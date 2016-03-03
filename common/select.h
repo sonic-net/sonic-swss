@@ -12,8 +12,9 @@ namespace swss {
 class Select
 {
 public:
-    /* Add object for select */
+    /* Add object for select can be called during Selectable::readMe */
     void addSelectable(Selectable *c);
+    void removeSelectable(Selectable *c);
 
     /* Add file-descriptor for select  */
     void addFd(int fd);

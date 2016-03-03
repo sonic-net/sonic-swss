@@ -13,6 +13,16 @@ void Select::addSelectable(Selectable *c)
     m_objects.push_back(c);
 }
 
+void Select::removeSelectable(Selectable *c)
+{
+    for (auto i = m_objects.begin(); i != m_objects.end(); i++)
+        if (*i == c)
+        {
+            m_objects.erase(i);
+            return;
+        }
+}
+
 void Select::addFd(int fd)
 {
     m_fds.push_back(fd);
