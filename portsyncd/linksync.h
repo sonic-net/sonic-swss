@@ -3,7 +3,6 @@
 
 #include "common/dbconnector.h"
 #include "common/producertable.h"
-#include "common/consumertable.h"
 #include "common/netmsg.h"
 
 namespace swss {
@@ -19,7 +18,7 @@ public:
 
 private:
     ProducerTable m_portTableProducer, m_vlanTableProducer, m_lagTableProducer;
-    ConsumerTable m_portTableConsumer, m_vlanTableConsumer, m_lagTableConsumer;
+    Table m_portTableConsumer, m_vlanTableConsumer, m_lagTableConsumer;
 };
 
 }
