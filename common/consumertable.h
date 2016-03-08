@@ -20,10 +20,6 @@ public:
     /* Get a singlesubsribe channel rpop */
     void pop(KeyOpFieldsValuesTuple &kco);
 
-    /* Get a key content without poping it from the notificaiton list */
-    /* return false if the key doesn't exists */
-    bool peek(std::string key, std::vector<FieldValueTuple> &values);
-
     virtual void addFd(fd_set *fd);
     virtual bool isMe(fd_set *fd);
     virtual int readCache();
