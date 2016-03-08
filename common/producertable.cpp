@@ -46,16 +46,9 @@ void ProducerTable::set(string key, vector<FieldValueTuple> &values, string op)
 {
     multi();
     for (FieldValueTuple &i : values)
-    {
-        char *temp;
-        int len = redisFormatCommand(&temp, "HSET %s %s %s",
-                                     getKeyName(key).c_str(),
-                                     fvField(i).c_str(),
-                                     fvValue(i).c_str());
-        string hset(temp, len);
-        free(temp);
-        enqueue(hset, REDIS_REPLY_INTEGER, true);
-    }
+        enqueue(formatHSET(getKeyName(key), fvField(i), fvValue(i)),
+                REDIS_REPLY_INTEGER, true);
+
     enqueueDbChange(key, JSon::buildJson(values), op);
     exec();
 }
