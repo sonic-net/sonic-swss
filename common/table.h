@@ -20,9 +20,20 @@ typedef std::tuple<std::string, std::string, std::vector<FieldValueTuple> > KeyO
 #define kfvFieldsValues std::get<2>
 
 class Table {
-protected:
+public:
     Table(DBConnector *db, std::string tableName);
 
+    /* Read a value from the DB directly */
+    /* Returns false if the key doesn't exists */
+    bool get(std::string key, std::vector<FieldValueTuple> &values);
+
+    /* Set an entry in the DB directly (op not in used) */
+    virtual void set(std::string key, std::vector<FieldValueTuple> &values,
+                     std::string op = "");
+    /* Delete an entry in the DB directly (op not in used) */
+    virtual void del(std::string key, std::string op = "");
+
+protected:
     /* Return the actual key name as a comibation of tableName:key */
     std::string getKeyName(std::string key);
 
@@ -40,6 +51,11 @@ protected:
     void enqueue(std::string command, int exepectedResult, bool isFormatted = false);
     redisReply* queueResultsFront();
     void queueResultsPop();
+
+    /* Format HSET key field value command */
+    static std::string formatHSET(const std::string &key,
+                                  const std::string &field,
+                                  const std::string &value);
 
     DBConnector *m_db;
     std::string m_tableName;
