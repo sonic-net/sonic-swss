@@ -1,14 +1,12 @@
 [![Build Status](https://sonic-jenkins.westus.cloudapp.azure.com/buildStatus/icon?job=swss-build)](https://sonic-jenkins.westus.cloudapp.azure.com/job/swss-build)
 # Switch State Service - swss
 
-### This software repository must be treated as private and is only shared under NDA terms with Microsoft until publicly released.
-
 # Description
 The Switch State Service (SwSS) is a collection of software that provides a database interface for communication with and state representation of network applications and network switch hardware.
 
 # Contribution guide
 
-All contributors must sign a contribution license agreement before contributions can be accepted.  Contact kasubra@microsoft.com or daloher@microsoft.com.  Later this will be automated.
+See the [contributors guide](https://github.com/Azure/SONiC/blob/gh-pages/contributing.md) for information about how to contribute.
 
 ### GitHub Workflow
 

@@ -1,0 +1,7 @@
+# This file describes the maintainers for swss.  
+# See the SONiC project governance document for more information
+
+Name = "Guohan Lu"
+Email = "gulv@microsoft.com"
+Github = lguohan
+Mailinglist = sonicproject@googlegroups.com
