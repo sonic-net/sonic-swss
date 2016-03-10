@@ -40,6 +40,49 @@ string Table::getChannelTableName()
     return m_tableName + "_CHANNEL";
 }
 
+bool Table::get(std::string key, vector<FieldValueTuple> &values)
+{
+    string hgetall_key("HGETALL ");
+    hgetall_key += getKeyName(key);
+
+    RedisReply r(m_db, hgetall_key, REDIS_REPLY_ARRAY);
+    redisReply *reply = r.getContext();
+    values.clear();
+
+    if (!reply->elements)
+        return false;
+
+    if (reply->elements & 1)
+        throw system_error(make_error_code(errc::address_not_available),
+                           "Unable to connect netlink socket");
+
+    for (unsigned int i = 0; i < reply->elements; i += 2)
+        values.push_back(make_tuple(reply->element[i]->str,
+                                    reply->element[i + 1]->str));
+
+    return true;
+}
+
+void Table::set(std::string key, std::vector<FieldValueTuple> &values,
+                std::string /*op*/)
+{
+    /* We are doing transaction for AON (All or nothing) */
+    multi();
+    for (FieldValueTuple &i : values)
+        enqueue(formatHSET(getKeyName(key), fvField(i), fvValue(i)),
+                REDIS_REPLY_INTEGER, true);
+
+    exec();
+}
+
+void Table::del(std::string key, std::string /* op */)
+{
+    RedisReply r(m_db, string("DEL ") + getKeyName(key), REDIS_REPLY_INTEGER);
+    if (r.getContext()->type != REDIS_REPLY_INTEGER)
+        throw system_error(make_error_code(errc::io_error),
+                           "DEL operation failed");
+}
+
 void Table::multi()
 {
     while (!m_expectedResults.empty())
@@ -108,6 +151,19 @@ void Table::enqueue(std::string command, int exepectedResult, bool isFormatted)
     RedisReply r(m_db, command, REDIS_REPLY_STATUS, isFormatted);
     r.checkStatusQueued();
     m_expectedResults.push(exepectedResult);
+}
+
+string Table::formatHSET(const string& key, const string& field,
+                         const string& value)
+{
+        char *temp;
+        int len = redisFormatCommand(&temp, "HSET %s %s %s",
+                                     key.c_str(),
+                                     field.c_str(),
+                                     value.c_str());
+        string hset(temp, len);
+        free(temp);
+        return hset;
 }
 
 }

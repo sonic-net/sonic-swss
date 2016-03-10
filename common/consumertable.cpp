@@ -85,29 +85,6 @@ void ConsumerTable::pop(KeyOpFieldsValuesTuple &kco)
     kco = std::make_tuple(key, op, fieldsValues);
 }
 
-bool ConsumerTable::peek(std::string key, vector<FieldValueTuple> &values)
-{
-    string hgetall_key("HGETALL ");
-    hgetall_key += getKeyName(key);
-
-    RedisReply r(m_db, hgetall_key, REDIS_REPLY_ARRAY);
-    redisReply *reply = r.getContext();
-    values.clear();
-
-    if (!reply->elements)
-        return false;
-
-    if (reply->elements & 1)
-        throw system_error(make_error_code(errc::address_not_available),
-                           "Unable to connect netlink socket");
-
-    for (unsigned int i = 0; i < reply->elements; i += 2)
-        values.push_back(make_tuple(reply->element[i]->str,
-                                    reply->element[i + 1]->str));
-
-    return true;
-}
-
 void ConsumerTable::addFd(fd_set *fd)
 {
     FD_SET(m_subscribe->getContext()->fd, fd);

@@ -16,9 +16,10 @@ class ProducerTable : public Table
 public:
     ProducerTable(DBConnector *db, std::string tableName);
 
-    void set(std::string key, std::vector<FieldValueTuple> &values,
-             std::string op = SET_COMMAND);
-    void del(std::string key, std::string op = DEL_COMMAND);
+    /* Implements set() and del() commands using notification messages */
+    virtual void set(std::string key, std::vector<FieldValueTuple> &values,
+                     std::string op = SET_COMMAND);
+    virtual void del(std::string key, std::string op = DEL_COMMAND);
 
 private:
     /* Disable copy-constructor and operator = */

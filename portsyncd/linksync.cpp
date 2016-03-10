@@ -52,11 +52,11 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     fvVector.push_back(o);
     fvVector.push_back(m);
 
-    if (m_lagTableConsumer.peek(key, temp))
+    if (m_lagTableConsumer.get(key, temp))
         m_lagTableProducer.set(key, fvVector);
-    else if (m_vlanTableConsumer.peek(key, temp))
+    else if (m_vlanTableConsumer.get(key, temp))
         m_vlanTableProducer.set(key, fvVector);
-    else if (m_portTableConsumer.peek(key, temp))
+    else if (m_portTableConsumer.get(key, temp))
         m_portTableProducer.set(key, fvVector);
     /* else discard managment or untracked netdev state */
 }
