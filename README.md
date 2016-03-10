@@ -1,12 +1,43 @@
 [![Build Status](https://sonic-jenkins.westus.cloudapp.azure.com/buildStatus/icon?job=swss-build)](https://sonic-jenkins.westus.cloudapp.azure.com/job/swss-build)
 # Switch State Service - swss
 
+### This software repository must be treated as private and is only shared under NDA terms with Microsoft until publicly released.
+
 # Description
 The Switch State Service (SwSS) is a collection of software that provides a database interface for communication with and state representation of network applications and network switch hardware.
 
+# Getting Started
+
+## Install from Debian Repo
+
+For your convenience, you can install prepared packages on Debian Jessie:
+
+    echo 'deb http://apt-mo.trafficmanager.net/repos/sonic/ trusty main' >> /etc/apt/sources.list.d/sonic.list
+    sudo apt-get update
+    sudo apt-get install sonic-swss
+
+## Install from Source
+
+You can compile and install from source using:
+
+    git clone https://github.com/Azure/swss.git
+    #TODO: ./getdeps.sh
+    make && sudo make install
+
+You can also build a debian package using:
+
+    fakeroot debian/rules binary
+
+## Need Help?
+
+For general questions, setup help, or troubleshooting:
+- [sonicproject on Google Groups](https://groups.google.com/d/forum/sonicproject)
+
+For bug reports or feature requests, please open an Issue.
+
 # Contribution guide
 
-See the [contributors guide](https://github.com/Azure/SONiC/blob/gh-pages/contributing.md) for information about how to contribute.
+All contributors must sign a contribution license agreement before contributions can be accepted.  Contact kasubra@microsoft.com or daloher@microsoft.com.  Later this will be automated.
 
 ### GitHub Workflow
 
@@ -40,3 +71,4 @@ For example:
 * Push your changes to your private fork and do "pull-request" to this repository
 * Use a pull request to do code review
 * Use issues to keep track of what is going on
+
