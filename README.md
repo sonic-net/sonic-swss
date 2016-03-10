@@ -1,4 +1,4 @@
-[![Build Status](https://sonic-jenkins.westus.cloudapp.azure.com/buildStatus/icon?job=swss-build)](https://sonic-jenkins.westus.cloudapp.azure.com/job/swss-build)
+[![Build Status](https://sonic-jenkins.westus.cloudapp.azure.com/buildStatus/icon?job=sonic-swss-build)](https://sonic-jenkins.westus.cloudapp.azure.com/job/sonic-swss-build)
 # Switch State Service - swss
 
 ### This software repository must be treated as private and is only shared under NDA terms with Microsoft until publicly released.
