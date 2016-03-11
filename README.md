@@ -36,7 +36,7 @@ For bug reports or feature requests, please open an Issue.
 
 # Contribution guide
 
-All contributors must sign a contribution license agreement before contributions can be accepted.  Contact kasubra@microsoft.com or daloher@microsoft.com.  Later this will be automated.
+See the [contributors guide](https://github.com/Azure/SONiC/blob/gh-pages/contributing.md) for information about how to contribute.
 
 ### GitHub Workflow
 
