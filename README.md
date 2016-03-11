@@ -1,8 +1,38 @@
-[![Build Status](https://sonic-jenkins.westus.cloudapp.azure.com/buildStatus/icon?job=swss-build)](https://sonic-jenkins.westus.cloudapp.azure.com/job/swss-build)
-# Switch State Service - swss
+[![Build Status](https://sonic-jenkins.westus.cloudapp.azure.com/buildStatus/icon?job=sonic-swss-build)](https://sonic-jenkins.westus.cloudapp.azure.com/job/sonic-swss-build)
+# Sonic - Switch State Service - SwSS
 
 # Description
 The Switch State Service (SwSS) is a collection of software that provides a database interface for communication with and state representation of network applications and network switch hardware.
+
+# Getting Started
+
+## Install from Debian Repo
+
+For your convenience, you can install prepared packages on Debian Jessie:
+
+    sudo apt-key adv --keyserver apt-mo.trafficmanager.net --recv-keys 417A0893
+    echo 'deb http://apt-mo.trafficmanager.net/repos/sonic/ trusty main' >> /etc/apt/sources.list.d/sonic.list
+    sudo apt-get update
+    sudo apt-get install sonic-swss
+
+## Install from Source
+
+You can compile and install from source using:
+
+    git clone https://github.com/Azure/sonic-swss.git
+    #TODO: ./getdeps.sh
+    make && sudo make install
+
+You can also build a debian package using:
+
+    fakeroot debian/rules binary
+
+## Need Help?
+
+For general questions, setup help, or troubleshooting:
+- [sonicproject on Google Groups](https://groups.google.com/d/forum/sonicproject)
+
+For bug reports or feature requests, please open an Issue.
 
 # Contribution guide
 
@@ -40,3 +70,4 @@ For example:
 * Push your changes to your private fork and do "pull-request" to this repository
 * Use a pull request to do code review
 * Use issues to keep track of what is going on
+
