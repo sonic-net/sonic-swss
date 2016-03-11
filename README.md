@@ -10,6 +10,7 @@ The Switch State Service (SwSS) is a collection of software that provides a data
 
 For your convenience, you can install prepared packages on Debian Jessie:
 
+    sudo apt-key adv --keyserver apt-mo.trafficmanager.net --recv-keys 417A0893
     echo 'deb http://apt-mo.trafficmanager.net/repos/sonic/ trusty main' >> /etc/apt/sources.list.d/sonic.list
     sudo apt-get update
     sudo apt-get install sonic-swss
@@ -18,7 +19,7 @@ For your convenience, you can install prepared packages on Debian Jessie:
 
 You can compile and install from source using:
 
-    git clone https://github.com/Azure/swss.git
+    git clone https://github.com/Azure/sonic-swss.git
     #TODO: ./getdeps.sh
     make && sudo make install
 
