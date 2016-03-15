@@ -1,5 +1,5 @@
 [![Build Status](https://sonic-jenkins.westus.cloudapp.azure.com/buildStatus/icon?job=sonic-swss-build)](https://sonic-jenkins.westus.cloudapp.azure.com/job/sonic-swss-build)
-# Sonic - Switch State Service - SwSS
+# SONiC - Switch State Service - SwSS
 
 # Description
 The Switch State Service (SwSS) is a collection of software that provides a database interface for communication with and state representation of network applications and network switch hardware.
@@ -36,7 +36,7 @@ For bug reports or feature requests, please open an Issue.
 
 # Contribution guide
 
-See the [contributors guide](https://github.com/Azure/SONiC/blob/gh-pages/contributing.md) for information about how to contribute.
+See the [contributors guide](https://github.com/Azure/SONiC/blob/gh-pages/CONTRIBUTING.md) for information about how to contribute.
 
 ### GitHub Workflow
 
