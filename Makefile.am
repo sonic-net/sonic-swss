@@ -1,4 +1,4 @@
-SUBDIRS = common neighsyncd intfsyncd portsyncd orchagent
+SUBDIRS = common neighsyncd intfsyncd portsyncd orchagent teamsyncd
 
 if TESTS
 SUBDIRS += tests
