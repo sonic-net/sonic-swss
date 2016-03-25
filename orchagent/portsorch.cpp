@@ -8,7 +8,7 @@
 
 #include "net/if.h"
 
-#include "common/logger.h"
+#include "logger.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_vlan_api_t *sai_vlan_api;

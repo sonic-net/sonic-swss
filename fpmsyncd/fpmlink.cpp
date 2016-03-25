@@ -1,9 +1,9 @@
 #include <string.h>
 #include <errno.h>
 #include <system_error>
-#include "common/logger.h"
-#include "common/netmsg.h"
-#include "common/netdispatcher.h"
+#include "logger.h"
+#include "netmsg.h"
+#include "netdispatcher.h"
 #include "fpmsyncd/fpmlink.h"
 
 using namespace swss;

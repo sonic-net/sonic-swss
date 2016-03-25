@@ -12,6 +12,5 @@ intfsyncd_SOURCES = intfsyncd.cpp intfsync.cpp
 
 intfsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 intfsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
-intfsyncd_LDADD = -lnl-3 -lnl-route-3 -lhiredis \
-	-L$(top_srcdir)/common -lswsscommon
+intfsyncd_LDADD = -lnl-3 -lnl-route-3 -lhiredis -lswsscommon
 

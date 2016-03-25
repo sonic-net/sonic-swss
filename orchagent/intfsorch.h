@@ -4,8 +4,8 @@
 #include "orch.h"
 #include "portsorch.h"
 
-#include "common/ipaddress.h"
-#include "common/macaddress.h"
+#include "ipaddress.h"
+#include "macaddress.h"
 
 #include <map>
 

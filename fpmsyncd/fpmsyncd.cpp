@@ -1,7 +1,7 @@
 #include <iostream>
-#include "common/logger.h"
-#include "common/select.h"
-#include "common/netdispatcher.h"
+#include "logger.h"
+#include "select.h"
+#include "netdispatcher.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
 

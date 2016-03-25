@@ -11,7 +11,7 @@
 #include <unistd.h>
 #include <exception>
 
-#include "common/selectable.h"
+#include "selectable.h"
 #include "fpm/fpm.h"
 
 namespace swss {

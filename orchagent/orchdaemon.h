@@ -1,10 +1,10 @@
 #ifndef SWSS_ORCHDAEMON_H
 #define SWSS_ORCHDAEMON_H
 
-#include "common/dbconnector.h"
-#include "common/producertable.h"
-#include "common/consumertable.h"
-#include "common/select.h"
+#include "dbconnector.h"
+#include "producertable.h"
+#include "consumertable.h"
+#include "select.h"
 
 #include "portsorch.h"
 #include "intfsorch.h"

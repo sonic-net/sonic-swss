@@ -1,7 +1,7 @@
 #include "intfsorch.h"
 
-#include "common/ipprefix.h"
-#include "common/logger.h"
+#include "ipprefix.h"
+#include "logger.h"
 
 #include <fstream>
 #include <sstream>

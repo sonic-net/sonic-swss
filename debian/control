@@ -9,15 +9,3 @@ Package: swss
 Architecture: any
 Depends: ${shlibs:Depends}
 Description: This package contains Switch State Service for SONiC project.
-
-Package: libswsscommon
-Architecture: any
-Section: libs
-Description: Tihs package contains Switch State Service common library.
-
-Package: libswsscommon-dev
-Architecture: any
-Depends: libswsscommon (= ${binary:Version})
-Section: libdevel
-Description: This package contains development files for Switch State Service.
-

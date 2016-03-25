@@ -1,8 +1,8 @@
 #include <stdlib.h>
 #include <iostream>
 #include <vector>
-#include "common/dbconnector.h"
-#include "common/producertable.h"
+#include "dbconnector.h"
+#include "producertable.h"
 
 using namespace std;
 using namespace swss;

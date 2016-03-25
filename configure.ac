@@ -23,18 +23,6 @@ esac],[debug=false])
 AM_CONDITIONAL(DEBUG, test x$debug = xtrue)
 
 
-AC_ARG_WITH(gtest,
-[  --with-gtest=<dir>   Compiles tests using the location of google tests],
-AC_MSG_NOTICE(Using gtest path from:$with_gtest), with_gtest="none")
-
-GTEST_PATH=
-if test "x$with_gtest" != xnone; then
-GTEST_PATH=$with_gtest
-fi
-AC_SUBST(GTEST_PATH)
-AM_CONDITIONAL(TESTS, test "x$with_gtest" != xnone)
-
-
 AC_ARG_WITH(fpm,
 [  --with-fpm=<dir>   Compiles using qauggas fpm library],
 AC_MSG_NOTICE(Using fpmi path from:$with_fpm), with_fpm="none")
@@ -47,14 +35,12 @@ AC_SUBST(FPM_PATH)
 AM_CONDITIONAL(FPM, test "x$with_fpm" != xnone)
 
 
-CFLAGS_COMMON="-std=c++11 -Wall -fPIC -Wno-write-strings -I/usr/include/libnl3"
+CFLAGS_COMMON="-std=c++11 -Wall -fPIC -Wno-write-strings -I/usr/include/libnl3 -I/usr/include/swss"
 AC_SUBST(CFLAGS_COMMON)
 
 AC_CONFIG_FILES([
     Makefile
-    common/Makefile
     orchagent/Makefile
-    tests/Makefile
     fpmsyncd/Makefile
     neighsyncd/Makefile
     intfsyncd/Makefile

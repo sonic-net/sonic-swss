@@ -3,12 +3,12 @@
 #include <system_error>
 #include <netlink/route/link.h>
 #include <netlink/route/addr.h>
-#include "common/logger.h"
-#include "common/netmsg.h"
-#include "common/dbconnector.h"
-#include "common/producertable.h"
-#include "common/scheme.h"
-#include "common/linkcache.h"
+#include "logger.h"
+#include "netmsg.h"
+#include "dbconnector.h"
+#include "producertable.h"
+#include "scheme.h"
+#include "linkcache.h"
 #include "intfsyncd/intfsync.h"
 
 using namespace std;

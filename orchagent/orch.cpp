@@ -1,6 +1,6 @@
 #include "orch.h"
 
-#include "common/logger.h"
+#include "logger.h"
 
 Orch::Orch(DBConnector *db, string tableName) :
     m_db(db), m_name(tableName)

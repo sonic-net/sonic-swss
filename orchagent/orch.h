@@ -6,9 +6,9 @@ extern "C" {
 #include "saistatus.h"
 }
 
-#include "common/dbconnector.h"
-#include "common/consumertable.h"
-#include "common/producertable.h"
+#include "dbconnector.h"
+#include "consumertable.h"
+#include "producertable.h"
 
 #include <map>
 

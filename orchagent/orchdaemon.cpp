@@ -2,7 +2,7 @@
 #include "routeorch.h"
 #include "neighorch.h"
 
-#include "common/logger.h"
+#include "logger.h"
 
 #include <unistd.h>
 

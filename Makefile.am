@@ -1,8 +1,4 @@
-SUBDIRS = common neighsyncd intfsyncd portsyncd orchagent
-
-if TESTS
-SUBDIRS += tests
-endif
+SUBDIRS = neighsyncd intfsyncd portsyncd orchagent
 
 if FPM
 SUBDIRS += fpmsyncd

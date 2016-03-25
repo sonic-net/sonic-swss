@@ -1,13 +1,13 @@
 #include <netlink/route/link.h>
 #include <netlink/route/route.h>
 #include <netlink/route/nexthop.h>
-#include "common/logger.h"
-#include "common/select.h"
-#include "common/netmsg.h"
-#include "common/ipprefix.h"
-#include "common/dbconnector.h"
-#include "common/producertable.h"
-#include "common/scheme.h"
+#include "logger.h"
+#include "select.h"
+#include "netmsg.h"
+#include "ipprefix.h"
+#include "dbconnector.h"
+#include "producertable.h"
+#include "scheme.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
 

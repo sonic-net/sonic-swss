@@ -1,9 +1,9 @@
 #ifndef __NEIGHSYNC__
 #define __NEIGHSYNC__
 
-#include "common/dbconnector.h"
-#include "common/producertable.h"
-#include "common/netmsg.h"
+#include "dbconnector.h"
+#include "producertable.h"
+#include "netmsg.h"
 
 namespace swss {
 

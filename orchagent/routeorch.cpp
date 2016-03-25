@@ -1,6 +1,6 @@
 #include "routeorch.h"
 
-#include "common/logger.h"
+#include "logger.h"
 
 extern sai_route_api_t*                 sai_route_api;
 extern sai_next_hop_group_api_t*        sai_next_hop_group_api;

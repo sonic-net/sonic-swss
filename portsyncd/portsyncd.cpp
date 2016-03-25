@@ -1,8 +1,8 @@
-#include "common/dbconnector.h"
-#include "common/select.h"
-#include "common/netdispatcher.h"
-#include "common/netlink.h"
-#include "common/producertable.h"
+#include "dbconnector.h"
+#include "select.h"
+#include "netdispatcher.h"
+#include "netlink.h"
+#include "producertable.h"
 #include "portsyncd/linksync.h"
 
 #include <getopt.h>

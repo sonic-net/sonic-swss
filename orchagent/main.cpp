@@ -1,6 +1,6 @@
 #include "orchdaemon.h"
 
-#include "common/logger.h"
+#include "logger.h"
 
 extern "C" {
 #include "sai.h"

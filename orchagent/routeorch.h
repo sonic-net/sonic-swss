@@ -4,9 +4,9 @@
 #include "orch.h"
 #include "intfsorch.h"
 
-#include "common/ipaddress.h"
-#include "common/ipaddresses.h"
-#include "common/ipprefix.h"
+#include "ipaddress.h"
+#include "ipaddresses.h"
+#include "ipprefix.h"
 
 #include <map>
 

@@ -1,8 +1,8 @@
 #include <iostream>
-#include "common/logger.h"
-#include "common/select.h"
-#include "common/netdispatcher.h"
-#include "common/netlink.h"
+#include "logger.h"
+#include "select.h"
+#include "netdispatcher.h"
+#include "netlink.h"
 #include "neighsyncd/neighsync.h"
 
 using namespace std;
