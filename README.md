@@ -1,9 +1,9 @@
 [![Build Status](https://sonic-jenkins.westus.cloudapp.azure.com/job/sonic-swss-build/badge/icon)](https://sonic-jenkins.westus.cloudapp.azure.com/job/sonic-swss-build/)
 
-# SONiC - Switch State Service - SwSS
+# SONiC - SWitch State Service - SWSS
 
 ## Description
-The Switch State Service (SwSS) is a collection of software that provides a database interface for communication with and state representation of network applications and network switch hardware.
+The SWitch State Service (SWSS) is a collection of software that provides a database interface for communication with and state representation of network applications and network switch hardware.
 
 ## Getting Started
 
@@ -26,26 +26,33 @@ There are a few different ways you can install SONiC-SWSS.
 
 For your convenience, you can install prepared packages on Debian Jessie:
 
-    sudo apt-get install sonic-swss
+    sudo apt-get install swss
 
 #### Install from Source
 
 Checkout the source: `git clone https://github.com/Azure/sonic-swss.git` and install it yourself.
+
+Get SAI header files into /usr/include/sai. Put the SAI header files that you use to compile
+libsairedis into /usr/include/sai
+
 Get `fpm.h` header file before compiling:
 
     mkdir fpmsyncd/fpm
     wget http://git.savannah.gnu.org/cgit/quagga.git/plain/fpm/fpm.h -O fpmsyncd/fpm/fpm.h
 
+Install prerequisite packages:
+
+    sudo apt-get install libswsscommon libswsscommon-dev libsairedis libsairedis-dev
+
 You can compile and install from source using:
 
     ./autogen.sh
-    ./configure
+    ./configure -with-fpm=fpm
     make && sudo make install
 
 You can also build a debian package using:
 
     ./autogen.sh
-    ./configure
     fakeroot debian/rules binary
 
 ## Need Help?
