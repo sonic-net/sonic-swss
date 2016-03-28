@@ -1,8 +1,13 @@
 Schema data is defined in ABNF [RFC5234](https://tools.ietf.org/html/rfc5234) syntax.  
 
+###Definitions of common tokens
+	name					= 1*DIGIT/1*ALPHA
+	ref_hash_key_reference	= "[" hash_key "]" ;The token is a refernce to another valid DB key.
+	hash_key				= name ; a valid key name (i.e. exists in DB)
+
 
 ###PORT_TABLE
-Stores information for physical switch ports managed by the switch chip.  device_names are defined in [port_config.ini](https://github.com/stcheng/swss/blob/mock/portsyncd/port_config.ini).  Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE.   See INTF_TABLE.
+Stores information for physical switch ports managed by the switch chip.  device_names are defined in [port_config.ini](../portsyncd/port_config.ini).  Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE.   See INTF_TABLE.
 
     ;Defines layer 2 ports
     ;In SONiC, Data is loaded from configuration file by portsyncd
@@ -15,10 +20,18 @@ Stores information for physical switch ports managed by the switch chip.  device
     ifname              = 1*64VCHAR     ; name of the port, must be unique 
     mac                 = 12HEXDIG      ; 
 
+	;QOS Mappings
+	map_dscp_to_tc		= ref_hash_key_reference
+	map_tc_to_queue		= ref_hash_key_reference
+	
+	Example:
+	127.0.0.1:6379> hgetall PORT_TABLE:ETHERNET4
+	1) "dscp_to_tc_map"
+	2) "[DSCP_TO_TC_MAP_TABLE:AZURE]"
+	3) "tc_to_queue_map"
+	4) "[TC_TO_QUEUE_MAP_TABLE:AZURE]"
 
-
----------
-    
+---------------------------------------------
 ###INTF_TABLE
 intfsyncd manages this table.  In SONiC, CPU (management) and logical ports (vlan, loopback, LAG) are declared in /etc/network/interface and loaded into the INTF_TABLE.
 
@@ -84,7 +97,7 @@ For example (reorder output)
     7) "if_mtu"
     8) "65536"
 
----------
+---------------------------------------------
 ###VLAN_TABLE
     ;Defines VLANs and the interfaces which are members of the vlan
     ;Status: work in progress
@@ -93,7 +106,7 @@ For example (reorder output)
     admin_status        = BIT ; administrative status for vlan up or down
     attach_to           = PORT_TABLE.key
 
----------
+---------------------------------------------
 ###LAG_TABLE
     ;a logical, link aggregation group interface (802.3ad) made of one or more ports
     ;In SONiC, data is loaded by teamsyncd
@@ -132,8 +145,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     5) "duplex"
     6) "half"
 
-
----------
+---------------------------------------------
 ###ROUTE_TABLE
     ;Stores a list of routes
     ;Status: Mandatory
@@ -142,8 +154,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     intf          = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
     blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
   
-
----------
+---------------------------------------------
 ###NEIGH_TABLE
     ; Stores the neighbors or next hop IP address and output port or 
     ; interface for routes
@@ -154,213 +165,107 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     neigh         = 12HEXDIG         ;  mac address of the neighbor 
     family        = "IPv4" / "IPv6"  ; address family
 
-
----------
-##QOS related definitions
-
-###Definitions of common tokens
-	number					= 1*DIGIT
-	name					= number/1*ALPHA
-	ref_hash_key_reference	= "[" hash_key "]" ;Value the token is a refernce to the name of another valid DB key.
-	hash_key				= name ; a valid key name (i.e. exists in DB)
-
+---------------------------------------------
 ###QUEUE_TABLE
 
-	; QUEUE table. Defines types of queues and their IDs to be referenced by the schedulers, ports.
-	; This is a 'template' for a queue[i], which then will be applied to a concrete port queue.
-	; For example can be applied to port.0.queue.3 port.1.queue.3, etc.
-	; SAI mapping - no direct mapping. As mentioned this is a 'template' for a queue.
-	key					= QUEUE_TABLE:name
-	;field
-	queue_index			= number
-	;field values
-	[0-7]
-	; Example
-	; key QUEUE_TABLE:BEST_EFFORT
-	;		field_name				value
-	; "queue_index"					  1
-	; key QUEUE_TABLE:RDMA
-	;		field_name				value
-	; "queue_index"					  4
+	; QUEUE table. Defines port queue.
+	; SAI mapping - port queue.
 
+	key					= "QUEUE_TABLE:"port_name":queue_index
+	queue_index			= 1*DIGIT
+	port_name			= ifName
+	queue_reference		= ref_hash_key_reference
 
+	;field					value
+	scheduler			= ref_hash_key_reference; reference to scheduler key
+	wred_profile		= ref_hash_key_reference; reference to wred profile key
+
+	Example:
+	127.0.0.1:6379> hgetall QUEUE_TABLE:ETHERNET4:1
+	1) "scheduler"
+	2) "[SCHEDULER_TABLE:BEST_EFFORT]"
+	3) "wred_profile"
+	4) "[WRED_PROFILE_TABLE:AZURE]"
+
+---------------------------------------------
 ###TC\_TO\_QUEUE\_MAP\_TABLE
 	; TC to queue map
 	;SAI mapping - qos_map with SAI_QOS_MAP_ATTR_TYPE == SAI_QOS_MAP_TC_TO_QUEUE. See saiqosmaps.h
 	key					= "TC_TO_QUEUE_MAP_TABLE:"name
 	;field
-	tc_num				= number
+	tc_num				= 1*DIGIT
 	;values
-	queue				= ref_hash_key_reference ;refernce to a queue hash key, see example below .
+	queue				= 1*DIGIT; queue index
 	
-	; example
-	; key "TC_TO_QUEUE_MAP_TABLE:AZURE"
-	;	field_name					value
-	;		5					[QUEUE_TABLE:BEST_EFFORT]		; resolves to queue 1
-	;		6					[QUEUE_TABLE:BEST_EFFORT]		; resolves to queue 1
+	Example:
+	27.0.0.1:6379> hgetall TC_TO_QUEUE_MAP_TABLE:AZURE
+	1) "5" ;tc
+	2) "1" ;queue index
+	3) "6" 
+	4) "1" 
 
-
+---------------------------------------------
 ###DSCP\_TO\_TC\_MAP\_TABLE
 	; dscp to TC map
 	;SAI mapping - qos_map object with SAI_QOS_MAP_ATTR_TYPE == sai_qos_map_type_t::SAI_QOS_MAP_DSCP_TO_TC
 	key					= "DSCP_TO_TC_MAP_TABLE:"name
-	;field
-	dscp_value			= number
-	;values
-	tc_value			= number
+	;field				value
+	dscp_value			= 1*DIGIT
+	tc_value			= 1*DIGIT
 	
-	; example
-	; key DSCP_TO_TC_MAP_TABLE:AZURE
-	;	dscp_value 				tc_value
-	;		7					5
-	;		6					5
-	;		3					3
-	;               
+	Example:
+	127.0.0.1:6379> hgetall "DSCP_TO_TC_MAP_TABLE:AZURE"
+	 1) "3" ;dscp
+	 2) "3" ;tc
+	 3) "6" 
+	 4) "5" 
+	 5) "7"
+	 6) "5"
+	 7) "8"
+	 8) "7"
+	 9) "9"
+	10) "8"
 
-###PORT\_QOS\_TABLE
-	; QOS Mappings for a port
-	key					= "PORT_QOS_TABLE:" port_name
-	port_name			= name
-	; field
-	map_type			= 1*"map_dscp_to_tc"/1*"map_tc_to_queue"
-	; value
-	map_key_reference	= ref_hash_key_reference
-	
-	; example
-	; key 			PORT_QOS_TABLE:ETHERNET4 ; qus table for port Ethernet 4
-	;	field_name					value
-	;		dscp_to_tc_map			[DSCP_TO_TC_MAP_TABLE:AZURE]
-	;		tc_to_queue_map			[TC_TO_QUEUE_MAP_TABLE:AZURE]
-
-
+---------------------------------------------
 ###SCHEDULER_TABLE
 	; Scheduler table
 	; SAI mapping - saicheduler.h
 	key					= "SCHEDULER_TABLE":name
 	; field						value
-	1*algorithm				= "DWRR"/"WRR"/"PRIORITY"
-	1*weight				= number
-	1*priority				= number
+	type			= "DWRR"/"WRR"/"PRIORITY"
+	weight				= 1*DIGIT
+	priority			= 1*DIGIT
 	
-	;example1
-	; key "SCHEDULER_TABLE:SCAVENGER"
-	;	field_name					value
-	;		algorithm  				DWRR
-	;		weight					 35
-	
-	;example2
-	; key "SCHEDULER_TABLE:BEST_EFFORT"
-	;	field_name					value
-	;		algorithm		        PRIORITY
-	;		priority				7
+	Example:
+	127.0.0.1:6379> hgetall SCHEDULER_TABLE:BEST_EFFORT
+	1) "type"
+	2) "PRIORITY"
+	3) "priority"
+	4) "7"
+	127.0.0.1:6379> hgetall SCHEDULER_TABLE:SCAVENGER
+	1) "type"
+	2) "DWRR"
+	3) "weight"
+	4) "35"
 
+---------------------------------------------
 ###WRED\_PROFILE\_TABLE
 	; WRED profile
 	; SAI mapping - saiwred.h
 	key						= "WRED_PROFILE_TABLE:"name
-	;fields
-	yellow_max_threshold	= byte count
-	green_max_threshold		= byte count
-	;example
-	; key == WRED_PROFILE_TABLE:AZURE
-	;	field					value
-	;	yellow_max_threshold	100
-	;	green_max_threshold		200
-
-###QUEUE\_QOS\_TABLE
-	; QOS assignments for a given port.queue
-	; SAI mapping - maps to a sai_queue object of a given port.
-	key					= "QUEUE_QOS_TABLE:" port_name ":" queue_reference
-	port_name			= name
-	queue_reference		= ref_hash_key_reference
+	;field						value
+	yellow_max_threshold	= byte_count
+	green_max_threshold		= byte_count
+	byte_count				= 1*DIGIT
 	
-	;field					value
-	scheduler			= 1*ref_hash_key_reference; reference to scheduler key
-	wred_profile		= 1*ref_hash_key_reference; reference to wred profile key
+	Example:
+	127.0.0.1:6379> hgetall "WRED_PROFILE_TABLE:AZURE"
+	1) "green_max_threshold"
+	2) "20480"
+	3) "yellow_max_threshold"
+	4) "30720"
 
-	; example
-	; key QUEUE_QOS_TABLE:ETHERNET4:[QUEUE_TABLE:BEST_EFFORT]; setting for eth4.best_effort_queue
-	; 	field						value
-	; scheduler			[SCHEDULER_TABLE:BEST_EFFORT]
-	; wred_profile		[WRED_PROFILE_TABLE:AZURE]	
-
-###JSON configuration file
-Some network applications require network communication to build proper configuration, for example to build BGP settings.
-However there are cases where network configuration is not required, for example QOS settings. In such cases the settings will be stored in a JSON file, corresponding to the current schema and will be consumed by **swss-config**, an application which will apply the settings described in JSON file to the Redis DB (APP_DB).
-
-#### JSON sample for QOS data
-	
-	[
-		{
-			"QUEUE_TABLE:BEST_EFFORT": {
-				"queue_index": 1
-			},
-			"OP": "SET"
-		},
-		{
-			"TC_TO_QUEUE_MAP_TABLE:AZURE": {
-				"5": "[QUEUE_TABLE:BEST_EFFORT]"
-			},
-			"OP": "SET"
-		},
-		{
-			"DSCP_TO_TC_MAP_TABLE:AZURE": {
-				"7":"5",
-				"6":"5",
-				"3":"3",
-				"8":"7",			
-				"9":"8"
-			},
-			"OP": "SET"
-		},
-		{
-			"DSCP_TO_TC_MAP_TABLE:AZURE": {
-				"7":"6",			
-				"8":"7"
-			},
-			"OP": "DEL"
-		},
-		{
-			"PORT_QOS_TABLE:ETHERNET4": {
-				"dscp_to_tc_map" : "[DSCP_TO_TC_MAP_TABLE:AZURE]",
-				"tc_to_queue_map": "[TC_TO_QUEUE_MAP_TABLE:AZURE]"		
-			},
-			"OP": "SET"		
-		},
-		{
-			"SCHEDULER_TABLE:SCAVENGER" : {
-				"algorithm":"DWRR",
-				"weight": "35"
-			},
-			"OP": "SET"
-		},
-		{
-			"SCHEDULER_TABLE:BEST_EFFORT" : {
-				"algorithm":"PRIORITY",
-				"priority": "7"
-			},
-			"OP": "SET"
-		},
-		{
-			"WRED_PROFILE_TABLE:AZURE" : {
-				"yellow_max_threshold":"200",
-				"green_max_threshold": "100"
-			},
-			"OP": "SET"
-		},
-		{
-			"QUEUE_QOS_TABLE:ETHERNET4:[QUEUE_TABLE:BEST_EFFORT]" : {
-				"scheduler"		:	"[SCHEDULER_TABLE:BEST_EFFORT]",
-				"wred_profile"	: 	"[WRED_PROFILE_TABLE:AZURE]"
-			},
-			"OP": "SET"
-		}
-	]
-
-
-
-
-----------
+----------------------------------------------
 
 ###Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?  
