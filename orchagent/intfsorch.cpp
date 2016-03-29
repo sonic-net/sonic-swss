@@ -123,16 +123,6 @@ void IntfsOrch::doTask()
                 continue;
             }
 
-            IpPrefix ip_prefix;
-            for (auto it = kfvFieldsValues(t).begin();
-                 it  != kfvFieldsValues(t).end(); it++)
-            {
-                if (fvField(*it) == "ip_prefix")
-                {
-                    ip_prefix = IpPrefix(fvValue(*it));
-                }
-            }
-
             sai_unicast_route_entry_t unicast_route_entry;
             unicast_route_entry.vr_id = gVirtualRouterId;
             unicast_route_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
@@ -159,7 +149,11 @@ void IntfsOrch::doTask()
                 it++;
             }
             else
+            {
+                SWSS_LOG_NOTICE("Remove packet action trap route ip:%s\n", ip_prefix.getIp().to_string().c_str());
+                m_intfs.erase(alias);
                 it = m_toSync.erase(it);
+            }
         }
     }
 }
