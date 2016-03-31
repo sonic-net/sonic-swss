@@ -51,7 +51,10 @@ void OrchDaemon::start()
 
         ret = m_select->select(&s, &fd, 1);
         if (ret == Select::ERROR)
+        {
             SWSS_LOG_NOTICE("Error!\n");
+            continue;
+        }
 
         if (ret == Select::TIMEOUT)
             continue;
