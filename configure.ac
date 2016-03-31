@@ -45,6 +45,7 @@ AC_CONFIG_FILES([
     neighsyncd/Makefile
     intfsyncd/Makefile
     portsyncd/Makefile
+    swssconfig/Makefile
 ])
 
 AC_OUTPUT
