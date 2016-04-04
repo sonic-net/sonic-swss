@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir)
+INCLUDES = -I $(top_srcdir) -I $(NLOHMANN_JSON_PATH)
 
 bin_PROGRAMS = swssconfig
 
