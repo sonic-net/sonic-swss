@@ -1,9 +1,5 @@
-SUBDIRS = neighsyncd intfsyncd portsyncd orchagent
+SUBDIRS = neighsyncd intfsyncd portsyncd orchagent swssconfig
 
 if FPM
 SUBDIRS += fpmsyncd
-endif
-
-if SWSSCONFIG
-SUBDIRS += swssconfig
 endif

@@ -34,17 +34,6 @@ fi
 AC_SUBST(FPM_PATH)
 AM_CONDITIONAL(FPM, test "x$with_fpm" != xnone)
 
-AC_ARG_WITH(nlohmann-json,
-[  --with-nlohmann-json=<dir>   Compiles using nlohmanns json library],
-AC_MSG_NOTICE(Using nlohmann-json path from:$with_nlohmann_json), with_nlohmann_json="none")
-
-NLOHMANN_JSON_PATH=
-if test "x$with_nlohmann_json" != xnone; then
-NLOHMANN_JSON_PATH=$with_nlohmann_json
-fi
-AC_SUBST(NLOHMANN_JSON_PATH)
-AM_CONDITIONAL(SWSSCONFIG, test "x$with_nlohmann_json" != xnone)
-
 
 CFLAGS_COMMON="-std=c++11 -Wall -fPIC -Wno-write-strings -I/usr/include/libnl3 -I/usr/include/swss"
 AC_SUBST(CFLAGS_COMMON)
