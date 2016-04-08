@@ -16,6 +16,8 @@ Orch::~Orch()
 
 void Orch::execute()
 {
+    SWSS_LOG_ENTER();
+
     KeyOpFieldsValuesTuple t;
     m_consumer->pop(t);
 

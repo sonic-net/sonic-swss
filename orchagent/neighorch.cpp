@@ -7,6 +7,8 @@ extern sai_next_hop_api_t*         sai_next_hop_api;
 
 void NeighOrch::doTask()
 {
+    SWSS_LOG_ENTER();
+
     if (m_toSync.empty())
         return;
 
@@ -86,6 +88,8 @@ void NeighOrch::doTask()
 
 bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
 {
+    SWSS_LOG_ENTER();
+
     sai_status_t status;
     IpAddress ip_address = neighborEntry.ip_address;
     string alias = neighborEntry.alias;
@@ -152,6 +156,8 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
 
 bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
 {
+    SWSS_LOG_ENTER();
+
     sai_status_t status;
     IpAddress ip_address = neighborEntry.ip_address;
     string alias = neighborEntry.alias;

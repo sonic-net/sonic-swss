@@ -24,6 +24,8 @@ extern MacAddress gMacAddress;
 PortsOrch::PortsOrch(DBConnector *db, string tableName) :
         Orch(db, tableName)
 {
+    SWSS_LOG_ENTER();
+
     int i, j;
     sai_status_t status;
     sai_attribute_t attr;
@@ -128,6 +130,8 @@ PortsOrch::PortsOrch(DBConnector *db, string tableName) :
 
 bool PortsOrch::getPort(string alias, Port &p)
 {
+    SWSS_LOG_ENTER();
+
     if (m_portList.find(alias) == m_portList.end())
         return false;
     p = m_portList[alias];
@@ -136,6 +140,8 @@ bool PortsOrch::getPort(string alias, Port &p)
 
 bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
 {
+    SWSS_LOG_ENTER();
+
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_ADMIN_STATE;
     attr.value.booldata = up;
@@ -151,6 +157,8 @@ bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
 
 void PortsOrch::doTask()
 {
+    SWSS_LOG_ENTER();
+
     if (m_toSync.empty())
         return;
 
@@ -249,6 +257,8 @@ void PortsOrch::doTask()
 
 bool PortsOrch::initializePort(Port &p)
 {
+    SWSS_LOG_ENTER();
+
     SWSS_LOG_NOTICE("Initializing port alias:%s pid:%llx\n", p.m_alias.c_str(), p.m_port_id);
 
     p.m_vlan_id = FRONT_PANEL_PORT_VLAN_BASE + p.m_index;
@@ -294,6 +304,8 @@ bool PortsOrch::initializePort(Port &p)
 
 bool PortsOrch::setupVlan(sai_vlan_id_t vlan_id, sai_object_id_t port_id, sai_object_id_t &vlan_member_id)
 {
+    SWSS_LOG_ENTER();
+
     sai_status_t status;
 
     status = sai_vlan_api->create_vlan(vlan_id);
@@ -336,6 +348,8 @@ bool PortsOrch::setupVlan(sai_vlan_id_t vlan_id, sai_object_id_t port_id, sai_ob
 bool PortsOrch::setupRouterIntfs(sai_object_id_t virtual_router_id, MacAddress mac_address,
                       sai_vlan_id_t vlan_id, sai_object_id_t &router_intfs_id)
 {
+    SWSS_LOG_ENTER();
+
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
@@ -367,6 +381,8 @@ bool PortsOrch::setupRouterIntfs(sai_object_id_t virtual_router_id, MacAddress m
 
 bool PortsOrch::setupHostIntfs(sai_object_id_t id, string alias, sai_object_id_t &host_intfs_id)
 {
+    SWSS_LOG_ENTER();
+
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
