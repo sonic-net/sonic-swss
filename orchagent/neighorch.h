@@ -23,14 +23,15 @@ typedef map<NeighborEntry, MacAddress> NeighborTable;
 class NeighOrch : public Orch
 {
 public:
-
     NeighOrch(DBConnector *db, string tableName, PortsOrch *portsOrch, RouteOrch *routeOrch) :
         Orch(db, tableName), m_portsOrch(portsOrch), m_routeOrch(routeOrch) {};
+    const char* const delimiter         = ";";
+    const char* const neigh_field_name  = "neigh";
 private:
     PortsOrch *m_portsOrch;
     RouteOrch *m_routeOrch;
 
-    void doTask();
+    virtual void doTask(_in_ Consumer& consumer_info);
 
     NeighborTable m_syncdNeighbors;
 

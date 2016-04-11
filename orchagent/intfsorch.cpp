@@ -18,13 +18,13 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, PortsOrch *portsOrch) :
 {
 }
 
-void IntfsOrch::doTask()
+void IntfsOrch::doTask(_in_ Consumer& consumer_info)
 {
-    if (m_toSync.empty())
+    if (consumer_info.m_toSync.empty())
         return;
 
-    auto it = m_toSync.begin();
-    while (it != m_toSync.end())
+    auto it = consumer_info.m_toSync.begin();
+    while (it != consumer_info.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
 
@@ -33,7 +33,7 @@ void IntfsOrch::doTask()
         if (found == string::npos)
         {
             SWSS_LOG_ERROR("Failed to parse task key %s\n", key.c_str());
-            it = m_toSync.erase(it);
+            it = consumer_info.m_toSync.erase(it);
             continue;
         }
         string alias = key.substr(0, found);
@@ -41,7 +41,7 @@ void IntfsOrch::doTask()
         IpPrefix ip_prefix(key.substr(found+1));
         if (!ip_prefix.isV4())
         {
-            it = m_toSync.erase(it);
+            it = consumer_info.m_toSync.erase(it);
             continue;
         }
 
@@ -52,7 +52,7 @@ void IntfsOrch::doTask()
             /* Duplicate entry */
             if (m_intfs.find(alias) != m_intfs.end() && m_intfs[alias] == ip_prefix.getIp())
             {
-                it = m_toSync.erase(it);
+                it = consumer_info.m_toSync.erase(it);
                 continue;
             }
 
@@ -60,7 +60,7 @@ void IntfsOrch::doTask()
             if (!m_portsOrch->getPort(alias, p))
             {
                 SWSS_LOG_ERROR("Failed to locate interface %s\n", alias.c_str());
-                it = m_toSync.erase(it);
+                it = consumer_info.m_toSync.erase(it);
                 continue;
             }
 
@@ -110,7 +110,7 @@ void IntfsOrch::doTask()
             {
                 SWSS_LOG_NOTICE("Create packet action trap route ip:%s\n", ip_prefix.getIp().to_string().c_str());
                 m_intfs[alias] = ip_prefix.getIp();
-                it = m_toSync.erase(it);
+                it = consumer_info.m_toSync.erase(it);
             }
         }
         else if (op == DEL_COMMAND)
@@ -119,7 +119,7 @@ void IntfsOrch::doTask()
             if (!m_portsOrch->getPort(alias, p))
             {
                 SWSS_LOG_ERROR("Failed to locate interface %s\n", alias.c_str());
-                it = m_toSync.erase(it);
+                it = consumer_info.m_toSync.erase(it);
                 continue;
             }
 
@@ -152,7 +152,7 @@ void IntfsOrch::doTask()
             {
                 SWSS_LOG_NOTICE("Remove packet action trap route ip:%s\n", ip_prefix.getIp().to_string().c_str());
                 m_intfs.erase(alias);
-                it = m_toSync.erase(it);
+                it = consumer_info.m_toSync.erase(it);
             }
         }
     }
