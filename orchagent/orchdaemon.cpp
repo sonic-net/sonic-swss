@@ -52,7 +52,7 @@ void OrchDaemon::start()
         ret = m_select->select(&s, &fd, 1);
         if (ret == Select::ERROR)
         {
-            SWSS_LOG_NOTICE("Error!\n");
+            SWSS_LOG_NOTICE("Error: %s!\n", strerror(errno));
             continue;
         }
 
