@@ -58,6 +58,17 @@ PortsOrch::PortsOrch(DBConnector *db, string tableName) :
         }
     }
 
+    for (i = 0; i < 4; i++)
+    {
+        attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_CHANNEL;
+        attr.value.s32 = SAI_HOSTIF_TRAP_CHANNEL_NETDEV;
+        status = sai_hostif_api->set_trap_attribute(trap_ids[i], &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set trap attribute\n");
+        }
+    }
+
     /* Get port number */
     attr.id = SAI_SWITCH_ATTR_PORT_NUMBER;
 
