@@ -35,8 +35,6 @@ public:
         m_nextHopGroupCount(0),
         m_resync(false) {};
 
-    void doTask();
-
     bool createNextHopEntry(IpAddress, sai_object_id_t);
     bool createNextHopEntry(IpAddresses, sai_object_id_t);
     bool removeNextHopEntry(IpAddress);
@@ -45,6 +43,9 @@ public:
     NextHopEntry getNextHopEntry(IpAddresses);
     int getNextHopRefCount(IpAddress);
     int getNextHopRefCount(IpAddresses);
+
+private:
+    virtual void doTask(Consumer& consumer_info);
 
 private:
     PortsOrch *m_portsOrch;

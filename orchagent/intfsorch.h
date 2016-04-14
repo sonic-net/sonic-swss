@@ -16,8 +16,7 @@ class IntfsOrch : public Orch
 public:
     IntfsOrch(DBConnector *db, string tableName, PortsOrch *portsOrch);
 private:
-    void doTask();
-
+    virtual void doTask(_in_ Consumer& consumer_info);
     PortsOrch *m_portsOrch;
     IntfsTable m_intfs;
 };
