@@ -23,6 +23,8 @@ OrchDaemon::~OrchDaemon()
 
 bool OrchDaemon::init()
 {
+    SWSS_LOG_ENTER();
+
     m_applDb = new DBConnector(APPL_DB, "localhost", 6379, 0);
 
     m_portsO = new PortsOrch(m_applDb, APP_PORT_TABLE_NAME);
@@ -37,6 +39,8 @@ bool OrchDaemon::init()
 
 void OrchDaemon::start()
 {
+    SWSS_LOG_ENTER();
+
     int ret;
 
     m_select->addSelectable(m_portsO->getConsumer());
@@ -68,6 +72,8 @@ void OrchDaemon::start()
 
 Orch *OrchDaemon::getOrchByConsumer(ConsumerTable *c)
 {
+    SWSS_LOG_ENTER();
+
     if (m_portsO->getConsumer() == c)
         return m_portsO;
     if (m_intfsO->getConsumer() == c)

@@ -40,6 +40,8 @@ const char *test_profile_get_value (
     _In_ sai_switch_profile_id_t profile_id,
     _In_ const char *variable)
 {
+    SWSS_LOG_ENTER();
+
     auto it = gProfileMap.find(variable);
 
     if (it == gProfileMap.end())
@@ -52,6 +54,8 @@ int test_profile_get_next_value (
     _Out_ const char **variable,
     _Out_ const char **value)
 {
+    SWSS_LOG_ENTER();
+
     return -1;
 }
 
@@ -65,6 +69,8 @@ sai_switch_notification_t switch_notifications = {
 
 void initSaiApi()
 {
+    SWSS_LOG_ENTER();
+
     sai_api_initialize(0, (service_method_table_t *)&test_services);
 
     sai_api_query(SAI_API_SWITCH,               (void **)&sai_switch_api);
@@ -92,6 +98,8 @@ void initSaiApi()
 
 void initDiagShell()
 {
+    SWSS_LOG_ENTER();
+
     sai_status_t status;
 
     while (true)
@@ -111,6 +119,10 @@ void initDiagShell()
 
 int main(int argc, char **argv)
 {
+    swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_INFO);
+
+    SWSS_LOG_ENTER();
+
     int opt;
     sai_status_t status;
 

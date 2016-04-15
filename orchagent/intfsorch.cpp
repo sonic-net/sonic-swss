@@ -20,6 +20,8 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, PortsOrch *portsOrch) :
 
 void IntfsOrch::doTask()
 {
+    SWSS_LOG_ENTER();
+
     if (m_toSync.empty())
         return;
 

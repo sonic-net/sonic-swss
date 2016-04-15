@@ -9,6 +9,8 @@ extern sai_object_id_t gVirtualRouterId;
 
 void RouteOrch::doTask()
 {
+    SWSS_LOG_ENTER();
+
     if (m_toSync.empty())
         return;
 
@@ -129,12 +131,16 @@ void RouteOrch::doTask()
 
 bool RouteOrch::createNextHopEntry(IpAddress ipAddress, sai_object_id_t nextHopId)
 {
+    SWSS_LOG_ENTER();
+
     IpAddresses ip_addresses(ipAddress.to_string());
     return createNextHopEntry(ip_addresses, nextHopId);
 }
 
 bool RouteOrch::createNextHopEntry(IpAddresses ipAddresses, sai_object_id_t nextHopGroupId)
 {
+    SWSS_LOG_ENTER();
+
     if (m_syncdNextHops.find(ipAddresses) != m_syncdNextHops.end())
     {
         SWSS_LOG_ERROR("Failed to create existed next hop entry ip:%s nhid:%llx\n", ipAddresses.to_string().c_str(), nextHopGroupId);
@@ -150,6 +156,8 @@ bool RouteOrch::createNextHopEntry(IpAddresses ipAddresses, sai_object_id_t next
 
 bool RouteOrch::removeNextHopEntry(IpAddress ipAddress)
 {
+    SWSS_LOG_ENTER();
+
     IpAddresses ip_addresses(ipAddress.to_string());
 
     if (m_syncdNextHops.find(ip_addresses) == m_syncdNextHops.end())
@@ -170,6 +178,8 @@ bool RouteOrch::removeNextHopEntry(IpAddress ipAddress)
 
 bool RouteOrch::removeNextHopEntry(IpAddresses ipAddresses)
 {
+    SWSS_LOG_ENTER();
+
     if (m_syncdNextHops.find(ipAddresses) == m_syncdNextHops.end())
     {
         SWSS_LOG_ERROR("Failed to remove absent next hop entry ip:%s\n", ipAddresses.to_string().c_str());
@@ -203,28 +213,38 @@ bool RouteOrch::removeNextHopEntry(IpAddresses ipAddresses)
 
 int RouteOrch::getNextHopRefCount(IpAddress ipAddress)
 {
+    SWSS_LOG_ENTER();
+
     IpAddresses ip_addresses(ipAddress.to_string());
     return getNextHopRefCount(ip_addresses);
 }
 
 int RouteOrch::getNextHopRefCount(IpAddresses ipAddresses)
 {
+    SWSS_LOG_ENTER();
+
     return m_syncdNextHops[ipAddresses].ref_count;
 }
 
 NextHopEntry RouteOrch::getNextHopEntry(IpAddress ipAddress)
 {
+    SWSS_LOG_ENTER();
+
     IpAddresses ip_addresses(ipAddress.to_string());
     return getNextHopEntry(ip_addresses);
 }
 
 NextHopEntry RouteOrch::getNextHopEntry(IpAddresses ipAddresses)
 {
+    SWSS_LOG_ENTER();
+
     return m_syncdNextHops[ipAddresses];
 }
 
 bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
 {
+    SWSS_LOG_ENTER();
+
     /* nhid indicates the next hop id or next hop group id of this route */
     sai_object_id_t next_hop_id;
     auto it_route = m_syncdRoutes.find(ipPrefix);
@@ -403,6 +423,8 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
 
 bool RouteOrch::removeRoute(IpPrefix ipPrefix)
 {
+    SWSS_LOG_ENTER();
+
     sai_unicast_route_entry_t route_entry;
     route_entry.vr_id = gVirtualRouterId;
     route_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
