@@ -10,7 +10,7 @@ else
 DBGFLAGS = -g
 endif
 
-orchagent_SOURCES = main.cpp orchdaemon.cpp orch.cpp routeorch.cpp neighorch.cpp intfsorch.cpp portsorch.cpp qosorch.cpp
+orchagent_SOURCES = main.cpp orchdaemon.cpp orch.cpp routeorch.cpp neighorch.cpp intfsorch.cpp portsorch.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

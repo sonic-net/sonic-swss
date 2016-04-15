@@ -17,7 +17,7 @@ public:
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);
 private:
-    virtual void doTask(_in_ Consumer& consumer_info);
+    void doTask(Consumer &consumer);
 
     sai_object_id_t m_cpuPort;
 

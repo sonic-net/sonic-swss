@@ -149,13 +149,13 @@ bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
     return true;
 }
 
-void PortsOrch::doTask(_in_ Consumer& consumer_info)
+void PortsOrch::doTask(Consumer &consumer)
 {
-    if (consumer_info.m_toSync.empty())
+    if (consumer.m_toSync.empty())
         return;
 
-    auto it = consumer_info.m_toSync.begin();
-    while (it != consumer_info.m_toSync.end())
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
 
@@ -243,7 +243,7 @@ void PortsOrch::doTask(_in_ Consumer& consumer_info)
         else
             SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
 
-        it = consumer_info.m_toSync.erase(it);
+        it = consumer.m_toSync.erase(it);
     }
 }
 

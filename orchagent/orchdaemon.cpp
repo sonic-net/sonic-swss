@@ -31,16 +31,6 @@ bool OrchDaemon::init()
     m_intfsO = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, m_portsO);
     m_routeO = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, m_portsO);
     m_neighO = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, m_portsO, m_routeO);
-    std::vector<std::string> qos_tables = {
-        APP_TC_TO_QUEUE_MAP_TABLE_NAME, 
-        APP_SCHEDULER_TABLE_NAME, 
-        APP_DSCP_TO_TC_MAP_TABLE_NAME,
-        APP_QUEUE_TABLE_NAME,
-        APP_PORT_QOS_MAP_TABLE_NAME,
-        APP_WRED_PROFILE_TABLE_NAME
-        };
-    
-    m_qosO   = new QosOrch(m_applDb, qos_tables, m_portsO);
     m_select = new Select();
 
     return true;
@@ -49,22 +39,10 @@ bool OrchDaemon::init()
 void OrchDaemon::start()
 {
     int ret;
-    std::vector<Selectable *> selectables;
-    
-    m_portsO->getSelectables(selectables);
-    m_select->addSelectables(selectables);
-    
-    m_intfsO->getSelectables(selectables);
-    m_select->addSelectables(selectables);
-    
-    m_neighO->getSelectables(selectables);
-    m_select->addSelectables(selectables);
-    
-    m_routeO->getSelectables(selectables);
-    m_select->addSelectables(selectables);
-
-    m_qosO->getSelectables(selectables);
-    m_select->addSelectables(selectables);
+    m_select->addSelectables(m_portsO->getConsumers());
+    m_select->addSelectables(m_intfsO->getConsumers());
+    m_select->addSelectables(m_neighO->getConsumers());
+    m_select->addSelectables(m_routeO->getConsumers());
 
     while (true)
     {
@@ -78,22 +56,20 @@ void OrchDaemon::start()
         if (ret == Select::TIMEOUT)
             continue;
 
-        Orch *o = getOrchByConsumer((ConsumerTable *)s);// NOTE: o can be nullptr
-
-        SWSS_LOG_INFO("Get message from Orch: %s\n", o->getOrchName().c_str());
+        Orch *o = getOrchByConsumer((ConsumerTable *)s);
         o->execute(((ConsumerTable *)s)->getTableName());
     }
 }
 
 Orch *OrchDaemon::getOrchByConsumer(ConsumerTable *c)
 {
-    if (m_portsO->is_owned_consumer(c))
+    if (m_portsO->hasConsumer(c))
         return m_portsO;
-    if (m_intfsO->is_owned_consumer(c))
+    if (m_intfsO->hasConsumer(c))
         return m_intfsO;
-    if (m_neighO->is_owned_consumer(c))
+    if (m_neighO->hasConsumer(c))
         return m_neighO;
-    if (m_routeO->is_owned_consumer(c))
+    if (m_routeO->hasConsumer(c))
         return m_routeO;
     return nullptr;
 }

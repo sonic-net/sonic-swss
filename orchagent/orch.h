@@ -32,21 +32,18 @@ public:
     Orch(DBConnector *db, vector<string> &tableNames);
     ~Orch();
 
-    void getSelectables( _out_ std::vector<Selectable*>& selectables);
-    bool is_owned_consumer(ConsumerTable* s)const;
+    std::vector<Selectable*> getConsumers();
+    bool hasConsumer(ConsumerTable* s)const;
 
     bool execute(string tableName);
 
-    inline string getOrchName() { return m_name; }
-
 protected:
-    virtual void doTask(_in_ Consumer& consumer_info) = 0;
+    virtual void doTask(Consumer &consumer) = 0;
 private:
     DBConnector *m_db;
-    const string m_name;// TODO: where is this field initialized??
 
 protected:
-    ConsumerMap m_consumer_map;
+    ConsumerMap m_consumerMap;
 
 };
 

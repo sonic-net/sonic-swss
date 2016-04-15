@@ -6,38 +6,39 @@ using namespace swss;
 Orch::Orch(DBConnector *db, string tableName) :
     m_db(db)
 {
-    Consumer c_info(new ConsumerTable(m_db, tableName));
-    m_consumer_map.insert(ConsumerMapPair(tableName, c_info));
+    Consumer consumer(new ConsumerTable(m_db, tableName));
+    m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
 }
 
 Orch::Orch(DBConnector *db, vector<string> &tableNames) :
     m_db(db)
 {
     for( auto it = tableNames.begin(); it != tableNames.end(); it++) {
-        Consumer c_info(new ConsumerTable(m_db, *it));
-        m_consumer_map.insert(ConsumerMapPair(*it, c_info));
+        Consumer consumer(new ConsumerTable(m_db, *it));
+        m_consumerMap.insert(ConsumerMapPair(*it, consumer));
     }
 }
 
 Orch::~Orch()
 {
     delete(m_db);
-    for(auto it : m_consumer_map) {
+    for(auto it : m_consumerMap) {
         delete it.second.m_consumer;
     }
 }
 
-void Orch::getSelectables(_out_ std::vector<Selectable*> &consumers)
+std::vector<Selectable*> Orch::getConsumers()
 {
-    consumers.clear();
-    for(auto it : m_consumer_map) {
+    std::vector<Selectable*> consumers;
+    for(auto it : m_consumerMap) {
         consumers.push_back(it.second.m_consumer);
     }
+    return consumers;
 }
  
-bool Orch::is_owned_consumer(ConsumerTable*consumer) const
+bool Orch::hasConsumer(ConsumerTable *consumer) const
 {
-    for(auto it : m_consumer_map) {
+    for(auto it : m_consumerMap) {
         if(it.second.m_consumer == consumer) {
             return true;
         }
@@ -47,8 +48,8 @@ bool Orch::is_owned_consumer(ConsumerTable*consumer) const
 
 bool Orch::execute(string tableName)
 {
-    auto consumer_it = m_consumer_map.find(tableName);
-    if(consumer_it == m_consumer_map.end()) {
+    auto consumer_it = m_consumerMap.find(tableName);
+    if(consumer_it == m_consumerMap.end()) {
         SWSS_LOG_ERROR("Unrecognized tableName:%s\n", tableName.c_str());
         return false;
     }
@@ -77,7 +78,7 @@ bool Orch::execute(string tableName)
     {
         KeyOpFieldsValuesTuple existing_data = consumer.m_toSync[key];
 
-        auto new_values      = kfvFieldsValues(new_data);
+        auto new_values = kfvFieldsValues(new_data);
         auto existing_values = kfvFieldsValues(existing_data);
 
 

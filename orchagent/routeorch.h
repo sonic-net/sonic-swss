@@ -45,7 +45,7 @@ public:
     int getNextHopRefCount(IpAddresses);
 
 private:
-    virtual void doTask(Consumer& consumer_info);
+    void doTask(Consumer& consumer);
 
 private:
     PortsOrch *m_portsOrch;
