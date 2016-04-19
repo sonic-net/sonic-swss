@@ -35,11 +35,6 @@ Checkout the source: `git clone https://github.com/Azure/sonic-swss.git` and ins
 Get SAI header files into /usr/include/sai. Put the SAI header files that you use to compile
 libsairedis into /usr/include/sai
 
-Get `fpm.h` header file before compiling:
-
-    mkdir fpmsyncd/fpm
-    wget http://git.savannah.gnu.org/cgit/quagga.git/plain/fpm/fpm.h -O fpmsyncd/fpm/fpm.h
-
 Install prerequisite packages:
 
     sudo apt-get install libswsscommon libswsscommon-dev libsairedis libsairedis-dev
@@ -47,7 +42,7 @@ Install prerequisite packages:
 You can compile and install from source using:
 
     ./autogen.sh
-    ./configure -with-fpm=fpm
+    ./configure
     make && sudo make install
 
 You can also build a debian package using:

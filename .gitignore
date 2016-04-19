@@ -46,7 +46,6 @@ stamp-h1
 # Dependency Folder #
 #####################
 deps/
-fpmsyncd/fpm/
 
 # Executables #
 ###############
