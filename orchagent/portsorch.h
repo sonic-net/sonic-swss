@@ -13,11 +13,14 @@ class PortsOrch : public Orch
 public:
     PortsOrch(DBConnector *db, string tableName);
 
+    bool isInitDone();
+
     bool getPort(string alias, Port &p);
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);
 
 private:
+    bool m_initDone = false;
     sai_object_id_t m_cpuPort;
 
     sai_uint32_t m_portCount;

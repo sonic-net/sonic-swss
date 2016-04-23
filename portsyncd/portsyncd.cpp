@@ -29,7 +29,7 @@ int main(int argc, char **argv)
     int opt;
     string port_config_file = DEFAULT_PORT_CONFIG_FILE;
 
-    while ((opt = getopt(argc, argv, "f:")) != -1 )
+    while ((opt = getopt(argc, argv, "f:h")) != -1 )
     {
         switch (opt)
         {
@@ -56,6 +56,8 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
+    cout << "Read port configuration file..." << endl;
+
     string line;
     while (getline(infile, line))
     {
@@ -73,6 +75,17 @@ int main(int argc, char **argv)
         p.set(alias, attrs);
     }
 
+    infile.close();
+
+    /*
+     * After finishing reading port configuration file, this daemon shall send
+     * out a signal to orchagent indicating port initialization procedure is
+     * done and other application could start syncing.
+     */
+    FieldValueTuple finish_notice("lanes", "0");
+    vector<FieldValueTuple> attrs = { finish_notice };
+    p.set("ConfigDone", attrs);
+
     LinkSync sync(&db);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
@@ -85,7 +98,7 @@ int main(int argc, char **argv)
             Select s;
 
             netlink.registerGroup(RTNLGRP_LINK);
-            cout << "Listens to link messages..." << endl;
+            cout << "Listen to link messages..." << endl;
             netlink.dumpRequest(RTM_GETLINK);
 
             s.addSelectable(&netlink);

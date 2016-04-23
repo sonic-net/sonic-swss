@@ -25,6 +25,9 @@ void IntfsOrch::doTask(Consumer &consumer)
     if (consumer.m_toSync.empty())
         return;
 
+    if (!m_portsOrch->isInitDone())
+        return;
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {

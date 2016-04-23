@@ -139,6 +139,11 @@ PortsOrch::PortsOrch(DBConnector *db, string tableName) :
     }
 }
 
+bool PortsOrch::isInitDone()
+{
+    return m_initDone;
+}
+
 bool PortsOrch::getPort(string alias, Port &p)
 {
     if (m_portList.find(alias) == m_portList.end())
@@ -178,6 +183,25 @@ void PortsOrch::doTask(Consumer &consumer)
 
         string alias = kfvKey(t);
         string op = kfvOp(t);
+
+        /* Get notification from application */
+        /* portsyncd application:
+         * When portsorch receives 'ConfigDone' message, it indicates port initialization
+         * procedure is done. Before port initialization procedure, none of other tasks
+         * are executed.
+         */
+        if (alias == "ConfigDone")
+        {
+            /* portsyncd restarting case:
+             * When portsyncd restarts, duplicate notifications may be received.
+             */
+            if (m_initDone)
+                return;
+
+            m_initDone = true;
+            SWSS_LOG_INFO("Get ConfigDone notification from portsyncd.\n");
+            return;
+        }
 
         if (op == "SET")
         {
