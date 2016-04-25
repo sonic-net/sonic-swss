@@ -33,7 +33,10 @@ void IntfSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     /* Don't sync local routes */
     if (rtnl_addr_get_scope(addr) != RT_SCOPE_UNIVERSE)
+    {
         scope = "local";
+        return;
+    }
 
     if (rtnl_addr_get_family(addr) == AF_INET)
         family = IPV4_NAME;
