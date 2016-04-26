@@ -46,10 +46,13 @@ PortsOrch::PortsOrch(DBConnector *db, string tableName) :
         SAI_HOSTIF_TRAP_ID_TTL_ERROR,
         SAI_HOSTIF_TRAP_ID_ARP_REQUEST,
         SAI_HOSTIF_TRAP_ID_ARP_RESPONSE,
-        SAI_HOSTIF_TRAP_ID_LLDP
+        SAI_HOSTIF_TRAP_ID_LLDP,
+        SAI_HOSTIF_TRAP_ID_LACP
     };
 
-    for (i = 0; i < 4; i++)
+    int trap_length = sizeof(trap_ids)/sizeof(*trap_ids);
+
+    for (i = 0; i < trap_length; i++)
     {
         attr.id = SAI_HOSTIF_TRAP_ATTR_PACKET_ACTION;
         attr.value.s32 = SAI_PACKET_ACTION_TRAP;
@@ -60,7 +63,7 @@ PortsOrch::PortsOrch(DBConnector *db, string tableName) :
         }
     }
 
-    for (i = 0; i < 4; i++)
+    for (i = 0; i < trap_length; i++)
     {
         attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_CHANNEL;
         attr.value.s32 = SAI_HOSTIF_TRAP_CHANNEL_NETDEV;
