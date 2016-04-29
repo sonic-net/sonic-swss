@@ -21,6 +21,77 @@ extern MacAddress gMacAddress;
 
 #define FRONT_PANEL_PORT_VLAN_BASE 1024
 
+namespace swss {
+bool Port::getQueue(size_t queue_ind, sai_object_id_t &queue_id)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t  attr;
+    attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES;
+    attr.value.u32 = 0;
+    sai_status_t status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get number of queues for port:%s status:%d\n", m_alias.c_str(), status);
+        return false;
+    }
+    
+    size_t no_of_queues = attr.value.u32;
+    if (no_of_queues <= queue_ind) {
+        SWSS_LOG_ERROR("queue index:%d exceeds range:%d\n", queue_ind, no_of_queues);
+        return false;
+    }
+    attr.id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
+    attr.value.objlist.count = no_of_queues;
+    attr.value.objlist.list = new sai_object_id_t[no_of_queues];
+    
+    /* Get queue list */
+    status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("fail to call sai_port_api->get_port_attribute: port:%s, status:%d", m_alias.c_str(), status);
+        delete[] attr.value.objlist.list;
+        return false;
+    }
+    queue_id = attr.value.objlist.list[queue_ind];
+    delete[] attr.value.objlist.list;
+    return true;    
+}
+bool Port::getPG(size_t pg_ind, sai_object_id_t &pg)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t  attr;
+    attr.id = SAI_PORT_ATTR_NUMBER_OF_PRIORITY_GROUPS;
+    attr.value.u32 = 0;
+    sai_status_t status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get number of queues for port:%s, status:%d\n", m_alias.c_str(), status);
+        return false;
+    }
+    
+    size_t no_of_pgs = attr.value.u32;
+    if (no_of_pgs <= pg_ind) {
+        SWSS_LOG_ERROR("pg index:%d exceeds range:%d\n", pg_ind, no_of_pgs);
+        return false;
+    }
+    attr.id = SAI_PORT_ATTR_PRIORITY_GROUP_LIST;
+    attr.value.objlist.count = no_of_pgs;
+    attr.value.objlist.list = new sai_object_id_t[no_of_pgs];
+    
+    /* Get pg list */
+    status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("fail to call sai_port_api->get_port_attribute: port:%s, status:%d", m_alias.c_str(), status);
+        delete[] attr.value.objlist.list;
+        return false;
+    }
+    pg = attr.value.objlist.list[pg_ind];
+    delete[] attr.value.objlist.list;
+    return true;    
+}
+}
+
 PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         Orch(db, tableNames)
 {
@@ -393,8 +464,6 @@ void PortsOrch::doLagTask(Consumer &consumer)
 
 void PortsOrch::doTask(Consumer &consumer)
 {
-    SWSS_LOG_ENTER();
-
     if (consumer.m_toSync.empty())
         return;
 
