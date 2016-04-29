@@ -12,6 +12,8 @@
 #include "routeorch.h"
 #include "copporch.h"
 #include "tunneldecaporch.h"
+#include "qosorch.h"
+#include "bufferorch.h"
 
 using namespace swss;
 
@@ -28,7 +30,6 @@ private:
     DBConnector *m_asicDb;
 
     std::vector<Orch *> m_orchList;
-
     Select *m_select;
 
     Orch *getOrchByConsumer(ConsumerTable *c);

@@ -35,6 +35,8 @@ private:
     void doLagTask(Consumer &consumer);
 
     bool initializePort(Port &port);
+    bool initializePriorityGroups(Port &port);
+    bool initializeQueues(Port &port);
 
     bool addHostIntfs(sai_object_id_t router_intfs_id, string alias, sai_object_id_t &host_intfs_id);
 

@@ -58,6 +58,8 @@ public:
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
     std::set<std::string> m_members = set<std::string>();
+    std::vector<sai_object_id_t> m_queue_ids;
+    std::vector<sai_object_id_t> m_priority_group_ids;
 };
 
 }

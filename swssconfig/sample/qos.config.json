@@ -1,0 +1,54 @@
+[
+    {
+        "TC_TO_QUEUE_MAP_TABLE:AZURE": {
+            "5": "1",
+            "6": "1"
+        },
+        "OP": "SET"
+    },
+    {
+        "DSCP_TO_TC_MAP_TABLE:AZURE": {
+            "7":"5",
+            "6":"5",
+            "3":"3",
+            "8":"7",
+            "9":"8"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_QOS_MAP_TABLE:Ethernet4": {
+            "dscp_to_tc_map" : "[DSCP_TO_TC_MAP_TABLE:AZURE]",
+            "tc_to_queue_map": "[TC_TO_QUEUE_MAP_TABLE:AZURE]"
+        },
+        "OP": "SET"
+    },
+    {
+        "SCHEDULER_TABLE:SCAVENGER" : {
+            "type":"DWRR",
+            "weight": "35"
+        },
+        "OP": "SET"
+    },
+    {
+        "SCHEDULER_TABLE:BEST_EFFORT" : {
+            "type":"DWRR",
+            "weight": "44"
+        },
+        "OP": "SET"
+    },
+    {
+        "WRED_PROFILE_TABLE:AZURE" : {
+            "yellow_max_threshold":"200",
+            "green_max_threshold": "100"
+        },
+        "OP": "SET"
+    },
+    {
+        "QUEUE_TABLE:Ethernet4:1" : {
+            "scheduler"     :   "[SCHEDULER_TABLE:BEST_EFFORT]",
+            "wred_profile"  :   "[WRED_PROFILE_TABLE:AZURE]"
+        },
+        "OP": "SET"
+    }
+]

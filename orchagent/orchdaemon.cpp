@@ -28,7 +28,6 @@ OrchDaemon::~OrchDaemon()
 bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
-
     m_applDb = new DBConnector(APPL_DB, "localhost", 6379, 0);
 
     vector<string> ports_tables = {
@@ -43,9 +42,32 @@ bool OrchDaemon::init()
     RouteOrch *route_orch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, ports_orch, neigh_orch);
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
-    
-    m_orchList = { ports_orch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch };
+
+    vector<string> qos_tables = {
+        APP_TC_TO_QUEUE_MAP_TABLE_NAME,
+        APP_SCHEDULER_TABLE_NAME,
+        APP_DSCP_TO_TC_MAP_TABLE_NAME,
+        APP_QUEUE_TABLE_NAME,
+        APP_PORT_QOS_MAP_TABLE_NAME,
+        APP_WRED_PROFILE_TABLE_NAME,
+        APP_TC_TO_PRIORITY_GROUP_MAP_NAME,
+        APP_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_NAME,
+        APP_PFC_PRIORITY_TO_QUEUE_MAP_NAME
+    };
+    QosOrch *qos_orch = new QosOrch(m_applDb, qos_tables, ports_orch);
+
+    vector<string> buffer_tables = {
+        APP_BUFFER_POOL_TABLE_NAME,
+        APP_BUFFER_PROFILE_TABLE_NAME,
+        APP_BUFFER_QUEUE_TABLE_NAME,
+        APP_BUFFER_PG_TABLE_NAME,
+        APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
+        APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
+    };
+    BufferOrch *buffer_orch = new BufferOrch(m_applDb, buffer_tables, ports_orch);
+
     m_select = new Select();
+    m_orchList = { ports_orch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch };
 
     return true;
 }
@@ -65,6 +87,7 @@ void OrchDaemon::start()
         int fd, ret;
 
         ret = m_select->select(&s, &fd, 1);
+
         if (ret == Select::ERROR)
         {
             SWSS_LOG_NOTICE("Error: %s!\n", strerror(errno));

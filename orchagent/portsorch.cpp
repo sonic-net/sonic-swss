@@ -537,11 +537,77 @@ void PortsOrch::doTask(Consumer &consumer)
         doLagTask(consumer);
 }
 
+bool PortsOrch::initializeQueues(Port &port)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t  attr;
+    attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES;
+    attr.value.u32 = 0;
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get number of queues for port:%s status:%d\n", port.m_alias.c_str(), status);
+        return false;
+    }
+
+    port.m_queue_ids.resize(attr.value.u32);
+    attr.id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
+    attr.value.objlist.count = port.m_queue_ids.size();
+    attr.value.objlist.list = port.m_queue_ids.data();
+
+    status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("fail to call sai_port_api->get_port_attribute: port:%s, status:%d", port.m_alias.c_str(), status);
+        return false;
+    }
+    return true;
+}
+
+bool PortsOrch::initializePriorityGroups(Port &port)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_NUMBER_OF_PRIORITY_GROUPS;
+    attr.value.u32 = 0;
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get number of queues for port:%s, status:%d\n", port.m_alias.c_str(), status);
+        return false;
+    }
+
+    port.m_priority_group_ids.resize(attr.value.u32);
+    attr.id = SAI_PORT_ATTR_PRIORITY_GROUP_LIST;
+    attr.value.objlist.count = port.m_priority_group_ids.size();
+    attr.value.objlist.list = port.m_priority_group_ids.data();
+
+    status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("fail to call sai_port_api->get_port_attribute: port:%s, status:%d", port.m_alias.c_str(), status);
+        return false;
+    }
+    return true;
+}
+
 bool PortsOrch::initializePort(Port &p)
 {
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("Initializing port alias:%s pid:%llx\n", p.m_alias.c_str(), p.m_port_id);
+
+    if (!initializePriorityGroups(p))
+    {
+        SWSS_LOG_ERROR("Failed to initialize port priority groups pid:%llx alias:%s\n", p.m_port_id, p.m_alias.c_str());
+        return false;
+    }
+
+    if (!initializeQueues(p))
+    {
+        SWSS_LOG_ERROR("Failed to initialize port queues pid:%llx alias:%s\n", p.m_port_id, p.m_alias.c_str());
+        return false;
+    }
 
     /* Set up host interface */
     if (!addHostIntfs(p.m_port_id, p.m_alias, p.m_hif_id))

@@ -17,6 +17,10 @@ using namespace swss;
 
 const char delimiter           = ':';
 const char list_item_delimiter = ',';
+const char ref_start           = '[';
+const char ref_end             = ']';
+const char comma               = ',';
+const char range_specifier     = '-';
 
 typedef enum
 {
@@ -27,8 +31,12 @@ typedef enum
     task_ignore
 } task_process_status;
 
-typedef std::map<string, sai_object_id_t> object_map;
-typedef std::pair<string, sai_object_id_t> object_map_pair;
+typedef map<string, sai_object_id_t> object_map;
+typedef pair<string, sai_object_id_t> object_map_pair;
+
+typedef map<string, object_map*> type_map;
+typedef pair<string, object_map*> type_map_pair;
+
 typedef map<string, KeyOpFieldsValuesTuple> SyncMap;
 struct Consumer {
     Consumer(ConsumerTable* consumer) :m_consumer(consumer)  { }
@@ -36,8 +44,17 @@ struct Consumer {
     /* Store the latest 'golden' status */
     SyncMap m_toSync;
 };
-typedef std::pair<string, Consumer> ConsumerMapPair;
+typedef pair<string, Consumer> ConsumerMapPair;
 typedef map<string, Consumer> ConsumerMap;
+
+typedef enum
+{
+    success,
+    field_not_found,
+    multiple_instances,
+    not_resolved,
+    failure
+} ref_resolve_status;
 
 class Orch
 {
@@ -46,22 +63,24 @@ public:
     Orch(DBConnector *db, vector<string> &tableNames);
     virtual ~Orch();
 
-    std::vector<Selectable*> getSelectables();
+    vector<Selectable*> getSelectables();
     bool hasSelectable(ConsumerTable* s) const;
 
     bool execute(string tableName);
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     void doTask();
-protected:
-    /* Run doTask against a specific consumer */
-    virtual void doTask(Consumer &consumer) = 0;
-    void dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
 private:
     DBConnector *m_db;
-
 protected:
     ConsumerMap m_consumerMap;
 
+    /* Run doTask against a specific consumer */
+    virtual void doTask(Consumer &consumer) = 0;
+    void dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
+    ref_resolve_status resolveFieldRefValue(type_map&, const string&, KeyOpFieldsValuesTuple&, sai_object_id_t&);
+    bool parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
+    bool parseReference(type_map &type_maps, string &ref, string &table_name, string &object_name);
+    ref_resolve_status resolveFieldRefArray(type_map&, const string&, KeyOpFieldsValuesTuple&, vector<sai_object_id_t>&);
 };
 
 #endif /* SWSS_ORCH_H */
