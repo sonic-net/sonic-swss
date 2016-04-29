@@ -51,7 +51,7 @@ int main(int argc, char **argv)
     ifstream infile(port_config_file);
     if (!infile.is_open())
     {
-        cout << "Port configuration file not found! " << port_config_file << endl;
+        cerr << "Port configuration file not found! " << port_config_file << endl;
         usage(argv);
         return EXIT_FAILURE;
     }
@@ -111,7 +111,7 @@ int main(int argc, char **argv)
         }
         catch (...)
         {
-            cout << "Exception had been thrown in deamon" << endl;
+            cerr << "Exception had been thrown in deamon" << endl;
             return EXIT_FAILURE;
         }
     }
