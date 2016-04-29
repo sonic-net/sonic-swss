@@ -10,6 +10,8 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "routeorch.h"
+#include "qosorch.h"
+#include "bufferorch.h"
 
 using namespace swss;
 
@@ -26,7 +28,6 @@ private:
     DBConnector *m_asicDb;
 
     std::vector<Orch *> m_orchList;
-
     Select *m_select;
 
     Orch *getOrchByConsumer(ConsumerTable *c);
