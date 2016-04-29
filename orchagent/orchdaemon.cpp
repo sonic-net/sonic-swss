@@ -31,6 +31,16 @@ bool OrchDaemon::init()
     m_intfsO = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, m_portsO);
     m_routeO = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, m_portsO);
     m_neighO = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, m_portsO, m_routeO);
+    std::vector<std::string> qos_tables = {
+        APP_TC_TO_QUEUE_MAP_TABLE_NAME, 
+        APP_SCHEDULER_TABLE_NAME, 
+        APP_DSCP_TO_TC_MAP_TABLE_NAME,
+        APP_QUEUE_TABLE_NAME,
+        APP_PORT_QOS_MAP_TABLE_NAME,
+        APP_WRED_PROFILE_TABLE_NAME
+        };
+    
+    m_qosO   = new QosOrch(m_applDb, qos_tables, m_portsO);
     m_select = new Select();
 
     return true;
@@ -43,6 +53,7 @@ void OrchDaemon::start()
     m_select->addSelectables(m_intfsO->getConsumers());
     m_select->addSelectables(m_neighO->getConsumers());
     m_select->addSelectables(m_routeO->getConsumers());
+    m_select->addSelectables(m_qosO->getConsumers());
 
     while (true)
     {

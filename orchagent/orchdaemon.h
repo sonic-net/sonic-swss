@@ -10,6 +10,7 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "routeorch.h"
+#include "qosorch.h"
 
 using namespace swss;
 
@@ -29,6 +30,7 @@ private:
     IntfsOrch *m_intfsO;
     NeighOrch *m_neighO;
     RouteOrch *m_routeO;
+    QosOrch   *m_qosO;
 
     Select *m_select;
 
