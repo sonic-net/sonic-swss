@@ -31,8 +31,8 @@ bool OrchDaemon::init()
 
     m_portsO = new PortsOrch(m_applDb, APP_PORT_TABLE_NAME);
     m_intfsO = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, m_portsO);
-    m_routeO = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, m_portsO);
-    m_neighO = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, m_portsO, m_routeO);
+    m_neighO = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, m_portsO);
+    m_routeO = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, m_portsO, m_neighO);
     m_select = new Select();
 
     return true;
