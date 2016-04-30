@@ -103,40 +103,18 @@ private:
     bool handleTcToQueueTable(Consumer& consumer);
     bool handleSchedulerTable(Consumer& consumer);
     bool handleQueueTable(Consumer& consumer);
-    typedef  bool (QosOrch::*apply_map_to_port_queue_fn)(Port&, size_t queue_ind, sai_queue_attr_t, sai_object_id_t); 
-    bool tryApplyRefFieldToPortQueue(
-        const string                &op,
-        const string                &map_field_name,
-        apply_map_to_port_queue_fn  fn,
-        Port                        &port,
-        size_t                      queue_index,
-        sai_queue_attr_t            queue_attr,
-        KeyOpFieldsValuesTuple      &tuple);
     bool applyObjectToQueue(
         Port                &port,
         size_t              queue_ind,
         sai_queue_attr_t    queue_attr,
         sai_object_id_t     sai_object);
     bool handlePortQosMapTable(Consumer& consumer);
-    typedef  bool (QosOrch::*apply_map_to_port_fn)(Port&, sai_attr_id_t, sai_object_id_t); 
-    bool tryApplyRefFieldToPort(
-        const string            &op, 
-        const string            &map_field_name, 
-        Port                    &port, 
-        sai_attr_id_t           attr_id, 
-        apply_map_to_port_fn    fn,         
-        KeyOpFieldsValuesTuple  &tuple);
     bool applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
-
     bool handleWredProfileTable(Consumer& consumer);
-
     resolve_status resolveFieldRefValue(
-        const string                  &field_name, 
+        const string            &field_name, 
         KeyOpFieldsValuesTuple  &tuple, 
-        string                  &obj_type,
-        string                  &obj_alias,
-        sai_object_id_t         &sai_object,
-        bool                    is_singleton);
+        sai_object_id_t         &sai_object);
     
     bool parseReference(string &ref, string &table_name, string &object_name);
     bool tokenizeString(string str, const string &separator, vector<string> &tokens);
