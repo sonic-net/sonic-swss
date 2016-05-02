@@ -22,24 +22,22 @@ extern MacAddress gMacAddress;
 #define FRONT_PANEL_PORT_VLAN_BASE 1024
 
 namespace swss {
-sai_object_id_t Port::getQueue(size_t queue_ind)
+bool Port::getQueue(size_t queue_ind, sai_object_id_t &queue_id)
 {
-    sai_status_t sai_status;
-    sai_object_id_t queue;
     sai_attribute_t  sai_attr;
     sai_attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES;
     sai_attr.value.u32 = 0;
-    sai_status = sai_port_api->get_port_attribute(m_port_id, 1, &sai_attr);
+    sai_status_t sai_status = sai_port_api->get_port_attribute(m_port_id, 1, &sai_attr);
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get number of queues for port: %d\n", sai_status);
-        return SAI_NULL_OBJECT_ID;
+        return false;
     }
     
     size_t no_of_queues = sai_attr.value.u32;
     if(no_of_queues <= queue_ind) {
         SWSS_LOG_ERROR("queue index:%d exceeds range:%d\n", queue_ind, no_of_queues);
-        return SAI_NULL_OBJECT_ID;
+        return false;
     }
     sai_attr.id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
     sai_attr.value.objlist.count = no_of_queues;
@@ -53,9 +51,9 @@ sai_object_id_t Port::getQueue(size_t queue_ind)
         delete[] sai_attr.value.objlist.list;
         return SAI_NULL_OBJECT_ID;
     }
-    queue = sai_attr.value.objlist.list[queue_ind];
+    queue_id = sai_attr.value.objlist.list[queue_ind];
     delete[] sai_attr.value.objlist.list;
-    return queue;
+    return true;    
 }
 }
 PortsOrch::PortsOrch(DBConnector *db, string tableName) :
