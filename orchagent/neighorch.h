@@ -5,9 +5,6 @@
 #include "portsorch.h"
 
 #include "ipaddress.h"
-#include "ipaddresses.h"
-
-#define NHGRP_MAX_SIZE 16
 
 struct NeighborEntry
 {
@@ -22,38 +19,32 @@ struct NeighborEntry
 
 struct NextHopEntry
 {
-    sai_object_id_t     next_hop_id;    // next hop id or next hop group id
+    sai_object_id_t     next_hop_id;    // next hop id
     int                 ref_count;      // reference count
 };
 
 /* NeighborTable: NeighborEntry, neighbor MAC address */
 typedef map<NeighborEntry, MacAddress> NeighborTable;
-/* NextHopTable: next hop IP address(es), NextHopEntry */
-typedef map<IpAddresses, NextHopEntry> NextHopTable;
+/* NextHopTable: next hop IP address, NextHopEntry */
+typedef map<IpAddress, NextHopEntry> NextHopTable;
 
 class NeighOrch : public Orch
 {
 public:
     NeighOrch(DBConnector *db, string tableName, PortsOrch *portsOrch) :
         Orch(db, tableName),
-        m_portsOrch(portsOrch),
-        m_nextHopGroupCount(0) {};
+        m_portsOrch(portsOrch) {};
 
-    bool contains(IpAddress);
-    bool contains(IpAddresses);
+    bool hasNextHop(IpAddress);
 
-    bool addNextHopGroup(IpAddresses);
-    bool removeNextHopGroup(IpAddresses);
+    sai_object_id_t getNextHopId(IpAddress);
+    int getNextHopRefCount(IpAddress);
 
-    sai_object_id_t getNextHopId(IpAddresses);
-
-    void increaseNextHopRefCount(IpAddresses);
-    void decreaseNextHopRefCount(IpAddresses);
+    void increaseNextHopRefCount(IpAddress);
+    void decreaseNextHopRefCount(IpAddress);
 
 private:
     PortsOrch *m_portsOrch;
-
-    int m_nextHopGroupCount;
 
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
@@ -61,9 +52,10 @@ private:
     bool addNextHop(IpAddress, Port);
     bool removeNextHop(IpAddress);
 
-    void doTask(Consumer &consumer);
     bool addNeighbor(NeighborEntry, MacAddress);
     bool removeNeighbor(NeighborEntry);
+
+    void doTask(Consumer &consumer);
 };
 
 #endif /* SWSS_NEIGHORCH_H */

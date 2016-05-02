@@ -4,9 +4,15 @@
 
 #include "assert.h"
 
-extern sai_route_api_t*                 sai_route_api;
+extern sai_next_hop_group_api_t*    sai_next_hop_group_api;
+extern sai_route_api_t*             sai_route_api;
 
 extern sai_object_id_t gVirtualRouterId;
+
+bool RouteOrch::hasNextHopGroup(IpAddresses ipAddresses)
+{
+    return m_syncdNextHopGroups.find(ipAddresses) != m_syncdNextHopGroups.end();
+}
 
 void RouteOrch::doTask(Consumer& consumer)
 {
@@ -136,6 +142,132 @@ void RouteOrch::doTask(Consumer& consumer)
     }
 }
 
+void RouteOrch::increaseNextHopRefCount(IpAddresses ipAddresses)
+{
+
+    if (ipAddresses.getSize() == 1)
+    {
+        IpAddress ip_address(ipAddresses.to_string());
+        m_neighOrch->increaseNextHopRefCount(ip_address);
+    }
+    else
+    {
+        m_syncdNextHopGroups[ipAddresses].ref_count ++;
+    }
+}
+void RouteOrch::decreaseNextHopRefCount(IpAddresses ipAddresses)
+{
+    if (ipAddresses.getSize() == 1)
+    {
+        IpAddress ip_address(ipAddresses.to_string());
+        m_neighOrch->decreaseNextHopRefCount(ip_address);
+    }
+    else
+    {
+        m_syncdNextHopGroups[ipAddresses].ref_count --;
+    }
+}
+
+bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
+{
+    SWSS_LOG_ENTER();
+
+    assert(!hasNextHopGroup(ipAddresses));
+
+    if (m_nextHopGroupCount > NHGRP_MAX_SIZE)
+    {
+        SWSS_LOG_DEBUG("Failed to create next hop group. Exceeding maximum number of next hop groups.\n");
+        return false;
+    }
+
+    vector<sai_object_id_t> next_hop_ids;
+    set<IpAddress> next_hop_set = ipAddresses.getIpAddresses();
+
+    /* Assert each IP address exists in m_syncdNextHops table,
+     * and add the corresponding next_hop_id to next_hop_ids. */
+    for (auto it = next_hop_set.begin(); it != next_hop_set.end(); it++)
+    {
+        if (!m_neighOrch->hasNextHop(*it))
+        {
+            SWSS_LOG_NOTICE("Failed to get next hop entry ip:%s",
+                    (*it).to_string().c_str());
+            return false;
+        }
+
+        sai_object_id_t next_hop_id = m_neighOrch->getNextHopId(*it);
+        next_hop_ids.push_back(next_hop_id);
+    }
+
+    sai_attribute_t nhg_attr;
+    vector<sai_attribute_t> nhg_attrs;
+
+    nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
+    nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_ECMP;
+    nhg_attrs.push_back(nhg_attr);
+
+    nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
+    nhg_attr.value.objlist.count = next_hop_ids.size();
+    nhg_attr.value.objlist.list = next_hop_ids.data();
+    nhg_attrs.push_back(nhg_attr);
+
+    sai_object_id_t next_hop_group_id;
+    sai_status_t status = sai_next_hop_group_api->
+            create_next_hop_group(&next_hop_group_id, nhg_attrs.size(), nhg_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create next hop group nh:%s\n",
+                       ipAddresses.to_string().c_str());
+        return false;
+    }
+
+    m_nextHopGroupCount ++;
+    SWSS_LOG_NOTICE("Create next hop group nhgid:%llx nh:%s \n",
+                    next_hop_group_id, ipAddresses.to_string().c_str());
+
+    /* Increate the ref_count for the next hops used by the next hop group. */
+    for (auto it = next_hop_set.begin(); it != next_hop_set.end(); it++)
+        m_neighOrch->increaseNextHopRefCount(*it);
+
+    /*
+     * Initialize the next hop gruop structure with ref_count as 0. This
+     * count will increase once the route is successfully syncd.
+     */
+    NextHopGroupEntry next_hop_group_entry;
+    next_hop_group_entry.next_hop_group_id = next_hop_group_id;
+    next_hop_group_entry.ref_count = 0;
+    m_syncdNextHopGroups[ipAddresses] = next_hop_group_entry;
+
+    return true;
+}
+
+bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
+{
+    SWSS_LOG_ENTER();
+
+    assert(hasNextHopGroup(ipAddresses));
+
+    if (m_syncdNextHopGroups[ipAddresses].ref_count == 0)
+    {
+        sai_object_id_t next_hop_group_id = m_syncdNextHopGroups[ipAddresses].next_hop_group_id;
+        sai_status_t status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove next hop group nhgid:%llx\n", next_hop_group_id);
+            return false;
+        }
+
+        m_nextHopGroupCount --;
+
+        set<IpAddress> ip_address_set = ipAddresses.getIpAddresses();
+        for (auto it = ip_address_set.begin(); it != ip_address_set.end(); it++)
+            m_neighOrch->decreaseNextHopRefCount(*it);
+
+        m_syncdNextHopGroups.erase(ipAddresses);
+    }
+
+    return true;
+}
+
 void RouteOrch::addTempRoute(IpPrefix ipPrefix, IpAddresses nextHops)
 {
     bool to_add = false;
@@ -164,7 +296,7 @@ void RouteOrch::addTempRoute(IpPrefix ipPrefix, IpAddresses nextHops)
         /* Remove next hops that are not in m_syncdNextHops */
         for (auto it = next_hop_set.begin(); it != next_hop_set.end();)
         {
-            if (!m_neighOrch->contains(*it))
+            if (!m_neighOrch->hasNextHop(*it))
             {
                 SWSS_LOG_NOTICE("Failed to get next hop entry ip:%s",
                        (*it).to_string().c_str());
@@ -196,30 +328,36 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     sai_object_id_t next_hop_id;
     auto it_route = m_syncdRoutes.find(ipPrefix);
 
-    if (m_neighOrch->contains(nextHops))
+    /* The route is pointing to a next hop */
+    if (nextHops.getSize() == 1)
     {
-        next_hop_id = m_neighOrch->getNextHopId(nextHops);
-    }
-    /* Create next hop group */
-    else
-    {
-        if (nextHops.getSize() == 1)
+        IpAddress ip_address(nextHops.to_string());
+        if (m_neighOrch->hasNextHop(ip_address))
+        {
+            next_hop_id = m_neighOrch->getNextHopId(ip_address);
+        }
+        else
         {
             SWSS_LOG_NOTICE("Failed to get next hop entry ip:%s",
                     nextHops.to_string().c_str());
             return false;
         }
-
-        if (!m_neighOrch->addNextHopGroup(nextHops))
+    }
+    /* The route is pointing to a next hop group */
+    else
+    {
+        if (!hasNextHopGroup(nextHops)) /* Create a new next hop group */
         {
-            /* Add a temporary route when a next hop group cannot be added */
-            addTempRoute(ipPrefix, nextHops);
-
-            /* Return false since the original route is not successfully added */
-            return false;
+            if (!addNextHopGroup(nextHops))
+            {
+                /* Add a temporary route when a next hop group cannot be added */
+                addTempRoute(ipPrefix, nextHops);
+                /* Return false since the original route is not successfully added */
+                return false;
+            }
         }
 
-        next_hop_id = m_neighOrch->getNextHopId(nextHops);
+        next_hop_id = m_syncdNextHopGroups[nextHops].next_hop_group_id;
     }
 
     /* Sync the route entry */
@@ -249,13 +387,13 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
             /* Clean up the newly created next hop group entry */
             if (nextHops.getSize() > 1)
             {
-                m_neighOrch->removeNextHopGroup(nextHops);
+                removeNextHopGroup(nextHops);
             }
             return false;
         }
 
         /* Increase the ref_count for the next hop (group) entry */
-        m_neighOrch->increaseNextHopRefCount(nextHops);
+        increaseNextHopRefCount(nextHops);
         SWSS_LOG_INFO("Create route %s with next hop(s) %s",
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
@@ -270,15 +408,14 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
         }
 
         /* Increase the ref_count for the next hop (group) entry */
-        m_neighOrch->increaseNextHopRefCount(nextHops);
+        increaseNextHopRefCount(nextHops);
 
-        assert(m_neighOrch->contains(it_route->second));
-        m_neighOrch->decreaseNextHopRefCount(it_route->second);
-        if (it_route->second.getSize() > 1)
+        decreaseNextHopRefCount(it_route->second);
+        if (it_route->second.getSize() > 1
+            && m_syncdNextHopGroups[it_route->second].ref_count == 0)
         {
-            m_neighOrch->removeNextHopGroup(it_route->second);
+            removeNextHopGroup(it_route->second);
         }
-
         SWSS_LOG_INFO("Set route %s with next hop(s) %s",
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
@@ -308,13 +445,21 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
     auto it_route = m_syncdRoutes.find(ipPrefix);
     if (it_route != m_syncdRoutes.end())
     {
-        assert(m_neighOrch->contains(it_route->second));
-        m_neighOrch->decreaseNextHopRefCount(it_route->second);
-        if (it_route->second.getSize() > 1)
+        /*
+         * Decrease the reference count only when the route is pointing to a next hop.
+         * Decrease the reference count when the route is pointing to a next hop group,
+         * and check wheather the reference count decreases to zero. If yes, then we need
+         * to remove the next hop group.
+         */
+        decreaseNextHopRefCount(it_route->second);
+        if (it_route->second.getSize() > 1
+            && m_syncdNextHopGroups[it_route->second].ref_count == 0)
         {
-            m_neighOrch->removeNextHopGroup(it_route->second);
+            removeNextHopGroup(it_route->second);
         }
     }
+    SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
+            ipPrefix.to_string().c_str(), it_route->second.to_string().c_str());
 
     m_syncdRoutes.erase(ipPrefix);
     return true;
