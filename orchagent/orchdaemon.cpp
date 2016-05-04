@@ -91,5 +91,8 @@ Orch *OrchDaemon::getOrchByConsumer(ConsumerTable *c)
         return m_neighO;
     if (m_routeO->hasConsumer(c))
         return m_routeO;
+    if (m_qosO->hasConsumer(c))
+        return m_qosO;
+    
     return nullptr;
 }

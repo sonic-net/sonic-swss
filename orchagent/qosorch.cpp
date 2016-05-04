@@ -16,12 +16,14 @@ qos_type_map QosOrch::m_qos_type_maps = {
     {APP_DSCP_TO_TC_MAP_TABLE_NAME,  new qos_object_map()},
     {APP_TC_TO_QUEUE_MAP_TABLE_NAME, new qos_object_map()},
     {APP_SCHEDULER_TABLE_NAME,       new qos_object_map()},
-    {APP_WRED_PROFILE_TABLE_NAME,    new qos_object_map()}
+    {APP_WRED_PROFILE_TABLE_NAME,    new qos_object_map()},
+    {APP_PORT_QOS_MAP_TABLE_NAME,    new qos_object_map()}    
 };
 
 
 bool QosMapHandler::processWorkItem(Consumer& consumer)
 {
+    SWSS_LOG_ENTER();
     sai_object_id_t         sai_object          = SAI_NULL_OBJECT_ID;
     auto                    it                  = consumer.m_toSync.begin();
     KeyOpFieldsValuesTuple  tuple               = it->second;
@@ -93,11 +95,13 @@ bool QosMapHandler::processWorkItem(Consumer& consumer)
 
 void DscpToTcMapHandler::freeAttribResources(std::vector<sai_attribute_t> &attributes)
 {
+    SWSS_LOG_ENTER();
     delete[] attributes[0].value.qosmap.list;
 }
 
 bool DscpToTcMapHandler::isValidTable(string &tableName)
 {
+    SWSS_LOG_ENTER();
     if (tableName != APP_DSCP_TO_TC_MAP_TABLE_NAME)
     {
         SWSS_LOG_ERROR("invalid table type passed in %s, expected:%s\n", tableName.c_str(), APP_DSCP_TO_TC_MAP_TABLE_NAME);
@@ -107,6 +111,7 @@ bool DscpToTcMapHandler::isValidTable(string &tableName)
 }
 bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, std::vector<sai_attribute_t> &attributes)
 {
+    SWSS_LOG_ENTER();
     sai_attribute_t list_attr;
     sai_qos_map_list_t dscp_map_list;
     dscp_map_list.count = kfvFieldsValues(tuple).size();
@@ -116,6 +121,7 @@ bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     {
         dscp_map_list.list[ind].key.dscp = std::stoi(fvField(*i));
         dscp_map_list.list[ind].value.tc = std::stoi(fvValue(*i));
+        SWSS_LOG_DEBUG("key.dscp:%d, value.tc:%d", dscp_map_list.list[ind].key.dscp, dscp_map_list.list[ind].value.tc);
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = dscp_map_list.count;
@@ -125,6 +131,7 @@ bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
 }
 bool DscpToTcMapHandler::modifyQosMap(sai_object_id_t sai_object, std::vector<sai_attribute_t> &attributes)
 {
+    SWSS_LOG_ENTER();
     sai_status_t sai_status = sai_qos_map_api->set_qos_map_attribute(sai_object, &attributes[0]);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
@@ -135,6 +142,7 @@ bool DscpToTcMapHandler::modifyQosMap(sai_object_id_t sai_object, std::vector<sa
 }
 sai_object_id_t DscpToTcMapHandler::addQosMap(std::vector<sai_attribute_t> &attributes)
 {
+    SWSS_LOG_ENTER();
     sai_status_t sai_status;
     sai_object_id_t sai_object;
     sai_attribute_t qos_map_attrs[2];
@@ -149,10 +157,13 @@ sai_object_id_t DscpToTcMapHandler::addQosMap(std::vector<sai_attribute_t> &attr
         SWSS_LOG_ERROR("Failed to create dscp_to_tc map. status:%d", sai_status);
         return SAI_NULL_OBJECT_ID;
     }
+    SWSS_LOG_DEBUG("created QosMap object:%llx", sai_object);
     return sai_object;
 }
 bool DscpToTcMapHandler::removeQosMap(sai_object_id_t sai_object)
 {
+    SWSS_LOG_ENTER();
+    SWSS_LOG_DEBUG("Removing QosMap object:%llx", sai_object);
     sai_status_t sai_status = sai_qos_map_api->remove_qos_map(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
@@ -163,12 +174,14 @@ bool DscpToTcMapHandler::removeQosMap(sai_object_id_t sai_object)
 }
 bool QosOrch::handleDscpToTcTable(Consumer& consumer)
 {
+    SWSS_LOG_ENTER();
     DscpToTcMapHandler dscp_tc_handler;
     return dscp_tc_handler.processWorkItem(consumer);
 }
 
 void TcToQueueMapHandler::freeAttribResources(std::vector<sai_attribute_t> &attributes)
 {
+    SWSS_LOG_ENTER();
     delete[] attributes[0].value.qosmap.list;
 }
 
@@ -183,6 +196,7 @@ bool TcToQueueMapHandler::isValidTable(string &tableName)
 }
 bool TcToQueueMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, std::vector<sai_attribute_t> &attributes)
 {
+    SWSS_LOG_ENTER();
     sai_attribute_t     list_attr;
     sai_qos_map_list_t  tc_map_list;
     tc_map_list.count = kfvFieldsValues(tuple).size();
@@ -202,6 +216,7 @@ bool TcToQueueMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple 
 
 bool TcToQueueMapHandler::modifyQosMap(sai_object_id_t sai_object, std::vector<sai_attribute_t> &attributes)
 {
+    SWSS_LOG_ENTER();
     sai_status_t sai_status = sai_qos_map_api->set_qos_map_attribute(sai_object, &attributes[0]);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
@@ -213,6 +228,7 @@ bool TcToQueueMapHandler::modifyQosMap(sai_object_id_t sai_object, std::vector<s
 
 sai_object_id_t TcToQueueMapHandler::addQosMap(std::vector<sai_attribute_t> &attributes)
 {
+    SWSS_LOG_ENTER();
     sai_status_t sai_status;
     sai_object_id_t sai_object;
     sai_attribute_t qos_map_attrs[2];
@@ -232,6 +248,7 @@ sai_object_id_t TcToQueueMapHandler::addQosMap(std::vector<sai_attribute_t> &att
 
 bool TcToQueueMapHandler::removeQosMap(sai_object_id_t sai_object)
 {
+    SWSS_LOG_ENTER();
     sai_status_t sai_status = sai_qos_map_api->remove_qos_map(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
@@ -243,17 +260,19 @@ bool TcToQueueMapHandler::removeQosMap(sai_object_id_t sai_object)
 
 bool QosOrch::handleTcToQueueTable(Consumer& consumer)
 {
+    SWSS_LOG_ENTER();
     TcToQueueMapHandler tc_queue_handler;
     return tc_queue_handler.processWorkItem(consumer);
 }
 
 void WredMapHandler::freeAttribResources(std::vector<sai_attribute_t> &attributes)
 {
-    //delete[] attributes[0].value.qosmap.list;
+    SWSS_LOG_ENTER();    
 }
 
 bool WredMapHandler::isValidTable(string &tableName)
 {
+    SWSS_LOG_ENTER();
     if (tableName != APP_WRED_PROFILE_TABLE_NAME)
     {
         SWSS_LOG_ERROR("invalid table type passed in %s, expected:%s\n", tableName.c_str(), APP_WRED_PROFILE_TABLE_NAME);
@@ -263,6 +282,7 @@ bool WredMapHandler::isValidTable(string &tableName)
 }
 bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, std::vector<sai_attribute_t> &attribs)
 {
+    SWSS_LOG_ENTER();
     sai_attribute_t attr;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
@@ -296,6 +316,7 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
 
 bool WredMapHandler::modifyQosMap(sai_object_id_t sai_object, std::vector<sai_attribute_t> &attribs)
 {
+    SWSS_LOG_ENTER();
     sai_status_t sai_status;
     for(auto attr : attribs)
     {
@@ -311,6 +332,7 @@ bool WredMapHandler::modifyQosMap(sai_object_id_t sai_object, std::vector<sai_at
 
 sai_object_id_t WredMapHandler::addQosMap(std::vector<sai_attribute_t> &attribs)
 {
+    SWSS_LOG_ENTER();
     sai_status_t sai_status;
     sai_object_id_t sai_object;
     sai_status = sai_wred_api->create_wred_profile(&sai_object, attribs.size(), attribs.data());
@@ -323,6 +345,7 @@ sai_object_id_t WredMapHandler::addQosMap(std::vector<sai_attribute_t> &attribs)
 }
 bool WredMapHandler::removeQosMap(sai_object_id_t sai_object)
 {
+    SWSS_LOG_ENTER();
     sai_status_t sai_status;
     sai_status = sai_wred_api->remove_wred_profile(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
@@ -335,6 +358,7 @@ bool WredMapHandler::removeQosMap(sai_object_id_t sai_object)
 
 bool QosOrch::handleWredProfileTable(Consumer& consumer)
 {
+    SWSS_LOG_ENTER();
     WredMapHandler wred_handler;
     return wred_handler.processWorkItem(consumer);
 }
@@ -342,16 +366,19 @@ bool QosOrch::handleWredProfileTable(Consumer& consumer)
 QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames, PortsOrch *portsOrch) :
     Orch(db, tableNames), m_portsOrch(portsOrch) 
 {
+    SWSS_LOG_ENTER();
     initTableHandlers();
 };
 
 qos_type_map& QosOrch::getTypeMap()
 {
+    SWSS_LOG_ENTER();
     return m_qos_type_maps;
 }
 
 void QosOrch::initTableHandlers()
 {
+    SWSS_LOG_ENTER();
     m_qos_handler_map.insert(qos_handler_pair(APP_DSCP_TO_TC_MAP_TABLE_NAME, &QosOrch::handleDscpToTcTable));
     m_qos_handler_map.insert(qos_handler_pair(APP_TC_TO_QUEUE_MAP_TABLE_NAME, &QosOrch::handleTcToQueueTable));
     m_qos_handler_map.insert(qos_handler_pair(APP_SCHEDULER_TABLE_NAME, &QosOrch::handleSchedulerTable));
@@ -364,6 +391,7 @@ void QosOrch::initTableHandlers()
 // directly attached to the queue.
 bool QosOrch::handleSchedulerTable(Consumer& consumer)
 {
+    SWSS_LOG_ENTER();
     sai_status_t            sai_status;
     sai_object_id_t         sai_object = SAI_NULL_OBJECT_ID;
     auto                    it = consumer.m_toSync.begin();
@@ -478,37 +506,39 @@ bool QosOrch::handleSchedulerTable(Consumer& consumer)
 
 bool QosOrch::applyObjectToQueue(Port &port, size_t queue_ind, sai_queue_attr_t queue_attr, sai_object_id_t sai_object)
 {
-        sai_attribute_t attr;
-        sai_status_t    sai_status;
-        sai_object_id_t queue_id;
-        
-        if (!port.getQueue(queue_ind, queue_id))
-        {
-            SWSS_LOG_ERROR("Invalid queue index specified:%d", queue_ind);
-            return false;
-        }
-        attr.id = queue_attr;
-        attr.value.oid = sai_object;
-        // sai_object_type_query not implemented in sairedis?
-    /*    sai_object_type_t object_type = sai_object_type_query(sai_dscp_to_tc_map); 
-        if (SAI_OBJECT_TYPE_SCHEDULER_PROFILE != object_type)
-        {
-            SWSS_LOG_ERROR("Unexpected sai object type:%d, expected SAI_OBJECT_TYPE_QOS_MAPS\n", object_type);
-            return false;
-        }
-    */    
-        sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
-        if (sai_status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to set queue attribute:%d", sai_status);
-            return false;
-        }
-        return true;
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t    sai_status;
+    sai_object_id_t queue_id;
+    
+    if (!port.getQueue(queue_ind, queue_id))
+    {
+        SWSS_LOG_ERROR("Invalid queue index specified:%d", queue_ind);
+        return false;
+    }
+    attr.id = queue_attr;
+    attr.value.oid = sai_object;
+    // sai_object_type_query not implemented in sairedis?
+/*    sai_object_type_t object_type = sai_object_type_query(sai_dscp_to_tc_map); 
+    if (SAI_OBJECT_TYPE_SCHEDULER_PROFILE != object_type)
+    {
+        SWSS_LOG_ERROR("Unexpected sai object type:%d, expected SAI_OBJECT_TYPE_QOS_MAPS\n", object_type);
+        return false;
+    }
+*/    
+    sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
+    if (sai_status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set queue attribute:%d", sai_status);
+        return false;
+    }
+    return true;
 }
 
 // TODO: This needs to change - scheduler profile will be applied to scheduler group associated with the queue.
 bool QosOrch::handleQueueTable(Consumer& consumer)
 {
+    SWSS_LOG_ENTER();
     auto it = consumer.m_toSync.begin();
     KeyOpFieldsValuesTuple tuple = it->second;
     Port port;
@@ -519,7 +549,7 @@ bool QosOrch::handleQueueTable(Consumer& consumer)
     string op = kfvOp(tuple);
     size_t queue_ind = 0;
     vector<string> tokens;
-    resolve_status  resolve_result ;
+    resolve_status  resolve_result;
     // sample "QUEUE_TABLE:ETHERNET4:1"
     if (!tokenizeString(key, delimiter, tokens))
     {
@@ -604,6 +634,7 @@ bool QosOrch::handleQueueTable(Consumer& consumer)
 
 bool QosOrch::tokenizeString(string str, const string &separator, vector<string> &tokens)
 {
+    SWSS_LOG_ENTER();
     if (0 == separator.size())
     {
         SWSS_LOG_ERROR("Invalid separator passed in:%s\n", separator.c_str());
@@ -618,6 +649,7 @@ bool QosOrch::tokenizeString(string str, const string &separator, vector<string>
     string tmp;
     while (getline(ss, tmp, separator[0]))
     {
+        SWSS_LOG_DEBUG("extracted token:%s", tmp.c_str());
         tokens.push_back(tmp);
     }
     return true;
@@ -628,26 +660,28 @@ bool QosOrch::tokenizeString(string str, const string &separator, vector<string>
 - validates table_name exists
 - validates object with object_name exists
 */
-bool QosOrch::parseReference(string &ref, string &type_name, string &object_name)
+bool QosOrch::parseReference(string &ref_in, string &type_name, string &object_name)
 {
-    if (0 == ref.size())
+    SWSS_LOG_ENTER();
+    if (ref_in.size() < 3)
     {
-        SWSS_LOG_ERROR("empty reference received\n");
+        SWSS_LOG_ERROR("invalid reference received:%s\n", ref_in.c_str());
         return false;
     }
-    if ((ref[0] != ref_start) && (ref[ref.size()-1] != ref_end))
+    if ((ref_in[0] != ref_start) && (ref_in[ref_in.size()-1] != ref_end))
     {
-        SWSS_LOG_ERROR("malformed reference:%s. Must be surrounded by [ ]\n", ref.c_str());
+        SWSS_LOG_ERROR("malformed reference:%s. Must be surrounded by [ ]\n", ref_in.c_str());
         return false;
     }
+    string ref_content = ref_in.substr(1, ref_in.size() - 2);
     vector<string> tokens;
-    if (!tokenizeString(ref, delimiter, tokens))
+    if (!tokenizeString(ref_content, delimiter, tokens))
     {
         return false;
     }
     if (tokens.size() != 2)
     {
-        SWSS_LOG_ERROR("malformed reference:%s. Must contain 2 tokens\n", ref.c_str());
+        SWSS_LOG_ERROR("malformed reference:%s. Must contain 2 tokens\n", ref_content.c_str());
         return false;
     }
     auto type_it = m_qos_type_maps.find(tokens[0]);
@@ -673,6 +707,7 @@ QosOrch::resolve_status QosOrch::resolveFieldRefValue(
     KeyOpFieldsValuesTuple  &tuple, 
     sai_object_id_t         &sai_object)
 {
+    SWSS_LOG_ENTER();
     size_t count = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
@@ -702,6 +737,7 @@ QosOrch::resolve_status QosOrch::resolveFieldRefValue(
 
 bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t map)
 {
+    SWSS_LOG_ENTER();
     sai_attribute_t attr;
     sai_status_t    sai_status;
     // sai_object_type_query seems not implemented or exposed from sairedis?
@@ -724,28 +760,29 @@ bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t 
 
 bool QosOrch::handlePortQosMapTable(Consumer& consumer)
 {
+    SWSS_LOG_ENTER();
     auto it = consumer.m_toSync.begin();
     KeyOpFieldsValuesTuple tuple = it->second;
     Port port;
-    string port_alias = kfvKey(tuple);
+    string key = kfvKey(tuple);
     string op = kfvOp(tuple);
-    resolve_status  resolve_result;
     bool result = true;
     sai_object_id_t sai_object;
-    sai_port_attr_t port_attr;
+    sai_port_attr_t port_attr;    
+    //"PORT_QOS_MAP_TABLE:ETHERNET4
     if (consumer.m_consumer->getTableName() != APP_PORT_QOS_MAP_TABLE_NAME)
     {
-        SWSS_LOG_ERROR("Key with invalid table type passed in %s, expected:%s\n", port_alias.c_str(), APP_PORT_QOS_MAP_TABLE_NAME);
+        SWSS_LOG_ERROR("Key with invalid table type passed in %s, expected:%s\n", key.c_str(), APP_PORT_QOS_MAP_TABLE_NAME);
         return false;
     }
-    if (!m_portsOrch->getPort(port_alias, port))
+    if (!m_portsOrch->getPort(key, port))
     {
-        SWSS_LOG_ERROR("Port with alias:% not found\n", port_alias.c_str());
+        SWSS_LOG_ERROR("Port with alias:%s not found. key:%s\n", key.c_str(), key.c_str());
         return false;
     }
 
     port_attr = SAI_PORT_ATTR_QOS_DSCP_TO_TC_MAP;
-    resolve_result = resolveFieldRefValue(dscp_to_tc_field_name, tuple, sai_object);
+    resolve_status resolve_result = resolveFieldRefValue(dscp_to_tc_field_name, tuple, sai_object);
     if (resolve_status::success == resolve_result)
     {
         if (op == SET_COMMAND)
@@ -765,10 +802,11 @@ bool QosOrch::handlePortQosMapTable(Consumer& consumer)
         if (!result)
         {
             SWSS_LOG_ERROR("Failed setting field:%s to port:%s, line:%d\n", dscp_to_tc_field_name.c_str(), port.m_alias.c_str(), __LINE__);
+            return result;
         }
-        return result;
+        SWSS_LOG_DEBUG("Applied field:%s to port:%s, line:%d\n", dscp_to_tc_field_name.c_str(), port.m_alias.c_str(), __LINE__);        
     }
-    if (resolve_result != resolve_status::field_not_found) 
+    else if (resolve_result != resolve_status::field_not_found) 
     {
         return false;
     }
@@ -794,10 +832,11 @@ bool QosOrch::handlePortQosMapTable(Consumer& consumer)
         if (!result)
         {
             SWSS_LOG_ERROR("Failed setting field:%s to port:%s, line:%d\n", tc_to_queue_field_name.c_str(), port.m_alias.c_str(), __LINE__);
+            return result;
         }
-        return result;
+        SWSS_LOG_DEBUG("Applied field:%s to port:%s, line:%d\n", tc_to_queue_field_name.c_str(), port.m_alias.c_str(), __LINE__);
     }
-    if (resolve_result != resolve_status::field_not_found) 
+    else if (resolve_result != resolve_status::field_not_found) 
     {
         return false;
     }
@@ -806,6 +845,7 @@ bool QosOrch::handlePortQosMapTable(Consumer& consumer)
 
 void QosOrch::doTask(Consumer &consumer)
 {
+    SWSS_LOG_ENTER();
     if (consumer.m_toSync.empty()) 
     {
         return;
