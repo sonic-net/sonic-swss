@@ -24,35 +24,36 @@ extern MacAddress gMacAddress;
 namespace swss {
 bool Port::getQueue(size_t queue_ind, sai_object_id_t &queue_id)
 {
-    sai_attribute_t  sai_attr;
-    sai_attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES;
-    sai_attr.value.u32 = 0;
-    sai_status_t sai_status = sai_port_api->get_port_attribute(m_port_id, 1, &sai_attr);
-    if (sai_status != SAI_STATUS_SUCCESS)
+    SWSS_LOG_ENTER();
+    sai_attribute_t  attr;
+    attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES;
+    attr.value.u32 = 0;
+    sai_status_t status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get number of queues for port: %d\n", sai_status);
+        SWSS_LOG_ERROR("Failed to get number of queues for port: %d\n", status);
         return false;
     }
     
-    size_t no_of_queues = sai_attr.value.u32;
+    size_t no_of_queues = attr.value.u32;
     if(no_of_queues <= queue_ind) {
         SWSS_LOG_ERROR("queue index:%d exceeds range:%d\n", queue_ind, no_of_queues);
         return false;
     }
-    sai_attr.id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
-    sai_attr.value.objlist.count = no_of_queues;
-    sai_attr.value.objlist.list = new sai_object_id_t[no_of_queues];
+    attr.id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
+    attr.value.objlist.count = no_of_queues;
+    attr.value.objlist.list = new sai_object_id_t[no_of_queues];
     
     /* Get queue list */
-    sai_status = sai_port_api->get_port_attribute(m_port_id, 1, &sai_attr);
-    if (sai_status != SAI_STATUS_SUCCESS)
+    status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("fail to call sai_port_api->get_port_attribute: %d", sai_status);
-        delete[] sai_attr.value.objlist.list;
-        return SAI_NULL_OBJECT_ID;
+        SWSS_LOG_ERROR("fail to call sai_port_api->get_port_attribute: %d", status);
+        delete[] attr.value.objlist.list;
+        return false;
     }
-    queue_id = sai_attr.value.objlist.list[queue_ind];
-    delete[] sai_attr.value.objlist.list;
+    queue_id = attr.value.objlist.list[queue_ind];
+    delete[] attr.value.objlist.list;
     return true;    
 }
 }

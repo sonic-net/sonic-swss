@@ -90,7 +90,6 @@ bool QosMapHandler::processWorkItem(Consumer& consumer)
         return false;
     }
     return true;
-
 }
 
 void DscpToTcMapHandler::freeAttribResources(std::vector<sai_attribute_t> &attributes)

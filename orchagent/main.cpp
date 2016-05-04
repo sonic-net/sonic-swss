@@ -31,10 +31,10 @@ sai_neighbor_api_t*         sai_neighbor_api;
 sai_next_hop_api_t*         sai_next_hop_api;
 sai_next_hop_group_api_t*   sai_next_hop_group_api;
 sai_route_api_t*            sai_route_api;
-sai_queue_api_t     *sai_queue_api;
-sai_scheduler_api_t *sai_scheduler_api;
-sai_wred_api_t      *sai_wred_api;
-sai_qos_map_api_t   *sai_qos_map_api;
+sai_queue_api_t*            sai_queue_api;
+sai_scheduler_api_t*        sai_scheduler_api;
+sai_wred_api_t*             sai_wred_api;
+sai_qos_map_api_t*          sai_qos_map_api;
 
 
 map<string, string> gProfileMap;
@@ -130,7 +130,7 @@ void initDiagShell()
 
 int main(int argc, char **argv)
 {
-    swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_DEBUG);
+    swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_INFO);
 
     SWSS_LOG_ENTER();
 
