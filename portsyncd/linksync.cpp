@@ -29,13 +29,11 @@ LinkSync::LinkSync(DBConnector *db) :
 
 void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
-    std::vector<FieldValueTuple> temp;
-    struct rtnl_link *link = (struct rtnl_link *)obj;
-
     if ((nlmsg_type != RTM_NEWLINK) && (nlmsg_type != RTM_GETLINK) &&
         (nlmsg_type != RTM_DELLINK))
         return;
 
+    struct rtnl_link *link = (struct rtnl_link *)obj;
     string key = rtnl_link_get_name(link);
     if (nlmsg_type == RTM_DELLINK) /* Will be sync by other application */
         return;
@@ -44,7 +42,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     bool oper_state = rtnl_link_get_flags(link) & IFF_LOWER_UP;
     unsigned int mtu = rtnl_link_get_mtu(link);
 
-    std::vector<FieldValueTuple> fvVector;
+    vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin_state ? "up" : "down");
     FieldValueTuple o("oper_status", oper_state ? "up" : "down");
     FieldValueTuple m("mtu", to_string(mtu));
@@ -52,11 +50,38 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     fvVector.push_back(o);
     fvVector.push_back(m);
 
+    vector<FieldValueTuple> temp;
     if (m_lagTableConsumer.get(key, temp))
         m_lagTableProducer.set(key, fvVector);
     else if (m_vlanTableConsumer.get(key, temp))
         m_vlanTableProducer.set(key, fvVector);
     else if (m_portTableConsumer.get(key, temp))
-        m_portTableProducer.set(key, fvVector);
+    {
+        /*
+         * If the port entry is just initialized without having admin_status/oper_status field,
+         * we manually bring up the port using ifup --force command.
+         */
+        bool init = true;
+        for (auto it = temp.begin(); it != temp.end(); it++)
+        {
+            if (fvField(*it) == "admin_status")
+            {
+                init = false;
+                break;
+            }
+        }
+
+        /*
+         * TODO: Parse /etc/network/interfaces file to bring up port and configure corresponding IP.
+         */
+        if (init)
+        {
+            system(("/sbin/ifup --force " + key).c_str());
+        }
+        else
+        {
+            m_portTableProducer.set(key, fvVector);
+        }
+    }
     /* else discard managment or untracked netdev state */
 }
