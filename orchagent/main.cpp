@@ -85,8 +85,8 @@ void initSaiApi()
     sai_api_query(SAI_API_HOST_INTERFACE,       (void **)&sai_hostif_api);
     sai_api_query(SAI_API_ROUTER_INTERFACE,     (void **)&sai_router_intfs_api);
     sai_api_query(SAI_API_NEIGHBOR,             (void **)&sai_neighbor_api);
-    sai_api_query(SAI_API_NEXT_HOP,             (void**)&sai_next_hop_api);
-    sai_api_query(SAI_API_NEXT_HOP_GROUP,       (void**)&sai_next_hop_group_api);
+    sai_api_query(SAI_API_NEXT_HOP,             (void **)&sai_next_hop_api);
+    sai_api_query(SAI_API_NEXT_HOP_GROUP,       (void **)&sai_next_hop_group_api);
     sai_api_query(SAI_API_ROUTE,                (void **)&sai_route_api);
     sai_api_query(SAI_API_QUEUE,                (void **)&sai_queue_api);
     sai_api_query(SAI_API_SCHEDULER,            (void **)&sai_scheduler_api);
@@ -137,7 +137,7 @@ int main(int argc, char **argv)
     int opt;
     sai_status_t status;
 
-    while ((opt = getopt(argc, argv, "m:")) != -1)
+    while ((opt = getopt(argc, argv, "m:h")) != -1)
     {
         switch (opt)
         {

@@ -21,15 +21,6 @@ debian/libswsscommon/
 debian/swss/
 debian/tmp/
 
-# autogen.sh Files #
-####################
-AUTHORS
-COPYING
-ChangeLog
-INSTALL
-NEWS
-README
-
 aclocal.m4
 config.h
 config.h.in

@@ -1,6 +1,4 @@
 #include "orchdaemon.h"
-#include "routeorch.h"
-#include "neighorch.h"
 
 #include "logger.h"
 
@@ -31,8 +29,8 @@ bool OrchDaemon::init()
 
     m_portsO = new PortsOrch(m_applDb, APP_PORT_TABLE_NAME);
     m_intfsO = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, m_portsO);
-    m_routeO = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, m_portsO);
-    m_neighO = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, m_portsO, m_routeO);
+    m_neighO = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, m_portsO);
+    m_routeO = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, m_portsO, m_neighO);
     std::vector<std::string> qos_tables = {
         APP_TC_TO_QUEUE_MAP_TABLE_NAME, 
         APP_SCHEDULER_TABLE_NAME, 
@@ -41,7 +39,6 @@ bool OrchDaemon::init()
         APP_PORT_QOS_MAP_TABLE_NAME,
         APP_WRED_PROFILE_TABLE_NAME
         };
-    
     m_qosO   = new QosOrch(m_applDb, qos_tables, m_portsO);
     m_select = new Select();
 

@@ -23,6 +23,7 @@ Install dependencies:
 Install building dependencies:
 
     sudo apt-get install libtool
+    sudo apt-get install autoconf automake
     sudo apt-get install dh-exec
 
 There are a few different ways you can install SONiC-SWSS.

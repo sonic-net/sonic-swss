@@ -3,6 +3,7 @@
 
 #include "orch.h"
 #include "intfsorch.h"
+#include "neighorch.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -13,49 +14,54 @@
 using namespace std;
 using namespace swss;
 
-#define NHGRP_MAX_SIZE 16
+/* Maximum next hop group number */
+#define NHGRP_MAX_SIZE 128
 
-struct NextHopEntry
+struct NextHopGroupEntry
 {
-    sai_object_id_t     next_hop_id;    // next hop id or next hop group id
-    int                 ref_count;      // reference count
+    sai_object_id_t     next_hop_group_id;  // next hop group id
+    int                 ref_count;          // reference count
 };
 
+/* NextHopGroupTable: next hop group IP addersses, NextHopGroupEntry */
+typedef map<IpAddresses, NextHopGroupEntry> NextHopGroupTable;
 /* RouteTable: destination network, next hop IP address(es) */
 typedef map<IpPrefix, IpAddresses> RouteTable;
-/* NextHopTable: next hop IP address(es), NextHopEntry */
-typedef map<IpAddresses, NextHopEntry> NextHopTable;
 
 class RouteOrch : public Orch
 {
 public:
-    RouteOrch(DBConnector *db, string tableName, PortsOrch *portsOrch) :
+    RouteOrch(DBConnector *db, string tableName,
+              PortsOrch *portsOrch, NeighOrch *neighOrch) :
         Orch(db, tableName),
         m_portsOrch(portsOrch),
+        m_neighOrch(neighOrch),
         m_nextHopGroupCount(0),
         m_resync(false) {};
 
-    bool createNextHopEntry(IpAddress, sai_object_id_t);
-    bool createNextHopEntry(IpAddresses, sai_object_id_t);
-    bool removeNextHopEntry(IpAddress);
-    bool removeNextHopEntry(IpAddresses);
-    NextHopEntry getNextHopEntry(IpAddress);
-    NextHopEntry getNextHopEntry(IpAddresses);
-    int getNextHopRefCount(IpAddress);
-    int getNextHopRefCount(IpAddresses);
+    bool hasNextHopGroup(IpAddresses);
 
 private:
     PortsOrch *m_portsOrch;
+    NeighOrch *m_neighOrch;
 
     int m_nextHopGroupCount;
     bool m_resync;
 
     RouteTable m_syncdRoutes;
-    NextHopTable m_syncdNextHops;
+    NextHopGroupTable m_syncdNextHopGroups;
 
-    void doTask(Consumer& consumer);
+    void increaseNextHopRefCount(IpAddresses);
+    void decreaseNextHopRefCount(IpAddresses);
+
+    bool addNextHopGroup(IpAddresses);
+    bool removeNextHopGroup(IpAddresses);
+
+    void addTempRoute(IpPrefix, IpAddresses);
     bool addRoute(IpPrefix, IpAddresses);
     bool removeRoute(IpPrefix);
+
+    void doTask(Consumer& consumer);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

@@ -2,8 +2,88 @@
 
 #include "logger.h"
 
+#include "assert.h"
+
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
+
+bool NeighOrch::hasNextHop(IpAddress ipAddress)
+{
+    return m_syncdNextHops.find(ipAddress) != m_syncdNextHops.end();
+}
+
+bool NeighOrch::addNextHop(IpAddress ipAddress, Port port)
+{
+    SWSS_LOG_ENTER();
+
+    assert(!hasNextHop(ipAddress));
+
+    sai_attribute_t next_hop_attrs[3];
+    next_hop_attrs[0].id = SAI_NEXT_HOP_ATTR_TYPE;
+    next_hop_attrs[0].value.s32 = SAI_NEXT_HOP_IP;
+    next_hop_attrs[1].id = SAI_NEXT_HOP_ATTR_IP;
+    next_hop_attrs[1].value.ipaddr.addr_family= SAI_IP_ADDR_FAMILY_IPV4;
+    next_hop_attrs[1].value.ipaddr.addr.ip4 = ipAddress.getV4Addr();
+    next_hop_attrs[2].id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
+    next_hop_attrs[2].value.oid = port.m_rif_id;
+
+    sai_object_id_t next_hop_id;
+    sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, 3, next_hop_attrs);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create next hop entry ip:%s rid%llx\n",
+                       ipAddress.to_string().c_str(), port.m_rif_id);
+        return false;
+    }
+
+    NextHopEntry next_hop_entry;
+    next_hop_entry.next_hop_id = next_hop_id;
+    next_hop_entry.ref_count = 0;
+    m_syncdNextHops[ipAddress] = next_hop_entry;
+
+    return true;
+}
+
+bool NeighOrch::removeNextHop(IpAddress ipAddress)
+{
+    SWSS_LOG_ENTER();
+
+    assert(hasNextHop(ipAddress));
+
+    if (m_syncdNextHops[ipAddress].ref_count > 0)
+    {
+        SWSS_LOG_ERROR("Failed to remove still referenced next hop entry ip:%s",
+                       ipAddress.to_string().c_str());
+        return false;
+    }
+
+    m_syncdNextHops.erase(ipAddress);
+    return true;
+}
+
+sai_object_id_t NeighOrch::getNextHopId(IpAddress ipAddress)
+{
+    assert(hasNextHop(ipAddress));
+    return m_syncdNextHops[ipAddress].next_hop_id;
+}
+
+int NeighOrch::getNextHopRefCount(IpAddress ipAddress)
+{
+    assert(hasNextHop(ipAddress));
+    return m_syncdNextHops[ipAddress].ref_count;
+}
+
+void NeighOrch::increaseNextHopRefCount(IpAddress ipAddress)
+{
+    assert(hasNextHop(ipAddress));
+    m_syncdNextHops[ipAddress].ref_count ++;
+}
+
+void NeighOrch::decreaseNextHopRefCount(IpAddress ipAddress)
+{
+    assert(hasNextHop(ipAddress));
+    m_syncdNextHops[ipAddress].ref_count --;
+}
 
 void NeighOrch::doTask(Consumer &consumer)
 {
@@ -28,6 +108,7 @@ void NeighOrch::doTask(Consumer &consumer)
             it = consumer.m_toSync.erase(it);
             continue;
         }
+
         string alias = key.substr(0, found);
         Port p;
 
@@ -77,8 +158,8 @@ void NeighOrch::doTask(Consumer &consumer)
                 else
                     it++;
             }
-            /* Cannot locate the neighbor */
             else
+                /* Cannot locate the neighbor */
                 it = consumer.m_toSync.erase(it);
         }
         else
@@ -120,21 +201,8 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
 
         SWSS_LOG_NOTICE("Create neighbor entry rid:%llx alias:%s ip:%s\n", p.m_rif_id, alias.c_str(), ip_address.to_string().c_str());
 
-        sai_attribute_t next_hop_attrs[3];
-        next_hop_attrs[0].id = SAI_NEXT_HOP_ATTR_TYPE;
-        next_hop_attrs[0].value.s32 = SAI_NEXT_HOP_IP;
-        next_hop_attrs[1].id = SAI_NEXT_HOP_ATTR_IP;
-        next_hop_attrs[1].value.ipaddr.addr_family= SAI_IP_ADDR_FAMILY_IPV4;
-        next_hop_attrs[1].value.ipaddr.addr.ip4 = ip_address.getV4Addr();
-        next_hop_attrs[2].id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
-        next_hop_attrs[2].value.oid = p.m_rif_id;
-
-        sai_object_id_t next_hop_id;
-        status = sai_next_hop_api->create_next_hop(&next_hop_id, 3, next_hop_attrs);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!addNextHop(ip_address, p))
         {
-            SWSS_LOG_ERROR("Failed to create next hop ip:%s rid:%llx\n", ip_address.to_string().c_str(), p.m_rif_id);
-
             status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -142,9 +210,6 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
             }
             return false;
         }
-
-        SWSS_LOG_NOTICE("Create next hop ip:%s rid:%llx\n", ip_address.to_string().c_str(), p.m_rif_id);
-        m_routeOrch->createNextHopEntry(ip_address, next_hop_id);
 
         m_syncdNeighbors[neighborEntry] = macAddress;
     }
@@ -168,7 +233,7 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
     if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
         return true;
 
-    if (m_routeOrch->getNextHopRefCount(ip_address))
+    if (m_syncdNextHops[ip_address].ref_count > 0)
     {
         SWSS_LOG_ERROR("Neighbor is still referenced ip:%s\n", ip_address.to_string().c_str());
         return false;
@@ -186,7 +251,7 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
     neighbor_entry.ip_address.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
     neighbor_entry.ip_address.addr.ip4 = ip_address.getV4Addr();
 
-    sai_object_id_t next_hop_id = m_routeOrch->getNextHopEntry(ip_address).next_hop_id;
+    sai_object_id_t next_hop_id = m_syncdNextHops[ip_address].next_hop_id;
     status = sai_next_hop_api->remove_next_hop(next_hop_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -212,21 +277,11 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
         }
 
         SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%llx ip:%s\n", p.m_rif_id, ip_address.to_string().c_str());
-
-        sai_attribute_t attr;
-        attr.id = SAI_NEIGHBOR_ATTR_DST_MAC_ADDRESS;
-        memcpy(attr.value.mac, m_syncdNeighbors[neighborEntry].getMac(), 6);
-
-        status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry, 1, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to create neighbor entry mac:%s\n", m_syncdNeighbors[neighborEntry].to_string().c_str());
-        }
         return false;
     }
 
     m_syncdNeighbors.erase(neighborEntry);
-    m_routeOrch->removeNextHopEntry(ip_address);
+    removeNextHop(ip_address);
 
     return true;
 }
