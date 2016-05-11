@@ -12,14 +12,13 @@ extern sai_scheduler_api_t *sai_scheduler_api;
 extern sai_wred_api_t      *sai_wred_api;
 extern sai_qos_map_api_t   *sai_qos_map_api;
 
-qos_type_map QosOrch::m_qos_type_maps = {
-    {APP_DSCP_TO_TC_MAP_TABLE_NAME,  new qos_object_map()},
-    {APP_TC_TO_QUEUE_MAP_TABLE_NAME, new qos_object_map()},
-    {APP_SCHEDULER_TABLE_NAME,       new qos_object_map()},
-    {APP_WRED_PROFILE_TABLE_NAME,    new qos_object_map()},
-    {APP_PORT_QOS_MAP_TABLE_NAME,    new qos_object_map()}    
+type_map QosOrch::m_qos_type_maps = {
+    {APP_DSCP_TO_TC_MAP_TABLE_NAME,  new object_map()},
+    {APP_TC_TO_QUEUE_MAP_TABLE_NAME, new object_map()},
+    {APP_SCHEDULER_TABLE_NAME,       new object_map()},
+    {APP_WRED_PROFILE_TABLE_NAME,    new object_map()},
+    {APP_PORT_QOS_MAP_TABLE_NAME,    new object_map()}    
 };
-
 
 bool QosMapHandler::processWorkItem(Consumer& consumer)
 {
@@ -369,7 +368,7 @@ QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames, PortsOrch *portsOr
     initTableHandlers();
 };
 
-qos_type_map& QosOrch::getTypeMap()
+type_map& QosOrch::getTypeMap()
 {
     SWSS_LOG_ENTER();
     return m_qos_type_maps;
@@ -465,7 +464,7 @@ bool QosOrch::handleSchedulerTable(Consumer& consumer)
                         SWSS_LOG_ERROR( "fail to set scheduler attribute, id:%d", attr.id);
                         return false;
                     }
-                }            
+                }
             }
             else {
                 sai_status = sai_scheduler_api->create_scheduler_profile(&sai_object, sai_attr_list.size(), sai_attr_list.data());
@@ -548,7 +547,7 @@ bool QosOrch::handleQueueTable(Consumer& consumer)
     string op = kfvOp(tuple);
     size_t queue_ind = 0;
     vector<string> tokens;
-    resolve_status  resolve_result;
+    ref_resolve_status  resolve_result;
     // sample "QUEUE_TABLE:ETHERNET4:1"
     if (!tokenizeString(key, delimiter, tokens))
     {
@@ -572,8 +571,8 @@ bool QosOrch::handleQueueTable(Consumer& consumer)
     }
 
     queue_attr = SAI_QUEUE_ATTR_SCHEDULER_PROFILE_ID;
-    resolve_result = resolveFieldRefValue(scheduler_field_name, tuple, sai_object);
-    if (resolve_status::success == resolve_result)
+    resolve_result = resolveFieldRefValue(m_qos_type_maps, scheduler_field_name, tuple, sai_object);
+    if (ref_resolve_status::success == resolve_result)
     {
         if (op == SET_COMMAND)
         {
@@ -595,14 +594,14 @@ bool QosOrch::handleQueueTable(Consumer& consumer)
         }
         return result;
     }
-    if (resolve_result != resolve_status::field_not_found) 
+    if (resolve_result != ref_resolve_status::field_not_found) 
     {
         return false;
     }
 
     queue_attr = SAI_QUEUE_ATTR_WRED_PROFILE_ID;
-    resolve_result = resolveFieldRefValue(wred_profile_field_name, tuple, sai_object);
-    if (resolve_status::success == resolve_result)
+    resolve_result = resolveFieldRefValue(m_qos_type_maps, wred_profile_field_name, tuple, sai_object);
+    if (ref_resolve_status::success == resolve_result)
     {
         if (op == SET_COMMAND)
         {
@@ -624,114 +623,11 @@ bool QosOrch::handleQueueTable(Consumer& consumer)
         }
         return result;
     }
-    if (resolve_result != resolve_status::field_not_found) 
+    if (resolve_result != ref_resolve_status::field_not_found) 
     {
         return false;
     }
     return true;
-}
-
-bool QosOrch::tokenizeString(string str, const string &separator, vector<string> &tokens)
-{
-    SWSS_LOG_ENTER();
-    if (0 == separator.size())
-    {
-        SWSS_LOG_ERROR("Invalid separator passed in:%s\n", separator.c_str());
-        return false;
-    }
-    if (string::npos == str.find(separator))
-    {
-        SWSS_LOG_ERROR("Specified separator:%s not found in input:%s\n", separator.c_str(), str.c_str());
-        return false;
-    }
-    istringstream ss(str);
-    string tmp;
-    while (getline(ss, tmp, separator[0]))
-    {
-        SWSS_LOG_DEBUG("extracted token:%s", tmp.c_str());
-        tokens.push_back(tmp);
-    }
-    return true;
-}
-
-/*
-- Validates reference is has proper format which is [table_name:object_name]
-- validates table_name exists
-- validates object with object_name exists
-*/
-bool QosOrch::parseReference(string &ref_in, string &type_name, string &object_name)
-{
-    SWSS_LOG_ENTER();
-    if (ref_in.size() < 3)
-    {
-        SWSS_LOG_ERROR("invalid reference received:%s\n", ref_in.c_str());
-        return false;
-    }
-    if ((ref_in[0] != ref_start) && (ref_in[ref_in.size()-1] != ref_end))
-    {
-        SWSS_LOG_ERROR("malformed reference:%s. Must be surrounded by [ ]\n", ref_in.c_str());
-        return false;
-    }
-    string ref_content = ref_in.substr(1, ref_in.size() - 2);
-    vector<string> tokens;
-    if (!tokenizeString(ref_content, delimiter, tokens))
-    {
-        return false;
-    }
-    if (tokens.size() != 2)
-    {
-        SWSS_LOG_ERROR("malformed reference:%s. Must contain 2 tokens\n", ref_content.c_str());
-        return false;
-    }
-    auto type_it = m_qos_type_maps.find(tokens[0]);
-    if (type_it == m_qos_type_maps.end())
-    {
-        SWSS_LOG_ERROR("not recognized type:%s\n", tokens[0].c_str());
-        return false;
-    }
-    auto obj_map = m_qos_type_maps[tokens[0]];
-    auto obj_it = obj_map->find(tokens[1]);
-    if (obj_it == obj_map->end())
-    {
-        SWSS_LOG_ERROR("map:%s does not contain object with name:%s\n", tokens[0].c_str(), tokens[1].c_str());
-        return false;
-    }
-    type_name   = tokens[0];
-    object_name = tokens[1];
-    return true;
-}
-
-QosOrch::resolve_status QosOrch::resolveFieldRefValue(
-    const string            &field_name, 
-    KeyOpFieldsValuesTuple  &tuple, 
-    sai_object_id_t         &sai_object)
-{
-    SWSS_LOG_ENTER();
-    size_t count = 0;
-    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
-    {
-        if (fvField(*i) == field_name)
-        {
-            if (count > 1)
-            {
-                SWSS_LOG_ERROR("Singleton field with name:%s must have only 1 instance, actual count:%d\n", field_name.c_str(), count);
-                return resolve_status::multiple_instances;
-            }
-            string ref_type_name, object_name;
-            if (!parseReference(fvValue(*i), ref_type_name, object_name))
-            {
-                return resolve_status::failure;
-            }
-            sai_object = (*(m_qos_type_maps[ref_type_name]))[object_name];
-            count++;
-        }
-    }
-    if (0 == count)
-    {
-        SWSS_LOG_NOTICE("field with name:%s not found\n", field_name.c_str());
-        return resolve_status::field_not_found;
-    }
-    return resolve_status::success;
 }
 
 bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t map)
@@ -781,8 +677,8 @@ bool QosOrch::handlePortQosMapTable(Consumer& consumer)
     }
 
     port_attr = SAI_PORT_ATTR_QOS_DSCP_TO_TC_MAP;
-    resolve_status resolve_result = resolveFieldRefValue(dscp_to_tc_field_name, tuple, sai_object);
-    if (resolve_status::success == resolve_result)
+    ref_resolve_status resolve_result = resolveFieldRefValue(m_qos_type_maps, dscp_to_tc_field_name, tuple, sai_object);
+    if (ref_resolve_status::success == resolve_result)
     {
         if (op == SET_COMMAND)
         {
@@ -805,14 +701,14 @@ bool QosOrch::handlePortQosMapTable(Consumer& consumer)
         }
         SWSS_LOG_DEBUG("Applied field:%s to port:%s, line:%d\n", dscp_to_tc_field_name.c_str(), port.m_alias.c_str(), __LINE__);        
     }
-    else if (resolve_result != resolve_status::field_not_found) 
+    else if (resolve_result != ref_resolve_status::field_not_found) 
     {
         return false;
     }
 
     port_attr = SAI_PORT_ATTR_QOS_TC_TO_QUEUE_MAP;
-    resolve_result = resolveFieldRefValue(tc_to_queue_field_name, tuple, sai_object);
-    if (resolve_status::success == resolve_result)
+    resolve_result = resolveFieldRefValue(m_qos_type_maps, tc_to_queue_field_name, tuple, sai_object);
+    if (ref_resolve_status::success == resolve_result)
     {
         if (op == SET_COMMAND)
         {
@@ -835,7 +731,7 @@ bool QosOrch::handlePortQosMapTable(Consumer& consumer)
         }
         SWSS_LOG_DEBUG("Applied field:%s to port:%s, line:%d\n", tc_to_queue_field_name.c_str(), port.m_alias.c_str(), __LINE__);
     }
-    else if (resolve_result != resolve_status::field_not_found) 
+    else if (resolve_result != ref_resolve_status::field_not_found) 
     {
         return false;
     }

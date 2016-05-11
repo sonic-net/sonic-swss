@@ -56,6 +56,40 @@ bool Port::getQueue(size_t queue_ind, sai_object_id_t &queue_id)
     delete[] attr.value.objlist.list;
     return true;    
 }
+bool Port::getPG(size_t pg_ind, sai_object_id_t &pg)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t  attr;
+    attr.id = SAI_PORT_ATTR_NUMBER_OF_PRIORITY_GROUPS;
+    attr.value.u32 = 0;
+    sai_status_t status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get number of queues for port: %d\n", status);
+        return false;
+    }
+    
+    size_t no_of_pgs = attr.value.u32;
+    if(no_of_pgs <= pg_ind) {
+        SWSS_LOG_ERROR("pg index:%d exceeds range:%d\n", pg_ind, no_of_pgs);
+        return false;
+    }
+    attr.id = SAI_PORT_ATTR_PRIORITY_GROUP_LIST;
+    attr.value.objlist.count = no_of_pgs;
+    attr.value.objlist.list = new sai_object_id_t[no_of_pgs];
+    
+    /* Get pg list */
+    status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("fail to call sai_port_api->get_port_attribute: %d", status);
+        delete[] attr.value.objlist.list;
+        return false;
+    }
+    pg = attr.value.objlist.list[pg_ind];
+    delete[] attr.value.objlist.list;
+    return true;    
+}
 }
 PortsOrch::PortsOrch(DBConnector *db, string tableName) :
         Orch(db, tableName)

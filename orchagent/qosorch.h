@@ -5,13 +5,10 @@
 #include "orch.h"
 #include "portsorch.h"
 
-const std::string delimiter                         = ":";
 const std::string tc_to_queue_field_name            = "tc_to_queue_map";
 const std::string dscp_to_tc_field_name             = "dscp_to_tc_map";
 const std::string scheduler_field_name              = "scheduler";
 const std::string wred_profile_field_name           = "wred_profile";
-const char        ref_start                         = '[';
-const char        ref_end                           = ']';
 const std::string yellow_max_threshold_field_name   = "yellow_max_threshold";
 const std::string green_max_threshold_field_name    = "green_max_threshold";
 
@@ -21,13 +18,6 @@ const std::string scheduler_algo_WRR                = "WRR";
 const std::string scheduler_algo_PRIORITY           = "PRIORITY";
 const std::string scheduler_weight_field_name       = "weight";
 const std::string scheduler_priority_field_name     = "priority";
-
-typedef std::map<string, sai_object_id_t> qos_object_map;
-typedef std::pair<string, sai_object_id_t> qos_object_map_pair;
-
-typedef std::map<string, qos_object_map*> qos_type_map;
-typedef std::pair<string, qos_object_map*> qos_type_map_pair;
-
 
 class QosMapHandler
 {
@@ -80,15 +70,8 @@ public:
     
     QosOrch(DBConnector *db, vector<string> &tableNames, PortsOrch *portsOrch);
     
-    typedef enum {
-        success,
-        field_not_found,
-        multiple_instances,
-        failure
-    }resolve_status;
-
-    static qos_type_map& getTypeMap();
-    static qos_type_map m_qos_type_maps;
+    static type_map& getTypeMap();
+    static type_map m_qos_type_maps;
 private:
     virtual void doTask(Consumer& consumer);
 
@@ -109,12 +92,6 @@ private:
     bool handlePortQosMapTable(Consumer& consumer);
     bool applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
     bool handleWredProfileTable(Consumer& consumer);
-    resolve_status resolveFieldRefValue(
-        const string            &field_name, 
-        KeyOpFieldsValuesTuple  &tuple, 
-        sai_object_id_t         &sai_object);
-    bool parseReference(string &ref, string &table_name, string &object_name);
-    bool tokenizeString(string str, const string &separator, vector<string> &tokens);
 
 private:    
     PortsOrch *m_portsOrch;
