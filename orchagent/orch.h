@@ -60,10 +60,8 @@ public:
     Orch(DBConnector *db, string tableName);
     Orch(DBConnector *db, vector<string> &tableNames);
     ~Orch();
-public:
-    static type_map& getTypeMap();
-    static type_map m_type_maps;
 
+public:
     std::vector<Selectable*> getConsumers();
     bool hasConsumer(ConsumerTable* s)const;
 

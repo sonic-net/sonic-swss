@@ -36,7 +36,7 @@ bool Port::getQueue(size_t queue_ind, sai_object_id_t &queue_id)
     }
     
     size_t no_of_queues = attr.value.u32;
-    if(no_of_queues <= queue_ind) {
+    if (no_of_queues <= queue_ind) {
         SWSS_LOG_ERROR("queue index:%d exceeds range:%d\n", queue_ind, no_of_queues);
         return false;
     }
@@ -70,7 +70,7 @@ bool Port::getPG(size_t pg_ind, sai_object_id_t &pg)
     }
     
     size_t no_of_pgs = attr.value.u32;
-    if(no_of_pgs <= pg_ind) {
+    if (no_of_pgs <= pg_ind) {
         SWSS_LOG_ERROR("pg index:%d exceeds range:%d\n", pg_ind, no_of_pgs);
         return false;
     }
@@ -504,7 +504,7 @@ bool PortsOrch::setupHostIntfs(sai_object_id_t id, string alias, sai_object_id_t
     strncpy((char *)&attr.value.chardata, alias.c_str(), HOSTIF_NAME_SIZE);
     attrs.push_back(attr);
 
-    sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, attrs.size(), attrs.data());
+    sai_status_t status = sai_hostif_api->create_hostif (&host_intfs_id, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create host interface\n");
