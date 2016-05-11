@@ -109,7 +109,7 @@ void initSaiApi()
     sai_log_set(SAI_API_SCHEDULER,              SAI_LOG_NOTICE);
     sai_log_set(SAI_API_WRED,                   SAI_LOG_NOTICE);
     sai_log_set(SAI_API_QOS_MAPS,               SAI_LOG_NOTICE);
-    sai_log_set(SAI_API_BUFFERS,                SAI_LOG_DEBUG);    
+    sai_log_set(SAI_API_BUFFERS,                SAI_LOG_NOTICE);    
 }
 
 void initDiagShell()
@@ -133,7 +133,7 @@ void initDiagShell()
 
 int main(int argc, char **argv)
 {
-    swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_DEBUG);
+    swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_INFO);
 
     SWSS_LOG_ENTER();
 
