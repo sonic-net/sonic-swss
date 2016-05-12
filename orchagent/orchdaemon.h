@@ -10,6 +10,8 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "routeorch.h"
+#include "qosorch.h"
+#include "bufferorch.h"
 
 using namespace swss;
 
@@ -25,10 +27,12 @@ private:
     DBConnector *m_applDb;
     DBConnector *m_asicDb;
 
-    PortsOrch *m_portsO;
-    IntfsOrch *m_intfsO;
-    NeighOrch *m_neighO;
-    RouteOrch *m_routeO;
+    PortsOrch   *m_portsO;
+    IntfsOrch   *m_intfsO;
+    NeighOrch   *m_neighO;
+    RouteOrch   *m_routeO;
+    QosOrch     *m_qosO;
+    BufferOrch  *m_bufferO;
 
     Select *m_select;
 
