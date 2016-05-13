@@ -15,6 +15,7 @@ const std::string green_max_threshold_field_name    = "green_max_threshold";
 const std::string scheduler_algo_type_field_name    = "type";
 const std::string scheduler_algo_DWRR               = "DWRR";
 const std::string scheduler_algo_WRR                = "WRR";
+const std::string scheduler_algo_STRICT             = "strict";
 const std::string scheduler_algo_PRIORITY           = "PRIORITY";
 const std::string scheduler_weight_field_name       = "weight";
 const std::string scheduler_priority_field_name     = "priority";
@@ -22,7 +23,7 @@ const std::string scheduler_priority_field_name     = "priority";
 class QosMapHandler
 {
 public:
-    bool processWorkItem(Consumer& consumer);
+    task_process_status processWorkItem(Consumer& consumer);
     virtual bool isValidTable(string &tableName) = 0;
     virtual bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, std::vector<sai_attribute_t> &attributes) = 0;
     virtual void freeAttribResources(std::vector<sai_attribute_t> &attributes) = 0;
@@ -75,23 +76,20 @@ public:
 private:
     virtual void doTask(Consumer& consumer);
 
-    typedef bool (QosOrch::*qos_table_handler)(Consumer& consumer);
+    typedef task_process_status (QosOrch::*qos_table_handler)(Consumer& consumer);
     typedef std::map<std::string, qos_table_handler> qos_table_handler_map;
     typedef std::pair<string, qos_table_handler> qos_handler_pair;
     
     void initTableHandlers();
-    bool handleDscpToTcTable(Consumer& consumer);
-    bool handleTcToQueueTable(Consumer& consumer);
-    bool handleSchedulerTable(Consumer& consumer);
-    bool handleQueueTable(Consumer& consumer);
-    bool applyObjectToQueue(
-        Port                &port,
-        size_t              queue_ind,
-        sai_queue_attr_t    queue_attr,
-        sai_object_id_t     sai_object);
-    bool handlePortQosMapTable(Consumer& consumer);
+    task_process_status handleDscpToTcTable(Consumer& consumer);
+    task_process_status handleTcToQueueTable(Consumer& consumer);
+    task_process_status handleSchedulerTable(Consumer& consumer);
+    task_process_status handleQueueTable(Consumer& consumer);
+    bool applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_id_t sai_wred_profile);
+    bool applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, sai_object_id_t scheduler_profile_id);
+    task_process_status handlePortQosMapTable(Consumer& consumer);
     bool applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
-    bool handleWredProfileTable(Consumer& consumer);
+    task_process_status handleWredProfileTable(Consumer& consumer);
 
 private:    
     PortsOrch *m_portsOrch;

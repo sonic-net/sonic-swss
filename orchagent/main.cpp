@@ -33,6 +33,7 @@ sai_next_hop_group_api_t*   sai_next_hop_group_api;
 sai_route_api_t*            sai_route_api;
 sai_queue_api_t*            sai_queue_api;
 sai_scheduler_api_t*        sai_scheduler_api;
+sai_scheduler_group_api_t*  sai_scheduler_group_api;
 sai_wred_api_t*             sai_wred_api;
 sai_qos_map_api_t*          sai_qos_map_api;
 sai_buffer_api_t*           sai_buffer_api;
@@ -94,6 +95,7 @@ void initSaiApi()
     sai_api_query(SAI_API_WRED,                 (void **)&sai_wred_api);
     sai_api_query(SAI_API_QOS_MAPS,             (void **)&sai_qos_map_api);
     sai_api_query(SAI_API_BUFFERS,              (void **)&sai_buffer_api);
+    sai_api_query(SAI_API_SCHEDULER_GROUP,      (void **)&sai_scheduler_group_api);
     
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_NOTICE);
     sai_log_set(SAI_API_VIRTUAL_ROUTER,         SAI_LOG_NOTICE);
@@ -109,7 +111,8 @@ void initSaiApi()
     sai_log_set(SAI_API_SCHEDULER,              SAI_LOG_NOTICE);
     sai_log_set(SAI_API_WRED,                   SAI_LOG_NOTICE);
     sai_log_set(SAI_API_QOS_MAPS,               SAI_LOG_NOTICE);
-    sai_log_set(SAI_API_BUFFERS,                SAI_LOG_NOTICE);    
+    sai_log_set(SAI_API_BUFFERS,                SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_SCHEDULER_GROUP,        SAI_LOG_NOTICE);    
 }
 
 void initDiagShell()

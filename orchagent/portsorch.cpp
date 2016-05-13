@@ -31,7 +31,7 @@ bool Port::getQueue(size_t queue_ind, sai_object_id_t &queue_id)
     sai_status_t status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get number of queues for port: %d\n", status);
+        SWSS_LOG_ERROR("Failed to get number of queues for port:%s status:%d\n", m_alias.c_str(), status);
         return false;
     }
     
@@ -48,7 +48,7 @@ bool Port::getQueue(size_t queue_ind, sai_object_id_t &queue_id)
     status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("fail to call sai_port_api->get_port_attribute: %d", status);
+        SWSS_LOG_ERROR("fail to call sai_port_api->get_port_attribute: port:%s, status:%d", m_alias.c_str(), status);
         delete[] attr.value.objlist.list;
         return false;
     }
@@ -65,7 +65,7 @@ bool Port::getPG(size_t pg_ind, sai_object_id_t &pg)
     sai_status_t status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get number of queues for port: %d\n", status);
+        SWSS_LOG_ERROR("Failed to get number of queues for port:%s, status:%d\n", m_alias.c_str(), status);
         return false;
     }
     
@@ -82,7 +82,7 @@ bool Port::getPG(size_t pg_ind, sai_object_id_t &pg)
     status = sai_port_api->get_port_attribute(m_port_id, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("fail to call sai_port_api->get_port_attribute: %d", status);
+        SWSS_LOG_ERROR("fail to call sai_port_api->get_port_attribute: port:%s, status:%d", m_alias.c_str(), status);
         delete[] attr.value.objlist.list;
         return false;
     }
