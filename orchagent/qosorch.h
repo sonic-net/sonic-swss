@@ -15,8 +15,7 @@ const std::string green_max_threshold_field_name    = "green_max_threshold";
 const std::string scheduler_algo_type_field_name    = "type";
 const std::string scheduler_algo_DWRR               = "DWRR";
 const std::string scheduler_algo_WRR                = "WRR";
-const std::string scheduler_algo_STRICT             = "strict";
-const std::string scheduler_algo_PRIORITY           = "PRIORITY";
+const std::string scheduler_algo_STRICT             = "STRICT";
 const std::string scheduler_weight_field_name       = "weight";
 const std::string scheduler_priority_field_name     = "priority";
 

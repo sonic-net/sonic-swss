@@ -444,10 +444,6 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
                 {
                     attr.value.s32 = SAI_SCHEDULING_STRICT;
                 }                
-                else if (fvValue(*i) == scheduler_algo_PRIORITY)
-                {
-                    // Skip for now, implementation TBD.
-                }
                 else {
                     SWSS_LOG_ERROR( "Unknown scheduler type value:%s", fvField(*i).c_str());
                     return task_process_status::task_invalid_entry;
@@ -463,6 +459,8 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             else if (fvField(*i) == scheduler_priority_field_name)
             {
                 // Skip for now, implementation TBD.
+                // The meaning is to be able to adjus priority of the given scheduler group.
+                // However currently SAI model does not provide such ability.
             }
             else {
                 SWSS_LOG_ERROR( "Unknown field:%s", fvField(*i).c_str());
@@ -525,7 +523,6 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
     vector<sai_object_id_t>    groups;
     vector<sai_object_id_t>    child_groups;
     uint32_t                   groups_count     = 0;
-    uint32_t                   groups_matched   = 0;
     
     if (!port.getQueue(queue_ind, queue_id))
     {
@@ -567,7 +564,8 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
     }
 
     /* Lookup groups to which queue belongs */
-    for (uint32_t ii = 0; ii < groups_count ; ii++) {
+    for (uint32_t ii = 0; ii < groups_count ; ii++)
+    {
         uint32_t child_count = 0;
 
         attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT;//Number of queues/groups childs added to scheduler group
@@ -595,7 +593,6 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
             {
                 continue;
             }
-            groups_matched++;
 
             attr.id = SAI_SCHEDULER_GROUP_ATTR_SCHEDULER_PROFILE_ID;
             attr.value.oid = scheduler_profile_id;
@@ -606,9 +603,10 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
                 return false;
             }
             SWSS_LOG_DEBUG("port:%s, scheduler_profile_id:0x%llx applied to scheduler group:0x%llx", port.m_alias.c_str(), scheduler_profile_id, groups[ii]);
+            return true;
         }
     }    
-    return true;
+    return false;
 }
 
 bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_id_t sai_wred_profile)
