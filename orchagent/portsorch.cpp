@@ -416,17 +416,8 @@ bool PortsOrch::initializePort(Port &p)
 
     SWSS_LOG_NOTICE("Initializing port alias:%s pid:%llx\n", p.m_alias.c_str(), p.m_port_id);
 
-    p.m_vlan_id = FRONT_PANEL_PORT_VLAN_BASE + p.m_index;
-
-    /* Set up VLAN */
-    if (!setupVlan(p.m_vlan_id, p.m_port_id, p.m_vlan_member_id))
-    {
-        SWSS_LOG_ERROR("Failed to set up VLAN vid:%hu pid:%llx\n", p.m_vlan_id, p.m_port_id);
-        return false;
-    }
-
     /* Set up router interface */
-    if (!setupRouterIntfs(gVirtualRouterId, gMacAddress, p.m_vlan_id, p.m_rif_id))
+    if (!setupRouterIntfs(gVirtualRouterId, gMacAddress, p.m_port_id, p.m_rif_id))
         return false;
 
     /* Set up host interface */
@@ -457,51 +448,8 @@ bool PortsOrch::initializePort(Port &p)
     return true;
 }
 
-bool PortsOrch::setupVlan(sai_vlan_id_t vlan_id, sai_object_id_t port_id, sai_object_id_t &vlan_member_id)
-{
-    SWSS_LOG_ENTER();
-
-    sai_status_t status;
-
-    status = sai_vlan_api->create_vlan(vlan_id);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create VLAN vid:%hu\n", vlan_id);
-        return false;
-    }
-
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attrs;
-
-    attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_ID;
-    attr.value.u16 = vlan_id;
-    attrs.push_back(attr);
-
-    attr.id = SAI_VLAN_MEMBER_ATTR_PORT_ID;
-    attr.value.oid = port_id;
-    attrs.push_back(attr);
-
-    status = sai_vlan_api->create_vlan_member(&vlan_member_id, attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create VLAN member vid:%hu pid:%llx\n", vlan_id, port_id);
-        return false;
-    }
-
-    attr.id = SAI_PORT_ATTR_PORT_VLAN_ID;
-    attr.value.u16 = vlan_id;
-    status = sai_port_api->set_port_attribute(port_id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to set port VLAN ID pid:%llx\n", port_id);
-        return false;
-    }
-
-    return true;
-}
-
 bool PortsOrch::setupRouterIntfs(sai_object_id_t virtual_router_id, MacAddress mac_address,
-                      sai_vlan_id_t vlan_id, sai_object_id_t &router_intfs_id)
+                      sai_object_id_t port_id, sai_object_id_t &router_intfs_id)
 {
     SWSS_LOG_ENTER();
 
@@ -513,15 +461,15 @@ bool PortsOrch::setupRouterIntfs(sai_object_id_t virtual_router_id, MacAddress m
     attrs.push_back(attr);
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
-    attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_VLAN;
+    attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
     attrs.push_back(attr);
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
     memcpy(attr.value.mac, mac_address.getMac(), sizeof(sai_mac_t));
     attrs.push_back(attr);
 
-    attr.id = SAI_ROUTER_INTERFACE_ATTR_VLAN_ID;
-    attr.value.u16 = vlan_id;
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
+    attr.value.oid = port_id;
     attrs.push_back(attr);
 
     sai_status_t status = sai_router_intfs_api->create_router_interface(&router_intfs_id, attrs.size(), attrs.data());
