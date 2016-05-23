@@ -48,8 +48,34 @@ bool Orch::hasConsumer(ConsumerTable *consumer) const
     return false;
 }
 
+bool Orch::reinit()
+{
+    SWSS_LOG_ENTER();
+
+    for (auto m: m_consumerMap)
+    {
+        Table table(m_db, m.first);
+        Consumer &consumer = m.second;
+
+        vector<KeyOpFieldsValuesTuple> tuples;
+        table.getTableContent(tuples);
+        for (auto tuple: tuples)
+        {
+            string key = kfvKey(tuple);
+            string op  = SET_COMMAND; /* Set the op to SET_COMMAND */
+            consumer.m_toSync[key] = KeyOpFieldsValuesTuple(key, op, kfvFieldsValues(tuple));
+        }
+
+        doTask(consumer);
+    }
+
+    return true;
+}
+
 bool Orch::execute(string tableName)
 {
+    SWSS_LOG_ENTER();
+
     auto consumer_it = m_consumerMap.find(tableName);
     if(consumer_it == m_consumerMap.end()) {
         SWSS_LOG_ERROR("Unrecognized tableName:%s\n", tableName.c_str());

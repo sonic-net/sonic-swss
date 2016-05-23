@@ -35,16 +35,13 @@ public:
     std::vector<Selectable*> getConsumers();
     bool hasConsumer(ConsumerTable* s)const;
 
+    bool reinit();
     bool execute(string tableName);
 
 protected:
-    virtual void doTask(Consumer &consumer) = 0;
-private:
     DBConnector *m_db;
-
-protected:
     ConsumerMap m_consumerMap;
-
+    virtual void doTask(Consumer &consumer) = 0;
 };
 
 #endif /* SWSS_ORCH_H */

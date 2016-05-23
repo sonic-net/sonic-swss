@@ -20,6 +20,7 @@ public:
     ~OrchDaemon();
 
     bool init();
+    bool reinit();
     void start();
 private:
     DBConnector *m_applDb;

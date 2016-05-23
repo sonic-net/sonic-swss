@@ -44,6 +44,18 @@ bool OrchDaemon::init()
     return true;
 }
 
+bool OrchDaemon::reinit()
+{
+    SWSS_LOG_ENTER();
+
+    m_portsO->reinit();
+    m_intfsO->reinit();
+    m_neighO->reinit();
+    m_routeO->reinit();
+
+    return true;
+}
+
 void OrchDaemon::start()
 {
     SWSS_LOG_ENTER();

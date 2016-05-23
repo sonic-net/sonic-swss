@@ -19,7 +19,8 @@ extern sai_hostif_api_t* sai_hostif_api;
 extern sai_object_id_t gVirtualRouterId;
 extern MacAddress gMacAddress;
 
-#define FRONT_PANEL_PORT_VLAN_BASE 1024
+#define CONFIG_DONE_NOTIFICATION    "ConfigDone"
+#define FRONT_PANEL_PORT_VLAN_BASE  1024
 
 PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         Orch(db, tableNames)
@@ -142,6 +143,32 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     }
 }
 
+bool PortsOrch::reinit()
+{
+    SWSS_LOG_ENTER();
+
+    /* Check if before reinitialization ConfigDone notification exists. */
+    Table table(m_db, APP_PORT_TABLE_NAME);
+    vector<FieldValueTuple> values;
+    if (table.get(CONFIG_DONE_NOTIFICATION, values))
+    {
+        m_initDone = true;
+        table.del(CONFIG_DONE_NOTIFICATION);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Port is not fully configured.");
+        return false;
+    }
+
+    if(Orch::reinit())
+        table.set(CONFIG_DONE_NOTIFICATION, values);
+    else
+        return false;
+
+    return true;
+}
+
 bool PortsOrch::isInitDone()
 {
     return m_initDone;
@@ -188,7 +215,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
          * procedure is done. Before port initialization procedure, none of other tasks
          * are executed.
          */
-        if (alias == "ConfigDone")
+        if (alias == CONFIG_DONE_NOTIFICATION)
         {
             /* portsyncd restarting case:
              * When portsyncd restarts, duplicate notifications may be received.

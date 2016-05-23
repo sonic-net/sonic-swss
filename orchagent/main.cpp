@@ -149,8 +149,12 @@ int main(int argc, char **argv)
     gProfileMap[SAI_KEY_INIT_CONFIG_FILE] = mlnx_config_file;
 #endif
 
-    SWSS_LOG_NOTICE("sai_switch_api: initializing switch\n");
-    status = sai_switch_api->initialize_switch(0, "0xb850", "", &switch_notifications);
+    /* A SAI_INIT_VIEW signal is set to notify syncd to create a new ASIC view
+     * table for later converting from the old ASIC view to the new one. */
+    SWSS_LOG_NOTICE("sai_switch_api: initializing switch - sai_init_view");
+    status = sai_switch_api->initialize_switch(0, "0xb850",
+            "sai_init_view", &switch_notifications);
+
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to initialize switch %d\n", status);
@@ -208,6 +212,18 @@ int main(int argc, char **argv)
     }
 
     try {
+        /* A reinit() function is called to re-initialize all the current
+         * content in the APPL_DB. If it is the first time orchagent starts,
+         * the APPL_DB shall be empty and nothing changes across reinit(). */
+        orchDaemon->reinit();
+
+        /* After initialize the view, a second initialize_switch function with
+         * SAI_APPLY_VIEW signal is called to notify the ASIC that
+         * initialization process is done. */
+        SWSS_LOG_NOTICE("sai_switch_api: initializing switch - sai_apply_view");
+        sai_switch_api->initialize_switch(0, "",
+                "sai_apply_view", &switch_notifications);
+
         orchDaemon->start();
     }
     catch (char const *e)
