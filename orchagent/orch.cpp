@@ -29,8 +29,6 @@ Orch::~Orch()
 
 std::vector<Selectable *> Orch::getSelectables()
 {
-    SWSS_LOG_ENTER();
-
     std::vector<Selectable *> selectables;
     for(auto it : m_consumerMap) {
         selectables.push_back(it.second.m_consumer);
@@ -50,6 +48,8 @@ bool Orch::hasSelectable(ConsumerTable *selectable) const
 
 bool Orch::execute(string tableName)
 {
+    SWSS_LOG_ENTER();
+
     auto consumer_it = m_consumerMap.find(tableName);
     if(consumer_it == m_consumerMap.end()) {
         SWSS_LOG_ERROR("Unrecognized tableName:%s\n", tableName.c_str());

@@ -15,9 +15,8 @@ public:
 
     bool isInitDone();
 
-    bool getPort(string alias, Port &p);
-
-    bool setPortAdminStatus(sai_object_id_t id, bool up);
+    bool getPort(string alias, Port &port);
+    void setPort(string alias, Port port);
 
 private:
     bool m_initDone = false;
@@ -29,18 +28,24 @@ private:
 
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
+    void doVlanTask(Consumer &consumer);
     void doLagTask(Consumer &consumer);
 
-    bool initializePort(Port &p);
-    bool setupVlan(sai_vlan_id_t vlan_id, sai_object_id_t port_id, sai_object_id_t &vlan_member_id);
-    bool setupRouterIntfs(sai_object_id_t virtual_router_id, MacAddress mac_address,
-            sai_object_id_t port_id, sai_object_id_t &router_intfs_id);
-    bool setupHostIntfs(sai_object_id_t router_intfs_id, string alias, sai_object_id_t &host_intfs_id);
+    bool initializePort(Port &port);
+
+    bool addHostIntfs(sai_object_id_t router_intfs_id, string alias, sai_object_id_t &host_intfs_id);
+
+    bool addVlan(string vlan);
+    bool removeVlan(Port vlan);
+    bool addVlanMember(Port vlan, Port port);
+    bool removeVlanMember(Port vlan, Port port);
 
     bool addLag(string lag);
     bool removeLag(Port lag);
     bool addLagMember(Port lag, Port port);
     bool removeLagMember(Port lag, Port port);
+
+    bool setPortAdminStatus(sai_object_id_t id, bool up);
 };
 #endif /* SWSS_PORTSORCH_H */
 
