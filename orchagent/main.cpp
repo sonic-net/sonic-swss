@@ -18,7 +18,6 @@ using namespace std;
 using namespace swss;
 
 #define UNREFERENCED_PARAMETER(P)       (P)
-#define DEFAULT_MAC                     "00:11:11:11:11:00"
 
 /* Initialize all global api pointers */
 sai_switch_api_t*           sai_switch_api;
@@ -158,22 +157,23 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    sai_attribute_t attr;
-    attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
-    status = sai_switch_api->get_switch_attribute(1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (!gMacAddress)
     {
-        SWSS_LOG_NOTICE("Failed to get MAC address from switch %d\n", status);
+        sai_attribute_t attr;
+        attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
+        status = sai_switch_api->get_switch_attribute(1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get MAC address from switch %d\n", status);
+            exit(EXIT_FAILURE);
+        }
+        else
+        {
+            gMacAddress = attr.value.mac;
+        }
     }
     else
     {
-        gMacAddress = attr.value.mac;
-    }
-
-    if (status != SAI_STATUS_SUCCESS || !gMacAddress)
-    {
-        gMacAddress = MacAddress(DEFAULT_MAC);
-
         memcpy(attr.value.mac, gMacAddress.getMac(), 6);
         status = sai_switch_api->set_switch_attribute(&attr);
         if (status != SAI_STATUS_SUCCESS)
