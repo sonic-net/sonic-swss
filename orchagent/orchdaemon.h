@@ -10,6 +10,8 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "routeorch.h"
+#include "qosorch.h"
+#include "bufferorch.h"
 
 using namespace swss;
 
@@ -25,12 +27,8 @@ private:
     DBConnector *m_applDb;
     DBConnector *m_asicDb;
 
-    PortsOrch *m_portsO;
-    IntfsOrch *m_intfsO;
-    NeighOrch *m_neighO;
-    RouteOrch *m_routeO;
-
     Select *m_select;
+    std::vector<Orch*> m_orch_list;
 
     Orch *getOrchByConsumer(ConsumerTable *c);
 };
