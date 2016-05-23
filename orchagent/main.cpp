@@ -157,10 +157,10 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
     if (!gMacAddress)
     {
-        sai_attribute_t attr;
-        attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
         status = sai_switch_api->get_switch_attribute(1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
