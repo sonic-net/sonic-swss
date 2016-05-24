@@ -42,6 +42,11 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
 
     key+= LinkCache::getInstance().ifindexToName(rtnl_neigh_get_ifindex(neigh));
+
+    /* Don't sync lo, eth0, and docker0 neighbors */
+    if (key == "lo" || key == "eth0" || key == "docker0")
+        return;
+
     key+= ":";
     nl_addr2str(rtnl_neigh_get_dst(neigh), addrStr, MAX_ADDR_SIZE);
     key+= addrStr;

@@ -47,6 +47,11 @@ void IntfSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
 
     key = LinkCache::getInstance().ifindexToName(rtnl_addr_get_ifindex(addr));
+
+    /* Don't sync lo, eth0, and docker0 routes */
+    if (key == "lo" || key == "eth0" || key == "docker0")
+        return;
+
     key+= ":";
     nl_addr2str(rtnl_addr_get_local(addr), addrStr, MAX_ADDR_SIZE);
     key+= addrStr;
