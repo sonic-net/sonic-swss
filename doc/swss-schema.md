@@ -101,10 +101,14 @@ For example (reorder output)
 ###VLAN_TABLE
     ;Defines VLANs and the interfaces which are members of the vlan
     ;Status: work in progress
-    key                 = DEVICE_NAME    ; must be unique across PORT,INTF,VLAN,LAG TABLES
-    vland_id            = DIGIT 0-4095
-    admin_status        = BIT ; administrative status for vlan up or down
-    attach_to           = PORT_TABLE.key
+    key                 = VLAN_TABLE:"vlan"vlanid ; DIGIT 0-4095
+    admin_status        = "down" / "up"        ; admin status
+    oper_status         = "down" / "up"        ; operating status
+    mtu                 = 1*4DIGIT             ; MTU for this object
+
+    key                 = VLAN_TABLE:vlanid:ifname ; physical port member of VLAN
+    tagging_mode        = "untagged" / "tagged" / "priority_tagged" ; default value as untagged
+
 
 ---------------------------------------------
 ###LAG_TABLE
@@ -115,7 +119,7 @@ For example (reorder output)
     minimum_links       = 1*2DIGIT             ; to be implemented
     admin_status        = "down" / "up"        ; Admin status
     oper_status         = "down" / "up"        ; Oper status (physical + protocol state)
-    if_mtu              = 1*4DIGIT   ; MTU for this object
+    mtu                 = 1*4DIGIT             ; MTU for this object
     linkup
     speed
 
