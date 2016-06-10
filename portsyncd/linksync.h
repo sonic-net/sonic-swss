@@ -5,6 +5,8 @@
 #include "producertable.h"
 #include "netmsg.h"
 
+#include <map>
+
 namespace swss {
 
 class LinkSync : public NetMsg
@@ -19,6 +21,8 @@ public:
 private:
     ProducerTable m_portTableProducer, m_vlanTableProducer, m_lagTableProducer;
     Table m_portTableConsumer, m_vlanTableConsumer, m_lagTableConsumer;
+
+    std::map<unsigned int, std::string> m_ifindexNameMap;
 };
 
 }
