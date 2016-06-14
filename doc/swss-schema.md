@@ -101,10 +101,10 @@ For example (reorder output)
 ###VLAN_TABLE
     ;Defines VLANs and the interfaces which are members of the vlan
     ;Status: work in progress
-    key                 = VLAN_TABLE:"vlan"vlanid ; DIGIT 0-4095
+    key                 = VLAN_TABLE:"vlan"vlanid ; DIGIT 0-4095 with prefix "vlan"
     admin_status        = "down" / "up"        ; admin status
     oper_status         = "down" / "up"        ; operating status
-    mtu                 = 1*4DIGIT             ; MTU for this object
+    mtu                 = 1*4DIGIT             ; MTU for the IP interface of the VLAN
 
     key                 = VLAN_TABLE:vlanid:ifname ; physical port member of VLAN
     tagging_mode        = "untagged" / "tagged" / "priority_tagged" ; default value as untagged
