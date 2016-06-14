@@ -31,6 +31,7 @@ sai_next_hop_api_t*         sai_next_hop_api;
 sai_next_hop_group_api_t*   sai_next_hop_group_api;
 sai_route_api_t*            sai_route_api;
 sai_lag_api_t*              sai_lag_api;
+sai_policer_api_t*          sai_policer_api;
 
 map<string, string> gProfileMap;
 sai_object_id_t gVirtualRouterId;
@@ -84,6 +85,8 @@ void initSaiApi()
     sai_api_query(SAI_API_NEXT_HOP_GROUP,       (void **)&sai_next_hop_group_api);
     sai_api_query(SAI_API_ROUTE,                (void **)&sai_route_api);
     sai_api_query(SAI_API_LAG,                  (void **)&sai_lag_api);
+    sai_api_query(SAI_API_POLICER,              (void **)&sai_policer_api);
+    
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_NOTICE);
     sai_log_set(SAI_API_VIRTUAL_ROUTER,         SAI_LOG_NOTICE);
@@ -96,6 +99,7 @@ void initSaiApi()
     sai_log_set(SAI_API_NEXT_HOP_GROUP,         SAI_LOG_NOTICE);
     sai_log_set(SAI_API_ROUTE,                  SAI_LOG_NOTICE);
     sai_log_set(SAI_API_LAG,                    SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_POLICER,                SAI_LOG_NOTICE);
 }
 
 void initDiagShell()
