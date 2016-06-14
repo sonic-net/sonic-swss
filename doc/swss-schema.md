@@ -319,6 +319,61 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     
 ---------------------------------------------
 
+###COPP_TABLE
+Control plane policing configuration table.
+The settings in this table configure trap group, which is assigned a list of trap IDs (protocols), priority of CPU queue priority, and a policer.
+The CPU queue priority is strict priority.
+The policer is created and exclusively owned by the given trap group; it will be not shared (bound to) any other object.
+
+packet_action = "drop" | "forward" | "copy" | "copy_cancel" | "trap" | "log" | "deny" | "transit"
+
+    key = "COPP_TABLE:name"
+    name_list     = name | name,name_list
+    queue         = number; strict queue priority. Higher number means higher priority.
+    trap_ids      = name_list; Acceptable values: bgp, lacp, arp, lldp, snmp, ssh, ttl error, ip2me
+    trap_action   = packet_action; trap action which will be applied to all trap_ids.
+    
+    ;Settings for embedded policer. NOTE - if no policer settings are specified, then no policer is created.
+    meter_type  = "packets" | "bytes"
+    mode        = "sr_tcm" | "tr_tcm" | "storm"
+    color        = "aware" | "blind"
+    cbs         = number ;packets or bytes depending on the meter_type value
+    cir         = number ;packets or bytes depending on the meter_type value
+    pbs         = number ;packets or bytes depending on the meter_type value
+    pir         = number ;packets or bytes depending on the meter_type value
+    
+    green_action   = packet_action
+    yellow_action  = packet_action
+    red_action     = packet_action
+
+    Example:
+    127.0.0.1:6379> hgetall  "COPP_TABLE:Group.P7"
+     1) "cbs"
+     2) "1024"
+     3) "cir"
+     4) "6600"
+     5) "color"
+     6) "aware"
+     7) "meter_type"
+     8) "packets"
+     9) "mode"
+    10) "sr_tcm"
+    11) "pbs"
+    12) "1024"
+    13) "pir"
+    14) "4096"
+    15) "red_action"
+    16) "drop"
+    17) "trap_ids"
+    18) "lacp"
+    19) "trap_action"
+    20) "trap"
+    127.0.0.1:6379>
+
+Note: The configuration will be created as json file to be consumed by swssconfig tool, which will place the table into the redis database.
+It's possible to create separate configuration files for different ASIC platforms. 
+
+----------------------------------------------
 
 ###Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?  

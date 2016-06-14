@@ -38,39 +38,6 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
 
     m_cpuPort = attr.value.oid;
 
-    /* Set traps to CPU */
-    sai_hostif_trap_id_t trap_ids[] = {
-        SAI_HOSTIF_TRAP_ID_TTL_ERROR,
-        SAI_HOSTIF_TRAP_ID_ARP_REQUEST,
-        SAI_HOSTIF_TRAP_ID_ARP_RESPONSE,
-        SAI_HOSTIF_TRAP_ID_LLDP,
-        SAI_HOSTIF_TRAP_ID_LACP
-    };
-
-    int trap_length = sizeof(trap_ids)/sizeof(*trap_ids);
-
-    for (i = 0; i < trap_length; i++)
-    {
-        attr.id = SAI_HOSTIF_TRAP_ATTR_PACKET_ACTION;
-        attr.value.s32 = SAI_PACKET_ACTION_TRAP;
-        status = sai_hostif_api->set_trap_attribute(trap_ids[i], &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to set trap attribute\n");
-        }
-    }
-
-    for (i = 0; i < trap_length; i++)
-    {
-        attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_CHANNEL;
-        attr.value.s32 = SAI_HOSTIF_TRAP_CHANNEL_NETDEV;
-        status = sai_hostif_api->set_trap_attribute(trap_ids[i], &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to set trap attribute\n");
-        }
-    }
-
     /* Get port number */
     attr.id = SAI_SWITCH_ATTR_PORT_NUMBER;
 
