@@ -10,6 +10,7 @@
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "routeorch.h"
+#include "copporch.h"
 
 using namespace swss;
 

@@ -15,6 +15,21 @@ extern "C" {
 using namespace std;
 using namespace swss;
 
+const char delimiter           = ':';
+const char list_item_delimiter = ',';
+
+typedef enum
+{
+    task_success,
+    task_invalid_entry,
+    task_failed,
+    task_need_retry
+} task_process_status;
+
+typedef std::map<string, sai_object_id_t> object_map;
+typedef std::pair<string, sai_object_id_t> object_map_pair;
+
+
 typedef map<string, KeyOpFieldsValuesTuple> SyncMap;
 struct Consumer {
     Consumer(ConsumerTable* consumer) :m_consumer(consumer)  { }
@@ -41,8 +56,8 @@ public:
 protected:
     /* Run doTask against a specific consumer */
     virtual void doTask(Consumer &consumer) = 0;
+    void dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
 private:
-
     DBConnector *m_db;
 
 protected:

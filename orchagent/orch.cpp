@@ -1,6 +1,7 @@
 #include "orch.h"
 #include "logger.h"
-
+#include <sstream>
+#include <iostream>
 using namespace swss;
 
 Orch::Orch(DBConnector *db, string tableName) :
@@ -116,4 +117,14 @@ void Orch::doTask()
         if (!it.second.m_toSync.empty())
             doTask(it.second);
     }
+}
+
+void Orch::dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
+{
+    string debug_msg = "Full table content: " + consumer.m_consumer->getTableName() + " key : " + kfvKey(tuple) + " op : "  + kfvOp(tuple);
+    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
+    {
+        debug_msg += " " + fvField(*i) + " : " + fvValue(*i);
+    }
+    SWSS_LOG_DEBUG("%s\n", debug_msg.c_str());
 }
