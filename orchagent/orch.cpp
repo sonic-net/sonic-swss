@@ -1,6 +1,7 @@
 #include "orch.h"
 #include "logger.h"
-
+#include <sstream>
+#include <iostream>
 using namespace swss;
 
 Orch::Orch(DBConnector *db, string tableName) :
@@ -116,4 +117,37 @@ void Orch::doTask()
         if (!it.second.m_toSync.empty())
             doTask(it.second);
     }
+}
+
+bool Orch::tokenizeString(string str, const string &separator, vector<string> &tokens)
+{
+    SWSS_LOG_ENTER();
+    if(0 == separator.size())
+    {
+        SWSS_LOG_ERROR("Invalid separator passed in:%s\n", separator.c_str());
+        return false;
+    }
+    if(string::npos == str.find(separator))
+    {
+        SWSS_LOG_DEBUG("Single token:'%s'", str.c_str());
+        tokens.push_back(str);
+        return true;
+    }
+    istringstream ss(str);
+    string tmp;
+    while (getline(ss, tmp, separator[0]))
+    {
+        SWSS_LOG_DEBUG("extracted token:%s", tmp.c_str());
+        tokens.push_back(tmp);
+    }
+    return true;
+}
+void Orch::dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
+{
+    string debug_msg = "Full table content: " + consumer.m_consumer->getTableName() + " key : " + kfvKey(tuple) + " op : "  + kfvOp(tuple);
+    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
+    {
+        debug_msg += " " + fvField(*i) + " : " + fvValue(*i);
+    }
+    SWSS_LOG_DEBUG("%s\n", debug_msg.c_str());
 }
