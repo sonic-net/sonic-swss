@@ -270,6 +270,17 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 	4) "30720"
 
 ----------------------------------------------
+###TUNNEL_DECAP_TABLE
+    ; Stores tunnel decap rules
+    ; Status: Work in progress
+    key                     = TUNNEL_DECAP_TABLE:name
+    tunnel_type             = "IPINIP"
+    dst_ip                  = IP1,IP2 ;IP addresses separated ","
+    dscp_mode               = "uniform" / "pipe"
+    ecn_mode                = "copy_from_outer" / "standard"
+    ttl_mode                = "uniform" / "pipe" / "origin" ;origin means keeping the TTL in the inner packet header. Not yet defined in SAI.
+
+---------------------------------------------
 
 ###Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?  
