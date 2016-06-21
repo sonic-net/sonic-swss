@@ -272,13 +272,12 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 ----------------------------------------------
 ###TUNNEL_DECAP_TABLE
     ; Stores tunnel decap rules
-    ; Status: Work in progress
     key                     = TUNNEL_DECAP_TABLE:name
     tunnel_type             = "IPINIP"
-    dst_ip                  = IP1,IP2 ;IP addresses separated ","
+    dst_ip                  = IP1,IP2 ;IP addresses separated by ","
     dscp_mode               = "uniform" / "pipe"
-    ecn_mode                = "copy_from_outer" / "standard"
-    ttl_mode                = "uniform" / "pipe" / "origin" ;origin means keeping the TTL in the inner packet header. Not yet defined in SAI.
+    ecn_mode                = "copy_from_outer" / "standard" ;standard: Behavior defined in RFC 6040 section 4.2
+    ttl_mode                = "uniform" / "pipe"
 
 ---------------------------------------------
 
