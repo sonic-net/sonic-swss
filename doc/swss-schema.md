@@ -270,6 +270,16 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 	4) "30720"
 
 ----------------------------------------------
+###TUNNEL_DECAP_TABLE
+    ; Stores tunnel decap rules
+    key                     = TUNNEL_DECAP_TABLE:name
+    tunnel_type             = "IPINIP"
+    dst_ip                  = IP1,IP2 ;IP addresses separated by ","
+    dscp_mode               = "uniform" / "pipe"
+    ecn_mode                = "copy_from_outer" / "standard" ;standard: Behavior defined in RFC 6040 section 4.2
+    ttl_mode                = "uniform" / "pipe"
+
+---------------------------------------------
 
 ###Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?  
