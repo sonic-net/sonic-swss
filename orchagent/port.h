@@ -28,6 +28,9 @@ public:
     Port(std::string alias, Type type) :
             m_alias(alias), m_type(type) {};
 
+    bool getQueue(size_t queue_ind, sai_object_id_t &queue_id);
+    bool getPG(size_t pg_ind, sai_object_id_t &pg);
+
     inline bool operator<(const Port &o) const
     {
         return m_alias< o.m_alias;
