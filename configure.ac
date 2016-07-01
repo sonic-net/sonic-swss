@@ -29,6 +29,14 @@ AC_ARG_ENABLE(debug,
 esac],[debug=false])
 AM_CONDITIONAL(DEBUG, test x$debug = xtrue)
 
+AC_ARG_ENABLE(rpcserver,
+[  --enable-rpcserver  Compile with thrift rpcserver included],
+[case "${enableval}" in
+	yes) rpcserver=true ;;
+	no)  rpcserver=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-rpcserver) ;;
+esac],[rpcserver=false])
+AM_CONDITIONAL(SAITHRIFT, test x$rpcserver = xtrue)
 
 CFLAGS_COMMON="-std=c++11 -Wall -fPIC -Wno-write-strings -I/usr/include/libnl3 -I/usr/include/swss"
 AC_SUBST(CFLAGS_COMMON)

@@ -14,8 +14,16 @@ extern "C" {
 
 #include <getopt.h>
 
+#ifdef SAITHRIFT
+#include <switch_sai_rpc_server.h>
+#endif // SAITHRIFT
+
 using namespace std;
 using namespace swss;
+
+#ifdef SAITHRIFT
+#define SWITCH_SAI_THRIFT_RPC_SERVER_PORT 9092
+#endif // SAITHRIFT
 
 #define UNREFERENCED_PARAMETER(P)       (P)
 
@@ -126,13 +134,25 @@ int main(int argc, char **argv)
     int opt;
     sai_status_t status;
 
-    while ((opt = getopt(argc, argv, "m:h")) != -1)
+#ifdef SAITHRIFT
+    const char* const optstring = "rm:h";
+    bool run_rpc_server = false;
+#else
+    const char* const optstring = "m:h";
+#endif // SAITHRIFT
+
+    while ((opt = getopt(argc, argv, optstring)) != -1)
     {
         switch (opt)
         {
         case 'm':
             gMacAddress = MacAddress(optarg);
             break;
+#ifdef SAITHRIFT
+        case 'r':
+            run_rpc_server = true;
+            break;
+#endif // SAITHRIFT
         case 'h':
             exit(EXIT_SUCCESS);
         default: /* '?' */
@@ -206,6 +226,13 @@ int main(int argc, char **argv)
         SWSS_LOG_ERROR("Failed to initialize orchstration daemon\n");
         exit(EXIT_FAILURE);
     }
+
+#ifdef SAITHRIFT
+    if (run_rpc_server)
+    {
+        start_sai_thrift_rpc_server(SWITCH_SAI_THRIFT_RPC_SERVER_PORT);
+    }
+#endif // SAITHRIFT
 
     try {
         orchDaemon->start();
