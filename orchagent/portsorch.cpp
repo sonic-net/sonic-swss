@@ -15,7 +15,8 @@ extern sai_vlan_api_t *sai_vlan_api;
 extern sai_lag_api_t *sai_lag_api;
 extern sai_hostif_api_t* sai_hostif_api;
 
-#define VLAN_PREFIX "Vlan"
+#define VLAN_PREFIX         "Vlan"
+#define DEFAULT_VLAN_ID     1
 
 PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         Orch(db, tableNames)
@@ -92,10 +93,10 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     status = sai_switch_api->get_switch_attribute(1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("\n");
+        SWSS_LOG_ERROR("Failed to get port list");
     }
 
-    /* Get port lane info */
+    /* Get port hardware lane info */
     for (i = 0; i < (int)m_portCount; i++)
     {
         sai_uint32_t lanes[4];
@@ -124,7 +125,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         m_portListLaneMap[tmp_lane_set] = port_list[i];
     }
 
-    /* Set port hardware learn mode */
+    /* Set port to hardware learn mode */
     for (i = 0; i < (int)m_portCount; i++)
     {
         attr.id = SAI_PORT_ATTR_FDB_LEARNING;
@@ -133,7 +134,29 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         status = sai_port_api->set_port_attribute(port_list[i], &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set port hardware learn mode pid:%llx\n", port_list[i]);
+            SWSS_LOG_ERROR("Failed to set port to hardware learn mode pid:%llx\n", port_list[i]);
+        }
+    }
+
+    /* Get default VLAN member list */
+    sai_object_id_t *vlan_member_list = new sai_object_id_t[m_portCount];
+    attr.id = SAI_VLAN_ATTR_MEMBER_LIST;
+    attr.value.objlist.count = m_portCount;
+    attr.value.objlist.list = vlan_member_list;
+
+    status = sai_vlan_api->get_vlan_attribute(DEFAULT_VLAN_ID, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get default VLAN member list");
+    }
+
+    /* Remove port from default VLAN */
+    for (i = 0; i < (int)m_portCount; i++)
+    {
+        status = sai_vlan_api->remove_vlan_member(vlan_member_list[i]);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove port from default VLAN %d", i);
         }
     }
 }
