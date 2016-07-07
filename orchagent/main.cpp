@@ -98,25 +98,6 @@ void initSaiApi()
     sai_log_set(SAI_API_LAG,                    SAI_LOG_NOTICE);
 }
 
-void initDiagShell()
-{
-    sai_status_t status;
-
-    while (true)
-    {
-        sai_attribute_t attr;
-        attr.id = SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE + 1;
-        status = sai_switch_api->set_switch_attribute(&attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to open diagnostic shell %d", status);
-            return;
-        }
-
-        this_thread::sleep_for(chrono::seconds(1));
-    }
-}
-
 int main(int argc, char **argv)
 {
     swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_DEBUG);
@@ -144,13 +125,8 @@ int main(int argc, char **argv)
 
     initSaiApi();
 
-#ifdef MLNX_SAI
-    std::string mlnx_config_file = "/etc/ssw/ACS-MSN2700/sai_2700.xml";
-    gProfileMap[SAI_KEY_INIT_CONFIG_FILE] = mlnx_config_file;
-#endif
-
     SWSS_LOG_NOTICE("sai_switch_api: initializing switch\n");
-    status = sai_switch_api->initialize_switch(0, "0xb850", "", &switch_notifications);
+    status = sai_switch_api->initialize_switch(0, "", "SAI_INIT_VIEW", &switch_notifications);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to initialize switch %d\n", status);
@@ -182,11 +158,6 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
     }
-
-#ifdef BRCM_SAI
-    thread bcm_diag_shell_thread = thread(initDiagShell);
-    bcm_diag_shell_thread.detach();
-#endif
 
     attr.id = SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID;
     status = sai_switch_api->get_switch_attribute(1, &attr);
