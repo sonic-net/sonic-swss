@@ -126,7 +126,7 @@ int main(int argc, char **argv)
     initSaiApi();
 
     SWSS_LOG_NOTICE("sai_switch_api: initializing switch\n");
-    status = sai_switch_api->initialize_switch(0, "", "SAI_INIT_VIEW", &switch_notifications);
+    status = sai_switch_api->initialize_switch(0, "", "", &switch_notifications);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to initialize switch %d\n", status);
