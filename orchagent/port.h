@@ -9,6 +9,8 @@ extern "C" {
 #include <set>
 #include <string>
 
+#define DEFAULT_PORT_VLAN_ID    1
+
 namespace swss {
 
 class Port
@@ -49,6 +51,7 @@ public:
     int                 m_ifindex = 0;
     sai_object_id_t     m_port_id = 0;
     sai_vlan_id_t       m_vlan_id = 0;
+    sai_vlan_id_t       m_port_vlan_id = DEFAULT_PORT_VLAN_ID;  // Port VLAN ID
     sai_object_id_t     m_vlan_member_id = 0;
     sai_object_id_t     m_rif_id = 0;
     sai_object_id_t     m_hif_id = 0;

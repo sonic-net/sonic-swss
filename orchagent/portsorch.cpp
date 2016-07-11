@@ -686,7 +686,21 @@ bool PortsOrch::addVlanMember(Port vlan, Port port)
     SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%llx",
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_id, port.m_port_id);
 
+    attr.id = SAI_PORT_ATTR_PORT_VLAN_ID;
+    attr.value.u16 = vlan.m_vlan_id;
+
+    status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set port VLAN ID vid:%hu pid:%llx",
+                vlan.m_vlan_id, port.m_port_id);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Set port %s VLAN ID to %hu", port.m_alias.c_str(), vlan.m_vlan_id);
+
     port.m_vlan_id = vlan.m_vlan_id;
+    port.m_port_vlan_id = vlan.m_vlan_id;
     port.m_vlan_member_id = vlan_member_id;
     m_portList[port.m_alias] = port;
     vlan.m_members.insert(port.m_alias);
@@ -711,7 +725,20 @@ bool PortsOrch::removeVlanMember(Port vlan, Port port)
     SWSS_LOG_ERROR("Remove member %s from VLAN %s lid:%hx vmid:%llx",
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_id, port.m_vlan_member_id);
 
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PORT_VLAN_ID;
+    attr.value.u16 = DEFAULT_PORT_VLAN_ID;
+
+    status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to reset port VLAN ID to DEFAULT_PORT_VLAN_ID pid:%llx",
+                port.m_port_id);
+        return false;
+    }
+
     port.m_vlan_id = 0;
+    port.m_port_vlan_id = DEFAULT_PORT_VLAN_ID;
     port.m_vlan_member_id = 0;
     m_portList[port.m_alias] = port;
     vlan.m_members.erase(port.m_alias);
