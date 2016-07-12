@@ -1,0 +1,11 @@
+# vlan_interfaces file
+#
+# By default, this file shall be put in folder /etc/network/interfaces.d/.
+
+# The following configurations configures a VLAN with VLAN ID 1200, which
+# contains two VLAN members Ethernet0 and Ethernet4.
+auto Vlan1200
+iface Vlan1200 inet static
+    address 20.0.0.0
+    netmask 255.255.192.0
+    bridge_ports Ethernet0 Ethernet4

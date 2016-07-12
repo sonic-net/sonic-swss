@@ -1,0 +1,166 @@
+# interfaces file
+#
+# The main configuration file that is located in folder /etc/network/.
+
+# Loopback network interface
+auto lo
+iface lo inet loopback
+    up ip addr add dev lo 10.1.0.33/32
+
+# Management network interface
+auto eth0
+iface eth0 inet static
+    address 10.3.147.1
+    netmask 255.255.254.0
+    gateway 10.3.146.1
+
+# Switch front panel interfaces
+auto Ethernet8
+iface Ethernet8 inet static
+    address 10.0.0.4
+    netmask 255.255.255.254
+
+auto Ethernet12
+iface Ethernet12 inet static
+    address 10.0.0.6
+    netmask 255.255.255.254
+
+auto Ethernet16
+iface Ethernet16 inet static
+    address 10.0.0.8
+    netmask 255.255.255.254
+
+auto Ethernet20
+iface Ethernet20 inet static
+    address 10.0.0.10
+    netmask 255.255.255.254
+
+auto Ethernet24
+iface Ethernet24 inet static
+    address 10.0.0.12
+    netmask 255.255.255.254
+
+auto Ethernet28
+iface Ethernet28 inet static
+    address 10.0.0.14
+    netmask 255.255.255.254
+
+auto Ethernet32
+iface Ethernet32 inet static
+    address 10.0.0.16
+    netmask 255.255.255.254
+
+auto Ethernet36
+iface Ethernet36 inet static
+    address 10.0.0.18
+    netmask 255.255.255.254
+
+auto Ethernet40
+iface Ethernet40 inet static
+    address 10.0.0.20
+    netmask 255.255.255.254
+
+auto Ethernet44
+iface Ethernet44 inet static
+    address 10.0.0.22
+    netmask 255.255.255.254
+
+auto Ethernet48
+iface Ethernet48 inet static
+    address 10.0.0.24
+    netmask 255.255.255.254
+
+auto Ethernet52
+iface Ethernet52 inet static
+    address 10.0.0.26
+    netmask 255.255.255.254
+
+auto Ethernet56
+iface Ethernet56 inet static
+    address 10.0.0.28
+    netmask 255.255.255.254
+
+auto Ethernet60
+iface Ethernet60 inet static
+    address 10.0.0.30
+    netmask 255.255.255.254
+
+auto Ethernet64
+iface Ethernet64 inet static
+    address 10.0.0.32
+    netmask 255.255.255.254
+
+auto Ethernet68
+iface Ethernet68 inet static
+    address 10.0.0.34
+    netmask 255.255.255.254
+
+auto Ethernet72
+iface Ethernet72 inet static
+    address 10.0.0.36
+    netmask 255.255.255.254
+
+auto Ethernet76
+iface Ethernet76 inet static
+    address 10.0.0.38
+    netmask 255.255.255.254
+
+auto Ethernet80
+iface Ethernet80 inet static
+    address 10.0.0.40
+    netmask 255.255.255.254
+
+Auto Ethernet84
+iface Ethernet84 inet static
+    address 10.0.0.42
+    netmask 255.255.255.254
+
+auto Ethernet88
+iface Ethernet88 inet static
+    address 10.0.0.44
+    netmask 255.255.255.254
+
+auto Ethernet92
+iface Ethernet92 inet static
+    address 10.0.0.46
+    netmask 255.255.255.254
+
+auto Ethernet96
+iface Ethernet96 inet static
+    address 10.0.0.48
+    netmask 255.255.255.254
+
+auto Ethernet100
+iface Ethernet100 inet static
+    address 10.0.0.50
+    netmask 255.255.255.254
+
+auto Ethernet104
+iface Ethernet104 inet static
+    address 10.0.0.52
+    netmask 255.255.255.254
+
+auto Ethernet108
+iface Ethernet108 inet static
+    address 10.0.0.54
+    netmask 255.255.255.254
+
+auto Ethernet112
+iface Ethernet112 inet static
+    address 10.0.0.56
+    netmask 255.255.255.254
+
+auto Ethernet116
+iface Ethernet116 inet static
+    address 10.0.0.58
+    netmask 255.255.255.254
+
+auto Ethernet120
+iface Ethernet120 inet static
+    address 10.0.0.60
+    netmask 255.255.255.254
+
+auto Ethernet124
+iface Ethernet124 inet static
+    address 10.0.0.62
+    netmask 255.255.255.254
