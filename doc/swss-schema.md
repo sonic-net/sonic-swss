@@ -295,6 +295,8 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     ecn_mode                = "copy_from_outer" / "standard" ;standard: Behavior defined in RFC 6040 section 4.2
     ttl_mode                = "uniform" / "pipe"
 
+    IP = dec-octet "." dec-octet "." dec-octet "." dec-octet
+
 ---------------------------------------------
 
 ###LLDP_ENTRY_TABLE
