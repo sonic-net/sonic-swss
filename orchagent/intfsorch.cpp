@@ -24,9 +24,6 @@ void IntfsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (consumer.m_toSync.empty())
-        return;
-
     if (!m_portsOrch->isInitDone())
         return;
 

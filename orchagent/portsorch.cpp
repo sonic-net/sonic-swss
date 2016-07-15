@@ -534,9 +534,6 @@ void PortsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (consumer.m_toSync.empty())
-        return;
-
     string table_name = consumer.m_consumer->getTableName();
 
     if (table_name == APP_PORT_TABLE_NAME)
