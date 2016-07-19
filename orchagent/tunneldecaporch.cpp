@@ -3,7 +3,9 @@
 #include "logger.h"
 
 extern sai_tunnel_api_t* sai_tunnel_api;
-extern sai_switch_api_t* sai_switch_api;
+
+extern sai_object_id_t gVirtualRouterId;
+extern sai_object_id_t overlayIfId;
 
 TunnelDecapOrch::TunnelDecapOrch(DBConnector *db, string tableName) : Orch(db, tableName)
 {
@@ -16,8 +18,6 @@ TunnelDecapOrch::TunnelDecapOrch(DBConnector *db, string tableName) : Orch(db, t
  */
 void TunnelDecapOrch::doTask(Consumer& consumer)
 {
-    if (consumer.m_toSync.empty())
-        return;
 
     auto it = consumer.m_toSync.begin();
 
@@ -93,7 +93,7 @@ bool TunnelDecapOrch::addDecapTunnel(string type, IpAddresses dst_ip, string dsc
 
     SWSS_LOG_ENTER();
 
-    int length_of_tunnel_attrs = 4;
+    int length_of_tunnel_attrs = 5;
 
     // adding tunnel attributes to array and writing to ASIC_DB
     sai_attribute_t tunnel_attrs[length_of_tunnel_attrs];
@@ -101,38 +101,40 @@ bool TunnelDecapOrch::addDecapTunnel(string type, IpAddresses dst_ip, string dsc
     // tunnel type (only ipinip for now)
     tunnel_attrs[0].id = SAI_TUNNEL_ATTR_TYPE;
     tunnel_attrs[0].value.s32 = SAI_TUNNEL_IPINIP;
+    tunnel_attrs[1].id = SAI_TUNNEL_ATTR_OVERLAY_INTERFACE;
+    tunnel_attrs[1].value.oid = overlayIfId;
 
     // decap ecn mode (copy from outer/standard)
-    tunnel_attrs[1].id = SAI_TUNNEL_ATTR_DECAP_ECN_MODE;
+    tunnel_attrs[2].id = SAI_TUNNEL_ATTR_DECAP_ECN_MODE;
     if (ecn == "copy_from_outer") 
     {
-        tunnel_attrs[1].value.s32 = SAI_TUNNEL_DECAP_ECN_MODE_COPY_FROM_OUTER;
+        tunnel_attrs[2].value.s32 = SAI_TUNNEL_DECAP_ECN_MODE_COPY_FROM_OUTER;
     }
     else if (ecn == "standard") 
     {
-        tunnel_attrs[1].value.s32 = SAI_TUNNEL_DECAP_ECN_MODE_STANDARD;
+        tunnel_attrs[2].value.s32 = SAI_TUNNEL_DECAP_ECN_MODE_STANDARD;
     }
 
     // ttl mode (uniform/pipe)
-    tunnel_attrs[2].id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
+    tunnel_attrs[3].id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
     if (ttl == "uniform") 
     {
-        tunnel_attrs[2].value.s32 = SAI_TUNNEL_TTL_UNIFORM_MODEL;
+        tunnel_attrs[3].value.s32 = SAI_TUNNEL_TTL_UNIFORM_MODEL;
     }
     else if (ttl == "pipe") 
     {
-        tunnel_attrs[2].value.s32 = SAI_TUNNEL_TTL_PIPE_MODEL;
+        tunnel_attrs[3].value.s32 = SAI_TUNNEL_TTL_PIPE_MODEL;
     }
 
     // dscp mode (uniform/pipe)
-    tunnel_attrs[3].id = SAI_TUNNEL_ATTR_DECAP_DSCP_MODE;
+    tunnel_attrs[4].id = SAI_TUNNEL_ATTR_DECAP_DSCP_MODE;
     if (dscp == "uniform") 
     {
-        tunnel_attrs[3].value.s32 = SAI_TUNNEL_DSCP_UNIFORM_MODEL;
+        tunnel_attrs[4].value.s32 = SAI_TUNNEL_DSCP_UNIFORM_MODEL;
     }
     else if (dscp == "pipe") 
     {
-        tunnel_attrs[3].value.s32 = SAI_TUNNEL_DSCP_PIPE_MODEL;
+        tunnel_attrs[4].value.s32 = SAI_TUNNEL_DSCP_PIPE_MODEL;
     }
 
     // write attributes to ASIC_DB
@@ -143,17 +145,6 @@ bool TunnelDecapOrch::addDecapTunnel(string type, IpAddresses dst_ip, string dsc
         SWSS_LOG_ERROR("Failed to create tunnel");
         return false;
     }
-	
-    // gathering the switch virtual router id (this isn't actually used in brcm_sai but required for create)
-    sai_attribute_t attr;
-    attr.id = SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID;
-    status = sai_switch_api->get_switch_attribute(1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Fail to get switch virtual router ID %d", status);
-        exit(EXIT_FAILURE);
-    }
-    sai_object_id_t virtualRouterId = attr.value.oid;
 
     // TODO:
     // check if the database is already populated with the correct data
@@ -164,7 +155,7 @@ bool TunnelDecapOrch::addDecapTunnel(string type, IpAddresses dst_ip, string dsc
     int length_of_tunnel_table_entry_attrs = 5;
     sai_attribute_t tunnel_table_entry_attrs[length_of_tunnel_table_entry_attrs];
     tunnel_table_entry_attrs[0].id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID;
-    tunnel_table_entry_attrs[0].value.oid = virtualRouterId;
+    tunnel_table_entry_attrs[0].value.oid = gVirtualRouterId;
     tunnel_table_entry_attrs[1].id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE;
     tunnel_table_entry_attrs[1].value.u32 = SAI_TUNNEL_TERM_TABLE_ENTRY_P2MP;
     tunnel_table_entry_attrs[2].id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP;

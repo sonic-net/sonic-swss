@@ -36,6 +36,8 @@ sai_tunnel_api_t*           sai_tunnel_api;
 
 map<string, string> gProfileMap;
 sai_object_id_t gVirtualRouterId;
+sai_object_id_t overlayIfId;
+sai_object_id_t underlayIfId;
 MacAddress gMacAddress;
 
 const char *test_profile_get_value (
@@ -176,6 +178,25 @@ int main(int argc, char **argv)
     gVirtualRouterId = attr.value.oid;
 
     SWSS_LOG_NOTICE("Get switch virtual router ID %llx\n", gVirtualRouterId);
+
+    // create the overlay router interface to create a LOOPBACK type router interface (decap)
+    sai_attribute_t intf_attrs[2];
+    intf_attrs[0].id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+    intf_attrs[0].value.oid = gVirtualRouterId;
+    intf_attrs[1].id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+    intf_attrs[1].value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
+    sai_object_id_t overlay_if;
+
+    status = sai_router_intfs_api->create_router_interface(&overlay_if, 2, intf_attrs);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create overlay router interface.");
+        return false;
+    }
+
+    overlayIfId = overlay_if;
+
+    SWSS_LOG_NOTICE("Created overlay router interface ID %llx\n", overlayIfId);
 
     OrchDaemon *orchDaemon = new OrchDaemon();
     if (!orchDaemon->init())
