@@ -296,7 +296,56 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     ttl_mode                = "uniform" / "pipe"
 
 ---------------------------------------------
-
+###ACL_POLICY_TABLE
+; Define ACL Policy Table
+; Status: Working in progress
+  key           = ACL_POLICY_TABLE:policy_name          ; policy_name must be unique
+  policy_name   = 1*64VCHAR                             ; name of the ACL policy, must be unique
+  ports         = [0-max_ports]*port_name               ; the ports to which this ACL policy is applied,
+                                                        ; ACL policy might not be applied to any interface yet.
+  port_name     = 1*64VCHAR                             ; name of the port, must be unique
+  max_ports     = 1*5DIGIT                              ; number of ports supported on the chip
+---------------------------------------------
+###ACL_RULE_TABLE
+; Define rules associated with a specific ACL Policy
+; Status: Working in progress
+  key: ACL_RULE_TABLE:policy_name:seq                   ; key of the rule entry in the table, seq is the order of the rules 
+                                                        ; when the packet is filtered by the ACL "policy_name". 
+                                                        ; A rule is always assocaited with a policy. 
+  action        = "permit"/"deny"                       ; action when the fields are matched
+  l2_prot_type  = "ipv4"/"ipv6"                         ; options of the l2_protocol_type field
+  l3_prot_type  = "icmp"/"tcp"/"udp"/"any"              ; options of the l3_protocol_type field 
+  ipv4_src      = ipv4_prefix/"any"                     ; options of the source ipv4 address (and mask) field
+  ipv4_dst      = ipv4_prefix/"any"                     ; options of the destination ipv4 address (and mask) field
+  ipv6_src      = ipv6_prefix/"any"                     ; options of the source ipv6 address (and mask) field
+  ipv6_dst      = ipv6_prefix/"any"                     ; options of the destination ipv6 address (and mask) field
+                                                        ; l2_prot_type detemines which set of the addresses taking effect, v4 or v6.
+  l4_src_port   = port_num/[port_num_L-port_num_H]      ; source L4 port or the range of L4 ports field 
+  l4_dst_port   = port_num/[port_num_L-port_num_H]      ; destination L4 port or the range of L4 ports field
+  seq           = 1*DIGIT                               ; unique sequence number of the rules assocaited within this ACL policy.
+                                                        ; When applying this ACL policy, the seq determines the order of the 
+                                                        ; rules applied. 
+  port_num      = 1*5DIGIT                              ; a number between 0 and 65535
+  port_num_L    = 1*5DIGIT                              ; a number between 0 and 65535, port_num_L < port_num_H
+  port_num_H    = 1*5DIGIT                              ; a number between 0 and 65535, port_num_L < port_num_H
+  ipv6_prefix   =                                6( h16 ":" ) ls32
+                    /                       "::" 5( h16 ":" ) ls32
+                    / [               h16 ] "::" 4( h16 ":" ) ls32
+                    / [ *1( h16 ":" ) h16 ] "::" 3( h16 ":" ) ls32
+                    / [ *2( h16 ":" ) h16 ] "::" 2( h16 ":" ) ls32
+                    / [ *3( h16 ":" ) h16 ] "::"    h16 ":"   ls32
+                    / [ *4( h16 ":" ) h16 ] "::"              ls32
+                    / [ *5( h16 ":" ) h16 ] "::"              h16
+                    / [ *6( h16 ":" ) h16 ] "::"
+  h16           = 1*4HEXDIG
+  ls32          = ( h16 ":" h16 ) / IPv4address
+  ipv4_prefix   = dec-octet "." dec-octet "." dec-octet "." dec-octet “/” %d1-32  
+  dec-octet     = DIGIT                     ; 0-9
+                    / %x31-39 DIGIT         ; 10-99
+                    / "1" 2DIGIT            ; 100-199
+                    / "2" %x30-34 DIGIT     ; 200-249
+                    / "25" %x30-35          ; 250-255
+                    
 ###Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?  
 
