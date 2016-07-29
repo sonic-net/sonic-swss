@@ -297,6 +297,29 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 
 ---------------------------------------------
 
+###LLDP_ENTRY_TABLE
+    ; current LLDP neighbor information.
+    port_table_key           = LLDP_ENTRY_TABLE:ifname ; .1.0.8802.1.1.2.1
+    ; field                    value
+    lldp_rem_port_id_subtype = 1DIGIT     ; 4.1.1.6
+    lldp_rem_port_id         = 1*255VCHAR ; 4.1.1.7
+    lldp_rem_port_des        = 0*255VCHAR ; 4.1.1.8
+    lldp_rem_sys_name        = 0*255VCHAR ; 4.1.1.9
+
+    Example:
+    127.0.0.1:6379[1]> hgetall  "LLDP_ENTRY_TABLE:ETHERNET4"
+    1) "lldp_rem_sys_name"
+    2) "str-7260-13"
+    3) "lldp_rem_port_id_subtype"
+    4) "6"
+    5) "lldp_rem_port_id"
+    6) "Ethernet7"
+    7) "lldp_rem_sys_desc"
+    8) "SONiC v2"
+    
+---------------------------------------------
+
+
 ###Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?  
 
