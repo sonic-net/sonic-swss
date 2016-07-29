@@ -298,7 +298,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     4) "6"
     5) "lldp_rem_port_id"
     6) "Ethernet7"
-    7) "lldp_rem_sys_name"
+    7) "lldp_rem_sys_desc"
     8) "SONiC v2"
     
 ---------------------------------------------
