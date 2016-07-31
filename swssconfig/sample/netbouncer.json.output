@@ -1,0 +1,12 @@
+127.0.0.1:6379> hgetall TUNNEL_DECAP_TABLE:NETBOUNCER
+1) "dscp_mode"
+2) "uniform"
+3) "dst_ip"
+4) "127.0.0.1"
+5) "ecn_mode"
+6) "copy_from_outer"
+7) "ttl_mode"
+8) "uniform"
+9) "tunnel_type"
+10) "IPINIP"
+127.0.0.1:6379>

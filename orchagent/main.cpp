@@ -180,23 +180,36 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("Get switch virtual router ID %llx\n", gVirtualRouterId);
 
     // create the overlay router interface to create a LOOPBACK type router interface (decap)
-    sai_attribute_t intf_attrs[2];
-    intf_attrs[0].id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
-    intf_attrs[0].value.oid = gVirtualRouterId;
-    intf_attrs[1].id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
-    intf_attrs[1].value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
-    sai_object_id_t overlay_if;
+    sai_attribute_t overlay_intf_attrs[2];
+    overlay_intf_attrs[0].id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+    overlay_intf_attrs[0].value.oid = gVirtualRouterId;
+    overlay_intf_attrs[1].id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+    overlay_intf_attrs[1].value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
 
-    status = sai_router_intfs_api->create_router_interface(&overlay_if, 2, intf_attrs);
+    status = sai_router_intfs_api->create_router_interface(&overlayIfId, 2, overlay_intf_attrs);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create overlay router interface.");
+        SWSS_LOG_ERROR("Failed to create overlay router interface %d", status);
         return false;
     }
 
-    overlayIfId = overlay_if;
-
     SWSS_LOG_NOTICE("Created overlay router interface ID %llx\n", overlayIfId);
+
+    // create the underlay router interface to create a LOOPBACK type router interface (encap)
+    sai_attribute_t underlay_intf_attrs[2];
+    underlay_intf_attrs[0].id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+    underlay_intf_attrs[0].value.oid = gVirtualRouterId;
+    underlay_intf_attrs[1].id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+    underlay_intf_attrs[1].value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
+
+    status = sai_router_intfs_api->create_router_interface(&underlayIfId, 2, underlay_intf_attrs);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create underlay router interface %d", status);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Created underlay router interface ID %llx\n", underlayIfId);
 
     OrchDaemon *orchDaemon = new OrchDaemon();
     if (!orchDaemon->init())

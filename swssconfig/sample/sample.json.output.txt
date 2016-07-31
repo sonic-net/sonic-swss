@@ -24,7 +24,6 @@
 23) "WRED_PROFILE_TABLE_VALUE_QUEUE"
 24) "PORT_TABLE:ETHERNET4"
 25) "SCHEDULER_TABLE_KEY_QUEUE"
-26) "TUNNEL_DECAP_TABLE:NETBOUNCER"
 
 hgetall TC_TO_QUEUE_MAP_TABLE:AZURE
 hgetall SCHEDULER_TABLE:BEST_EFFORT
@@ -76,18 +75,7 @@ hgetall WRED_PROFILE_TABLE:AZURE
 2) "[DSCP_TO_TC_MAP_TABLE:AZURE]"
 3) "tc_to_queue_map"
 4) "[TC_TO_QUEUE_MAP_TABLE:AZURE]"
-127.0.0.1:6379> hgetall TUNNEL_DECAP_TABLE:NETBOUNCER
-1) "dscp_mode"
-2) "uniform"
-3) "dst_ip"
-4) "127.0.0.1"
-5) "ecn_mode"
-6) "copy_from_outer"
-7) "ttl_mode"
-8) "uniform"
-9) "tunnel_type"
-10) "IPINIP"
-127.0.0.1:6379>               
+127.0.0.1:6379>
 
 hgetall TC_TO_QUEUE_MAP_TABLE:AZURE
 hgetall SCHEDULER_TABLE:BEST_EFFORT
