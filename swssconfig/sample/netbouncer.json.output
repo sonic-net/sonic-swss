@@ -2,7 +2,7 @@
 1) "dscp_mode"
 2) "uniform"
 3) "dst_ip"
-4) "127.0.0.1"
+4) "10.0.0.1"
 5) "ecn_mode"
 6) "copy_from_outer"
 7) "ttl_mode"
