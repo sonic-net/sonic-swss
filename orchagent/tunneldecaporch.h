@@ -42,7 +42,7 @@ private:
     bool removeDecapTunnel(string key);
 
     bool addDecapTunnelTermEntries(string tunnelKey, IpAddresses dst_ip, sai_object_id_t tunnel_id);
-    bool removeDecapTunnelTermEntry(string key, TunnelTermEntry &tunnel_term_info);
+    bool removeDecapTunnelTermEntry(sai_object_id_t tunnel_term_id, string ip);
 
     bool setTunnelAttribute(string field, string value, sai_object_id_t existing_tunnel_id);
     bool setIpAttribute(string key, IpAddresses new_ip_addresses, sai_object_id_t tunnel_id);

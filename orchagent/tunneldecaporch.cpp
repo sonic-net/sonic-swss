@@ -427,7 +427,7 @@ bool TunnelDecapOrch::setIpAttribute(string key, IpAddresses new_ip_addresses, s
         string ip = tunnel_entry_info.ip_address;
         if (!new_ip_addresses.contains(ip))
         {
-            if (!removeDecapTunnelTermEntry(key, tunnel_entry_info))
+            if (!removeDecapTunnelTermEntry(tunnel_entry_info.tunnel_term_id, ip))
             {
                 return false;
             }
@@ -466,7 +466,8 @@ bool TunnelDecapOrch::removeDecapTunnel(string key)
     // loop through the tunnel entry ids related to the tunnel and remove them before removing the tunnel
     for (auto it = tunnel_info->tunnel_term_info.begin(); it != tunnel_info->tunnel_term_info.end(); ++it)
     {
-        if (!removeDecapTunnelTermEntry(key, *it))
+        TunnelTermEntry tunnel_entry_info = *it;
+        if (!removeDecapTunnelTermEntry(tunnel_entry_info.tunnel_term_id, tunnel_entry_info.ip_address))
         {
             return false;
         }
@@ -494,12 +495,9 @@ bool TunnelDecapOrch::removeDecapTunnel(string key)
  * Return Values:
  *    @return true on success and false if there's an error
  */
-bool TunnelDecapOrch::removeDecapTunnelTermEntry(string key, TunnelTermEntry &tunnel_term_info)
+bool TunnelDecapOrch::removeDecapTunnelTermEntry(sai_object_id_t tunnel_term_id, string ip)
 {
     sai_status_t status;
-    
-    sai_object_id_t tunnel_term_id = tunnel_term_info.tunnel_term_id;
-    string ip = tunnel_term_info.ip_address;
 
     status = sai_tunnel_api->remove_tunnel_term_table_entry(tunnel_term_id);
     if (status != SAI_STATUS_SUCCESS)
