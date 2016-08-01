@@ -226,8 +226,6 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
     tunnelTable[key] = { tunnel_id, {} };
 
     // TODO:
-    // check if the database is already populated with the correct data
-    // don't create duplicate entries
     // there should also be "business logic" for netbouncer in the "tunnel application" code, which is a different source file and daemon process
 
     // create a decap tunnel entry for every ip
@@ -279,7 +277,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, IpAddresses ds
     struct sockaddr_in tunnel_ip_struct;
     string ip;
 
-    attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP;
+    TunnelEntry *tunnel_info = &tunnelTable.find(tunnelKey)->second;
 
     // loop through the IP list and create a new tunnel table entry for every IP (in network byte order)
     for (auto it = tunnel_ips.begin(); it != tunnel_ips.end(); ++it)
@@ -298,6 +296,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, IpAddresses ds
             inet_pton(AF_INET, ip.c_str(), &(tunnel_ip_struct.sin_addr));
             tunnel_dst_ip.addr.ip4 = tunnel_ip_struct.sin_addr.s_addr;
 
+            attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP;
             attr.value.ipaddr = tunnel_dst_ip;
             tunnel_table_entry_attrs.push_back(attr);
 
@@ -314,7 +313,12 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, IpAddresses ds
             existingIps.insert(ip);
 
             // insert entry id and ip into tunnel mapping
-            tunnelTable[tunnelKey].tunnel_term_info.push_back({ tunnel_term_table_entry_id, ip });
+            tunnel_info->tunnel_term_info.push_back({ tunnel_term_table_entry_id, ip });
+
+            // pop the last element for the next loop
+            tunnel_table_entry_attrs.pop_back();
+
+            SWSS_LOG_NOTICE("Created tunnel entry for ip: %s", ip.c_str());
         }
 
     }
@@ -430,26 +434,15 @@ bool TunnelDecapOrch::setIpAttribute(string key, IpAddresses new_ip_addresses, s
         }
         else
         {
-            SWSS_LOG_ERROR("%s already exists. Will not create entry.", ip.c_str());
-
-            // remove the ip from new_ip_addresses since it already exists (saves some performance time)
-            new_ip_addresses.remove(ip);
-
             // add the data into the tunnel_term_info
             tunnel_info->tunnel_term_info.push_back({ tunnel_entry_info.tunnel_term_id, ip });
         }
     }
 
-    set<IpAddress> new_tunnel_ips = new_ip_addresses.getIpAddresses();
-
-    // loop through new ips and add ips that do not already exist
-    for (auto it = new_tunnel_ips.begin(); it != new_tunnel_ips.end(); ++it)
+    // add all the new ip addresses
+    if(!addDecapTunnelTermEntries(key, new_ip_addresses, tunnel_id))
     {
-        string ip = it->to_string();
-        if(!addDecapTunnelTermEntries(key, IpAddresses(ip), tunnel_id))
-        {
-            return false;
-        }
+        return false;
     }
 
     return true;
