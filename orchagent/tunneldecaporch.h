@@ -18,8 +18,8 @@ struct TunnelTermEntry
 
 struct TunnelEntry
 {
-	sai_object_id_t            tunnel_id;              // tunnel id
-	vector<TunnelTermEntry>	   tunnel_term_info;       // tunnel_entry ids related to the tunnel abd ips related to the tunnel (all ips for tunnel entries that refer to this tunnel)
+    sai_object_id_t            tunnel_id;              // tunnel id
+    vector<TunnelTermEntry>    tunnel_term_info;       // tunnel_entry ids related to the tunnel abd ips related to the tunnel (all ips for tunnel entries that refer to this tunnel)
 };
 
 /* TunnelTable: key string, tunnel object id */
@@ -35,8 +35,8 @@ public:
 
 private:
 
-	TunnelTable tunnelTable;
-	ExistingIps existingIps;
+    TunnelTable tunnelTable;
+    ExistingIps existingIps;
 
     bool addDecapTunnel(string key, string type, IpAddresses dst_ip, string dscp, string ecn, string ttl);
     bool removeDecapTunnel(string key);
