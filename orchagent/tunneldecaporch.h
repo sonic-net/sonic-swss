@@ -2,7 +2,6 @@
 #define SWSS_TUNNELDECAPORCH_H
 
 #include <arpa/inet.h>
-#include <list>
 #include <unordered_set>
 
 #include "orch.h"

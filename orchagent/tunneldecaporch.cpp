@@ -342,8 +342,6 @@ bool TunnelDecapOrch::setTunnelAttribute(string field, string value, sai_object_
 
     sai_attribute_t attr;
 
-    SWSS_LOG_NOTICE("tunnel id: %llu", existing_tunnel_id);
-
     if (field == "ecn_mode")
     {
         // decap ecn mode (copy from outer/standard)
@@ -392,10 +390,7 @@ bool TunnelDecapOrch::setTunnelAttribute(string field, string value, sai_object_
         SWSS_LOG_ERROR("Failed to set attribute %s with value %s\n", field.c_str(), value.c_str());
         return false;
     }
-    else
-    {
-        SWSS_LOG_NOTICE("Set attribute %s with value %s\n", field.c_str(), value.c_str());
-    }
+    SWSS_LOG_NOTICE("Set attribute %s with value %s\n", field.c_str(), value.c_str());
     return true;
 }
 
@@ -508,6 +503,6 @@ bool TunnelDecapOrch::removeDecapTunnelTermEntry(sai_object_id_t tunnel_term_id,
 
     // making sure to remove all instances of the ip address
     existingIps.erase(ip);
-    SWSS_LOG_NOTICE("Removed ip address: %s", ip.c_str());
+    SWSS_LOG_NOTICE("Removed decap tunnel term entry with ip address: %s", ip.c_str());
     return true;
 }
