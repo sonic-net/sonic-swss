@@ -8,6 +8,7 @@
 #include "net/if.h"
 
 #include "logger.h"
+#include "schema.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_port_api_t *sai_port_api;
@@ -22,6 +23,10 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();
+
+    /* Initialize Counter Table */
+    DBConnector *counter_db = new DBConnector(COUNTERS_DB, "localhost", 6379, 0);
+    m_counterTable = new Table(counter_db, COUNTERS_PORT_NAME_MAP);
 
     int i, j;
     sai_status_t status;
@@ -244,6 +249,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         {
                             /* Add port to port list */
                             m_portList[alias] = p;
+                            /* Add port name map to counter table */
+                            std::stringstream ss;
+                            ss << hex << p.m_port_id;
+                            FieldValueTuple tuple(p.m_alias, ss.str());
+                            vector<FieldValueTuple> vector;
+                            vector.push_back(tuple);
+                            m_counterTable->set("", vector);
+
                             SWSS_LOG_NOTICE("Port is initialized alias:%s\n", alias.c_str());
 
                         }

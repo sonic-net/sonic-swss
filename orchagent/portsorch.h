@@ -19,6 +19,8 @@ public:
     void setPort(string alias, Port port);
 
 private:
+    Table *m_counterTable;
+
     bool m_initDone = false;
     sai_object_id_t m_cpuPort;
 
