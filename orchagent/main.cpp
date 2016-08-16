@@ -36,7 +36,6 @@ sai_tunnel_api_t*           sai_tunnel_api;
 
 map<string, string> gProfileMap;
 sai_object_id_t gVirtualRouterId;
-sai_object_id_t overlayIfId;
 sai_object_id_t underlayIfId;
 MacAddress gMacAddress;
 
@@ -178,22 +177,6 @@ int main(int argc, char **argv)
     gVirtualRouterId = attr.value.oid;
 
     SWSS_LOG_NOTICE("Get switch virtual router ID %llx\n", gVirtualRouterId);
-
-    // create the overlay router interface to create a LOOPBACK type router interface (decap)
-    sai_attribute_t overlay_intf_attrs[2];
-    overlay_intf_attrs[0].id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
-    overlay_intf_attrs[0].value.oid = gVirtualRouterId;
-    overlay_intf_attrs[1].id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
-    overlay_intf_attrs[1].value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
-
-    status = sai_router_intfs_api->create_router_interface(&overlayIfId, 2, overlay_intf_attrs);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create overlay router interface %d", status);
-        return false;
-    }
-
-    SWSS_LOG_NOTICE("Created overlay router interface ID %llx\n", overlayIfId);
 
     // create the underlay router interface to create a LOOPBACK type router interface (encap)
     sai_attribute_t underlay_intf_attrs[2];

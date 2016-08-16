@@ -3,9 +3,9 @@
 #include "logger.h"
 
 extern sai_tunnel_api_t* sai_tunnel_api;
+extern sai_router_interface_api_t* sai_router_intfs_api;
 
 extern sai_object_id_t gVirtualRouterId;
-extern sai_object_id_t overlayIfId;
 extern sai_object_id_t underlayIfId;
 
 TunnelDecapOrch::TunnelDecapOrch(DBConnector *db, string tableName) : Orch(db, tableName)
@@ -163,9 +163,28 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
 
     SWSS_LOG_ENTER();
 
+    sai_status_t status;
+
     // adding tunnel attributes to array and writing to ASIC_DB
     sai_attribute_t attr;
     vector<sai_attribute_t> tunnel_attrs;
+    sai_object_id_t overlayIfId;
+
+    // create the overlay router interface to create a LOOPBACK type router interface (decap)
+    sai_attribute_t overlay_intf_attrs[2];
+    overlay_intf_attrs[0].id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+    overlay_intf_attrs[0].value.oid = gVirtualRouterId;
+    overlay_intf_attrs[1].id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+    overlay_intf_attrs[1].value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
+
+    status = sai_router_intfs_api->create_router_interface(&overlayIfId, 2, overlay_intf_attrs);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create overlay router interface %d", status);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Created overlay router interface ID %llx\n", overlayIfId);
 
     // tunnel type (only ipinip for now)
     attr.id = SAI_TUNNEL_ATTR_TYPE;
@@ -216,7 +235,7 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
 
     // write attributes to ASIC_DB
     sai_object_id_t tunnel_id;
-    sai_status_t status = sai_tunnel_api->create_tunnel(&tunnel_id, tunnel_attrs.size(), tunnel_attrs.data());
+    status = sai_tunnel_api->create_tunnel(&tunnel_id, tunnel_attrs.size(), tunnel_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create tunnel");
