@@ -40,9 +40,9 @@ int main(int argc, char **argv)
         {
             cout << "Connection lost, reconnecting..." << endl;
         }
-        catch (...)
+        catch (const std::exception& e)
         {
-            cout << "Exception had been thrown in deamon" << endl;
+            cout << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
             return 0;
         }
     }

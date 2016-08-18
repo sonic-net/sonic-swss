@@ -124,9 +124,9 @@ int main(int argc, char **argv)
             }
         }
     }
-    catch (...)
+    catch (const std::exception& e)
     {
-        cerr << "Exception had been thrown in deamon" << endl;
+        cerr << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
         return EXIT_FAILURE;
     }
 
