@@ -1,9 +1,13 @@
-#include "orch.h"
-#include "tokenize.h"
-#include "logger.h"
 #include <iostream>
 
+#include "orch.h"
+#include "portsorch.h"
+#include "tokenize.h"
+#include "logger.h"
+
 using namespace swss;
+
+extern PortsOrch *gPortsOrch;
 
 Orch::Orch(DBConnector *db, string tableName) :
     m_db(db)
@@ -41,7 +45,7 @@ vector<Selectable *> Orch::getSelectables()
 bool Orch::hasSelectable(ConsumerTable *selectable) const
 {
     for(auto it : m_consumerMap) {
-        if(it.second.m_consumer == selectable) {
+        if (it.second.m_consumer == selectable) {
             return true;
         }
     }
@@ -53,7 +57,7 @@ bool Orch::execute(string tableName)
     SWSS_LOG_ENTER();
 
     auto consumer_it = m_consumerMap.find(tableName);
-    if(consumer_it == m_consumerMap.end())
+    if (consumer_it == m_consumerMap.end())
     {
         SWSS_LOG_ERROR("Unrecognized tableName:%s\n", tableName.c_str());
         return false;
@@ -69,7 +73,7 @@ bool Orch::execute(string tableName)
     dumpTuple(consumer, new_data);
 
     /* If a new task comes or if a DEL task comes, we directly put it into consumer.m_toSync map */
-    if(consumer.m_toSync.find(key) == consumer.m_toSync.end() || op == DEL_COMMAND)
+    if (consumer.m_toSync.find(key) == consumer.m_toSync.end() || op == DEL_COMMAND)
     {
        consumer.m_toSync[key] = new_data;
     }
@@ -91,7 +95,7 @@ bool Orch::execute(string tableName)
             while (iu != existing_values.end())
             {
                 string ofield = fvField(*iu);
-                if(field == ofield)
+                if (field == ofield)
                     iu = existing_values.erase(iu);
                 else
                     iu++;
@@ -101,7 +105,7 @@ bool Orch::execute(string tableName)
         consumer.m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
     }
 
-    if(!consumer.m_toSync.empty())
+    if (!consumer.m_toSync.empty())
         doTask(consumer);
 
     return true;
@@ -116,12 +120,12 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_DEBUG("input:%s", ref_in.c_str());
-    if(ref_in.size() < 3)
+    if (ref_in.size() < 3)
     {
         SWSS_LOG_ERROR("invalid reference received:%s\n", ref_in.c_str());
         return false;
     }
-    if((ref_in[0] != ref_start) && (ref_in[ref_in.size()-1] != ref_end))
+    if ((ref_in[0] != ref_start) && (ref_in[ref_in.size()-1] != ref_end))
     {
         SWSS_LOG_ERROR("malformed reference:%s. Must be surrounded by [ ]\n", ref_in.c_str());
         return false;
@@ -129,20 +133,20 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name
     string ref_content = ref_in.substr(1, ref_in.size() - 2);
     vector<string> tokens;
     tokens = tokenize(ref_content, delimiter);
-    if(tokens.size() != 2)
+    if (tokens.size() != 2)
     {
         SWSS_LOG_ERROR("malformed reference:%s. Must contain 2 tokens\n", ref_content.c_str());
         return false;
     }
     auto type_it = type_maps.find(tokens[0]);
-    if(type_it == type_maps.end())
+    if (type_it == type_maps.end())
     {
         SWSS_LOG_ERROR("not recognized type:%s\n", tokens[0].c_str());
         return false;
     }
     auto obj_map = type_maps[tokens[0]];
     auto obj_it = obj_map->find(tokens[1]);
-    if(obj_it == obj_map->end())
+    if (obj_it == obj_map->end())
     {
         SWSS_LOG_ERROR("map:%s does not contain object with name:%s\n", tokens[0].c_str(), tokens[1].c_str());
         return false;
@@ -163,16 +167,16 @@ ref_resolve_status Orch::resolveFieldRefValue(
     size_t count = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
-        if(fvField(*i) == field_name)
+        if (fvField(*i) == field_name)
         {
             SWSS_LOG_DEBUG("field:%s, value:%s", fvField(*i).c_str(), fvValue(*i).c_str());
-            if(count > 1)
+            if (count > 1)
             {
                 SWSS_LOG_ERROR("Singleton field with name:%s must have only 1 instance, actual count:%d\n", field_name.c_str(), count);
                 return ref_resolve_status::multiple_instances;
             }
             string ref_type_name, object_name;
-            if(!parseReference(type_maps, fvValue(*i), ref_type_name, object_name))
+            if (!parseReference(type_maps, fvValue(*i), ref_type_name, object_name))
             {
                 return ref_resolve_status::not_resolved;
             }
@@ -180,7 +184,7 @@ ref_resolve_status Orch::resolveFieldRefValue(
             count++;
         }
     }
-    if(0 == count)
+    if (0 == count)
     {
         SWSS_LOG_NOTICE("field with name:%s not found\n", field_name.c_str());
         return ref_resolve_status::field_not_found;
@@ -190,9 +194,12 @@ ref_resolve_status Orch::resolveFieldRefValue(
 
 void Orch::doTask()
 {
+    if (!gPortsOrch->isInitDone())
+        return;
+
     for(auto &it : m_consumerMap)
     {
-        if(!it.second.m_toSync.empty())
+        if (!it.second.m_toSync.empty())
             doTask(it.second);
     }
 }
@@ -219,9 +226,9 @@ ref_resolve_status Orch::resolveFieldRefArray(
     sai_object_arr.clear();
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
-        if(fvField(*i) == field_name)
+        if (fvField(*i) == field_name)
         {
-            if(count > 1)
+            if (count > 1)
             {
                 SWSS_LOG_ERROR("Singleton field with name:%s must have only 1 instance, actual count:%d\n", field_name.c_str(), count);
                 return ref_resolve_status::multiple_instances;
@@ -229,7 +236,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
             string ref_type_name, object_name;
             string list = fvValue(*i);
             vector<string> list_items;
-            if(list.find(list_item_delimiter) != string::npos)
+            if (list.find(list_item_delimiter) != string::npos)
             {
                 list_items = tokenize(list, list_item_delimiter);
             }
@@ -239,7 +246,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
             }
             for (size_t ind = 0; ind < list_items.size(); ind++)
             {
-                if(!parseReference(type_maps, list_items[ind], ref_type_name, object_name))
+                if (!parseReference(type_maps, list_items[ind], ref_type_name, object_name))
                 {
                     SWSS_LOG_ERROR("Failed to parse profile reference:%s\n", list_items[ind].c_str());
                     return ref_resolve_status::not_resolved;
@@ -251,7 +258,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
             count++;
         }
     }
-    if(0 == count)
+    if (0 == count)
     {
         SWSS_LOG_NOTICE("field with name:%s not found\n", field_name.c_str());
         return ref_resolve_status::field_not_found;
@@ -263,18 +270,18 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_DEBUG("input:%s", input.c_str());
-    if(input.find(range_specifier) != string::npos)
+    if (input.find(range_specifier) != string::npos)
     {
         vector<string> range_values;
         range_values = tokenize(input, range_specifier);
-        if(range_values.size() != 2)
+        if (range_values.size() != 2)
         {
             SWSS_LOG_ERROR("malformed index range in:%s. Must contain 2 tokens\n", input.c_str());
             return false;
         }
         range_low = stoul(range_values[0]);
         range_high = stoul(range_values[1]);
-        if(range_low >= range_high)
+        if (range_low >= range_high)
         {
             SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than righ value.\n", input.c_str());
             return false;

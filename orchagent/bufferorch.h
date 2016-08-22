@@ -23,7 +23,7 @@ const string buffer_profile_list_field_name = "profile_list";
 class BufferOrch : public Orch
 {
 public:
-    BufferOrch(DBConnector *db, vector<string> &tableNames, PortsOrch *portsOrch);
+    BufferOrch(DBConnector *db, vector<string> &tableNames);
     static type_map m_buffer_type_maps;
 private:
     typedef task_process_status (BufferOrch::*buffer_table_handler)(Consumer& consumer);
@@ -39,7 +39,6 @@ private:
     task_process_status processIngressBufferProfileList(Consumer &consumer);
     task_process_status processEgressBufferProfileList(Consumer &consumer);
 
-    PortsOrch *m_portsOrch;
     buffer_table_handler_map m_bufferHandlerMap;
 };
 #endif /* SWSS_BUFFORCH_H */

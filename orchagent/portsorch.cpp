@@ -1,9 +1,9 @@
 #include "portsorch.h"
 
+#include <cassert>
 #include <fstream>
 #include <sstream>
 #include <set>
-#include "assert.h"
 
 #include "net/if.h"
 
@@ -38,7 +38,8 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     status = sai_switch_api->get_switch_attribute(1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get CPU port\n");
+        SWSS_LOG_ERROR("Failed to get CPU port");
+        throw "PortsOrch initialization failure";
     }
 
     m_cpuPort = attr.value.oid;
@@ -49,12 +50,13 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     status = sai_switch_api->get_switch_attribute(1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get port number\n");
+        SWSS_LOG_ERROR("Failed to get port number");
+        throw "PortsOrch initialization failure";
     }
 
     m_portCount = attr.value.u32;
 
-    SWSS_LOG_NOTICE("Get port number : %d\n", m_portCount);
+    SWSS_LOG_NOTICE("Get port number : %d", m_portCount);
 
     /* Get port list */
     sai_object_id_t *port_list = new sai_object_id_t[m_portCount];
@@ -66,6 +68,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get port list");
+        throw "PortsOrch initialization failure";
     }
 
     /* Get port hardware lane info */
@@ -79,7 +82,8 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         status = sai_port_api->get_port_attribute(port_list[i], 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get hardware lane list pid:%llx\n", port_list[i]);
+            SWSS_LOG_ERROR("Failed to get hardware lane list pid:%llx", port_list[i]);
+            throw "PortsOrch initialization failure";
         }
 
         set<int> tmp_lane_set;
@@ -93,7 +97,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         }
         tmp_lane_str = tmp_lane_str.substr(0, tmp_lane_str.size()-1);
 
-        SWSS_LOG_NOTICE("Get port with lanes pid:%llx lanes:%s\n", port_list[i], tmp_lane_str.c_str());
+        SWSS_LOG_NOTICE("Get port with lanes pid:%llx lanes:%s", port_list[i], tmp_lane_str.c_str());
         m_portListLaneMap[tmp_lane_set] = port_list[i];
     }
 
@@ -106,8 +110,10 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         status = sai_port_api->set_port_attribute(port_list[i], &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set port to hardware learn mode pid:%llx\n", port_list[i]);
+            SWSS_LOG_ERROR("Failed to set port to hardware learn mode pid:%llx", port_list[i]);
+            throw "PortsOrch initialization failure";
         }
+        SWSS_LOG_NOTICE("Set port to hardware learn mode pid:%llx", port_list[i]);
     }
 
     /* Get default VLAN member list */
@@ -120,6 +126,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get default VLAN member list");
+        throw "PortsOrch initialization failure";
     }
 
     /* Remove port from default VLAN */
@@ -129,6 +136,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to remove port from default VLAN %d", i);
+            throw "PortsOrch initialization failure";
         }
     }
 }
@@ -199,7 +207,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             if (!m_initDone)
             {
                 m_initDone = true;
-                SWSS_LOG_INFO("Get ConfigDone notification from portsyncd.\n");
+                SWSS_LOG_INFO("Get ConfigDone notification from portsyncd.");
             }
 
             it = consumer.m_toSync.erase(it);
@@ -241,7 +249,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     /* Determin if the port has already been initialized before */
                     if (m_portList.find(alias) != m_portList.end() && m_portList[alias].m_port_id == id)
-                        SWSS_LOG_NOTICE("Port has already been initialized before alias:%s\n", alias.c_str());
+                        SWSS_LOG_NOTICE("Port has already been initialized before alias:%s", alias.c_str());
                     else
                     {
                         Port p(alias, Port::PHY);
@@ -262,15 +270,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             vector.push_back(tuple);
                             m_counterTable->set("", vector);
 
-                            SWSS_LOG_NOTICE("Port is initialized alias:%s\n", alias.c_str());
+                            SWSS_LOG_NOTICE("Port is initialized alias:%s", alias.c_str());
 
                         }
                         else
-                            SWSS_LOG_ERROR("Failed to initialize port alias:%s\n", alias.c_str());
+                            SWSS_LOG_ERROR("Failed to initialize port alias:%s", alias.c_str());
                     }
                 }
                 else
-                    SWSS_LOG_ERROR("Failed to locate port lane combination alias:%s\n", alias.c_str());
+                    SWSS_LOG_ERROR("Failed to locate port lane combination alias:%s", alias.c_str());
             }
 
             if (admin_status != "")
@@ -279,20 +287,20 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (getPort(alias, p))
                 {
                     if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
-                        SWSS_LOG_NOTICE("Port is set to admin %s alias:%s\n", admin_status.c_str(), alias.c_str());
+                        SWSS_LOG_NOTICE("Port is set to admin %s alias:%s", admin_status.c_str(), alias.c_str());
                     else
                     {
-                        SWSS_LOG_ERROR("Failed to set port to admin %s alias:%s\n", admin_status.c_str(), alias.c_str());
+                        SWSS_LOG_ERROR("Failed to set port to admin %s alias:%s", admin_status.c_str(), alias.c_str());
                         it++;
                         continue;
                     }
                 }
                 else
-                    SWSS_LOG_ERROR("Failed to get port id by alias:%s\n", alias.c_str());
+                    SWSS_LOG_ERROR("Failed to get port id by alias:%s", alias.c_str());
             }
         }
         else
-            SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
 
         it = consumer.m_toSync.erase(it);
     }
@@ -340,7 +348,6 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 /* Duplicate entry */
                 if (m_portList.find(vlan_alias) != m_portList.end())
                 {
-                    SWSS_LOG_ERROR("Duplicate VLAN entry alias:%s", vlan_alias.c_str());
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -353,7 +360,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             else if (op == DEL_COMMAND)
             {
                 Port vlan;
-                assert(getPort(vlan_alias, vlan));
+                getPort(vlan_alias, vlan);
 
                 if (removeVlan(vlan))
                     it = consumer.m_toSync.erase(it);
@@ -371,16 +378,14 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         {
             assert(m_portList.find(vlan_alias) != m_portList.end());
             Port vlan, port;
-            assert(getPort(vlan_alias, vlan));
-            assert(getPort(port_alias, port));
+            getPort(vlan_alias, vlan);
+            getPort(port_alias, port);
 
             if (op == SET_COMMAND)
             {
                 /* Duplicate entry */
                 if (vlan.m_members.find(port_alias) != vlan.m_members.end())
                 {
-                    SWSS_LOG_ERROR("Duplicate VLAN member entry vlan:%s port:%s",
-                            vlan_alias.c_str(), port_alias.c_str());
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -411,7 +416,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             }
             else
             {
-                SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
                 it = consumer.m_toSync.erase(it);
             }
         }
@@ -449,7 +454,6 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 /* Duplicate entry */
                 if (m_portList.find(lag_alias) != m_portList.end())
                 {
-                    SWSS_LOG_ERROR("Duplicate LAG entry alias:%s", lag_alias.c_str());
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -462,7 +466,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
             else if (op == DEL_COMMAND)
             {
                 Port lag;
-                assert(getPort(lag_alias, lag));
+                getPort(lag_alias, lag);
 
                 if (removeLag(lag))
                     it = consumer.m_toSync.erase(it);
@@ -471,7 +475,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
             }
             else
             {
-                SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
                 it = consumer.m_toSync.erase(it);
             }
         }
@@ -480,16 +484,14 @@ void PortsOrch::doLagTask(Consumer &consumer)
         {
             assert(m_portList.find(lag_alias) != m_portList.end());
             Port lag, port;
-            assert(getPort(lag_alias, lag));
-            assert(getPort(port_alias, port));
+            getPort(lag_alias, lag);
+            getPort(port_alias, port);
 
             if (op == SET_COMMAND)
             {
                 /* Duplicate entry */
                 if (lag.m_members.find(port_alias) != lag.m_members.end())
                 {
-                    SWSS_LOG_ERROR("Duplicate LAG member entry lag:%s port:%s",
-                            lag_alias.c_str(), port_alias.c_str());
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -516,7 +518,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
             }
             else
             {
-                SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
                 it = consumer.m_toSync.erase(it);
             }
         }
@@ -595,7 +597,7 @@ bool PortsOrch::initializePort(Port &p)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("Initializing port alias:%s pid:%llx\n", p.m_alias.c_str(), p.m_port_id);
+    SWSS_LOG_NOTICE("Initializing port alias:%s pid:%llx", p.m_alias.c_str(), p.m_port_id);
 
     if (!initializePriorityGroups(p))
     {
@@ -612,7 +614,7 @@ bool PortsOrch::initializePort(Port &p)
     /* Set up host interface */
     if (!addHostIntfs(p.m_port_id, p.m_alias, p.m_hif_id))
     {
-        SWSS_LOG_ERROR("Failed to set up host interface pid:%llx alias:%s\n", p.m_port_id, p.m_alias.c_str());
+        SWSS_LOG_ERROR("Failed to set up host interface pid:%llx alias:%s", p.m_port_id, p.m_alias.c_str());
         return false;
     }
 
@@ -623,7 +625,7 @@ bool PortsOrch::initializePort(Port &p)
     p.m_ifindex = if_nametoindex(p.m_alias.c_str());
     if (p.m_ifindex == 0)
     {
-        SWSS_LOG_ERROR("Failed to get netdev index alias:%s\n", p.m_alias.c_str());
+        SWSS_LOG_ERROR("Failed to get netdev index alias:%s", p.m_alias.c_str());
         return false;
     }
 #endif
@@ -631,7 +633,7 @@ bool PortsOrch::initializePort(Port &p)
     /* Set port admin status UP */
     if (!setPortAdminStatus(p.m_port_id, true))
     {
-        SWSS_LOG_ERROR("Failed to set port admin status UP pid:%llx\n", p.m_port_id);
+        SWSS_LOG_ERROR("Failed to set port admin status UP pid:%llx", p.m_port_id);
         return false;
     }
     return true;
@@ -659,7 +661,7 @@ bool PortsOrch::addHostIntfs(sai_object_id_t id, string alias, sai_object_id_t &
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create host interface\n");
+        SWSS_LOG_ERROR("Failed to create host interface");
         return false;
     }
 
@@ -840,11 +842,11 @@ bool PortsOrch::removeLag(Port lag)
     sai_status_t status = sai_lag_api->remove_lag(lag.m_lag_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove LAG %s lid:%llx\n", lag.m_alias.c_str(), lag.m_lag_id);
+        SWSS_LOG_ERROR("Failed to remove LAG %s lid:%llx", lag.m_alias.c_str(), lag.m_lag_id);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Remove LAG %s lid:%llx\n", lag.m_alias.c_str(), lag.m_lag_id);
+    SWSS_LOG_NOTICE("Remove LAG %s lid:%llx", lag.m_alias.c_str(), lag.m_lag_id);
 
     m_portList.erase(lag.m_alias);
 
@@ -871,12 +873,12 @@ bool PortsOrch::addLagMember(Port lag, Port port)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to add member %s to LAG %s lid:%llx pid:%llx\n",
+        SWSS_LOG_ERROR("Failed to add member %s to LAG %s lid:%llx pid:%llx",
                 port.m_alias.c_str(), lag.m_alias.c_str(), lag.m_lag_id, port.m_port_id);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Add member %s to LAG %s lid:%llx pid:%llx\n",
+    SWSS_LOG_NOTICE("Add member %s to LAG %s lid:%llx pid:%llx",
             port.m_alias.c_str(), lag.m_alias.c_str(), lag.m_lag_id, port.m_port_id);
 
     port.m_lag_id = lag.m_lag_id;

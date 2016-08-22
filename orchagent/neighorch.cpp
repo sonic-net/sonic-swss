@@ -6,19 +6,25 @@
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
 
+extern PortsOrch *gPortsOrch;
+
+NeighOrch::NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch) :
+        Orch(db, tableName), m_intfsOrch(intfsOrch)
+{
+    SWSS_LOG_ENTER();
+}
+
 bool NeighOrch::hasNextHop(IpAddress ipAddress)
 {
     return m_syncdNextHops.find(ipAddress) != m_syncdNextHops.end();
 }
 
-bool NeighOrch::addNextHop(IpAddress ipAddress, Port port)
+bool NeighOrch::addNextHop(IpAddress ipAddress, string alias)
 {
     SWSS_LOG_ENTER();
 
     assert(!hasNextHop(ipAddress));
-
-    if (port.m_rif_id == 0)
-        return false;
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
 
     sai_attribute_t next_hop_attrs[3];
     next_hop_attrs[0].id = SAI_NEXT_HOP_ATTR_TYPE;
@@ -26,26 +32,31 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, Port port)
     next_hop_attrs[1].id = SAI_NEXT_HOP_ATTR_IP;
     copy(next_hop_attrs[1].value.ipaddr, ipAddress);
     next_hop_attrs[2].id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
-    next_hop_attrs[2].value.oid = port.m_rif_id;
+    next_hop_attrs[2].value.oid = rif_id;
 
     sai_object_id_t next_hop_id;
     sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, 3, next_hop_attrs);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create next hop entry ip:%s rid%llx\n",
-                       ipAddress.to_string().c_str(), port.m_rif_id);
+        SWSS_LOG_ERROR("Failed to create next hop entry ip:%s rid:%llx",
+                       ipAddress.to_string().c_str(), rif_id);
         return false;
     }
+
+    SWSS_LOG_NOTICE("Create next hop entry id:%llx, ip:%s, rid:%llx\n",
+                    next_hop_id, ipAddress.to_string().c_str(), rif_id);
 
     NextHopEntry next_hop_entry;
     next_hop_entry.next_hop_id = next_hop_id;
     next_hop_entry.ref_count = 0;
     m_syncdNextHops[ipAddress] = next_hop_entry;
 
+    m_intfsOrch->increaseRouterIntfsRefCount(alias);
+
     return true;
 }
 
-bool NeighOrch::removeNextHop(IpAddress ipAddress)
+bool NeighOrch::removeNextHop(IpAddress ipAddress, string alias)
 {
     SWSS_LOG_ENTER();
 
@@ -59,6 +70,7 @@ bool NeighOrch::removeNextHop(IpAddress ipAddress)
     }
 
     m_syncdNextHops.erase(ipAddress);
+    m_intfsOrch->decreaseRouterIntfsRefCount(alias);
     return true;
 }
 
@@ -90,9 +102,6 @@ void NeighOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!m_portsOrch->isInitDone())
-        return;
-
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -110,7 +119,7 @@ void NeighOrch::doTask(Consumer &consumer)
         string alias = key.substr(0, found);
         Port p;
 
-        if (!m_portsOrch->getPort(alias, p))
+        if (!gPortsOrch->getPort(alias, p))
         {
             it = consumer.m_toSync.erase(it);
             continue;
@@ -140,6 +149,7 @@ void NeighOrch::doTask(Consumer &consumer)
                     it++;
             }
             else
+                /* Duplicate entry */
                 it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
@@ -171,14 +181,10 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
     IpAddress ip_address = neighborEntry.ip_address;
     string alias = neighborEntry.alias;
 
-    Port p;
-    m_portsOrch->getPort(alias, p);
-
-    if (p.m_rif_id == 0)
-        return false;
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
 
     sai_neighbor_entry_t neighbor_entry;
-    neighbor_entry.rif_id = p.m_rif_id;
+    neighbor_entry.rif_id = rif_id;
     copy(neighbor_entry.ip_address, ip_address);
 
     sai_attribute_t neighbor_attr;
@@ -194,15 +200,18 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
             return false;
         }
 
-        SWSS_LOG_NOTICE("Create neighbor entry rid:%llx alias:%s ip:%s\n", p.m_rif_id, alias.c_str(), ip_address.to_string().c_str());
+        SWSS_LOG_NOTICE("Create neighbor entry rid:%llx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
+        m_intfsOrch->increaseRouterIntfsRefCount(alias);
 
-        if (!addNextHop(ip_address, p))
+        if (!addNextHop(ip_address, alias))
         {
             status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%llx alias:%s ip:%s\n", p.m_rif_id, alias.c_str(), ip_address.to_string().c_str());
+                SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%llx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
+                return false;
             }
+            m_intfsOrch->decreaseRouterIntfsRefCount(alias);
             return false;
         }
 
@@ -234,15 +243,10 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
         return false;
     }
 
-    Port p;
-    if (!m_portsOrch->getPort(alias, p))
-    {
-        SWSS_LOG_ERROR("Failed to locate port alias:%s\n", alias.c_str());
-        return false;
-    }
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
 
     sai_neighbor_entry_t neighbor_entry;
-    neighbor_entry.rif_id = p.m_rif_id;
+    neighbor_entry.rif_id = rif_id;
     copy(neighbor_entry.ip_address, ip_address);
 
     sai_object_id_t next_hop_id = m_syncdNextHops[ip_address].next_hop_id;
@@ -266,16 +270,17 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
     {
         if (status == SAI_STATUS_ITEM_NOT_FOUND)
         {
-            SWSS_LOG_ERROR("Failed to locate neigbor entry rid:%llx ip:%s\n", p.m_rif_id, ip_address.to_string().c_str());
+            SWSS_LOG_ERROR("Failed to locate neigbor entry rid:%llx ip:%s\n", rif_id, ip_address.to_string().c_str());
             return true;
         }
 
-        SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%llx ip:%s\n", p.m_rif_id, ip_address.to_string().c_str());
+        SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%llx ip:%s\n", rif_id, ip_address.to_string().c_str());
         return false;
     }
 
     m_syncdNeighbors.erase(neighborEntry);
-    removeNextHop(ip_address);
+    m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+    removeNextHop(ip_address, alias);
 
     return true;
 }

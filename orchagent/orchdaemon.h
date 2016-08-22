@@ -20,14 +20,13 @@ using namespace swss;
 class OrchDaemon
 {
 public:
-    OrchDaemon();
+    OrchDaemon(DBConnector *);
     ~OrchDaemon();
 
     bool init();
     void start();
 private:
     DBConnector *m_applDb;
-    DBConnector *m_asicDb;
 
     std::vector<Orch *> m_orchList;
     Select *m_select;

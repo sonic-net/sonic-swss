@@ -11,6 +11,8 @@ extern sai_queue_api_t *sai_queue_api;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_buffer_api_t *sai_buffer_api;
 
+extern PortsOrch *gPortsOrch;
+
 using namespace std;
 
 type_map BufferOrch::m_buffer_type_maps = {
@@ -22,8 +24,7 @@ type_map BufferOrch::m_buffer_type_maps = {
     {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()}
 };
 
-BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames, PortsOrch *portsOrch) :
-    Orch(db, tableNames), m_portsOrch(portsOrch)
+BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
@@ -323,7 +324,7 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
     {
         Port port;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
-        if (!m_portsOrch->getPort(port_name, port))
+        if (!gPortsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found\n", port_name.c_str());
             return task_process_status::task_invalid_entry;
@@ -395,7 +396,7 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     {
         Port port;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
-        if (!m_portsOrch->getPort(port_name, port))
+        if (!gPortsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found\n", port_name.c_str());
             return task_process_status::task_invalid_entry;
@@ -459,7 +460,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
     attr.value.objlist.list = profile_list.data();
     for (string port_name : port_names)
     {
-        if (!m_portsOrch->getPort(port_name, port))
+        if (!gPortsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found\n", port_name.c_str());
             return task_process_status::task_invalid_entry;
@@ -505,7 +506,7 @@ task_process_status BufferOrch::processEgressBufferProfileList(Consumer &consume
     attr.value.objlist.list = profile_list.data();
     for (string port_name : port_names)
     {
-        if (!m_portsOrch->getPort(port_name, port))
+        if (!gPortsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found\n", port_name.c_str());
             return task_process_status::task_invalid_entry;
@@ -523,10 +524,6 @@ task_process_status BufferOrch::processEgressBufferProfileList(Consumer &consume
 void BufferOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-    if (!m_portsOrch->isInitDone())
-    {
-        return;
-    }
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {

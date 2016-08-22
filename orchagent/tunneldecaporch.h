@@ -33,7 +33,6 @@ public:
     TunnelDecapOrch(DBConnector *db, string tableName);
 
 private:
-
     TunnelTable tunnelTable;
     ExistingIps existingIps;
 

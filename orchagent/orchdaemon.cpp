@@ -7,20 +7,18 @@
 using namespace std;
 using namespace swss;
 
-OrchDaemon::OrchDaemon()
+/* Global variable gPortsOrch declared */
+PortsOrch *gPortsOrch;
+
+OrchDaemon::OrchDaemon(DBConnector *applDb) :
+        m_applDb(applDb)
 {
-    m_applDb = nullptr;
-    m_asicDb = nullptr;
+    SWSS_LOG_ENTER();
 }
 
 OrchDaemon::~OrchDaemon()
 {
-    if (m_applDb)
-        delete(m_applDb);
-
-    if (m_asicDb)
-        delete(m_asicDb);
-
+    SWSS_LOG_ENTER();
     for (Orch *o : m_orchList)
         delete(o);
 }
@@ -28,7 +26,6 @@ OrchDaemon::~OrchDaemon()
 bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
-    m_applDb = new DBConnector(APPL_DB, "localhost", 6379, 0);
 
     vector<string> ports_tables = {
         APP_PORT_TABLE_NAME,
@@ -36,10 +33,10 @@ bool OrchDaemon::init()
         APP_LAG_TABLE_NAME
     };
 
-    PortsOrch *ports_orch = new PortsOrch(m_applDb, ports_tables);
-    IntfsOrch *intfs_orch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, ports_orch);
-    NeighOrch *neigh_orch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, ports_orch);
-    RouteOrch *route_orch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, ports_orch, neigh_orch);
+    gPortsOrch = new PortsOrch(m_applDb, ports_tables);
+    IntfsOrch *intfs_orch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME);
+    NeighOrch *neigh_orch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, intfs_orch);
+    RouteOrch *route_orch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, neigh_orch);
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
@@ -54,7 +51,7 @@ bool OrchDaemon::init()
         APP_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_NAME,
         APP_PFC_PRIORITY_TO_QUEUE_MAP_NAME
     };
-    QosOrch *qos_orch = new QosOrch(m_applDb, qos_tables, ports_orch);
+    QosOrch *qos_orch = new QosOrch(m_applDb, qos_tables);
 
     vector<string> buffer_tables = {
         APP_BUFFER_POOL_TABLE_NAME,
@@ -64,10 +61,10 @@ bool OrchDaemon::init()
         APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
         APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
     };
-    BufferOrch *buffer_orch = new BufferOrch(m_applDb, buffer_tables, ports_orch);
+    BufferOrch *buffer_orch = new BufferOrch(m_applDb, buffer_tables);
 
+    m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch };
     m_select = new Select();
-    m_orchList = { ports_orch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch };
 
     return true;
 }

@@ -40,9 +40,10 @@ sai_wred_api_t*             sai_wred_api;
 sai_qos_map_api_t*          sai_qos_map_api;
 sai_buffer_api_t*           sai_buffer_api;
 
+/* Global variables */
 map<string, string> gProfileMap;
 sai_object_id_t gVirtualRouterId;
-sai_object_id_t underlayIfId;
+sai_object_id_t gUnderlayIfId;
 MacAddress gMacAddress;
 
 const char *test_profile_get_value (
@@ -146,15 +147,15 @@ int main(int argc, char **argv)
         }
     }
 
-    SWSS_LOG_NOTICE("--- Starting Orchestration Agent ---\n");
+    SWSS_LOG_NOTICE("--- Starting Orchestration Agent ---");
 
     initSaiApi();
 
-    SWSS_LOG_NOTICE("sai_switch_api: initializing switch\n");
+    SWSS_LOG_NOTICE("sai_switch_api: initializing switch");
     status = sai_switch_api->initialize_switch(0, "", "", &switch_notifications);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to initialize switch %d\n", status);
+        SWSS_LOG_ERROR("Failed to initialize switch %d", status);
         exit(EXIT_FAILURE);
     }
 
@@ -165,7 +166,7 @@ int main(int argc, char **argv)
         status = sai_switch_api->get_switch_attribute(1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get MAC address from switch %d\n", status);
+            SWSS_LOG_ERROR("Failed to get MAC address from switch %d", status);
             exit(EXIT_FAILURE);
         }
         else
@@ -179,11 +180,12 @@ int main(int argc, char **argv)
         status = sai_switch_api->set_switch_attribute(&attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set MAC address to switch %d\n", status);
+            SWSS_LOG_ERROR("Failed to set MAC address to switch %d", status);
             exit(EXIT_FAILURE);
         }
     }
 
+    /* Get the default virtual router ID */
     attr.id = SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID;
     status = sai_switch_api->get_switch_attribute(1, &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -193,29 +195,30 @@ int main(int argc, char **argv)
     }
 
     gVirtualRouterId = attr.value.oid;
+    SWSS_LOG_NOTICE("Get switch virtual router ID %llx", gVirtualRouterId);
 
-    SWSS_LOG_NOTICE("Get switch virtual router ID %llx\n", gVirtualRouterId);
-
-    // create the underlay router interface to create a LOOPBACK type router interface (encap)
+    /* Create a loopback underlay router interface */
     sai_attribute_t underlay_intf_attrs[2];
     underlay_intf_attrs[0].id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
     underlay_intf_attrs[0].value.oid = gVirtualRouterId;
     underlay_intf_attrs[1].id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
     underlay_intf_attrs[1].value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
 
-    status = sai_router_intfs_api->create_router_interface(&underlayIfId, 2, underlay_intf_attrs);
+    status = sai_router_intfs_api->create_router_interface(&gUnderlayIfId, 2, underlay_intf_attrs);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create underlay router interface %d", status);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Created underlay router interface ID %llx\n", underlayIfId);
+    SWSS_LOG_NOTICE("Created underlay router interface ID %llx", gUnderlayIfId);
 
-    OrchDaemon *orchDaemon = new OrchDaemon();
+    /* Initialize orchestration components */
+    DBConnector *appl_db = new DBConnector(APPL_DB, "localhost", 6379, 0);
+    OrchDaemon *orchDaemon = new OrchDaemon(appl_db);
     if (!orchDaemon->init())
     {
-        SWSS_LOG_ERROR("Failed to initialize orchstration daemon\n");
+        SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
         exit(EXIT_FAILURE);
     }
 
@@ -224,11 +227,11 @@ int main(int argc, char **argv)
     }
     catch (char const *e)
     {
-        SWSS_LOG_ERROR("Exception: %s\n", e);
+        SWSS_LOG_ERROR("Exception: %s", e);
     }
     catch (exception& e)
     {
-        SWSS_LOG_ERROR("Failed due to exception: %s\n", e.what());
+        SWSS_LOG_ERROR("Failed due to exception: %s", e.what());
     }
 
     return 0;

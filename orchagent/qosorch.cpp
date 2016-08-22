@@ -16,6 +16,8 @@ extern sai_qos_map_api_t *sai_qos_map_api;
 extern sai_scheduler_group_api_t *sai_scheduler_group_api;
 extern sai_switch_api_t *sai_switch_api;
 
+extern PortsOrch *gPortsOrch;
+
 map<string, sai_ecn_mark_mode_t> ecn_map = {
     {"ecn_none", SAI_ECN_MARK_MODE_NONE},
     {"ecn_green", SAI_ECN_MARK_MODE_GREEN},
@@ -551,8 +553,7 @@ task_process_status QosOrch::handlePfcToQueueTable(Consumer& consumer)
     return pfc_to_queue_handler.processWorkItem(consumer);
 }
 
-QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames, PortsOrch *portsOrch) :
-    Orch(db, tableNames), m_portsOrch(portsOrch)
+QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
@@ -847,7 +848,7 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
     {
         Port port;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
-        if (!m_portsOrch->getPort(port_name, port))
+        if (!gPortsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found\n", port_name.c_str());
             return task_process_status::task_invalid_entry;
@@ -1031,7 +1032,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
     {
         Port port;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
-        if (!m_portsOrch->getPort(port_name, port))
+        if (!gPortsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found\n", port_name.c_str());
             return task_process_status::task_invalid_entry;
@@ -1082,10 +1083,6 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
 void QosOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-    if (!m_portsOrch->isInitDone())
-    {
-        return;
-    }
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {

@@ -3,6 +3,7 @@
 
 #include "orch.h"
 #include "portsorch.h"
+#include "intfsorch.h"
 
 #include "ipaddress.h"
 
@@ -31,9 +32,7 @@ typedef map<IpAddress, NextHopEntry> NextHopTable;
 class NeighOrch : public Orch
 {
 public:
-    NeighOrch(DBConnector *db, string tableName, PortsOrch *portsOrch) :
-        Orch(db, tableName),
-        m_portsOrch(portsOrch) {};
+    NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch);
 
     bool hasNextHop(IpAddress);
 
@@ -44,13 +43,13 @@ public:
     void decreaseNextHopRefCount(IpAddress);
 
 private:
-    PortsOrch *m_portsOrch;
+    IntfsOrch *m_intfsOrch;
 
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
 
-    bool addNextHop(IpAddress, Port);
-    bool removeNextHop(IpAddress);
+    bool addNextHop(IpAddress, string);
+    bool removeNextHop(IpAddress, string);
 
     bool addNeighbor(NeighborEntry, MacAddress);
     bool removeNeighbor(NeighborEntry);

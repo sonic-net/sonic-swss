@@ -95,7 +95,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
         if (nlmsg_type == RTM_DELLINK)
             m_vlanTableProducer.del(key);
-        else
+        else /* RTM_NEWLINK */
         {
             FieldValueTuple t("tagging_mode", "untagged");
             fvVector.push_back(t);

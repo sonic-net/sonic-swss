@@ -7,7 +7,7 @@ extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 
 extern sai_object_id_t gVirtualRouterId;
-extern sai_object_id_t underlayIfId;
+extern sai_object_id_t gUnderlayIfId;
 
 TunnelDecapOrch::TunnelDecapOrch(DBConnector *db, string tableName) : Orch(db, tableName)
 {
@@ -20,9 +20,7 @@ TunnelDecapOrch::TunnelDecapOrch(DBConnector *db, string tableName) : Orch(db, t
  */
 void TunnelDecapOrch::doTask(Consumer& consumer)
 {
-
     auto it = consumer.m_toSync.begin();
-
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
@@ -195,7 +193,7 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
     attr.value.oid = overlayIfId;
     tunnel_attrs.push_back(attr);
     attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
-    attr.value.oid = underlayIfId;
+    attr.value.oid = gUnderlayIfId;
     tunnel_attrs.push_back(attr);
 
     // decap ecn mode (copy from outer/standard)
