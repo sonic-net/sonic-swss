@@ -110,14 +110,22 @@ void IntfsOrch::doTask(Consumer &consumer)
                 SWSS_LOG_NOTICE("Create subnet route pre:%s\n", ip_prefix.to_string().c_str());
             }
 
+            vector<sai_attribute_t> ip2me_attrs;
+            sai_attribute_t ip2me_attr;
+            ip2me_attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
+            ip2me_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+            ip2me_attrs.push_back(ip2me_attr);
+
+            ip2me_attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
+            ip2me_attr.value.oid = m_portsOrch->getCpuPort();
+            ip2me_attrs.push_back(ip2me_attr);
+
             unicast_route_entry.vr_id = gVirtualRouterId;
             unicast_route_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
             unicast_route_entry.destination.addr.ip4 = ip_prefix.getIp().getV4Addr();
             unicast_route_entry.destination.mask.ip4 = 0xFFFFFFFF;
 
-            attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
-            attr.value.s32 = SAI_PACKET_ACTION_TRAP;
-            status = sai_route_api->create_route(&unicast_route_entry, 1, &attr);
+            status = sai_route_api->create_route(&unicast_route_entry, ip2me_attrs.size(), ip2me_attrs.data());
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to create packet action trap route ip:%s %d\n", ip_prefix.getIp().to_string().c_str(), status);

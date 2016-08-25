@@ -151,6 +151,11 @@ void PortsOrch::setPort(string alias, Port p)
     m_portList[alias] = p;
 }
 
+sai_object_id_t PortsOrch::getCpuPort()
+{
+    return m_cpuPort;
+}
+
 bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
 {
     SWSS_LOG_ENTER();
