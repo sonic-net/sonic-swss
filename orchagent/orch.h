@@ -23,7 +23,8 @@ typedef enum
     task_success,
     task_invalid_entry,
     task_failed,
-    task_need_retry
+    task_need_retry,
+    task_ignore
 } task_process_status;
 
 typedef std::map<string, sai_object_id_t> object_map;

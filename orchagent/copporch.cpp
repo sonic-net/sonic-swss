@@ -7,27 +7,30 @@
 #include <iostream>
 
 using namespace swss;
+using namespace std;
 
 extern sai_hostif_api_t*    sai_hostif_api;
 extern sai_policer_api_t*   sai_policer_api;
+extern sai_switch_api_t*    sai_switch_api;
 
-std::map<string, sai_meter_type_t> policer_meter_map = {
+
+map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
     {"bytes", SAI_METER_TYPE_BYTES}
 };
 
-std::map<string, sai_policer_mode_t> policer_mode_map = {
+map<string, sai_policer_mode_t> policer_mode_map = {
     {"sr_tcm", SAI_POLICER_MODE_Sr_TCM},
     {"tr_tcm", SAI_POLICER_MODE_Tr_TCM},
     {"storm",  SAI_POLICER_MODE_STORM_CONTROL}
 };
 
-std::map<string, sai_policer_color_source_t> policer_color_aware_map = {
+map<string, sai_policer_color_source_t> policer_color_aware_map = {
     {"aware", SAI_POLICER_COLOR_SOURCE_AWARE},
     {"blind", SAI_POLICER_COLOR_SOURCE_BLIND}
 };
 
-std::map<string, sai_hostif_trap_id_t> trap_id_map = {
+map<string, sai_hostif_trap_id_t> trap_id_map = {
     {"stp", SAI_HOSTIF_TRAP_ID_STP},
     {"lacp", SAI_HOSTIF_TRAP_ID_LACP},
     {"eapol", SAI_HOSTIF_TRAP_ID_EAPOL},
@@ -64,7 +67,7 @@ std::map<string, sai_hostif_trap_id_t> trap_id_map = {
     {"ttl_error", SAI_HOSTIF_TRAP_ID_TTL_ERROR}
 };
 
-std::map<string, sai_packet_action_t> packet_action_map = {
+map<string, sai_packet_action_t> packet_action_map = {
     {"drop", SAI_PACKET_ACTION_DROP},
     {"forward", SAI_PACKET_ACTION_FORWARD},
     {"copy", SAI_PACKET_ACTION_COPY},
@@ -75,11 +78,57 @@ std::map<string, sai_packet_action_t> packet_action_map = {
     {"transit", SAI_PACKET_ACTION_TRANSIT}
 };
 
+const string default_trap_group = "default";
+const vector<sai_hostif_trap_id_t> default_trap_ids = {
+    SAI_HOSTIF_TRAP_ID_TTL_ERROR
+};
+
 CoppOrch::CoppOrch(DBConnector *db, string tableName) :
     Orch(db, tableName)
 {
     SWSS_LOG_ENTER();
+    initDefaultTrapGroup();
+    initDefaultTrapIds();
 };
+
+void CoppOrch::initDefaultTrapIds()
+{
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> trap_id_attrs;
+
+    attr.id = SAI_HOSTIF_TRAP_ATTR_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_TRAP;
+    trap_id_attrs.push_back(attr);
+
+    attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_GROUP;
+    attr.value.oid = m_trap_group_map[default_trap_group];
+    trap_id_attrs.push_back(attr);
+
+    attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_CHANNEL;
+    attr.value.s32 = SAI_HOSTIF_TRAP_CHANNEL_NETDEV;
+    trap_id_attrs.push_back(attr);
+
+    if (!applyAttributesToTrapIds(default_trap_ids, trap_id_attrs))
+    {
+        SWSS_LOG_ERROR("Failed applying default trap Ids.");
+    }
+}
+
+void CoppOrch::initDefaultTrapGroup()
+{
+    SWSS_LOG_ENTER();
+    sai_status_t sai_status;
+    sai_attribute_t attrib;
+
+    attrib.id = SAI_SWITCH_ATTR_DEFAULT_TRAP_GROUP;
+    sai_status = sai_switch_api->get_switch_attribute(1, &attrib);
+    if (sai_status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("failed to get default trap group. error:%d", sai_status);
+    }
+    m_trap_group_map[default_trap_group] = attrib.value.oid;
+}
 
 void CoppOrch::getTrapIdList(vector<string> &trap_id_name_list, vector<sai_hostif_trap_id_t> &trap_id_list) const
 {
@@ -94,10 +143,27 @@ void CoppOrch::getTrapIdList(vector<string> &trap_id_name_list, vector<sai_hosti
     }
 }
 
-bool CoppOrch::applyTrapIds(sai_object_id_t trap_group, vector<string> &trap_id_name_list, std::vector<sai_attribute_t> &trap_id_attribs)
+bool CoppOrch::applyAttributesToTrapIds(const vector<sai_hostif_trap_id_t> &trap_id_list, vector<sai_attribute_t> &trap_id_attribs)
+{
+    for (auto trap_id : trap_id_list)
+    {
+        for (auto trap_id_attr : trap_id_attribs)
+        {
+            SWSS_LOG_DEBUG("Applying trap attr:%d", trap_id_attr.id);
+            sai_status_t sai_status = sai_hostif_api->set_trap_attribute(trap_id, &trap_id_attr);
+            if (sai_status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to apply trap_id attribute:%d to trap_id:%d, error:%d\n", trap_id_attr.id, trap_id, sai_status);
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool CoppOrch::applyTrapIds(sai_object_id_t trap_group, vector<string> &trap_id_name_list, vector<sai_attribute_t> &trap_id_attribs)
 {
     SWSS_LOG_ENTER();
-    sai_status_t sai_status;
     vector<sai_hostif_trap_id_t> trap_id_list;
 
     getTrapIdList(trap_id_name_list, trap_id_list);
@@ -112,20 +178,7 @@ bool CoppOrch::applyTrapIds(sai_object_id_t trap_group, vector<string> &trap_id_
     attr.value.s32 = SAI_HOSTIF_TRAP_CHANNEL_NETDEV;
     trap_id_attribs.push_back(attr);
 
-    for (auto trap_id : trap_id_list)
-    {
-        for (auto trap_id_attr : trap_id_attribs)
-        {
-            SWSS_LOG_DEBUG("Applying trap attr:%d", trap_id_attr.id);
-            sai_status = sai_hostif_api->set_trap_attribute(trap_id, &trap_id_attr);
-            if (sai_status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to apply trap_id attribute:%d to trap_id:%d, error:%d\n", trap_id_attr.id, trap_id, sai_status);
-                return false;
-            }
-        }
-    }
-    return true;
+    return applyAttributesToTrapIds(trap_id_list, trap_id_attribs);
 }
 
 bool CoppOrch::removePolicer(string trap_group_name)
@@ -174,7 +227,7 @@ sai_object_id_t CoppOrch::getPolicer(string trap_group_name)
     return m_trap_group_policer_map[m_trap_group_map[trap_group_name]];
 }
 
-bool CoppOrch::createPolicer(string trap_group_name, std::vector<sai_attribute_t> &policer_attribs)
+bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &policer_attribs)
 {
     SWSS_LOG_ENTER();
     sai_object_id_t policer_id;
@@ -200,6 +253,7 @@ bool CoppOrch::createPolicer(string trap_group_name, std::vector<sai_attribute_t
     SWSS_LOG_DEBUG("Created policer:%llx for trap group name:%s:", policer_id, trap_group_name.c_str());
     return true;
 }
+
 task_process_status CoppOrch::processCoppRule(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
@@ -212,9 +266,9 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
     string op = kfvOp(tuple);
 
     SWSS_LOG_DEBUG("copp:processing:%s", trap_group_name.c_str());
-    std::vector<sai_attribute_t> trap_gr_attribs;
-    std::vector<sai_attribute_t> trap_id_attribs;
-    std::vector<sai_attribute_t> policer_attribs;
+    vector<sai_attribute_t> trap_gr_attribs;
+    vector<sai_attribute_t> trap_id_attribs;
+    vector<sai_attribute_t> policer_attribs;
 
     if (op == SET_COMMAND)
     {
@@ -231,7 +285,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 queue_ind = fvValue(*i);
                 SWSS_LOG_DEBUG("queue data:%s", queue_ind.c_str());
                 attr.id = SAI_HOSTIF_TRAP_GROUP_ATTR_QUEUE;
-                attr.value.u32 = std::stoul(queue_ind);
+                attr.value.u32 = stoul(queue_ind);
                 trap_gr_attribs.push_back(attr);
             }
             //
@@ -275,28 +329,28 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             else if (fvField(*i) == copp_policer_cbs_field)
             {
                 attr.id = SAI_POLICER_ATTR_CBS;
-                attr.value.u64 = std::stoul(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 policer_attribs.push_back(attr);
                 SWSS_LOG_DEBUG("obtained cbs:%d", attr.value.u64);
             }
             else if (fvField(*i) == copp_policer_cir_field)
             {
                 attr.id = SAI_POLICER_ATTR_CIR;
-                attr.value.u64 = std::stoul(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 policer_attribs.push_back(attr);
                 SWSS_LOG_DEBUG("obtained cir:%d", attr.value.u64);
             }
             else if (fvField(*i) == copp_policer_pbs_field)
             {
                 attr.id = SAI_POLICER_ATTR_PBS;
-                attr.value.u64 = std::stoul(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 policer_attribs.push_back(attr);
                 SWSS_LOG_DEBUG("obtained pbs:%d", attr.value.u64);
             }
             else if (fvField(*i) == copp_policer_pir_field)
             {
                 attr.id = SAI_POLICER_ATTR_PIR;
-                attr.value.u64 = std::stoul(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 policer_attribs.push_back(attr);
                 SWSS_LOG_DEBUG("obtained pir:%d", attr.value.u64);
             }
@@ -409,6 +463,14 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             SWSS_LOG_ERROR("Failed to remove policer from trap group:%s\n", trap_group_name.c_str());
             return task_process_status::task_failed;
         }
+
+        // default trap group is never deleted.
+        if (trap_group_name == default_trap_group)
+        {
+            SWSS_LOG_WARN("Trying to delete default trap group");
+            return task_process_status::task_ignore;
+        }
+
         sai_status = sai_hostif_api->remove_hostif_trap_group(m_trap_group_map[trap_group_name]);
         if (sai_status != SAI_STATUS_SUCCESS)
         {
@@ -445,7 +507,12 @@ void CoppOrch::doTask(Consumer &consumer)
         {
             task_status = processCoppRule(consumer);
         }
-        catch(const std::out_of_range e)
+        catch(const out_of_range e)
+        {
+            SWSS_LOG_ERROR("processing copp rule threw out_of_range exception:%s", e.what());
+            task_status = task_process_status::task_invalid_entry;
+        }
+        catch(exception& e)
         {
             SWSS_LOG_ERROR("processing copp rule threw exception:%s", e.what());
             task_status = task_process_status::task_invalid_entry;
@@ -453,6 +520,7 @@ void CoppOrch::doTask(Consumer &consumer)
         switch(task_status)
         {
             case task_process_status::task_success :
+            case task_process_status::task_ignore  :
                 it = consumer.m_toSync.erase(it);
                 break;
             case task_process_status::task_invalid_entry:
