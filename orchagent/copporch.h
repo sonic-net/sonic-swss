@@ -32,6 +32,7 @@ protected:
     bool removePolicer(string trap_group_name);
     sai_object_id_t getPolicer(string trap_group_name);
     bool createPolicer(string trap_group, std::vector<sai_attribute_t> &policer_attribs);
+    void initDefaultTrapGroup();
     object_map m_trap_group_map;
     std::map<sai_object_id_t, sai_object_id_t> m_trap_group_policer_map;
 };
