@@ -24,6 +24,7 @@ int main(int argc, char **argv)
             Select s;
 
             netlink.registerGroup(RTNLGRP_IPV4_IFADDR);
+            netlink.registerGroup(RTNLGRP_IPV6_IFADDR);
             cout << "Listens to interface messages..." << endl;
             netlink.dumpRequest(RTM_GETADDR);
 
