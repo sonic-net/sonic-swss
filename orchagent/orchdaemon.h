@@ -11,6 +11,7 @@
 #include "neighorch.h"
 #include "routeorch.h"
 #include "copporch.h"
+#include "tunneldecaporch.h"
 
 using namespace swss;
 

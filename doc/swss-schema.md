@@ -289,11 +289,27 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 ###TUNNEL_DECAP_TABLE
     ; Stores tunnel decap rules
     key                     = TUNNEL_DECAP_TABLE:name
+    ;field                      value
     tunnel_type             = "IPINIP"
     dst_ip                  = IP1,IP2 ;IP addresses separated by ","
     dscp_mode               = "uniform" / "pipe"
     ecn_mode                = "copy_from_outer" / "standard" ;standard: Behavior defined in RFC 6040 section 4.2
     ttl_mode                = "uniform" / "pipe"
+
+    IP = dec-octet "." dec-octet "." dec-octet "." dec-octet
+
+    Example:
+    127.0.0.1:6379> hgetall TUNNEL_DECAP_TABLE:NETBOUNCER
+    1) "dscp_mode"
+    2) "uniform"
+    3) "dst_ip"
+    4) "127.0.0.1"
+    5) "ecn_mode"
+    6) "copy_from_outer"
+    7) "ttl_mode"
+    8) "uniform"
+    9) "tunnel_type"
+    10) "IPINIP" 
 
 ---------------------------------------------
 

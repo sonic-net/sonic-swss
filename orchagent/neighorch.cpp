@@ -18,6 +18,9 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, Port port)
 
     assert(!hasNextHop(ipAddress));
 
+    if (port.m_rif_id == 0)
+        return false;
+
     sai_attribute_t next_hop_attrs[3];
     next_hop_attrs[0].id = SAI_NEXT_HOP_ATTR_TYPE;
     next_hop_attrs[0].value.s32 = SAI_NEXT_HOP_IP;
@@ -177,6 +180,9 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
 
     Port p;
     m_portsOrch->getPort(alias, p);
+
+    if (p.m_rif_id == 0)
+        return false;
 
     sai_neighbor_entry_t neighbor_entry;
     neighbor_entry.rif_id = p.m_rif_id;
