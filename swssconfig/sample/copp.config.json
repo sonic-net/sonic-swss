@@ -1,0 +1,42 @@
+[
+    {
+        "COPP_TABLE:trap.group.bgp.lacp": {
+            "trap_ids": "bgp,lacp",
+            "trap_action":"trap",
+            "queue": "4"
+        },
+        "OP": "SET"
+    },
+    {
+        "COPP_TABLE:trap.group.ARP": {
+            "trap_ids": "arp_req,arp_resp",
+            "trap_action":"trap",
+            "queue": "4",
+            "meter_type":"packets",
+            "mode":"sr_tcm",
+            "cir":"600",
+            "red_action":"drop"
+        },
+        "OP": "SET"
+    },
+    {
+        "COPP_TABLE:trap.group.lldp.dhcp": {
+            "trap_ids": "lldp,dhcp",
+            "trap_action":"trap",
+            "queue": "4"
+        },
+        "OP": "SET"
+    },
+    {
+        "COPP_TABLE:trap.group.ip2me": {
+            "trap_ids": "ip2me",
+            "trap_action":"trap",
+            "queue": "1",
+            "meter_type":"packets",
+            "mode":"sr_tcm",
+            "cir":"600",
+            "red_action":"drop"
+        },
+        "OP": "SET"
+    }
+]
