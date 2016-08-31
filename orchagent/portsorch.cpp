@@ -49,7 +49,8 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         SAI_HOSTIF_TRAP_ID_ARP_REQUEST,
         SAI_HOSTIF_TRAP_ID_ARP_RESPONSE,
         SAI_HOSTIF_TRAP_ID_LLDP,
-        SAI_HOSTIF_TRAP_ID_LACP
+        SAI_HOSTIF_TRAP_ID_LACP,
+        SAI_HOSTIF_TRAP_ID_IP2ME
     };
 
     int trap_length = sizeof(trap_ids)/sizeof(*trap_ids);
