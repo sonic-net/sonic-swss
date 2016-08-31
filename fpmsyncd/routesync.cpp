@@ -110,6 +110,10 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         if (m_link_cache)
         {
             rtnl_link_i2name(m_link_cache, ifindex, addrStr, MAX_ADDR_SIZE);
+            if (!strlen(addrStr))
+            {
+                rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+            }
             ifindexes += addrStr;
         } else
         {
