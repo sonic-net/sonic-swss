@@ -17,6 +17,7 @@ public:
 
     bool getPort(string alias, Port &port);
     void setPort(string alias, Port port);
+    sai_object_id_t getCpuPort();
 
 private:
     Table *m_counterTable;
