@@ -10,6 +10,8 @@ using namespace swss;
 
 extern sai_hostif_api_t*    sai_hostif_api;
 extern sai_policer_api_t*   sai_policer_api;
+extern sai_switch_api_t*    sai_switch_api;
+
 
 std::map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
@@ -75,11 +77,32 @@ std::map<string, sai_packet_action_t> packet_action_map = {
     {"transit", SAI_PACKET_ACTION_TRANSIT}
 };
 
+const string default_trap_group = "default";
+
 CoppOrch::CoppOrch(DBConnector *db, string tableName) :
     Orch(db, tableName)
 {
     SWSS_LOG_ENTER();
+    initDefaultTrapGroup();
 };
+
+void CoppOrch::initDefaultTrapGroup()
+{
+    SWSS_LOG_ENTER();
+    sai_status_t sai_status;
+    sai_attribute_t attrib;
+
+    if (m_trap_group_map.find(default_trap_group) != m_trap_group_map.end()) {
+        return;
+    }
+
+    attrib.id = SAI_SWITCH_ATTR_DEFAULT_TRAP_GROUP;
+    sai_status = sai_switch_api->get_switch_attribute(1, &attrib);
+    if (sai_status != SAI_STATUS_SUCCESS) {
+        throw std::runtime_error(string("failed to get default trap group. error:") + to_string(sai_status));
+    }
+    m_trap_group_map[default_trap_group] = attrib.value.oid;
+}
 
 void CoppOrch::getTrapIdList(vector<string> &trap_id_name_list, vector<sai_hostif_trap_id_t> &trap_id_list) const
 {
@@ -200,6 +223,7 @@ bool CoppOrch::createPolicer(string trap_group_name, std::vector<sai_attribute_t
     SWSS_LOG_DEBUG("Created policer:%llx for trap group name:%s:", policer_id, trap_group_name.c_str());
     return true;
 }
+
 task_process_status CoppOrch::processCoppRule(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
@@ -409,6 +433,12 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             SWSS_LOG_ERROR("Failed to remove policer from trap group:%s\n", trap_group_name.c_str());
             return task_process_status::task_failed;
         }
+
+        // default trap group is never deleted.
+        if (trap_group_name == default_trap_group) {
+            return task_process_status::task_success;
+        }
+
         sai_status = sai_hostif_api->remove_hostif_trap_group(m_trap_group_map[trap_group_name]);
         if (sai_status != SAI_STATUS_SUCCESS)
         {
@@ -447,7 +477,12 @@ void CoppOrch::doTask(Consumer &consumer)
         }
         catch(const std::out_of_range e)
         {
-            SWSS_LOG_ERROR("processing copp rule threw exception:%s", e.what());
+            SWSS_LOG_ERROR("processing copp rule threw exception:%s, line:%s", e.what(), __LINE__);
+            task_status = task_process_status::task_invalid_entry;
+        }
+        catch(std::exception& e)
+        {
+            SWSS_LOG_ERROR("processing copp rule threw exception:%s, line:%s", e.what(), __LINE__);
             task_status = task_process_status::task_invalid_entry;
         }
         switch(task_status)
