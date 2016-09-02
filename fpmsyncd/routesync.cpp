@@ -25,7 +25,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
     struct rtnl_route *route_obj = (struct rtnl_route *)obj;
     struct nl_addr *dip;
-    char addrStr[MAX_ADDR_SIZE + 1] = {0};
+    char ifname[MAX_ADDR_SIZE + 1] = {0};
     uint32_t ipv4;
     int prefix;
 
@@ -33,9 +33,9 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     /* Supports IPv4 address only for now */
     if (rtnl_route_get_family(route_obj)  != AF_INET)
     {
-        nl_addr2str(dip, addrStr, MAX_ADDR_SIZE);
+        nl_addr2str(dip, ifname, MAX_ADDR_SIZE);
         SWSS_LOG_INFO("%s: Unknown route family support: %s (object: %s)\n",
-                      __FUNCTION__, addrStr, nl_object_get_type(obj));
+                      __FUNCTION__, ifname, nl_object_get_type(obj));
         return;
     }
 
@@ -50,9 +50,9 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
     else if (nlmsg_type != RTM_NEWROUTE)
     {
-        nl_addr2str(dip, addrStr, MAX_ADDR_SIZE);
+        nl_addr2str(dip, ifname, MAX_ADDR_SIZE);
         SWSS_LOG_INFO("%s: Unknown message-type: %d for %s\n",
-                      __FUNCTION__, nlmsg_type, addrStr);
+                      __FUNCTION__, nlmsg_type, ifname);
         return;
     }
 
@@ -72,9 +72,9 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         case RTN_MULTICAST:
         case RTN_BROADCAST:
         case RTN_LOCAL:
-            nl_addr2str(dip, addrStr, MAX_ADDR_SIZE);
+            nl_addr2str(dip, ifname, MAX_ADDR_SIZE);
             SWSS_LOG_INFO("%s: BUM routes aren't supported yet (%s)\n",
-                          __FUNCTION__, addrStr);
+                          __FUNCTION__, ifname);
             return;
 
         default:
@@ -83,14 +83,14 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     /* Geting nexthop lists */
     string nexthops;
-    string ifindexes;
+    string ifnames;
 
     struct nl_list_head *nhs = rtnl_route_get_nexthops(route_obj);
     if (!nhs)
     {
-        nl_addr2str(dip, addrStr, MAX_ADDR_SIZE);
+        nl_addr2str(dip, ifname, MAX_ADDR_SIZE);
         SWSS_LOG_INFO("%s: Nexthop list is empty for %s\n",
-                      __FUNCTION__, addrStr);
+                      __FUNCTION__, ifname);
         return;
     }
 
@@ -109,28 +109,29 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         /* 0 means no ifindex */
         if (m_link_cache)
         {
-            rtnl_link_i2name(m_link_cache, ifindex, addrStr, MAX_ADDR_SIZE);
-            if (!strlen(addrStr))
+            rtnl_link_i2name(m_link_cache, ifindex, ifname, MAX_ADDR_SIZE);
+            if (!strlen(ifname))
             {
                 rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+                rtnl_link_i2name(m_link_cache, ifindex, ifname, MAX_ADDR_SIZE);
             }
-            ifindexes += addrStr;
+            ifnames += ifname;
         } else
         {
-            ifindexes += to_string(ifindex);
+            ifnames += to_string(ifindex);
         }
 
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
         {
             nexthops += string(",");
-            ifindexes += string(",");
+            ifnames += string(",");
         }
     }
 
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple nh("nexthop", nexthops);
-    FieldValueTuple idx("ifindex", ifindexes);
+    FieldValueTuple idx("ifindex", ifnames);
     fvVector.push_back(nh);
     fvVector.push_back(idx);
     m_routeTable.set(destip.to_string(), fvVector);
