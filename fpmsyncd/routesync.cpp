@@ -106,21 +106,16 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
             nexthops += nh.to_string();
         }
 
-        /* 0 means no ifindex */
-        if (m_link_cache)
+        rtnl_link_i2name(m_link_cache, ifindex, ifname, MAX_ADDR_SIZE);
+        /* Cannot get ifname. Possibly interfaces get re-created. */
+        if (!strlen(ifname))
         {
+            rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
             rtnl_link_i2name(m_link_cache, ifindex, ifname, MAX_ADDR_SIZE);
             if (!strlen(ifname))
-            {
-                rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
-                rtnl_link_i2name(m_link_cache, ifindex, ifname, MAX_ADDR_SIZE);
-            }
-            ifnames += ifname;
-        } else
-        {
-            ifnames += to_string(ifindex);
+                strcpy(ifname, "unknown");
         }
-
+        ifnames += ifname;
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
         {
@@ -131,7 +126,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple nh("nexthop", nexthops);
-    FieldValueTuple idx("ifindex", ifnames);
+    FieldValueTuple idx("ifname", ifnames);
     fvVector.push_back(nh);
     fvVector.push_back(idx);
     m_routeTable.set(destip.to_string(), fvVector);
