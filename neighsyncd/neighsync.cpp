@@ -32,11 +32,7 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (rtnl_neigh_get_family(neigh) == AF_INET)
         family = IPV4_NAME;
     else if (rtnl_neigh_get_family(neigh) == AF_INET6)
-    {
         family = IPV6_NAME;
-        /* Currently IPv6 is not supported */
-        return;
-    }
     else
         return;
 
