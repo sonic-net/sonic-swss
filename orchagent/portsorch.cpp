@@ -24,9 +24,12 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
 {
     SWSS_LOG_ENTER();
 
-    /* Initialize Counter Table */
+    /* Initialize counter table */
     DBConnector *counter_db = new DBConnector(COUNTERS_DB, "localhost", 6379, 0);
     m_counterTable = new Table(counter_db, COUNTERS_PORT_NAME_MAP);
+
+    /* Initialize port table */
+    m_portTable = new Table(m_db, APP_PORT_TABLE_NAME);
 
     int i, j;
     sai_status_t status;
@@ -174,11 +177,24 @@ bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
 
     sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
     if (status != SAI_STATUS_SUCCESS)
-    {
         return false;
-    }
-
     return true;
+}
+
+void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto it = m_portList.begin(); it != m_portList.end(); it++)
+    {
+        if (it->second.m_port_id == id)
+        {
+            vector<FieldValueTuple> vector;
+            FieldValueTuple tuple("oper_status", to_string(status));
+            vector.push_back(tuple);
+            m_portTable->set(it->first, vector);
+        }
+    }
 }
 
 void PortsOrch::doPortTask(Consumer &consumer)

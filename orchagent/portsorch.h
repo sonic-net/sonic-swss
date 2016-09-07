@@ -19,8 +19,10 @@ public:
     void setPort(string alias, Port port);
     sai_object_id_t getCpuPort();
 
+    void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
 private:
     Table *m_counterTable;
+    Table *m_portTable;
 
     bool m_initDone = false;
     sai_object_id_t m_cpuPort;

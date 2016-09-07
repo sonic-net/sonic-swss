@@ -17,6 +17,8 @@ extern "C" {
 using namespace std;
 using namespace swss;
 
+extern sai_switch_notification_t switch_notifications;
+
 #define UNREFERENCED_PARAMETER(P)       (P)
 
 /* Initialize all global api pointers */
@@ -72,9 +74,6 @@ int test_profile_get_next_value (
 const service_method_table_t test_services = {
     test_profile_get_value,
     test_profile_get_next_value
-};
-
-sai_switch_notification_t switch_notifications = {
 };
 
 void initSaiApi()

@@ -61,8 +61,8 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
 
     unsigned int flags = rtnl_link_get_flags(link);
-    bool admin_state = flags & IFF_UP;
-    bool oper_state = flags & IFF_LOWER_UP;
+    bool admin = flags & IFF_UP;
+    bool oper = flags & IFF_LOWER_UP;
     unsigned int mtu = rtnl_link_get_mtu(link);
 
     char addrStr[MAX_ADDR_SIZE+1] = {0};
@@ -72,12 +72,12 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     int master = rtnl_link_get_master(link);
     char *type = rtnl_link_get_type(link);
 
-    cout << "Receive nlmsg from portsyncd: type:" << nlmsg_type << " key:" << key
-         << " admin_state:" << admin_state << " oper_state:" << oper_state
-         << " addr:" << addrStr << " ifindex:" << ifindex << " master:" << master;
     if (type)
-        cout << " type:" << type;
-    cout << endl;
+        SWSS_LOG_DEBUG("nlmsg type:%d key:%s admin:%d oper:%d addr:%s ifindex:%d master:%d type:%s",
+                       nlmsg_type, key.c_str(), admin, oper, addrStr, ifindex, master, type);
+    else
+        SWSS_LOG_DEBUG("nlmsg type:%d key:%s admin:%d oper:%d addr:%s ifindex:%d master:%d",
+                       nlmsg_type, key.c_str(), admin, oper, addrStr, ifindex, master);
 
     /* Insert or update the ifindex to key map */
     m_ifindexNameMap[ifindex] = key;
@@ -104,8 +104,8 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         }
     }
 
-    FieldValueTuple a("admin_status", admin_state ? "up" : "down");
-    FieldValueTuple o("oper_status", oper_state ? "up" : "down");
+    FieldValueTuple a("admin_status", admin ? "up" : "down");
+    FieldValueTuple o("oper_status", oper ? "up" : "down");
     FieldValueTuple m("mtu", to_string(mtu));
     fvVector.push_back(a);
     fvVector.push_back(o);
@@ -141,6 +141,4 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
         return;
     }
-
-    cerr << "Unhandled netlink message received." << endl;
 }

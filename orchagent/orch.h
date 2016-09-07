@@ -69,9 +69,9 @@ public:
     bool execute(string tableName);
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     void doTask();
-private:
-    DBConnector *m_db;
+
 protected:
+    DBConnector *m_db;
     ConsumerMap m_consumerMap;
 
     /* Run doTask against a specific consumer */

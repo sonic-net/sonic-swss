@@ -3,7 +3,6 @@
 
 extern "C" {
 #include "sai.h"
-#include "saistatus.h"
 }
 
 #include <set>
