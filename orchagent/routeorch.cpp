@@ -1,8 +1,7 @@
+#include <assert.h>
 #include "routeorch.h"
-
 #include "logger.h"
-
-#include "assert.h"
+#include "sainet.h"
 
 extern sai_next_hop_group_api_t*    sai_next_hop_group_api;
 extern sai_route_api_t*             sai_route_api;
