@@ -25,11 +25,11 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     SWSS_LOG_ENTER();
 
     /* Initialize counter table */
-    DBConnector *counter_db = new DBConnector(COUNTERS_DB, "localhost", 6379, 0);
-    m_counterTable = new Table(counter_db, COUNTERS_PORT_NAME_MAP);
+    unique_ptr<DBConnector> pCounter_db(new DBConnector(COUNTERS_DB, "localhost", 6379, 0));
+    m_counterTable = unique_ptr<Table>(new Table(pCounter_db.get(), COUNTERS_PORT_NAME_MAP));
 
     /* Initialize port table */
-    m_portTable = new Table(m_db, APP_PORT_TABLE_NAME);
+    m_portTable = unique_ptr<Table>(new Table(m_db, APP_PORT_TABLE_NAME));
 
     int i, j;
     sai_status_t status;
@@ -177,8 +177,39 @@ bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
 
     sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
     if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set admin status %s to port pid:%llx",
+                       up ? "UP" : "DOWN", id);
         return false;
+    }
     return true;
+}
+
+bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto it = m_portList.begin(); it != m_portList.end(); it++)
+    {
+        if (it->second.m_port_id == port_id)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+            attr.value.booldata = up;
+
+            sai_status_t status = sai_hostif_api->set_hostif_attribute(it->second.m_hif_id, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_WARN("Failed to set operation status %s to host interface %s",
+                              up ? "UP" : "DOWN", it->second.m_alias.c_str());
+                return false;
+            }
+            SWSS_LOG_NOTICE("Set operation status %s to host interface %s",
+                            up ? "UP" : "DOWN", it->second.m_alias.c_str());
+            return true;
+        }
+    }
+    return false;
 }
 
 void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status)
@@ -623,11 +654,7 @@ bool PortsOrch::initializePort(Port &p)
     initializeQueues(p);
 
     /* Set up host interface */
-    if (!addHostIntfs(p.m_port_id, p.m_alias, p.m_hif_id))
-    {
-        SWSS_LOG_ERROR("Failed to set up host interface pid:%llx alias:%s", p.m_port_id, p.m_alias.c_str());
-        return false;
-    }
+    addHostIntfs(p.m_port_id, p.m_alias, p.m_hif_id);
 
     // TODO: Assure if_nametoindex(p.m_alias.c_str()) != 0
     // TODO: Get port oper status
@@ -642,11 +669,8 @@ bool PortsOrch::initializePort(Port &p)
 #endif
 
     /* Set port admin status UP */
-    if (!setPortAdminStatus(p.m_port_id, true))
-    {
-        SWSS_LOG_ERROR("Failed to set port admin status UP pid:%llx", p.m_port_id);
-        return false;
-    }
+    setPortAdminStatus(p.m_port_id, true);
+
     return true;
 }
 
@@ -672,7 +696,7 @@ bool PortsOrch::addHostIntfs(sai_object_id_t id, string alias, sai_object_id_t &
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create host interface");
+        SWSS_LOG_ERROR("Failed to create host interface for port %s", alias.c_str());
         return false;
     }
 

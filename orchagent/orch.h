@@ -2,6 +2,7 @@
 #define SWSS_ORCH_H
 
 #include <map>
+#include <memory>
 
 extern "C" {
 #include "sai.h"

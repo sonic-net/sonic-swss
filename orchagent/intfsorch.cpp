@@ -67,6 +67,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
+                /* TODO: Resolve the dependency relationship and add ref_count to port */
                 it++;
                 continue;
             }

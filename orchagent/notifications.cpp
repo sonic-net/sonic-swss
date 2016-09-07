@@ -20,6 +20,7 @@ void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *d
         sai_port_oper_status_t status = data[i].port_state;
 
         gPortsOrch->updateDbPortOperStatus(id, status);
+        gPortsOrch->setHostIntfsOperStatus(id, status == SAI_PORT_OPER_STATUS_UP);
     }
 }
 
