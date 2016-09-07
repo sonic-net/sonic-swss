@@ -69,14 +69,6 @@ void RouteOrch::doTask(Consumer& consumer)
 
         IpPrefix ip_prefix = IpPrefix(key);
 
-        /* Currently we don't support IPv6 */
-        if (!ip_prefix.isV4())
-        {
-            SWSS_LOG_WARN("Get unsupported IPv6 task ip:%s", ip_prefix.to_string().c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
-
         if (op == SET_COMMAND)
         {
             IpAddresses ip_addresses;
@@ -359,9 +351,7 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     /* Sync the route entry */
     sai_unicast_route_entry_t route_entry;
     route_entry.vr_id = gVirtualRouterId;
-    route_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-    route_entry.destination.addr.ip4 = ipPrefix.getIp().getV4Addr();
-    route_entry.destination.mask.ip4 = ipPrefix.getMask().getV4Addr();
+    copy(route_entry.destination, ipPrefix);
 
     sai_attribute_t route_attr;
     route_attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
@@ -426,9 +416,7 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
 
     sai_unicast_route_entry_t route_entry;
     route_entry.vr_id = gVirtualRouterId;
-    route_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-    route_entry.destination.addr.ip4 = ipPrefix.getIp().getV4Addr();
-    route_entry.destination.mask.ip4 = ipPrefix.getMask().getV4Addr();
+    copy(route_entry.destination, ipPrefix);
 
     sai_status_t status = sai_route_api->remove_route(&route_entry);
     if (status != SAI_STATUS_SUCCESS)

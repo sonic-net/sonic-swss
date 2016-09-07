@@ -1,8 +1,6 @@
+#include <assert.h>
 #include "neighorch.h"
-
 #include "logger.h"
-
-#include "assert.h"
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
@@ -25,8 +23,7 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, Port port)
     next_hop_attrs[0].id = SAI_NEXT_HOP_ATTR_TYPE;
     next_hop_attrs[0].value.s32 = SAI_NEXT_HOP_IP;
     next_hop_attrs[1].id = SAI_NEXT_HOP_ATTR_IP;
-    next_hop_attrs[1].value.ipaddr.addr_family= SAI_IP_ADDR_FAMILY_IPV4;
-    next_hop_attrs[1].value.ipaddr.addr.ip4 = ipAddress.getV4Addr();
+    copy(next_hop_attrs[1].value.ipaddr, ipAddress);
     next_hop_attrs[2].id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
     next_hop_attrs[2].value.oid = port.m_rif_id;
 
@@ -119,11 +116,6 @@ void NeighOrch::doTask(Consumer &consumer)
         }
 
         IpAddress ip_address(key.substr(found+1));
-        if (!ip_address.isV4())
-        {
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
 
         NeighborEntry neighbor_entry = { ip_address, alias };
 
@@ -186,8 +178,7 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
 
     sai_neighbor_entry_t neighbor_entry;
     neighbor_entry.rif_id = p.m_rif_id;
-    neighbor_entry.ip_address.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-    neighbor_entry.ip_address.addr.ip4 = ip_address.getV4Addr();
+    copy(neighbor_entry.ip_address, ip_address);
 
     sai_attribute_t neighbor_attr;
     neighbor_attr.id = SAI_NEIGHBOR_ATTR_DST_MAC_ADDRESS;
@@ -251,8 +242,7 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
 
     sai_neighbor_entry_t neighbor_entry;
     neighbor_entry.rif_id = p.m_rif_id;
-    neighbor_entry.ip_address.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-    neighbor_entry.ip_address.addr.ip4 = ip_address.getV4Addr();
+    copy(neighbor_entry.ip_address, ip_address);
 
     sai_object_id_t next_hop_id = m_syncdNextHops[ip_address].next_hop_id;
     status = sai_next_hop_api->remove_next_hop(next_hop_id);

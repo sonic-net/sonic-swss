@@ -83,9 +83,8 @@ void IntfsOrch::doTask(Consumer &consumer)
 
             sai_unicast_route_entry_t unicast_route_entry;
             unicast_route_entry.vr_id = gVirtualRouterId;
-            unicast_route_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-            unicast_route_entry.destination.addr.ip4 = ip_prefix.getIp().getV4Addr() & ip_prefix.getMask().getV4Addr();
-            unicast_route_entry.destination.mask.ip4 = ip_prefix.getMask().getV4Addr();
+            copy(unicast_route_entry.destination, ip_prefix);
+            subnet(unicast_route_entry.destination, unicast_route_entry.destination);
 
             sai_attribute_t attr;
             vector<sai_attribute_t> attrs;
@@ -121,9 +120,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             ip2me_attrs.push_back(ip2me_attr);
 
             unicast_route_entry.vr_id = gVirtualRouterId;
-            unicast_route_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-            unicast_route_entry.destination.addr.ip4 = ip_prefix.getIp().getV4Addr();
-            unicast_route_entry.destination.mask.ip4 = 0xFFFFFFFF;
+            copy(unicast_route_entry.destination, ip_prefix.getIp());
 
             status = sai_route_api->create_route(&unicast_route_entry, ip2me_attrs.size(), ip2me_attrs.data());
             if (status != SAI_STATUS_SUCCESS)
@@ -152,9 +149,8 @@ void IntfsOrch::doTask(Consumer &consumer)
 
             sai_unicast_route_entry_t unicast_route_entry;
             unicast_route_entry.vr_id = gVirtualRouterId;
-            unicast_route_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-            unicast_route_entry.destination.addr.ip4 = ip_prefix.getIp().getV4Addr() & ip_prefix.getMask().getV4Addr();
-            unicast_route_entry.destination.mask.ip4 = ip_prefix.getMask().getV4Addr();
+            copy(unicast_route_entry.destination, ip_prefix);
+            subnet(unicast_route_entry.destination, unicast_route_entry.destination);
 
             sai_status_t status = sai_route_api->remove_route(&unicast_route_entry);
             if (status != SAI_STATUS_SUCCESS)
@@ -165,9 +161,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
 
             unicast_route_entry.vr_id = gVirtualRouterId;
-            unicast_route_entry.destination.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-            unicast_route_entry.destination.addr.ip4 = ip_prefix.getIp().getV4Addr();
-            unicast_route_entry.destination.mask.ip4 = 0xFFFFFFFF;
+            copy(unicast_route_entry.destination, ip_prefix);
 
             status = sai_route_api->remove_route(&unicast_route_entry);
             if (status != SAI_STATUS_SUCCESS)
