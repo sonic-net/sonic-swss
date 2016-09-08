@@ -12,7 +12,7 @@ extern "C" {
 #include "ipaddress.h"
 #include "ipprefix.h"
 
-inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const ip_addr_t& src)
+inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const swss::ip_addr_t& src)
 {
     switch(src.family)
     {
@@ -30,15 +30,15 @@ inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const ip_addr_t& src
     return dst;
 }
 
-inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const IpAddress& src)
+inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const swss::IpAddress& src)
 {
     return copy(dst, src.getIp());
 }
 
-inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpPrefix& src)
+inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const swss::IpPrefix& src)
 {
-    ip_addr_t ia = src.getIp().getIp();
-    ip_addr_t ma = src.getMask().getIp();
+    swss::ip_addr_t ia = src.getIp().getIp();
+    swss::ip_addr_t ma = src.getMask().getIp();
     switch(ia.family)
     {
         case AF_INET:
@@ -57,7 +57,7 @@ inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpPrefix& src)
     return dst;
 }
 
-inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const ip_addr_t& src)
+inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const swss::ip_addr_t& src)
 {
     switch(src.family)
     {
@@ -77,7 +77,7 @@ inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const ip_addr_t& src)
     return dst;
 }
 
-inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpAddress& src)
+inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const swss::IpAddress& src)
 {
     return copy(dst, src.getIp());
 }
