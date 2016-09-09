@@ -7,7 +7,7 @@
 #include "intfsorch.h"
 #include "ipprefix.h"
 #include "logger.h"
-#include "sainet.h"
+#include "swssnet.h"
 
 extern sai_object_id_t gVirtualRouterId;
 

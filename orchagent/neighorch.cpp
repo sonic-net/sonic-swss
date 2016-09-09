@@ -1,7 +1,7 @@
 #include <assert.h>
 #include "neighorch.h"
 #include "logger.h"
-#include "sainet.h"
+#include "swssnet.h"
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
