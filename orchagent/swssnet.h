@@ -14,17 +14,18 @@ extern "C" {
 
 namespace swss {
 
-inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const ip_addr_t& src)
+inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const IpAddress& src)
 {
-    switch(src.family)
+    auto& sip = src.getIp();
+    switch(sip.family)
     {
         case AF_INET:
             dst.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-            dst.addr.ip4 = src.ip_addr.ipv4_addr;
+            dst.addr.ip4 = sip.ip_addr.ipv4_addr;
             break;
         case AF_INET6:
             dst.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
-            memcpy(dst.addr.ip6, src.ip_addr.ipv6_addr, 16);
+            memcpy(dst.addr.ip6, sip.ip_addr.ipv6_addr, 16);
             break;
         default:
             assert(false); // unreachable code
@@ -32,15 +33,10 @@ inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const ip_addr_t& src
     return dst;
 }
 
-inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const IpAddress& src)
-{
-    return copy(dst, src.getIp());
-}
-
 inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpPrefix& src)
 {
-    ip_addr_t ia = src.getIp().getIp();
-    ip_addr_t ma = src.getMask().getIp();
+    auto& ia = src.getIp().getIp();
+    auto& ma = src.getMask().getIp();
     switch(ia.family)
     {
         case AF_INET:
@@ -59,29 +55,25 @@ inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpPrefix& src)
     return dst;
 }
 
-inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const ip_addr_t& src)
+inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpAddress& src)
 {
-    switch(src.family)
+    auto& sip = src.getIp();
+    switch(sip.family)
     {
         case AF_INET:
             dst.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-            dst.addr.ip4 = src.ip_addr.ipv4_addr;
+            dst.addr.ip4 = sip.ip_addr.ipv4_addr;
             dst.mask.ip4 = 0xFFFFFFFF;
             break;
         case AF_INET6:
             dst.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
-            memcpy(dst.addr.ip6, src.ip_addr.ipv6_addr, 16);
+            memcpy(dst.addr.ip6, sip.ip_addr.ipv6_addr, 16);
             memset(dst.mask.ip6, 0xFF, 16);
             break;
         default:
             assert(false); // unreachable code
     }
     return dst;
-}
-
-inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpAddress& src)
-{
-    return copy(dst, src.getIp());
 }
 
 inline static sai_ip_prefix_t& subnet(sai_ip_prefix_t& dst, const sai_ip_prefix_t& src)
