@@ -7,7 +7,7 @@ bin_PROGRAMS = orchagent routeresync
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
 else
-DBGFLAGS = -g
+DBGFLAGS = -g -DNDEBUG
 endif
 
 orchagent_SOURCES = main.cpp orchdaemon.cpp orch.cpp routeorch.cpp neighorch.cpp intfsorch.cpp portsorch.cpp copporch.cpp tunneldecaporch.cpp

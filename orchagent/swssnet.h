@@ -3,8 +3,8 @@
 //
 #pragma once
 
-#include <assert.h>
 #include <memory.h>
+#include <stdexcept>
 #include <net/if.h>
 extern "C" {
 #include "sai.h"
@@ -28,7 +28,7 @@ inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const IpAddress& src
             memcpy(dst.addr.ip6, sip.ip_addr.ipv6_addr, 16);
             break;
         default:
-            assert(false); // unreachable code
+            throw std::logic_error("Invalid family");
     }
     return dst;
 }
@@ -50,7 +50,7 @@ inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpPrefix& src)
             memcpy(dst.mask.ip6, ma.ip_addr.ipv6_addr, 16);
             break;
         default:
-            assert(false); // unreachable code
+            throw std::logic_error("Invalid family");
     }
     return dst;
 }
@@ -71,7 +71,7 @@ inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpAddress& src)
             memset(dst.mask.ip6, 0xFF, 16);
             break;
         default:
-            assert(false); // unreachable code
+            throw std::logic_error("Invalid family");
     }
     return dst;
 }
@@ -93,7 +93,7 @@ inline static sai_ip_prefix_t& subnet(sai_ip_prefix_t& dst, const sai_ip_prefix_
             }
             break;
         default:
-            assert(false); // unreachable code
+            throw std::logic_error("Invalid family");
     }
     return dst;
 }
