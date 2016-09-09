@@ -1,4 +1,4 @@
-// Header file definine base types and simple helper functions for network in SAI
+// Header file defining base types and simple helper functions for network in SAI
 // Should keep the dependency as minimal as possible
 //
 #pragma once
