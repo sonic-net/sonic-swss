@@ -1,7 +1,11 @@
 #include <assert.h>
+#include <stdexcept>
+#include <memory>
 #include "routeorch.h"
 #include "logger.h"
 #include "swssnet.h"
+
+using namespace std;
 
 extern sai_next_hop_group_api_t*    sai_next_hop_group_api;
 extern sai_route_api_t*             sai_route_api;
@@ -66,7 +70,17 @@ void RouteOrch::doTask(Consumer& consumer)
             continue;
         }
 
-        IpPrefix ip_prefix = IpPrefix(key);
+        unique_ptr<const IpPrefix> ip_prefix;
+        try
+        {
+            ip_prefix.reset(new IpPrefix(key));
+        }
+        catch (const std::invalid_argument& ex)
+        {
+            SWSS_LOG_ERROR("Failed to parse IpPrefix in task key %s: %s\n", key.c_str(), ex.what());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
 
         if (op == SET_COMMAND)
         {
@@ -97,9 +111,9 @@ void RouteOrch::doTask(Consumer& consumer)
                 continue;
             }
 
-            if (m_syncdRoutes.find(ip_prefix) == m_syncdRoutes.end() || m_syncdRoutes[ip_prefix] != ip_addresses)
+            if (m_syncdRoutes.find(*ip_prefix) == m_syncdRoutes.end() || m_syncdRoutes[*ip_prefix] != ip_addresses)
             {
-                if (addRoute(ip_prefix, ip_addresses))
+                if (addRoute(*ip_prefix, ip_addresses))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;
@@ -110,9 +124,9 @@ void RouteOrch::doTask(Consumer& consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (m_syncdRoutes.find(ip_prefix) != m_syncdRoutes.end())
+            if (m_syncdRoutes.find(*ip_prefix) != m_syncdRoutes.end())
             {
-                if (removeRoute(ip_prefix))
+                if (removeRoute(*ip_prefix))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;
