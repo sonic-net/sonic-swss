@@ -2,12 +2,16 @@
 #include <fstream>
 #include <sstream>
 #include <map>
+#include <stdexcept>
+#include <memory>
 #include <net/if.h>
 
 #include "intfsorch.h"
 #include "ipprefix.h"
 #include "logger.h"
 #include "swssnet.h"
+
+using namespace std;
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -44,13 +48,19 @@ void IntfsOrch::doTask(Consumer &consumer)
         /* TODO: Sync loopback address and trap all IP packets to loopback addressy */
         if (alias == "lo" || alias == "eth0" || alias == "docker0")
         {
+            SWSS_LOG_INFO("Ignore task key %s\n", key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
 
-        IpPrefix ip_prefix(key.substr(found+1));
-        if (!ip_prefix.isV4())
+        unique_ptr<const IpPrefix> ip_prefix;
+        try
         {
+            ip_prefix.reset(new IpPrefix(key.substr(found+1)));
+        }
+        catch (const std::invalid_argument& ex)
+        {
+            SWSS_LOG_ERROR("Failed to parse IpPrefix in task key %s: %s\n", key.c_str(), ex.what());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -60,7 +70,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             /* Duplicate entry */
-            if (m_intfs.find(alias) != m_intfs.end() && m_intfs[alias].contains(ip_prefix.getIp()))
+            if (m_intfs.find(alias) != m_intfs.end() && m_intfs[alias].contains(ip_prefix->getIp()))
             {
                 it = consumer.m_toSync.erase(it);
                 continue;
@@ -82,7 +92,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 
             sai_unicast_route_entry_t unicast_route_entry;
             unicast_route_entry.vr_id = gVirtualRouterId;
-            copy(unicast_route_entry.destination, ip_prefix);
+            copy(unicast_route_entry.destination, *ip_prefix);
             subnet(unicast_route_entry.destination, unicast_route_entry.destination);
 
             sai_attribute_t attr;
@@ -99,13 +109,13 @@ void IntfsOrch::doTask(Consumer &consumer)
             sai_status_t status = sai_route_api->create_route(&unicast_route_entry, attrs.size(), attrs.data());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to create subnet route pre:%s %d\n", ip_prefix.to_string().c_str(), status);
+                SWSS_LOG_ERROR("Failed to create subnet route pre:%s %d\n", ip_prefix->to_string().c_str(), status);
                 it++;
                 continue;
             }
             else
             {
-                SWSS_LOG_NOTICE("Create subnet route pre:%s\n", ip_prefix.to_string().c_str());
+                SWSS_LOG_NOTICE("Create subnet route pre:%s\n", ip_prefix->to_string().c_str());
             }
 
             vector<sai_attribute_t> ip2me_attrs;
@@ -119,24 +129,24 @@ void IntfsOrch::doTask(Consumer &consumer)
             ip2me_attrs.push_back(ip2me_attr);
 
             unicast_route_entry.vr_id = gVirtualRouterId;
-            copy(unicast_route_entry.destination, ip_prefix.getIp());
+            copy(unicast_route_entry.destination, ip_prefix->getIp());
 
             status = sai_route_api->create_route(&unicast_route_entry, ip2me_attrs.size(), ip2me_attrs.data());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to create packet action trap route ip:%s %d\n", ip_prefix.getIp().to_string().c_str(), status);
+                SWSS_LOG_ERROR("Failed to create packet action trap route ip:%s %d\n", ip_prefix->getIp().to_string().c_str(), status);
                 it++;
             }
             else
             {
-                SWSS_LOG_NOTICE("Create packet action trap route ip:%s\n", ip_prefix.getIp().to_string().c_str());
-                m_intfs[alias].add(ip_prefix.getIp());
+                SWSS_LOG_NOTICE("Create packet action trap route ip:%s\n", ip_prefix->getIp().to_string().c_str());
+                m_intfs[alias].add(ip_prefix->getIp());
                 it = consumer.m_toSync.erase(it);
             }
         }
         else if (op == DEL_COMMAND)
         {
-            assert(m_intfs.find(alias) != m_intfs.end() && m_intfs[alias].contains(ip_prefix.getIp()));
+            assert(m_intfs.find(alias) != m_intfs.end() && m_intfs[alias].contains(ip_prefix->getIp()));
 
             Port port;
             if (!m_portsOrch->getPort(alias, port))
@@ -148,30 +158,30 @@ void IntfsOrch::doTask(Consumer &consumer)
 
             sai_unicast_route_entry_t unicast_route_entry;
             unicast_route_entry.vr_id = gVirtualRouterId;
-            copy(unicast_route_entry.destination, ip_prefix);
+            copy(unicast_route_entry.destination, *ip_prefix);
             subnet(unicast_route_entry.destination, unicast_route_entry.destination);
 
             sai_status_t status = sai_route_api->remove_route(&unicast_route_entry);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to remove subnet route pre:%s %d\n", ip_prefix.to_string().c_str(), status);
+                SWSS_LOG_ERROR("Failed to remove subnet route pre:%s %d\n", ip_prefix->to_string().c_str(), status);
                 it++;
                 continue;
             }
 
             unicast_route_entry.vr_id = gVirtualRouterId;
-            copy(unicast_route_entry.destination, ip_prefix);
+            copy(unicast_route_entry.destination, *ip_prefix);
 
             status = sai_route_api->remove_route(&unicast_route_entry);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to remove action trap route ip:%s %d\n", ip_prefix.getIp().to_string().c_str(), status);
+                SWSS_LOG_ERROR("Failed to remove action trap route ip:%s %d\n", ip_prefix->getIp().to_string().c_str(), status);
                 it++;
             }
             else
             {
-                SWSS_LOG_NOTICE("Remove packet action trap route ip:%s\n", ip_prefix.getIp().to_string().c_str());
-                m_intfs[alias].remove(ip_prefix.getIp());
+                SWSS_LOG_NOTICE("Remove packet action trap route ip:%s\n", ip_prefix->getIp().to_string().c_str());
+                m_intfs[alias].remove(ip_prefix->getIp());
                 it = consumer.m_toSync.erase(it);
 
                 if (!m_intfs[alias].getSize())
