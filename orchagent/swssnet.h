@@ -83,13 +83,13 @@ inline static sai_ip_prefix_t& subnet(sai_ip_prefix_t& dst, const sai_ip_prefix_
     {
         case SAI_IP_ADDR_FAMILY_IPV4:
             dst.addr.ip4 = src.addr.ip4 & src.mask.ip4;
-            dst.mask.ip4 = 0xFFFFFFFF;
+            dst.mask.ip4 = src.mask.ip4;
             break;
         case SAI_IP_ADDR_FAMILY_IPV6:
             for (size_t i = 0; i < 16; i++)
             {
                 dst.addr.ip6[i] = src.addr.ip6[i] & src.mask.ip6[i];
-                dst.mask.ip6[i] = 0xFF;
+                dst.mask.ip6[i] = src.mask.ip6[i];
             }
             break;
         default:
