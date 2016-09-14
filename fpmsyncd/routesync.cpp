@@ -53,7 +53,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         case RTN_BLACKHOLE:
             {
-                std::vector<FieldValueTuple> fvVector;
+                vector<FieldValueTuple> fvVector;
                 FieldValueTuple fv("blackhole", "true");
                 fvVector.push_back(fv);
                 m_routeTable.set(destipprefix, fvVector);
@@ -114,7 +114,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         }
     }
 
-    std::vector<FieldValueTuple> fvVector;
+    vector<FieldValueTuple> fvVector;
     FieldValueTuple nh("nexthop", nexthops);
     FieldValueTuple idx("ifname", ifnames);
     fvVector.push_back(nh);
