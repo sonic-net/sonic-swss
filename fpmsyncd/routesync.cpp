@@ -34,8 +34,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     auto family = rtnl_route_get_family(route_obj);
     if (family != AF_INET && family != AF_INET6)
     {
-        SWSS_LOG_INFO("%s: Unknown route family support: %s (object: %s)\n",
-                      __FUNCTION__, destipprefix, nl_object_get_type(obj));
+        SWSS_LOG_INFO("Unknown route family support: %s (object: %s)\n", destipprefix, nl_object_get_type(obj));
         return;
     }
 
@@ -46,8 +45,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
     else if (nlmsg_type != RTM_NEWROUTE)
     {
-        SWSS_LOG_INFO("%s: Unknown message-type: %d for %s\n",
-                      __FUNCTION__, nlmsg_type, destipprefix);
+        SWSS_LOG_INFO("Unknown message-type: %d for %s\n", nlmsg_type, destipprefix);
         return;
     }
 
@@ -67,8 +65,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         case RTN_MULTICAST:
         case RTN_BROADCAST:
         case RTN_LOCAL:
-            SWSS_LOG_INFO("%s: BUM routes aren't supported yet (%s)\n",
-                          __FUNCTION__, destipprefix);
+            SWSS_LOG_INFO("BUM routes aren't supported yet (%s)\n", destipprefix);
             return;
 
         default:
@@ -82,8 +79,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     struct nl_list_head *nhs = rtnl_route_get_nexthops(route_obj);
     if (!nhs)
     {
-        SWSS_LOG_INFO("%s: Nexthop list is empty for %s\n",
-                      __FUNCTION__, destipprefix);
+        SWSS_LOG_INFO("Nexthop list is empty for %s\n", destipprefix);
         return;
     }
 
