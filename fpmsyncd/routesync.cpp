@@ -29,17 +29,14 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     dip = rtnl_route_get_dst(route_obj);
     nl_addr2str(dip, destipprefix, MAX_ADDR_SIZE);
-    SWSS_LOG_DEBUG("destipprefix=%s\n", destipprefix);
+    SWSS_LOG_DEBUG("Receive new route message dest ip prefix: %s\n", destipprefix);
     /* Supports IPv4 or IPv6 address, otherwise return immediately */
-    switch (rtnl_route_get_family(route_obj))
+    auto family = rtnl_route_get_family(route_obj);
+    if (family != AF_INET && family != AF_INET6)
     {
-        case AF_INET:
-        case AF_INET6:
-            break;
-        default:
-            SWSS_LOG_INFO("%s: Unknown route family support: %s (object: %s)\n",
-                          __FUNCTION__, destipprefix, nl_object_get_type(obj));
-            return;
+        SWSS_LOG_INFO("%s: Unknown route family support: %s (object: %s)\n",
+                      __FUNCTION__, destipprefix, nl_object_get_type(obj));
+        return;
     }
 
     if (nlmsg_type == RTM_DELROUTE)
@@ -104,7 +101,6 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         }
 
         rtnl_link_i2name(m_link_cache, ifindex, ifname, IFNAMSIZ);
-        SWSS_LOG_DEBUG("ifname=%s\n", ifname);
         /* Cannot get ifname. Possibly interfaces get re-created. */
         if (!strlen(ifname))
         {
