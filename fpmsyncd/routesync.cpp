@@ -25,10 +25,11 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
     struct rtnl_route *route_obj = (struct rtnl_route *)obj;
     struct nl_addr *dip;
-    char ifname[MAX_ADDR_SIZE + 1] = {0};
+    char destipprefix[MAX_ADDR_SIZE + 1] = {0};
 
     dip = rtnl_route_get_dst(route_obj);
-    nl_addr2str(dip, ifname, MAX_ADDR_SIZE);
+    nl_addr2str(dip, destipprefix, MAX_ADDR_SIZE);
+    SWSS_LOG_DEBUG("destipprefix=%s\n", destipprefix);
     /* Supports IPv4 or IPv6 address, otherwise return immediately */
     switch (rtnl_route_get_family(route_obj))
     {
@@ -37,19 +38,19 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
             break;
         default:
             SWSS_LOG_INFO("%s: Unknown route family support: %s (object: %s)\n",
-                          __FUNCTION__, ifname, nl_object_get_type(obj));
+                          __FUNCTION__, destipprefix, nl_object_get_type(obj));
             return;
     }
 
     if (nlmsg_type == RTM_DELROUTE)
     {
-        m_routeTable.del(ifname);
+        m_routeTable.del(destipprefix);
         return;
     }
     else if (nlmsg_type != RTM_NEWROUTE)
     {
         SWSS_LOG_INFO("%s: Unknown message-type: %d for %s\n",
-                      __FUNCTION__, nlmsg_type, ifname);
+                      __FUNCTION__, nlmsg_type, destipprefix);
         return;
     }
 
@@ -60,7 +61,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
                 std::vector<FieldValueTuple> fvVector;
                 FieldValueTuple fv("blackhole", "true");
                 fvVector.push_back(fv);
-                m_routeTable.set(ifname, fvVector);
+                m_routeTable.set(destipprefix, fvVector);
                 return;
             }
         case RTN_UNICAST:
@@ -70,7 +71,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         case RTN_BROADCAST:
         case RTN_LOCAL:
             SWSS_LOG_INFO("%s: BUM routes aren't supported yet (%s)\n",
-                          __FUNCTION__, ifname);
+                          __FUNCTION__, destipprefix);
             return;
 
         default:
@@ -85,10 +86,11 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (!nhs)
     {
         SWSS_LOG_INFO("%s: Nexthop list is empty for %s\n",
-                      __FUNCTION__, ifname);
+                      __FUNCTION__, destipprefix);
         return;
     }
 
+    char ifname[IFNAMSIZ] = {0};
     for (int i = 0; i < rtnl_route_get_nnexthops(route_obj); i++)
     {
         struct rtnl_nexthop *nexthop = rtnl_route_nexthop_n(route_obj, i);
@@ -101,12 +103,13 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
             nexthops += nh.to_string();
         }
 
-        rtnl_link_i2name(m_link_cache, ifindex, ifname, MAX_ADDR_SIZE);
+        rtnl_link_i2name(m_link_cache, ifindex, ifname, IFNAMSIZ);
+        SWSS_LOG_DEBUG("ifname=%s\n", ifname);
         /* Cannot get ifname. Possibly interfaces get re-created. */
         if (!strlen(ifname))
         {
             rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
-            rtnl_link_i2name(m_link_cache, ifindex, ifname, MAX_ADDR_SIZE);
+            rtnl_link_i2name(m_link_cache, ifindex, ifname, IFNAMSIZ);
             if (!strlen(ifname))
                 strcpy(ifname, "unknown");
         }
@@ -124,5 +127,5 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     FieldValueTuple idx("ifname", ifnames);
     fvVector.push_back(nh);
     fvVector.push_back(idx);
-    m_routeTable.set(ifname, fvVector);
+    m_routeTable.set(destipprefix, fvVector);
 }
