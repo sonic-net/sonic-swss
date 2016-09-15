@@ -1,8 +1,12 @@
+#include <dirent.h>
 #include <stdlib.h>
+#include <string.h>
+
+#include <fstream>
 #include <iostream>
 #include <vector>
+
 #include "logger.h"
-#include <fstream>
 #include "dbconnector.h"
 #include "producertable.h"
 #include "json.hpp"
@@ -17,9 +21,12 @@ const char* const op_name            = "OP";
 const char* const name_delimiter     = ":";
 const int el_count = 2;
 
-void usage(char **argv)
+const string SWSS_CONFIG_DIR    = "/etc/swss/config.d/";
+
+void usage()
 {
-    cout << "Usage: " << argv[0] << " json_file_path\n";
+    cout << "Usage: swssconfig [FILE...]" << endl;
+    cout << "       (default config folder is /etc/swss/config.d/)" << endl;
 }
 
 void dump_db_item(KeyOpFieldsValuesTuple &db_item)
@@ -60,7 +67,7 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
     return true;
 }
 
-bool load_json_db_data(iostream &fs, vector<KeyOpFieldsValuesTuple> &db_items)
+bool load_json_db_data(ifstream &fs, vector<KeyOpFieldsValuesTuple> &db_items)
 {
     json json_array;
     fs >> json_array;
@@ -127,47 +134,77 @@ bool load_json_db_data(iostream &fs, vector<KeyOpFieldsValuesTuple> &db_items)
     return true;
 }
 
+vector<string> read_directory(const string &path)
+{
+    vector<string> ret;
+    DIR *dir;
+    dirent *entry;
+    dir = opendir(path.c_str());
+    if (dir)
+    {
+        while ((entry = readdir(dir)))
+        {
+            if (strcmp(entry->d_name, ".") && strcmp(entry->d_name, ".."))
+            {
+                ret.push_back(string(entry->d_name));
+            }
+        }
+        closedir(dir);
+    }
+    sort(ret.begin(), ret.end());
+    return ret;
+}
+
 int main(int argc, char **argv)
 {
-    Logger::setMinPrio(Logger::SWSS_DEBUG);
+    Logger::setMinPrio(Logger::SWSS_NOTICE);
 
-    if (argc != 2)
+    vector<string> files;
+    if (argc == 1)
     {
-        usage(argv);
-        exit(EXIT_FAILURE);
+        files = read_directory(SWSS_CONFIG_DIR);
     }
-
-    vector<KeyOpFieldsValuesTuple> db_items;
-    fstream fs;
-    try
+    if (argc == 2 && !strcmp(argv[1], "-h"))
     {
-        fs.open(argv[1], fstream::in);
-        if (!load_json_db_data(fs, db_items))
+        usage();
+        exit(EXIT_SUCCESS);
+    }
+    else
+    {
+        for (auto i = 1; i < argc; i++)
         {
-            SWSS_LOG_ERROR("Failed loading data from json file.");
-            fs.close();
-            return EXIT_FAILURE;
-        }
-        fs.close();
-    }
-    catch(...)
-    {
-        cout << "Failed loading json file: " << argv[1] << " Please refer to logs\n";
-        return EXIT_FAILURE;
-    }
-
-    try
-    {
-        if (!write_db_data(db_items))
-        {
-            SWSS_LOG_ERROR("Failed writing data to db\n");
-            return EXIT_FAILURE;
+            files.push_back(string(argv[i]));
         }
     }
-    catch(...)
+
+    for (auto i : files)
     {
-        cout << "Failed applying settings from json file: " << argv[1] << " Please refer to logs\n";
-        return EXIT_FAILURE;
+        SWSS_LOG_NOTICE("Loading config from JSON file:%s...", i.c_str());
+
+        ifstream fs;
+        vector<KeyOpFieldsValuesTuple> db_items;
+        try
+        {
+            fs.open(i, fstream::in);
+            if (!load_json_db_data(fs, db_items))
+            {
+                SWSS_LOG_ERROR("Failed loading data from JSON file:%s", i.c_str());
+                return EXIT_FAILURE;
+            }
+
+            if (!write_db_data(db_items))
+            {
+                SWSS_LOG_ERROR("Failed applying data from JSON file:%S", i.c_str());
+                return EXIT_FAILURE;
+            }
+        }
+        catch(const exception &e)
+        {
+            SWSS_LOG_ERROR("Exception caught:%s", e.what());
+            cout << "Exception caught:" << e.what() << endl;
+                return EXIT_FAILURE;
+        }
     }
+
     return EXIT_SUCCESS;
 }
