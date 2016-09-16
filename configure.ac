@@ -29,6 +29,14 @@ AC_ARG_ENABLE(debug,
 esac],[debug=false])
 AM_CONDITIONAL(DEBUG, test x$debug = xtrue)
 
+AC_ARG_ENABLE(gtest,
+[  --enable-gtest       Compile with googletest flags],
+[case "${enableval}" in
+	yes) gtest=true ;;
+	no)  gtest=false ;;
+	*) AC_MSG_ERROR(bad value ${enableval} for --enable-gtest) ;;
+esac],[gtest=false])
+AM_CONDITIONAL(GTEST, test x$gtest = xtrue)
 
 CFLAGS_COMMON="-std=c++11 -Wall -fPIC -Wno-write-strings -I/usr/include/libnl3 -I/usr/include/swss"
 AC_SUBST(CFLAGS_COMMON)
@@ -42,6 +50,7 @@ AC_CONFIG_FILES([
     portsyncd/Makefile
     teamsyncd/Makefile
     swssconfig/Makefile
+    tests/Makefile
 ])
 
 AC_OUTPUT
