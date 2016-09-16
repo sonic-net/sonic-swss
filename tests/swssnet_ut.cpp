@@ -7,7 +7,7 @@
 using namespace std;
 using namespace swss;
 
-TEST(IpAddress, copy)
+TEST(swssnet, copy1)
 {
     IpAddress ip("2001:4898:f0:f153:357c:77b2:49c9:627c");
     sai_ip_address_t dst;
@@ -19,7 +19,7 @@ TEST(IpAddress, copy)
     EXPECT_STREQ(buf, "2001:4898:f0:f153:357c:77b2:49c9:627c");
 }
 
-TEST(IpPrefix, copy)
+TEST(swssnet, copy2)
 {
     IpPrefix ip("2001:4898:f0:f153:357c:77b2:49c9:627c/27");
     sai_ip_prefix_t dst;
@@ -30,11 +30,10 @@ TEST(IpPrefix, copy)
     inet_ntop(AF_INET6, dst.addr.ip6, buf, INET6_ADDRSTRLEN);
     EXPECT_STREQ(buf, "2001:4898:f0:f153:357c:77b2:49c9:627c");
     inet_ntop(AF_INET6, dst.mask.ip6, buf, INET6_ADDRSTRLEN);
-    printf("%s\n", buf);
     EXPECT_STREQ(buf, "ffff:ffe0::");
 }
 
-TEST(IpAddress, copy2)
+TEST(swssnet, copy3)
 {
     IpAddress ip("2001:4898:f0:f153:357c:77b2:49c9:627c");
     sai_ip_prefix_t dst;
@@ -48,7 +47,7 @@ TEST(IpAddress, copy2)
     EXPECT_STREQ(buf, "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff");
 }
 
-TEST(sai_ip_prefix_t, subnet)
+TEST(swssnet, subnet)
 {
     sai_ip_prefix_t dst, src;
     src.addr_family = SAI_IP_ADDR_FAMILY_IPV6;
