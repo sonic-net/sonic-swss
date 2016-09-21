@@ -1,4 +1,3 @@
-#include "sai.h"
 #include "tokenize.h"
 #include "qosorch.h"
 #include "logger.h"
@@ -635,7 +634,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             else if (fvField(*i) == scheduler_weight_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_SCHEDULING_WEIGHT;
-                attr.value.s32 = stoi(fvValue(*i));
+                attr.value.u8 = stoi(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_priority_field_name)
@@ -647,27 +646,30 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
                 SWSS_LOG_ERROR("Unknown field:%s", fvField(*i).c_str());
                 return task_process_status::task_invalid_entry;
             }
-            if (SAI_NULL_OBJECT_ID != sai_object)
+        }
+
+        if (SAI_NULL_OBJECT_ID != sai_object)
+        {
+            for (auto attr : sai_attr_list)
             {
-                for (auto attr : sai_attr_list)
-                {
-                    sai_status = sai_scheduler_api->set_scheduler_attribute(sai_object, &attr);
-                    if (sai_status != SAI_STATUS_SUCCESS)
-                    {
-                        SWSS_LOG_ERROR("fail to set scheduler attribute, id:%d", attr.id);
-                        return task_process_status::task_failed;
-                    }
-                }
-            }
-            else {
-                sai_status = sai_scheduler_api->create_scheduler_profile(&sai_object, sai_attr_list.size(), sai_attr_list.data());
+                sai_status = sai_scheduler_api->set_scheduler_attribute(sai_object, &attr);
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
-                    SWSS_LOG_ERROR("fail to call sai_scheduler_api->create_scheduler_profile: %d", sai_status);
+                    SWSS_LOG_ERROR("fail to set scheduler attribute, id:%d", attr.id);
                     return task_process_status::task_failed;
                 }
-                (*(m_qos_type_maps[qos_map_type_name]))[qos_object_name] = sai_object;
             }
+        }
+        else
+        {
+            sai_status = sai_scheduler_api->create_scheduler_profile(&sai_object, sai_attr_list.size(), sai_attr_list.data());
+            if (sai_status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("fail to call sai_scheduler_api->create_scheduler_profile: %d", sai_status);
+                return task_process_status::task_failed;
+            }
+            SWSS_LOG_NOTICE("Create scheduler profile");
+            (*(m_qos_type_maps[qos_map_type_name]))[qos_object_name] = sai_object;
         }
     }
     else if (op == DEL_COMMAND)
