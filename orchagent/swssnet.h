@@ -16,7 +16,7 @@ namespace swss {
 
 inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const IpAddress& src)
 {
-    auto& sip = src.getIp();
+    auto sip = src.getIp();
     switch(sip.family)
     {
         case AF_INET:
@@ -35,8 +35,8 @@ inline static sai_ip_address_t& copy(sai_ip_address_t& dst, const IpAddress& src
 
 inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpPrefix& src)
 {
-    auto& ia = src.getIp().getIp();
-    auto& ma = src.getMask().getIp();
+    auto ia = src.getIp().getIp();
+    auto ma = src.getMask().getIp();
     switch(ia.family)
     {
         case AF_INET:
@@ -57,7 +57,7 @@ inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpPrefix& src)
 
 inline static sai_ip_prefix_t& copy(sai_ip_prefix_t& dst, const IpAddress& src)
 {
-    auto& sip = src.getIp();
+    auto sip = src.getIp();
     switch(sip.family)
     {
         case AF_INET:
