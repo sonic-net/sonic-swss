@@ -24,12 +24,22 @@ void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *d
     }
 }
 
+void on_switch_shutdown_request()
+{
+    SWSS_LOG_ENTER();
+
+    /* TODO: Later a better restart story will be told here */
+    SWSS_LOG_ERROR("Syncd stopped");
+
+    exit(EXIT_FAILURE);
+}
+
 sai_switch_notification_t switch_notifications
 {
     NULL,
     NULL,
     on_port_state_change,
     NULL,
-    NULL,
+    on_switch_shutdown_request,
     NULL
 };
