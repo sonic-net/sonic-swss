@@ -99,7 +99,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
-                SWSS_LOG_ERROR("Failed to locate interface %s\n", alias.c_str());
+                SWSS_LOG_ERROR("Failed to locate interface %s", alias.c_str());
                 throw logic_error("Failed to locate interface.");
             }
 
@@ -184,8 +184,8 @@ bool IntfsOrch::addRouterIntfs(Port &port)
     sai_status_t status = sai_router_intfs_api->create_router_interface(&port.m_rif_id, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create router interface for port %s", port.m_alias.c_str());
-        return false;
+        SWSS_LOG_ERROR("Failed to create router interface for port %s, rv:%d", port.m_alias.c_str(), status);
+        throw runtime_error("Failed to create router interface.");
     }
 
     gPortsOrch->setPort(port.m_alias, port);
@@ -208,7 +208,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     sai_status_t status = sai_router_intfs_api->remove_router_interface(port.m_rif_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove router interface for port %s", port.m_alias.c_str());
+        SWSS_LOG_ERROR("Failed to remove router interface for port %s, rv:%d", port.m_alias.c_str(), status);
         throw runtime_error("Failed to remove router interface.");
     }
 
@@ -241,11 +241,11 @@ void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     sai_status_t status = sai_route_api->create_route(&unicast_route_entry, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create subnet route pre:%s %d\n", ip_prefix.to_string().c_str(), status);
+        SWSS_LOG_ERROR("Failed to create subnet route pre:%s, rv:%d", ip_prefix.to_string().c_str(), status);
         throw runtime_error("Failed to create subnet route.");
     }
 
-    SWSS_LOG_NOTICE("Create subnet route pre:%s\n", ip_prefix.to_string().c_str());
+    SWSS_LOG_NOTICE("Create subnet route pre:%s", ip_prefix.to_string().c_str());
     increaseRouterIntfsRefCount(port.m_alias);
 }
 
@@ -259,7 +259,7 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     sai_status_t status = sai_route_api->remove_route(&unicast_route_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove subnet route pre:%s %d\n", ip_prefix.to_string().c_str(), status);
+        SWSS_LOG_ERROR("Failed to remove subnet route pre:%s, rv:%d", ip_prefix.to_string().c_str(), status);
         throw runtime_error("Failed to remove subnet route.");
     }
 
@@ -287,11 +287,11 @@ void IntfsOrch::addIp2MeRoute(const Port &port, const IpPrefix &ip_prefix)
     sai_status_t status = sai_route_api->create_route(&unicast_route_entry, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create IP2me route ip:%s %d\n", ip_prefix.getIp().to_string().c_str(), status);
+        SWSS_LOG_ERROR("Failed to create IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
         throw runtime_error("Failed to create IP2me route.");
     }
 
-    SWSS_LOG_NOTICE("Create packet create IP2me route ip:%s\n", ip_prefix.getIp().to_string().c_str());
+    SWSS_LOG_NOTICE("Create IP2me route ip:%s", ip_prefix.getIp().to_string().c_str());
     increaseRouterIntfsRefCount(port.m_alias);
 }
 
@@ -304,10 +304,10 @@ void IntfsOrch::removeIp2MeRoute(const Port &port, const IpPrefix &ip_prefix)
     sai_status_t status = sai_route_api->remove_route(&unicast_route_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove IP2me route ip:%s %d\n", ip_prefix.getIp().to_string().c_str(), status);
+        SWSS_LOG_ERROR("Failed to remove IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
         throw runtime_error("Failed to remove IP2me route.");
     }
 
-    SWSS_LOG_NOTICE("Remove packet action trap route ip:%s\n", ip_prefix.getIp().to_string().c_str());
+    SWSS_LOG_NOTICE("Remove packet action trap route ip:%s", ip_prefix.getIp().to_string().c_str());
     decreaseRouterIntfsRefCount(port.m_alias);
 }
