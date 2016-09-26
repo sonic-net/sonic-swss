@@ -125,6 +125,12 @@ void NeighOrch::doTask(Consumer &consumer)
             continue;
         }
 
+        if (!p.m_rif_id)
+        {
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
         IpAddress ip_address(key.substr(found+1));
 
         NeighborEntry neighbor_entry = { ip_address, alias };
