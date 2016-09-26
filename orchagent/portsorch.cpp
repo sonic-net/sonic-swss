@@ -132,8 +132,8 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         throw "PortsOrch initialization failure";
     }
 
-    /* Remove port from default VLAN */
-    for (i = 0; i < (int)m_portCount; i++)
+    /* Remove ports from default VLAN */
+    for (i = 0; i < (int)attr.value.objlist.count; i++)
     {
         status = sai_vlan_api->remove_vlan_member(vlan_member_list[i]);
         if (status != SAI_STATUS_SUCCESS)
