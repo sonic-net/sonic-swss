@@ -602,6 +602,11 @@ void PortsOrch::initializeQueues(Port &port)
 
     port.m_queue_ids.resize(attr.value.u32);
 
+    if (attr.value.u32 == 0)
+    {
+        return;
+    }
+
     attr.id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
     attr.value.objlist.count = port.m_queue_ids.size();
     attr.value.objlist.list = port.m_queue_ids.data();
@@ -630,6 +635,11 @@ void PortsOrch::initializePriorityGroups(Port &port)
     SWSS_LOG_INFO("Get %d priority groups for port %s", attr.value.u32, port.m_alias.c_str());
 
     port.m_priority_group_ids.resize(attr.value.u32);
+
+    if (attr.value.u32 == 0)
+    {
+        return;
+    }
 
     attr.id = SAI_PORT_ATTR_PRIORITY_GROUP_LIST;
     attr.value.objlist.count = port.m_priority_group_ids.size();
