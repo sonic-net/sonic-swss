@@ -9,6 +9,7 @@ extern "C" {
 
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <thread>
 #include <chrono>
 
@@ -47,6 +48,9 @@ map<string, string> gProfileMap;
 sai_object_id_t gVirtualRouterId;
 sai_object_id_t gUnderlayIfId;
 MacAddress gMacAddress;
+
+/* Global database mutex */
+mutex gDbMutex;
 
 const char *test_profile_get_value (
     _In_ sai_switch_profile_id_t profile_id,

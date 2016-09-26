@@ -1,3 +1,5 @@
+#include <mutex>
+
 #include "portsorch.h"
 
 extern "C" {
@@ -6,10 +8,15 @@ extern "C" {
 
 #include "logger.h"
 
+extern mutex gDbMutex;
 extern PortsOrch *gPortsOrch;
 
 void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *data)
 {
+    SWSS_LOG_ENTER();
+
+    lock_guard<mutex> lock(gDbMutex);
+
     /* Wait until gPortsOrch is initialized */
     if (!gPortsOrch || !gPortsOrch->isInitDone())
         return;

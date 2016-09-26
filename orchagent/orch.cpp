@@ -1,4 +1,5 @@
 #include <iostream>
+#include <mutex>
 
 #include "orch.h"
 #include "portsorch.h"
@@ -7,6 +8,7 @@
 
 using namespace swss;
 
+extern mutex gDbMutex;
 extern PortsOrch *gPortsOrch;
 
 Orch::Orch(DBConnector *db, string tableName) :
@@ -55,6 +57,8 @@ bool Orch::hasSelectable(ConsumerTable *selectable) const
 bool Orch::execute(string tableName)
 {
     SWSS_LOG_ENTER();
+
+    lock_guard<mutex> lock(gDbMutex);
 
     auto consumer_it = m_consumerMap.find(tableName);
     if (consumer_it == m_consumerMap.end())
