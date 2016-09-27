@@ -92,8 +92,9 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
         if (addr != NULL)
         {
-            IpAddress nh(*(uint32_t*)nl_addr_get_binary_addr(addr));
-            nexthops += nh.to_string();
+            char gwipprefix[MAX_ADDR_SIZE + 1] = {0};
+            nl_addr2str(addr, gwipprefix, MAX_ADDR_SIZE);
+            nexthops += gwipprefix;
         }
 
         rtnl_link_i2name(m_link_cache, ifindex, ifname, IFNAMSIZ);
