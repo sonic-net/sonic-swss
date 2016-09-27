@@ -10,6 +10,38 @@ extern sai_route_api_t*             sai_route_api;
 
 extern PortsOrch *gPortsOrch;
 
+RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
+        Orch(db, tableName),
+        m_neighOrch(neighOrch),
+        m_nextHopGroupCount(0),
+        m_resync(false)
+{
+    SWSS_LOG_ENTER();
+
+    IpPrefix default_ip_prefix("0.0.0.0/0");
+
+    sai_unicast_route_entry_t unicast_route_entry;
+    unicast_route_entry.vr_id = gVirtualRouterId;
+    copy(unicast_route_entry.destination, default_ip_prefix);
+    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
+
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_DROP;
+
+    sai_status_t status = sai_route_api->create_route(&unicast_route_entry, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create default route with packet action drop");
+        throw runtime_error("Failed to create router interface.");
+    }
+
+    // add default route into the m_syncdRoutes
+    m_syncdRoutes[default_ip_prefix] = IpAddresses("0.0.0.0");
+
+    SWSS_LOG_NOTICE("Create default route with packet action drop");
+}
+
 bool RouteOrch::hasNextHopGroup(IpAddresses ipAddresses)
 {
     return m_syncdNextHopGroups.find(ipAddresses) != m_syncdNextHopGroups.end();
@@ -145,6 +177,13 @@ void RouteOrch::decreaseNextHopRefCount(IpAddresses ipAddresses)
     if (ipAddresses.getSize() == 1)
     {
         IpAddress ip_address(ipAddresses.to_string());
+
+        // skip blackhole route
+        if (ip_address.isZero())
+        {
+            return;
+        }
+
         m_neighOrch->decreaseNextHopRefCount(ip_address);
     }
     else
@@ -417,11 +456,28 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
     route_entry.vr_id = gVirtualRouterId;
     copy(route_entry.destination, ipPrefix);
 
-    sai_status_t status = sai_route_api->remove_route(&route_entry);
-    if (status != SAI_STATUS_SUCCESS)
+    // set to blackhole for default route
+    if (ipPrefix.isDefaultRoute())
     {
-        SWSS_LOG_ERROR("Failed to remove route prefix:%s\n", ipPrefix.to_string().c_str());
-        return false;
+        sai_attribute_t attr;
+        attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
+        attr.value.s32 = SAI_PACKET_ACTION_DROP;
+
+        sai_status_t status = sai_route_api->set_route_attribute(&route_entry, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set route %s to drop", ipPrefix.to_string().c_str());
+            return false;
+        }
+    }
+    else
+    {
+        sai_status_t status = sai_route_api->remove_route(&route_entry);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove route prefix:%s\n", ipPrefix.to_string().c_str());
+            return false;
+        }
     }
 
     /* Remove next hop group entry if ref_count is zero */

@@ -31,11 +31,7 @@ typedef map<IpPrefix, IpAddresses> RouteTable;
 class RouteOrch : public Orch
 {
 public:
-    RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
-        Orch(db, tableName),
-        m_neighOrch(neighOrch),
-        m_nextHopGroupCount(0),
-        m_resync(false) {};
+    RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch);
 
     bool hasNextHopGroup(IpAddresses);
 
