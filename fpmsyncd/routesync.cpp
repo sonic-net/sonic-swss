@@ -90,15 +90,12 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         struct nl_addr *addr = rtnl_route_nh_get_gateway(nexthop);
         unsigned int ifindex = rtnl_route_nh_get_ifindex(nexthop);
 
-        if (addr == NULL)
+        if (addr != NULL)
         {
-            SWSS_LOG_INFO("Got empty nexthop gateway: %d\n", i);
-            continue;
+            char gwipprefix[MAX_ADDR_SIZE + 1] = {0};
+            nl_addr2str(addr, gwipprefix, MAX_ADDR_SIZE);
+            nexthops += gwipprefix;
         }
-        
-        char gwipprefix[MAX_ADDR_SIZE + 1] = {0};
-        nl_addr2str(addr, gwipprefix, MAX_ADDR_SIZE);
-        nexthops += gwipprefix;
 
         rtnl_link_i2name(m_link_cache, ifindex, ifname, IFNAMSIZ);
         /* Cannot get ifname. Possibly interfaces get re-created. */
@@ -116,12 +113,6 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
             nexthops += string(",");
             ifnames += string(",");
         }
-    }
-
-    if (nexthops.size() == 0)
-    {
-        SWSS_LOG_INFO("Nexthop list empty: %s\n", destipprefix);
-        return;
     }
 
     vector<FieldValueTuple> fvVector;
