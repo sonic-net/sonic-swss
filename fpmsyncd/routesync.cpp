@@ -130,5 +130,5 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     fvVector.push_back(nh);
     fvVector.push_back(idx);
     m_routeTable.set(destipprefix, fvVector);
-    SWSS_LOG_INFO("RoutTable set: %s %s %s\n", destipprefix, nexthops.c_str(), ifnames.c_str());
+    SWSS_LOG_DEBUG("RoutTable set: %s %s %s\n", destipprefix, nexthops.c_str(), ifnames.c_str());
 }
