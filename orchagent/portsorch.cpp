@@ -31,7 +31,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     /* Initialize port table */
     m_portTable = unique_ptr<Table>(new Table(m_db, APP_PORT_TABLE_NAME));
 
-    int i, j;
+    uint32_t i, j;
     sai_status_t status;
     sai_attribute_t attr;
 
@@ -75,7 +75,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     }
 
     /* Get port hardware lane info */
-    for (i = 0; i < (int)m_portCount; i++)
+    for (i = 0; i < m_portCount; i++)
     {
         sai_uint32_t lanes[4];
         attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
@@ -90,7 +90,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         }
 
         set<int> tmp_lane_set;
-        for (j = 0; j < (int)attr.value.u32list.count; j++)
+        for (j = 0; j < attr.value.u32list.count; j++)
             tmp_lane_set.insert(attr.value.u32list.list[j]);
 
         string tmp_lane_str = "";
@@ -105,7 +105,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     }
 
     /* Set port to hardware learn mode */
-    for (i = 0; i < (int)m_portCount; i++)
+    for (i = 0; i < m_portCount; i++)
     {
         attr.id = SAI_PORT_ATTR_FDB_LEARNING;
         attr.value.s32 = SAI_PORT_LEARN_MODE_HW;
@@ -133,7 +133,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     }
 
     /* Remove port from default VLAN */
-    for (i = 0; i < (int)m_portCount; i++)
+    for (i = 0; i < attr.value.objlist.count; i++)
     {
         status = sai_vlan_api->remove_vlan_member(vlan_member_list[i]);
         if (status != SAI_STATUS_SUCCESS)
