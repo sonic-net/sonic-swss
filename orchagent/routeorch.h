@@ -14,9 +14,6 @@
 using namespace std;
 using namespace swss;
 
-/* Maximum next hop group number */
-#define NHGRP_MAX_SIZE 128
-
 struct NextHopGroupEntry
 {
     sai_object_id_t     next_hop_group_id;  // next hop group id
@@ -31,11 +28,7 @@ typedef map<IpPrefix, IpAddresses> RouteTable;
 class RouteOrch : public Orch
 {
 public:
-    RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
-        Orch(db, tableName),
-        m_neighOrch(neighOrch),
-        m_nextHopGroupCount(0),
-        m_resync(false) {};
+    RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch);
 
     bool hasNextHopGroup(IpAddresses);
 
@@ -43,6 +36,8 @@ private:
     NeighOrch *m_neighOrch;
 
     int m_nextHopGroupCount;
+    int m_maxNextHopGroupCount;
+
     bool m_resync;
 
     RouteTable m_syncdRoutes;

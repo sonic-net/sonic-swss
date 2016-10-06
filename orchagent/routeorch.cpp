@@ -7,8 +7,25 @@ extern sai_object_id_t gVirtualRouterId;
 
 extern sai_next_hop_group_api_t*    sai_next_hop_group_api;
 extern sai_route_api_t*             sai_route_api;
+extern sai_switch_api_t*            sai_switch_api;
 
 extern PortsOrch *gPortsOrch;
+
+RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
+        Orch(db, tableName), m_neighOrch(neighOrch), m_nextHopGroupCount(0), m_resync(false)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
+    sai_status_t status = sai_switch_api->get_switch_attribute(1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get number of ECMP groups for switch");
+    }
+    SWSS_LOG_NOTICE("Get maximum %d number of ECMP groups for switch", attr.value.u32);
+    m_maxNextHopGroupCount = attr.value.u32;
+}
 
 bool RouteOrch::hasNextHopGroup(IpAddresses ipAddresses)
 {
@@ -159,7 +176,7 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
 
     assert(!hasNextHopGroup(ipAddresses));
 
-    if (m_nextHopGroupCount > NHGRP_MAX_SIZE)
+    if (m_nextHopGroupCount > m_maxNextHopGroupCount)
     {
         SWSS_LOG_DEBUG("Failed to create next hop group. Exceeding maximum number of next hop groups.\n");
         return false;
