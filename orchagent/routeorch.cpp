@@ -54,7 +54,7 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
     }
 
     // add default v6 route into the m_syncdRoutes
-    m_syncdRoutes[v6_default_ip_prefix] = IpAddresses("0::0");
+    m_syncdRoutes[v6_default_ip_prefix] = IpAddresses("::");
 
     SWSS_LOG_NOTICE("Create v6 default route with packet action drop");
 }
@@ -525,7 +525,7 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
         }
         else
         {
-            m_syncdRoutes[ipPrefix] = IpAddresses("0::0");
+            m_syncdRoutes[ipPrefix] = IpAddresses("::");
         }
     }
     else
