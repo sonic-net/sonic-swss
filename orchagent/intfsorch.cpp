@@ -54,8 +54,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         string alias(keys[0]);
         IpPrefix ip_prefix(kfvKey(t).substr(kfvKey(t).find(':')+1));
 
-        /* TODO: Sync loopback address and trap all IP packets to loopback address */
-        if (alias == "lo" || alias == "eth0" || alias == "docker0")
+        if (alias == "eth0" || alias == "docker0")
         {
             it = consumer.m_toSync.erase(it);
             continue;
@@ -64,6 +63,13 @@ void IntfsOrch::doTask(Consumer &consumer)
         string op = kfvOp(t);
         if (op == SET_COMMAND)
         {
+            if (alias == "lo")
+            {
+                addIp2MeRoute(ip_prefix);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
@@ -82,7 +88,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                     m_syncdIntfses[alias] = intfs_entry;
 
                     addSubnetRoute(port, ip_prefix);
-                    addIp2MeRoute(port, ip_prefix);
+                    addIp2MeRoute(ip_prefix);
 
                     m_syncdIntfses[alias].ip_addresses.add(ip_prefix.getIp());
                     it = consumer.m_toSync.erase(it);
@@ -96,6 +102,13 @@ void IntfsOrch::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (alias == "lo")
+            {
+                removeIp2MeRoute(ip_prefix);
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
@@ -108,7 +121,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                 if (m_syncdIntfses[alias].ip_addresses.contains(ip_prefix.getIp()))
                 {
                     removeSubnetRoute(port, ip_prefix);
-                    removeIp2MeRoute(port, ip_prefix);
+                    removeIp2MeRoute(ip_prefix);
 
                     m_syncdIntfses[alias].ip_addresses.remove(ip_prefix.getIp());
                 }
@@ -267,7 +280,7 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     decreaseRouterIntfsRefCount(port.m_alias);
 }
 
-void IntfsOrch::addIp2MeRoute(const Port &port, const IpPrefix &ip_prefix)
+void IntfsOrch::addIp2MeRoute(const IpPrefix &ip_prefix)
 {
     sai_unicast_route_entry_t unicast_route_entry;
     unicast_route_entry.vr_id = gVirtualRouterId;
@@ -292,10 +305,9 @@ void IntfsOrch::addIp2MeRoute(const Port &port, const IpPrefix &ip_prefix)
     }
 
     SWSS_LOG_NOTICE("Create IP2me route ip:%s", ip_prefix.getIp().to_string().c_str());
-    increaseRouterIntfsRefCount(port.m_alias);
 }
 
-void IntfsOrch::removeIp2MeRoute(const Port &port, const IpPrefix &ip_prefix)
+void IntfsOrch::removeIp2MeRoute(const IpPrefix &ip_prefix)
 {
     sai_unicast_route_entry_t unicast_route_entry;
     unicast_route_entry.vr_id = gVirtualRouterId;
@@ -309,5 +321,4 @@ void IntfsOrch::removeIp2MeRoute(const Port &port, const IpPrefix &ip_prefix)
     }
 
     SWSS_LOG_NOTICE("Remove packet action trap route ip:%s", ip_prefix.getIp().to_string().c_str());
-    decreaseRouterIntfsRefCount(port.m_alias);
 }

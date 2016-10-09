@@ -42,8 +42,8 @@ private:
     void addSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
     void removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
 
-    void addIp2MeRoute(const Port &port, const IpPrefix &ip_prefix);
-    void removeIp2MeRoute(const Port &port, const IpPrefix &ip_prefix);
+    void addIp2MeRoute(const IpPrefix &ip_prefix);
+    void removeIp2MeRoute(const IpPrefix &ip_prefix);
 };
 
 #endif /* SWSS_INTFSORCH_H */
