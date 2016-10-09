@@ -32,14 +32,31 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
     sai_status_t status = sai_route_api->create_route(&unicast_route_entry, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create default route with packet action drop");
-        throw runtime_error("Failed to create router interface.");
+        SWSS_LOG_ERROR("Failed to create v4 default route with packet action drop");
+        throw runtime_error("Failed to create v4 default route with packet action drop");
     }
 
-    // add default route into the m_syncdRoutes
+    // add default v4 route into the m_syncdRoutes
     m_syncdRoutes[default_ip_prefix] = IpAddresses("0.0.0.0");
 
-    SWSS_LOG_NOTICE("Create default route with packet action drop");
+    SWSS_LOG_NOTICE("Create v4 default route with packet action drop");
+
+    IpPrefix v6_default_ip_prefix("::/0");
+
+    copy(unicast_route_entry.destination, v6_default_ip_prefix);
+    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
+
+    status = sai_route_api->create_route(&unicast_route_entry, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create v6 default route with packet action drop");
+        throw runtime_error("Failed to create v6 default route with packet action drop");
+    }
+
+    // add default v6 route into the m_syncdRoutes
+    m_syncdRoutes[v6_default_ip_prefix] = IpAddresses("0::0");
+
+    SWSS_LOG_NOTICE("Create v6 default route with packet action drop");
 }
 
 bool RouteOrch::hasNextHopGroup(IpAddresses ipAddresses)
@@ -500,6 +517,20 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.to_string().c_str());
 
-    m_syncdRoutes.erase(ipPrefix);
+    if (ipPrefix.isDefaultRoute())
+    {
+        if (ipPrefix.isV4())
+        {
+            m_syncdRoutes[ipPrefix] = IpAddresses("0.0.0.0");
+        }
+        else
+        {
+            m_syncdRoutes[ipPrefix] = IpAddresses("0::0");
+        }
+    }
+    else
+    {
+        m_syncdRoutes.erase(ipPrefix);
+    }
     return true;
 }
