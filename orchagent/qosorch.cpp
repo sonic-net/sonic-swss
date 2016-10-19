@@ -689,7 +689,7 @@ void QosOrch::initACLEntryForECN(sai_object_id_t acl_table_id, sai_uint32_t prio
     {
         SWSS_LOG_NOTICE("Successfully created ACL entry for ECN coloring. dscp=%d, ecn-%d", ecn_field, dscp_field);
     }
-    e;se
+    else
     {
         SWSS_LOG_ERROR("dscp=%d, ecn-%d. sai_acl_api->create_acl_entry() failed: %d", ecn_field, dscp_field, status);
     }
