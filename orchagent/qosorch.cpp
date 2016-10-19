@@ -637,7 +637,11 @@ sai_object_id_t QosOrch::initSystemACLTable()
     attrs.push_back(attr);
 
     status = sai_acl_api->create_acl_table(&acl_table_id, attrs.size(), &attrs[0]);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Successfully created ACL table for ECN coloring");
+    }
+    else
     {
         SWSS_LOG_ERROR("create system acl table. sai_acl_api->create_acl_table failed: %d", status);
         return 0;
@@ -681,7 +685,11 @@ void QosOrch::initACLEntryForECN(sai_object_id_t acl_table_id, sai_uint32_t prio
     attrs.push_back(attr);
 
     status = sai_acl_api->create_acl_entry(&acl_entry_id, attrs.size(), &attrs[0]);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Successfully created ACL entry for ECN coloring. dscp=%d, ecn-%d", ecn_field, dscp_field);
+    }
+    e;se
     {
         SWSS_LOG_ERROR("dscp=%d, ecn-%d. sai_acl_api->create_acl_entry() failed: %d", ecn_field, dscp_field, status);
     }
