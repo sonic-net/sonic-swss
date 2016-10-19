@@ -110,10 +110,11 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
 
             Port port;
+            /* Cannot locate interface */
             if (!gPortsOrch->getPort(alias, port))
             {
-                SWSS_LOG_ERROR("Failed to locate interface %s", alias.c_str());
-                throw logic_error("Failed to locate interface.");
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
 
             if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())

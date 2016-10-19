@@ -517,7 +517,12 @@ void PortsOrch::doLagTask(Consumer &consumer)
             else if (op == DEL_COMMAND)
             {
                 Port lag;
-                getPort(lag_alias, lag);
+                /* Cannot locate LAG */
+                if (!getPort(lag_alias, lag))
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
 
                 if (removeLag(lag))
                     it = consumer.m_toSync.erase(it);
@@ -540,20 +545,52 @@ void PortsOrch::doLagTask(Consumer &consumer)
 
             if (op == SET_COMMAND)
             {
-                /* Duplicate entry */
-                if (lag.m_members.find(port_alias) != lag.m_members.end())
+                string linkup_status;
+                for (auto i : kfvFieldsValues(t))
                 {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
+                    if (fvField(i) == "linkup")
+                        linkup_status = fvValue(i);
                 }
 
-                /* Assert the port doesn't belong to any LAG */
-                assert(!port.m_lag_id && !port.m_lag_member_id);
+                /* Add LAG member */
+                if (linkup_status == "up")
+                {
+                    /* Duplicate entry */
+                    if (lag.m_members.find(port_alias) != lag.m_members.end())
+                    {
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
 
-                if (addLagMember(lag, port))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
+                    /* Assert the port doesn't belong to any LAG */
+                    assert(!port.m_lag_id && !port.m_lag_member_id);
+
+                    if (addLagMember(lag, port))
+                        it = consumer.m_toSync.erase(it);
+                    else
+                        it++;
+                }
+                /* Remove LAG member */
+                else /* linkup_status == "down" */
+                {
+                    assert(lag.m_members.find(port_alias) != lag.m_members.end());
+
+                    /* Cannot locate LAG or LAG member
+                     * This happens at the time when teamd starts. The linkup
+                     * is set to down in the beginning.
+                     */
+                    if (!port.m_lag_id || !port.m_lag_member_id)
+                    {
+                        it = consumer.m_toSync.erase(it);
+                        continue;
+                    }
+
+                    if (removeLagMember(lag, port))
+                        it = consumer.m_toSync.erase(it);
+                    else
+                        it++;
+                }
+
             }
             else if (op == DEL_COMMAND)
             {

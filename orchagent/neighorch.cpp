@@ -220,14 +220,19 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
             return false;
         }
-
-        m_syncdNeighbors[neighborEntry] = macAddress;
     }
     else
     {
-        // TODO: The neighbor entry is already there
-        // TODO: MAC change
+        status = sai_neighbor_api->set_neighbor_attribute(&neighbor_entry, &neighbor_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to update neighbor entry rid:%llx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
+            return false;
+        }
+        SWSS_LOG_NOTICE("Updated neighbor entry rid:%llx alias:%s ip:%s new mac: %s\n", rif_id, alias.c_str(), ip_address.to_string().c_str(), macAddress.to_string().c_str());
     }
+
+    m_syncdNeighbors[neighborEntry] = macAddress;
 
     return true;
 }
