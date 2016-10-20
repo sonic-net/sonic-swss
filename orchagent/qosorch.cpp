@@ -600,6 +600,11 @@ sai_object_id_t QosOrch::initSystemACLTable()
     attr.value.u32 = 10;
     attrs.push_back(attr);
 
+    /* MLNX spectrum chip does not support matching out port */
+    attr.id = SAI_ACL_TABLE_ATTR_FIELD_OUT_PORT;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_MAC;
     attr.value.booldata = true;
     attrs.push_back(attr);
@@ -633,6 +638,10 @@ sai_object_id_t QosOrch::initSystemACLTable()
     attrs.push_back(attr);
 
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ACL_TABLE_ATTR_FIELD_RANGE;
     attr.value.booldata = true;
     attrs.push_back(attr);
 
