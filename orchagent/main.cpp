@@ -42,6 +42,7 @@ sai_scheduler_group_api_t*  sai_scheduler_group_api;
 sai_wred_api_t*             sai_wred_api;
 sai_qos_map_api_t*          sai_qos_map_api;
 sai_buffer_api_t*           sai_buffer_api;
+sai_acl_api_t*              sai_acl_api;
 
 /* Global variables */
 map<string, string> gProfileMap;
@@ -105,6 +106,7 @@ void initSaiApi()
     sai_api_query(SAI_API_QOS_MAPS,             (void **)&sai_qos_map_api);
     sai_api_query(SAI_API_BUFFERS,              (void **)&sai_buffer_api);
     sai_api_query(SAI_API_SCHEDULER_GROUP,      (void **)&sai_scheduler_group_api);
+    sai_api_query(SAI_API_ACL,                  (void **)&sai_acl_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_NOTICE);
     sai_log_set(SAI_API_VIRTUAL_ROUTER,         SAI_LOG_NOTICE);
@@ -125,6 +127,7 @@ void initSaiApi()
     sai_log_set(SAI_API_QOS_MAPS,               SAI_LOG_NOTICE);
     sai_log_set(SAI_API_BUFFERS,                SAI_LOG_NOTICE);
     sai_log_set(SAI_API_SCHEDULER_GROUP,        SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_ACL,                    SAI_LOG_NOTICE);
 }
 
 int main(int argc, char **argv)
