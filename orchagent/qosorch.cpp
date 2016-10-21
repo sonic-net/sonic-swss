@@ -575,15 +575,13 @@ void QosOrch::initColorAcl()
 
     // init ACL system table
     acl_table_id = initSystemAclTable();
-    if (acl_table_id != 0)
+    if (acl_table_id != SAI_NULL_OBJECT_ID)
     {
         // Add entry to match packets with dscp=8, ecn=0 and set yellow color to them
         initAclEntryForEcn(acl_table_id, 1000, 0x00, 0x08, SAI_PACKET_COLOR_YELLOW);
         // Add entry to match packets with dscp=0, ecn=0 and set yellow color to them
         initAclEntryForEcn(acl_table_id,  999, 0x00, 0x00, SAI_PACKET_COLOR_YELLOW);
     }
-
-    return;
 }
 
 sai_object_id_t QosOrch::initSystemAclTable()
@@ -603,43 +601,11 @@ sai_object_id_t QosOrch::initSystemAclTable()
     attr.value.u32 = 10;
     attrs.push_back(attr);
 
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_MAC;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_SRC_IP;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IP;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_ECN;
     attr.value.booldata = true;
     attrs.push_back(attr);
 
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_RANGE;
     attr.value.booldata = true;
     attrs.push_back(attr);
 
@@ -651,7 +617,7 @@ sai_object_id_t QosOrch::initSystemAclTable()
     else
     {
         SWSS_LOG_ERROR("create system acl table. sai_acl_api->create_acl_table failed: %d", status);
-        return 0;
+        return SAI_NULL_OBJECT_ID;
     }
 
     return acl_table_id;
@@ -688,7 +654,7 @@ void QosOrch::initAclEntryForEcn(sai_object_id_t acl_table_id, sai_uint32_t prio
 
     attr.id = SAI_ACL_ENTRY_ATTR_ACTION_SET_COLOR;
     attr.value.aclaction.enable = true;
-    attr.value.aclaction.parameter.s32 = SAI_PACKET_COLOR_YELLOW;
+    attr.value.aclaction.parameter.s32 = color;
     attrs.push_back(attr);
 
     status = sai_acl_api->create_acl_entry(&acl_entry_id, attrs.size(), &attrs[0]);
@@ -700,8 +666,6 @@ void QosOrch::initAclEntryForEcn(sai_object_id_t acl_table_id, sai_uint32_t prio
     {
         SWSS_LOG_ERROR("dscp=%d, ecn=%d. sai_acl_api->create_acl_entry() failed: %d", ecn_field, dscp_field, status);
     }
-
-    return;
 }
 
 void QosOrch::initTableHandlers()
