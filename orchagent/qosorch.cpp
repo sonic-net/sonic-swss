@@ -575,13 +575,11 @@ void QosOrch::initColorAcl()
 
     // init ACL system table
     acl_table_id = initSystemAclTable();
-    if (acl_table_id != SAI_NULL_OBJECT_ID)
-    {
-        // Add entry to match packets with dscp=8, ecn=0 and set yellow color to them
-        initAclEntryForEcn(acl_table_id, 1000, 0x00, 0x08, SAI_PACKET_COLOR_YELLOW);
-        // Add entry to match packets with dscp=0, ecn=0 and set yellow color to them
-        initAclEntryForEcn(acl_table_id,  999, 0x00, 0x00, SAI_PACKET_COLOR_YELLOW);
-    }
+
+    // Add entry to match packets with dscp=8, ecn=0 and set yellow color to them
+    initAclEntryForEcn(acl_table_id, 1000, 0x00, 0x08, SAI_PACKET_COLOR_YELLOW);
+    // Add entry to match packets with dscp=0, ecn=0 and set yellow color to them
+    initAclEntryForEcn(acl_table_id,  999, 0x00, 0x00, SAI_PACKET_COLOR_YELLOW);
 }
 
 sai_object_id_t QosOrch::initSystemAclTable()
@@ -617,7 +615,7 @@ sai_object_id_t QosOrch::initSystemAclTable()
     else
     {
         SWSS_LOG_ERROR("create system acl table. sai_acl_api->create_acl_table failed: %d", status);
-        return SAI_NULL_OBJECT_ID;
+        throw runtime_error("Failed to create system acl table");
     }
 
     return acl_table_id;
@@ -665,6 +663,7 @@ void QosOrch::initAclEntryForEcn(sai_object_id_t acl_table_id, sai_uint32_t prio
     else
     {
         SWSS_LOG_ERROR("dscp=%d, ecn=%d. sai_acl_api->create_acl_entry() failed: %d", ecn_field, dscp_field, status);
+        throw runtime_error("Failed to create color acl entry");
     }
 }
 
