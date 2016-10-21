@@ -112,9 +112,9 @@ private:
     typedef map<string, qos_table_handler> qos_table_handler_map;
     typedef pair<string, qos_table_handler> qos_handler_pair;
 
-    void initColorACL();
-    sai_object_id_t initSystemACLTable();
-    void initACLEntryForECN(sai_object_id_t acl_table_id, sai_uint32_t priority,
+    void initColorAcl();
+    sai_object_id_t initSystemAclTable();
+    void initAclEntryForEcn(sai_object_id_t acl_table_id, sai_uint32_t priority,
                             sai_uint8_t ecn_field, sai_uint8_t dscp_field, sai_int32_t color);
 
     void initTableHandlers();

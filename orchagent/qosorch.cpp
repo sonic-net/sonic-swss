@@ -556,7 +556,9 @@ task_process_status QosOrch::handlePfcToQueueTable(Consumer& consumer)
 QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();
-    initColorACL();
+
+    // add ACLs to support Sonic WRED profile.
+    initColorAcl(); // FIXME: Should be removed as soon as we have ACL configuration support
     initTableHandlers();
 };
 
@@ -566,24 +568,25 @@ type_map& QosOrch::getTypeMap()
     return m_qos_type_maps;
 }
 
-void QosOrch::initColorACL()
+void QosOrch::initColorAcl()
 {
     SWSS_LOG_ENTER();
     sai_object_id_t acl_table_id;
 
-    acl_table_id = initSystemACLTable();
+    // init ACL system table
+    acl_table_id = initSystemAclTable();
     if (acl_table_id != 0)
     {
-        // dscp 8, ecn 0 --> yellow
-        initACLEntryForECN(acl_table_id, 1000, 0x00, 0x08, SAI_PACKET_COLOR_YELLOW);
-        // dscp 0, ecn 0 --> yellow
-        initACLEntryForECN(acl_table_id,  999, 0x00, 0x00, SAI_PACKET_COLOR_YELLOW);
+        // Add entry to match packets with dscp=8, ecn=0 and set yellow color to them
+        initAclEntryForEcn(acl_table_id, 1000, 0x00, 0x08, SAI_PACKET_COLOR_YELLOW);
+        // Add entry to match packets with dscp=0, ecn=0 and set yellow color to them
+        initAclEntryForEcn(acl_table_id,  999, 0x00, 0x00, SAI_PACKET_COLOR_YELLOW);
     }
 
     return;
 }
 
-sai_object_id_t QosOrch::initSystemACLTable()
+sai_object_id_t QosOrch::initSystemAclTable()
 {
     SWSS_LOG_ENTER();
     vector<sai_attribute_t> attrs;
@@ -654,7 +657,7 @@ sai_object_id_t QosOrch::initSystemACLTable()
     return acl_table_id;
 }
 
-void QosOrch::initACLEntryForECN(sai_object_id_t acl_table_id, sai_uint32_t priority,
+void QosOrch::initAclEntryForEcn(sai_object_id_t acl_table_id, sai_uint32_t priority,
                                  sai_uint8_t ecn_field, sai_uint8_t dscp_field, sai_int32_t color)
 {
     SWSS_LOG_ENTER();
