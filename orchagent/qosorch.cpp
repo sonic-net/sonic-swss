@@ -607,6 +607,10 @@ sai_object_id_t QosOrch::initSystemAclTable()
     attr.value.booldata = true;
     attrs.push_back(attr);
 
+    attr.id = SAI_ACL_TABLE_ATTR_FIELD_RANGE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
     status = sai_acl_api->create_acl_table(&acl_table_id, attrs.size(), &attrs[0]);
     if (status == SAI_STATUS_SUCCESS)
     {
