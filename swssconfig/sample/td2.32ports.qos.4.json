@@ -1,0 +1,13 @@
+[
+    {
+        "WRED_PROFILE_TABLE:AZURE" : {
+            "wred_green_enable":"true",
+            "wred_yellow_enable":"true",
+            "ecn":"ecn_all",
+            "red_max_threshold":"512000",
+            "yellow_max_threshold":"512000",
+            "green_max_threshold": "184320"
+        },
+        "OP": "SET"
+    }
+]

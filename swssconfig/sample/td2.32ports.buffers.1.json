@@ -1,0 +1,50 @@
+[
+    {
+        "BUFFER_POOL_TABLE:ingress_lossless_pool0": {
+            "size": "3637248",
+            "type": "ingress",
+            "mode": "static"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_POOL_TABLE:ingress_lossless_pool1": {
+            "size": "3637248",
+            "type": "ingress",
+            "mode": "static"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_POOL_TABLE:ingress_lossy_pool": {
+            "size": "5491712",
+            "type": "ingress",
+            "mode": "dynamic"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_POOL_TABLE:egress_lossless_pool0": {
+            "size": "113664",
+            "type": "egress",
+            "mode": "static"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_POOL_TABLE:egress_lossless_pool1": {
+            "size": "113664",
+            "type": "egress",
+            "mode": "static"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_POOL_TABLE:egress_lossy_pool": {
+            "size": "5491712",
+            "type": "egress",
+            "mode": "dynamic"
+        },
+        "OP": "SET"
+    }
+]
