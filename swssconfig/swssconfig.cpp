@@ -31,14 +31,14 @@ void usage()
 
 void dump_db_item(KeyOpFieldsValuesTuple &db_item)
 {
-    SWSS_LOG_NOTICE("db_item: [");
-    SWSS_LOG_NOTICE("\toperation: %s", kfvOp(db_item).c_str());
-    SWSS_LOG_NOTICE("\thash: %s", kfvKey(db_item).c_str());
-    SWSS_LOG_NOTICE("\tfields: [");
+    SWSS_LOG_DEBUG("db_item: [");
+    SWSS_LOG_DEBUG("\toperation: %s", kfvOp(db_item).c_str());
+    SWSS_LOG_DEBUG("\thash: %s", kfvKey(db_item).c_str());
+    SWSS_LOG_DEBUG("\tfields: [");
     for (auto fv: kfvFieldsValues(db_item))
-        SWSS_LOG_NOTICE("\t\tfield: %s value: %s", fvField(fv).c_str(), fvValue(fv).c_str());
-    SWSS_LOG_NOTICE("\t]");
-    SWSS_LOG_NOTICE("]");
+        SWSS_LOG_DEBUG("\t\tfield: %s value: %s", fvField(fv).c_str(), fvValue(fv).c_str());
+    SWSS_LOG_DEBUG("\t]");
+    SWSS_LOG_DEBUG("]");
 }
 
 bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
