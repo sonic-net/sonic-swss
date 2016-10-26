@@ -4,7 +4,6 @@
 #include "netlink.h"
 #include "producertable.h"
 #include "portsyncd/linksync.h"
-#include "logger.h"
 
 #include <getopt.h>
 
