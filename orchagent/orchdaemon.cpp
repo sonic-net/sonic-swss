@@ -83,7 +83,7 @@ void OrchDaemon::start()
         Selectable *s;
         int fd, ret;
 
-        ret = m_select->select(&s, &fd, 1);
+        ret = m_select->select(&s, &fd, 500);
 
         if (ret == Select::ERROR)
         {
