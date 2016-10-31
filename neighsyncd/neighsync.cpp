@@ -13,6 +13,8 @@
 using namespace std;
 using namespace swss;
 
+#define IPV6_LINKLOCAL_SCOPE_MULTICAST_ADDRESSES_PREFIX "ff02"
+
 NeighSync::NeighSync(DBConnector *db) :
     m_neighTable(db, APP_NEIGH_TABLE_NAME)
 {
@@ -42,7 +44,8 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     nl_addr2str(rtnl_neigh_get_dst(neigh), ipStr, MAX_ADDR_SIZE);
     string ip(ipStr);
-    if (family == IPV6_NAME && ip.compare(0, 4, "ff02"))
+    /* Ignore IPv6 multicast addresses as neighbors */
+    if (family == IPV6_NAME && ip.compare(0, 4, IPV6_LINKLOCAL_SCOPE_MULTICAST_ADDRESSES_PREFIX))
         return;
     key+= ipStr;
 
