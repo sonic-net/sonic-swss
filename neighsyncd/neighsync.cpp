@@ -20,7 +20,8 @@ NeighSync::NeighSync(DBConnector *db) :
 
 void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
-    char addrStr[MAX_ADDR_SIZE + 1] = {0};
+    char ipStr[MAX_ADDR_SIZE + 1] = {0};
+    char macStr[MAX_ADDR_SIZE + 1] = {0};
     struct rtnl_neigh *neigh = (struct rtnl_neigh *)obj;
     string key;
     string family;
@@ -38,8 +39,12 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     key+= LinkCache::getInstance().ifindexToName(rtnl_neigh_get_ifindex(neigh));
     key+= ":";
-    nl_addr2str(rtnl_neigh_get_dst(neigh), addrStr, MAX_ADDR_SIZE);
-    key+= addrStr;
+
+    nl_addr2str(rtnl_neigh_get_dst(neigh), ipStr, MAX_ADDR_SIZE);
+    string ip(ipStr);
+    if (family == IPV6_NAME && ip.compare(0, 4, "ff02"))
+        return;
+    key+= ipStr;
 
     int state = rtnl_neigh_get_state(neigh);
     if ((nlmsg_type == RTM_DELNEIGH) || (state == NUD_INCOMPLETE) ||
@@ -49,10 +54,10 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
-    nl_addr2str(rtnl_neigh_get_lladdr(neigh), addrStr, MAX_ADDR_SIZE);
+    nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple f("family", family);
-    FieldValueTuple nh("neigh", addrStr);
+    FieldValueTuple nh("neigh", macStr);
     fvVector.push_back(nh);
     fvVector.push_back(f);
     m_neighTable.set(key, fvVector);
