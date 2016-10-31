@@ -7,6 +7,9 @@
 using namespace std;
 using namespace swss;
 
+/* select() function timeout retry time */
+#define SELECT_TIMEOUT 1000
+
 /* Global variable gPortsOrch declared */
 PortsOrch *gPortsOrch;
 
@@ -83,7 +86,7 @@ void OrchDaemon::start()
         Selectable *s;
         int fd, ret;
 
-        ret = m_select->select(&s, &fd, 500);
+        ret = m_select->select(&s, &fd, SELECT_TIMEOUT);
 
         if (ret == Select::ERROR)
         {
