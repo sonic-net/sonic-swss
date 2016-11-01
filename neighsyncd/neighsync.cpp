@@ -1,19 +1,19 @@
-#include <string.h>
-#include <errno.h>
-#include <system_error>
+#include <string>
+#include <netinet/in.h>
 #include <netlink/route/link.h>
 #include <netlink/route/neighbour.h>
+
 #include "logger.h"
-#include "netmsg.h"
 #include "dbconnector.h"
 #include "producertable.h"
+#include "ipaddress.h"
+#include "netmsg.h"
 #include "linkcache.h"
-#include "neighsyncd/neighsync.h"
+
+#include "neighsync.h"
 
 using namespace std;
 using namespace swss;
-
-#define IPV6_LINKLOCAL_SCOPE_MULTICAST_ADDRESSES_PREFIX "ff02"
 
 NeighSync::NeighSync(DBConnector *db) :
     m_neighTable(db, APP_NEIGH_TABLE_NAME)
@@ -43,9 +43,10 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ":";
 
     nl_addr2str(rtnl_neigh_get_dst(neigh), ipStr, MAX_ADDR_SIZE);
-    string ip(ipStr);
-    /* Ignore IPv6 multicast addresses as neighbors */
-    if (family == IPV6_NAME && ip.compare(0, 4, IPV6_LINKLOCAL_SCOPE_MULTICAST_ADDRESSES_PREFIX))
+    string tmp(ipStr);
+    IpAddress ip(tmp);
+    /* Ignore IPv6 multicast link-local addresses as neighbors */
+    if (IN6_IS_ADDR_MC_LINKLOCAL(ip.getV6Addr()))
         return;
     key+= ipStr;
 
