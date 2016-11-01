@@ -2,7 +2,7 @@
 #define __ROUTESYNC__
 
 #include "dbconnector.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "netmsg.h"
 
 namespace swss {
@@ -17,7 +17,7 @@ public:
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
 private:
-    ProducerTable m_routeTable;
+    ProducerStateTable m_routeTable;
     struct nl_cache *m_link_cache;
     struct nl_sock *m_nl_sock;
 };

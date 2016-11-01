@@ -10,8 +10,8 @@ extern "C" {
 }
 
 #include "dbconnector.h"
-#include "consumertable.h"
-#include "producertable.h"
+#include "consumerstatetable.h"
+#include "producerstatetable.h"
 
 using namespace std;
 using namespace swss;
@@ -40,8 +40,8 @@ typedef pair<string, object_map*> type_map_pair;
 
 typedef map<string, KeyOpFieldsValuesTuple> SyncMap;
 struct Consumer {
-    Consumer(ConsumerTable* consumer) :m_consumer(consumer)  { }
-    ConsumerTable* m_consumer;
+    Consumer(ConsumerStateTable* consumer) :m_consumer(consumer)  { }
+    ConsumerStateTable* m_consumer;
     /* Store the latest 'golden' status */
     SyncMap m_toSync;
 };
@@ -65,7 +65,7 @@ public:
     virtual ~Orch();
 
     vector<Selectable*> getSelectables();
-    bool hasSelectable(ConsumerTable* s) const;
+    bool hasSelectable(ConsumerStateTable* s) const;
 
     bool execute(string tableName);
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */

@@ -7,7 +7,7 @@
 #include "logger.h"
 #include "netmsg.h"
 #include "dbconnector.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "teamsync.h"
 
 using namespace std;
@@ -88,7 +88,7 @@ const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {
 };
 
 TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
-                                     ProducerTable *lagTable) :
+                                     ProducerStateTable *lagTable) :
     m_lagTable(lagTable),
     m_lagName(lagName),
     m_ifindex(ifindex)

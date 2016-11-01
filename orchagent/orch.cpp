@@ -14,7 +14,7 @@ extern PortsOrch *gPortsOrch;
 Orch::Orch(DBConnector *db, string tableName) :
     m_db(db)
 {
-    Consumer consumer(new ConsumerTable(m_db, tableName));
+    Consumer consumer(new ConsumerStateTable(m_db, tableName));
     m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
 }
 
@@ -23,7 +23,7 @@ Orch::Orch(DBConnector *db, vector<string> &tableNames) :
 {
     for(auto it : tableNames)
     {
-        Consumer consumer(new ConsumerTable(m_db, it));
+        Consumer consumer(new ConsumerStateTable(m_db, it));
         m_consumerMap.insert(ConsumerMapPair(it, consumer));
     }
 }
@@ -44,7 +44,7 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-bool Orch::hasSelectable(ConsumerTable *selectable) const
+bool Orch::hasSelectable(ConsumerStateTable *selectable) const
 {
     for(auto it : m_consumerMap) {
         if (it.second.m_consumer == selectable) {

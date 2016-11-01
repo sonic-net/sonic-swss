@@ -6,7 +6,7 @@
 #include "netmsg.h"
 #include "ipprefix.h"
 #include "dbconnector.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
 

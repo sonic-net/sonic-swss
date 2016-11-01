@@ -104,12 +104,12 @@ void OrchDaemon::start()
             continue;
         }
 
-        Orch *o = getOrchByConsumer((ConsumerTable *)s);
-        o->execute(((ConsumerTable *)s)->getTableName());
+        Orch *o = getOrchByConsumer((ConsumerStateTable *)s);
+        o->execute(((ConsumerStateTable *)s)->getTableName());
     }
 }
 
-Orch *OrchDaemon::getOrchByConsumer(ConsumerTable *c)
+Orch *OrchDaemon::getOrchByConsumer(ConsumerStateTable *c)
 {
     SWSS_LOG_ENTER();
 

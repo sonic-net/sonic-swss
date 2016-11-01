@@ -2,7 +2,7 @@
 #define SWSS_ORCHDAEMON_H
 
 #include "dbconnector.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "consumertable.h"
 #include "select.h"
 
@@ -31,7 +31,7 @@ private:
     std::vector<Orch *> m_orchList;
     Select *m_select;
 
-    Orch *getOrchByConsumer(ConsumerTable *c);
+    Orch *getOrchByConsumer(ConsumerStateTable *c);
 };
 
 #endif /* SWSS_ORCHDAEMON_H */

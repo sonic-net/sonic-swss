@@ -5,7 +5,7 @@
 
 #include "logger.h"
 #include "dbconnector.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "ipaddress.h"
 #include "netmsg.h"
 #include "linkcache.h"

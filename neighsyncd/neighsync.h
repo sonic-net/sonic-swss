@@ -2,7 +2,7 @@
 #define __NEIGHSYNC__
 
 #include "dbconnector.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "netmsg.h"
 
 namespace swss {
@@ -17,7 +17,7 @@ public:
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
 private:
-    ProducerTable m_neighTable;
+    ProducerStateTable m_neighTable;
 };
 
 }

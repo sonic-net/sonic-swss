@@ -2,7 +2,7 @@
 #include "select.h"
 #include "netdispatcher.h"
 #include "netlink.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "portsyncd/linksync.h"
 
 #include <getopt.h>
@@ -44,7 +44,7 @@ void usage()
     cout << "                           default: /etc/network/interfaces.d/vlan_interfaces" << endl;
 }
 
-void handlePortConfigFile(ProducerTable &p, string file);
+void handlePortConfigFile(ProducerStateTable &p, string file);
 void handleVlanIntfFile(string file);
 
 int main(int argc, char **argv)
@@ -73,7 +73,7 @@ int main(int argc, char **argv)
     }
 
     DBConnector db(0, "localhost", 6379, 0);
-    ProducerTable p(&db, APP_PORT_TABLE_NAME);
+    ProducerStateTable p(&db, APP_PORT_TABLE_NAME);
 
     LinkSync sync(&db);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
@@ -134,7 +134,7 @@ int main(int argc, char **argv)
     return 1;
 }
 
-void handlePortConfigFile(ProducerTable &p, string file)
+void handlePortConfigFile(ProducerStateTable &p, string file)
 {
     cout << "Read port configuration file..." << endl;
 

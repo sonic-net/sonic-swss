@@ -8,7 +8,7 @@
 
 #include "logger.h"
 #include "dbconnector.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "json.hpp"
 
 using namespace std;
@@ -57,7 +57,7 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
         }
         string table_name = key.substr(0, pos);
         string key_name = key.substr(pos + 1);
-        ProducerTable producer(&db, table_name);
+        ProducerStateTable producer(&db, table_name);
 
         if (kfvOp(db_item) == SET_COMMAND)
             producer.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);

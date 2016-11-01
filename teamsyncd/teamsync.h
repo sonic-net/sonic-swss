@@ -5,7 +5,7 @@
 #include <string>
 #include <memory>
 #include "dbconnector.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "selectable.h"
 #include "select.h"
 #include "netmsg.h"
@@ -29,7 +29,7 @@ public:
     public:
         enum { MAX_IFNAME = 64 };
         TeamPortSync(const std::string &lagName, int ifindex,
-                     ProducerTable *lagTable);
+                     ProducerStateTable *lagTable);
         ~TeamPortSync();
 
         virtual void addFd(fd_set *fd);
@@ -43,7 +43,7 @@ public:
                                 team_change_type_mask_t type_mask);
         static const struct team_change_handler gPortChangeHandler;
     private:
-        ProducerTable *m_lagTable;
+        ProducerStateTable *m_lagTable;
         struct team_handle *m_team;
         std::string m_lagName;
         int m_ifindex;
@@ -56,7 +56,7 @@ protected:
 
 private:
     Select *m_select;
-    ProducerTable m_lagTable;
+    ProducerStateTable m_lagTable;
     std::map<std::string, std::shared_ptr<TeamPortSync> > m_teamPorts;
 };
 

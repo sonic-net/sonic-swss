@@ -2,7 +2,7 @@
 #include <iostream>
 #include <vector>
 #include "dbconnector.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "logger.h"
 
 using namespace std;
@@ -20,7 +20,7 @@ int main(int argc, char **argv)
     SWSS_LOG_ENTER();
 
     DBConnector db(APPL_DB, "localhost", 6379, 0);
-    ProducerTable r(&db, APP_ROUTE_TABLE_NAME);
+    ProducerStateTable r(&db, APP_ROUTE_TABLE_NAME);
 
     if (argc != 2)
     {

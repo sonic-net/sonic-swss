@@ -6,7 +6,7 @@
 #include "logger.h"
 #include "netmsg.h"
 #include "dbconnector.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "linkcache.h"
 #include "intfsyncd/intfsync.h"
 
