@@ -43,10 +43,8 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ":";
 
     nl_addr2str(rtnl_neigh_get_dst(neigh), ipStr, MAX_ADDR_SIZE);
-    string tmp(ipStr);
-    IpAddress ip(tmp);
     /* Ignore IPv6 multicast link-local addresses as neighbors */
-    if (IN6_IS_ADDR_MC_LINKLOCAL(ip.getV6Addr()))
+    if (family == IPV6_NAME && IN6_IS_ADDR_MC_LINKLOCAL(nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh))))
         return;
     key+= ipStr;
 
