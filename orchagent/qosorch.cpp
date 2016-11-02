@@ -144,7 +144,7 @@ bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     sai_attribute_t list_attr;
     sai_qos_map_list_t dscp_map_list;
     dscp_map_list.count = kfvFieldsValues(tuple).size();
-    dscp_map_list.list = new sai_qos_map_t[dscp_map_list.count];
+    dscp_map_list.list = new sai_qos_map_t[dscp_map_list.count]();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
@@ -193,7 +193,7 @@ bool TcToQueueMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple 
     sai_attribute_t list_attr;
     sai_qos_map_list_t tc_map_list;
     tc_map_list.count = kfvFieldsValues(tuple).size();
-    tc_map_list.list = new sai_qos_map_t[tc_map_list.count];
+    tc_map_list.list = new sai_qos_map_t[tc_map_list.count]();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
@@ -415,7 +415,7 @@ bool TcToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple
     sai_attribute_t     list_attr;
     sai_qos_map_list_t  tc_to_pg_map_list;
     tc_to_pg_map_list.count = kfvFieldsValues(tuple).size();
-    tc_to_pg_map_list.list = new sai_qos_map_t[tc_to_pg_map_list.count];
+    tc_to_pg_map_list.list = new sai_qos_map_t[tc_to_pg_map_list.count]();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
@@ -463,7 +463,7 @@ bool PfcPrioToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     sai_attribute_t     list_attr;
     sai_qos_map_list_t  pfc_prio_to_pg_map_list;
     pfc_prio_to_pg_map_list.count = kfvFieldsValues(tuple).size();
-    pfc_prio_to_pg_map_list.list = new sai_qos_map_t[pfc_prio_to_pg_map_list.count];
+    pfc_prio_to_pg_map_list.list = new sai_qos_map_t[pfc_prio_to_pg_map_list.count]();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
@@ -511,7 +511,7 @@ bool PfcToQueueHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
     sai_attribute_t     list_attr;
     sai_qos_map_list_t  pfc_to_queue_map_list;
     pfc_to_queue_map_list.count = kfvFieldsValues(tuple).size();
-    pfc_to_queue_map_list.list = new sai_qos_map_t[pfc_to_queue_map_list.count];
+    pfc_to_queue_map_list.list = new sai_qos_map_t[pfc_to_queue_map_list.count]();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
