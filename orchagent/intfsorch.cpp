@@ -33,12 +33,20 @@ sai_object_id_t IntfsOrch::getRouterIntfsId(string alias)
 
 void IntfsOrch::increaseRouterIntfsRefCount(const string alias)
 {
+    SWSS_LOG_ENTER();
+
     m_syncdIntfses[alias].ref_count++;
+    SWSS_LOG_INFO("Router interface %s ref count is increased to %d",
+                  alias.c_str(), m_syncdIntfses[alias].ref_count);
 }
 
 void IntfsOrch::decreaseRouterIntfsRefCount(const string alias)
 {
+    SWSS_LOG_ENTER();
+
     m_syncdIntfses[alias].ref_count--;
+    SWSS_LOG_INFO("Router interface %s ref count is decreased to %d",
+                  alias.c_str(), m_syncdIntfses[alias].ref_count);
 }
 
 void IntfsOrch::doTask(Consumer &consumer)
@@ -81,20 +89,26 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (m_syncdIntfses.find(alias) == m_syncdIntfses.end() ||
                 !m_syncdIntfses[alias].ip_addresses.contains(ip_prefix.getIp()))
             {
-                if (addRouterIntfs(port))
+                if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
                 {
-                    IntfsEntry intfs_entry;
-                    intfs_entry.ref_count = 0;
-                    m_syncdIntfses[alias] = intfs_entry;
-
-                    addSubnetRoute(port, ip_prefix);
-                    addIp2MeRoute(ip_prefix);
-
-                    m_syncdIntfses[alias].ip_addresses.add(ip_prefix.getIp());
-                    it = consumer.m_toSync.erase(it);
+                    if (addRouterIntfs(port))
+                    {
+                        IntfsEntry intfs_entry;
+                        intfs_entry.ref_count = 0;
+                        m_syncdIntfses[alias] = intfs_entry;
+                    }
+                    else
+                    {
+                        it++;
+                        continue;
+                    }
                 }
-                else
-                    it++;
+
+                addSubnetRoute(port, ip_prefix);
+                addIp2MeRoute(ip_prefix);
+
+                m_syncdIntfses[alias].ip_addresses.add(ip_prefix.getIp());
+                it = consumer.m_toSync.erase(it);
             }
             else
                 /* Duplicate entry */
@@ -127,10 +141,18 @@ void IntfsOrch::doTask(Consumer &consumer)
                     m_syncdIntfses[alias].ip_addresses.remove(ip_prefix.getIp());
                 }
 
-                if (removeRouterIntfs(port))
-                    it = consumer.m_toSync.erase(it);
+                /* Remove router interface that no IP addresses are associated with */
+                if (m_syncdIntfses[alias].ip_addresses.getSize() == 0)
+                {
+                    if (removeRouterIntfs(port))
+                        it = consumer.m_toSync.erase(it);
+                    else
+                        it++;
+                }
                 else
-                    it++;
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
             }
             else
                 /* Cannot locate the interface */
@@ -145,7 +167,11 @@ bool IntfsOrch::addRouterIntfs(Port &port)
 
     /* Return true if the router interface exists */
     if (port.m_rif_id)
+    {
+        SWSS_LOG_WARN("Router interface already exists on %s",
+                      port.m_alias.c_str());
         return true;
+    }
 
     /* Create router interface if the router interface doesn't exist */
     sai_attribute_t attr;
@@ -255,11 +281,13 @@ void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     sai_status_t status = sai_route_api->create_route(&unicast_route_entry, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create subnet route pre:%s, rv:%d", ip_prefix.to_string().c_str(), status);
+        SWSS_LOG_ERROR("Failed to create subnet route to %s from %s, rv:%d",
+                       ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
         throw runtime_error("Failed to create subnet route.");
     }
 
-    SWSS_LOG_NOTICE("Create subnet route pre:%s", ip_prefix.to_string().c_str());
+    SWSS_LOG_NOTICE("Create subnet route to %s from %s",
+                    ip_prefix.to_string().c_str(), port.m_alias.c_str());
     increaseRouterIntfsRefCount(port.m_alias);
 }
 
@@ -273,11 +301,13 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     sai_status_t status = sai_route_api->remove_route(&unicast_route_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove subnet route pre:%s, rv:%d", ip_prefix.to_string().c_str(), status);
+        SWSS_LOG_ERROR("Failed to remove subnet route to %s from %s, rv:%d",
+                       ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
         throw runtime_error("Failed to remove subnet route.");
     }
 
-    SWSS_LOG_NOTICE("Remove subnet route with prefix:%s", ip_prefix.to_string().c_str());
+    SWSS_LOG_NOTICE("Remove subnet route to %s from %s",
+                    ip_prefix.to_string().c_str(), port.m_alias.c_str());
     decreaseRouterIntfsRefCount(port.m_alias);
 }
 
