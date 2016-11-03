@@ -36,7 +36,7 @@ void IntfsOrch::increaseRouterIntfsRefCount(const string alias)
     SWSS_LOG_ENTER();
 
     m_syncdIntfses[alias].ref_count++;
-    SWSS_LOG_INFO("Router interface %s ref count is increased to %d",
+    SWSS_LOG_DEBUG("Router interface %s ref count is increased to %d",
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
 }
 
@@ -45,7 +45,7 @@ void IntfsOrch::decreaseRouterIntfsRefCount(const string alias)
     SWSS_LOG_ENTER();
 
     m_syncdIntfses[alias].ref_count--;
-    SWSS_LOG_INFO("Router interface %s ref count is decreased to %d",
+    SWSS_LOG_DEBUG("Router interface %s ref count is decreased to %d",
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
 }
 
@@ -86,10 +86,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
-            if (m_syncdIntfses.find(alias) == m_syncdIntfses.end() ||
+            auto it_intfs = m_syncdIntfses.find(alias);
+            if (it_intfs == m_syncdIntfses.end() ||
                 !m_syncdIntfses[alias].ip_addresses.contains(ip_prefix.getIp()))
             {
-                if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+                if (it_intfs == m_syncdIntfses.end())
                 {
                     if (addRouterIntfs(port))
                     {
