@@ -73,6 +73,11 @@ bool Orch::execute(string tableName)
 
     string key = kfvKey(new_data);
     string op  = kfvOp(new_data);
+    // Possible nothing popped, ie. the oparation is already merged with other operations
+    if (op.empty())
+    {
+        return true;
+    }
 
     dumpTuple(consumer, new_data);
 
