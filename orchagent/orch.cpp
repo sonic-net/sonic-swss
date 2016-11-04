@@ -123,6 +123,7 @@ bool Orch::execute(string tableName)
 bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name, string &object_name)
 {
     SWSS_LOG_ENTER();
+
     SWSS_LOG_DEBUG("input:%s", ref_in.c_str());
     if (ref_in.size() < 3)
     {
@@ -168,15 +169,16 @@ ref_resolve_status Orch::resolveFieldRefValue(
     sai_object_id_t &sai_object)
 {
     SWSS_LOG_ENTER();
-    size_t count = 0;
+
+    bool hit = false;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
         if (fvField(*i) == field_name)
         {
             SWSS_LOG_DEBUG("field:%s, value:%s", fvField(*i).c_str(), fvValue(*i).c_str());
-            if (count > 1)
+            if (hit)
             {
-                SWSS_LOG_ERROR("Singleton field with name:%s must have only 1 instance, actual count:%d\n", field_name.c_str(), count);
+                SWSS_LOG_ERROR("Multiple same fields %s", field_name.c_str());
                 return ref_resolve_status::multiple_instances;
             }
             string ref_type_name, object_name;
@@ -185,12 +187,11 @@ ref_resolve_status Orch::resolveFieldRefValue(
                 return ref_resolve_status::not_resolved;
             }
             sai_object = (*(type_maps[ref_type_name]))[object_name];
-            count++;
+            hit = true;
         }
     }
-    if (0 == count)
+    if (!hit)
     {
-        SWSS_LOG_NOTICE("field with name:%s not found\n", field_name.c_str());
         return ref_resolve_status::field_not_found;
     }
     return ref_resolve_status::success;
