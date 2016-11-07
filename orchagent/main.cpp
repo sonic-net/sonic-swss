@@ -139,10 +139,13 @@ int main(int argc, char **argv)
     int opt;
     sai_status_t status;
 
-    while ((opt = getopt(argc, argv, "m:h")) != -1)
+    while ((opt = getopt(argc, argv, "m:hd")) != -1)
     {
         switch (opt)
         {
+        case 'd':
+            swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_DEBUG);
+            break;
         case 'm':
             gMacAddress = MacAddress(optarg);
             break;
