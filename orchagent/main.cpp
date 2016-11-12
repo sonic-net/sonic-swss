@@ -14,6 +14,7 @@ extern "C" {
 #include <chrono>
 
 #include <getopt.h>
+#include <sairedis.h>
 
 using namespace std;
 using namespace swss;
@@ -168,7 +169,32 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    SWSS_LOG_NOTICE("Enabling sairedis recording");
+
     sai_attribute_t attr;
+    attr.id = SAI_REDIS_SWITCH_ATTR_RECORD;
+    attr.value.booldata = true;
+
+    status = sai_switch_api->set_switch_attribute(&attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to enable recording %d", status);
+        exit(EXIT_FAILURE);
+    }
+
+    SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
+    attr.value.s32 = SAI_REDIS_NOTIFY_SYNCD_INIT_VIEW;
+    status = sai_switch_api->set_switch_attribute(&attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW %d", status);
+        exit(EXIT_FAILURE);
+    }
+
     attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
     if (!gMacAddress)
     {
@@ -231,7 +257,20 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    try {
+    try
+    {
+        SWSS_LOG_NOTICE("Notify syncd APPLY_VIEW");
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
+        attr.value.s32 = SAI_REDIS_NOTIFY_SYNCD_APPLY_VIEW;
+        status = sai_switch_api->set_switch_attribute(&attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to notify syncd APPLY_VIEW %d", status);
+            exit(EXIT_FAILURE);
+        }
+
         orchDaemon->start();
     }
     catch (char const *e)
