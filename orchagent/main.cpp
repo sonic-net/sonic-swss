@@ -1,7 +1,3 @@
-#include "orchdaemon.h"
-
-#include "logger.h"
-
 extern "C" {
 #include "sai.h"
 #include "saistatus.h"
@@ -12,8 +8,10 @@ extern "C" {
 #include <mutex>
 #include <thread>
 #include <chrono>
-
 #include <getopt.h>
+#include "orchdaemon.h"
+#include "logger.h"
+#include "inc/common.h"
 
 using namespace std;
 using namespace swss;
@@ -223,7 +221,7 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("Created underlay router interface ID %llx", gUnderlayIfId);
 
     /* Initialize orchestration components */
-    DBConnector *appl_db = new DBConnector(APPL_DB, "localhost", 6379, 0);
+    DBConnector *appl_db = new DBConnector(APPL_DB, REDIS_UNIXSOCKET, 0);
     OrchDaemon *orchDaemon = new OrchDaemon(appl_db);
     if (!orchDaemon->init())
     {
