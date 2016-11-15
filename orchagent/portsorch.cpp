@@ -9,7 +9,6 @@
 
 #include "logger.h"
 #include "schema.h"
-#include "inc/common.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_port_api_t *sai_port_api;
@@ -26,7 +25,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     SWSS_LOG_ENTER();
 
     /* Initialize counter table */
-    DBConnector *counter_db(new DBConnector(COUNTERS_DB, REDIS_UNIXSOCKET, 0));
+    DBConnector *counter_db(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
     m_counterTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_PORT_NAME_MAP));
 
     /* Initialize port table */

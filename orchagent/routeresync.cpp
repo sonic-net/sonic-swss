@@ -4,7 +4,6 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "logger.h"
-#include "inc/common.h"
 
 using namespace std;
 using namespace swss;
@@ -20,7 +19,7 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
-    DBConnector db(APPL_DB, REDIS_UNIXSOCKET, 0);
+    DBConnector db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     ProducerStateTable r(&db, APP_ROUTE_TABLE_NAME);
 
     if (argc != 2)
