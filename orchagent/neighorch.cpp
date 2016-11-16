@@ -250,7 +250,7 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
 
     if (m_syncdNextHops[ip_address].ref_count > 0)
     {
-        SWSS_LOG_ERROR("Neighbor is still referenced ip:%s\n", ip_address.to_string().c_str());
+        SWSS_LOG_INFO("Neighbor is still referenced ip:%s\n", ip_address.to_string().c_str());
         return false;
     }
 
