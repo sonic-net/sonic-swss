@@ -145,7 +145,8 @@ void RouteOrch::doTask(Consumer& consumer)
                 continue;
             }
 
-            if (m_syncdRoutes.find(ip_prefix) == m_syncdRoutes.end() || m_syncdRoutes[ip_prefix] != ip_addresses)
+            if (m_syncdRoutes.find(ip_prefix) == m_syncdRoutes.end() ||
+                m_syncdRoutes[ip_prefix] != ip_addresses)
             {
                 if (addRoute(ip_prefix, ip_addresses))
                     it = consumer.m_toSync.erase(it);
@@ -175,6 +176,31 @@ void RouteOrch::doTask(Consumer& consumer)
             it = consumer.m_toSync.erase(it);
         }
     }
+
+    auto trigger_it = m_nextHopTriggerRoutes.begin();
+    while (trigger_it != m_nextHopTriggerRoutes.end())
+    {
+        if (m_neighOrch->hasNextHop(trigger_it->first))
+        {
+            RouteTable route_to_trigger = trigger_it->second;
+            auto route_it = route_to_trigger.begin();
+            while (route_it != route_to_trigger.end())
+            {
+                if (addRoute(route_it->first, route_it->second))
+                    route_it = route_to_trigger.erase(route_it);
+                else
+                    route_it++;
+            }
+
+            if (route_to_trigger.size() == 0)
+                trigger_it = m_nextHopTriggerRoutes.erase(trigger_it);
+            else
+                trigger_it++;
+        }
+        else
+            trigger_it++;
+    }
+
 }
 
 void RouteOrch::increaseNextHopRefCount(IpAddresses ipAddresses)
@@ -209,7 +235,7 @@ void RouteOrch::decreaseNextHopRefCount(IpAddresses ipAddresses)
     }
 }
 
-bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
+bool RouteOrch::addNextHopGroup(IpPrefix ipPrefix, IpAddresses ipAddresses)
 {
     SWSS_LOG_ENTER();
 
@@ -232,6 +258,7 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
         {
             SWSS_LOG_INFO("Failed to get next hop entry ip:%s",
                     it.to_string().c_str());
+            m_nextHopTriggerRoutes[it][ipPrefix] = ipAddresses;
             return false;
         }
 
@@ -309,7 +336,7 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
     return true;
 }
 
-void RouteOrch::addTempRoute(IpPrefix ipPrefix, IpAddresses nextHops)
+bool RouteOrch::addTempRoute(IpPrefix ipPrefix, IpAddresses nextHops)
 {
     SWSS_LOG_ENTER();
 
@@ -340,18 +367,14 @@ void RouteOrch::addTempRoute(IpPrefix ipPrefix, IpAddresses nextHops)
         for (auto it = next_hop_set.begin(); it != next_hop_set.end();)
         {
             if (!m_neighOrch->hasNextHop(*it))
-            {
-                SWSS_LOG_INFO("Failed to get next hop entry ip:%s",
-                       (*it).to_string().c_str());
                 it = next_hop_set.erase(it);
-            }
             else
                 it++;
         }
 
-        /* Return if next_hop_set is empty */
+        /* Return false if next_hop_set is empty */
         if (next_hop_set.empty())
-            return;
+            return false;
 
         /* Randomly pick an address from the set */
         auto it = next_hop_set.begin();
@@ -359,8 +382,11 @@ void RouteOrch::addTempRoute(IpPrefix ipPrefix, IpAddresses nextHops)
 
         /* Set the route's temporary next hop to be the randomly picked one */
         IpAddresses tmp_next_hop((*it).to_string());
-        addRoute(ipPrefix, tmp_next_hop);
+        /* Return true if the temporary route is added successfully */
+        return addRoute(ipPrefix, tmp_next_hop);
     }
+    else
+        return true;
 }
 
 bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
@@ -381,9 +407,11 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
         }
         else
         {
-            SWSS_LOG_INFO("Failed to get next hop entry ip:%s",
-                    nextHops.to_string().c_str());
-            return false;
+            SWSS_LOG_INFO("Failed to get next hop entry %s for prefix %s",
+                    nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
+            m_nextHopTriggerRoutes[ip_address][ipPrefix] = nextHops;
+            /* Return true and store the route into trigger table */
+            return true;
         }
     }
     /* The route is pointing to a next hop group */
@@ -391,12 +419,10 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     {
         if (!hasNextHopGroup(nextHops)) /* Create a new next hop group */
         {
-            if (!addNextHopGroup(nextHops))
+            if (!addNextHopGroup(ipPrefix, nextHops))
             {
                 /* Add a temporary route when a next hop group cannot be added */
-                addTempRoute(ipPrefix, nextHops);
-                /* Return false since the original route is not successfully added */
-                return false;
+                return addTempRoute(ipPrefix, nextHops);
             }
         }
 

@@ -27,6 +27,8 @@ struct NextHopGroupEntry
 typedef map<IpAddresses, NextHopGroupEntry> NextHopGroupTable;
 /* RouteTable: destination network, next hop IP address(es) */
 typedef map<IpPrefix, IpAddresses> RouteTable;
+/* NextHopTriggerTable: next hop Ip address, RouteTable */
+typedef map<IpAddress, RouteTable> NextHopTriggerTable;
 
 class RouteOrch : public Orch
 {
@@ -44,13 +46,19 @@ private:
     RouteTable m_syncdRoutes;
     NextHopGroupTable m_syncdNextHopGroups;
 
+    /*
+     * This table is used to store the route entries that cannot be synced due to
+     * unresolved next hops. Once the next hop is resolved, the routes will be processed.
+     */
+    NextHopTriggerTable m_nextHopTriggerRoutes;
+
     void increaseNextHopRefCount(IpAddresses);
     void decreaseNextHopRefCount(IpAddresses);
 
-    bool addNextHopGroup(IpAddresses);
+    bool addNextHopGroup(IpPrefix, IpAddresses);
     bool removeNextHopGroup(IpAddresses);
 
-    void addTempRoute(IpPrefix, IpAddresses);
+    bool addTempRoute(IpPrefix, IpAddresses);
     bool addRoute(IpPrefix, IpAddresses);
     bool removeRoute(IpPrefix);
 
