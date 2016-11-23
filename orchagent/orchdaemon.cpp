@@ -12,6 +12,8 @@ using namespace swss;
 
 /* Global variable gPortsOrch declared */
 PortsOrch *gPortsOrch;
+/* Global variable gFdbOrch declared */
+FdbOrch *gFdbOrch;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb) :
         m_applDb(applDb)
@@ -37,6 +39,7 @@ bool OrchDaemon::init()
     };
 
     gPortsOrch = new PortsOrch(m_applDb, ports_tables);
+    gFdbOrch = new FdbOrch(gPortsOrch);
     IntfsOrch *intfs_orch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME);
     NeighOrch *neigh_orch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, intfs_orch);
     RouteOrch *route_orch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, neigh_orch);
@@ -66,7 +69,9 @@ bool OrchDaemon::init()
     };
     BufferOrch *buffer_orch = new BufferOrch(m_applDb, buffer_tables);
 
-    m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch };
+    MirrorOrch *mirror_orch = new MirrorOrch(m_applDb, APP_PORT_MIRROR_TABLE_NAME, gPortsOrch, route_orch, neigh_orch, gFdbOrch);
+
+    m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch };
     m_select = new Select();
 
     return true;

@@ -161,6 +161,34 @@ bool PortsOrch::getPort(string alias, Port &p)
     return true;
 }
 
+bool PortsOrch::getPort(sai_object_id_t id, Port &port)
+{
+    for (const auto& portIter: m_portList)
+    {
+        switch (portIter.second.m_type)
+        {
+        case Port::PHY:
+            if(portIter.second.m_port_id == id)
+            {
+                port = portIter.second;
+                return true;
+            }
+            break;
+        case Port::LAG:
+            if(portIter.second.m_lag_id == id)
+            {
+                port = portIter.second;
+                return true;
+            }
+            break;
+        default:
+            continue;
+        }
+    }
+
+    return false;
+}
+
 void PortsOrch::setPort(string alias, Port p)
 {
     m_portList[alias] = p;
@@ -854,6 +882,9 @@ bool PortsOrch::addVlanMember(Port vlan, Port port)
     vlan.m_members.insert(port.m_alias);
     m_portList[vlan.m_alias] = vlan;
 
+    VlanMemberUpdate update = { vlan, port, true };
+    notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
+
     return true;
 }
 
@@ -891,6 +922,9 @@ bool PortsOrch::removeVlanMember(Port vlan, Port port)
     m_portList[port.m_alias] = port;
     vlan.m_members.erase(port.m_alias);
     m_portList[vlan.m_alias] = vlan;
+
+    VlanMemberUpdate update = { vlan, port, false };
+    notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
 
     return true;
 }
@@ -978,6 +1012,9 @@ bool PortsOrch::addLagMember(Port lag, Port port)
 
     m_portList[lag.m_alias] = lag;
 
+    LagMemberUpdate update = { lag, port, true };
+    notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
+
     return true;
 }
 
@@ -1000,6 +1037,9 @@ bool PortsOrch::removeLagMember(Port lag, Port port)
     m_portList[port.m_alias] = port;
     lag.m_members.erase(port.m_alias);
     m_portList[lag.m_alias] = lag;
+
+    LagMemberUpdate update = { lag, port, false };
+    notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
     return true;
 }

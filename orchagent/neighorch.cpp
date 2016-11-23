@@ -98,6 +98,26 @@ void NeighOrch::decreaseNextHopRefCount(IpAddress ipAddress)
     m_syncdNextHops[ipAddress].ref_count --;
 }
 
+bool NeighOrch::getNeighborEntry(const IpAddress& ipAddress, NeighborEntry& neighborEntry, MacAddress& macAddress)
+{
+    if (!hasNextHop(ipAddress))
+    {
+        return false;
+    }
+
+    for (const auto& entry : m_syncdNeighbors)
+    {
+        if (entry.first.ip_address == ipAddress)
+        {
+            neighborEntry = entry.first;
+            macAddress = entry.second;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void NeighOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -234,6 +254,9 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
 
     m_syncdNeighbors[neighborEntry] = macAddress;
 
+    NeighborUpdate update = { neighborEntry, macAddress, true };
+    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
+
     return true;
 }
 
@@ -288,6 +311,9 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
         SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%llx ip:%s\n", rif_id, ip_address.to_string().c_str());
         return false;
     }
+
+    NeighborUpdate update = { neighborEntry, MacAddress(), false };
+    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
     m_syncdNeighbors.erase(neighborEntry);
     m_intfsOrch->decreaseRouterIntfsRefCount(alias);

@@ -41,6 +41,8 @@ sai_wred_api_t*             sai_wred_api;
 sai_qos_map_api_t*          sai_qos_map_api;
 sai_buffer_api_t*           sai_buffer_api;
 sai_acl_api_t*              sai_acl_api;
+sai_mirror_api_t*           sai_mirror_api;
+sai_fdb_api_t*              sai_fdb_api;
 
 /* Global variables */
 map<string, string> gProfileMap;
@@ -88,8 +90,10 @@ void initSaiApi()
     sai_api_query(SAI_API_SWITCH,               (void **)&sai_switch_api);
     sai_api_query(SAI_API_VIRTUAL_ROUTER,       (void **)&sai_virtual_router_api);
     sai_api_query(SAI_API_PORT,                 (void **)&sai_port_api);
+    sai_api_query(SAI_API_FDB,                  (void **)&sai_fdb_api);
     sai_api_query(SAI_API_VLAN,                 (void **)&sai_vlan_api);
     sai_api_query(SAI_API_HOST_INTERFACE,       (void **)&sai_hostif_api);
+    sai_api_query(SAI_API_MIRROR,               (void **)&sai_mirror_api);
     sai_api_query(SAI_API_ROUTER_INTERFACE,     (void **)&sai_router_intfs_api);
     sai_api_query(SAI_API_NEIGHBOR,             (void **)&sai_neighbor_api);
     sai_api_query(SAI_API_NEXT_HOP,             (void **)&sai_next_hop_api);
@@ -109,8 +113,10 @@ void initSaiApi()
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_NOTICE);
     sai_log_set(SAI_API_VIRTUAL_ROUTER,         SAI_LOG_NOTICE);
     sai_log_set(SAI_API_PORT,                   SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_FDB,                    SAI_LOG_NOTICE);
     sai_log_set(SAI_API_VLAN,                   SAI_LOG_NOTICE);
     sai_log_set(SAI_API_HOST_INTERFACE,         SAI_LOG_NOTICE);
+    sai_log_set(SAI_API_MIRROR,                 SAI_LOG_NOTICE);
     sai_log_set(SAI_API_ROUTER_INTERFACE,       SAI_LOG_NOTICE);
     sai_log_set(SAI_API_NEIGHBOR,               SAI_LOG_NOTICE);
     sai_log_set(SAI_API_NEXT_HOP,               SAI_LOG_NOTICE);

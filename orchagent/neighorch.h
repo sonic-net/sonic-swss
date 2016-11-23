@@ -2,6 +2,7 @@
 #define SWSS_NEIGHORCH_H
 
 #include "orch.h"
+#include "observer.h"
 #include "portsorch.h"
 #include "intfsorch.h"
 
@@ -16,6 +17,16 @@ struct NeighborEntry
     {
         return tie(ip_address, alias) < tie(o.ip_address, o.alias);
     }
+
+    bool operator==(const NeighborEntry &o) const
+    {
+        return (ip_address == o.ip_address) && (alias == o.alias);
+    }
+
+    bool operator!=(const NeighborEntry &o) const
+    {
+        return !(*this == o);
+    }
 };
 
 struct NextHopEntry
@@ -29,7 +40,14 @@ typedef map<NeighborEntry, MacAddress> NeighborTable;
 /* NextHopTable: next hop IP address, NextHopEntry */
 typedef map<IpAddress, NextHopEntry> NextHopTable;
 
-class NeighOrch : public Orch
+struct NeighborUpdate
+{
+    NeighborEntry entry;
+    MacAddress mac;
+    bool add;
+};
+
+class NeighOrch : public Orch, public Subject
 {
 public:
     NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch);
@@ -41,6 +59,8 @@ public:
 
     void increaseNextHopRefCount(IpAddress);
     void decreaseNextHopRefCount(IpAddress);
+
+    bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
 
 private:
     IntfsOrch *m_intfsOrch;

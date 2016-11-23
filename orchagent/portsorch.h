@@ -3,12 +3,27 @@
 
 #include "orch.h"
 #include "port.h"
+#include "observer.h"
 
 #include "macaddress.h"
 
 #include <map>
 
-class PortsOrch : public Orch
+struct LagMemberUpdate
+{
+    Port lag;
+    Port member;
+    bool add;
+};
+
+struct VlanMemberUpdate
+{
+    Port vlan;
+    Port member;
+    bool add;
+};
+
+class PortsOrch : public Orch, public Subject
 {
 public:
     PortsOrch(DBConnector *db, vector<string> tableNames);
@@ -16,6 +31,7 @@ public:
     bool isInitDone();
 
     bool getPort(string alias, Port &port);
+    bool getPort(sai_object_id_t id, Port &port);
     void setPort(string alias, Port port);
     sai_object_id_t getCpuPort();
 

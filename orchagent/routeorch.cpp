@@ -64,6 +64,89 @@ bool RouteOrch::hasNextHopGroup(IpAddresses ipAddresses)
     return m_syncdNextHopGroups.find(ipAddresses) != m_syncdNextHopGroups.end();
 }
 
+bool RouteOrch::getBestMatchRoute(const IpAddress& dstAddr, IpPrefix& prefix, IpAddresses& nexthop)
+{
+    const RouteTable::value_type *bestMatchRoute = NULL;
+
+    for (const auto& route : m_syncdRoutes)
+    {
+        if (!route.first.isAddressInSubnet(dstAddr))
+        {
+            continue;
+        }
+
+        if (!bestMatchRoute || bestMatchRoute->first < route.first)
+        {
+            bestMatchRoute = &route;
+        }
+    }
+
+    if (bestMatchRoute)
+    {
+        prefix = bestMatchRoute->first;
+        nexthop = bestMatchRoute->second;
+
+        return true;
+    }
+
+    return false;
+}
+
+void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
+{
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_INFO("Attaching next hop observer for %s destination IP\n", dstAddr.to_string().c_str());
+
+    auto observerEntry = m_nextHopObservers.find(dstAddr);
+
+    if (observerEntry == m_nextHopObservers.end())
+    {
+        m_nextHopObservers.emplace(dstAddr, NextHopObserverEntry());
+        observerEntry = m_nextHopObservers.find(dstAddr);
+
+        for (auto route : m_syncdRoutes)
+        {
+            if (route.first.isAddressInSubnet(dstAddr))
+            {
+                observerEntry->second.routeTable.emplace(route.first, route.second);
+            }
+        }
+    }
+
+    observerEntry->second.observers.push_back(observer);
+
+    auto route = observerEntry->second.routeTable.rbegin();
+    if (route != observerEntry->second.routeTable.rend())
+    {
+        NextHopUpdate update = { route->first, route->second };
+        observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, static_cast<void *>(&update));
+    }
+}
+
+void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr)
+{
+    SWSS_LOG_ENTER();
+    auto observerEntry = m_nextHopObservers.find(dstAddr);
+
+    if (observerEntry == m_nextHopObservers.end())
+    {
+        SWSS_LOG_ERROR("Failed to detach observer for %s. Entry not found.\n", dstAddr.to_string().c_str());
+        assert(false);
+    }
+
+    for (auto iter = observerEntry->second.observers.begin(); iter != observerEntry->second.observers.end(); ++iter)
+       {
+           if (observer == *iter)
+           {
+               continue;
+           }
+
+           m_observers.erase(iter);
+           break;
+       }
+}
+
 void RouteOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
@@ -173,6 +256,87 @@ void RouteOrch::doTask(Consumer& consumer)
         {
             SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
             it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+void RouteOrch::notifyNextHopChangeObservers(IpPrefix prefix, IpAddresses nexthops, bool add)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto& entry : m_nextHopObservers)
+    {
+        if (!prefix.isAddressInSubnet(entry.first))
+        {
+            continue;
+        }
+
+        if (add)
+        {
+            bool update_required = false;
+            NextHopUpdate update = { prefix, nexthops };
+
+            /* Table should not be empty. Default route should always exists. */
+            assert(!entry.second.routeTable.empty());
+
+            auto route = entry.second.routeTable.find(prefix);
+            if (route == entry.second.routeTable.end())
+            {
+                /* If added route is best match update observers */
+                if (entry.second.routeTable.rbegin()->first < prefix)
+                {
+                    update_required = true;
+                }
+
+                entry.second.routeTable.emplace(prefix, nexthops);
+            }
+            else
+            {
+                if (route->second != nexthops)
+                {
+                    route->second = nexthops;
+                    /* If changed route is best match update observers */
+                    if (entry.second.routeTable.rbegin()->first == route->first)
+                    {
+                        update_required = true;
+                    }
+                }
+            }
+
+            if (update_required)
+            {
+                for (auto observer : entry.second.observers)
+                {
+                    observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, static_cast<void *>(&update));
+                }
+            }
+        }
+        else
+        {
+            auto route = entry.second.routeTable.find(prefix);
+            if (route != entry.second.routeTable.end())
+            {
+                /* If removed route was best match find another best match route */
+                if (route->first == entry.second.routeTable.rbegin()->first)
+                {
+                    entry.second.routeTable.erase(route);
+
+                    /* Table should not be empty. Default route should always exists. */
+                    assert(!entry.second.routeTable.empty());
+
+                    auto route = entry.second.routeTable.rbegin();
+                    NextHopUpdate update = { route->first, route->second };
+
+                    for (auto observer : entry.second.observers)
+                    {
+                        observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, static_cast<void *>(&update));
+                    }
+                }
+                else
+                {
+                    entry.second.routeTable.erase(route);
+                }
+            }
         }
     }
 }
@@ -462,6 +626,8 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     }
 
     m_syncdRoutes[ipPrefix] = nextHops;
+
+    notifyNextHopChangeObservers(ipPrefix, nextHops, true);
     return true;
 }
 
@@ -531,6 +697,7 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
     else
     {
         m_syncdRoutes.erase(ipPrefix);
+        notifyNextHopChangeObservers(ipPrefix, IpAddresses("0.0.0.0"), false);
     }
     return true;
 }

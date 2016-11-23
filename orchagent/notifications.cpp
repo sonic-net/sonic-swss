@@ -1,6 +1,8 @@
 #include <mutex>
+#include <assert.h>
 
 #include "portsorch.h"
+#include "fdborch.h"
 
 extern "C" {
 #include "sai.h"
@@ -10,6 +12,38 @@ extern "C" {
 
 extern mutex gDbMutex;
 extern PortsOrch *gPortsOrch;
+extern FdbOrch *gFdbOrch;
+
+void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data)
+{
+    SWSS_LOG_ENTER();
+
+    lock_guard<mutex> lock(gDbMutex);
+
+    if (!gFdbOrch)
+    {
+        SWSS_LOG_NOTICE("gFdbOrch is not initialized");
+        return;
+    }
+
+    for (uint32_t i = 0; i < count; ++i)
+    {
+        sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+
+        for (uint32_t j = 0; j < data[i].attr_count; ++j)
+        {
+            if (data[i].attr[j].id == SAI_FDB_ENTRY_ATTR_PORT_ID)
+            {
+                oid = data[i].attr[j].value.oid;
+                break;
+            }
+        }
+
+        assert(oid != SAI_NULL_OBJECT_ID);
+
+        gFdbOrch->update(data[i].event_type, &data[i].fdb_entry, oid);
+    }
+}
 
 void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *data)
 {
@@ -48,7 +82,7 @@ void on_switch_shutdown_request()
 sai_switch_notification_t switch_notifications
 {
     NULL,
-    NULL,
+    on_fdb_event,
     on_port_state_change,
     NULL,
     on_switch_shutdown_request,
