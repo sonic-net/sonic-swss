@@ -16,6 +16,7 @@
 #include "bufferorch.h"
 #include "mirrororch.h"
 #include "fdborch.h"
+#include "aclorch.h"
 
 using namespace swss;
 

@@ -72,7 +72,13 @@ bool OrchDaemon::init()
 
     MirrorOrch *mirror_orch = new MirrorOrch(m_applDb, APP_MIRROR_SESSION_TABLE_NAME, gPortsOrch, route_orch, neigh_orch, gFdbOrch);
 
-    m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch };
+    vector<string> acl_tables = {
+        APP_ACL_TABLE_NAME,
+        APP_ACL_RULE_TABLE_NAME
+    };
+    AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch);
+
+    m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch};
     m_select = new Select();
 
     return true;
