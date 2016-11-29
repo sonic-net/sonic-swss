@@ -1,5 +1,7 @@
 #include <linux/if_ether.h>
 
+#include <utility>
+
 #include "logger.h"
 #include "swssnet.h"
 #include "mirrororch.h"
@@ -20,6 +22,8 @@
 #define MIRROR_SESSION_DEFAULT_TOS      0
 
 extern sai_mirror_api_t *sai_mirror_api;
+
+using namespace std::rel_ops;
 
 MirrorOrch::MirrorOrch(DBConnector *db, string tableName,
         PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch) :
