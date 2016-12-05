@@ -1,6 +1,7 @@
 #ifndef __ROUTESYNC__
 #define __ROUTESYNC__
 
+#include <memory>
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "netmsg.h"
@@ -12,8 +13,9 @@ class RouteSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
-    RouteSync(DBConnector *db);
+    RouteSync(std::shared_ptr<RedisPipeline> pipeline);
 
+    virtual void flush();
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
 private:

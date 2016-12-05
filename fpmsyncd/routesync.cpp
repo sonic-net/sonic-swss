@@ -13,12 +13,17 @@
 using namespace std;
 using namespace swss;
 
-RouteSync::RouteSync(DBConnector *db) :
-    m_routeTable(db, APP_ROUTE_TABLE_NAME)
+RouteSync::RouteSync(shared_ptr<RedisPipeline> pipeline) :
+    m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true)
 {
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+}
+
+void RouteSync::flush()
+{
+    m_routeTable.flush();
 }
 
 void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)

@@ -11,7 +11,8 @@ using namespace swss;
 int main(int argc, char **argv)
 {
     DBConnector db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    RouteSync sync(&db);
+    auto pipeline = make_shared<RedisPipeline>(&db);
+    RouteSync sync(pipeline);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
@@ -34,6 +35,8 @@ int main(int argc, char **argv)
                 int tempfd;
                 /* Reading FPM messages forever (and calling "readMe" to read them) */
                 s.select(&temps, &tempfd);
+                sync.flush();
+                cout << "Flushed!!" << endl;
             }
         }
         catch (FpmLink::FpmConnectionClosedException &e)

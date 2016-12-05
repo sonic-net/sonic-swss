@@ -10,7 +10,7 @@ using namespace swss;
 using namespace std;
 
 FpmLink::FpmLink(int port) :
-    m_bufSize(FPM_MAX_MSG_LEN * 2),
+    m_bufSize(FPM_MAX_MSG_LEN * 256),
     m_messageBuffer(NULL),
     m_pos(0),
     m_connected(false),
@@ -111,6 +111,7 @@ void FpmLink::readMe()
     m_pos+= read;
 
     /* Check for complete messages */
+    int batch_counter = 0;
     while (true)
     {
         hdr = (fpm_msg_hdr_t *)(m_messageBuffer + start);
@@ -132,11 +133,13 @@ void FpmLink::readMe()
                 throw std::system_error(make_error_code(errc::bad_message), "Unable to convert nlmsg");
 
             nlmsg_set_proto(msg, NETLINK_ROUTE);
+            batch_counter++;
             NetDispatcher::getInstance().onNetlinkMessage(msg);
             nlmsg_free(msg);
         }
         start += msg_len;
     }
+    printf("batch_counter=%d\n", batch_counter);
 
     memmove(m_messageBuffer, m_messageBuffer + start, m_pos - start);
     m_pos = m_pos - start;
