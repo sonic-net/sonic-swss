@@ -38,6 +38,20 @@ static acl_table_type_lookup_t aclTableTypeLookUp =
     { TABLE_TYPE_MIRROR, ACL_TABLE_MIRROR }
 };
 
+static acl_ip_type_lookup_t aclIpTypeLookup =
+{
+    { IP_TYPE_ANY,         SAI_ACL_IP_TYPE_ANY },
+    { IP_TYPE_IP,          SAI_ACL_IP_TYPE_IP },
+    { IP_TYPE_NON_IP,      SAI_ACL_IP_TYPE_NON_IP },
+    { IP_TYPE_IPv4ANY,     SAI_ACL_IP_TYPE_IPv4ANY },
+    { IP_TYPE_NON_IPv4,    SAI_ACL_IP_TYPE_NON_IPv4 },
+    { IP_TYPE_IPv6ANY,     SAI_ACL_IP_TYPE_IPv6ANY },
+    { IP_TYPE_NON_IPv6,    SAI_ACL_IP_TYPE_NON_IPv6 },
+    { IP_TYPE_ARP,         SAI_ACL_IP_TYPE_ARP },
+    { IP_TYPE_ARP_REQUEST, SAI_ACL_IP_TYPE_ARP_REQUEST },
+    { IP_TYPE_ARP_REPLY,   SAI_ACL_IP_TYPE_ARP_REPLY }
+};
+
 AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch) :
         Orch(db, tableNames),
         m_portOrch(portOrch)
@@ -356,6 +370,24 @@ bool AclOrch::processToAclTableType(string _type, acl_table_type_t &acl_type)
     }
 }
 
+bool AclOrch::processIpType(string _type, sai_uint32_t &ip_type)
+{
+    SWSS_LOG_ENTER();
+
+    string type = toUpper(_type);
+
+    // TODO combine if=assign
+    if (aclIpTypeLookup.find(type) == aclIpTypeLookup.end())
+    {
+        return false;
+    }
+    else
+    {
+        ip_type = aclIpTypeLookup[type];
+        return true;
+    }
+}
+
 sai_object_id_t AclOrch::getTableById(string table_id)
 {
     SWSS_LOG_ENTER();
@@ -433,10 +465,20 @@ bool AclOrch::validateAddMatch(AclRule &aclRule, string attr_name, string attr_v
     {
         return false;
     }
-    else if((attr_name == MATCH_ETHER_TYPE)  || (attr_name == MATCH_IP_TYPE)     ||
+    else if(attr_name == MATCH_IP_TYPE)
+    {
+        if (!processIpType(attr_value, value.aclfield.data.u32))
+        {
+            SWSS_LOG_DEBUG("Invalid IP type %s\n", attr_value.c_str());
+            return false;
+        }
+
+        value.aclfield.enable = true;
+        value.aclfield.mask.u32 = 0xFFFFFFFF;
+    }
+    else if((attr_name == MATCH_ETHER_TYPE)  || (attr_name == MATCH_DSCP)        ||
             (attr_name == MATCH_L4_SRC_PORT) || (attr_name == MATCH_L4_DST_PORT) ||
-            (attr_name == MATCH_IP_PROTOCOL) || (attr_name == MATCH_TCP_FLAGS)   ||
-            (attr_name == MATCH_DSCP))
+            (attr_name == MATCH_IP_PROTOCOL) || (attr_name == MATCH_TCP_FLAGS))
     {
         char *endp = NULL;
         errno = 0;

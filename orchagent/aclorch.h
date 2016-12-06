@@ -36,6 +36,17 @@
 #define PACKET_ACTION_FORWARD   "FORWARD"
 #define PACKET_ACTION_DROP      "DROP"
 
+#define IP_TYPE_ANY             "ANY"
+#define IP_TYPE_IP              "IP"
+#define IP_TYPE_NON_IP          "NON_IP"
+#define IP_TYPE_IPv4ANY         "IPv4ANY"
+#define IP_TYPE_NON_IPv4        "NON_IPv4"
+#define IP_TYPE_IPv6ANY         "IPv6ANY"
+#define IP_TYPE_NON_IPv6        "NON_IPv6"
+#define IP_TYPE_ARP             "ARP"
+#define IP_TYPE_ARP_REQUEST     "ARP_REQUEST"
+#define IP_TYPE_ARP_REPLY       "ARP_REPLY"
+
 typedef enum
 {
     ACL_TABLE_UNKNOWN,
@@ -45,6 +56,7 @@ typedef enum
 
 typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
 typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
+typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
 typedef vector<sai_object_id_t> ports_list_t;
 
 struct AclRule {
@@ -99,6 +111,7 @@ private:
 
     bool processToAclTableType(string type, acl_table_type_t &acl_type);
     bool processPorts(string portsList, ports_list_t& out);
+    bool processIpType(string _type, sai_uint32_t &ip_type);
     bool validateAclTable(AclTable &aclTable);
     bool validateAclRule(AclRule &aclRule);
     bool validateAddPriority(AclRule &aclRule, string attr_name, string attr_value);
