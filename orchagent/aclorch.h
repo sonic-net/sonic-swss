@@ -101,6 +101,7 @@ private:
     bool processPorts(string portsList, ports_list_t& out);
     bool validateAclTable(AclTable &aclTable);
     bool validateAclRule(AclRule &aclRule);
+    bool validateAddPriority(AclRule &aclRule, string attr_name, string attr_value);
     bool validateAddMatch(AclRule &aclRule, string attr_name, string attr_value);
     bool validateAddAction(AclRule &aclRule, string attr_name, string attr_value);
 

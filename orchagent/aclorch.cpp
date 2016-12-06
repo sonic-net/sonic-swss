@@ -7,8 +7,9 @@
 #undef SWSS_LOG_DEBUG
 #define SWSS_LOG_DEBUG SWSS_LOG_ERROR
 
-extern sai_acl_api_t*   sai_acl_api;
-extern sai_port_api_t*  sai_port_api;
+extern sai_acl_api_t*    sai_acl_api;
+extern sai_port_api_t*   sai_port_api;
+extern sai_switch_api_t* sai_switch_api;
 
 acl_rule_attr_lookup_t aclMatchLookup =
 {
@@ -82,6 +83,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             AclTable newTable;
+            bool bAllAttributesOk = true;
 
             for (auto itp : kfvFieldsValues(t))
             {
@@ -113,12 +115,12 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 else
                 {
                     SWSS_LOG_ERROR("Unknown table attribute '%s'\n", attr_name.c_str());
-                    newTable.type = ACL_TABLE_UNKNOWN;
+                    bAllAttributesOk = false;
                     break;
                 }
             }
             // validate and create ACL Table
-            if (validateAclTable(newTable))
+            if (bAllAttributesOk && validateAclTable(newTable))
             {
                 sai_object_id_t table_oid = getTableById(table_id);
 
@@ -148,29 +150,22 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (table_id == "*")
+            sai_object_id_t table_oid = getTableById(table_id);
+            if (table_oid != SAI_NULL_OBJECT_ID)
             {
-                deleteAllAclObjects();
-            }
-            else
-            {
-                sai_object_id_t table_oid = getTableById(table_id);
-                if (table_oid != SAI_NULL_OBJECT_ID)
+                if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
                 {
-                    if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
-                    {
-                        SWSS_LOG_INFO("Successfully deleted ACL table %s\n", table_id.c_str());
-                        m_AclTables.erase(table_oid);
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to delete ACL table %s\n", table_id.c_str());
-                    }
+                    SWSS_LOG_INFO("Successfully deleted ACL table %s\n", table_id.c_str());
+                    m_AclTables.erase(table_oid);
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Failed to delete ACL table. Table %s does not exist\n", table_id.c_str());
+                    SWSS_LOG_ERROR("Failed to delete ACL table %s\n", table_id.c_str());
                 }
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to delete ACL table. Table %s does not exist\n", table_id.c_str());
             }
         }
         else
@@ -200,6 +195,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             AclRule newRule;
+            bool bAllAttributesOk = true;
 
             for (auto itr : kfvFieldsValues(t))
             {
@@ -209,11 +205,11 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 string attr_name = toUpper(fvField(itr));
                 string attr_value = fvValue(itr);
 
-                SWSS_LOG_DEBUG("RULE: %s %s\n", attr_name.c_str(), attr_value.c_str());
+                SWSS_LOG_DEBUG("ATTRIBUTE: %s %s\n", attr_name.c_str(), attr_value.c_str());
 
-                if (attr_name == RULE_PRIORITY)
+                if (validateAddPriority(newRule, attr_name, attr_value))
                 {
-                    newRule.priority = std::stoi(attr_value);
+                    SWSS_LOG_INFO("Added priority attribute\n");
                 }
                 else if (validateAddMatch(newRule, attr_name, attr_value))
                 {
@@ -226,11 +222,12 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 else
                 {
                     SWSS_LOG_ERROR("Unknown or invalid rule attribute '%s : %s'\n", attr_name.c_str(), attr_value.c_str());
+                    bAllAttributesOk = false;
                     break;
                 }
             }
             // validate and create ACL rule
-            if (validateAclRule(newRule))
+            if (bAllAttributesOk && validateAclRule(newRule))
             {
                 sai_object_id_t table_oid = getTableById(table_id);
                 sai_object_id_t rule_oid = getRuleById(table_id, rule_id);
@@ -394,6 +391,38 @@ sai_object_id_t AclOrch::getRuleById(string table_id, string rule_id)
     return SAI_NULL_OBJECT_ID;
 }
 
+bool AclOrch::validateAddPriority(AclRule &aclRule, string attr_name, string attr_value)
+{
+    bool status = false;
+
+    if (attr_name == RULE_PRIORITY)
+    {
+        sai_attribute_t attrs[] =
+        {
+            { SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY },
+            { SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY }
+        };
+        // get min/max allowed priority
+        if (sai_switch_api->get_switch_attribute(sizeof(attrs)/sizeof(attrs[0]), attrs) == SAI_STATUS_SUCCESS)
+        {
+            char *endp = NULL;
+            errno = 0;
+            aclRule.priority = strtol(attr_value.c_str(), &endp, 0);
+            // chack conversion was successfull and the value is within the allowed range
+            status = (errno == 0) &&
+                     (endp == attr_value.c_str() + attr_value.size()) &&
+                     (aclRule.priority >= attrs[0].value.u32) &&
+                     (aclRule.priority <= attrs[1].value.u32);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to get ACL entry priority min/max values\n");
+        }
+    }
+
+    return status;
+}
+
 bool AclOrch::validateAddMatch(AclRule &aclRule, string attr_name, string attr_value)
 {
     SWSS_LOG_ENTER();
@@ -409,23 +438,39 @@ bool AclOrch::validateAddMatch(AclRule &aclRule, string attr_name, string attr_v
             (attr_name == MATCH_IP_PROTOCOL) || (attr_name == MATCH_TCP_FLAGS)   ||
             (attr_name == MATCH_DSCP))
     {
-        value.aclfield.data.u32 = std::stoi(attr_value);  // TODO can throw? // u32 - safe?
+        char *endp = NULL;
+        errno = 0;
+        value.aclfield.data.u32 = strtol(attr_value.c_str(), &endp, 0);
+        if (errno || (endp != attr_value.c_str() + attr_value.size()))
+        {
+            SWSS_LOG_DEBUG("Attr: %s, val: %s, err=%d\n", attr_name.c_str(), attr_value.c_str(), errno);
+            return false;
+        }
+
         value.aclfield.enable = true;
         value.aclfield.mask.u32 = 0xFFFFFFFF;
     }
     else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
     {
-        IpPrefix ip(attr_value);
+        try
+        {
+            IpPrefix ip(attr_value);
 
-        if (ip.isV4())
-        {
-            value.aclfield.data.ip4 = ip.getIp().getV4Addr();
-            value.aclfield.mask.ip4 = ip.getMask().getV4Addr();
+            if (ip.isV4())
+            {
+                value.aclfield.data.ip4 = ip.getIp().getV4Addr();
+                value.aclfield.mask.ip4 = ip.getMask().getV4Addr();
+            }
+            else
+            {
+                memcpy(value.aclfield.data.ip6, ip.getIp().getV6Addr(), 16);
+                memcpy(value.aclfield.mask.ip6, ip.getMask().getV6Addr(), 16);
+            }
         }
-        else
+        catch(...)
         {
-            memcpy(value.aclfield.data.ip6, ip.getIp().getV6Addr(), 16);
-            memcpy(value.aclfield.mask.ip6, ip.getMask().getV6Addr(), 16);
+            SWSS_LOG_DEBUG("Attr: %s, val: %s IpPrefix exception...\n", attr_name.c_str(), attr_value.c_str());
+            return false;
         }
     }
 
