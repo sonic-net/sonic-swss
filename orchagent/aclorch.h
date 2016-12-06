@@ -50,6 +50,7 @@ typedef vector<sai_object_id_t> ports_list_t;
 struct AclRule {
     string id;
     string table_id;
+    sai_object_id_t counter_oid;
     uint32_t priority;
     map <sai_acl_entry_attr_t, sai_attribute_value_t> matches;
     map <sai_acl_entry_attr_t, sai_attribute_value_t> actions;
@@ -89,9 +90,11 @@ private:
 
     sai_status_t createBindAclTable(AclTable &aclTable, sai_object_id_t &table_oid);
     sai_status_t createAclRule(AclRule &aclRule, sai_object_id_t &rule_oid);
+    sai_status_t createAclCounter(sai_object_id_t &counter_oid, sai_object_id_t table_oid);
     sai_status_t bindAclTable(sai_object_id_t table_oid, AclTable &aclTable, bool bind = true);
     sai_status_t deleteUnbindAclTable(sai_object_id_t table_oid);
-    sai_status_t deleteAclRule(sai_object_id_t rule_oid);
+    sai_status_t deleteAclRule(AclRule &aclRule);
+    sai_status_t deleteAclCounter(sai_object_id_t counter_oid);
     sai_status_t deleteAllAclObjects();
 
     bool processToAclTableType(string type, acl_table_type_t &acl_type);

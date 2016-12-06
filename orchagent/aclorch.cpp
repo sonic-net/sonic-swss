@@ -4,6 +4,9 @@
 #include "schema.h"
 #include "ipprefix.h"
 
+#undef SWSS_LOG_DEBUG
+#define SWSS_LOG_DEBUG SWSS_LOG_ERROR
+
 extern sai_acl_api_t*   sai_acl_api;
 extern sai_port_api_t*  sai_port_api;
 
@@ -234,7 +237,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 if (rule_oid != SAI_NULL_OBJECT_ID)
                 {
                     // rule already exists - delete it first
-                    if (deleteAclRule(rule_oid) == SAI_STATUS_SUCCESS)
+                    if (deleteAclRule(m_AclTables[table_oid].rules[rule_oid]) == SAI_STATUS_SUCCESS)
                     {
                         m_AclTables[table_oid].rules.erase(rule_oid);
                         SWSS_LOG_INFO("Successfully deleted ACL rule: %s\n", rule_id.c_str());
@@ -264,7 +267,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 sai_object_id_t rule_oid = getRuleById(table_id, rule_id);
                 if (rule_oid != SAI_NULL_OBJECT_ID)
                 {
-                    if (deleteAclRule(rule_oid) == SAI_STATUS_SUCCESS)
+                    if (deleteAclRule(m_AclTables[table_oid].rules[rule_oid]) == SAI_STATUS_SUCCESS)
                     {
                         m_AclTables[table_oid].rules.erase(rule_oid);
                         SWSS_LOG_INFO("Successfully deleted ACL rule %s\n", rule_id.c_str());
@@ -563,35 +566,82 @@ sai_status_t AclOrch::createAclRule(AclRule &aclRule, sai_object_id_t &rule_oid)
     SWSS_LOG_ENTER();
 
     sai_object_id_t table_oid = getTableById(aclRule.table_id);
-    sai_attribute_t entry_attrs[MAX_RULE_ATTRIBUTES];
-    uint32_t attrs_num = 0;
+    vector<sai_attribute_t> rule_attrs;
+    sai_object_id_t counter_oid;
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    if ((status = createAclCounter(counter_oid, table_oid)) != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create counter for the rule %s in table %s\n",
+                       aclRule.id.c_str(), aclRule.table_id.c_str());
+        return status;
+    }
+    else
+    {
+        SWSS_LOG_DEBUG("Created counter for the rule %s in table %s\n", aclRule.id.c_str(), aclRule.table_id.c_str());
+    }
+
+    aclRule.counter_oid = counter_oid;
 
     // store table oid this rule belongs to
-    entry_attrs[attrs_num].id = SAI_ACL_ENTRY_ATTR_TABLE_ID;
-    entry_attrs[attrs_num++].value.oid = table_oid;
+    attr.id =  SAI_ACL_ENTRY_ATTR_TABLE_ID;
+    attr.value.oid = table_oid;
+    rule_attrs.push_back(attr);
 
-    entry_attrs[attrs_num].id = SAI_ACL_ENTRY_ATTR_PRIORITY;
-    entry_attrs[attrs_num++].value.u32 = aclRule.priority;
+    attr.id =  SAI_ACL_ENTRY_ATTR_PRIORITY;
+    attr.value.u32 = aclRule.priority;
+    rule_attrs.push_back(attr);
 
-    entry_attrs[attrs_num].id = SAI_ACL_ENTRY_ATTR_ADMIN_STATE;
-    entry_attrs[attrs_num++].value.booldata = true;
+    attr.id =  SAI_ACL_ENTRY_ATTR_ADMIN_STATE;
+    attr.value.booldata = true;
+    rule_attrs.push_back(attr);
 
-    SWSS_LOG_DEBUG("Creating rule in table %s\n", aclRule.table_id.c_str());
+    // add reference to the counter
+    attr.id =  SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
+    attr.value.aclaction.parameter.oid = aclRule.counter_oid;
+    attr.value.aclaction.enable = true;
+    rule_attrs.push_back(attr);
 
     // store matches
     for (auto it : aclRule.matches)
     {
-        entry_attrs[attrs_num].id = it.first;
-        entry_attrs[attrs_num++].value = it.second;
+        attr.id = it.first;
+        attr.value = it.second;
+        rule_attrs.push_back(attr);
     }
+
     // store actions
     for (auto it : aclRule.actions)
     {
-        entry_attrs[attrs_num].id = it.first;
-        entry_attrs[attrs_num++].value = it.second;
+        attr.id = it.first;
+        attr.value = it.second;
+        rule_attrs.push_back(attr);
     }
 
-    return sai_acl_api->create_acl_entry(&rule_oid, attrs_num, entry_attrs);
+    return sai_acl_api->create_acl_entry(&rule_oid, rule_attrs.size(), rule_attrs.data());
+}
+
+sai_status_t AclOrch::createAclCounter(sai_object_id_t &counter_oid, sai_object_id_t table_oid)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> counter_attrs;
+
+    attr.id =  SAI_ACL_COUNTER_ATTR_TABLE_ID;
+    attr.value.oid = table_oid;
+    counter_attrs.push_back(attr);
+
+    attr.id =  SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT;
+    attr.value.booldata = true;
+    counter_attrs.push_back(attr);
+
+    attr.id =  SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT;
+    attr.value.booldata = true;
+    counter_attrs.push_back(attr);
+
+    return sai_acl_api->create_acl_counter(&counter_oid, counter_attrs.size(), counter_attrs.data());
 }
 
 sai_status_t AclOrch::deleteUnbindAclTable(sai_object_id_t table_oid)
@@ -609,11 +659,30 @@ sai_status_t AclOrch::deleteUnbindAclTable(sai_object_id_t table_oid)
     return sai_acl_api->delete_acl_table(table_oid);
 }
 
-sai_status_t AclOrch::deleteAclRule(sai_object_id_t rule_oid)
+sai_status_t AclOrch::deleteAclRule(AclRule &aclRule)
+{
+    SWSS_LOG_ENTER();
+    sai_object_id_t rule_oid;
+    sai_status_t status;
+
+    if ((rule_oid = getRuleById(aclRule.table_id, aclRule.id)) == SAI_NULL_OBJECT_ID)
+    {
+        return SAI_STATUS_FAILURE;
+    }
+
+    if ((status = sai_acl_api->delete_acl_entry(rule_oid)) != SAI_STATUS_SUCCESS)
+    {
+        return status;
+    }
+
+    return deleteAclCounter(aclRule.counter_oid);
+}
+
+sai_status_t AclOrch::deleteAclCounter(sai_object_id_t counter_oid)
 {
     SWSS_LOG_ENTER();
 
-    return sai_acl_api->delete_acl_entry(rule_oid);
+    return sai_acl_api->delete_acl_counter(counter_oid);
 }
 
 // TODO for debug purposes
@@ -627,7 +696,7 @@ sai_status_t AclOrch::deleteAllAclObjects()
         auto it2 = it->second.rules.begin();
         while (it2 != it->second.rules.end())
         {
-            if (deleteAclRule(it2->first) == SAI_STATUS_SUCCESS)
+            if (deleteAclRule(it2->second) == SAI_STATUS_SUCCESS)
             {
                 it2 = it->second.rules.erase(it2);
                 SWSS_LOG_INFO("Successfully deleted ACL rule %s in table %s\n", it2->second.id.c_str(), it->second.id.c_str());
