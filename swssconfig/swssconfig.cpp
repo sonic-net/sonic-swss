@@ -61,8 +61,13 @@ bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
 
         if (kfvOp(db_item) == SET_COMMAND)
             producer.set(key_name, kfvFieldsValues(db_item), SET_COMMAND);
-        if (kfvOp(db_item) == DEL_COMMAND)
+        else if (kfvOp(db_item) == DEL_COMMAND)
             producer.del(key_name, DEL_COMMAND);
+        else
+        {
+            SWSS_LOG_ERROR("Invalid operation: %s\n", kfvOp(db_item).c_str());
+            return false;
+        }
     }
     return true;
 }
