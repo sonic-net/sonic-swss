@@ -109,9 +109,9 @@ private:
     sai_status_t deleteAclCounter(sai_object_id_t counter_oid);
     sai_status_t deleteAllAclObjects();
 
-    bool processToAclTableType(string type, acl_table_type_t &acl_type);
+    bool processAclTableType(string type, acl_table_type_t &table_type);
     bool processPorts(string portsList, ports_list_t& out);
-    bool processIpType(string _type, sai_uint32_t &ip_type);
+    bool processIpType(string type, sai_uint32_t &ip_type);
     bool validateAclTable(AclTable &aclTable);
     bool validateAclRule(AclRule &aclRule);
     bool validateAddPriority(AclRule &aclRule, string attr_name, string attr_value);

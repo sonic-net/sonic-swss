@@ -114,7 +114,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 }
                 else if (attr_name == TABLE_TYPE)
                 {
-                    if (!processToAclTableType(attr_value, newTable.type))
+                    if (!processAclTableType(attr_value, newTable.type))
                     {
                         SWSS_LOG_ERROR("Failed to process table type for table %s\n", table_id.c_str());
                     }
@@ -271,7 +271,6 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            // TODO delete behavior?
             sai_object_id_t table_oid = getTableById(table_id);
             if (table_oid != SAI_NULL_OBJECT_ID)
             {
@@ -351,41 +350,36 @@ bool AclOrch::processPorts(string portsList, ports_list_t& out)
     return true;
 }
 
-bool AclOrch::processToAclTableType(string _type, acl_table_type_t &acl_type)
+bool AclOrch::processAclTableType(string type, acl_table_type_t &table_type)
 {
     SWSS_LOG_ENTER();
 
-    string type = toUpper(_type);
+    auto tt = aclTableTypeLookUp.find(toUpper(type));
 
-    // TODO combine if=assign
-    if (aclTableTypeLookUp.find(type) == aclTableTypeLookUp.end())
+    if (tt == aclTableTypeLookUp.end())
     {
-        acl_type = ACL_TABLE_UNKNOWN;
         return false;
     }
-    else
-    {
-        acl_type = aclTableTypeLookUp[type];
-        return true;
-    }
+
+    table_type = tt->second;
+
+    return true;
 }
 
-bool AclOrch::processIpType(string _type, sai_uint32_t &ip_type)
+bool AclOrch::processIpType(string type, sai_uint32_t &ip_type)
 {
     SWSS_LOG_ENTER();
 
-    string type = toUpper(_type);
+    auto it = aclIpTypeLookup.find(toUpper(type));
 
-    // TODO combine if=assign
-    if (aclIpTypeLookup.find(type) == aclIpTypeLookup.end())
+    if (it == aclIpTypeLookup.end())
     {
         return false;
     }
-    else
-    {
-        ip_type = aclIpTypeLookup[type];
-        return true;
-    }
+
+    ip_type = it->second;
+
+    return true;
 }
 
 sai_object_id_t AclOrch::getTableById(string table_id)
@@ -485,7 +479,7 @@ bool AclOrch::validateAddMatch(AclRule &aclRule, string attr_name, string attr_v
         value.aclfield.data.u32 = strtol(attr_value.c_str(), &endp, 0);
         if (errno || (endp != attr_value.c_str() + attr_value.size()))
         {
-            SWSS_LOG_DEBUG("Attr: %s, val: %s, err=%d\n", attr_name.c_str(), attr_value.c_str(), errno);
+            SWSS_LOG_DEBUG("Attr: %s, val: %s(=%d), err=%d\n", attr_name.c_str(), attr_value.c_str(), value.aclfield.data.u32, errno);
             return false;
         }
 
