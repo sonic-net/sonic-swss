@@ -110,6 +110,8 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 else
                 {
                     SWSS_LOG_ERROR("Unknown table attribute '%s'\n", attr_name.c_str());
+                    newTable.type = ACL_TABLE_UNKNOWN;
+                    break;
                 }
             }
             // validate and create ACL Table
@@ -269,7 +271,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     }
                     else
                     {
-                        SWSS_LOG_ERROR("Failed to delete ACL rule %s\n", table_id.c_str());
+                        SWSS_LOG_ERROR("Failed to delete ACL rule: %s\n", table_id.c_str());
                     }
                 }
                 else
