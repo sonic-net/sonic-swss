@@ -45,30 +45,19 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
     memcpy(entry.mac_address, mac.getMac(), sizeof(sai_mac_t));
     entry.vlan_id = vlan;
 
-    sai_attribute_t *attr = NULL;
-    sai_attribute_t attrs[SAI_FDB_ENTRY_ATTR_END];
+    sai_attribute_t attr;
+    attr.id = SAI_FDB_ENTRY_ATTR_PORT_ID;
 
-    sai_status_t status = sai_fdb_api->get_fdb_entry_attribute(&entry, SAI_FDB_ENTRY_ATTR_END, attrs);
+    sai_status_t status = sai_fdb_api->get_fdb_entry_attribute(&entry, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_INFO("Failed to get port for FDB entry OID\n");
         return false;
     }
 
-    for (int i = 0; i < SAI_FDB_ENTRY_ATTR_END; ++i)
+    if (!m_portsOrch->getPort(attr.value.oid, port))
     {
-        if (attrs[i].id == SAI_FDB_ENTRY_ATTR_PORT_ID)
-        {
-            attr = attrs + i;
-            break;
-        }
-    }
-
-    assert(attr);
-
-    if (!m_portsOrch->getPort(attr->value.oid, port))
-    {
-        SWSS_LOG_ERROR("Failed to get port for %llu OID\n", attr->value.oid);
+        SWSS_LOG_ERROR("Failed to get port for %llu OID\n", attr.value.oid);
         return false;
     }
 

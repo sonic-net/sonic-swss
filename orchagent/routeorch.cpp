@@ -64,34 +64,6 @@ bool RouteOrch::hasNextHopGroup(IpAddresses ipAddresses)
     return m_syncdNextHopGroups.find(ipAddresses) != m_syncdNextHopGroups.end();
 }
 
-bool RouteOrch::getBestMatchRoute(const IpAddress& dstAddr, IpPrefix& prefix, IpAddresses& nexthop)
-{
-    const RouteTable::value_type *bestMatchRoute = NULL;
-
-    for (const auto& route : m_syncdRoutes)
-    {
-        if (!route.first.isAddressInSubnet(dstAddr))
-        {
-            continue;
-        }
-
-        if (!bestMatchRoute || bestMatchRoute->first < route.first)
-        {
-            bestMatchRoute = &route;
-        }
-    }
-
-    if (bestMatchRoute)
-    {
-        prefix = bestMatchRoute->first;
-        nexthop = bestMatchRoute->second;
-
-        return true;
-    }
-
-    return false;
-}
-
 void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
 {
     SWSS_LOG_ENTER();
@@ -139,11 +111,9 @@ void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr)
        {
            if (observer == *iter)
            {
-               continue;
+               m_observers.erase(iter);
+               break;
            }
-
-           m_observers.erase(iter);
-           break;
        }
 }
 
@@ -693,6 +663,9 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
         {
             m_syncdRoutes[ipPrefix] = IpAddresses("::");
         }
+
+        /* Notify about default route next hop change. */
+        notifyNextHopChangeObservers(ipPrefix, m_syncdRoutes[ipPrefix], true);
     }
     else
     {

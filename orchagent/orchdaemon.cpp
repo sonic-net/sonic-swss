@@ -69,7 +69,7 @@ bool OrchDaemon::init()
     };
     BufferOrch *buffer_orch = new BufferOrch(m_applDb, buffer_tables);
 
-    MirrorOrch *mirror_orch = new MirrorOrch(m_applDb, APP_PORT_MIRROR_TABLE_NAME, gPortsOrch, route_orch, neigh_orch, gFdbOrch);
+    MirrorOrch *mirror_orch = new MirrorOrch(m_applDb, APP_MIRROR_SESSION_TABLE_NAME, gPortsOrch, route_orch, neigh_orch, gFdbOrch);
 
     m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch };
     m_select = new Select();

@@ -39,8 +39,6 @@ void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data)
             }
         }
 
-        assert(oid != SAI_NULL_OBJECT_ID);
-
         gFdbOrch->update(data[i].event_type, &data[i].fdb_entry, oid);
     }
 }

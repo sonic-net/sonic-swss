@@ -1,6 +1,6 @@
 [
     {
-        "PORT_MIRROR_TABLE:session1": {
+        "MIRROR_SESSION_TABLE:session1": {
             "src_ip": "1.1.1.1",
             "dst_ip": "2.2.2.2",
             "gre_type": "0x6558",

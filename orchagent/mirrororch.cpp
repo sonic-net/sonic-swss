@@ -229,8 +229,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session, const
     // Get port operation should not fail;
     if (!m_portsOrch->getPort(session.neighborInfo.neighbor.alias, session.neighborInfo.port))
     {
-        SWSS_LOG_ERROR("Failed to get port for %s alias\n", session.neighborInfo.neighbor.alias.c_str());
-        assert(false);
+        throw runtime_error("Failed to get port for " + session.neighborInfo.neighbor.alias + " alias");
     }
 
     if (session.neighborInfo.port.m_type == Port::VLAN)
@@ -257,11 +256,11 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session, const
             return false;
         }
 
+        const auto& firstMember = *session.neighborInfo.port.m_members.begin();
         Port lagMember;
-        if (!m_portsOrch->getPort(*session.neighborInfo.port.m_members.begin(), lagMember))
+        if (!m_portsOrch->getPort(firstMember, lagMember))
         {
-            SWSS_LOG_ERROR("Failed to get port for %s alias\n", session.neighborInfo.port.m_members.begin()->c_str());
-            assert(false);
+            throw runtime_error("Failed to get port for " + firstMember + " alias");
         }
 
         session.neighborInfo.portId = lagMember.m_port_id;
