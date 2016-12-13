@@ -3,18 +3,22 @@
 
 #include <iostream>
 #include <sstream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 #include "orch.h"
 #include "portsorch.h"
 
 // Table attributes
 #define DEFAULT_TABLE_PRIORITY 10
+#define COUNTERS_READ_INTERVAL 10
 
 #define TABLE_DESCRIPTION "POLICY_DESC"
 #define TABLE_TYPE        "TYPE"
 #define TABLE_PORTS       "PORTS"
 
-#define TABLE_TYPE_L3       "L3"
-#define TABLE_TYPE_MIRROR   "MIRROR"
+#define TABLE_TYPE_L3     "L3"
+#define TABLE_TYPE_MIRROR "MIRROR"
 
 #define MAX_RULE_ATTRIBUTES 20  // table_oid + priority + enable + matches + actions
 #define RULE_PRIORITY           "PRIORITY"
@@ -90,15 +94,18 @@ inline void split(string str, Iterable& out, char delim = ' ')
     }
 }
 
-class AclOrch : public Orch
+class AclOrch : public Orch, public std::thread
 {
 public:
     AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch);
+    ~AclOrch();
 
 private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
     void doAclRuleTask(Consumer &consumer);
+
+    static void collectCountersThread(AclOrch *pAclOrch);
 
     sai_status_t createBindAclTable(AclTable &aclTable, sai_object_id_t &table_oid);
     sai_status_t createAclRule(AclRule &aclRule, sai_object_id_t &rule_oid);
@@ -127,6 +134,9 @@ private:
     // Port OID to vector of ACL OIDs
     map <sai_object_id_t, vector<sai_object_id_t>> m_portBind;
 
+    static std::mutex m_countersMutex;
+    static std::condition_variable m_sleepGuard;
+    static bool m_bCollectCounters;
     PortsOrch *m_portOrch;
 
 };

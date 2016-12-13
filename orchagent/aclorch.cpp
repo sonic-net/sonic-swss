@@ -7,6 +7,10 @@
 #undef SWSS_LOG_DEBUG
 #define SWSS_LOG_DEBUG SWSS_LOG_ERROR
 
+std::mutex AclOrch::m_countersMutex;
+std::condition_variable AclOrch::m_sleepGuard;
+bool AclOrch::m_bCollectCounters = true;
+
 extern sai_acl_api_t*    sai_acl_api;
 extern sai_port_api_t*   sai_port_api;
 extern sai_switch_api_t* sai_switch_api;
@@ -54,9 +58,19 @@ static acl_ip_type_lookup_t aclIpTypeLookup =
 
 AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch) :
         Orch(db, tableNames),
+        std::thread(AclOrch::collectCountersThread, this),
         m_portOrch(portOrch)
 {
     SWSS_LOG_ENTER();
+}
+
+AclOrch::~AclOrch()
+{
+    SWSS_LOG_ENTER();
+
+    m_bCollectCounters = false;
+    m_sleepGuard.notify_all();
+    join();
 }
 
 void AclOrch::doTask(Consumer &consumer)
@@ -431,6 +445,7 @@ bool AclOrch::validateAddPriority(AclRule &aclRule, string attr_name, string att
         // get min/max allowed priority
         if (sai_switch_api->get_switch_attribute(sizeof(attrs)/sizeof(attrs[0]), attrs) == SAI_STATUS_SUCCESS)
         {
+            SWSS_LOG_DEBUG("ACL entry priority min/max: %d/%d\n", attrs[0].value.u32, attrs[1].value.u32);
             char *endp = NULL;
             errno = 0;
             aclRule.priority = strtol(attr_value.c_str(), &endp, 0);
@@ -581,6 +596,8 @@ sai_status_t AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &ta
 {
     SWSS_LOG_ENTER();
 
+    std::unique_lock<std::mutex> lock(m_countersMutex);
+
     sai_status_t status;
     sai_attribute_t attr;
     vector<sai_attribute_t> table_attrs;
@@ -645,6 +662,8 @@ sai_status_t AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &ta
 sai_status_t AclOrch::createAclRule(AclRule &aclRule, sai_object_id_t &rule_oid)
 {
     SWSS_LOG_ENTER();
+
+    std::unique_lock<std::mutex> lock(m_countersMutex);
 
     sai_object_id_t table_oid = getTableById(aclRule.table_id);
     vector<sai_attribute_t> rule_attrs;
@@ -714,10 +733,6 @@ sai_status_t AclOrch::createAclCounter(sai_object_id_t &counter_oid, sai_object_
     attr.value.oid = table_oid;
     counter_attrs.push_back(attr);
 
-    attr.id =  SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT;
-    attr.value.booldata = true;
-    counter_attrs.push_back(attr);
-
     attr.id =  SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT;
     attr.value.booldata = true;
     counter_attrs.push_back(attr);
@@ -729,6 +744,8 @@ sai_status_t AclOrch::deleteUnbindAclTable(sai_object_id_t table_oid)
 {
     SWSS_LOG_ENTER();
     sai_status_t status;
+
+    std::unique_lock<std::mutex> lock(m_countersMutex);
 
     if ((status = bindAclTable(table_oid, m_AclTables[table_oid], false)) != SAI_STATUS_SUCCESS)
     {
@@ -745,6 +762,8 @@ sai_status_t AclOrch::deleteAclRule(AclRule &aclRule)
     SWSS_LOG_ENTER();
     sai_object_id_t rule_oid;
     sai_status_t status;
+
+    std::unique_lock<std::mutex> lock(m_countersMutex);
 
     if ((rule_oid = getRuleById(aclRule.table_id, aclRule.id)) == SAI_NULL_OBJECT_ID)
     {
@@ -766,41 +785,40 @@ sai_status_t AclOrch::deleteAclCounter(sai_object_id_t counter_oid)
     return sai_acl_api->delete_acl_counter(counter_oid);
 }
 
-// TODO for debug purposes
-sai_status_t AclOrch::deleteAllAclObjects()
+void AclOrch::collectCountersThread(AclOrch* pAclOrch)
 {
     SWSS_LOG_ENTER();
+    sai_attribute_t counter_attr;
+    counter_attr.id = SAI_ACL_COUNTER_ATTR_PACKETS;
 
-    auto it = m_AclTables.begin();
-    while (it != m_AclTables.end())
+    swss::DBConnector db(COUNTERS_DB, "localhost", 6379, 0);
+    swss::Table countersTable(&db, "COUNTERS");
+
+    while(m_bCollectCounters)
     {
-        auto it2 = it->second.rules.begin();
-        while (it2 != it->second.rules.end())
+        std::unique_lock<std::mutex> lock(m_countersMutex);
+
+        for (auto itt : pAclOrch->m_AclTables)
         {
-            if (deleteAclRule(it2->second) == SAI_STATUS_SUCCESS)
+
+            std::vector<swss::FieldValueTuple> values;
+
+            for (auto itr : itt.second.rules)
             {
-                it2 = it->second.rules.erase(it2);
-                SWSS_LOG_INFO("Successfully deleted ACL rule %s in table %s\n", it2->second.id.c_str(), it->second.id.c_str());
+                sai_acl_api->get_acl_counter_attribute(itr.second.counter_oid, 1, &counter_attr);
+
+                swss::FieldValueTuple fvt(itr.second.id, std::to_string(counter_attr.value.u64));
+                values.push_back(fvt);
+
+                SWSS_LOG_DEBUG("Counter %lX, value %lX\n", itr.second.counter_oid, counter_attr.value.u64);
             }
-            else
-            {
-                SWSS_LOG_ERROR("Failed to delete ACL rule %s in table %s\n", it2->second.id.c_str(), it->second.id.c_str());
-                break;
-            }
+            countersTable.set("ACL:" + itt.second.id, values, "");
+            values.clear();
         }
-        if (deleteUnbindAclTable(it->first) == SAI_STATUS_SUCCESS) {
-            SWSS_LOG_INFO("Successfully deleted ACL table %s\n", it->second.id.c_str());
-            it = m_AclTables.erase(it);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to delete ACL table %s\n", it->second.id.c_str());
-            return SAI_STATUS_FAILURE;
-            break;
-        }
+
+        m_sleepGuard.wait_for(lock, std::chrono::seconds(COUNTERS_READ_INTERVAL));
     }
 
-    return SAI_STATUS_SUCCESS;
 }
 
 sai_status_t AclOrch::bindAclTable(sai_object_id_t table_oid, AclTable &aclTable, bool bind)
