@@ -198,6 +198,18 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+    SWSS_LOG_NOTICE("Enable redis pipeline");
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_USE_PIPELINE;
+    attr.value.booldata = true;
+
+    sai_switch_api->set_switch_attribute(&attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to enable redis pipeline %d", status);
+        exit(EXIT_FAILURE);
+    }
+
     attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
     if (!gMacAddress)
     {
