@@ -22,6 +22,10 @@ using namespace swss;
 #define VLAN_DRV_NAME   "bridge"
 #define TEAM_DRV_NAME   "team"
 
+const string INTFS_PREFIX = "Ethernet";
+const string VLAN_PREFIX = "Vlan";
+const string LAG_PREFIX = "PortChannel";
+
 extern set<string> g_portSet;
 extern map<string, set<string>> g_vlanMap;
 extern bool g_init;
@@ -75,7 +79,9 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     struct rtnl_link *link = (struct rtnl_link *)obj;
     string key = rtnl_link_get_name(link);
 
-    if (key == "lo" || key == "eth0" || key == "docker0" || key == "bcm0")
+    if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX) &&
+        key.compare(0, VLAN_PREFIX.length(), VLAN_PREFIX) &&
+        key.compare(0, LAG_PREFIX.length(), LAG_PREFIX))
         return;
 
     unsigned int flags = rtnl_link_get_flags(link);
@@ -107,7 +113,12 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     /* VLAN member: A separate entry in VLAN_TABLE will be inserted */
     if (master)
     {
-        string member_key = m_ifindexNameMap[master] + ":" + key;
+        string master_key = m_ifindexNameMap[master];
+        /* LAG member: will be dealt by teamsyncd */
+        if (!master_key.compare(0, LAG_PREFIX.length(), LAG_PREFIX))
+            return;
+
+        string member_key = master_key + ":" + key;
 
         if (nlmsg_type == RTM_DELLINK) /* Will it happen? */
             m_vlanTableProducer.del(member_key);
