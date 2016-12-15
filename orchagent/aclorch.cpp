@@ -733,6 +733,10 @@ sai_status_t AclOrch::createAclCounter(sai_object_id_t &counter_oid, sai_object_
     attr.value.oid = table_oid;
     counter_attrs.push_back(attr);
 
+    attr.id =  SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT;
+    attr.value.booldata = true;
+    counter_attrs.push_back(attr);
+
     attr.id =  SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT;
     attr.value.booldata = true;
     counter_attrs.push_back(attr);
@@ -788,8 +792,9 @@ sai_status_t AclOrch::deleteAclCounter(sai_object_id_t counter_oid)
 void AclOrch::collectCountersThread(AclOrch* pAclOrch)
 {
     SWSS_LOG_ENTER();
-    sai_attribute_t counter_attr;
-    counter_attr.id = SAI_ACL_COUNTER_ATTR_PACKETS;
+    sai_attribute_t counter_attr[2];
+    counter_attr[0].id = SAI_ACL_COUNTER_ATTR_PACKETS;
+    counter_attr[1].id = SAI_ACL_COUNTER_ATTR_BYTES;
 
     swss::DBConnector db(COUNTERS_DB, "localhost", 6379, 0);
     swss::Table countersTable(&db, "COUNTERS");
@@ -805,14 +810,16 @@ void AclOrch::collectCountersThread(AclOrch* pAclOrch)
 
             for (auto itr : itt.second.rules)
             {
-                sai_acl_api->get_acl_counter_attribute(itr.second.counter_oid, 1, &counter_attr);
+                sai_acl_api->get_acl_counter_attribute(itr.second.counter_oid, 2, counter_attr);
 
-                swss::FieldValueTuple fvt(itr.second.id, std::to_string(counter_attr.value.u64));
-                values.push_back(fvt);
+                swss::FieldValueTuple fvtp("Packets", std::to_string(counter_attr[0].value.u64));
+                values.push_back(fvtp);
+                swss::FieldValueTuple fvtb("Bytes", std::to_string(counter_attr[1].value.u64));
+                values.push_back(fvtb);
 
-                SWSS_LOG_DEBUG("Counter %lX, value %lX\n", itr.second.counter_oid, counter_attr.value.u64);
+                SWSS_LOG_DEBUG("Counter %lX, value %ld/%ld\n", itr.second.counter_oid, counter_attr[0].value.u64, counter_attr[1].value.u64);
+                countersTable.set(itt.second.id + ":" + itr.second.id, values, "");
             }
-            countersTable.set("ACL:" + itt.second.id, values, "");
             values.clear();
         }
 
