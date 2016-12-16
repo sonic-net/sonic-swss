@@ -83,6 +83,76 @@ void MirrorOrch::update(SubjectType type, void *cntx)
     }
 }
 
+bool MirrorOrch::sessionExists(const string& name)
+{
+    SWSS_LOG_ENTER();
+
+    return m_syncdMirrors.find(name) != m_syncdMirrors.end();
+}
+
+bool MirrorOrch::getSessionState(const string& name, bool& state)
+{
+    SWSS_LOG_ENTER();
+
+    if (!sessionExists(name))
+    {
+        return false;
+    }
+
+    state = m_syncdMirrors[name].status;
+
+    return true;
+}
+
+bool MirrorOrch::getSessionOid(const string& name, sai_object_id_t& oid)
+{
+    SWSS_LOG_ENTER();
+
+    if (!sessionExists(name))
+    {
+        return false;
+    }
+
+    oid = m_syncdMirrors[name].sessionId;
+
+    return true;
+}
+
+bool MirrorOrch::increaseRefCount(const string& name)
+{
+    SWSS_LOG_ENTER();
+
+    if (!sessionExists(name))
+    {
+        return false;
+    }
+
+    ++m_syncdMirrors[name].refCount;
+
+    return true;
+}
+
+bool MirrorOrch::decreaseRefCount(const string& name)
+{
+    SWSS_LOG_ENTER();
+
+    if (!sessionExists(name))
+    {
+        return false;
+    }
+
+    auto session = m_syncdMirrors.find(name);
+
+    if (session->second.refCount <= 0)
+    {
+        throw runtime_error("Session reference counter could not be less or equal than 0");
+    }
+
+    --session->second.refCount;
+
+    return true;
+}
+
 void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& data)
 {
     SWSS_LOG_ENTER();
@@ -168,6 +238,12 @@ void MirrorOrch::deleteEntry(const string& name)
     }
 
     auto& session = sessionIter->second;
+
+    if (session.refCount)
+    {
+        SWSS_LOG_ERROR("Failed to delete session. Session %s in use.\n", name.c_str());
+        return;
+    }
 
     if (session.status)
     {
@@ -359,7 +435,15 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         session.status = false;
     }
 
-    return setSessionState(name, session);
+    if (!setSessionState(name, session))
+    {
+        throw runtime_error("Failed to test session state");
+    }
+
+    MirrorSessionUpdate update = { name, true };
+    notify(SUBJECT_TYPE_MIRROR_SESSION_CHANGE, static_cast<void *>(&update));
+
+    return true;
 }
 
 bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
@@ -367,6 +451,9 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     SWSS_LOG_INFO("Deactivating mirror session %s\n", name.c_str());
 
     assert(session.status);
+
+    MirrorSessionUpdate update = { name, false };
+    notify(SUBJECT_TYPE_MIRROR_SESSION_CHANGE, static_cast<void *>(&update));
 
     sai_status_t status = sai_mirror_api->remove_mirror_session(session.sessionId);
     if (status != SAI_STATUS_SUCCESS)
@@ -377,7 +464,12 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
 
     session.status = false;
 
-    return setSessionState(name, session);
+    if (!setSessionState(name, session))
+    {
+        throw runtime_error("Failed to test session state");
+    }
+
+    return true;
 }
 
 bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)

@@ -8,6 +8,8 @@
 #include <condition_variable>
 #include "orch.h"
 #include "portsorch.h"
+#include "mirrororch.h"
+#include "observer.h"
 
 // Table attributes
 #define DEFAULT_TABLE_PRIORITY 10
@@ -35,7 +37,7 @@
 #define MATCH_L4_DST_PORT_RANGE "L4_DST_PORT_RANGE"
 
 #define ACTION_PACKET_ACTION    "PACKET_ACTION"
-#define ACTION_MIRROR           "MIRROR"
+#define ACTION_MIRROR_ACTION    "MIRROR_ACTION"
 
 #define PACKET_ACTION_FORWARD   "FORWARD"
 #define PACKET_ACTION_DROP      "DROP"
@@ -63,13 +65,79 @@ typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
 typedef vector<sai_object_id_t> ports_list_t;
 
-struct AclRule {
+class AclOrch;
+
+class AclRule
+{
+public:
+    AclRule(AclOrch *aclOrch, string rule, string table);
+    virtual bool validateAddPriority(string attr_name, string attr_value);
+    virtual bool validateAddMatch(string attr_name, string attr_value);
+    virtual bool validateAddAction(string attr_name, string attr_value) = 0;
+    virtual bool validate() = 0;
+    bool processIpType(string type, sai_uint32_t &ip_type);
+
+    virtual bool create();
+    virtual bool remove();
+    virtual void update(SubjectType, void *) = 0;
+
+    string getId()
+    {
+        return id;
+    }
+
+    string getTableId()
+    {
+        return table_id;
+    }
+
+    sai_object_id_t getCounterOid()
+    {
+        return counter_oid;
+    }
+
+    static shared_ptr<AclRule> makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, string rule, string table);
+    virtual ~AclRule() {};
+
+protected:
+    virtual bool createCounter();
+    virtual bool removeCounter();
+
+    AclOrch *aclOrch;
     string id;
     string table_id;
+    sai_object_id_t table_oid;
+    sai_object_id_t rule_oid;
     sai_object_id_t counter_oid;
     uint32_t priority;
     map <sai_acl_entry_attr_t, sai_attribute_value_t> matches;
     map <sai_acl_entry_attr_t, sai_attribute_value_t> actions;
+};
+
+class AclRuleL3: public AclRule
+{
+public:
+    AclRuleL3(AclOrch *aclOrch, string rule, string table);
+
+    bool validateAddAction(string attr_name, string attr_value);
+    bool validate();
+    void update(SubjectType, void *);
+};
+
+class AclRuleMirror: public AclRule
+{
+public:
+    AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirrorOrch, string rule, string table);
+    bool validateAddAction(string attr_name, string attr_value);
+    bool validate();
+    bool create();
+    bool remove();
+    void update(SubjectType, void *);
+
+protected:
+    bool state;
+    string sessionName;
+    MirrorOrch *mirrorOrch;
 };
 
 struct AclTable {
@@ -77,7 +145,8 @@ struct AclTable {
     string description;
     acl_table_type_t type;
     ports_list_t ports;
-    map <sai_object_id_t, AclRule> rules;
+    // Map rule name to rule data
+    map<string, shared_ptr<AclRule>> rules;
     AclTable(): type(ACL_TABLE_UNKNOWN) {}
 };
 
@@ -94,11 +163,19 @@ inline void split(string str, Iterable& out, char delim = ' ')
     }
 }
 
-class AclOrch : public Orch, public std::thread
+class AclOrch : public Orch, public Observer, public std::thread
 {
 public:
-    AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch);
+    AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch);
     ~AclOrch();
+    void update(SubjectType, void *);
+
+    sai_object_id_t getTableById(string table_id);
+
+    static std::mutex& getContextMutex()
+    {
+        return m_countersMutex;
+    }
 
 private:
     void doTask(Consumer &consumer);
@@ -108,26 +185,13 @@ private:
     static void collectCountersThread(AclOrch *pAclOrch);
 
     sai_status_t createBindAclTable(AclTable &aclTable, sai_object_id_t &table_oid);
-    sai_status_t createAclRule(AclRule &aclRule, sai_object_id_t &rule_oid);
-    sai_status_t createAclCounter(sai_object_id_t &counter_oid, sai_object_id_t table_oid);
     sai_status_t bindAclTable(sai_object_id_t table_oid, AclTable &aclTable, bool bind = true);
     sai_status_t deleteUnbindAclTable(sai_object_id_t table_oid);
-    sai_status_t deleteAclRule(AclRule &aclRule);
-    sai_status_t deleteAclCounter(sai_object_id_t counter_oid);
     sai_status_t deleteAllAclObjects();
 
     bool processAclTableType(string type, acl_table_type_t &table_type);
     bool processPorts(string portsList, ports_list_t& out);
-    bool processIpType(string type, sai_uint32_t &ip_type);
     bool validateAclTable(AclTable &aclTable);
-    bool validateAclRule(AclRule &aclRule);
-    bool validateAddPriority(AclRule &aclRule, string attr_name, string attr_value);
-    bool validateAddMatch(AclRule &aclRule, string attr_name, string attr_value);
-    bool validateAddAction(AclRule &aclRule, string attr_name, string attr_value);
-
-    sai_object_id_t getTableById(string table_id);
-    sai_object_id_t getRuleById(string table_id, string rule_id);
-    string toUpper(string str);
 
     //vector <AclTable> m_AclTables;
     map <sai_object_id_t, AclTable> m_AclTables;
@@ -138,7 +202,7 @@ private:
     static std::condition_variable m_sleepGuard;
     static bool m_bCollectCounters;
     PortsOrch *m_portOrch;
-
+    MirrorOrch *m_mirrorOrch;
 };
 
 #endif /* SWSS_ACLORCH_H */

@@ -33,7 +33,7 @@ acl_rule_attr_lookup_t aclMatchLookup =
 acl_rule_attr_lookup_t aclActionLookup =
 {
     { ACTION_PACKET_ACTION, SAI_ACL_ENTRY_ATTR_PACKET_ACTION },
-    { ACTION_MIRROR,        SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS }
+    { ACTION_MIRROR_ACTION, SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS }
 };
 
 static acl_table_type_lookup_t aclTableTypeLookUp =
@@ -56,21 +56,495 @@ static acl_ip_type_lookup_t aclIpTypeLookup =
     { IP_TYPE_ARP_REPLY,   SAI_ACL_IP_TYPE_ARP_REPLY }
 };
 
-AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch) :
-        Orch(db, tableNames),
-        std::thread(AclOrch::collectCountersThread, this),
-        m_portOrch(portOrch)
+inline string toUpper(const string& str)
+{
+    string uppercase = str;
+
+    transform(uppercase.begin(), uppercase.end(), uppercase.begin(), ::toupper);
+
+    return uppercase;
+}
+
+AclRule::AclRule(AclOrch *aclOrch, string rule, string table) :
+        aclOrch(aclOrch),
+        id(rule),
+        table_id(table),
+        table_oid(SAI_NULL_OBJECT_ID),
+        rule_oid(SAI_NULL_OBJECT_ID),
+        counter_oid(SAI_NULL_OBJECT_ID),
+        priority(0)
+{
+    table_oid = aclOrch->getTableById(table_id);
+}
+
+bool AclRule::validateAddPriority(string attr_name, string attr_value)
+{
+    bool status = false;
+
+    if (attr_name == RULE_PRIORITY)
+    {
+        sai_attribute_t attrs[] =
+        {
+            { SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY },
+            { SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY }
+        };
+        // get min/max allowed priority
+        if (sai_switch_api->get_switch_attribute(sizeof(attrs)/sizeof(attrs[0]), attrs) == SAI_STATUS_SUCCESS)
+        {
+            char *endp = NULL;
+            errno = 0;
+            priority = strtol(attr_value.c_str(), &endp, 0);
+            // chack conversion was successfull and the value is within the allowed range
+            status = (errno == 0) &&
+                     (endp == attr_value.c_str() + attr_value.size()) &&
+                     (priority >= attrs[0].value.u32) &&
+                     (priority <= attrs[1].value.u32);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to get ACL entry priority min/max values\n");
+        }
+    }
+
+    return status;
+}
+
+bool AclRule::validateAddMatch(string attr_name, string attr_value)
 {
     SWSS_LOG_ENTER();
+
+    sai_attribute_value_t value;
+
+    if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
+    {
+        return false;
+    }
+    else if(attr_name == MATCH_IP_TYPE)
+    {
+        if (!processIpType(attr_value, value.aclfield.data.u32))
+        {
+            SWSS_LOG_DEBUG("Invalid IP type %s\n", attr_value.c_str());
+            return false;
+        }
+
+        value.aclfield.enable = true;
+        value.aclfield.mask.u32 = 0xFFFFFFFF;
+    }
+    else if((attr_name == MATCH_ETHER_TYPE)  || (attr_name == MATCH_DSCP)        ||
+            (attr_name == MATCH_L4_SRC_PORT) || (attr_name == MATCH_L4_DST_PORT) ||
+            (attr_name == MATCH_IP_PROTOCOL) || (attr_name == MATCH_TCP_FLAGS))
+    {
+        char *endp = NULL;
+        errno = 0;
+        value.aclfield.data.u32 = strtol(attr_value.c_str(), &endp, 0);
+        if (errno || (endp != attr_value.c_str() + attr_value.size()))
+        {
+            SWSS_LOG_DEBUG("Attr: %s, val: %s(=%d), err=%d\n", attr_name.c_str(), attr_value.c_str(), value.aclfield.data.u32, errno);
+            return false;
+        }
+
+        value.aclfield.enable = true;
+        value.aclfield.mask.u32 = 0xFFFFFFFF;
+    }
+    else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
+    {
+        try
+        {
+            IpPrefix ip(attr_value);
+
+            if (ip.isV4())
+            {
+                value.aclfield.data.ip4 = ip.getIp().getV4Addr();
+                value.aclfield.mask.ip4 = ip.getMask().getV4Addr();
+            }
+            else
+            {
+                memcpy(value.aclfield.data.ip6, ip.getIp().getV6Addr(), 16);
+                memcpy(value.aclfield.mask.ip6, ip.getMask().getV6Addr(), 16);
+            }
+        }
+        catch(...)
+        {
+            SWSS_LOG_DEBUG("Attr: %s, val: %s IpPrefix exception...\n", attr_name.c_str(), attr_value.c_str());
+            return false;
+        }
+    }
+
+    matches[aclMatchLookup[attr_name]] = value;
+
+    return true;
+}
+
+bool AclRule::processIpType(string type, sai_uint32_t &ip_type)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = aclIpTypeLookup.find(toUpper(type));
+
+    if (it == aclIpTypeLookup.end())
+    {
+        return false;
+    }
+
+    ip_type = it->second;
+
+    return true;
+}
+
+bool AclRule::create()
+{
+    SWSS_LOG_ENTER();
+
+    std::unique_lock<std::mutex> lock(aclOrch->getContextMutex());
+
+    sai_object_id_t table_oid = aclOrch->getTableById(table_id);
+    vector<sai_attribute_t> rule_attrs;
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    if (!createCounter())
+    {
+        return false;
+    }
+    else
+    {
+        SWSS_LOG_DEBUG("Created counter for the rule %s in table %s\n", id.c_str(), table_id.c_str());
+    }
+
+    // store table oid this rule belongs to
+    attr.id =  SAI_ACL_ENTRY_ATTR_TABLE_ID;
+    attr.value.oid = table_oid;
+    rule_attrs.push_back(attr);
+
+    attr.id =  SAI_ACL_ENTRY_ATTR_PRIORITY;
+    attr.value.u32 = priority;
+    rule_attrs.push_back(attr);
+
+    attr.id =  SAI_ACL_ENTRY_ATTR_ADMIN_STATE;
+    attr.value.booldata = true;
+    rule_attrs.push_back(attr);
+
+    // add reference to the counter
+    attr.id =  SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
+    attr.value.aclaction.parameter.oid = counter_oid;
+    attr.value.aclaction.enable = true;
+    rule_attrs.push_back(attr);
+
+    // store matches
+    for (auto it : matches)
+    {
+        attr.id = it.first;
+        attr.value = it.second;
+        rule_attrs.push_back(attr);
+    }
+
+    // store actions
+    for (auto it : actions)
+    {
+        attr.id = it.first;
+        attr.value = it.second;
+        rule_attrs.push_back(attr);
+    }
+
+    status = sai_acl_api->create_acl_entry(&rule_oid, rule_attrs.size(), rule_attrs.data());
+
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool AclRule::remove()
+{
+    SWSS_LOG_ENTER();
+    sai_status_t status;
+
+    std::unique_lock<std::mutex> lock(aclOrch->getContextMutex());
+
+    if ((status = sai_acl_api->delete_acl_entry(rule_oid)) != SAI_STATUS_SUCCESS)
+    {
+        return false;
+    }
+
+    rule_oid = SAI_NULL_OBJECT_ID;
+
+    return removeCounter();
+}
+
+shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, string rule, string table)
+{
+    switch (type)
+    {
+    case ACL_TABLE_L3:
+        return make_shared<AclRuleL3>(acl, rule, table);
+    case ACL_TABLE_MIRROR:
+        return make_shared<AclRuleMirror>(acl, mirror, rule, table);
+    case ACL_TABLE_UNKNOWN:
+    default:
+        throw runtime_error("Unknown rule type.");
+    }
+}
+
+bool AclRule::createCounter()
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> counter_attrs;
+
+    attr.id =  SAI_ACL_COUNTER_ATTR_TABLE_ID;
+    attr.value.oid = table_oid;
+    counter_attrs.push_back(attr);
+
+    attr.id =  SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT;
+    attr.value.booldata = true;
+    counter_attrs.push_back(attr);
+
+    attr.id =  SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT;
+    attr.value.booldata = true;
+    counter_attrs.push_back(attr);
+
+    if (sai_acl_api->create_acl_counter(&counter_oid, counter_attrs.size(), counter_attrs.data()) != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create counter for the rule %s in table %s\n",
+                id.c_str(), table_id.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRule::removeCounter()
+{
+    SWSS_LOG_ENTER();
+
+    if (counter_oid == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    if (sai_acl_api->delete_acl_counter(counter_oid) != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove ACL counter for rule %s in table %s",
+                id.c_str(), table_id.c_str());
+        return false;
+    }
+
+    counter_oid = SAI_NULL_OBJECT_ID;
+
+    return true;
+}
+
+AclRuleL3::AclRuleL3(AclOrch *aclOrch, string rule, string table) :
+        AclRule(aclOrch, rule, table)
+{
+}
+
+bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
+{
+    SWSS_LOG_ENTER();
+
+    string attr_value = toUpper(_attr_value);
+    sai_attribute_value_t value;
+
+    if (aclActionLookup.find(attr_name) == aclActionLookup.end())
+        return false;
+
+    if (attr_name != ACTION_PACKET_ACTION)
+    {
+        return false;
+    }
+
+    if (attr_value == PACKET_ACTION_FORWARD)
+    {
+        value.aclaction.parameter.s32 = SAI_PACKET_ACTION_FORWARD;
+    }
+    else if (attr_value == PACKET_ACTION_DROP)
+    {
+        value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
+    }
+    else
+    {
+        return false;
+    }
+    value.aclaction.enable = true;
+
+    actions[aclActionLookup[attr_name]] = value;
+
+    return true;
+}
+
+bool AclRuleL3::validate()
+{
+    SWSS_LOG_ENTER();
+
+    if (matches.size() == 0 || actions.size() != 1)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+void AclRuleL3::update(SubjectType, void *)
+{
+    // Do nothing
+}
+
+AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table) :
+        AclRule(aclOrch, rule, table),
+        state(false),
+        mirrorOrch(mirror)
+{
+}
+
+bool AclRuleMirror::validateAddAction(string attr_name, string attr_value)
+{
+    SWSS_LOG_ENTER();
+
+    if (attr_name != ACTION_MIRROR_ACTION)
+    {
+        return false;
+    }
+
+    if (!mirrorOrch->sessionExists(attr_value))
+    {
+        return false;
+    }
+
+    sessionName = attr_value;
+
+    return true;
+}
+
+bool AclRuleMirror::validate()
+{
+    SWSS_LOG_ENTER();
+
+    if (matches.size() == 0 || sessionName.empty())
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool AclRuleMirror::create()
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_value_t value;
+    bool state = false;
+    sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+
+    if (!mirrorOrch->getSessionState(sessionName, state))
+    {
+        throw runtime_error("Failed to get mirror session state");
+    }
+
+    if (!state)
+    {
+        return true;
+    }
+
+    if (!mirrorOrch->getSessionOid(sessionName, oid))
+    {
+        throw runtime_error("Failed to get mirror session OID");
+    }
+
+    value.aclaction.enable = true;
+    value.aclaction.parameter.objlist.list = &oid;
+    value.aclaction.parameter.objlist.count = 1;
+
+    actions.clear();
+    actions[SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS] = value;
+
+    if (!AclRule::create())
+    {
+        return false;
+    }
+
+    state = true;
+
+    return mirrorOrch->increaseRefCount(sessionName);
+}
+
+bool AclRuleMirror::remove()
+{
+    if (!AclRule::remove())
+    {
+        return false;
+    }
+
+    state = false;
+
+    return mirrorOrch->decreaseRefCount(sessionName);
+}
+
+void AclRuleMirror::update(SubjectType type, void *cntx)
+{
+    if (type != SUBJECT_TYPE_MIRROR_SESSION_CHANGE)
+    {
+        return;
+    }
+
+    MirrorSessionUpdate *update = static_cast<MirrorSessionUpdate *>(cntx);
+
+    if (sessionName != update->name)
+    {
+        return;
+    }
+
+    if (update->active)
+    {
+        SWSS_LOG_INFO("Activating mirroring ACL %s for session %s", id.c_str(), sessionName.c_str());
+        create();
+    }
+    else
+    {
+        SWSS_LOG_INFO("Deactivating mirroring ACL %s for session %s", id.c_str(), sessionName.c_str());
+        remove();
+    }
+}
+
+AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch) :
+        Orch(db, tableNames),
+        std::thread(AclOrch::collectCountersThread, this),
+        m_portOrch(portOrch),
+        m_mirrorOrch(mirrorOrch)
+{
+    SWSS_LOG_ENTER();
+
+    m_mirrorOrch->attach(this);
 }
 
 AclOrch::~AclOrch()
 {
-    SWSS_LOG_ENTER();
+    m_mirrorOrch->detach(this);
 
     m_bCollectCounters = false;
     m_sleepGuard.notify_all();
     join();
+}
+
+void AclOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    if (type != SUBJECT_TYPE_MIRROR_SESSION_CHANGE)
+    {
+        return;
+    }
+
+    for (const auto& table : m_AclTables)
+    {
+        if (table.second.type != ACL_TABLE_MIRROR)
+        {
+            continue;
+        }
+
+        for (auto& rule : table.second.rules)
+        {
+            rule.second->update(type, cntx);
+        }
+    }
 }
 
 void AclOrch::doTask(Consumer &consumer)
@@ -222,55 +696,62 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            AclRule newRule;
             bool bAllAttributesOk = true;
+            shared_ptr<AclRule> newRule;
+            sai_object_id_t table_oid = getTableById(table_id);
 
-            for (auto itr : kfvFieldsValues(t))
+            if (table_oid == SAI_NULL_OBJECT_ID || m_AclTables[table_oid].type == ACL_TABLE_UNKNOWN)
             {
-                newRule.id = rule_id;
-                newRule.table_id = table_id;
+                bAllAttributesOk = false;
+            }
 
-                string attr_name = toUpper(fvField(itr));
-                string attr_value = fvValue(itr);
+            if (bAllAttributesOk)
+            {
+                newRule = AclRule::makeShared(m_AclTables[table_oid].type, this, m_mirrorOrch, rule_id, table_id);
 
-                SWSS_LOG_DEBUG("ATTRIBUTE: %s %s\n", attr_name.c_str(), attr_value.c_str());
+                for (auto itr : kfvFieldsValues(t))
+                {
+                    string attr_name = toUpper(fvField(itr));
+                    string attr_value = fvValue(itr);
 
-                if (validateAddPriority(newRule, attr_name, attr_value))
-                {
-                    SWSS_LOG_INFO("Added priority attribute\n");
-                }
-                else if (validateAddMatch(newRule, attr_name, attr_value))
-                {
-                    SWSS_LOG_INFO("Added match attribute '%s'\n", attr_name.c_str());
-                }
-                else if (validateAddAction(newRule, attr_name, attr_value))
-                {
-                    SWSS_LOG_INFO("Added action attribute '%s'\n", attr_name.c_str());
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Unknown or invalid rule attribute '%s : %s'\n", attr_name.c_str(), attr_value.c_str());
-                    bAllAttributesOk = false;
-                    break;
+                    SWSS_LOG_DEBUG("ATTRIBUTE: %s %s\n", attr_name.c_str(), attr_value.c_str());
+
+                    if (newRule->validateAddPriority(attr_name, attr_value))
+                    {
+                        SWSS_LOG_INFO("Added priority attribute\n");
+                    }
+                    else if (newRule->validateAddMatch(attr_name, attr_value))
+                    {
+                        SWSS_LOG_INFO("Added match attribute '%s'\n", attr_name.c_str());
+                    }
+                    else if (newRule->validateAddAction(attr_name, attr_value))
+                    {
+                        SWSS_LOG_INFO("Added action attribute '%s'\n", attr_name.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Unknown or invalid rule attribute '%s : %s'\n", attr_name.c_str(), attr_value.c_str());
+                        bAllAttributesOk = false;
+                        break;
+                    }
                 }
             }
             // validate and create ACL rule
-            if (bAllAttributesOk && validateAclRule(newRule))
+            if (bAllAttributesOk && newRule->validate())
             {
-                sai_object_id_t table_oid = getTableById(table_id);
-                sai_object_id_t rule_oid = getRuleById(table_id, rule_id);
-                if (rule_oid != SAI_NULL_OBJECT_ID)
+                auto ruleIter = m_AclTables[table_oid].rules.find(rule_id);
+                if (ruleIter != m_AclTables[table_oid].rules.end())
                 {
                     // rule already exists - delete it first
-                    if (deleteAclRule(m_AclTables[table_oid].rules[rule_oid]) == SAI_STATUS_SUCCESS)
+                    if (ruleIter->second->remove())
                     {
-                        m_AclTables[table_oid].rules.erase(rule_oid);
+                        m_AclTables[table_oid].rules.erase(ruleIter);
                         SWSS_LOG_INFO("Successfully deleted ACL rule: %s\n", rule_id.c_str());
                     }
                 }
-                if (createAclRule(newRule, rule_oid) == SAI_STATUS_SUCCESS)
+                if (newRule->create())
                 {
-                    m_AclTables[table_oid].rules[rule_oid] = newRule;
+                    m_AclTables[table_oid].rules[rule_id] = newRule;
                     SWSS_LOG_INFO("Successfully created ACL rule %s in table %s\n", rule_id.c_str(), table_id.c_str());
                 }
                 else
@@ -288,12 +769,12 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             sai_object_id_t table_oid = getTableById(table_id);
             if (table_oid != SAI_NULL_OBJECT_ID)
             {
-                sai_object_id_t rule_oid = getRuleById(table_id, rule_id);
-                if (rule_oid != SAI_NULL_OBJECT_ID)
+                auto ruleIter = m_AclTables[table_oid].rules.find(rule_id);
+                if (ruleIter != m_AclTables[table_oid].rules.end())
                 {
-                    if (deleteAclRule(m_AclTables[table_oid].rules[rule_oid]) == SAI_STATUS_SUCCESS)
+                    if (ruleIter->second->remove())
                     {
-                        m_AclTables[table_oid].rules.erase(rule_oid);
+                        m_AclTables[table_oid].rules.erase(ruleIter);
                         SWSS_LOG_INFO("Successfully deleted ACL rule %s\n", rule_id.c_str());
                     }
                     else
@@ -380,22 +861,6 @@ bool AclOrch::processAclTableType(string type, acl_table_type_t &table_type)
     return true;
 }
 
-bool AclOrch::processIpType(string type, sai_uint32_t &ip_type)
-{
-    SWSS_LOG_ENTER();
-
-    auto it = aclIpTypeLookup.find(toUpper(type));
-
-    if (it == aclIpTypeLookup.end())
-    {
-        return false;
-    }
-
-    ip_type = it->second;
-
-    return true;
-}
-
 sai_object_id_t AclOrch::getTableById(string table_id)
 {
     SWSS_LOG_ENTER();
@@ -411,180 +876,11 @@ sai_object_id_t AclOrch::getTableById(string table_id)
     return SAI_NULL_OBJECT_ID;
 }
 
-sai_object_id_t AclOrch::getRuleById(string table_id, string rule_id)
-{
-    SWSS_LOG_ENTER();
-
-    sai_object_id_t table_oid = getTableById(table_id);
-
-    if (table_oid == SAI_NULL_OBJECT_ID)
-    {
-        return SAI_NULL_OBJECT_ID;
-    }
-
-    for (auto it : m_AclTables[table_oid].rules)
-    {
-        if (it.second.id == rule_id)
-            return it.first;
-    }
-
-    return SAI_NULL_OBJECT_ID;
-}
-
-bool AclOrch::validateAddPriority(AclRule &aclRule, string attr_name, string attr_value)
-{
-    bool status = false;
-
-    if (attr_name == RULE_PRIORITY)
-    {
-        sai_attribute_t attrs[] =
-        {
-            { SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY },
-            { SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY }
-        };
-        // get min/max allowed priority
-        if (sai_switch_api->get_switch_attribute(sizeof(attrs)/sizeof(attrs[0]), attrs) == SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_DEBUG("ACL entry priority min/max: %d/%d\n", attrs[0].value.u32, attrs[1].value.u32);
-            char *endp = NULL;
-            errno = 0;
-            aclRule.priority = strtol(attr_value.c_str(), &endp, 0);
-            // chack conversion was successfull and the value is within the allowed range
-            status = (errno == 0) &&
-                     (endp == attr_value.c_str() + attr_value.size()) &&
-                     (aclRule.priority >= attrs[0].value.u32) &&
-                     (aclRule.priority <= attrs[1].value.u32);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to get ACL entry priority min/max values\n");
-        }
-    }
-
-    return status;
-}
-
-bool AclOrch::validateAddMatch(AclRule &aclRule, string attr_name, string attr_value)
-{
-    SWSS_LOG_ENTER();
-
-    sai_attribute_value_t value;
-
-    if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
-    {
-        return false;
-    }
-    else if(attr_name == MATCH_IP_TYPE)
-    {
-        if (!processIpType(attr_value, value.aclfield.data.u32))
-        {
-            SWSS_LOG_DEBUG("Invalid IP type %s\n", attr_value.c_str());
-            return false;
-        }
-
-        value.aclfield.enable = true;
-        value.aclfield.mask.u32 = 0xFFFFFFFF;
-    }
-    else if((attr_name == MATCH_ETHER_TYPE)  || (attr_name == MATCH_DSCP)        ||
-            (attr_name == MATCH_L4_SRC_PORT) || (attr_name == MATCH_L4_DST_PORT) ||
-            (attr_name == MATCH_IP_PROTOCOL) || (attr_name == MATCH_TCP_FLAGS))
-    {
-        char *endp = NULL;
-        errno = 0;
-        value.aclfield.data.u32 = strtol(attr_value.c_str(), &endp, 0);
-        if (errno || (endp != attr_value.c_str() + attr_value.size()))
-        {
-            SWSS_LOG_DEBUG("Attr: %s, val: %s(=%d), err=%d\n", attr_name.c_str(), attr_value.c_str(), value.aclfield.data.u32, errno);
-            return false;
-        }
-
-        value.aclfield.enable = true;
-        value.aclfield.mask.u32 = 0xFFFFFFFF;
-    }
-    else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
-    {
-        try
-        {
-            IpPrefix ip(attr_value);
-
-            if (ip.isV4())
-            {
-                value.aclfield.data.ip4 = ip.getIp().getV4Addr();
-                value.aclfield.mask.ip4 = ip.getMask().getV4Addr();
-            }
-            else
-            {
-                memcpy(value.aclfield.data.ip6, ip.getIp().getV6Addr(), 16);
-                memcpy(value.aclfield.mask.ip6, ip.getMask().getV6Addr(), 16);
-            }
-        }
-        catch(...)
-        {
-            SWSS_LOG_DEBUG("Attr: %s, val: %s IpPrefix exception...\n", attr_name.c_str(), attr_value.c_str());
-            return false;
-        }
-    }
-
-    aclRule.matches[aclMatchLookup[attr_name]] = value;
-
-    return true;
-}
-
-bool AclOrch::validateAddAction(AclRule &aclRule, string attr_name, string _attr_value)
-{
-    SWSS_LOG_ENTER();
-
-    string attr_value = toUpper(_attr_value);
-    sai_attribute_value_t value;
-
-    if (aclActionLookup.find(attr_name) == aclActionLookup.end())
-        return false;
-
-    if (attr_name == ACTION_PACKET_ACTION)
-    {
-        if (attr_value == PACKET_ACTION_FORWARD)
-        {
-            value.aclaction.parameter.s32 = SAI_PACKET_ACTION_FORWARD;
-        }
-        else if (attr_value == PACKET_ACTION_DROP)
-        {
-            value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
-        }
-        else
-        {
-            return false;
-        }
-        value.aclaction.enable = true;
-    }
-    else if (attr_name == ACTION_MIRROR)
-    {
-        // parse 'attr_value', fill in 'value'
-        return false;
-    }
-
-    aclRule.actions[aclActionLookup[attr_name]] = value;
-
-    return true;
-}
-
 bool AclOrch::validateAclTable(AclTable &aclTable)
 {
     SWSS_LOG_ENTER();
 
     if (aclTable.type == ACL_TABLE_UNKNOWN || aclTable.ports.size() == 0)
-    {
-        return false;
-    }
-
-    return true;
-}
-
-bool AclOrch::validateAclRule(AclRule &aclRule)
-{
-    SWSS_LOG_ENTER();
-
-    if (getTableById(aclRule.table_id) == SAI_NULL_OBJECT_ID ||
-        aclRule.matches.size() == 0 || aclRule.actions.size() != 1)
     {
         return false;
     }
@@ -659,91 +955,6 @@ sai_status_t AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &ta
     return status;
 }
 
-sai_status_t AclOrch::createAclRule(AclRule &aclRule, sai_object_id_t &rule_oid)
-{
-    SWSS_LOG_ENTER();
-
-    std::unique_lock<std::mutex> lock(m_countersMutex);
-
-    sai_object_id_t table_oid = getTableById(aclRule.table_id);
-    vector<sai_attribute_t> rule_attrs;
-    sai_object_id_t counter_oid;
-    sai_attribute_t attr;
-    sai_status_t status;
-
-    if ((status = createAclCounter(counter_oid, table_oid)) != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create counter for the rule %s in table %s\n",
-                       aclRule.id.c_str(), aclRule.table_id.c_str());
-        return status;
-    }
-    else
-    {
-        SWSS_LOG_DEBUG("Created counter for the rule %s in table %s\n", aclRule.id.c_str(), aclRule.table_id.c_str());
-    }
-
-    aclRule.counter_oid = counter_oid;
-
-    // store table oid this rule belongs to
-    attr.id =  SAI_ACL_ENTRY_ATTR_TABLE_ID;
-    attr.value.oid = table_oid;
-    rule_attrs.push_back(attr);
-
-    attr.id =  SAI_ACL_ENTRY_ATTR_PRIORITY;
-    attr.value.u32 = aclRule.priority;
-    rule_attrs.push_back(attr);
-
-    attr.id =  SAI_ACL_ENTRY_ATTR_ADMIN_STATE;
-    attr.value.booldata = true;
-    rule_attrs.push_back(attr);
-
-    // add reference to the counter
-    attr.id =  SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
-    attr.value.aclaction.parameter.oid = aclRule.counter_oid;
-    attr.value.aclaction.enable = true;
-    rule_attrs.push_back(attr);
-
-    // store matches
-    for (auto it : aclRule.matches)
-    {
-        attr.id = it.first;
-        attr.value = it.second;
-        rule_attrs.push_back(attr);
-    }
-
-    // store actions
-    for (auto it : aclRule.actions)
-    {
-        attr.id = it.first;
-        attr.value = it.second;
-        rule_attrs.push_back(attr);
-    }
-
-    return sai_acl_api->create_acl_entry(&rule_oid, rule_attrs.size(), rule_attrs.data());
-}
-
-sai_status_t AclOrch::createAclCounter(sai_object_id_t &counter_oid, sai_object_id_t table_oid)
-{
-    SWSS_LOG_ENTER();
-
-    sai_attribute_t attr;
-    vector<sai_attribute_t> counter_attrs;
-
-    attr.id =  SAI_ACL_COUNTER_ATTR_TABLE_ID;
-    attr.value.oid = table_oid;
-    counter_attrs.push_back(attr);
-
-    attr.id =  SAI_ACL_COUNTER_ATTR_ENABLE_BYTE_COUNT;
-    attr.value.booldata = true;
-    counter_attrs.push_back(attr);
-
-    attr.id =  SAI_ACL_COUNTER_ATTR_ENABLE_PACKET_COUNT;
-    attr.value.booldata = true;
-    counter_attrs.push_back(attr);
-
-    return sai_acl_api->create_acl_counter(&counter_oid, counter_attrs.size(), counter_attrs.data());
-}
-
 sai_status_t AclOrch::deleteUnbindAclTable(sai_object_id_t table_oid)
 {
     SWSS_LOG_ENTER();
@@ -759,34 +970,6 @@ sai_status_t AclOrch::deleteUnbindAclTable(sai_object_id_t table_oid)
     }
 
     return sai_acl_api->delete_acl_table(table_oid);
-}
-
-sai_status_t AclOrch::deleteAclRule(AclRule &aclRule)
-{
-    SWSS_LOG_ENTER();
-    sai_object_id_t rule_oid;
-    sai_status_t status;
-
-    std::unique_lock<std::mutex> lock(m_countersMutex);
-
-    if ((rule_oid = getRuleById(aclRule.table_id, aclRule.id)) == SAI_NULL_OBJECT_ID)
-    {
-        return SAI_STATUS_FAILURE;
-    }
-
-    if ((status = sai_acl_api->delete_acl_entry(rule_oid)) != SAI_STATUS_SUCCESS)
-    {
-        return status;
-    }
-
-    return deleteAclCounter(aclRule.counter_oid);
-}
-
-sai_status_t AclOrch::deleteAclCounter(sai_object_id_t counter_oid)
-{
-    SWSS_LOG_ENTER();
-
-    return sai_acl_api->delete_acl_counter(counter_oid);
 }
 
 void AclOrch::collectCountersThread(AclOrch* pAclOrch)
@@ -810,15 +993,15 @@ void AclOrch::collectCountersThread(AclOrch* pAclOrch)
 
             for (auto itr : itt.second.rules)
             {
-                sai_acl_api->get_acl_counter_attribute(itr.second.counter_oid, 2, counter_attr);
+                sai_acl_api->get_acl_counter_attribute(itr.second->getCounterOid(), 2, counter_attr);
 
                 swss::FieldValueTuple fvtp("Packets", std::to_string(counter_attr[0].value.u64));
                 values.push_back(fvtp);
                 swss::FieldValueTuple fvtb("Bytes", std::to_string(counter_attr[1].value.u64));
                 values.push_back(fvtb);
 
-                SWSS_LOG_DEBUG("Counter %lX, value %ld/%ld\n", itr.second.counter_oid, counter_attr[0].value.u64, counter_attr[1].value.u64);
-                countersTable.set(itt.second.id + ":" + itr.second.id, values, "");
+                SWSS_LOG_DEBUG("Counter %lX, value %ld/%ld\n", itr.second->getCounterOid(), counter_attr[0].value.u64, counter_attr[1].value.u64);
+                countersTable.set(itt.second.id + ":" + itr.second->getId(), values, "");
             }
             values.clear();
         }
@@ -888,13 +1071,4 @@ sai_status_t AclOrch::bindAclTable(sai_object_id_t table_oid, AclTable &aclTable
     }
 
     return status;
-}
-
-string AclOrch::toUpper(string str)
-{
-    string uppercase = str;
-
-    transform(uppercase.begin(), uppercase.end(), uppercase.begin(), ::toupper);
-
-    return uppercase;
 }

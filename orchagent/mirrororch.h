@@ -49,6 +49,7 @@ struct MirrorEntry
     } neighborInfo;
 
     sai_object_id_t sessionId;
+    int64_t refCount;
 
     MirrorEntry() :
         status(false),
@@ -56,23 +57,35 @@ struct MirrorEntry
         dscp(0),
         ttl(0),
         queue(0),
-        sessionId(0)
+        sessionId(0),
+        refCount(0)
     {
         nexthopInfo.resolved = false;
         neighborInfo.resolved = false;
     }
 };
 
+struct MirrorSessionUpdate
+{
+    string name;
+    bool active;
+};
+
 /* MirrorTable: mirror session name, mirror session data */
 typedef map<string, MirrorEntry> MirrorTable;
 
-class MirrorOrch : public Orch, public Observer
+class MirrorOrch : public Orch, public Observer, public Subject
 {
 public:
     MirrorOrch(DBConnector *db, string tableName,
                PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch);
 
     void update(SubjectType, void *);
+    bool sessionExists(const string&);
+    bool getSessionState(const string&, bool&);
+    bool getSessionOid(const string&, sai_object_id_t&);
+    bool increaseRefCount(const string&);
+    bool decreaseRefCount(const string&);
 
 private:
     PortsOrch *m_portsOrch;
