@@ -62,11 +62,17 @@ LinkSync::LinkSync(DBConnector *db) :
     {
         vector<string> keys = tokenize(kfvKey(tuple), ':');
         if (keys.size() != 2)
+        {
             continue;
+        }
+
         string vlan = keys[0];
         string member = keys[1];
+
         if (g_vlanMap.find(vlan) == g_vlanMap.end())
+        {
             g_vlanMap[vlan] = set<string>();
+        }
         g_vlanMap[vlan].insert(member);
     }
 }
@@ -74,7 +80,9 @@ LinkSync::LinkSync(DBConnector *db) :
 void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
     if ((nlmsg_type != RTM_NEWLINK) && (nlmsg_type != RTM_DELLINK))
+    {
         return;
+    }
 
     struct rtnl_link *link = (struct rtnl_link *)obj;
     string key = rtnl_link_get_name(link);
@@ -82,7 +90,9 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX) &&
         key.compare(0, VLAN_PREFIX.length(), VLAN_PREFIX) &&
         key.compare(0, LAG_PREFIX.length(), LAG_PREFIX))
+    {
         return;
+    }
 
     unsigned int flags = rtnl_link_get_flags(link);
     bool admin = flags & IFF_UP;
@@ -97,18 +107,24 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     char *type = rtnl_link_get_type(link);
 
     if (type)
+    {
         SWSS_LOG_DEBUG("nlmsg type:%d key:%s admin:%d oper:%d addr:%s ifindex:%d master:%d type:%s",
                        nlmsg_type, key.c_str(), admin, oper, addrStr, ifindex, master, type);
+    }
     else
+    {
         SWSS_LOG_DEBUG("nlmsg type:%d key:%s admin:%d oper:%d addr:%s ifindex:%d master:%d",
                        nlmsg_type, key.c_str(), admin, oper, addrStr, ifindex, master);
+    }
 
     /* Insert or update the ifindex to key map */
     m_ifindexNameMap[ifindex] = key;
 
     /* Will be dealt by teamsyncd */
     if (type && !strcmp(type, TEAM_DRV_NAME))
+    {
         return;
+    }
 
     /* VLAN member: A separate entry in VLAN_TABLE will be inserted */
     if (master)
@@ -116,12 +132,16 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         string master_key = m_ifindexNameMap[master];
         /* LAG member: will be dealt by teamsyncd */
         if (!master_key.compare(0, LAG_PREFIX.length(), LAG_PREFIX))
+        {
             return;
+        }
 
         string member_key = master_key + ":" + key;
 
         if (nlmsg_type == RTM_DELLINK) /* Will it happen? */
+        {
             m_vlanTableProducer.del(member_key);
+        }
         else /* RTM_NEWLINK */
         {
             vector<FieldValueTuple> fvVector;
@@ -157,10 +177,13 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (type && !strcmp(type, VLAN_DRV_NAME))
     {
         if (nlmsg_type == RTM_DELLINK)
+        {
             m_vlanTableProducer.del(key);
+        }
         else
+        {
             m_vlanTableProducer.set(key, fvVector);
-
+        }
         return;
     }
 
@@ -170,7 +193,9 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         /* TODO: When port is removed from the kernel */
         if (nlmsg_type == RTM_DELLINK)
+        {
             return;
+        }
 
         if (!g_init && g_portSet.find(key) != g_portSet.end())
         {
