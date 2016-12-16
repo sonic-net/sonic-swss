@@ -4,6 +4,8 @@
 #include "schema.h"
 #include "ipprefix.h"
 
+#undef SWSS_LOG_INFO
+#define SWSS_LOG_INFO SWSS_LOG_ERROR
 #undef SWSS_LOG_DEBUG
 #define SWSS_LOG_DEBUG SWSS_LOG_ERROR
 
@@ -123,7 +125,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
     {
         if (!processIpType(attr_value, value.aclfield.data.u32))
         {
-            SWSS_LOG_DEBUG("Invalid IP type %s\n", attr_value.c_str());
+            SWSS_LOG_ERROR("Invalid IP type %s\n", attr_value.c_str());
             return false;
         }
 
@@ -139,7 +141,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         value.aclfield.data.u32 = strtol(attr_value.c_str(), &endp, 0);
         if (errno || (endp != attr_value.c_str() + attr_value.size()))
         {
-            SWSS_LOG_DEBUG("Attr: %s, val: %s(=%d), err=%d\n", attr_name.c_str(), attr_value.c_str(), value.aclfield.data.u32, errno);
+            SWSS_LOG_ERROR("Integer parse error. Attribute: %s, value: %s(=%d), errno: %d\n", attr_name.c_str(), attr_value.c_str(), value.aclfield.data.u32, errno);
             return false;
         }
 
@@ -165,7 +167,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         catch(...)
         {
-            SWSS_LOG_DEBUG("Attr: %s, val: %s IpPrefix exception...\n", attr_name.c_str(), attr_value.c_str());
+            SWSS_LOG_ERROR("IpPrefix exception. Attribute: %s, value: %s\n", attr_name.c_str(), attr_value.c_str());
             return false;
         }
     }
@@ -206,10 +208,8 @@ bool AclRule::create()
     {
         return false;
     }
-    else
-    {
-        SWSS_LOG_DEBUG("Created counter for the rule %s in table %s\n", id.c_str(), table_id.c_str());
-    }
+
+    SWSS_LOG_INFO("Created counter for the rule %s in table %s\n", id.c_str(), table_id.c_str());
 
     // store table oid this rule belongs to
     attr.id =  SAI_ACL_ENTRY_ATTR_TABLE_ID;
@@ -303,8 +303,7 @@ bool AclRule::createCounter()
 
     if (sai_acl_api->create_acl_counter(&counter_oid, counter_attrs.size(), counter_attrs.data()) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create counter for the rule %s in table %s\n",
-                id.c_str(), table_id.c_str());
+        SWSS_LOG_ERROR("Failed to create counter for the rule %s in table %s\n", id.c_str(), table_id.c_str());
         return false;
     }
 
@@ -322,8 +321,7 @@ bool AclRule::removeCounter()
 
     if (sai_acl_api->delete_acl_counter(counter_oid) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove ACL counter for rule %s in table %s",
-                id.c_str(), table_id.c_str());
+        SWSS_LOG_ERROR("Failed to remove ACL counter for rule %s in table %s", id.c_str(), table_id.c_str());
         return false;
     }
 
@@ -986,27 +984,40 @@ void AclOrch::collectCountersThread(AclOrch* pAclOrch)
     {
         std::unique_lock<std::mutex> lock(m_countersMutex);
 
-        for (auto itt : pAclOrch->m_AclTables)
-        {
+        std::chrono::duration<double, std::milli> timeToSleep;
+        auto  updStart = std::chrono::steady_clock::now();
 
+        for (auto table_it : pAclOrch->m_AclTables)
+        {
             std::vector<swss::FieldValueTuple> values;
 
-            for (auto itr : itt.second.rules)
+            for (auto rule_it : table_it.second.rules)
             {
-                sai_acl_api->get_acl_counter_attribute(itr.second->getCounterOid(), 2, counter_attr);
+                sai_acl_api->get_acl_counter_attribute(rule_it.second->getCounterOid(), 2, counter_attr);
 
                 swss::FieldValueTuple fvtp("Packets", std::to_string(counter_attr[0].value.u64));
                 values.push_back(fvtp);
                 swss::FieldValueTuple fvtb("Bytes", std::to_string(counter_attr[1].value.u64));
                 values.push_back(fvtb);
 
-                SWSS_LOG_DEBUG("Counter %lX, value %ld/%ld\n", itr.second->getCounterOid(), counter_attr[0].value.u64, counter_attr[1].value.u64);
-                countersTable.set(itt.second.id + ":" + itr.second->getId(), values, "");
+                SWSS_LOG_DEBUG("Counter %lX, value %ld/%ld\n", rule_it.second->getCounterOid(), counter_attr[0].value.u64, counter_attr[1].value.u64);
+                countersTable.set(table_it.second.id + ":" + rule_it.second->getId(), values, "");
             }
             values.clear();
         }
 
-        m_sleepGuard.wait_for(lock, std::chrono::seconds(COUNTERS_READ_INTERVAL));
+         timeToSleep = std::chrono::seconds(COUNTERS_READ_INTERVAL) - (std::chrono::steady_clock::now() - updStart);
+         if (timeToSleep > std::chrono::seconds(0))
+         {
+             SWSS_LOG_INFO("ACL counters DB update thread: sleeping %dms\n", (int)timeToSleep.count());
+             m_sleepGuard.wait_for(lock, timeToSleep);
+         }
+         else
+         {
+             SWSS_LOG_WARN("ACL counters DB update time is greater than the configured update period\n");
+         }
+
+
     }
 
 }
@@ -1017,7 +1028,7 @@ sai_status_t AclOrch::bindAclTable(sai_object_id_t table_oid, AclTable &aclTable
 
     sai_status_t status = SAI_STATUS_SUCCESS;
 
-    SWSS_LOG_INFO("%s table to ports\n", bind ? "Bind" : "Unbind", aclTable.id.c_str());
+    SWSS_LOG_INFO("%s table %s to ports\n", bind ? "Bind" : "Unbind", aclTable.id.c_str());
 
     if (aclTable.ports.empty())
     {

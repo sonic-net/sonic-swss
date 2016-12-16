@@ -11,8 +11,10 @@
 #include "mirrororch.h"
 #include "observer.h"
 
-// Table attributes
 #define DEFAULT_TABLE_PRIORITY 10
+// ACL counters update interval in the DB
+// Value is in seconds. Should not be less than 5 seconds
+// (in worst case update of 1265 counters takes almost 5 sec)
 #define COUNTERS_READ_INTERVAL 10
 
 #define TABLE_DESCRIPTION "POLICY_DESC"
@@ -22,7 +24,6 @@
 #define TABLE_TYPE_L3     "L3"
 #define TABLE_TYPE_MIRROR "MIRROR"
 
-#define MAX_RULE_ATTRIBUTES 20  // table_oid + priority + enable + matches + actions
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_SRC_IP            "SRC_IP"
 #define MATCH_DST_IP            "DST_IP"
