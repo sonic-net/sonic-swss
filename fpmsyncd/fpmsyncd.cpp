@@ -35,8 +35,8 @@ int main(int argc, char **argv)
                 int tempfd;
                 /* Reading FPM messages forever (and calling "readMe" to read them) */
                 s.select(&temps, &tempfd);
-                sync.flush();
-                cout << "Flushed!!" << endl;
+                pipeline->flush();
+                cout << "Pipeline flushed" << endl;
             }
         }
         catch (FpmLink::FpmConnectionClosedException &e)

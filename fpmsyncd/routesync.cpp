@@ -21,11 +21,6 @@ RouteSync::RouteSync(shared_ptr<RedisPipeline> pipeline) :
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 }
 
-void RouteSync::flush()
-{
-    m_routeTable.flush();
-}
-
 void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
     struct rtnl_route *route_obj = (struct rtnl_route *)obj;

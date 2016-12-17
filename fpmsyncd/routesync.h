@@ -15,7 +15,6 @@ public:
 
     RouteSync(std::shared_ptr<RedisPipeline> pipeline);
 
-    virtual void flush();
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
 private:
