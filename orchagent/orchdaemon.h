@@ -34,6 +34,7 @@ private:
     Select *m_select;
 
     Orch *getOrchByConsumer(ConsumerStateTable *c);
+    void flush();
 };
 
 #endif /* SWSS_ORCHDAEMON_H */

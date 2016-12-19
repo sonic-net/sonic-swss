@@ -78,6 +78,19 @@ bool OrchDaemon::init()
     return true;
 }
 
+/* Flush redis through sairedis interface */
+void OrchDaemon::flush()
+{
+    sai_attribute_t attr;
+    attr.id = SAI_REDIS_SWITCH_ATTR_FLUSH;
+    sai_status_t status = sai_switch_api->set_switch_attribute(&attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
+        exit(EXIT_FAILURE);
+    }
+}
+
 void OrchDaemon::start()
 {
     SWSS_LOG_ENTER();
@@ -107,15 +120,7 @@ void OrchDaemon::start()
             for (Orch *o : m_orchList)
                 o->doTask();
 
-            /* Flush redis through sairedis interface */
-            sai_attribute_t attr;
-            attr.id = SAI_REDIS_SWITCH_ATTR_FLUSH;
-            sai_status_t status = sai_switch_api->set_switch_attribute(&attr);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
-                exit(EXIT_FAILURE);
-            }
+            flush();
             continue;
         }
 
