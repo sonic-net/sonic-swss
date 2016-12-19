@@ -574,11 +574,24 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     }
     else
     {
+        /* Set the next hop ID to a new value */
         sai_status_t status = sai_route_api->set_route_attribute(&route_entry, &route_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set route %s with next hop(s) %s",
                     ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
+            return false;
+        }
+
+        /* Set the packet action to forward */
+        route_attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
+        route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+
+        status = sai_route_api->set_route_attribute(&route_entry, &route_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set route %s with packet action forward, %d",
+                           ipPrefix.to_string().c_str(), status);
             return false;
         }
 
