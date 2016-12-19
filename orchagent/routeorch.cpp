@@ -543,8 +543,6 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     copy(route_entry.destination, ipPrefix);
 
     sai_attribute_t route_attr;
-    route_attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
-    route_attr.value.oid = next_hop_id;
 
     /* If the prefix is not in m_syncdRoutes, then we need to create the route
      * for this prefix with the new next hop (group) id. If the prefix is already
@@ -554,6 +552,9 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
      */
     if (it_route == m_syncdRoutes.end())
     {
+        route_attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
+        route_attr.value.oid = next_hop_id;
+
         sai_status_t status = sai_route_api->create_route(&route_entry, 1, &route_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -574,24 +575,27 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     }
     else
     {
-        /* Set the next hop ID to a new value */
-        sai_status_t status = sai_route_api->set_route_attribute(&route_entry, &route_attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to set route %s with next hop(s) %s",
-                    ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
-            return false;
-        }
-
         /* Set the packet action to forward */
         route_attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
         route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
-        status = sai_route_api->set_route_attribute(&route_entry, &route_attr);
+        sai_status_t status = sai_route_api->set_route_attribute(&route_entry, &route_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set route %s with packet action forward, %d",
                            ipPrefix.to_string().c_str(), status);
+            return false;
+        }
+
+        route_attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
+        route_attr.value.oid = next_hop_id;
+
+        /* Set the next hop ID to a new value */
+        status = sai_route_api->set_route_attribute(&route_entry, &route_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set route %s with next hop(s) %s",
+                    ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
             return false;
         }
 
