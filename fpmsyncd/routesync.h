@@ -13,7 +13,7 @@ class RouteSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
-    RouteSync(std::shared_ptr<RedisPipeline> pipeline);
+    RouteSync(RedisPipeline *pipeline);
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 

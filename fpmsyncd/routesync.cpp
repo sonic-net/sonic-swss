@@ -13,7 +13,7 @@
 using namespace std;
 using namespace swss;
 
-RouteSync::RouteSync(shared_ptr<RedisPipeline> pipeline) :
+RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true)
 {
     m_nl_sock = nl_socket_alloc();
