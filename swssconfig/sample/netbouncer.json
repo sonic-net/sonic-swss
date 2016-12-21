@@ -3,9 +3,9 @@
 		"TUNNEL_DECAP_TABLE:NETBOUNCER" : {
 			"tunnel_type":"IPINIP",
 			"dst_ip":"10.0.0.1",
-			"dscp_mode":"uniform",
+			"dscp_mode":"pipe",
 			"ecn_mode":"copy_from_outer",
-			"ttl_mode":"uniform"
+			"ttl_mode":"pipe"
 		},
 		"OP": "SET"
 	}
