@@ -13,6 +13,9 @@ std::mutex AclOrch::m_countersMutex;
 std::condition_variable AclOrch::m_sleepGuard;
 bool AclOrch::m_bCollectCounters = true;
 
+swss::DBConnector AclOrch::m_db(COUNTERS_DB, "localhost", 6379, 0);
+swss::Table AclOrch::m_countersTable(&m_db, "COUNTERS");
+
 extern sai_acl_api_t*    sai_acl_api;
 extern sai_port_api_t*   sai_port_api;
 extern sai_switch_api_t* sai_switch_api;
@@ -324,6 +327,9 @@ bool AclRule::removeCounter()
         SWSS_LOG_ERROR("Failed to remove ACL counter for rule %s in table %s", id.c_str(), table_id.c_str());
         return false;
     }
+
+    SWSS_LOG_ERROR("Removing record about the counter %lX from the DB", counter_oid);
+    AclOrch::getCountersTable().del(getTableId() + ":" + getId());
 
     counter_oid = SAI_NULL_OBJECT_ID;
 
@@ -977,9 +983,6 @@ void AclOrch::collectCountersThread(AclOrch* pAclOrch)
     counter_attr[0].id = SAI_ACL_COUNTER_ATTR_PACKETS;
     counter_attr[1].id = SAI_ACL_COUNTER_ATTR_BYTES;
 
-    swss::DBConnector db(COUNTERS_DB, "localhost", 6379, 0);
-    swss::Table countersTable(&db, "COUNTERS");
-
     while(m_bCollectCounters)
     {
         std::unique_lock<std::mutex> lock(m_countersMutex);
@@ -1001,23 +1004,21 @@ void AclOrch::collectCountersThread(AclOrch* pAclOrch)
                 values.push_back(fvtb);
 
                 SWSS_LOG_DEBUG("Counter %lX, value %ld/%ld\n", rule_it.second->getCounterOid(), counter_attr[0].value.u64, counter_attr[1].value.u64);
-                countersTable.set(table_it.second.id + ":" + rule_it.second->getId(), values, "");
+                AclOrch::getCountersTable().set(table_it.second.id + ":" + rule_it.second->getId(), values, "");
             }
             values.clear();
         }
 
-         timeToSleep = std::chrono::seconds(COUNTERS_READ_INTERVAL) - (std::chrono::steady_clock::now() - updStart);
-         if (timeToSleep > std::chrono::seconds(0))
-         {
-             SWSS_LOG_INFO("ACL counters DB update thread: sleeping %dms\n", (int)timeToSleep.count());
-             m_sleepGuard.wait_for(lock, timeToSleep);
-         }
-         else
-         {
-             SWSS_LOG_WARN("ACL counters DB update time is greater than the configured update period\n");
-         }
-
-
+        timeToSleep = std::chrono::seconds(COUNTERS_READ_INTERVAL) - (std::chrono::steady_clock::now() - updStart);
+        if (timeToSleep > std::chrono::seconds(0))
+        {
+            SWSS_LOG_INFO("ACL counters DB update thread: sleeping %dms\n", (int)timeToSleep.count());
+            m_sleepGuard.wait_for(lock, timeToSleep);
+        }
+        else
+        {
+            SWSS_LOG_WARN("ACL counters DB update time is greater than the configured update period\n");
+        }
     }
 
 }

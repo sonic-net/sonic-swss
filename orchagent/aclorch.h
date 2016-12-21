@@ -178,6 +178,11 @@ public:
         return m_countersMutex;
     }
 
+    static swss::Table& getCountersTable()
+    {
+        return m_countersTable;
+    }
+
 private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
@@ -202,6 +207,9 @@ private:
     static std::mutex m_countersMutex;
     static std::condition_variable m_sleepGuard;
     static bool m_bCollectCounters;
+    static swss::DBConnector m_db;
+    static swss::Table m_countersTable;
+
     PortsOrch *m_portOrch;
     MirrorOrch *m_mirrorOrch;
 };
