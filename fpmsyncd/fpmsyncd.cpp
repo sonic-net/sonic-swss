@@ -36,7 +36,7 @@ int main(int argc, char **argv)
                 /* Reading FPM messages forever (and calling "readMe" to read them) */
                 s.select(&temps, &tempfd);
                 pipeline.flush();
-                cout << "Pipeline flushed" << endl;
+                SWSS_LOG_DEBUG("Pipeline flushed");
             }
         }
         catch (FpmLink::FpmConnectionClosedException &e)
