@@ -1,7 +1,6 @@
 #ifndef __ROUTESYNC__
 #define __ROUTESYNC__
 
-#include <memory>
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "netmsg.h"
