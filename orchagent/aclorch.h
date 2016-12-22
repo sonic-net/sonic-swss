@@ -5,6 +5,7 @@
 #include <sstream>
 #include <thread>
 #include <mutex>
+#include <tuple>
 #include <condition_variable>
 #include "orch.h"
 #include "portsorch.h"
@@ -65,8 +66,36 @@ typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
 typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
 typedef vector<sai_object_id_t> ports_list_t;
+typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
+typedef struct
+{
+    sai_attribute_value_t saiValue;
+    uint32_t              auxValue;
+} acl_entry_value_t;
 
 class AclOrch;
+
+class AclRange
+{
+public:
+    static AclRange *create(sai_acl_range_type_t type, int min, int max);
+    static bool remove(sai_acl_range_type_t type, int min, int max);
+    static bool remove(sai_object_id_t *oids, int oidsCnt);
+    sai_object_id_t getOid()
+    {
+        return m_oid;
+    }
+
+private:
+    AclRange(sai_acl_range_type_t type, sai_object_id_t oid, int min, int max);
+    bool remove();
+    sai_object_id_t m_oid;
+    int m_refCnt;
+    int m_min;
+    int m_max;
+    sai_acl_range_type_t m_type;
+    static map<acl_range_properties_t, AclRange*> m_ranges;
+};
 
 class AclRule
 {
@@ -98,11 +127,12 @@ public:
     }
 
     static shared_ptr<AclRule> makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, string rule, string table);
-    virtual ~AclRule() {};
+    virtual ~AclRule() {}
 
 protected:
     virtual bool createCounter();
     virtual bool removeCounter();
+    virtual bool removeRanges();
 
     AclOrch *aclOrch;
     string id;
@@ -111,8 +141,8 @@ protected:
     sai_object_id_t rule_oid;
     sai_object_id_t counter_oid;
     uint32_t priority;
-    map <sai_acl_entry_attr_t, sai_attribute_value_t> matches;
-    map <sai_acl_entry_attr_t, sai_attribute_value_t> actions;
+    map <sai_acl_entry_attr_t, acl_entry_value_t> matches;
+    map <sai_acl_entry_attr_t, acl_entry_value_t> actions;
 };
 
 class AclRuleL3: public AclRule
@@ -193,7 +223,6 @@ private:
     sai_status_t createBindAclTable(AclTable &aclTable, sai_object_id_t &table_oid);
     sai_status_t bindAclTable(sai_object_id_t table_oid, AclTable &aclTable, bool bind = true);
     sai_status_t deleteUnbindAclTable(sai_object_id_t table_oid);
-    sai_status_t deleteAllAclObjects();
 
     bool processAclTableType(string type, acl_table_type_t &table_type);
     bool processPorts(string portsList, ports_list_t& out);
