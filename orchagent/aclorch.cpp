@@ -5,11 +5,6 @@
 #include "schema.h"
 #include "ipprefix.h"
 
-#undef SWSS_LOG_INFO
-#define SWSS_LOG_INFO SWSS_LOG_ERROR
-#undef SWSS_LOG_DEBUG
-#define SWSS_LOG_DEBUG SWSS_LOG_ERROR
-
 std::mutex AclOrch::m_countersMutex;
 std::map<acl_range_properties_t, AclRange*> AclRange::m_ranges;
 std::condition_variable AclOrch::m_sleepGuard;
@@ -176,7 +171,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             return false;
         }
     }
-    else if (attr_name == MATCH_L4_SRC_PORT_RANGE || attr_name == MATCH_L4_DST_PORT_RANGE)
+    else if ((attr_name == MATCH_L4_SRC_PORT_RANGE) || (attr_name == MATCH_L4_DST_PORT_RANGE))
     {
         if (sscanf(attr_value.c_str(), "%d-%d", &value.u32range.min, &value.u32range.max) != 2)
         {
@@ -190,13 +185,6 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             (value.u32range.min > value.u32range.max))
         {
             SWSS_LOG_ERROR("Range parse error. Invalid range value. Attribute: %s, value: %s\n", attr_name.c_str(), attr_value.c_str());
-            return false;
-        }
-
-        // check if thist type of match was already specified
-        if (matches.find(aclMatchLookup[attr_name]) != matches.end())
-        {
-            SWSS_LOG_ERROR("Range parse error. Duplicate range match. Attribute: %s, value: %s\n", attr_name.c_str(), attr_value.c_str());
             return false;
         }
     }
@@ -313,7 +301,7 @@ bool AclRule::create()
         AclRange::remove(range_objects, range_object_list.count);
     }
 
-    return status == SAI_STATUS_SUCCESS;
+    return (status == SAI_STATUS_SUCCESS);
 }
 
 bool AclRule::remove()
@@ -591,7 +579,7 @@ void AclRuleMirror::update(SubjectType type, void *cntx)
 AclRange::AclRange(sai_acl_range_type_t type, sai_object_id_t oid, int min, int max):
     m_oid(oid), m_refCnt(1), m_min(min), m_max(max), m_type(type)
 {
-
+    SWSS_LOG_ENTER();
 }
 
 AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
@@ -616,14 +604,12 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
 
         if (sai_acl_api->create_acl_range(&range_oid, range_attrs.size(), range_attrs.data()) != SAI_STATUS_SUCCESS)
         {
-            //SWSS_LOG_ERROR("Failed to create ACL Range object\n");
             return NULL;
         }
 
         SWSS_LOG_INFO("Created ACL Range object. Type: %d, range %d-%d, oid: %lX\n", type, min, max, range_oid);
         m_ranges[rangeProperties] = new AclRange(type, range_oid, min, max);
 
-        //return m_ranges[rangeProperties];
         range_it = m_ranges.find(rangeProperties);
     }
     else
@@ -637,6 +623,8 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
 
 bool AclRange::remove(sai_acl_range_type_t type, int min, int max)
 {
+    SWSS_LOG_ENTER();
+
     auto range_it = m_ranges.find(std::make_tuple(type, min, max));
 
     if(range_it == m_ranges.end())
@@ -649,6 +637,8 @@ bool AclRange::remove(sai_acl_range_type_t type, int min, int max)
 
 bool AclRange::remove(sai_object_id_t *oids, int oidsCnt)
 {
+    SWSS_LOG_ENTER();
+
     for (int oidIdx = 0; oidIdx < oidsCnt; oidsCnt++)
     {
         for (auto it : m_ranges)
@@ -665,7 +655,14 @@ bool AclRange::remove(sai_object_id_t *oids, int oidsCnt)
 
 bool AclRange::remove()
 {
-    if ((--m_refCnt) <= 0)
+    SWSS_LOG_ENTER();
+
+    if ((--m_refCnt) < 0)
+    {
+        throw runtime_error("Invalid ACL Range refCnt!");
+    }
+
+    if (m_refCnt == 0)
     {
         SWSS_LOG_DEBUG("Range object oid %lX ref count is %d, removing...\n", m_oid, m_refCnt);
         if (sai_acl_api->remove_acl_range(m_oid) != SAI_STATUS_SUCCESS)
@@ -1200,7 +1197,7 @@ void AclOrch::collectCountersThread(AclOrch* pAclOrch)
                 swss::FieldValueTuple fvtb("Bytes", std::to_string(counter_attr[1].value.u64));
                 values.push_back(fvtb);
 
-                //SWSS_LOG_DEBUG("Counter %lX, value %ld/%ld\n", rule_it.second->getCounterOid(), counter_attr[0].value.u64, counter_attr[1].value.u64);
+                SWSS_LOG_DEBUG("Counter %lX, value %ld/%ld\n", rule_it.second->getCounterOid(), counter_attr[0].value.u64, counter_attr[1].value.u64);
                 AclOrch::getCountersTable().set(table_it.second.id + ":" + rule_it.second->getId(), values, "");
             }
             values.clear();
@@ -1209,7 +1206,7 @@ void AclOrch::collectCountersThread(AclOrch* pAclOrch)
         timeToSleep = std::chrono::seconds(COUNTERS_READ_INTERVAL) - (std::chrono::steady_clock::now() - updStart);
         if (timeToSleep > std::chrono::seconds(0))
         {
-            //SWSS_LOG_DEBUG("ACL counters DB update thread: sleeping %dms\n", (int)timeToSleep.count());
+            SWSS_LOG_DEBUG("ACL counters DB update thread: sleeping %dms\n", (int)timeToSleep.count());
             m_sleepGuard.wait_for(lock, timeToSleep);
         }
         else
