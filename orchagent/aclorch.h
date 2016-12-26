@@ -67,11 +67,6 @@ typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
 typedef vector<sai_object_id_t> ports_list_t;
 typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
-typedef struct
-{
-    sai_attribute_value_t saiValue;
-    uint32_t              auxValue;
-} acl_entry_value_t;
 
 class AclOrch;
 
@@ -141,8 +136,8 @@ protected:
     sai_object_id_t rule_oid;
     sai_object_id_t counter_oid;
     uint32_t priority;
-    map <sai_acl_entry_attr_t, acl_entry_value_t> matches;
-    map <sai_acl_entry_attr_t, acl_entry_value_t> actions;
+    map <sai_acl_entry_attr_t, sai_attribute_value_t> matches;
+    map <sai_acl_entry_attr_t, sai_attribute_value_t> actions;
 };
 
 class AclRuleL3: public AclRule

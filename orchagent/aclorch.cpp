@@ -1,3 +1,4 @@
+#include <limits.h>
 #include <algorithm>
 #include "aclorch.h"
 #include "logger.h"
@@ -32,8 +33,8 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_TCP_FLAGS,         SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS },
     { MATCH_IP_TYPE,           SAI_ACL_ENTRY_ATTR_FIELD_IP_TYPE },
     { MATCH_DSCP,              SAI_ACL_ENTRY_ATTR_FIELD_DSCP },
-    { MATCH_L4_SRC_PORT_RANGE, SAI_ACL_ENTRY_ATTR_FIELD_RANGE },
-    { MATCH_L4_DST_PORT_RANGE, SAI_ACL_ENTRY_ATTR_FIELD_RANGE },
+    { MATCH_L4_SRC_PORT_RANGE, (sai_acl_entry_attr_t)SAI_ACL_RANGE_L4_SRC_PORT_RANGE },
+    { MATCH_L4_DST_PORT_RANGE, (sai_acl_entry_attr_t)SAI_ACL_RANGE_L4_DST_PORT_RANGE },
 };
 
 acl_rule_attr_lookup_t aclActionLookup =
@@ -119,7 +120,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 {
     SWSS_LOG_ENTER();
 
-    acl_entry_value_t value;
+    sai_attribute_value_t value;
 
     if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
     {
@@ -127,14 +128,14 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
     }
     else if(attr_name == MATCH_IP_TYPE)
     {
-        if (!processIpType(attr_value, value.saiValue.aclfield.data.u32))
+        if (!processIpType(attr_value, value.aclfield.data.u32))
         {
             SWSS_LOG_ERROR("Invalid IP type %s\n", attr_value.c_str());
             return false;
         }
 
-        value.saiValue.aclfield.enable = true;
-        value.saiValue.aclfield.mask.u32 = 0xFFFFFFFF;
+        value.aclfield.enable = true;
+        value.aclfield.mask.u32 = 0xFFFFFFFF;
     }
     else if((attr_name == MATCH_ETHER_TYPE)  || (attr_name == MATCH_DSCP)        ||
             (attr_name == MATCH_L4_SRC_PORT) || (attr_name == MATCH_L4_DST_PORT) ||
@@ -142,15 +143,15 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
     {
         char *endp = NULL;
         errno = 0;
-        value.saiValue.aclfield.data.u32 = strtol(attr_value.c_str(), &endp, 0);
+        value.aclfield.data.u32 = strtol(attr_value.c_str(), &endp, 0);
         if (errno || (endp != attr_value.c_str() + attr_value.size()))
         {
-            SWSS_LOG_ERROR("Integer parse error. Attribute: %s, value: %s(=%d), errno: %d\n", attr_name.c_str(), attr_value.c_str(), value.saiValue.aclfield.data.u32, errno);
+            SWSS_LOG_ERROR("Integer parse error. Attribute: %s, value: %s(=%d), errno: %d\n", attr_name.c_str(), attr_value.c_str(), value.aclfield.data.u32, errno);
             return false;
         }
 
-        value.saiValue.aclfield.enable = true;
-        value.saiValue.aclfield.mask.u32 = 0xFFFFFFFF;
+        value.aclfield.enable = true;
+        value.aclfield.mask.u32 = 0xFFFFFFFF;
     }
     else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
     {
@@ -160,13 +161,13 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
             if (ip.isV4())
             {
-                value.saiValue.aclfield.data.ip4 = ip.getIp().getV4Addr();
-                value.saiValue.aclfield.mask.ip4 = ip.getMask().getV4Addr();
+                value.aclfield.data.ip4 = ip.getIp().getV4Addr();
+                value.aclfield.mask.ip4 = ip.getMask().getV4Addr();
             }
             else
             {
-                memcpy(value.saiValue.aclfield.data.ip6, ip.getIp().getV6Addr(), 16);
-                memcpy(value.saiValue.aclfield.mask.ip6, ip.getMask().getV6Addr(), 16);
+                memcpy(value.aclfield.data.ip6, ip.getIp().getV6Addr(), 16);
+                memcpy(value.aclfield.mask.ip6, ip.getMask().getV6Addr(), 16);
             }
         }
         catch(...)
@@ -177,12 +178,27 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
     }
     else if (attr_name == MATCH_L4_SRC_PORT_RANGE || attr_name == MATCH_L4_DST_PORT_RANGE)
     {
-        if (sscanf(attr_value.c_str(), "%d-%d", &value.saiValue.u32range.min, &value.saiValue.u32range.max) != 2)
+        if (sscanf(attr_value.c_str(), "%d-%d", &value.u32range.min, &value.u32range.max) != 2)
         {
             SWSS_LOG_ERROR("Range parse error. Attribute: %s, value: %s\n", attr_name.c_str(), attr_value.c_str());
             return false;
         }
-        value.auxValue = (attr_name == MATCH_L4_SRC_PORT_RANGE)? SAI_ACL_RANGE_L4_SRC_PORT_RANGE : SAI_ACL_RANGE_L4_DST_PORT_RANGE;
+
+        // check boundaries
+        if ((value.u32range.min > USHRT_MAX) ||
+            (value.u32range.max > USHRT_MAX) ||
+            (value.u32range.min > value.u32range.max))
+        {
+            SWSS_LOG_ERROR("Range parse error. Invalid range value. Attribute: %s, value: %s\n", attr_name.c_str(), attr_value.c_str());
+            return false;
+        }
+
+        // check if thist type of match was already specified
+        if (matches.find(aclMatchLookup[attr_name]) != matches.end())
+        {
+            SWSS_LOG_ERROR("Range parse error. Duplicate range match. Attribute: %s, value: %s\n", attr_name.c_str(), attr_value.c_str());
+            return false;
+        }
     }
 
     matches[aclMatchLookup[attr_name]] = value;
@@ -250,21 +266,15 @@ bool AclRule::create()
     for (auto it : matches)
     {
         // collect ranges and add them later as a list
-        if (((sai_acl_entry_attr_t)it.first == SAI_ACL_ENTRY_ATTR_FIELD_RANGE))
+        if (((sai_acl_range_type_t)it.first == SAI_ACL_RANGE_L4_SRC_PORT_RANGE) ||
+            ((sai_acl_range_type_t)it.first == SAI_ACL_RANGE_L4_DST_PORT_RANGE))
         {
-            if (range_object_list.count >=2)
-            {
-                // + release created
-                AclRange::remove(range_objects, range_object_list.count);
-                SWSS_LOG_ERROR("Failed to create range object. Too many ranges per rule\n");
-                return false;
-            }
-            SWSS_LOG_DEBUG("Creating range object %u..%u\n", it.second.saiValue.u32range.min, it.second.saiValue.u32range.max);
+            SWSS_LOG_DEBUG("Creating range object %u..%u\n", it.second.u32range.min, it.second.u32range.max);
 
-            AclRange *range = AclRange::create((sai_acl_range_type_t)it.second.auxValue, it.second.saiValue.u32range.min, it.second.saiValue.u32range.max);
+            AclRange *range = AclRange::create((sai_acl_range_type_t)it.first, it.second.u32range.min, it.second.u32range.max);
             if (!range)
             {
-                // release created ranges if any
+                // release already created range if any
                 AclRange::remove(range_objects, range_object_list.count);
                 SWSS_LOG_ERROR("Failed to create range object\n");
                 return false;
@@ -277,7 +287,7 @@ bool AclRule::create()
         else
         {
             attr.id = it.first;
-            attr.value = it.second.saiValue;
+            attr.value = it.second;
             rule_attrs.push_back(attr);
         }
     }
@@ -294,7 +304,7 @@ bool AclRule::create()
     for (auto it : actions)
     {
         attr.id = it.first;
-        attr.value = it.second.saiValue;
+        attr.value = it.second;
         rule_attrs.push_back(attr);
     }
 
@@ -374,10 +384,10 @@ bool AclRule::removeRanges()
     for (auto it : matches)
     {
         // collect ranges and add them later as a list
-        if (((sai_acl_range_type_t)it.second.auxValue == SAI_ACL_RANGE_L4_SRC_PORT_RANGE) ||
-            ((sai_acl_range_type_t)it.second.auxValue == SAI_ACL_RANGE_L4_DST_PORT_RANGE))
+        if (((sai_acl_range_type_t)it.first == SAI_ACL_RANGE_L4_SRC_PORT_RANGE) ||
+            ((sai_acl_range_type_t)it.first == SAI_ACL_RANGE_L4_DST_PORT_RANGE))
         {
-            return AclRange::remove((sai_acl_range_type_t)it.second.auxValue, it.second.saiValue.u32range.min, it.second.saiValue.u32range.max);
+            return AclRange::remove((sai_acl_range_type_t)it.first, it.second.u32range.min, it.second.u32range.max);
         }
     }
     return true;
@@ -416,7 +426,7 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
     SWSS_LOG_ENTER();
 
     string attr_value = toUpper(_attr_value);
-    acl_entry_value_t value;
+    sai_attribute_value_t value;
 
     if (aclActionLookup.find(attr_name) == aclActionLookup.end())
         return false;
@@ -428,17 +438,17 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
 
     if (attr_value == PACKET_ACTION_FORWARD)
     {
-        value.saiValue.aclaction.parameter.s32 = SAI_PACKET_ACTION_FORWARD;
+        value.aclaction.parameter.s32 = SAI_PACKET_ACTION_FORWARD;
     }
     else if (attr_value == PACKET_ACTION_DROP)
     {
-        value.saiValue.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
+        value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
     }
     else
     {
         return false;
     }
-    value.saiValue.aclaction.enable = true;
+    value.aclaction.enable = true;
 
     actions[aclActionLookup[attr_name]] = value;
 
@@ -504,7 +514,7 @@ bool AclRuleMirror::create()
 {
     SWSS_LOG_ENTER();
 
-    acl_entry_value_t value;
+    sai_attribute_value_t value;
     bool state = false;
     sai_object_id_t oid = SAI_NULL_OBJECT_ID;
 
@@ -523,9 +533,9 @@ bool AclRuleMirror::create()
         throw runtime_error("Failed to get mirror session OID");
     }
 
-    value.saiValue.aclaction.enable = true;
-    value.saiValue.aclaction.parameter.objlist.list = &oid;
-    value.saiValue.aclaction.parameter.objlist.count = 1;
+    value.aclaction.enable = true;
+    value.aclaction.parameter.objlist.list = &oid;
+    value.aclaction.parameter.objlist.count = 1;
 
     actions.clear();
     actions[SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS] = value;
@@ -1069,11 +1079,13 @@ sai_status_t AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &ta
     sai_status_t status;
     sai_attribute_t attr;
     vector<sai_attribute_t> table_attrs;
-//    int32_t range_types_list[] =
-//        { SAI_ACL_RANGE_L4_DST_PORT_RANGE,
-//          SAI_ACL_RANGE_L4_SRC_PORT_RANGE
-//        };
-
+    // workaround until SAI is fixed
+#if 0
+    int32_t range_types_list[] =
+        { SAI_ACL_RANGE_L4_DST_PORT_RANGE,
+          SAI_ACL_RANGE_L4_SRC_PORT_RANGE
+        };
+#endif
     attr.id =  SAI_ACL_TABLE_ATTR_STAGE;
     attr.value.s32 = SAI_ACL_STAGE_INGRESS;
     table_attrs.push_back(attr);
@@ -1120,7 +1132,6 @@ sai_status_t AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &ta
 
     attr.id =  SAI_ACL_TABLE_ATTR_FIELD_RANGE;
     // workaround until SAI is fixed
-    // does not affect functionality
 #if 0
     attr.value.s32list.count = sizeof(range_types_list) / sizeof(range_types_list[0]);
     attr.value.s32list.list = range_types_list;
