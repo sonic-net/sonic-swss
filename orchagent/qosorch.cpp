@@ -2,8 +2,10 @@
 #include "qosorch.h"
 #include "logger.h"
 
+#include <stdlib.h>
 #include <sstream>
 #include <iostream>
+#include <string>
 
 using namespace std;
 
@@ -557,8 +559,13 @@ QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNa
 {
     SWSS_LOG_ENTER();
 
-    // add ACLs to support Sonic WRED profile.
-    initColorAcl(); // FIXME: Should be removed as soon as we have ACL configuration support
+    string platform = string(getenv("onie_platform"));
+    if (platform != "x86_64-barefoot_p4-r0")
+    {
+        // add ACLs to support Sonic WRED profile.
+        initColorAcl(); // FIXME: Should be removed as soon as we have ACL configuration support
+    }
+
     initTableHandlers();
 };
 
