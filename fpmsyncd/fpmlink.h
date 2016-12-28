@@ -18,6 +18,7 @@ namespace swss {
 
 class FpmLink : public Selectable {
 public:
+    const int MSG_BATCH_SIZE;
     FpmLink(int port = FPM_DEFAULT_PORT);
     virtual ~FpmLink();
 

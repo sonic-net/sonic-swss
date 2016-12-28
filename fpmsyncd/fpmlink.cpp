@@ -10,7 +10,8 @@ using namespace swss;
 using namespace std;
 
 FpmLink::FpmLink(int port) :
-    m_bufSize(FPM_MAX_MSG_LEN * 256),
+    MSG_BATCH_SIZE(256),
+    m_bufSize(FPM_MAX_MSG_LEN * MSG_BATCH_SIZE),
     m_messageBuffer(NULL),
     m_pos(0),
     m_connected(false),
