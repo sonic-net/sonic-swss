@@ -118,14 +118,14 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
-            SWSS_LOG_DEBUG("Modifying existing sai object:%llx ", sai_object);
+            SWSS_LOG_DEBUG("Modifying existing sai object:%lx ", sai_object);
             sai_status = sai_buffer_api->set_buffer_pool_attr(sai_object, &attribs[0]);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%llx, status:%d", object_name.c_str(), sai_object, sai_status);
+                SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
                 return task_process_status::task_failed;
             }
-            SWSS_LOG_DEBUG("Modified existing pool:%llx, type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
+            SWSS_LOG_DEBUG("Modified existing pool:%lx, type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
         }
         else
         {
@@ -137,7 +137,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
                 return task_process_status::task_failed;
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name] = sai_object;
-            SWSS_LOG_DEBUG("Created new pool:%llx, type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
+            SWSS_LOG_DEBUG("Created new pool:%lx, type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
         }
     }
     else if (op == DEL_COMMAND)
@@ -145,7 +145,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
         if (SAI_STATUS_SUCCESS != sai_status)
         {
-            SWSS_LOG_ERROR("Failed to remove buffer pool, name:%s, sai object:%llx, status:%d", object_name.c_str(), sai_object, sai_status);
+            SWSS_LOG_ERROR("Failed to remove buffer pool, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
             return task_process_status::task_failed;
         }
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
@@ -240,11 +240,11 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
-            SWSS_LOG_DEBUG("Modifying existing sai object:%llx ", sai_object);
+            SWSS_LOG_DEBUG("Modifying existing sai object:%lx ", sai_object);
             sai_status = sai_buffer_api->set_buffer_profile_attr(sai_object, &attribs[0]);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%llx, status:%d", object_name.c_str(), sai_object, sai_status);
+                SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
                 return task_process_status::task_failed;
             }
         }
@@ -258,7 +258,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
                 return task_process_status::task_failed;
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name] = sai_object;
-            SWSS_LOG_DEBUG("Created new sai object:%llx, type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
+            SWSS_LOG_DEBUG("Created new sai object:%lx, type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
         }
     }
     else if (op == DEL_COMMAND)
@@ -266,7 +266,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
         sai_status = sai_buffer_api->remove_buffer_profile(sai_object);
         if (SAI_STATUS_SUCCESS != sai_status)
         {
-            SWSS_LOG_ERROR("Failed to remove buffer profile, name:%s, sai object:%llx, status:%d", object_name.c_str(), sai_object, sai_status);
+            SWSS_LOG_ERROR("Failed to remove buffer profile, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
             return task_process_status::task_failed;
         }
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
@@ -332,14 +332,14 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
         for (size_t ind = range_low; ind <= range_high; ind++)
         {
             sai_object_id_t queue_id;
-            SWSS_LOG_DEBUG("processing queue:%d", ind);
+            SWSS_LOG_DEBUG("processing queue:%zd", ind);
             if (port.m_queue_ids.size() <= ind)
             {
-                SWSS_LOG_ERROR("Invalid queue index specified:%d", ind);
+                SWSS_LOG_ERROR("Invalid queue index specified:%zd", ind);
                 return task_process_status::task_invalid_entry;
             }
             queue_id = port.m_queue_ids[ind];
-            SWSS_LOG_DEBUG("Applying buffer profile:0x%llx to queue index:%d, queue sai_id:0x%llx", sai_buffer_profile, ind, queue_id);
+            SWSS_LOG_DEBUG("Applying buffer profile:0x%lx to queue index:%zd, queue sai_id:0x%lx", sai_buffer_profile, ind, queue_id);
             sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
             if (sai_status != SAI_STATUS_SUCCESS)
             {
@@ -404,18 +404,18 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
         for (size_t ind = range_low; ind <= range_high; ind++)
         {
             sai_object_id_t pg_id;
-            SWSS_LOG_DEBUG("processing pg:%d", ind);
+            SWSS_LOG_DEBUG("processing pg:%zd", ind);
             if (port.m_priority_group_ids.size() <= ind)
             {
-                SWSS_LOG_ERROR("Invalid pg index specified:%d", ind);
+                SWSS_LOG_ERROR("Invalid pg index specified:%zd", ind);
                 return task_process_status::task_invalid_entry;
             }
             pg_id = port.m_priority_group_ids[ind];
-            SWSS_LOG_DEBUG("Applying buffer profile:0x%llx to port:%s pg index:%d, pg sai_id:0x%llx", sai_buffer_profile, port_name.c_str(), ind, pg_id);
+            SWSS_LOG_DEBUG("Applying buffer profile:0x%lx to port:%s pg index:%zd, pg sai_id:0x%lx", sai_buffer_profile, port_name.c_str(), ind, pg_id);
             sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attr(pg_id, &attr);
             if (sai_status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to set port:%s pg:%d buffer profile attribute, status:%d", port_name.c_str(), ind, sai_status);
+                SWSS_LOG_ERROR("Failed to set port:%s pg:%zd buffer profile attribute, status:%d", port_name.c_str(), ind, sai_status);
                 return task_process_status::task_failed;
             }
         }

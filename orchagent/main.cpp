@@ -233,7 +233,7 @@ int main(int argc, char **argv)
     }
 
     gVirtualRouterId = attr.value.oid;
-    SWSS_LOG_NOTICE("Get switch virtual router ID %llx", gVirtualRouterId);
+    SWSS_LOG_NOTICE("Get switch virtual router ID %lx", gVirtualRouterId);
 
     /* Create a loopback underlay router interface */
     sai_attribute_t underlay_intf_attrs[2];
@@ -249,7 +249,7 @@ int main(int argc, char **argv)
         return false;
     }
 
-    SWSS_LOG_NOTICE("Created underlay router interface ID %llx", gUnderlayIfId);
+    SWSS_LOG_NOTICE("Created underlay router interface ID %lx", gUnderlayIfId);
 
     /* Initialize orchestration components */
     DBConnector *appl_db = new DBConnector(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);

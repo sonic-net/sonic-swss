@@ -396,7 +396,7 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
     }
 
     m_nextHopGroupCount ++;
-    SWSS_LOG_NOTICE("Create next hop group nhgid:%llx nh:%s \n",
+    SWSS_LOG_NOTICE("Create next hop group nhgid:%lx nh:%s \n",
                     next_hop_group_id, ipAddresses.to_string().c_str());
 
     /* Increate the ref_count for the next hops used by the next hop group. */
@@ -427,7 +427,7 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
         sai_status_t status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to remove next hop group nhgid:%llx\n", next_hop_group_id);
+            SWSS_LOG_ERROR("Failed to remove next hop group nhgid:%lx\n", next_hop_group_id);
             return false;
         }
 

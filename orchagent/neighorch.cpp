@@ -38,12 +38,12 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, string alias)
     sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, 3, next_hop_attrs);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create next hop entry ip:%s rid:%llx",
+        SWSS_LOG_ERROR("Failed to create next hop entry ip:%s rid:%lx",
                        ipAddress.to_string().c_str(), rif_id);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Create next hop entry id:%llx, ip:%s, rid:%llx\n",
+    SWSS_LOG_NOTICE("Create next hop entry id:%lx, ip:%s, rid:%lx\n",
                     next_hop_id, ipAddress.to_string().c_str(), rif_id);
 
     NextHopEntry next_hop_entry;
@@ -226,7 +226,7 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
             return false;
         }
 
-        SWSS_LOG_NOTICE("Create neighbor entry rid:%llx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
+        SWSS_LOG_NOTICE("Create neighbor entry rid:%lx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
         m_intfsOrch->increaseRouterIntfsRefCount(alias);
 
         if (!addNextHop(ip_address, alias))
@@ -234,7 +234,7 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
             status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%llx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
+                SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%lx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
                 return false;
             }
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
@@ -246,10 +246,10 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
         status = sai_neighbor_api->set_neighbor_attribute(&neighbor_entry, &neighbor_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to update neighbor entry rid:%llx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
+            SWSS_LOG_ERROR("Failed to update neighbor entry rid:%lx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
             return false;
         }
-        SWSS_LOG_NOTICE("Updated neighbor entry rid:%llx alias:%s ip:%s new mac: %s\n", rif_id, alias.c_str(), ip_address.to_string().c_str(), macAddress.to_string().c_str());
+        SWSS_LOG_NOTICE("Updated neighbor entry rid:%lx alias:%s ip:%s new mac: %s\n", rif_id, alias.c_str(), ip_address.to_string().c_str(), macAddress.to_string().c_str());
     }
 
     m_syncdNeighbors[neighborEntry] = macAddress;
@@ -290,11 +290,11 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
         /* When next hop is not found, we continue to remove neighbor entry. */
         if (status == SAI_STATUS_ITEM_NOT_FOUND)
         {
-            SWSS_LOG_ERROR("Failed to locate next hop nhid:%llx\n", next_hop_id);
+            SWSS_LOG_ERROR("Failed to locate next hop nhid:%lx\n", next_hop_id);
         }
         else
         {
-            SWSS_LOG_ERROR("Failed to remove next hop nhid:%llx\n", next_hop_id);
+            SWSS_LOG_ERROR("Failed to remove next hop nhid:%lx\n", next_hop_id);
             return false;
         }
     }
@@ -304,11 +304,11 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
     {
         if (status == SAI_STATUS_ITEM_NOT_FOUND)
         {
-            SWSS_LOG_ERROR("Failed to locate neigbor entry rid:%llx ip:%s\n", rif_id, ip_address.to_string().c_str());
+            SWSS_LOG_ERROR("Failed to locate neigbor entry rid:%lx ip:%s\n", rif_id, ip_address.to_string().c_str());
             return true;
         }
 
-        SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%llx ip:%s\n", rif_id, ip_address.to_string().c_str());
+        SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%lx ip:%s\n", rif_id, ip_address.to_string().c_str());
         return false;
     }
 

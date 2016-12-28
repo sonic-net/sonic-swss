@@ -185,7 +185,7 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
         return false;
     }
 
-    SWSS_LOG_NOTICE("Created overlay router interface ID %llx\n", overlayIfId);
+    SWSS_LOG_NOTICE("Created overlay router interface ID %lx\n", overlayIfId);
 
     // tunnel type (only ipinip for now)
     attr.id = SAI_TUNNEL_ATTR_TYPE;
@@ -484,7 +484,7 @@ bool TunnelDecapOrch::removeDecapTunnel(string key)
     status = sai_tunnel_api->remove_tunnel(tunnel_info->tunnel_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove tunnel: %llu", tunnel_info->tunnel_id);
+        SWSS_LOG_ERROR("Failed to remove tunnel: %lu", tunnel_info->tunnel_id);
         return false;
     }
     tunnelTable.erase(key);
@@ -508,7 +508,7 @@ bool TunnelDecapOrch::removeDecapTunnelTermEntry(sai_object_id_t tunnel_term_id,
     status = sai_tunnel_api->remove_tunnel_term_table_entry(tunnel_term_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove tunnel table entry: %llu", tunnel_term_id);
+        SWSS_LOG_ERROR("Failed to remove tunnel table entry: %lu", tunnel_term_id);
         return false;
     }
 

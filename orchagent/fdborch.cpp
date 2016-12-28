@@ -57,7 +57,7 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
 
     if (!m_portsOrch->getPort(attr.value.oid, port))
     {
-        SWSS_LOG_ERROR("Failed to get port for %llu OID\n", attr.value.oid);
+        SWSS_LOG_ERROR("Failed to get port for %lu OID\n", attr.value.oid);
         return false;
     }
 

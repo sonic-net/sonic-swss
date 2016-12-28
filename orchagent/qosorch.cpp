@@ -68,7 +68,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
         {
             if (!modifyQosItem(sai_object, attributes))
             {
-                SWSS_LOG_ERROR("Failed to set settings to existing dscp_to_tc map. db name:%s sai object:%llx",
+                SWSS_LOG_ERROR("Failed to set settings to existing dscp_to_tc map. db name:%s sai object:%lx",
                     qos_object_name.c_str(), sai_object);
                 freeAttribResources(attributes);
                 return task_process_status::task_failed;
@@ -95,7 +95,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
         }
         if (!removeQosItem(sai_object))
         {
-            SWSS_LOG_ERROR("Failed to remove dscp_to_tc map. db name:%s sai object:%llx", qos_object_name.c_str(), sai_object);
+            SWSS_LOG_ERROR("Failed to remove dscp_to_tc map. db name:%s sai object:%lx", qos_object_name.c_str(), sai_object);
             return task_process_status::task_failed;
         }
         auto it_to_delete = (QosOrch::getTypeMap()[qos_map_type_name])->find(qos_object_name);
@@ -124,7 +124,7 @@ bool QosMapHandler::modifyQosItem(sai_object_id_t sai_object, vector<sai_attribu
 bool QosMapHandler::removeQosItem(sai_object_id_t sai_object)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("Removing QosMap object:%llx", sai_object);
+    SWSS_LOG_DEBUG("Removing QosMap object:%lx", sai_object);
     sai_status_t sai_status = sai_qos_map_api->remove_qos_map(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
@@ -178,7 +178,7 @@ sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &at
         SWSS_LOG_ERROR("Failed to create dscp_to_tc map. status:%d", sai_status);
         return SAI_NULL_OBJECT_ID;
     }
-    SWSS_LOG_DEBUG("created QosMap object:%llx", sai_object);
+    SWSS_LOG_DEBUG("created QosMap object:%lx", sai_object);
     return sai_object;
 }
 
@@ -792,7 +792,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
         sai_status = sai_scheduler_api->remove_scheduler_profile(sai_object);
         if (SAI_STATUS_SUCCESS != sai_status)
         {
-            SWSS_LOG_ERROR("Failed to remove scheduler profile. db name:%s sai object:%llx", qos_object_name.c_str(), sai_object);
+            SWSS_LOG_ERROR("Failed to remove scheduler profile. db name:%s sai object:%lx", qos_object_name.c_str(), sai_object);
             return task_process_status::task_failed;
         }
         auto it_to_delete = (m_qos_type_maps[qos_map_type_name])->find(qos_object_name);
@@ -818,7 +818,7 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
 
     if (port.m_queue_ids.size() <= queue_ind)
     {
-        SWSS_LOG_ERROR("Invalid queue index specified:%d", queue_ind);
+        SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
         return false;
     }
     queue_id = port.m_queue_ids[queue_ind];
@@ -866,7 +866,7 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
         child_count = attr.value.u32;
         if (SAI_STATUS_SUCCESS != sai_status)
         {
-            SWSS_LOG_ERROR("Failed to get child count for scheduler group:0x%llx of port:%s", groups[ii], port.m_alias.c_str());
+            SWSS_LOG_ERROR("Failed to get child count for scheduler group:0x%lx of port:%s", groups[ii], port.m_alias.c_str());
             return false;
         }
 
@@ -876,7 +876,7 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
         sai_status = sai_scheduler_group_api->get_scheduler_group_attribute(groups[ii], 1, &attr);
         if (SAI_STATUS_SUCCESS != sai_status)
         {
-            SWSS_LOG_ERROR("Failed to get child list for scheduler group:0x%llx of port:%s", groups[ii], port.m_alias.c_str());
+            SWSS_LOG_ERROR("Failed to get child list for scheduler group:0x%lx of port:%s", groups[ii], port.m_alias.c_str());
             return false;
         }
 
@@ -892,10 +892,10 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
             sai_status = sai_scheduler_group_api->set_scheduler_group_attribute(groups[ii], &attr);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed applying scheduler profile:0x%llx to scheduler group:0x%llx, port:%s", scheduler_profile_id, groups[ii], port.m_alias.c_str());
+                SWSS_LOG_ERROR("Failed applying scheduler profile:0x%lx to scheduler group:0x%lx, port:%s", scheduler_profile_id, groups[ii], port.m_alias.c_str());
                 return false;
             }
-            SWSS_LOG_DEBUG("port:%s, scheduler_profile_id:0x%llx applied to scheduler group:0x%llx", port.m_alias.c_str(), scheduler_profile_id, groups[ii]);
+            SWSS_LOG_DEBUG("port:%s, scheduler_profile_id:0x%lx applied to scheduler group:0x%lx", port.m_alias.c_str(), scheduler_profile_id, groups[ii]);
             return true;
         }
     }
@@ -911,7 +911,7 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
 
     if (port.m_queue_ids.size() <= queue_ind)
     {
-        SWSS_LOG_ERROR("Invalid queue index specified:%d", queue_ind);
+        SWSS_LOG_ERROR("Invalid queue index specified:%zd", queue_ind);
         return false;
     }
     queue_id = port.m_queue_ids[queue_ind];
@@ -969,7 +969,7 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
         for (size_t ind = range_low; ind <= range_high; ind++)
         {
             queue_ind = ind;
-            SWSS_LOG_DEBUG("processing queue:%d", queue_ind);
+            SWSS_LOG_DEBUG("processing queue:%zd", queue_ind);
             sai_object_id_t sai_scheduler_profile;
             resolve_result = resolveFieldRefValue(m_qos_type_maps, scheduler_field_name, tuple, sai_scheduler_profile);
             if (ref_resolve_status::success == resolve_result)
@@ -990,7 +990,7 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
                 }
                 if (!result)
                 {
-                    SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%d, line:%d\n", scheduler_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
+                    SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%zd, line:%d\n", scheduler_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
                     return task_process_status::task_failed;
                 }
                 SWSS_LOG_DEBUG("Applied scheduler to port:%s", port_name.c_str());
@@ -1026,7 +1026,7 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
                 }
                 if (!result)
                 {
-                    SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%d, line:%d\n", wred_profile_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
+                    SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%zd, line:%d\n", wred_profile_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
                     return task_process_status::task_failed;
                 }
                 SWSS_LOG_DEBUG("Applied wred profile to port:%s", port_name.c_str());
@@ -1056,7 +1056,7 @@ bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t 
     attr.value.oid = map;
     if (SAI_STATUS_SUCCESS != (sai_status = sai_port_api->set_port_attribute(port.m_port_id, &attr)))
     {
-        SWSS_LOG_ERROR("Failed setting sai object:%llx for port:%s, status:%s\n", map, port.m_alias.c_str(), sai_status);
+        SWSS_LOG_ERROR("Failed setting sai object:%lx for port:%s, status:%d\n", map, port.m_alias.c_str(), sai_status);
         return false;
     }
     return true;

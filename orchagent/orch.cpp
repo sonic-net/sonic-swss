@@ -240,7 +240,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
         {
             if (count > 1)
             {
-                SWSS_LOG_ERROR("Singleton field with name:%s must have only 1 instance, actual count:%d\n", field_name.c_str(), count);
+                SWSS_LOG_ERROR("Singleton field with name:%s must have only 1 instance, actual count:%zd\n", field_name.c_str(), count);
                 return ref_resolve_status::multiple_instances;
             }
             string ref_type_name, object_name;
@@ -262,7 +262,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
                     return ref_resolve_status::not_resolved;
                 }
                 sai_object_id_t sai_obj = (*(type_maps[ref_type_name]))[object_name];
-                SWSS_LOG_DEBUG("Resolved to sai_object:0x%llx, type:%s, name:%s", sai_obj, ref_type_name.c_str(), object_name.c_str());
+                SWSS_LOG_DEBUG("Resolved to sai_object:0x%lx, type:%s, name:%s", sai_obj, ref_type_name.c_str(), object_name.c_str());
                 sai_object_arr.push_back(sai_obj);
             }
             count++;

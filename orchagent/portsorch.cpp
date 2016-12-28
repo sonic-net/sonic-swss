@@ -87,7 +87,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         status = sai_port_api->get_port_attribute(port_list[i], 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get hardware lane list pid:%llx", port_list[i]);
+            SWSS_LOG_ERROR("Failed to get hardware lane list pid:%lx", port_list[i]);
             throw "PortsOrch initialization failure";
         }
 
@@ -102,7 +102,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         }
         tmp_lane_str = tmp_lane_str.substr(0, tmp_lane_str.size()-1);
 
-        SWSS_LOG_NOTICE("Get port with lanes pid:%llx lanes:%s", port_list[i], tmp_lane_str.c_str());
+        SWSS_LOG_NOTICE("Get port with lanes pid:%lx lanes:%s", port_list[i], tmp_lane_str.c_str());
         m_portListLaneMap[tmp_lane_set] = port_list[i];
     }
 
@@ -115,10 +115,10 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         status = sai_port_api->set_port_attribute(port_list[i], &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set port to hardware learn mode pid:%llx", port_list[i]);
+            SWSS_LOG_ERROR("Failed to set port to hardware learn mode pid:%lx", port_list[i]);
             throw "PortsOrch initialization failure";
         }
-        SWSS_LOG_NOTICE("Set port to hardware learn mode pid:%llx", port_list[i]);
+        SWSS_LOG_NOTICE("Set port to hardware learn mode pid:%lx", port_list[i]);
     }
 
     /* Get default VLAN member list */
@@ -210,11 +210,11 @@ bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
     sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set admin status %s to port pid:%llx",
+        SWSS_LOG_ERROR("Failed to set admin status %s to port pid:%lx",
                        up ? "UP" : "DOWN", id);
         return false;
     }
-    SWSS_LOG_NOTICE("Set admin status %s to port pid:%llx",
+    SWSS_LOG_NOTICE("Set admin status %s to port pid:%lx",
                     up ? "UP" : "DOWN", id);
     return true;
 }
@@ -729,7 +729,7 @@ bool PortsOrch::initializePort(Port &p)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("Initializing port alias:%s pid:%llx", p.m_alias.c_str(), p.m_port_id);
+    SWSS_LOG_NOTICE("Initializing port alias:%s pid:%lx", p.m_alias.c_str(), p.m_port_id);
 
     initializePriorityGroups(p);
     initializeQueues(p);
@@ -854,12 +854,12 @@ bool PortsOrch::addVlanMember(Port vlan, Port port)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to add member %s to VLAN %s vid:%hu pid:%llx",
+        SWSS_LOG_ERROR("Failed to add member %s to VLAN %s vid:%hu pid:%lx",
                 port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_id, port.m_port_id);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%llx",
+    SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%lx",
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_id, port.m_port_id);
 
     attr.id = SAI_PORT_ATTR_PORT_VLAN_ID;
@@ -868,7 +868,7 @@ bool PortsOrch::addVlanMember(Port vlan, Port port)
     status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set port VLAN ID vid:%hu pid:%llx",
+        SWSS_LOG_ERROR("Failed to set port VLAN ID vid:%hu pid:%lx",
                 vlan.m_vlan_id, port.m_port_id);
         return false;
     }
@@ -896,12 +896,12 @@ bool PortsOrch::removeVlanMember(Port vlan, Port port)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove member %s from VLAN %s vid:%hx vmid:%llx",
+        SWSS_LOG_ERROR("Failed to remove member %s from VLAN %s vid:%hx vmid:%lx",
                 port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_id, port.m_vlan_member_id);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Remove member %s from VLAN %s lid:%hx vmid:%llx",
+    SWSS_LOG_NOTICE("Remove member %s from VLAN %s lid:%hx vmid:%lx",
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_id, port.m_vlan_member_id);
 
     sai_attribute_t attr;
@@ -911,7 +911,7 @@ bool PortsOrch::removeVlanMember(Port vlan, Port port)
     status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to reset port VLAN ID to DEFAULT_PORT_VLAN_ID pid:%llx",
+        SWSS_LOG_ERROR("Failed to reset port VLAN ID to DEFAULT_PORT_VLAN_ID pid:%lx",
                 port.m_port_id);
         return false;
     }
@@ -938,11 +938,11 @@ bool PortsOrch::addLag(string lag_alias)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create LAG %s lid:%llx", lag_alias.c_str(), lag_id);
+        SWSS_LOG_ERROR("Failed to create LAG %s lid:%lx", lag_alias.c_str(), lag_id);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Create an empty LAG %s lid:%llx", lag_alias.c_str(), lag_id);
+    SWSS_LOG_NOTICE("Create an empty LAG %s lid:%lx", lag_alias.c_str(), lag_id);
 
     Port lag(lag_alias, Port::LAG);
     lag.m_lag_id = lag_id;
@@ -966,11 +966,11 @@ bool PortsOrch::removeLag(Port lag)
     sai_status_t status = sai_lag_api->remove_lag(lag.m_lag_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove LAG %s lid:%llx", lag.m_alias.c_str(), lag.m_lag_id);
+        SWSS_LOG_ERROR("Failed to remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Remove LAG %s lid:%llx", lag.m_alias.c_str(), lag.m_lag_id);
+    SWSS_LOG_NOTICE("Remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
 
     m_portList.erase(lag.m_alias);
 
@@ -997,12 +997,12 @@ bool PortsOrch::addLagMember(Port lag, Port port)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to add member %s to LAG %s lid:%llx pid:%llx",
+        SWSS_LOG_ERROR("Failed to add member %s to LAG %s lid:%lx pid:%lx",
                 port.m_alias.c_str(), lag.m_alias.c_str(), lag.m_lag_id, port.m_port_id);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Add member %s to LAG %s lid:%llx pid:%llx",
+    SWSS_LOG_NOTICE("Add member %s to LAG %s lid:%lx pid:%lx",
             port.m_alias.c_str(), lag.m_alias.c_str(), lag.m_lag_id, port.m_port_id);
 
     port.m_lag_id = lag.m_lag_id;
@@ -1024,12 +1024,12 @@ bool PortsOrch::removeLagMember(Port lag, Port port)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove member %s from LAG %s lid:%llx lmid:%llx",
+        SWSS_LOG_ERROR("Failed to remove member %s from LAG %s lid:%lx lmid:%lx",
                 port.m_alias.c_str(), lag.m_alias.c_str(), lag.m_lag_id, port.m_lag_member_id);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Remove member %s from LAG %s lid:%llx lmid:%llx",
+    SWSS_LOG_NOTICE("Remove member %s from LAG %s lid:%lx lmid:%lx",
             port.m_alias.c_str(), lag.m_alias.c_str(), lag.m_lag_id, port.m_lag_member_id);
 
     port.m_lag_id = 0;

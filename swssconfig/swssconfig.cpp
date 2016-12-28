@@ -199,7 +199,7 @@ int main(int argc, char **argv)
 
             if (!write_db_data(db_items))
             {
-                SWSS_LOG_ERROR("Failed applying data from JSON file:%S", i.c_str());
+                SWSS_LOG_ERROR("Failed applying data from JSON file:%s", i.c_str());
                 return EXIT_FAILURE;
             }
         }
