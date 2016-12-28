@@ -200,7 +200,9 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         if (!g_init && g_portSet.find(key) != g_portSet.end())
         {
             /* Bring up the front panel port as the first place*/
-            system(("/sbin/ifup --force " + key).c_str());
+            /* TODO: handle system retur code, if-block is just a warning suppressor */
+            if (system(("/sbin/ifup --force " + key).c_str()))
+                ;
             g_portSet.erase(key);
         }
         else
