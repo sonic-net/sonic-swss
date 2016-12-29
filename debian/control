@@ -9,3 +9,10 @@ Package: swss
 Architecture: any
 Depends: ${shlibs:Depends}
 Description: This package contains Switch State Service for SONiC project.
+
+Package: swss-dbg
+Architecture: any
+Section: debug
+Priority: extra
+Depends: swss (=${binary:Version})
+Description: debugging symbols for swss
