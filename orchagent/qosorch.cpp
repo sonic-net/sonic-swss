@@ -563,8 +563,11 @@ QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNa
     // query the capability and then decide what to do instead of hardcoding the
     // platform-specfic logic like this here, which is ugly and difficult to
     // understand the underlying rationale.
+
+    // Do not create color ACL on p4 platform as it does not support match dscp and ecn
     char *platform = getenv("onie_platform");
-    if (platform && strcmp(platform, "x86_64-barefoot_p4-r0") != 0)
+    if (!platform ||
+        (platform && strcmp(platform, "x86_64-barefoot_p4-r0") != 0))
     {
         // add ACLs to support Sonic WRED profile.
         initColorAcl(); // FIXME: Should be removed as soon as we have ACL configuration support
