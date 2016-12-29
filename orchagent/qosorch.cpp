@@ -559,8 +559,8 @@ QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNa
 {
     SWSS_LOG_ENTER();
 
-    string platform = string(getenv("onie_platform"));
-    if (platform != "x86_64-barefoot_p4-r0")
+    char *platform = getenv("onie_platform");
+    if (!platform && strcmp(platform, "x86_64-barefoot_p4-r0") == 0)
     {
         // add ACLs to support Sonic WRED profile.
         initColorAcl(); // FIXME: Should be removed as soon as we have ACL configuration support
