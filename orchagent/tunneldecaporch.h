@@ -36,7 +36,7 @@ private:
     TunnelTable tunnelTable;
     ExistingIps existingIps;
 
-    bool addDecapTunnel(string key, string type, IpAddresses dst_ip, string dscp, string ecn, string ttl);
+    bool addDecapTunnel(string key, string type, IpAddresses dst_ip, IpAddress src_ip, string dscp, string ecn, string ttl);
     bool removeDecapTunnel(string key);
 
     bool addDecapTunnelTermEntries(string tunnelKey, IpAddresses dst_ip, sai_object_id_t tunnel_id);

@@ -2,6 +2,7 @@
 	{
 		"TUNNEL_DECAP_TABLE:NETBOUNCER" : {
 			"tunnel_type":"IPINIP",
+			"src_ip":"10.0.0.1",
 			"dst_ip":"10.0.0.1",
 			"dscp_mode":"pipe",
 			"ecn_mode":"copy_from_outer",

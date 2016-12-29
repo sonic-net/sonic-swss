@@ -31,6 +31,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
         string op = kfvOp(t);
 
         IpAddresses ip_addresses;
+        IpAddress src_ip;
         string tunnel_type;
         string dscp_mode;
         string ecn_mode;
@@ -55,7 +56,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                         break;
                     }
                 }
-                if (fvField(i) == "dst_ip") 
+                else if (fvField(i) == "dst_ip")
                 {
                     try
                     {
@@ -72,7 +73,24 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                         setIpAttribute(key, ip_addresses, tunnelTable.find(key)->second.tunnel_id);
                     }
                 }
-                if (fvField(i) == "dscp_mode")
+                else if (fvField(i) == "src_ip")
+                {
+                    try
+                    {
+                        src_ip = IpAddress(fvValue(i));
+                    }
+                    catch (const std::invalid_argument &e)
+                    {
+                        SWSS_LOG_ERROR("%s", e.what());
+                        valid = false;
+                        break;
+                    }
+                    if (exists)
+                    {
+                        SWSS_LOG_ERROR("cannot modify src ip for existing tunnel");
+                    }
+                }
+                else if (fvField(i) == "dscp_mode")
                 {
                     dscp_mode = fvValue(i);
                     if (dscp_mode != "uniform" && dscp_mode != "pipe")
@@ -86,7 +104,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                         setTunnelAttribute(fvField(i), dscp_mode, tunnelTable.find(key)->second.tunnel_id);
                     }
                 }
-                if (fvField(i) == "ecn_mode")
+                else if (fvField(i) == "ecn_mode")
                 {
                     ecn_mode = fvValue(i);
                     if (ecn_mode != "copy_from_outer" && ecn_mode != "standard")
@@ -100,7 +118,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                         setTunnelAttribute(fvField(i), ecn_mode, tunnelTable.find(key)->second.tunnel_id);
                     }
                 }
-                if (fvField(i) == "ttl_mode")
+                else if (fvField(i) == "ttl_mode")
                 {
                     ttl_mode = fvValue(i);
                     if (ttl_mode != "uniform" && ttl_mode != "pipe")
@@ -115,10 +133,11 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     }
                 }
             }
+
             // create new tunnel if it doesn't exists already
             if (valid && !exists)
             {
-                if (addDecapTunnel(key, tunnel_type, ip_addresses, dscp_mode, ecn_mode, ttl_mode)) 
+                if (addDecapTunnel(key, tunnel_type, ip_addresses, src_ip, dscp_mode, ecn_mode, ttl_mode))
                 {
                     SWSS_LOG_NOTICE("Tunnel(s) added to ASIC_DB.");
                 }
@@ -152,6 +171,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
  * Arguments:
  *    @param[in] type - type of tunnel
  *    @param[in] dst_ip - destination ip address to decap
+ *    @param[in] src_ip - source ip address to decap
  *    @param[in] dscp - dscp mode (uniform/pipe)
  *    @param[in] ecn - ecn mode (copy_from_outer/standard)
  *    @param[in] ttl - ttl mode (uniform/pipe)
@@ -159,7 +179,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
  * Return Values:
  *    @return true on success and false if there's an error
  */
-bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip, string dscp, string ecn, string ttl)
+bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip, IpAddress src_ip, string dscp, string ecn, string ttl)
 {
 
     SWSS_LOG_ENTER();
@@ -196,6 +216,11 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
     tunnel_attrs.push_back(attr);
     attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
     attr.value.oid = gUnderlayIfId;
+    tunnel_attrs.push_back(attr);
+
+    // tunnel src ip
+    attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
+    copy(attr.value.ipaddr, src_ip.to_string());
     tunnel_attrs.push_back(attr);
 
     // decap ecn mode (copy from outer/standard)
