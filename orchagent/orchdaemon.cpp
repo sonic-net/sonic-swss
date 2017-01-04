@@ -81,6 +81,8 @@ bool OrchDaemon::init()
 /* Flush redis through sairedis interface */
 void OrchDaemon::flush()
 {
+    SWSS_LOG_ENTER();
+
     sai_attribute_t attr;
     attr.id = SAI_REDIS_SWITCH_ATTR_FLUSH;
     sai_status_t status = sai_switch_api->set_switch_attribute(&attr);
