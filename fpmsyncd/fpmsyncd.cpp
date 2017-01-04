@@ -43,7 +43,7 @@ int main(int argc, char **argv)
         {
             cout << "Connection lost, reconnecting..." << endl;
         }
-        catch (const std::exception& e)
+        catch (const exception& e)
         {
             cout << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
             return 0;

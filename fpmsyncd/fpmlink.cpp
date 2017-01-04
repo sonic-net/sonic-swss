@@ -22,20 +22,20 @@ FpmLink::FpmLink(int port) :
 
     m_server_socket = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (m_server_socket < 0)
-        throw std::system_error(errno, std::system_category());
+        throw system_error(errno, system_category());
 
     if (setsockopt(m_server_socket, SOL_SOCKET, SO_REUSEADDR, &true_val,
                    sizeof(true_val)) < 0)
     {
         close(m_server_socket);
-        throw std::system_error(errno, std::system_category());
+        throw system_error(errno, system_category());
     }
 
     if (setsockopt(m_server_socket, SOL_SOCKET, SO_KEEPALIVE, &true_val,
                    sizeof(true_val)) < 0)
     {
         close(m_server_socket);
-        throw std::system_error(errno, std::system_category());
+        throw system_error(errno, system_category());
     }
 
     memset (&addr, 0, sizeof (addr));
@@ -46,13 +46,13 @@ FpmLink::FpmLink(int port) :
     if (bind(m_server_socket, (struct sockaddr *)&addr, sizeof(addr)) < 0)
     {
         close(m_server_socket);
-        throw std::system_error(errno, std::system_category());
+        throw system_error(errno, system_category());
     }
 
     if (listen(m_server_socket, 2) != 0)
     {
         close(m_server_socket);
-        throw std::system_error(errno, std::system_category());
+        throw system_error(errno, system_category());
     }
 
     m_server_up = true;
@@ -76,7 +76,7 @@ void FpmLink::accept()
     m_connection_socket = ::accept(m_server_socket, (struct sockaddr *)&client_addr,
                                    &client_len);
     if (m_connection_socket < 0)
-        throw std::system_error(errno, std::system_category());
+        throw system_error(errno, system_category());
 
     SWSS_LOG_INFO("New connection accepted from: %s\n", inet_ntoa(client_addr.sin_addr));
 }
@@ -108,7 +108,7 @@ void FpmLink::readMe()
     if (read == 0)
         throw FpmConnectionClosedException();
     if (read < 0)
-        throw std::system_error(errno, std::system_category());
+        throw system_error(errno, system_category());
     m_pos+= read;
 
     /* Check for complete messages */
@@ -124,13 +124,13 @@ void FpmLink::readMe()
             break;
 
         if (!fpm_msg_ok(hdr, left))
-            throw std::system_error(make_error_code(errc::bad_message), "Malformed FPM message received");
+            throw system_error(make_error_code(errc::bad_message), "Malformed FPM message received");
 
         if (hdr->msg_type == FPM_MSG_TYPE_NETLINK)
         {
             nl_msg *msg = nlmsg_convert((nlmsghdr *)fpm_msg_data(hdr));
             if (msg == NULL)
-                throw std::system_error(make_error_code(errc::bad_message), "Unable to convert nlmsg");
+                throw system_error(make_error_code(errc::bad_message), "Unable to convert nlmsg");
 
             nlmsg_set_proto(msg, NETLINK_ROUTE);
             NetDispatcher::getInstance().onNetlinkMessage(msg);
