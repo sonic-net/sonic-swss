@@ -604,7 +604,11 @@ sai_object_id_t QosOrch::initSystemAclTable()
     sai_object_id_t acl_table_id;
     sai_status_t status;
 
-    // create system acl table
+    /* Create system ACL table */
+    attr.id = SAI_ACL_TABLE_ATTR_BIND_POINT;
+    attr.value.s32 = SAI_ACL_BIND_POINT_SWITCH;
+    attrs.push_back(attr);
+
     attr.id = SAI_ACL_TABLE_ATTR_STAGE;
     attr.value.s32 = SAI_ACL_STAGE_INGRESS;
     attrs.push_back(attr);
@@ -624,12 +628,12 @@ sai_object_id_t QosOrch::initSystemAclTable()
     status = sai_acl_api->create_acl_table(&acl_table_id, attrs.size(), &attrs[0]);
     if (status == SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_NOTICE("Successfully created ACL table for ECN coloring");
+        SWSS_LOG_NOTICE("Create system ACL table for ECN coloring");
     }
     else
     {
-        SWSS_LOG_ERROR("create system acl table. sai_acl_api->create_acl_table failed: %d", status);
-        throw runtime_error("Failed to create system acl table");
+        SWSS_LOG_ERROR("Failed to create system ACL table. sai_acl_api->create_acl_table failed: %d", status);
+        throw runtime_error("Failed to create system ACL table");
     }
 
     return acl_table_id;
