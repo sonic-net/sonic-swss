@@ -10,7 +10,7 @@ std::map<acl_range_properties_t, AclRange*> AclRange::m_ranges;
 std::condition_variable AclOrch::m_sleepGuard;
 bool AclOrch::m_bCollectCounters = true;
 
-swss::DBConnector AclOrch::m_db(COUNTERS_DB, "localhost", 6379, 0);
+swss::DBConnector AclOrch::m_db(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 swss::Table AclOrch::m_countersTable(&m_db, "COUNTERS");
 
 extern sai_acl_api_t*    sai_acl_api;
