@@ -22,6 +22,8 @@ using namespace swss;
 #define VLAN_DRV_NAME   "bridge"
 #define TEAM_DRV_NAME   "team"
 
+#define DEFAULT_LAG_INTERFACES_FILE "/etc/network/interfaces.d/lag_interfaces"
+
 const string INTFS_PREFIX = "Ethernet";
 const string VLAN_PREFIX = "Vlan";
 const string LAG_PREFIX = "PortChannel";
@@ -120,9 +122,12 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     /* Insert or update the ifindex to key map */
     m_ifindexNameMap[ifindex] = key;
 
-    /* Will be dealt by teamsyncd */
+    /* LAG (PortChannel) */
     if (type && !strcmp(type, TEAM_DRV_NAME))
     {
+        /* Bring up the LAG */
+        if (system(("/sbin/ifup --force -i " + string(DEFAULT_LAG_INTERFACES_FILE) + " " + key).c_str()))
+            ;
         return;
     }
 
