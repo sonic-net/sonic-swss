@@ -136,20 +136,17 @@ void initSaiApi()
 
 int main(int argc, char **argv)
 {
-    swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_NOTICE);
+    swss::Logger::linkToDb("orchagent");
 
     SWSS_LOG_ENTER();
 
     int opt;
     sai_status_t status;
 
-    while ((opt = getopt(argc, argv, "m:hd")) != -1)
+    while ((opt = getopt(argc, argv, "m:h")) != -1)
     {
         switch (opt)
         {
-        case 'd':
-            swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_DEBUG);
-            break;
         case 'm':
             gMacAddress = MacAddress(optarg);
             break;

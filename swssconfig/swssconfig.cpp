@@ -162,8 +162,6 @@ vector<string> read_directory(const string &path)
 
 int main(int argc, char **argv)
 {
-    Logger::setMinPrio(Logger::SWSS_NOTICE);
-
     vector<string> files;
     if (argc == 1)
     {

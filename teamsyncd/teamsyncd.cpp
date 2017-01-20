@@ -11,6 +11,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
+    swss::Logger::linkToDb("teamsyncd");
     DBConnector db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     Select s;
     TeamSync sync(&db, &s);
