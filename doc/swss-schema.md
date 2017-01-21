@@ -124,7 +124,7 @@ For example (reorder output)
     speed
 
     key                 = LAG_TABLE:lagname:ifname  ; physical port member of LAG, fk to PORT_TABLE:ifname
-    oper_status         = "down" / "up"        ; Oper status (physical + 802.3ad state)
+    status              = "enabled" / "disabled"    ; selected + distributing/collecting (802.3ad)
     speed               = ; set by LAG application, must match PORT_TABLE.duplex
     duplex              = ; set by LAG application, must match PORT_TABLE.duplex
 
@@ -142,8 +142,8 @@ In addition for each team device, the teamsyncd listens to team events
 and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 
     127.0.0.1:6379> HGETALL "LAG_TABLE:team0:veth0"
-    1) "linkup"
-    2) "down"
+    1) "status"
+    2) "disabled"
     3) "speed"
     4) "0Mbit"
     5) "duplex"

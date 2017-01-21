@@ -565,7 +565,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
             }
         }
-        /* Manipulate member */
+        /* Manipulate a LAG member */
         else
         {
             assert(m_portList.find(lag_alias) != m_portList.end());
@@ -573,17 +573,18 @@ void PortsOrch::doLagTask(Consumer &consumer)
             getPort(lag_alias, lag);
             getPort(port_alias, port);
 
+            /* Add a LAG member */
             if (op == SET_COMMAND)
             {
-                string linkup_status;
+                string status;
                 for (auto i : kfvFieldsValues(t))
                 {
-                    if (fvField(i) == "linkup")
-                        linkup_status = fvValue(i);
+                    if (fvField(i) == "status")
+                        status = fvValue(i);
                 }
 
-                /* Add LAG member */
-                if (linkup_status == "up")
+                /* Sync an enabled member */
+                if (status == "enabled")
                 {
                     /* Duplicate entry */
                     if (lag.m_members.find(port_alias) != lag.m_members.end())
@@ -600,15 +601,11 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     else
                         it++;
                 }
-                /* Remove LAG member */
-                else /* linkup_status == "down" */
+                /* Sync an disabled member */
+                else /* status == "disabled" */
                 {
-                    assert(lag.m_members.find(port_alias) != lag.m_members.end());
-
-                    /* Cannot locate LAG or LAG member
-                     * This happens at the time when teamd starts. The linkup
-                     * is set to down in the beginning.
-                     */
+                    /* "status" is "disabled" at start when m_lag_id and
+                     * m_lag_member_id are absent */
                     if (!port.m_lag_id || !port.m_lag_member_id)
                     {
                         it = consumer.m_toSync.erase(it);
@@ -620,10 +617,11 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     else
                         it++;
                 }
-
             }
+            /* Remove a LAG member */
             else if (op == DEL_COMMAND)
             {
+                /* Assert the LAG member exists */
                 assert(lag.m_members.find(port_alias) != lag.m_members.end());
 
                 /* Assert the port belongs to a LAG */

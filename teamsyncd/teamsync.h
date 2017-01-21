@@ -38,7 +38,7 @@ public:
         virtual void readMe();
 
     protected:
-        int onPortChange(bool isInit);
+        int onChange();
         static int teamdHandler(struct team_handle *th, void *arg,
                                 team_change_type_mask_t type_mask);
         static const struct team_change_handler gPortChangeHandler;
@@ -47,6 +47,7 @@ public:
         struct team_handle *m_team;
         std::string m_lagName;
         int m_ifindex;
+        std::map<std::string, bool> m_lagMembers; /* map[ifname] = status (enabled|disabled) */
     };
 
 protected:

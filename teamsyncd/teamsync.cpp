@@ -84,7 +84,7 @@ void TeamSync::removeLag(const string &lagName)
 
 const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {
     .func       = TeamSync::TeamPortSync::teamdHandler,
-    .type_mask  = TEAM_PORT_CHANGE
+    .type_mask  = TEAM_PORT_CHANGE | TEAM_OPTION_CHANGE
 };
 
 TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
@@ -119,7 +119,8 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
                            "Unable to register port change event");
     }
 
-    onPortChange(true);
+    /* Sync LAG at first */
+    onChange();
 }
 
 TeamSync::TeamPortSync::~TeamPortSync()
@@ -131,42 +132,60 @@ TeamSync::TeamPortSync::~TeamPortSync()
     }
 }
 
-int TeamSync::TeamPortSync::onPortChange(bool isInit)
+int TeamSync::TeamPortSync::onChange()
 {
     struct team_port *port;
+    map<string, bool> tmp_lag_members;
+
+    /* Check each port  */
     team_for_each_port(port, m_team)
     {
-        if (isInit || team_is_port_changed(port))
-        {
-            string key = m_lagName;
-            key += ":";
-            uint32_t ifindex = team_get_port_ifindex(port);
-            char ifname[MAX_IFNAME + 1] = {0};
-            key += team_ifindex2ifname(m_team, ifindex, ifname, MAX_IFNAME);
+        uint32_t ifindex;
+        char ifname[MAX_IFNAME + 1] = {0};
+        bool enabled;
 
-            if (team_is_port_removed(port))
-            {
-                m_lagTable->del(key);
-            } else
-            {
-                std::vector<FieldValueTuple> fvVector;
-                FieldValueTuple l("linkup", team_is_port_link_up(port) ? "up" : "down");
-                FieldValueTuple s("speed", to_string(team_get_port_speed(port)) + "Mbit");
-                FieldValueTuple d("duplex", team_get_port_duplex(port) ? "full" : "half");
-                fvVector.push_back(l);
-                fvVector.push_back(s);
-                fvVector.push_back(d);
-                m_lagTable->set(key, fvVector);
-            }
+        ifindex = team_get_port_ifindex(port);
+        team_ifindex2ifname(m_team, ifindex, ifname, MAX_IFNAME);
+
+        /* Skip the member that is removed from the LAG */
+        if (team_is_port_removed(port))
+            continue;
+
+        team_get_port_enabled(m_team, ifindex, &enabled);
+        tmp_lag_members[string(ifname)] = enabled;
+    }
+
+    /* Compare old and new LAG members and set/del accordingly */
+    for (auto it : tmp_lag_members)
+    {
+        if (m_lagMembers.find(it.first) == m_lagMembers.end() || it.second != m_lagMembers[it.first])
+        {
+            string key = m_lagName + ":" + it.first;
+            vector<FieldValueTuple> v;
+            FieldValueTuple l("status", it.second ? "enabled" : "disabled");
+            v.push_back(l);
+            m_lagTable->set(key, v);
         }
     }
+
+    for (auto it : m_lagMembers)
+    {
+        if (tmp_lag_members.find(it.first) == tmp_lag_members.end())
+        {
+            string key = m_lagName + ":" + it.first;
+            m_lagTable->del(key);
+        }
+    }
+
+    /* Replace the old LAG members with the new ones */
+    m_lagMembers = tmp_lag_members;
     return 0;
 }
 
 int TeamSync::TeamPortSync::teamdHandler(struct team_handle *team, void *arg,
                                          team_change_type_mask_t type_mask)
 {
-    return ((TeamSync::TeamPortSync *)arg)->onPortChange(false);
+    return ((TeamSync::TeamPortSync *)arg)->onChange();
 }
 
 void TeamSync::TeamPortSync::addFd(fd_set *fd)
