@@ -593,6 +593,19 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
     {
         sai_attribute_t attr;
         vector<sai_attribute_t> range_attrs;
+
+        // work around to avoid syncd termination on SAI error due to max count of ranges reached
+        // can be removed when syncd start passing errors to the SAI callers
+        char *platform = getenv("onie_platform");
+        if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+        {
+            if (m_ranges.size() >= MLNX_MAX_RANGES_COUNT)
+            {
+                SWSS_LOG_ERROR("Maximum numbers of ACL ranges reached\n");
+                return NULL;
+            }
+        }
+
         attr.id =  SAI_ACL_RANGE_ATTR_TYPE;
         attr.value.s32 = type;
         range_attrs.push_back(attr);
