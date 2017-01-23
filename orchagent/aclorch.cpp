@@ -1083,6 +1083,11 @@ sai_status_t AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &ta
           SAI_ACL_RANGE_L4_SRC_PORT_RANGE
         };
 #endif
+
+    attr.id = SAI_ACL_TABLE_ATTR_BIND_POINT;
+    attr.value.s32 = SAI_ACL_BIND_POINT_PORT;
+    table_attrs.push_back(attr);
+
     attr.id =  SAI_ACL_TABLE_ATTR_STAGE;
     attr.value.s32 = SAI_ACL_STAGE_INGRESS;
     table_attrs.push_back(attr);
