@@ -135,25 +135,23 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (master)
     {
         string master_key = m_ifindexNameMap[master];
-        /* LAG member: will be dealt by teamsyncd */
-        if (!master_key.compare(0, LAG_PREFIX.length(), LAG_PREFIX))
+        /* Verify the master interface starts with "Vlan" to exclude "PortChannel" interfaces */
+        if (!master_key.compare(0, VLAN_PREFIX.length(), VLAN_PREFIX))
         {
-            return;
-        }
+            string member_key = master_key + ":" + key;
 
-        string member_key = master_key + ":" + key;
+            if (nlmsg_type == RTM_DELLINK) /* Will it happen? */
+            {
+                m_vlanTableProducer.del(member_key);
+            }
+            else /* RTM_NEWLINK */
+            {
+                vector<FieldValueTuple> fvVector;
+                FieldValueTuple t("tagging_mode", "untagged");
+                fvVector.push_back(t);
 
-        if (nlmsg_type == RTM_DELLINK) /* Will it happen? */
-        {
-            m_vlanTableProducer.del(member_key);
-        }
-        else /* RTM_NEWLINK */
-        {
-            vector<FieldValueTuple> fvVector;
-            FieldValueTuple t("tagging_mode", "untagged");
-            fvVector.push_back(t);
-
-            m_vlanTableProducer.set(member_key, fvVector);
+                m_vlanTableProducer.set(member_key, fvVector);
+            }
         }
     }
     /* No longer a VLAN member: Check if it was a member before and remove it */
