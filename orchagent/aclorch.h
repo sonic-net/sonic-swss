@@ -98,7 +98,7 @@ private:
 class AclRule
 {
 public:
-    AclRule(AclOrch *aclOrch, string rule, string table);
+    AclRule(AclOrch *m_pAclOrch, string rule, string table);
     virtual bool validateAddPriority(string attr_name, string attr_value);
     virtual bool validateAddMatch(string attr_name, string attr_value);
     virtual bool validateAddAction(string attr_name, string attr_value) = 0;
@@ -111,17 +111,17 @@ public:
 
     string getId()
     {
-        return id;
+        return m_id;
     }
 
     string getTableId()
     {
-        return table_id;
+        return m_tableId;
     }
 
     sai_object_id_t getCounterOid()
     {
-        return counter_oid;
+        return m_counterOid;
     }
 
     static shared_ptr<AclRule> makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, string rule, string table);
@@ -132,21 +132,21 @@ protected:
     virtual bool removeCounter();
     virtual bool removeRanges();
 
-    AclOrch *aclOrch;
-    string id;
-    string table_id;
-    sai_object_id_t table_oid;
-    sai_object_id_t rule_oid;
-    sai_object_id_t counter_oid;
-    uint32_t priority;
-    map <sai_acl_entry_attr_t, sai_attribute_value_t> matches;
-    map <sai_acl_entry_attr_t, sai_attribute_value_t> actions;
+    AclOrch *m_pAclOrch;
+    string m_id;
+    string m_tableId;
+    sai_object_id_t m_tableOid;
+    sai_object_id_t m_ruleOid;
+    sai_object_id_t m_counterOid;
+    uint32_t m_priority;
+    map <sai_acl_entry_attr_t, sai_attribute_value_t> m_matches;
+    map <sai_acl_entry_attr_t, sai_attribute_value_t> m_actions;
 };
 
 class AclRuleL3: public AclRule
 {
 public:
-    AclRuleL3(AclOrch *aclOrch, string rule, string table);
+    AclRuleL3(AclOrch *m_pAclOrch, string rule, string table);
 
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
@@ -156,7 +156,7 @@ public:
 class AclRuleMirror: public AclRule
 {
 public:
-    AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirrorOrch, string rule, string table);
+    AclRuleMirror(AclOrch *m_pAclOrch, MirrorOrch *m_pMirrorOrch, string rule, string table);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
     bool create();
@@ -164,9 +164,9 @@ public:
     void update(SubjectType, void *);
 
 protected:
-    bool state;
-    string sessionName;
-    MirrorOrch *mirrorOrch;
+    bool m_state;
+    string m_sessionName;
+    MirrorOrch *m_pMirrorOrch;
 };
 
 struct AclTable {
@@ -192,7 +192,7 @@ inline void split(string str, Iterable& out, char delim = ' ')
     }
 }
 
-class AclOrch : public Orch, public Observer, public std::thread
+class AclOrch : public Orch, public Observer, public thread
 {
 public:
     AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch);
@@ -201,7 +201,7 @@ public:
 
     sai_object_id_t getTableById(string table_id);
 
-    static std::mutex& getContextMutex()
+    static mutex& getContextMutex()
     {
         return m_countersMutex;
     }
@@ -231,8 +231,8 @@ private:
     // Port OID to vector of ACL OIDs
     map <sai_object_id_t, vector<sai_object_id_t>> m_portBind;
 
-    static std::mutex m_countersMutex;
-    static std::condition_variable m_sleepGuard;
+    static mutex m_countersMutex;
+    static condition_variable m_sleepGuard;
     static bool m_bCollectCounters;
     static swss::DBConnector m_db;
     static swss::Table m_countersTable;
