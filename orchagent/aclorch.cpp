@@ -1118,10 +1118,6 @@ sai_status_t AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &ta
     attr.value.u32 = DEFAULT_TABLE_PRIORITY;
     table_attrs.push_back(attr);
 
-    attr.id =  SAI_ACL_TABLE_ATTR_SIZE;
-    attr.value.u32 = 0;
-    table_attrs.push_back(attr);
-
     attr.id =  SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE;
     attr.value.booldata = true;
     table_attrs.push_back(attr);
