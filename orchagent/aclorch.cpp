@@ -70,6 +70,18 @@ inline string toUpper(const string& str)
     return uppercase;
 }
 
+inline string trim(const std::string& str, const std::string& whitespace = " \t")
+{
+    const auto strBegin = str.find_first_not_of(whitespace);
+    if (strBegin == std::string::npos)
+        return "";
+
+    const auto strEnd = str.find_last_not_of(whitespace);
+    const auto strRange = strEnd - strBegin + 1;
+
+    return str.substr(strBegin, strRange);
+}
+
 AclRule::AclRule(AclOrch *aclOrch, string rule, string table) :
         m_pAclOrch(aclOrch),
         m_id(rule),
@@ -135,9 +147,46 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         value.aclfield.enable = true;
         value.aclfield.mask.u32 = 0xFFFFFFFF;
     }
+    else if(attr_name == MATCH_TCP_FLAGS)
+    {
+        vector<string> flagsData;
+        string flags, mask;
+        int val;
+        char *endp = NULL;
+        errno = 0;
+
+        split(attr_value, flagsData, '/');
+
+        if (flagsData.size() != 2) // expect two parts flags and mask separated with '/'
+        {
+            SWSS_LOG_ERROR("Invalid TCP flags format %s", attr_value.c_str());
+            return false;
+        }
+
+        flags = trim(flagsData[0]);
+        mask = trim(flagsData[1]);
+
+        val = strtol(flags.c_str(), &endp, 0);
+        if (errno || (endp != flags.c_str() + flags.size()) ||
+            (val < 0) || (val > UCHAR_MAX))
+        {
+            SWSS_LOG_ERROR("TCP flags parse error, value: %s(=%d), errno: %d", flags.c_str(), val, errno);
+            return false;
+        }
+        value.aclfield.data.u8 = val;
+
+        val = strtol(mask.c_str(), &endp, 0);
+        if (errno || (endp != mask.c_str() + mask.size()) ||
+            (val < 0) || (val > UCHAR_MAX))
+        {
+            SWSS_LOG_ERROR("TCP mask parse error, value: %s(=%d), errno: %d", mask.c_str(), val, errno);
+            return false;
+        }
+        value.aclfield.mask.u8 = val;
+    }
     else if((attr_name == MATCH_ETHER_TYPE)  || (attr_name == MATCH_DSCP)        ||
             (attr_name == MATCH_L4_SRC_PORT) || (attr_name == MATCH_L4_DST_PORT) ||
-            (attr_name == MATCH_IP_PROTOCOL) || (attr_name == MATCH_TCP_FLAGS))
+            (attr_name == MATCH_IP_PROTOCOL))
     {
         char *endp = NULL;
         errno = 0;
