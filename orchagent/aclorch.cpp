@@ -496,6 +496,17 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
     return true;
 }
 
+bool AclRuleL3::validateAddMatch(string attr_name, string attr_value)
+{
+    if (attr_name == MATCH_DSCP)
+    {
+        SWSS_LOG_ERROR("DSCP match is not supported for the tables of type L3");
+        return false;
+    }
+
+    return AclRule::validateAddMatch(attr_name, attr_value);
+}
+
 bool AclRuleL3::validate()
 {
     SWSS_LOG_ENTER();
@@ -1198,6 +1209,13 @@ sai_status_t AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &ta
     attr.id =  SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS;
     attr.value.booldata = true;
     table_attrs.push_back(attr);
+
+    if (aclTable.type == ACL_TABLE_MIRROR)
+    {
+        attr.id =  SAI_ACL_TABLE_ATTR_FIELD_DSCP;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+    }
 
     attr.id =  SAI_ACL_TABLE_ATTR_FIELD_RANGE;
     // workaround until SAI is fixed

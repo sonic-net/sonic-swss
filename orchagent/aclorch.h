@@ -149,6 +149,7 @@ public:
     AclRuleL3(AclOrch *m_pAclOrch, string rule, string table);
 
     bool validateAddAction(string attr_name, string attr_value);
+    bool validateAddMatch(string attr_name, string attr_value);
     bool validate();
     void update(SubjectType, void *);
 };
