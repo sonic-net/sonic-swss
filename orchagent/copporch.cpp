@@ -93,6 +93,7 @@ CoppOrch::CoppOrch(DBConnector *db, string tableName) :
 
 void CoppOrch::initDefaultTrapIds()
 {
+    SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
     vector<sai_attribute_t> trap_id_attrs;
@@ -105,29 +106,34 @@ void CoppOrch::initDefaultTrapIds()
     attr.value.oid = m_trap_group_map[default_trap_group];
     trap_id_attrs.push_back(attr);
 
+    /* Receive packets via OS net device */
     attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_CHANNEL;
     attr.value.s32 = SAI_HOSTIF_TRAP_CHANNEL_NETDEV;
     trap_id_attrs.push_back(attr);
 
-    if (!applyAttributesToTrapIds(default_trap_ids, trap_id_attrs))
+    if (!applyAttributesToTrapIds(m_trap_group_map[default_trap_group], default_trap_ids, trap_id_attrs))
     {
-        SWSS_LOG_ERROR("Failed applying default trap Ids.");
+        SWSS_LOG_ERROR("Failed to set attributes to default trap IDs");
     }
+
+    SWSS_LOG_INFO("Set attributes to default trap IDs");
 }
 
 void CoppOrch::initDefaultTrapGroup()
 {
     SWSS_LOG_ENTER();
-    sai_status_t sai_status;
-    sai_attribute_t attrib;
 
-    attrib.id = SAI_SWITCH_ATTR_DEFAULT_TRAP_GROUP;
-    sai_status = sai_switch_api->get_switch_attribute(1, &attrib);
-    if (sai_status != SAI_STATUS_SUCCESS)
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_DEFAULT_TRAP_GROUP;
+
+    sai_status_t status = sai_switch_api->get_switch_attribute(1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("failed to get default trap group. error:%d", sai_status);
+        SWSS_LOG_ERROR("Failed to get default trap group, rc=%d", status);
     }
-    m_trap_group_map[default_trap_group] = attrib.value.oid;
+
+    SWSS_LOG_INFO("Get default trap group");
+    m_trap_group_map[default_trap_group] = attr.value.oid;
 }
 
 void CoppOrch::getTrapIdList(vector<string> &trap_id_name_list, vector<sai_hostif_trap_id_t> &trap_id_list) const
@@ -143,21 +149,24 @@ void CoppOrch::getTrapIdList(vector<string> &trap_id_name_list, vector<sai_hosti
     }
 }
 
-bool CoppOrch::applyAttributesToTrapIds(const vector<sai_hostif_trap_id_t> &trap_id_list, vector<sai_attribute_t> &trap_id_attribs)
+bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
+                                        const vector<sai_hostif_trap_id_t> &trap_id_list,
+                                        vector<sai_attribute_t> &trap_id_attribs)
 {
     for (auto trap_id : trap_id_list)
     {
-        for (auto trap_id_attr : trap_id_attribs)
+        for (auto attr : trap_id_attribs)
         {
-            SWSS_LOG_DEBUG("Applying trap attr:%d", trap_id_attr.id);
-            sai_status_t sai_status = sai_hostif_api->set_trap_attribute(trap_id, &trap_id_attr);
-            if (sai_status != SAI_STATUS_SUCCESS)
+            sai_status_t status = sai_hostif_api->set_trap_attribute(trap_id, &attr);
+            if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to apply trap_id attribute:%d to trap_id:%d, error:%d\n", trap_id_attr.id, trap_id, sai_status);
+                SWSS_LOG_ERROR("Failed to set attribute %d to trap %d, rc=%d", attr.id, trap_id, status);
                 return false;
             }
         }
+        m_syncdTrapIds[trap_id] = trap_group_id;
     }
+
     return true;
 }
 
@@ -173,39 +182,46 @@ bool CoppOrch::applyTrapIds(sai_object_id_t trap_group, vector<string> &trap_id_
     attr.value.oid = trap_group;
     trap_id_attribs.push_back(attr);
 
-    // The channel is always the NETDEV device.
+    /* Receive packets via OS net device */
     attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_CHANNEL;
     attr.value.s32 = SAI_HOSTIF_TRAP_CHANNEL_NETDEV;
     trap_id_attribs.push_back(attr);
 
-    return applyAttributesToTrapIds(trap_id_list, trap_id_attribs);
+    return applyAttributesToTrapIds(trap_group, trap_id_list, trap_id_attribs);
 }
 
 bool CoppOrch::removePolicer(string trap_group_name)
 {
     SWSS_LOG_ENTER();
+
     sai_attribute_t attr;
     sai_status_t sai_status;
     sai_object_id_t policer_id = getPolicer(trap_group_name);
+
     if (SAI_NULL_OBJECT_ID == policer_id)
     {
-        SWSS_LOG_DEBUG("No policer is attached to trap group:%s\n", trap_group_name.c_str());
+        SWSS_LOG_INFO("No policer is attached to trap group %s", trap_group_name.c_str());
         return true;
     }
+
     attr.id = SAI_HOSTIF_TRAP_GROUP_ATTR_POLICER;
     attr.value.oid = SAI_NULL_OBJECT_ID;
+
     sai_status = sai_hostif_api->set_trap_group_attribute(m_trap_group_map[trap_group_name], &attr);
     if (sai_status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to reset policer for trap group:%lx, error:%d\n", m_trap_group_map[trap_group_name], sai_status);
+        SWSS_LOG_ERROR("Failed to set policer to NULL for trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
         return false;
     }
+
     sai_status = sai_policer_api->remove_policer(policer_id);
     if (sai_status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove policer:%lx, error:%d\n", policer_id, sai_status);
+        SWSS_LOG_ERROR("Failed to remove policer for trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
         return false;
     }
+
+    SWSS_LOG_NOTICE("Remove policer for trap group %s", trap_group_name.c_str());
     m_trap_group_policer_map.erase(m_trap_group_map[trap_group_name]);
     return true;
 }
@@ -213,6 +229,7 @@ bool CoppOrch::removePolicer(string trap_group_name)
 sai_object_id_t CoppOrch::getPolicer(string trap_group_name)
 {
     SWSS_LOG_ENTER();
+
     SWSS_LOG_DEBUG("trap group name:%s:", trap_group_name.c_str());
     if (m_trap_group_map.find(trap_group_name) == m_trap_group_map.end())
     {
@@ -230,33 +247,39 @@ sai_object_id_t CoppOrch::getPolicer(string trap_group_name)
 bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &policer_attribs)
 {
     SWSS_LOG_ENTER();
+
     sai_object_id_t policer_id;
     sai_status_t sai_status;
-    SWSS_LOG_DEBUG("trap group name:%s:", trap_group_name.c_str());
+
     sai_status = sai_policer_api->create_policer(&policer_id, policer_attribs.size(), policer_attribs.data());
     if (sai_status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create policer for existing trap_group_name:%lx, name:%s, error:%d", m_trap_group_map[trap_group_name], trap_group_name.c_str(), sai_status);
+        SWSS_LOG_ERROR("Failed to create policer trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
         return false;
     }
-    SWSS_LOG_DEBUG("Created policer:%lx for trap group:%lx", policer_id, m_trap_group_map[trap_group_name]);
+
+    SWSS_LOG_NOTICE("Create policer for trap group %s", trap_group_name.c_str());
+
     sai_attribute_t attr;
     attr.id = SAI_HOSTIF_TRAP_GROUP_ATTR_POLICER;
     attr.value.oid = policer_id;
+
     sai_status = sai_hostif_api->set_trap_group_attribute(m_trap_group_map[trap_group_name], &attr);
     if (sai_status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to bind policer:%lx to trap group:%lx, name:%s, error:%d\n", policer_id, m_trap_group_map[trap_group_name], trap_group_name.c_str(), sai_status);
+        SWSS_LOG_ERROR("Failed to bind policer to trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
         return false;
     }
+
+    SWSS_LOG_NOTICE("Bind policer to trap group %s:", trap_group_name.c_str());
     m_trap_group_policer_map[m_trap_group_map[trap_group_name]] = policer_id;
-    SWSS_LOG_DEBUG("Created policer:%lx for trap group name:%s:", policer_id, trap_group_name.c_str());
     return true;
 }
 
 task_process_status CoppOrch::processCoppRule(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
+
     sai_status_t sai_status;
     vector<string> trap_id_list;
     string queue_ind;
@@ -265,7 +288,6 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
     string trap_group_name = kfvKey(tuple);
     string op = kfvOp(tuple);
 
-    SWSS_LOG_DEBUG("copp:processing:%s", trap_group_name.c_str());
     vector<sai_attribute_t> trap_gr_attribs;
     vector<sai_attribute_t> trap_id_attribs;
     vector<sai_attribute_t> policer_attribs;
@@ -385,9 +407,10 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             }
         }
 
+        /* Set host interface trap group */
         if (m_trap_group_map.find(trap_group_name) != m_trap_group_map.end())
         {
-            SWSS_LOG_DEBUG("found existing trap_group object:%s", trap_group_name.c_str());
+            /* Create or set policer */
             if (!policer_attribs.empty())
             {
                 sai_object_id_t policer_id = getPolicer(trap_group_name);
@@ -416,40 +439,46 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                     }
                 }
             }
-            SWSS_LOG_DEBUG("Applying trap group attributes");
+
             for (sai_uint32_t ind = 0; ind < trap_gr_attribs.size(); ind++)
             {
                 auto trap_gr_attr = trap_gr_attribs[ind];
-                SWSS_LOG_DEBUG("Applying trap group attribute:%d", trap_gr_attr.id);
+
                 sai_status = sai_hostif_api->set_trap_group_attribute(m_trap_group_map[trap_group_name], &trap_gr_attr);
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to apply attribute:%d to trap group:%lx, name:%s, error:%d\n", trap_gr_attr.id, m_trap_group_map[trap_group_name], trap_group_name.c_str(), sai_status);
                     return task_process_status::task_failed;
                 }
+                SWSS_LOG_NOTICE("Set trap group %s to host interface", trap_group_name.c_str());
             }
         }
+        /* Create host interface trap group */
         else
         {
-            SWSS_LOG_DEBUG("Creating new trap_group object:%s", trap_group_name.c_str());
             sai_object_id_t new_trap;
+
             sai_status = sai_hostif_api->create_hostif_trap_group(&new_trap, trap_gr_attribs.size(), trap_gr_attribs.data());
             if (sai_status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to create new trap_group with name:%s", trap_group_name.c_str());
+                SWSS_LOG_ERROR("Failed to create host interface trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
                 return task_process_status::task_failed;
             }
-            SWSS_LOG_DEBUG("Created new trap_group:%lx with name:%s", new_trap, trap_group_name.c_str());
+
+            SWSS_LOG_NOTICE("Create host interface trap group %s", trap_group_name.c_str());
             m_trap_group_map[trap_group_name] = new_trap;
+
+            /* Create policer */
             if (!policer_attribs.empty())
             {
                 if (!createPolicer(trap_group_name, policer_attribs))
                 {
                     return task_process_status::task_failed;
                 }
-                SWSS_LOG_DEBUG("Bound policer to the trap group");
             }
         }
+
+        /* Apply traps to trap group */
         if (!applyTrapIds(m_trap_group_map[trap_group_name], trap_id_list, trap_id_attribs))
         {
             return task_process_status::task_failed;
@@ -457,26 +486,54 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
     }
     else if (op == DEL_COMMAND)
     {
-        // delete trap group and its policer.
+        /* Remove policer if any */
         if (!removePolicer(trap_group_name))
         {
-            SWSS_LOG_ERROR("Failed to remove policer from trap group:%s\n", trap_group_name.c_str());
+            SWSS_LOG_ERROR("Failed to remove policer from trap group %s", trap_group_name.c_str());
             return task_process_status::task_failed;
         }
 
-        // default trap group is never deleted.
+        /* Do not remove default trap group */
         if (trap_group_name == default_trap_group)
         {
-            SWSS_LOG_WARN("Trying to delete default trap group");
+            SWSS_LOG_WARN("Cannot remove default trap group");
             return task_process_status::task_ignore;
+        }
+
+        /* Reset the trap IDs to default trap group with default attributes */
+        vector<sai_hostif_trap_id_t> trap_ids_to_reset;
+        for (auto it : m_syncdTrapIds)
+        {
+            if (it.second == m_trap_group_map[trap_group_name])
+            {
+                trap_ids_to_reset.push_back(it.first);
+            }
+        }
+
+        sai_attribute_t attr;
+        vector<sai_attribute_t> default_trap_attrs;
+
+        attr.id = SAI_HOSTIF_TRAP_ATTR_PACKET_ACTION;
+        attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+        default_trap_attrs.push_back(attr);
+
+        attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_GROUP;
+        attr.value.oid = m_trap_group_map[default_trap_group];
+        default_trap_attrs.push_back(attr);
+
+        if (!applyAttributesToTrapIds(m_trap_group_map[default_trap_group], trap_ids_to_reset, default_trap_attrs))
+        {
+            SWSS_LOG_ERROR("Failed to reset traps to default trap group with default attributes");
+            return task_process_status::task_failed;
         }
 
         sai_status = sai_hostif_api->remove_hostif_trap_group(m_trap_group_map[trap_group_name]);
         if (sai_status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to remove trap group:%lx, name:%s\n", m_trap_group_map[trap_group_name], trap_group_name.c_str());
+            SWSS_LOG_ERROR("Failed to remove trap group %s", trap_group_name.c_str());
             return task_process_status::task_failed;
         }
+
         auto it_del = m_trap_group_map.find(trap_group_name);
         m_trap_group_map.erase(it_del);
     }
@@ -491,18 +548,13 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
 void CoppOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple tuple = it->second;
-        string table_name = consumer.m_consumer->getTableName();
-        if (table_name != APP_COPP_TABLE_NAME)
-        {
-            SWSS_LOG_ERROR("Unrecognised copp table encountered:%s\n", table_name.c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
         task_process_status task_status;
+
         try
         {
             task_status = processCoppRule(consumer);
