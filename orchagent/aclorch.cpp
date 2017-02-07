@@ -12,6 +12,8 @@ mutex AclOrch::m_countersMutex;
 map<acl_range_properties_t, AclRange*> AclRange::m_ranges;
 condition_variable AclOrch::m_sleepGuard;
 bool AclOrch::m_bCollectCounters = true;
+sai_uint32_t AclRule::m_minPriority = 0;
+sai_uint32_t AclRule::m_maxPriority = 0;
 
 swss::DBConnector AclOrch::m_db(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 swss::Table AclOrch::m_countersTable(&m_db, "COUNTERS");
@@ -100,27 +102,14 @@ bool AclRule::validateAddPriority(string attr_name, string attr_value)
 
     if (attr_name == RULE_PRIORITY)
     {
-        sai_attribute_t attrs[] =
-        {
-            { SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY },
-            { SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY }
-        };
-        // get min/max allowed priority
-        if (sai_switch_api->get_switch_attribute(sizeof(attrs)/sizeof(attrs[0]), attrs) == SAI_STATUS_SUCCESS)
-        {
-            char *endp = NULL;
-            errno = 0;
-            m_priority = strtol(attr_value.c_str(), &endp, 0);
-            // chack conversion was successfull and the value is within the allowed range
-            status = (errno == 0) &&
-                     (endp == attr_value.c_str() + attr_value.size()) &&
-                     (m_priority >= attrs[0].value.u32) &&
-                     (m_priority <= attrs[1].value.u32);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to get ACL entry priority min/max values");
-        }
+        char *endp = NULL;
+        errno = 0;
+        m_priority = strtol(attr_value.c_str(), &endp, 0);
+        // chack conversion was successfull and the value is within the allowed range
+        status = (errno == 0) &&
+                 (endp == attr_value.c_str() + attr_value.size()) &&
+                 (m_priority >= m_minPriority) &&
+                 (m_priority <= m_maxPriority);
     }
 
     return status;
@@ -772,6 +761,23 @@ AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch
         m_mirrorOrch(mirrorOrch)
 {
     SWSS_LOG_ENTER();
+
+    sai_attribute_t attrs[] =
+    {
+        { SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY },
+        { SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY }
+    };
+
+    // get min/max allowed priority
+    if (sai_switch_api->get_switch_attribute(sizeof(attrs)/sizeof(attrs[0]), attrs) == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_INFO("Got ACL entry priority values, min: %u, max: %u", attrs[0].value.u32, attrs[1].value.u32);
+        AclRule::setRulePriorities(attrs[0].value.u32, attrs[1].value.u32);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to get ACL entry priority min/max values");
+    }
 
     m_mirrorOrch->attach(this);
 }
