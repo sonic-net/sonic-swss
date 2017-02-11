@@ -286,9 +286,14 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
     assert(!session.status);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_TC;
-    attr.value.u8 = session.queue;
-    attrs.push_back(attr);
+    /* Some platforms don't support SAI_MIRROR_SESSION_ATTR_TC and only
+     * support global mirror session traffic class. */
+    if (session.queue != 0)
+    {
+        attr.id = SAI_MIRROR_SESSION_ATTR_TC;
+        attr.value.u8 = session.queue;
+        attrs.push_back(attr);
+    }
 
     attr.id =  SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
     attr.value.oid = session.neighborInfo.portId;
