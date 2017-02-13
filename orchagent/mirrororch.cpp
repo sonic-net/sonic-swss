@@ -1,6 +1,7 @@
 #include <linux/if_ether.h>
 
 #include <utility>
+#include <exception>
 
 #include "logger.h"
 #include "swssnet.h"
@@ -19,11 +20,40 @@
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
 #define MIRROR_SESSION_DEFAULT_IP_HDR_VER 4
-#define MIRROR_SESSION_DEFAULT_TOS      0
+#define MIRROR_SESSION_DSCP_SHIFT       2
+#define MIRROR_SESSION_DSCP_MIN         0
+#define MIRROR_SESSION_DSCP_MAX         63
 
 extern sai_mirror_api_t *sai_mirror_api;
 
 using namespace std::rel_ops;
+
+static inline uint64_t to_uint64(string str, uint64_t min = numeric_limits<uint64_t>::min(), uint64_t max = numeric_limits<uint64_t>::max())
+{
+    size_t idx = 0;
+    uint64_t ret = stoul(str, &idx, 0);
+    if (str[idx])
+    {
+        throw invalid_argument("failed to convert " + str + " value to uint64_t type");
+    }
+
+    if (ret < min || ret > max)
+    {
+        throw invalid_argument("failed to convert " + str + " value is not in range " + to_string(min) + " - " + to_string(max));
+    }
+
+    return ret;
+}
+
+static inline uint16_t to_uint16(string str, uint16_t min = numeric_limits<uint16_t>::min(), uint16_t max = numeric_limits<uint16_t>::max())
+{
+    return static_cast<uint16_t>(to_uint64(str, min, max));
+}
+
+static inline uint8_t to_uint8(string str, uint8_t min = numeric_limits<uint8_t>::min(), uint8_t max = numeric_limits<uint8_t>::max())
+{
+    return static_cast<uint8_t>(to_uint64(str, min, max));
+}
 
 MirrorOrch::MirrorOrch(DBConnector *db, string tableName,
         PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch) :
@@ -91,49 +121,61 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
 
     for (auto i : data)
     {
-        if (fvField(i) == MIRROR_SESSION_SRC_IP)
-        {
-            entry.srcIp = fvValue(i);
-            if (!entry.srcIp.isV4())
+        try {
+            if (fvField(i) == MIRROR_SESSION_SRC_IP)
             {
-                SWSS_LOG_ERROR("Unsupported version of sessions %s source IP address\n", key.c_str());
+                entry.srcIp = fvValue(i);
+                if (!entry.srcIp.isV4())
+                {
+                    SWSS_LOG_ERROR("Unsupported version of sessions %s source IP address\n", key.c_str());
+                    return;
+                }
+            }
+            else if (fvField(i) == MIRROR_SESSION_DST_IP)
+            {
+                entry.dstIp = fvValue(i);
+                if (!entry.dstIp.isV4())
+                {
+                    SWSS_LOG_ERROR("Unsupported version of sessions %s destination IP address\n", key.c_str());
+                    return;
+                }
+            }
+            else if (fvField(i) == MIRROR_SESSION_GRE_TYPE)
+            {
+                entry.greType = to_uint16(fvValue(i));
+            }
+            else if (fvField(i) == MIRROR_SESSION_DSCP)
+            {
+                entry.dscp = to_uint8(fvValue(i), MIRROR_SESSION_DSCP_MIN, MIRROR_SESSION_DSCP_MAX);
+            }
+            else if (fvField(i) == MIRROR_SESSION_TTL)
+            {
+                entry.ttl = to_uint8(fvValue(i));
+            }
+            else if (fvField(i) == MIRROR_SESSION_QUEUE)
+            {
+                entry.queue = to_uint8(fvValue(i));
+            }
+            else if (fvField(i) == MIRROR_SESSION_STATUS)
+            {
+                // Status update always caused by MirrorOrch and should
+                // not be changed by users. Ignore it.
+                return;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to parse session %s configuration. Unknown attribute %s.\n", key.c_str(), fvField(i).c_str());
                 return;
             }
         }
-        else if (fvField(i) == MIRROR_SESSION_DST_IP)
+        catch (const exception& e)
         {
-            entry.dstIp = fvValue(i);
-            if (!entry.dstIp.isV4())
-            {
-                SWSS_LOG_ERROR("Unsupported version of sessions %s destination IP address\n", key.c_str());
-                return;
-            }
-        }
-        else if (fvField(i) == MIRROR_SESSION_GRE_TYPE)
-        {
-            entry.greType = stoul(fvValue(i), NULL, 0);
-        }
-        else if (fvField(i) == MIRROR_SESSION_DSCP)
-        {
-            entry.dscp = stoul(fvValue(i), NULL, 0);
-        }
-        else if (fvField(i) == MIRROR_SESSION_TTL)
-        {
-            entry.ttl = stoul(fvValue(i), NULL, 0);
-        }
-        else if (fvField(i) == MIRROR_SESSION_QUEUE)
-        {
-            entry.queue = stoul(fvValue(i), NULL, 0);
-        }
-        else if (fvField(i) == MIRROR_SESSION_STATUS)
-        {
-            // Status update always caused by MirrorOrch and should
-            // not be changed by users. Ignore it.
+            SWSS_LOG_ERROR("Failed to parse session %s attribute %s error: %s.", key.c_str(), fvField(i).c_str(), e.what());
             return;
         }
-        else
+        catch (...)
         {
-            SWSS_LOG_ERROR("Failed to parse session %s configuration. Unknown attribute %s.\n", key.c_str(), fvField(i).c_str());
+            SWSS_LOG_ERROR("Failed to parse session %s attribute %s. Unknown error has been occurred", key.c_str(), fvField(i).c_str());
             return;
         }
     }
@@ -327,8 +369,10 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
     attrs.push_back(attr);
 
+    // TOS value format is the following:
+    // DSCP 6 bits | ECN 2 bits
     attr.id =SAI_MIRROR_SESSION_ATTR_TOS;
-    attr.value.u16 = MIRROR_SESSION_DEFAULT_TOS;
+    attr.value.u16 = session.dscp << MIRROR_SESSION_DSCP_SHIFT;
     attrs.push_back(attr);
 
     attr.id =SAI_MIRROR_SESSION_ATTR_TTL;
