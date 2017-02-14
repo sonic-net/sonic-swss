@@ -133,7 +133,6 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             return false;
         }
 
-        value.aclfield.enable = true;
         value.aclfield.mask.u32 = 0xFFFFFFFF;
     }
     else if(attr_name == MATCH_TCP_FLAGS)
@@ -186,7 +185,6 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             return false;
         }
 
-        value.aclfield.enable = true;
         value.aclfield.mask.u32 = 0xFFFFFFFF;
     }
     else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
@@ -230,6 +228,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
     }
 
+    value.aclfield.enable = true;
     m_matches[aclMatchLookup[attr_name]] = value;
 
     return true;
