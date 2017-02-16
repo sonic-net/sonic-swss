@@ -881,6 +881,12 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
             return false;
         }
 
+        // skip this iteration if there're no children in this group
+        if (child_count == 0)
+        {
+            continue;
+        }
+
         attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_LIST;
         attr.value.objlist.list = child_groups.data();
         attr.value.objlist.count = child_count;
