@@ -67,8 +67,8 @@
     {
         "BUFFER_PROFILE_TABLE:pg_lossless_profile": {
             "pool":"[BUFFER_POOL_TABLE:ingress_lossless_pool]",
-            "xon":"371",
-            "xoff":"371",
+            "xon":"35616",
+            "xoff":"31814",
             "size":"67430",
             "dynamic_th":"1"
         },
