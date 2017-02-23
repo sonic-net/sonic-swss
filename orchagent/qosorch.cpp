@@ -626,15 +626,24 @@ sai_object_id_t QosOrch::initSystemAclTable()
     attrs.push_back(attr);
 
     status = sai_acl_api->create_acl_table(&acl_table_id, attrs.size(), &attrs[0]);
-    if (status == SAI_STATUS_SUCCESS)
+    if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_NOTICE("Create system ACL table for ECN coloring");
+        SWSS_LOG_ERROR("Failed to create a system ACL table for ECN coloring, rv:%d", status);
+        throw runtime_error("Failed to create a system ACL table for ECN coloring");
     }
-    else
+    SWSS_LOG_NOTICE("Create a system ACL table for ECN coloring");
+
+    attr.id = SAI_SWITCH_ATTR_DEFAULT_INGRESS_ACL_LIST;
+    attr.value.objlist.count = 1;
+    attr.value.objlist.list = &acl_table_id;
+
+    status = sai_switch_api->set_switch_attribute(&attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create system ACL table. sai_acl_api->create_acl_table failed: %d", status);
-        throw runtime_error("Failed to create system ACL table");
+        SWSS_LOG_ERROR("Failed to bind the system ACL table globally, rv:%d", status);
+        throw runtime_error("Failed to bind the system ACL table globally");
     }
+    SWSS_LOG_NOTICE("Bind the system ACL table globally");
 
     return acl_table_id;
 }
@@ -673,16 +682,13 @@ void QosOrch::initAclEntryForEcn(sai_object_id_t acl_table_id, sai_uint32_t prio
     attr.value.aclaction.parameter.s32 = color;
     attrs.push_back(attr);
 
-    status = sai_acl_api->create_acl_entry(&acl_entry_id, attrs.size(), &attrs[0]);
-    if (status == SAI_STATUS_SUCCESS)
+    status = sai_acl_api->create_acl_entry(&acl_entry_id, attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_NOTICE("Successfully created ACL entry for ECN coloring. dscp=%d, ecn=%d", ecn_field, dscp_field);
+        SWSS_LOG_ERROR("Failed to create a system ACL entry for ECN coloring, rv=%d", status);
+        throw runtime_error("Failed to create a system ACL entry for ECN coloring");
     }
-    else
-    {
-        SWSS_LOG_ERROR("dscp=%d, ecn=%d. sai_acl_api->create_acl_entry() failed: %d", ecn_field, dscp_field, status);
-        throw runtime_error("Failed to create color acl entry");
-    }
+    SWSS_LOG_INFO("Create a system ACL entry for ECN coloring");
 }
 
 void QosOrch::initTableHandlers()
