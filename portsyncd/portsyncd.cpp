@@ -156,7 +156,8 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
         iss >> name >> lanes >> alias;
 
         /* If port has no alias, then use its' name as alias */
-        if (alias == "") {
+        if (alias == "")
+        {
             alias = name;
         }
         FieldValueTuple lanes_attr("lanes", lanes);
@@ -168,7 +169,7 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
 
         p.set(name, attrs);
 
-        g_portSet.insert(alias);
+        g_portSet.insert(name);
     }
 
     infile.close();
