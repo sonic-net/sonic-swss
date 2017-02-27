@@ -30,6 +30,7 @@ struct MirrorEntry
     uint8_t dscp;
     uint8_t ttl;
     uint8_t queue;
+    bool addVLanTag;
 
     struct
     {
@@ -57,6 +58,7 @@ struct MirrorEntry
         dscp(0),
         ttl(0),
         queue(0),
+        addVLanTag(false),
         sessionId(0),
         refCount(0)
     {

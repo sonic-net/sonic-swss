@@ -367,7 +367,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session, const
     }
     else if (session.neighborInfo.port.m_type == Port::LAG)
     {
-        session.neighborInfo.vlanId = session.neighborInfo.port.m_port_vlan_id;
+        session.neighborInfo.vlanId = session.addVLanTag ? session.neighborInfo.port.m_port_vlan_id : 0;
 
         if (session.neighborInfo.port.m_members.empty())
         {
@@ -387,7 +387,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session, const
     else
     {
         session.neighborInfo.portId = session.neighborInfo.port.m_port_id;
-        session.neighborInfo.vlanId = session.neighborInfo.port.m_port_vlan_id;
+        session.neighborInfo.vlanId = session.addVLanTag ? session.neighborInfo.port.m_port_vlan_id : 0;
         session.neighborInfo.resolved = true;
     }
 
