@@ -10,7 +10,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    swss::Logger::linkToDb("fpmsyncd");
+    swss::Logger::linkToDbNative("fpmsyncd");
     DBConnector db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     RedisPipeline pipeline(&db);
     RouteSync sync(&pipeline);

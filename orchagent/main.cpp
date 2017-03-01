@@ -136,7 +136,7 @@ void initSaiApi()
 
 int main(int argc, char **argv)
 {
-    swss::Logger::linkToDb("orchagent");
+    swss::Logger::linkToDbNative("orchagent");
 
     SWSS_LOG_ENTER();
 

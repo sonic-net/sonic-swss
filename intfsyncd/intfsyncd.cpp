@@ -10,7 +10,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    swss::Logger::linkToDb("intfsyncd");
+    swss::Logger::linkToDbNative("intfsyncd");
     DBConnector db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     IntfSync sync(&db);
 
