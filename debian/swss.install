@@ -4,12 +4,3 @@ swssconfig/sample/msn2700.32ports.buffers.json etc/swss/config.d
 swssconfig/sample/msn2700.32ports.qos.json etc/swss/config.d
 swssconfig/sample/td2.32ports.buffers.json etc/swss/config.d
 swssconfig/sample/td2.32ports.qos.json etc/swss/config.d
-swssconfig/sample/td2.32ports.buffers.1.json etc/swss/config.d
-swssconfig/sample/td2.32ports.buffers.2.json etc/swss/config.d
-swssconfig/sample/td2.32ports.buffers.3.json etc/swss/config.d
-swssconfig/sample/td2.32ports.qos.1.json etc/swss/config.d
-swssconfig/sample/td2.32ports.qos.2.json etc/swss/config.d
-swssconfig/sample/td2.32ports.qos.3.json etc/swss/config.d
-swssconfig/sample/td2.32ports.qos.4.json etc/swss/config.d
-swssconfig/sample/td2.32ports.qos.5.json etc/swss/config.d
-swssconfig/sample/td2.32ports.qos.6.json etc/swss/config.d
