@@ -194,7 +194,17 @@ void RouteOrch::doTask(Consumer& consumer)
             // TODO: need to split aliases with ',' and verify the next hops?
             if (alias == "eth0" || alias == "lo" || alias == "docker0")
             {
-                it = consumer.m_toSync.erase(it);
+                /* If any existing routes are updated to point to the
+                 * above interfaces, remove them from the ASIC. */
+                if (m_syncdRoutes.find(ip_prefix) != m_syncdRoutes.end())
+                {
+                    if (removeRoute(ip_prefix))
+                        it = consumer.m_toSync.erase(it);
+                    else
+                        it++;
+                }
+                else
+                    it = consumer.m_toSync.erase(it);
                 continue;
             }
 
