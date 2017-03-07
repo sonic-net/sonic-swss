@@ -10,6 +10,7 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
+    Logger::linkToDbNative("neighsyncd");
     DBConnector db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     NeighSync sync(&db);
 
