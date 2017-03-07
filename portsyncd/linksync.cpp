@@ -22,8 +22,6 @@ using namespace swss;
 #define VLAN_DRV_NAME   "bridge"
 #define TEAM_DRV_NAME   "team"
 
-#define DEFAULT_LAG_INTERFACES_FILE "/etc/network/interfaces.d/lag_interfaces"
-
 const string INTFS_PREFIX = "Ethernet";
 const string VLAN_PREFIX = "Vlan";
 const string LAG_PREFIX = "PortChannel";
@@ -40,7 +38,7 @@ LinkSync::LinkSync(DBConnector *db) :
     m_vlanTableConsumer(db, APP_VLAN_TABLE_NAME),
     m_lagTableConsumer(db, APP_LAG_TABLE_NAME)
 {
-    /* See the comments for g_portSet in linksync.h */
+    /* See the comments for g_portSet in portsyncd.cpp */
     for (string port : g_portSet)
     {
         vector<FieldValueTuple> temp;
@@ -122,12 +120,9 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     /* Insert or update the ifindex to key map */
     m_ifindexNameMap[ifindex] = key;
 
-    /* LAG (PortChannel) */
+    /* teamd instances are dealt in teamsyncd */
     if (type && !strcmp(type, TEAM_DRV_NAME))
     {
-        /* Bring up the LAG */
-        if (system(("/sbin/ifup --force -i " + string(DEFAULT_LAG_INTERFACES_FILE) + " " + key).c_str()))
-            ;
         return;
     }
 
@@ -190,7 +185,9 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
-    /* front panel interfaces: Check if the port is in the PORT_TABLE */
+    /* front panel interfaces: Check if the port is in the PORT_TABLE
+     * non-front panel interfaces such as eth0, lo which are not in the
+     * PORT_TABLE are ignored. */
     vector<FieldValueTuple> temp;
     if (m_portTableConsumer.get(key, temp))
     {
@@ -200,17 +197,12 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
             return;
         }
 
+        /* Host interface is created */
         if (!g_init && g_portSet.find(key) != g_portSet.end())
         {
-            /* Bring up the front panel port as the first place*/
-            /* TODO: handle system retur code, if-block is just a warning suppressor */
-            if (system(("/sbin/ifup --force " + key).c_str()))
-                ;
             g_portSet.erase(key);
         }
-        else
-            m_portTableProducer.set(key, fvVector);
 
-        return;
+        m_portTableProducer.set(key, fvVector);
     }
 }

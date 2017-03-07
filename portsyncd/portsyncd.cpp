@@ -13,21 +13,19 @@
 #include "portsyncd/linksync.h"
 
 #define DEFAULT_PORT_CONFIG_FILE     "port_config.ini"
-#define DEFAULT_VLAN_INTERFACES_FILE "/etc/network/interfaces.d/vlan_interfaces"
 
 using namespace std;
 using namespace swss;
 
 /*
- * This m_portSet contains all the front panel ports that the corresponding
+ * This g_portSet contains all the front panel ports that the corresponding
  * host interfaces needed to be created. When this LinkSync class is
  * initialized, we check the database to see if some of the ports' host
  * interfaces are already created and remove them from this set. We will
  * remove the rest of the ports in the set when receiving the first netlink
  * message indicating that the host interfaces are created. After the set
- * is empty, we send out the signal ConfigDone and bring up VLAN interfaces
- * when the vlan_interfaces file exists. g_init is used to limit the command
- * to be run only once.
+ * is empty, we send out the signal ConfigDone. g_init is used to limit the
+ * command to be run only once.
  */
 set<string> g_portSet;
 map<string, set<string>> g_vlanMap;
@@ -35,11 +33,9 @@ bool g_init = false;
 
 void usage()
 {
-    cout << "Usage: portsyncd [-p port_config.ini] [-v vlan_interfaces]" << endl;
+    cout << "Usage: portsyncd [-p port_config.ini]" << endl;
     cout << "       -p port_config.ini: MANDATORY import port lane mapping" << endl;
     cout << "                           default: port_config.ini" << endl;
-    cout << "       -v vlan_interfaces: import VLAN interfaces configuration file" << endl;
-    cout << "                           default: /etc/network/interfaces.d/vlan_interfaces" << endl;
 }
 
 void handlePortConfigFile(ProducerStateTable &p, string file);
@@ -50,7 +46,6 @@ int main(int argc, char **argv)
     Logger::linkToDbNative("portsyncd");
     int opt;
     string port_config_file = DEFAULT_PORT_CONFIG_FILE;
-    string vlan_interfaces_file = DEFAULT_VLAN_INTERFACES_FILE;
 
     while ((opt = getopt(argc, argv, "p:v:h")) != -1 )
     {
@@ -58,9 +53,6 @@ int main(int argc, char **argv)
         {
         case 'p':
             port_config_file.assign(optarg);
-            break;
-        case 'v':
-            vlan_interfaces_file.assign(optarg);
             break;
         case 'h':
             usage();
@@ -117,8 +109,6 @@ int main(int argc, char **argv)
                     vector<FieldValueTuple> attrs = { finish_notice };
                     p.set("ConfigDone", attrs);
 
-                    handleVlanIntfFile(vlan_interfaces_file);
-
                     g_init = true;
                 }
             }
@@ -174,17 +164,4 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
     }
 
     infile.close();
-}
-
-void handleVlanIntfFile(string file)
-{
-    ifstream infile(file);
-    if (infile.good())
-    {
-        /* Bring up VLAN interfaces when vlan_interfaces_file exists */
-        string cmd = "/sbin/ifup --all --force --interfaces " + file;
-        int ret = system(cmd.c_str());
-        if (!ret)
-            cerr << "Execute command returns non-zero value! " << cmd << endl;
-    }
 }
