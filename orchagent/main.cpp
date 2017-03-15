@@ -143,10 +143,15 @@ int main(int argc, char **argv)
     int opt;
     sai_status_t status;
 
-    while ((opt = getopt(argc, argv, "m:h")) != -1)
+    bool disableRecord = false;
+
+    while ((opt = getopt(argc, argv, "m:hR")) != -1)
     {
         switch (opt)
         {
+        case 'R':
+            disableRecord = true;
+            break;
         case 'm':
             gMacAddress = MacAddress(optarg);
             break;
@@ -173,7 +178,7 @@ int main(int argc, char **argv)
 
     sai_attribute_t attr;
     attr.id = SAI_REDIS_SWITCH_ATTR_RECORD;
-    attr.value.booldata = true;
+    attr.value.booldata = !disableRecord;
 
     status = sai_switch_api->set_switch_attribute(&attr);
 
