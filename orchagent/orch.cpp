@@ -158,7 +158,7 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name
     auto obj_it = obj_map->find(tokens[1]);
     if (obj_it == obj_map->end())
     {
-        SWSS_LOG_ERROR("map:%s does not contain object with name:%s\n", tokens[0].c_str(), tokens[1].c_str());
+        SWSS_LOG_INFO("map:%s does not contain object with name:%s\n", tokens[0].c_str(), tokens[1].c_str());
         return false;
     }
     type_name = tokens[0];
@@ -178,9 +178,9 @@ ref_resolve_status Orch::resolveFieldRefValue(
     bool hit = false;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
+        SWSS_LOG_DEBUG("field:%s, value:%s", fvField(*i).c_str(), fvValue(*i).c_str());
         if (fvField(*i) == field_name)
         {
-            SWSS_LOG_DEBUG("field:%s, value:%s", fvField(*i).c_str(), fvValue(*i).c_str());
             if (hit)
             {
                 SWSS_LOG_ERROR("Multiple same fields %s", field_name.c_str());

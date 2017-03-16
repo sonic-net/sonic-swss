@@ -104,7 +104,7 @@ public:
     QosOrch(DBConnector *db, vector<string> &tableNames);
 
     static type_map& getTypeMap();
-    static type_map m_qos_type_maps;
+    static type_map m_qos_maps;
 private:
     virtual void doTask(Consumer& consumer);
 
