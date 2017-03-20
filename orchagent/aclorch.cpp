@@ -4,6 +4,7 @@
 #include "logger.h"
 #include "schema.h"
 #include "ipprefix.h"
+#include "converter.h"
 
 using namespace std;
 using namespace swss;
@@ -121,75 +122,75 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
     sai_attribute_value_t value;
 
-    if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
+    try
     {
-        return false;
-    }
-    else if(attr_name == MATCH_IP_TYPE)
-    {
-        if (!processIpType(attr_value, value.aclfield.data.u32))
+        if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
         {
-            SWSS_LOG_ERROR("Invalid IP type %s", attr_value.c_str());
             return false;
         }
-
-        value.aclfield.mask.u32 = 0xFFFFFFFF;
-    }
-    else if(attr_name == MATCH_TCP_FLAGS)
-    {
-        vector<string> flagsData;
-        string flags, mask;
-        int val;
-        char *endp = NULL;
-        errno = 0;
-
-        split(attr_value, flagsData, '/');
-
-        if (flagsData.size() != 2) // expect two parts flags and mask separated with '/'
+        else if(attr_name == MATCH_IP_TYPE)
         {
-            SWSS_LOG_ERROR("Invalid TCP flags format %s", attr_value.c_str());
-            return false;
+            if (!processIpType(attr_value, value.aclfield.data.u32))
+            {
+                SWSS_LOG_ERROR("Invalid IP type %s", attr_value.c_str());
+                return false;
+            }
+
+            value.aclfield.mask.u32 = 0xFFFFFFFF;
         }
-
-        flags = trim(flagsData[0]);
-        mask = trim(flagsData[1]);
-
-        val = strtol(flags.c_str(), &endp, 0);
-        if (errno || (endp != flags.c_str() + flags.size()) ||
-            (val < 0) || (val > UCHAR_MAX))
+        else if(attr_name == MATCH_TCP_FLAGS)
         {
-            SWSS_LOG_ERROR("TCP flags parse error, value: %s(=%d), errno: %d", flags.c_str(), val, errno);
-            return false;
-        }
-        value.aclfield.data.u8 = val;
+            vector<string> flagsData;
+            string flags, mask;
+            int val;
+            char *endp = NULL;
+            errno = 0;
 
-        val = strtol(mask.c_str(), &endp, 0);
-        if (errno || (endp != mask.c_str() + mask.size()) ||
-            (val < 0) || (val > UCHAR_MAX))
-        {
-            SWSS_LOG_ERROR("TCP mask parse error, value: %s(=%d), errno: %d", mask.c_str(), val, errno);
-            return false;
-        }
-        value.aclfield.mask.u8 = val;
-    }
-    else if((attr_name == MATCH_ETHER_TYPE)  || (attr_name == MATCH_DSCP)        ||
-            (attr_name == MATCH_L4_SRC_PORT) || (attr_name == MATCH_L4_DST_PORT) ||
-            (attr_name == MATCH_IP_PROTOCOL))
-    {
-        char *endp = NULL;
-        errno = 0;
-        value.aclfield.data.u32 = strtol(attr_value.c_str(), &endp, 0);
-        if (errno || (endp != attr_value.c_str() + attr_value.size()))
-        {
-            SWSS_LOG_ERROR("Integer parse error. Attribute: %s, value: %s(=%d), errno: %d", attr_name.c_str(), attr_value.c_str(), value.aclfield.data.u32, errno);
-            return false;
-        }
+            split(attr_value, flagsData, '/');
 
-        value.aclfield.mask.u32 = 0xFFFFFFFF;
-    }
-    else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
-    {
-        try
+            if (flagsData.size() != 2) // expect two parts flags and mask separated with '/'
+            {
+                SWSS_LOG_ERROR("Invalid TCP flags format %s", attr_value.c_str());
+                return false;
+            }
+
+            flags = trim(flagsData[0]);
+            mask = trim(flagsData[1]);
+
+            val = strtol(flags.c_str(), &endp, 0);
+            if (errno || (endp != flags.c_str() + flags.size()) ||
+                (val < 0) || (val > UCHAR_MAX))
+            {
+                SWSS_LOG_ERROR("TCP flags parse error, value: %s(=%d), errno: %d", flags.c_str(), val, errno);
+                return false;
+            }
+            value.aclfield.data.u8 = val;
+
+            val = strtol(mask.c_str(), &endp, 0);
+            if (errno || (endp != mask.c_str() + mask.size()) ||
+                (val < 0) || (val > UCHAR_MAX))
+            {
+                SWSS_LOG_ERROR("TCP mask parse error, value: %s(=%d), errno: %d", mask.c_str(), val, errno);
+                return false;
+            }
+            value.aclfield.mask.u8 = val;
+        }
+        else if(attr_name == MATCH_ETHER_TYPE || attr_name == MATCH_L4_SRC_PORT || attr_name == MATCH_L4_DST_PORT)
+        {
+            value.aclfield.data.u16 = to_uint<uint16_t>(attr_value);
+            value.aclfield.mask.u16 = 0xFFFF;
+        }
+        else if(attr_name == MATCH_DSCP)
+        {
+            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value, 0, 63);
+            value.aclfield.mask.u8 = 0xFF;
+        }
+        else if(attr_name == MATCH_IP_PROTOCOL)
+        {
+            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
+            value.aclfield.mask.u8 = 0xFF;
+        }
+        else if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
         {
             IpPrefix ip(attr_value);
 
@@ -204,28 +205,33 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 memcpy(value.aclfield.mask.ip6, ip.getMask().getV6Addr(), 16);
             }
         }
-        catch(...)
+        else if ((attr_name == MATCH_L4_SRC_PORT_RANGE) || (attr_name == MATCH_L4_DST_PORT_RANGE))
         {
-            SWSS_LOG_ERROR("IpPrefix exception. Attribute: %s, value: %s", attr_name.c_str(), attr_value.c_str());
-            return false;
+            if (sscanf(attr_value.c_str(), "%d-%d", &value.u32range.min, &value.u32range.max) != 2)
+            {
+                SWSS_LOG_ERROR("Range parse error. Attribute: %s, value: %s", attr_name.c_str(), attr_value.c_str());
+                return false;
+            }
+
+            // check boundaries
+            if ((value.u32range.min > USHRT_MAX) ||
+                (value.u32range.max > USHRT_MAX) ||
+                (value.u32range.min > value.u32range.max))
+            {
+                SWSS_LOG_ERROR("Range parse error. Invalid range value. Attribute: %s, value: %s", attr_name.c_str(), attr_value.c_str());
+                return false;
+            }
         }
     }
-    else if ((attr_name == MATCH_L4_SRC_PORT_RANGE) || (attr_name == MATCH_L4_DST_PORT_RANGE))
+    catch (exception &e)
     {
-        if (sscanf(attr_value.c_str(), "%d-%d", &value.u32range.min, &value.u32range.max) != 2)
-        {
-            SWSS_LOG_ERROR("Range parse error. Attribute: %s, value: %s", attr_name.c_str(), attr_value.c_str());
-            return false;
-        }
-
-        // check boundaries
-        if ((value.u32range.min > USHRT_MAX) ||
-            (value.u32range.max > USHRT_MAX) ||
-            (value.u32range.min > value.u32range.max))
-        {
-            SWSS_LOG_ERROR("Range parse error. Invalid range value. Attribute: %s, value: %s", attr_name.c_str(), attr_value.c_str());
-            return false;
-        }
+        SWSS_LOG_ERROR("Failed to parse %s attribute %s value. Error: %s", attr_name.c_str(), attr_value.c_str(), e.what());
+        return false;
+    }
+    catch (...)
+    {
+        SWSS_LOG_ERROR("Failed to parse %s attribute %s value.", attr_name.c_str(), attr_value.c_str());
+        return false;
     }
 
     value.aclfield.enable = true;

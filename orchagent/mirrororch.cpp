@@ -5,6 +5,7 @@
 
 #include "logger.h"
 #include "swssnet.h"
+#include "converter.h"
 #include "mirrororch.h"
 
 #define MIRROR_SESSION_STATUS           "status"
@@ -27,33 +28,6 @@
 extern sai_mirror_api_t *sai_mirror_api;
 
 using namespace std::rel_ops;
-
-static inline uint64_t to_uint64(string str, uint64_t min = numeric_limits<uint64_t>::min(), uint64_t max = numeric_limits<uint64_t>::max())
-{
-    size_t idx = 0;
-    uint64_t ret = stoul(str, &idx, 0);
-    if (str[idx])
-    {
-        throw invalid_argument("failed to convert " + str + " value to uint64_t type");
-    }
-
-    if (ret < min || ret > max)
-    {
-        throw invalid_argument("failed to convert " + str + " value is not in range " + to_string(min) + " - " + to_string(max));
-    }
-
-    return ret;
-}
-
-static inline uint16_t to_uint16(string str, uint16_t min = numeric_limits<uint16_t>::min(), uint16_t max = numeric_limits<uint16_t>::max())
-{
-    return static_cast<uint16_t>(to_uint64(str, min, max));
-}
-
-static inline uint8_t to_uint8(string str, uint8_t min = numeric_limits<uint8_t>::min(), uint8_t max = numeric_limits<uint8_t>::max())
-{
-    return static_cast<uint8_t>(to_uint64(str, min, max));
-}
 
 MirrorOrch::MirrorOrch(DBConnector *db, string tableName,
         PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch) :
@@ -212,19 +186,19 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
             }
             else if (fvField(i) == MIRROR_SESSION_GRE_TYPE)
             {
-                entry.greType = to_uint16(fvValue(i));
+                entry.greType = to_uint<uint16_t>(fvValue(i));
             }
             else if (fvField(i) == MIRROR_SESSION_DSCP)
             {
-                entry.dscp = to_uint8(fvValue(i), MIRROR_SESSION_DSCP_MIN, MIRROR_SESSION_DSCP_MAX);
+                entry.dscp = to_uint<uint8_t>(fvValue(i), MIRROR_SESSION_DSCP_MIN, MIRROR_SESSION_DSCP_MAX);
             }
             else if (fvField(i) == MIRROR_SESSION_TTL)
             {
-                entry.ttl = to_uint8(fvValue(i));
+                entry.ttl = to_uint<uint8_t>(fvValue(i));
             }
             else if (fvField(i) == MIRROR_SESSION_QUEUE)
             {
-                entry.queue = to_uint8(fvValue(i));
+                entry.queue = to_uint<uint8_t>(fvValue(i));
             }
             else if (fvField(i) == MIRROR_SESSION_STATUS)
             {
