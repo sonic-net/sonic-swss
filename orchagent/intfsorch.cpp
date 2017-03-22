@@ -146,7 +146,10 @@ void IntfsOrch::doTask(Consumer &consumer)
                 if (m_syncdIntfses[alias].ip_addresses.getSize() == 0)
                 {
                     if (removeRouterIntfs(port))
+                    {
+                        m_syncdIntfses.erase(alias);
                         it = consumer.m_toSync.erase(it);
+                    }
                     else
                         it++;
                 }
