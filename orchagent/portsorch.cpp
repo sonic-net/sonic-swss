@@ -214,7 +214,7 @@ bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
                        up ? "UP" : "DOWN", id);
         return false;
     }
-    SWSS_LOG_NOTICE("Set admin status %s to port pid:%lx",
+    SWSS_LOG_INFO("Set admin status %s to port pid:%lx",
                     up ? "UP" : "DOWN", id);
     return true;
 }
@@ -330,7 +330,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     /* Determin if the port has already been initialized before */
                     if (m_portList.find(alias) != m_portList.end() && m_portList[alias].m_port_id == id)
-                        SWSS_LOG_NOTICE("Port has already been initialized before alias:%s", alias.c_str());
+                    {
+                        SWSS_LOG_INFO("Port has already been initialized before alias:%s", alias.c_str());
+                    }
                     else
                     {
                         Port p(alias, Port::PHY);
@@ -368,10 +370,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (getPort(alias, p))
                 {
                     if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
-                        SWSS_LOG_NOTICE("Port is set to admin %s alias:%s", admin_status.c_str(), alias.c_str());
+                        SWSS_LOG_NOTICE("Set port %s admin status to %s", alias.c_str(), admin_status.c_str());
                     else
                     {
-                        SWSS_LOG_ERROR("Failed to set port to admin %s alias:%s", admin_status.c_str(), alias.c_str());
+                        SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
                         it++;
                         continue;
                     }
@@ -459,8 +461,21 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         {
             assert(m_portList.find(vlan_alias) != m_portList.end());
             Port vlan, port;
-            getPort(vlan_alias, vlan);
-            getPort(port_alias, port);
+
+            /* When VLAN member is to be created before VLAN is created */
+            if (!getPort(vlan_alias, vlan))
+            {
+                SWSS_LOG_INFO("Failed to locate VLAN %s", vlan_alias.c_str());
+                it++;
+                continue;
+            }
+
+            if (!getPort(port_alias, port))
+            {
+                SWSS_LOG_ERROR("Failed to locate port %s", port_alias.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
 
             if (op == SET_COMMAND)
             {
@@ -570,8 +585,21 @@ void PortsOrch::doLagTask(Consumer &consumer)
         {
             assert(m_portList.find(lag_alias) != m_portList.end());
             Port lag, port;
-            getPort(lag_alias, lag);
-            getPort(port_alias, port);
+
+            /* When LAG member is to be created before LAG is created */
+            if (!getPort(lag_alias, lag))
+            {
+                SWSS_LOG_INFO("Failed to locate LAG %s", lag_alias.c_str());
+                it++;
+                continue;
+            }
+
+            if (!getPort(port_alias, port))
+            {
+                SWSS_LOG_ERROR("Failed to locate port %s", port_alias.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
 
             /* Add a LAG member */
             if (op == SET_COMMAND)
@@ -871,7 +899,7 @@ bool PortsOrch::addVlanMember(Port vlan, Port port)
         return false;
     }
 
-    SWSS_LOG_NOTICE("Set port %s VLAN ID to %hu", port.m_alias.c_str(), vlan.m_vlan_id);
+    SWSS_LOG_INFO("Set port %s VLAN ID to %hu", port.m_alias.c_str(), vlan.m_vlan_id);
 
     port.m_vlan_id = vlan.m_vlan_id;
     port.m_port_vlan_id = vlan.m_vlan_id;
