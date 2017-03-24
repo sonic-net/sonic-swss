@@ -34,22 +34,13 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (!type || (strcmp(type, TEAM_DRV_NAME) != 0))
         return;
 
-    bool tracked = m_teamPorts.find(lagName) != m_teamPorts.end();
-
-    if ((nlmsg_type == RTM_DELLINK) && tracked)
+    if (nlmsg_type == RTM_DELLINK)
     {
         /* Remove LAG ports and delete LAG */
         removeLag(lagName);
         return;
     }
 
-    if ((nlmsg_type == RTM_NEWLINK) && tracked)
-        return;
-
-    /*
-     * New LAG was dedcated for the first time. Sync admin and oper state since
-     * portsyncd reflects only changes
-     */
     addLag(lagName, rtnl_link_get_ifindex(link),
            rtnl_link_get_flags(link) & IFF_UP,
            rtnl_link_get_flags(link) & IFF_LOWER_UP,
@@ -59,7 +50,7 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
                       bool oper_state, unsigned int mtu)
 {
-    /* First add the LAG itself */
+    /* Set the LAG */
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin_state ? "up" : "down");
     FieldValueTuple o("oper_status", oper_state ? "up" : "down");
@@ -69,7 +60,11 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     fvVector.push_back(m);
     m_lagTable.set(lagName, fvVector);
 
-    /* Start adding ports to LAG */
+    /* Return when the team instance has already been tracked */
+    if (m_teamPorts.find(lagName) != m_teamPorts.end())
+        return;
+
+    /* Start track the team instance */
     TeamPortSync *sync = new TeamPortSync(lagName, ifindex, &m_lagTable);
     m_select->addSelectable(sync);
     m_teamPorts[lagName] = shared_ptr<TeamPortSync>(sync);
@@ -77,9 +72,16 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
 
 void TeamSync::removeLag(const string &lagName)
 {
+    /* Delete the LAG */
+    m_lagTable.del(lagName);
+
+    /* Return when the team instance hasn't been tracked before */
+    if (m_teamPorts.find(lagName) == m_teamPorts.end())
+        return;
+
+    /* No longer track the current team instance */
     m_select->removeSelectable(m_teamPorts[lagName].get());
     m_teamPorts.erase(lagName);
-    m_lagTable.del(lagName);
 }
 
 const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {
