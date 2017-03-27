@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <linux/if.h>
 #include <netlink/route/link.h>
+#include <teamdctl.h>
 #include "logger.h"
 #include "netmsg.h"
 #include "dbconnector.h"
@@ -28,20 +29,29 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if ((nlmsg_type != RTM_NEWLINK) && (nlmsg_type != RTM_DELLINK))
         return;
 
-    string lagName = rtnl_link_get_name(link);
+    string intfName = rtnl_link_get_name(link);
     /* Listens to LAG messages */
     char *type = rtnl_link_get_type(link);
     if (!type || (strcmp(type, TEAM_DRV_NAME) != 0))
+    {
+        if (nlmsg_type == RTM_NEWLINK)
+        {
+            for (const auto& i : m_teamPorts)
+            {
+                i.second->syncMember(intfName);
+            }
+        }
         return;
+    }
 
     if (nlmsg_type == RTM_DELLINK)
     {
         /* Remove LAG ports and delete LAG */
-        removeLag(lagName);
+        removeLag(intfName);
         return;
     }
 
-    addLag(lagName, rtnl_link_get_ifindex(link),
+    addLag(intfName, rtnl_link_get_ifindex(link),
            rtnl_link_get_flags(link) & IFF_UP,
            rtnl_link_get_flags(link) & IFF_LOWER_UP,
            rtnl_link_get_mtu(link));
@@ -121,6 +131,19 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
                            "Unable to register port change event");
     }
 
+    m_tdc = teamdctl_alloc();
+
+    if (m_tdc == NULL)
+    {
+        SWSS_LOG_THROW("Failed to allocate teamdctl context.");
+    }
+
+    err = teamdctl_connect(m_tdc, m_lagName.c_str(), NULL, NULL); 
+    if (err)
+    {
+        SWSS_LOG_THROW("Failed to connect to %s teamdctl.", m_lagName.c_str());
+    }
+
     /* Sync LAG at first */
     onChange();
 }
@@ -131,6 +154,12 @@ TeamSync::TeamPortSync::~TeamPortSync()
     {
         team_change_handler_unregister(m_team, &gPortChangeHandler, this);
         team_free(m_team);
+    }
+
+    if (m_tdc)
+    {
+        teamdctl_disconnect(m_tdc);
+        teamdctl_free(m_tdc);
     }
 }
 
@@ -208,4 +237,25 @@ int TeamSync::TeamPortSync::readCache()
 void TeamSync::TeamPortSync::readMe()
 {
     team_handle_events(m_team);
+}
+
+void TeamSync::TeamPortSync::syncMember(const std::string& intfName)
+{
+    const std::string config(teamdctl_config_get_raw(m_tdc));
+    const std::string intfNameStr("\"" + intfName + "\"");
+
+    if (config.find(intfNameStr) == std::string::npos)
+    {
+        return;
+    }
+
+    if (m_lagMembers.find(intfName) != m_lagMembers.end())
+    {
+        return;
+    }
+
+    if (teamdctl_port_add(m_tdc, intfName.c_str()))
+    {
+        SWSS_LOG_ERROR("Failed to add port %s to %s", intfName.c_str(), m_lagName.c_str());
+    }
 }
