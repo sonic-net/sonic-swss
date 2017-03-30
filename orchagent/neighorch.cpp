@@ -38,13 +38,13 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, string alias)
     sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, 3, next_hop_attrs);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create next hop entry ip:%s rid:%lx",
-                       ipAddress.to_string().c_str(), rif_id);
+        SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
+                       ipAddress.to_string().c_str(), alias.c_str(), status);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Create next hop entry id:%lx, ip:%s, rid:%lx\n",
-                    next_hop_id, ipAddress.to_string().c_str(), rif_id);
+    SWSS_LOG_NOTICE("Created next hop %s on %s",
+                    ipAddress.to_string().c_str(), alias.c_str());
 
     NextHopEntry next_hop_entry;
     next_hop_entry.next_hop_id = next_hop_id;
@@ -64,8 +64,8 @@ bool NeighOrch::removeNextHop(IpAddress ipAddress, string alias)
 
     if (m_syncdNextHops[ipAddress].ref_count > 0)
     {
-        SWSS_LOG_ERROR("Failed to remove still referenced next hop entry ip:%s",
-                       ipAddress.to_string().c_str());
+        SWSS_LOG_ERROR("Failed to remove still referenced next hop %s on %s",
+                       ipAddress.to_string().c_str(), alias.c_str());
         return false;
     }
 
@@ -131,7 +131,7 @@ void NeighOrch::doTask(Consumer &consumer)
         size_t found = key.find(':');
         if (found == string::npos)
         {
-            SWSS_LOG_ERROR("Failed to parse task key %s\n", key.c_str());
+            SWSS_LOG_ERROR("Failed to parse key %s", key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -193,7 +193,7 @@ void NeighOrch::doTask(Consumer &consumer)
         }
         else
         {
-            SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
     }
@@ -222,11 +222,12 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
         status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry, 1, &neighbor_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to create neighbor entry alias:%s ip:%s\n", alias.c_str(), ip_address.to_string().c_str());
+            SWSS_LOG_ERROR("Failed to create neighbor %s on %s, rv:%d",
+                           macAddress.to_string().c_str(), alias.c_str(), status);
             return false;
         }
 
-        SWSS_LOG_NOTICE("Create neighbor entry rid:%lx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
+        SWSS_LOG_NOTICE("Created neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
         m_intfsOrch->increaseRouterIntfsRefCount(alias);
 
         if (!addNextHop(ip_address, alias))
@@ -234,7 +235,8 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
             status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%lx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
+                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
+                               macAddress.to_string().c_str(), alias.c_str(), status);
                 return false;
             }
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
@@ -246,10 +248,11 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
         status = sai_neighbor_api->set_neighbor_attribute(&neighbor_entry, &neighbor_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to update neighbor entry rid:%lx alias:%s ip:%s\n", rif_id, alias.c_str(), ip_address.to_string().c_str());
+            SWSS_LOG_ERROR("Failed to update neighbor %s on %s, rv:%d",
+                           macAddress.to_string().c_str(), alias.c_str(), status);
             return false;
         }
-        SWSS_LOG_NOTICE("Updated neighbor entry rid:%lx alias:%s ip:%s new mac: %s\n", rif_id, alias.c_str(), ip_address.to_string().c_str(), macAddress.to_string().c_str());
+        SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
     }
 
     m_syncdNeighbors[neighborEntry] = macAddress;
@@ -273,7 +276,8 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
 
     if (m_syncdNextHops[ip_address].ref_count > 0)
     {
-        SWSS_LOG_INFO("Neighbor is still referenced ip:%s\n", ip_address.to_string().c_str());
+        SWSS_LOG_INFO("Failed to remove still referenced neighbor %s on %s",
+                      m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str());
         return false;
     }
 
@@ -290,27 +294,39 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
         /* When next hop is not found, we continue to remove neighbor entry. */
         if (status == SAI_STATUS_ITEM_NOT_FOUND)
         {
-            SWSS_LOG_ERROR("Failed to locate next hop nhid:%lx\n", next_hop_id);
+            SWSS_LOG_ERROR("Failed to locate next hop %s on %s, rv:%d",
+                           ip_address.to_string().c_str(), alias.c_str(), status);
         }
         else
         {
-            SWSS_LOG_ERROR("Failed to remove next hop nhid:%lx\n", next_hop_id);
+            SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
+                           ip_address.to_string().c_str(), alias.c_str(), status);
             return false;
         }
     }
+
+    SWSS_LOG_NOTICE("Removed next hop %s on %s",
+                    ip_address.to_string().c_str(), alias.c_str());
 
     status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
         if (status == SAI_STATUS_ITEM_NOT_FOUND)
         {
-            SWSS_LOG_ERROR("Failed to locate neigbor entry rid:%lx ip:%s\n", rif_id, ip_address.to_string().c_str());
+            SWSS_LOG_ERROR("Failed to locate neigbor %s on %s, rv:%d",
+                    m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str(), status);
             return true;
         }
-
-        SWSS_LOG_ERROR("Failed to remove neighbor entry rid:%lx ip:%s\n", rif_id, ip_address.to_string().c_str());
-        return false;
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
+                    m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str(), status);
+            return false;
+        }
     }
+
+    SWSS_LOG_NOTICE("Removed neighbor %s on %s",
+            m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str());
 
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
