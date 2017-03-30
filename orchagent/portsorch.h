@@ -52,6 +52,7 @@ private:
     void doPortTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
     void doLagTask(Consumer &consumer);
+    void doLagMemberTask(Consumer &consumer);
 
     bool initializePort(Port &port);
     void initializePriorityGroups(Port &port);

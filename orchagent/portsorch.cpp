@@ -529,142 +529,142 @@ void PortsOrch::doLagTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
 
-        string key = kfvKey(t);
-        size_t found = key.find(':');
-        string lag_alias, port_alias;
-        if (found == string::npos)
-            lag_alias = key;
+        string lag_alias = kfvKey(t);
+        string op = kfvOp(t);
+
+        if (op == SET_COMMAND)
+        {
+            /* Duplicate entry */
+            if (m_portList.find(lag_alias) != m_portList.end())
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            if (addLag(lag_alias))
+                it = consumer.m_toSync.erase(it);
+            else
+                it++;
+        }
+        else if (op == DEL_COMMAND)
+        {
+            Port lag;
+            /* Cannot locate LAG */
+            if (!getPort(lag_alias, lag))
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            if (removeLag(lag))
+                it = consumer.m_toSync.erase(it);
+            else
+                it++;
+        }
         else
         {
-            lag_alias = key.substr(0, found);
-            port_alias = key.substr(found+1);
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+            it = consumer.m_toSync.erase(it);
         }
+    }
+}
+
+void PortsOrch::doLagMemberTask(Consumer &consumer)
+{
+    if (!isInitDone())
+        return;
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+
+        /* Retrieve LAG alias and LAG member alias from key */
+        string key = kfvKey(t);
+        size_t found = key.find(':');
+        string lag_alias = key.substr(0, found);
+        string port_alias = key.substr(found+1);
 
         string op = kfvOp(t);
 
-        /* Manipulate LAG when port_alias is empty */
-        if (port_alias == "")
+        Port lag, port;
+        if (!getPort(lag_alias, lag))
         {
-            if (op == SET_COMMAND)
+            SWSS_LOG_INFO("Failed to locate LAG %s", lag_alias.c_str());
+            it++;
+            continue;
+        }
+
+        if (!getPort(port_alias, port))
+        {
+            SWSS_LOG_ERROR("Failed to locate port %s", port_alias.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        /* Update a LAG member */
+        if (op == SET_COMMAND)
+        {
+            string status;
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "status")
+                    status = fvValue(i);
+            }
+
+            /* Sync an enabled member */
+            if (status == "enabled")
             {
                 /* Duplicate entry */
-                if (m_portList.find(lag_alias) != m_portList.end())
+                if (lag.m_members.find(port_alias) != lag.m_members.end())
                 {
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
 
-                if (addLag(lag_alias))
+                /* Assert the port doesn't belong to any LAG */
+                assert(!port.m_lag_id && !port.m_lag_member_id);
+
+                if (addLagMember(lag, port))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;
             }
-            else if (op == DEL_COMMAND)
+            /* Sync an disabled member */
+            else /* status == "disabled" */
             {
-                Port lag;
-                /* Cannot locate LAG */
-                if (!getPort(lag_alias, lag))
+                /* "status" is "disabled" at start when m_lag_id and
+                 * m_lag_member_id are absent */
+                if (!port.m_lag_id || !port.m_lag_member_id)
                 {
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
-
-                if (removeLag(lag))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-                it = consumer.m_toSync.erase(it);
-            }
-        }
-        /* Manipulate a LAG member */
-        else
-        {
-            assert(m_portList.find(lag_alias) != m_portList.end());
-            Port lag, port;
-
-            /* When LAG member is to be created before LAG is created */
-            if (!getPort(lag_alias, lag))
-            {
-                SWSS_LOG_INFO("Failed to locate LAG %s", lag_alias.c_str());
-                it++;
-                continue;
-            }
-
-            if (!getPort(port_alias, port))
-            {
-                SWSS_LOG_ERROR("Failed to locate port %s", port_alias.c_str());
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-
-            /* Add a LAG member */
-            if (op == SET_COMMAND)
-            {
-                string status;
-                for (auto i : kfvFieldsValues(t))
-                {
-                    if (fvField(i) == "status")
-                        status = fvValue(i);
-                }
-
-                /* Sync an enabled member */
-                if (status == "enabled")
-                {
-                    /* Duplicate entry */
-                    if (lag.m_members.find(port_alias) != lag.m_members.end())
-                    {
-                        it = consumer.m_toSync.erase(it);
-                        continue;
-                    }
-
-                    /* Assert the port doesn't belong to any LAG */
-                    assert(!port.m_lag_id && !port.m_lag_member_id);
-
-                    if (addLagMember(lag, port))
-                        it = consumer.m_toSync.erase(it);
-                    else
-                        it++;
-                }
-                /* Sync an disabled member */
-                else /* status == "disabled" */
-                {
-                    /* "status" is "disabled" at start when m_lag_id and
-                     * m_lag_member_id are absent */
-                    if (!port.m_lag_id || !port.m_lag_member_id)
-                    {
-                        it = consumer.m_toSync.erase(it);
-                        continue;
-                    }
-
-                    if (removeLagMember(lag, port))
-                        it = consumer.m_toSync.erase(it);
-                    else
-                        it++;
-                }
-            }
-            /* Remove a LAG member */
-            else if (op == DEL_COMMAND)
-            {
-                /* Assert the LAG member exists */
-                assert(lag.m_members.find(port_alias) != lag.m_members.end());
-
-                /* Assert the port belongs to a LAG */
-                assert(port.m_lag_id && port.m_lag_member_id);
 
                 if (removeLagMember(lag, port))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;
             }
-            else
-            {
-                SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        }
+        /* Remove a LAG member */
+        else if (op == DEL_COMMAND)
+        {
+            /* Assert the LAG member exists */
+            assert(lag.m_members.find(port_alias) != lag.m_members.end());
+
+            /* Assert the port belongs to a LAG */
+            assert(port.m_lag_id && port.m_lag_member_id);
+
+            if (removeLagMember(lag, port))
                 it = consumer.m_toSync.erase(it);
-            }
+            else
+                it++;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+            it = consumer.m_toSync.erase(it);
         }
     }
 }
@@ -681,6 +681,8 @@ void PortsOrch::doTask(Consumer &consumer)
         doVlanTask(consumer);
     else if (table_name == APP_LAG_TABLE_NAME)
         doLagTask(consumer);
+    else if (table_name == APP_LAG_MEMBER_TABLE_NAME)
+        doLagMemberTask(consumer);
 }
 
 void PortsOrch::initializeQueues(Port &port)

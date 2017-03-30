@@ -18,7 +18,8 @@ using namespace swss;
 
 TeamSync::TeamSync(DBConnector *db, Select *select) :
     m_select(select),
-    m_lagTable(db, APP_LAG_TABLE_NAME)
+    m_lagTable(db, APP_LAG_TABLE_NAME),
+    m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME)
 {
 }
 
@@ -68,7 +69,7 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
         return;
 
     /* Start track the team instance */
-    TeamPortSync *sync = new TeamPortSync(lagName, ifindex, &m_lagTable);
+    TeamPortSync *sync = new TeamPortSync(lagName, ifindex, &m_lagMemberTable);
     m_select->addSelectable(sync);
     m_teamPorts[lagName] = shared_ptr<TeamPortSync>(sync);
 }
@@ -95,8 +96,8 @@ const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {
 };
 
 TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
-                                     ProducerStateTable *lagTable) :
-    m_lagTable(lagTable),
+                                     ProducerStateTable *lagMemberTable) :
+    m_lagMemberTable(lagMemberTable),
     m_lagName(lagName),
     m_ifindex(ifindex)
 {
@@ -171,7 +172,7 @@ int TeamSync::TeamPortSync::onChange()
             vector<FieldValueTuple> v;
             FieldValueTuple l("status", it.second ? "enabled" : "disabled");
             v.push_back(l);
-            m_lagTable->set(key, v);
+            m_lagMemberTable->set(key, v);
         }
     }
 
@@ -180,7 +181,7 @@ int TeamSync::TeamPortSync::onChange()
         if (tmp_lag_members.find(it.first) == tmp_lag_members.end())
         {
             string key = m_lagName + ":" + it.first;
-            m_lagTable->del(key);
+            m_lagMemberTable->del(key);
         }
     }
 
