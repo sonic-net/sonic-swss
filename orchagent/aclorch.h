@@ -95,6 +95,31 @@ private:
     static map<acl_range_properties_t, AclRange*> m_ranges;
 };
 
+struct AclRuleCounters
+{
+    uint64_t packets;
+    uint64_t bytes;
+
+    AclRuleCounters(uint64_t p = 0, uint64_t b = 0) :
+        packets(p),
+        bytes(b)
+    {
+    }
+
+    AclRuleCounters(const AclRuleCounters& rhs) :
+        packets(rhs.packets),
+        bytes(rhs.bytes)
+    {
+    }
+
+    AclRuleCounters& operator +=(const AclRuleCounters& rhs)
+    {
+        packets += rhs.packets;
+        bytes += rhs.bytes;
+        return *this;
+    }
+};
+
 class AclRule
 {
 public:
@@ -113,6 +138,7 @@ public:
     virtual bool create();
     virtual bool remove();
     virtual void update(SubjectType, void *) = 0;
+    virtual AclRuleCounters getCounters();
 
     string getId()
     {
@@ -170,10 +196,12 @@ public:
     bool create();
     bool remove();
     void update(SubjectType, void *);
+    AclRuleCounters getCounters();
 
 protected:
     bool m_state;
     string m_sessionName;
+    AclRuleCounters counters;
     MirrorOrch *m_pMirrorOrch;
 };
 

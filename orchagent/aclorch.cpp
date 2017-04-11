@@ -372,6 +372,23 @@ bool AclRule::remove()
     return res;
 }
 
+AclRuleCounters AclRule::getCounters()
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t counter_attr[2];
+    counter_attr[0].id = SAI_ACL_COUNTER_ATTR_PACKETS;
+    counter_attr[1].id = SAI_ACL_COUNTER_ATTR_BYTES;
+
+    if (sai_acl_api->get_acl_counter_attribute(m_counterOid, 2, counter_attr) != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get counters for %s rule", m_id.c_str());
+        return AclRuleCounters();
+    }
+
+    return AclRuleCounters(counter_attr[0].value.u64, counter_attr[1].value.u64);
+}
+
 shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, string rule, string table)
 {
     switch (type)
@@ -591,7 +608,7 @@ bool AclRuleMirror::create()
         return false;
     }
 
-    state = true;
+    m_state = true;
 
     return m_pMirrorOrch->increaseRefCount(m_sessionName);
 }
@@ -629,9 +646,24 @@ void AclRuleMirror::update(SubjectType type, void *cntx)
     }
     else
     {
+        // Store counters before deactivating ACL rule
+        counters += getCounters();
+
         SWSS_LOG_INFO("Deactivating mirroring ACL %s for session %s", m_id.c_str(), m_sessionName.c_str());
         remove();
     }
+}
+
+AclRuleCounters AclRuleMirror::getCounters()
+{
+    AclRuleCounters cnt(counters);
+
+    if (m_state)
+    {
+        cnt += AclRule::getCounters();
+    }
+
+    return cnt;
 }
 
 AclRange::AclRange(sai_acl_range_type_t type, sai_object_id_t oid, int min, int max):
@@ -1271,9 +1303,6 @@ sai_status_t AclOrch::deleteUnbindAclTable(sai_object_id_t table_oid)
 void AclOrch::collectCountersThread(AclOrch* pAclOrch)
 {
     SWSS_LOG_ENTER();
-    sai_attribute_t counter_attr[2];
-    counter_attr[0].id = SAI_ACL_COUNTER_ATTR_PACKETS;
-    counter_attr[1].id = SAI_ACL_COUNTER_ATTR_BYTES;
 
     while(m_bCollectCounters)
     {
@@ -1288,14 +1317,13 @@ void AclOrch::collectCountersThread(AclOrch* pAclOrch)
 
             for (auto rule_it : table_it.second.rules)
             {
-                sai_acl_api->get_acl_counter_attribute(rule_it.second->getCounterOid(), 2, counter_attr);
+                AclRuleCounters cnt = rule_it.second->getCounters();
 
-                swss::FieldValueTuple fvtp("Packets", to_string(counter_attr[0].value.u64));
+                swss::FieldValueTuple fvtp("Packets", to_string(cnt.packets));
                 values.push_back(fvtp);
-                swss::FieldValueTuple fvtb("Bytes", to_string(counter_attr[1].value.u64));
+                swss::FieldValueTuple fvtb("Bytes", to_string(cnt.bytes));
                 values.push_back(fvtb);
 
-                SWSS_LOG_DEBUG("Counter %lX, value %ld/%ld", rule_it.second->getCounterOid(), counter_attr[0].value.u64, counter_attr[1].value.u64);
                 AclOrch::getCountersTable().set(table_it.second.id + ":" + rule_it.second->getId(), values, "");
             }
             values.clear();
