@@ -69,9 +69,9 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
         return;
 
     /* Start track the team instance */
-    TeamPortSync *sync = new TeamPortSync(lagName, ifindex, &m_lagMemberTable);
-    m_select->addSelectable(sync);
-    m_teamPorts[lagName] = shared_ptr<TeamPortSync>(sync);
+    auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
+    m_select->addSelectable(sync.get());
+    m_teamPorts[lagName] = sync;
 }
 
 void TeamSync::removeLag(const string &lagName)
