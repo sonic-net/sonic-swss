@@ -269,7 +269,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple t = it->second;
+        auto &t = it->second;
 
         string alias = kfvKey(t);
         string op = kfvOp(t);
@@ -397,7 +397,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple t = it->second;
+        auto &t = it->second;
 
         string key = kfvKey(t);
 
@@ -527,7 +527,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple t = it->second;
+        auto &t = it->second;
 
         string lag_alias = kfvKey(t);
         string op = kfvOp(t);
@@ -577,7 +577,7 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple t = it->second;
+        auto &t = it->second;
 
         /* Retrieve LAG alias and LAG member alias from key */
         string key = kfvKey(t);
