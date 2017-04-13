@@ -582,6 +582,12 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
         /* Retrieve LAG alias and LAG member alias from key */
         string key = kfvKey(t);
         size_t found = key.find(':');
+        /* Return if the format of key is wrong */
+        if (found == string::npos)
+        {
+            SWSS_LOG_ERROR("Failed to parse %s", key.c_str());
+            return;
+        }
         string lag_alias = key.substr(0, found);
         string port_alias = key.substr(found+1);
 
