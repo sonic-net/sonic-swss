@@ -494,54 +494,32 @@ void RouteOrch::addTempRoute(IpPrefix ipPrefix, IpAddresses nextHops)
 {
     SWSS_LOG_ENTER();
 
-    bool to_add = false;
-    auto it_route = m_syncdRoutes.find(ipPrefix);
     auto next_hop_set = nextHops.getIpAddresses();
 
-    /*
-     * A temporary entry is added when route is not in m_syncdRoutes,
-     * or it is in m_syncdRoutes but the original next hop(s) is not a
-     * subset of the next hop group to be added.
-     */
-    if (it_route != m_syncdRoutes.end())
+    /* Remove next hops that are not in m_syncdNextHops */
+    for (auto it = next_hop_set.begin(); it != next_hop_set.end();)
     {
-        auto tmp_set = m_syncdRoutes[ipPrefix].getIpAddresses();
-        for (auto it : tmp_set)
+        if (!m_neighOrch->hasNextHop(*it))
         {
-            if (next_hop_set.find(it) == next_hop_set.end())
-                to_add = true;
+            SWSS_LOG_INFO("Failed to get next hop entry ip:%s",
+                   (*it).to_string().c_str());
+            it = next_hop_set.erase(it);
         }
+        else
+            it++;
     }
-    else
-        to_add = true;
 
-    if (to_add)
-    {
-        /* Remove next hops that are not in m_syncdNextHops */
-        for (auto it = next_hop_set.begin(); it != next_hop_set.end();)
-        {
-            if (!m_neighOrch->hasNextHop(*it))
-            {
-                SWSS_LOG_INFO("Failed to get next hop entry ip:%s",
-                       (*it).to_string().c_str());
-                it = next_hop_set.erase(it);
-            }
-            else
-                it++;
-        }
+    /* Return if next_hop_set is empty */
+    if (next_hop_set.empty())
+        return;
 
-        /* Return if next_hop_set is empty */
-        if (next_hop_set.empty())
-            return;
+    /* Randomly pick an address from the set */
+    auto it = next_hop_set.begin();
+    advance(it, rand() % next_hop_set.size());
 
-        /* Randomly pick an address from the set */
-        auto it = next_hop_set.begin();
-        advance(it, rand() % next_hop_set.size());
-
-        /* Set the route's temporary next hop to be the randomly picked one */
-        IpAddresses tmp_next_hop((*it).to_string());
-        addRoute(ipPrefix, tmp_next_hop);
-    }
+    /* Set the route's temporary next hop to be the randomly picked one */
+    IpAddresses tmp_next_hop((*it).to_string());
+    addRoute(ipPrefix, tmp_next_hop);
 }
 
 bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
