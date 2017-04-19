@@ -155,6 +155,8 @@ bool PortsOrch::isInitDone()
 
 bool PortsOrch::getPort(string alias, Port &p)
 {
+    SWSS_LOG_ENTER();
+
     if (m_portList.find(alias) == m_portList.end())
         return false;
     p = m_portList[alias];
@@ -163,6 +165,8 @@ bool PortsOrch::getPort(string alias, Port &p)
 
 bool PortsOrch::getPort(sai_object_id_t id, Port &port)
 {
+    SWSS_LOG_ENTER();
+
     for (const auto& portIter: m_portList)
     {
         switch (portIter.second.m_type)
@@ -255,7 +259,7 @@ void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_
         if (it->second.m_port_id == id)
         {
             vector<FieldValueTuple> vector;
-            FieldValueTuple tuple("oper_status", to_string(status));
+            FieldValueTuple tuple("oper_status", oper_status_strings.at(status));
             vector.push_back(tuple);
             m_portTable->set(it->first, vector);
         }

@@ -165,10 +165,8 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin ? "up" : "down");
-    FieldValueTuple o("oper_status", oper ? "up" : "down");
     FieldValueTuple m("mtu", to_string(mtu));
     fvVector.push_back(a);
-    fvVector.push_back(o);
     fvVector.push_back(m);
 
     /* VLAN interfaces: Check if the type is bridge */
@@ -180,6 +178,8 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         }
         else
         {
+            FieldValueTuple o("oper_status", oper ? "up" : "down");
+            fvVector.push_back(o);
             m_vlanTableProducer.set(key, fvVector);
         }
         return;

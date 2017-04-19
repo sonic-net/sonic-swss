@@ -9,6 +9,15 @@
 
 #include <map>
 
+static const map<sai_port_oper_status_t, string> oper_status_strings =
+{
+    { SAI_PORT_OPER_STATUS_UNKNOWN,     "unknown" },
+    { SAI_PORT_OPER_STATUS_UP,          "up" },
+    { SAI_PORT_OPER_STATUS_DOWN,        "down" },
+    { SAI_PORT_OPER_STATUS_TESTING,     "testing" },
+    { SAI_PORT_OPER_STATUS_NOT_PRESENT, "not present" }
+};
+
 struct LagMemberUpdate
 {
     Port lag;
