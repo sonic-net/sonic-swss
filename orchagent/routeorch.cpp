@@ -13,7 +13,8 @@ extern PortsOrch *gPortsOrch;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
-#define MLNX_PLATFORM_SUBSTRING "mlnx"
+#define DEFAULT_MAX_ECMP_GROUP_SIZE     32
+#define MLNX_PLATFORM_SUBSTRING         "mlnx"
 
 RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
         Orch(db, tableName),
@@ -38,13 +39,18 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
         m_maxNextHopGroupCount = attr.value.s32;
 
         /*
-         * Workaround to re-calculate maximum ECMP groups on the condition of
-         * maximum ECMP group size is 32 due to a different ECMP mode is used.
+         * ASIC specific workaround to re-calculate maximum ECMP groups 
+         * according to diferent ECMP mode used.
+         *
+         * On Mellanox platform, the maximum ECMP groups returned is the value
+         * under the condition that the ECMP group size is 1. Deviding this
+         * number by DEFAULT_MAX_ECMP_GROUP_SIZE gets the maximum number of
+         * ECMP groups when the maximum ECMP group size is 32.
          */
         char *platform = getenv("platform");
         if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
         {
-            m_maxNextHopGroupCount /= 32;
+            m_maxNextHopGroupCount /= DEFAULT_MAX_ECMP_GROUP_SIZE;
         }
     }
     SWSS_LOG_NOTICE("Maximum number of ECMP groups supported is %d", m_maxNextHopGroupCount);
