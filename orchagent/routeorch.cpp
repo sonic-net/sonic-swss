@@ -7,8 +7,13 @@ extern sai_object_id_t gVirtualRouterId;
 
 extern sai_next_hop_group_api_t*    sai_next_hop_group_api;
 extern sai_route_api_t*             sai_route_api;
+extern sai_switch_api_t*            sai_switch_api;
 
 extern PortsOrch *gPortsOrch;
+
+/* Default maximum number of next hop groups */
+#define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
+#define MLNX_PLATFORM_SUBSTRING "mlnx"
 
 RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
         Orch(db, tableName),
@@ -18,6 +23,32 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
 {
     SWSS_LOG_ENTER();
 
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
+
+    sai_status_t status = sai_switch_api->get_switch_attribute(1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to get switch attribute number of ECMP groups. \
+                       Use default value. rv:%d", status);
+        m_maxNextHopGroupCount = DEFAULT_NUMBER_OF_ECMP_GROUPS;
+    }
+    else
+    {
+        m_maxNextHopGroupCount = attr.value.s32;
+
+        /*
+         * Workaround to re-calculate maximum ECMP groups on the condition of
+         * maximum ECMP group size is 32 due to a different ECMP mode is used.
+         */
+        char *platform = getenv("platform");
+        if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+        {
+            m_maxNextHopGroupCount /= 32;
+        }
+    }
+    SWSS_LOG_NOTICE("Maximum number of ECMP groups supported is %d", m_maxNextHopGroupCount);
+
     IpPrefix default_ip_prefix("0.0.0.0/0");
 
     sai_unicast_route_entry_t unicast_route_entry;
@@ -25,11 +56,10 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
     copy(unicast_route_entry.destination, default_ip_prefix);
     subnet(unicast_route_entry.destination, unicast_route_entry.destination);
 
-    sai_attribute_t attr;
     attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
     attr.value.s32 = SAI_PACKET_ACTION_DROP;
 
-    sai_status_t status = sai_route_api->create_route(&unicast_route_entry, 1, &attr);
+    status = sai_route_api->create_route(&unicast_route_entry, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create v4 default route with packet action drop");
@@ -359,9 +389,10 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
 
     assert(!hasNextHopGroup(ipAddresses));
 
-    if (m_nextHopGroupCount > NHGRP_MAX_SIZE)
+    if (m_nextHopGroupCount >= m_maxNextHopGroupCount)
     {
-        SWSS_LOG_DEBUG("Failed to create next hop group. Exceeding maximum number of next hop groups.\n");
+        SWSS_LOG_DEBUG("Failed to create new next hop group. \
+                        Reaching maximum number of next hop groups.");
         return false;
     }
 
