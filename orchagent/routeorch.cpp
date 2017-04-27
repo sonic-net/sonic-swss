@@ -72,10 +72,10 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
         throw runtime_error("Failed to create v4 default route with packet action drop");
     }
 
-    // add default v4 route into the m_syncdRoutes
-    m_syncdRoutes[default_ip_prefix] = IpAddresses("0.0.0.0");
+    /* Add default IPv4 route into the m_syncdRoutes */
+    m_syncdRoutes[default_ip_prefix] = IpAddresses();
 
-    SWSS_LOG_NOTICE("Create v4 default route with packet action drop");
+    SWSS_LOG_NOTICE("Create IPv4 default route with packet action drop");
 
     IpPrefix v6_default_ip_prefix("::/0");
 
@@ -89,10 +89,10 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
         throw runtime_error("Failed to create v6 default route with packet action drop");
     }
 
-    // add default v6 route into the m_syncdRoutes
-    m_syncdRoutes[v6_default_ip_prefix] = IpAddresses("::");
+    /* Add default IPv6 route into the m_syncdRoutes */
+    m_syncdRoutes[v6_default_ip_prefix] = IpAddresses();
 
-    SWSS_LOG_NOTICE("Create v6 default route with packet action drop");
+    SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
 }
 
 bool RouteOrch::hasNextHopGroup(IpAddresses ipAddresses)
@@ -359,7 +359,12 @@ void RouteOrch::notifyNextHopChangeObservers(IpPrefix prefix, IpAddresses nextho
 
 void RouteOrch::increaseNextHopRefCount(IpAddresses ipAddresses)
 {
-    if (ipAddresses.getSize() == 1)
+    /* Return when there is no next hop (dropped) */
+    if (ipAddresses.getSize() == 0)
+    {
+        return;
+    }
+    else if (ipAddresses.getSize() == 1)
     {
         IpAddress ip_address(ipAddresses.to_string());
         m_neighOrch->increaseNextHopRefCount(ip_address);
@@ -371,15 +376,14 @@ void RouteOrch::increaseNextHopRefCount(IpAddresses ipAddresses)
 }
 void RouteOrch::decreaseNextHopRefCount(IpAddresses ipAddresses)
 {
-    if (ipAddresses.getSize() == 1)
+    /* Return when there is no next hop (dropped) */
+    if (ipAddresses.getSize() == 0)
+    {
+        return;
+    }
+    else if (ipAddresses.getSize() == 1)
     {
         IpAddress ip_address(ipAddresses.to_string());
-
-        // skip blackhole route
-        if (ip_address.isZero())
-        {
-            return;
-        }
 
         m_neighOrch->decreaseNextHopRefCount(ip_address);
     }
@@ -580,6 +584,7 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
         route_attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
         route_attr.value.oid = next_hop_id;
 
+        /* Default SAI_ROUTE_ATTR_PACKET_ACTION is SAI_PACKET_ACTION_FORWARD */
         sai_status_t status = sai_route_api->create_route(&route_entry, 1, &route_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -600,16 +605,21 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     }
     else
     {
-        /* Set the packet action to forward */
-        route_attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
-        route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+        sai_status_t status;
 
-        sai_status_t status = sai_route_api->set_route_attribute(&route_entry, &route_attr);
-        if (status != SAI_STATUS_SUCCESS)
+        /* Set the packet action to forward when there was no next hop (dropped) */
+        if (it_route->second.getSize() == 0)
         {
-            SWSS_LOG_ERROR("Failed to set route %s with packet action forward, %d",
-                           ipPrefix.to_string().c_str(), status);
-            return false;
+            route_attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
+            route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+
+            status = sai_route_api->set_route_attribute(&route_entry, &route_attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to set route %s with packet action forward, %d",
+                               ipPrefix.to_string().c_str(), status);
+                return false;
+            }
         }
 
         route_attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
