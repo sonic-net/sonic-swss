@@ -122,8 +122,6 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
     sai_attribute_value_t value;
 
-    value.aclfield.enable = true;
-
     try
     {
         if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
@@ -322,6 +320,7 @@ bool AclRule::create()
         {
             attr.id = it.first;
             attr.value = it.second;
+            attr.value.aclfield.enable = true;
             rule_attrs.push_back(attr);
         }
     }
