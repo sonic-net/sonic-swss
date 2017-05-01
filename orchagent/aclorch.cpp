@@ -794,7 +794,6 @@ bool AclRange::remove()
 
 AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch) :
         Orch(db, tableNames),
-        thread(AclOrch::collectCountersThread, this),
         m_portOrch(portOrch),
         m_mirrorOrch(mirrorOrch)
 {
@@ -826,7 +825,6 @@ AclOrch::~AclOrch()
 
     m_bCollectCounters = false;
     m_sleepGuard.notify_all();
-    join();
 }
 
 void AclOrch::update(SubjectType type, void *cntx)
