@@ -228,7 +228,7 @@ inline void split(string str, Iterable& out, char delim = ' ')
     }
 }
 
-class AclOrch : public Orch, public Observer, public thread
+class AclOrch : public Orch, public Observer
 {
 public:
     AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch);
@@ -275,6 +275,8 @@ private:
 
     PortsOrch *m_portOrch;
     MirrorOrch *m_mirrorOrch;
+
+    thread m_countersThread;
 };
 
 #endif /* SWSS_ACLORCH_H */
