@@ -237,11 +237,6 @@ public:
 
     sai_object_id_t getTableById(string table_id);
 
-    static mutex& getContextMutex()
-    {
-        return m_countersMutex;
-    }
-
     static swss::Table& getCountersTable()
     {
         return m_countersTable;

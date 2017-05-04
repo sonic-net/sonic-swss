@@ -259,8 +259,6 @@ bool AclRule::create()
 {
     SWSS_LOG_ENTER();
 
-    unique_lock<mutex> lock(m_pAclOrch->getContextMutex());
-
     sai_object_id_t table_oid = m_pAclOrch->getTableById(m_tableId);
     vector<sai_attribute_t> rule_attrs;
     sai_object_id_t range_objects[2];
@@ -356,8 +354,6 @@ bool AclRule::remove()
 {
     SWSS_LOG_ENTER();
     sai_status_t res;
-
-    unique_lock<mutex> lock(m_pAclOrch->getContextMutex());
 
     if (sai_acl_api->delete_acl_entry(m_ruleOid) != SAI_STATUS_SUCCESS)
     {
@@ -842,6 +838,8 @@ void AclOrch::update(SubjectType type, void *cntx)
         return;
     }
 
+    unique_lock<mutex> lock(m_countersMutex);
+
     for (const auto& table : m_AclTables)
     {
         if (table.second.type != ACL_TABLE_MIRROR)
@@ -864,10 +862,12 @@ void AclOrch::doTask(Consumer &consumer)
 
     if (table_name == APP_ACL_TABLE_NAME)
     {
+        unique_lock<mutex> lock(m_countersMutex);
         doAclTableTask(consumer);
     }
     else if (table_name == APP_ACL_RULE_TABLE_NAME)
     {
+        unique_lock<mutex> lock(m_countersMutex);
         doAclRuleTask(consumer);
     }
     else
@@ -1201,8 +1201,6 @@ sai_status_t AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &ta
 {
     SWSS_LOG_ENTER();
 
-    unique_lock<mutex> lock(m_countersMutex);
-
     sai_status_t status;
     sai_attribute_t attr;
     vector<sai_attribute_t> table_attrs;
@@ -1293,8 +1291,6 @@ sai_status_t AclOrch::deleteUnbindAclTable(sai_object_id_t table_oid)
 {
     SWSS_LOG_ENTER();
     sai_status_t status;
-
-    unique_lock<mutex> lock(m_countersMutex);
 
     if ((status = bindAclTable(table_oid, m_AclTables[table_oid], false)) != SAI_STATUS_SUCCESS)
     {
