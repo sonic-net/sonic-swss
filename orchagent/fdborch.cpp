@@ -269,7 +269,7 @@ bool FdbOrch::splitKey(const string& key, FdbEntry& entry)
     }
 
     uint8_t mac_array[6];
-    if (!MacAddress::parseMacString(mac_address_str, mac_array)) // FIXME: parseMacString consider 52:54:00:25::E9 and 52:54:00:25:E9 as good one
+    if (!MacAddress::parseMacString(mac_address_str, mac_array))
     {
         SWSS_LOG_ERROR("Failed to parse mac address: %s in key: %s", mac_address_str.c_str(), key.c_str());
         return false;
