@@ -286,8 +286,13 @@ bool FdbOrch::splitKey(const string& key, FdbEntry& entry)
         return false;
     }
 
-    entry.vlan = stoi(vlan_str.substr(4)); // FIXME: create swss-common function to extract vlan number from vlan name
-                                           // Currently this code could raise an exception
+    if (port.m_type != Port::VLAN)
+    {
+        SWSS_LOG_ERROR("Port %s from key %s must be a vlan port", vlan_str.c_str(), key.c_str());
+        return false;
+    }
 
+    entry.vlan = port.m_vlan_id;
+ 
     return true;
 }
