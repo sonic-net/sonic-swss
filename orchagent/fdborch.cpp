@@ -271,6 +271,12 @@ bool FdbOrch::splitKey(const string& key, FdbEntry& entry)
         return false;
     }
 
+    if (mac_array[0] & 0x01)
+    {
+        SWSS_LOG_ERROR("Mac address %s in key %s should be unicast", mac_address_str.c_str(), key.c_str());
+        return false;
+    }
+
     entry.mac = MacAddress(mac_array);
 
     Port port;
