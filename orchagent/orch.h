@@ -77,7 +77,7 @@ protected:
 
     /* Run doTask against a specific consumer */
     virtual void doTask(Consumer &consumer) = 0;
-    void dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
+    void recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
     ref_resolve_status resolveFieldRefValue(type_map&, const string&, KeyOpFieldsValuesTuple&, sai_object_id_t&);
     bool parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
     bool parseReference(type_map &type_maps, string &ref, string &table_name, string &object_name);

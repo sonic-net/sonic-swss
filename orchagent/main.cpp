@@ -3,6 +3,7 @@ extern "C" {
 #include "saistatus.h"
 }
 
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <mutex>
@@ -49,6 +50,11 @@ map<string, string> gProfileMap;
 sai_object_id_t gVirtualRouterId;
 sai_object_id_t gUnderlayIfId;
 MacAddress gMacAddress;
+
+bool gSairedisRecord = true;
+bool gSwssRecord = true;
+ofstream gRecordOfs;
+string gRecordFile;
 
 /* Global database mutex */
 mutex gDbMutex;
@@ -134,6 +140,30 @@ void initSaiApi()
     sai_log_set(SAI_API_ACL,                    SAI_LOG_NOTICE);
 }
 
+string getTimestamp()
+{
+    char buffer[64];
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+
+    size_t size = strftime(buffer, 32 ,"%Y-%m-%d.%T.", localtime(&tv.tv_sec));
+    snprintf(&buffer[size], 32, "%06ld", tv.tv_usec);
+
+    return string(buffer);
+}
+
+void usage()
+{
+    cout << "usage: orchagent [-h] [-r record_type] [-m MAC]" << endl;
+    cout << "    -h: display this message" << endl;
+    cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
+    cout << "                    0: do not record logs" << endl;
+    cout << "                    1: record SAI call sequence as sairedis*.rec" << endl;
+    cout << "                    2: record SwSS task sequence as swss*.rec" << endl;
+    cout << "                    3: enable both above two records" << endl;
+    cout << "    -m MAC: set switch MAC address" << endl;
+}
+
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("orchagent");
@@ -143,19 +173,39 @@ int main(int argc, char **argv)
     int opt;
     sai_status_t status;
 
-    bool disableRecord = false;
-
-    while ((opt = getopt(argc, argv, "m:hR")) != -1)
+    while ((opt = getopt(argc, argv, "m:r:h")) != -1)
     {
         switch (opt)
         {
-        case 'R':
-            disableRecord = true;
-            break;
         case 'm':
             gMacAddress = MacAddress(optarg);
             break;
+        case 'r':
+            if (!strcmp(optarg, "0"))
+            {
+                gSairedisRecord = false;
+                gSwssRecord = false;
+            }
+            else if (!strcmp(optarg, "1"))
+            {
+                gSwssRecord = false;
+            }
+            else if (!strcmp(optarg, "2"))
+            {
+                gSairedisRecord = false;
+            }
+            else if (!strcmp(optarg, "3"))
+            {
+                continue; /* default behavior */
+            }
+            else
+            {
+                usage();
+                exit(EXIT_FAILURE);
+            }
+            break;
         case 'h':
+            usage();
             exit(EXIT_SUCCESS);
         default: /* '?' */
             exit(EXIT_FAILURE);
@@ -174,26 +224,36 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    SWSS_LOG_NOTICE("Enabling sairedis recording");
-
+    /* Enable SAI Redis recording */
     sai_attribute_t attr;
     attr.id = SAI_REDIS_SWITCH_ATTR_RECORD;
-    attr.value.booldata = !disableRecord;
+    attr.value.booldata = gSairedisRecord;
 
     status = sai_switch_api->set_switch_attribute(&attr);
-
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to enable recording %d", status);
+        SWSS_LOG_ERROR("Failed to enable SAI Redis recording %d", status);
         exit(EXIT_FAILURE);
+    }
+
+    /* Enable SwSS recording */
+    if (gSwssRecord)
+    {
+        gRecordFile = "swss." + getTimestamp() + ".rec";
+        gRecordOfs.open(gRecordFile);
+        if (!gRecordOfs.is_open())
+        {
+            SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());
+            exit(EXIT_FAILURE);
+        }
     }
 
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
 
     attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
     attr.value.s32 = SAI_REDIS_NOTIFY_SYNCD_INIT_VIEW;
-    status = sai_switch_api->set_switch_attribute(&attr);
 
+    status = sai_switch_api->set_switch_attribute(&attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW %d", status);
@@ -205,7 +265,7 @@ int main(int argc, char **argv)
     attr.id = SAI_REDIS_SWITCH_ATTR_USE_PIPELINE;
     attr.value.booldata = true;
 
-    sai_switch_api->set_switch_attribute(&attr);
+    status = sai_switch_api->set_switch_attribute(&attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to enable redis pipeline %d", status);
@@ -239,6 +299,7 @@ int main(int argc, char **argv)
 
     /* Get the default virtual router ID */
     attr.id = SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID;
+
     status = sai_switch_api->get_switch_attribute(1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -260,7 +321,7 @@ int main(int argc, char **argv)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create underlay router interface %d", status);
-        return false;
+        exit(EXIT_FAILURE);
     }
 
     SWSS_LOG_NOTICE("Created underlay router interface ID %lx", gUnderlayIfId);

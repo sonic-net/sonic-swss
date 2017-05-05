@@ -577,16 +577,13 @@ void CoppOrch::doTask(Consumer &consumer)
                 break;
             case task_process_status::task_invalid_entry:
                 SWSS_LOG_ERROR("Invalid copp task item was encountered, removing from queue.");
-                dumpTuple(consumer, tuple);
                 it = consumer.m_toSync.erase(it);
                 break;
             case task_process_status::task_failed:
                 SWSS_LOG_ERROR("Processing copp task item failed, exiting. ");
-                dumpTuple(consumer, tuple);
                 return;
             case task_process_status::task_need_retry:
                 SWSS_LOG_ERROR("Processing copp task item failed, will retry.");
-                dumpTuple(consumer, tuple);
                 it++;
                 break;
             default:

@@ -1,5 +1,7 @@
+#include <fstream>
 #include <iostream>
 #include <mutex>
+#include <sys/time.h>
 
 #include "orch.h"
 #include "portsorch.h"
@@ -10,6 +12,11 @@ using namespace swss;
 
 extern mutex gDbMutex;
 extern PortsOrch *gPortsOrch;
+
+extern bool gSwssRecord;
+extern ofstream gRecordOfs;
+extern string gRecordFile;
+extern string getTimestamp();
 
 Orch::Orch(DBConnector *db, string tableName) :
     m_db(db)
@@ -33,6 +40,11 @@ Orch::~Orch()
     delete(m_db);
     for(auto &it : m_consumerMap)
         delete it.second.m_consumer;
+
+    if (gRecordOfs.is_open())
+    {
+        gRecordOfs.close();
+    }
 }
 
 vector<Selectable *> Orch::getSelectables()
@@ -73,13 +85,17 @@ bool Orch::execute(string tableName)
 
     string key = kfvKey(new_data);
     string op  = kfvOp(new_data);
-    // Possible nothing popped, ie. the oparation is already merged with other operations
+    /* Possible nothing popped, ie. the oparation is already merged with other operations */
     if (op.empty())
     {
         return true;
     }
 
-    dumpTuple(consumer, new_data);
+    /* Record incoming tasks */
+    if (gSwssRecord)
+    {
+        recordTuple(consumer, new_data);
+    }
 
     /* If a new task comes or if a DEL task comes, we directly put it into consumer.m_toSync map */
     if (consumer.m_toSync.find(key) == consumer.m_toSync.end() || op == DEL_COMMAND)
@@ -214,14 +230,16 @@ void Orch::doTask()
     }
 }
 
-void Orch::dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
+void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 {
-    string debug_msg = "Full table content: " + consumer.m_consumer->getTableName() + " key : " + kfvKey(tuple) + " op : "  + kfvOp(tuple);
+    string s = consumer.m_consumer->getTableName() + ":" + kfvKey(tuple)
+               + "|" + kfvOp(tuple);
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
-        debug_msg += " " + fvField(*i) + " : " + fvValue(*i);
+        s += "|" + fvField(*i) + ":" + fvValue(*i);
     }
-    SWSS_LOG_DEBUG("%s\n", debug_msg.c_str());
+
+    gRecordOfs << getTimestamp() << "|" << s << endl;
 }
 
 ref_resolve_status Orch::resolveFieldRefArray(

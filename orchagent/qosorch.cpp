@@ -1260,22 +1260,18 @@ void QosOrch::doTask(Consumer &consumer)
         switch(task_status)
         {
             case task_process_status::task_success :
-                dumpTuple(consumer, tuple);
                 it = consumer.m_toSync.erase(it);
                 SWSS_LOG_DEBUG("Successfully processed item, removing from queue.");
                 break;
             case task_process_status::task_invalid_entry :
                 SWSS_LOG_ERROR("Invalid QOS task item was encountered, removing from queue.");
-                dumpTuple(consumer, tuple);
                 it = consumer.m_toSync.erase(it);
                 break;
             case task_process_status::task_failed :
                 SWSS_LOG_ERROR("Processing QOS task item failed, exiting.");
-                dumpTuple(consumer, tuple);
                 return;
             case task_process_status::task_need_retry :
                 SWSS_LOG_INFO("Processing QOS task item failed, will retry.");
-                dumpTuple(consumer, tuple);
                 it++;
                 break;
             default:
