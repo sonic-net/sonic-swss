@@ -171,10 +171,11 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 
 ---------------------------------------------
 ###FDB_TABLE
+
     ; Stores FDB entries which were inserted into SAI state manually
     ; Notes:
-    : - only unicast FDB entries supported
-    : - only Vlan interfaces are supported
+    ; - only unicast FDB entries supported
+    ; - only Vlan interfaces are supported
     key           = FDB_TABLE:mac_address:"vlan"vlanid ; mac address will be inserted to FDB for the vlan interface
     port          = ifName                ; interface where the entry is bound to
     type          = "static" / "dynamic"  ; type of the entry
