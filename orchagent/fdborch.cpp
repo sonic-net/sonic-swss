@@ -234,7 +234,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
     {
         SWSS_LOG_ERROR("Failed to remove FDB entry. mac=%s, vlan=%d",
                        entry.mac.to_string().c_str(), entry.vlan);
-        return false; // FIXME: retry it? How many times?
+        return true;
     }
 
     (void)m_entries.erase(entry);
@@ -257,7 +257,7 @@ bool FdbOrch::splitKey(const string& key, FdbEntry& entry)
     }
 
     mac_address_str = key.substr(0, found);
-    vlan_str = key.substr(found + 1, string::npos); // FIXME: what if we have "macaddress:"
+    vlan_str = key.substr(found + 1, string::npos);
     if (vlan_str.length() <= 4) // "Vlan"
     {
         SWSS_LOG_ERROR("Failed to extract vlan interface name from the key: %s", key.c_str());
