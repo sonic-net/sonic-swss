@@ -114,14 +114,14 @@ void FdbOrch::doTask(Consumer& consumer)
 
             if (!port_defined)
             {
-                SWSS_LOG_ERROR("FDB entry with key:'%s' should have 'port' attribute\n", key.c_str());
+                SWSS_LOG_ERROR("FDB entry with key:'%s' must have 'port' attribute\n", key.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
 
             if (!type_defined)
             {
-                SWSS_LOG_ERROR("FDB entry with key:'%s' should have 'type' attribute\n", key.c_str());
+                SWSS_LOG_ERROR("FDB entry with key:'%s' must have 'type' attribute\n", key.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -188,7 +188,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     vector<sai_attribute_t> attrs;
 
     attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
-    attr.value.u8 = (type == "dynamic") ? SAI_FDB_ENTRY_DYNAMIC : SAI_FDB_ENTRY_STATIC; // FIXME: u8 is right here?
+    attr.value.s32 = (type == "dynamic") ? SAI_FDB_ENTRY_DYNAMIC : SAI_FDB_ENTRY_STATIC;
     attrs.push_back(attr);
 
     attr.id = SAI_FDB_ENTRY_ATTR_PORT_ID;
@@ -196,7 +196,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     attrs.push_back(attr);
 
     attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
-    attr.value.u8 = SAI_PACKET_ACTION_FORWARD; // FIXME: what to use here? what about u8 type?
+    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     attrs.push_back(attr);
 
     status = sai_fdb_api->create_fdb_entry(&fdb_entry, attrs.size(), attrs.data());
@@ -204,7 +204,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     {
         SWSS_LOG_ERROR("Failed to add FDB entry. mac=%s, vlan=%d. port_name %s. type %s\n",
                    entry.mac.to_string().c_str(), entry.vlan, port_name.c_str(), type.c_str());
-        return false; // FIXME: retry it? How many times?
+        return true;
     }
 
     (void)m_entries.insert(entry);
