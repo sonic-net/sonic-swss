@@ -1390,6 +1390,7 @@ sai_status_t AclOrch::bindAclTable(sai_object_id_t table_oid, AclTable &aclTable
                     portAcls.erase(iter);
                     break;
                 }
+                ++iter;
             }
         }
 
