@@ -27,7 +27,8 @@ class FdbOrch: public Orch, public Subject
 public:
     FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
         Orch(db, tableName),
-        m_portsOrch(port)
+        m_portsOrch(port),
+        m_table(Table(m_db, tableName))
     {
     }
 
@@ -37,6 +38,7 @@ public:
 private:
     PortsOrch *m_portsOrch;
     set<FdbEntry> m_entries;
+    Table m_table;
 
     void doTask(Consumer& consumer);
 

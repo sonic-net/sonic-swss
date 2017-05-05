@@ -139,6 +139,10 @@ void FdbOrch::doTask(Consumer& consumer)
                 it = consumer.m_toSync.erase(it);
             else
                 it++;
+
+            // Remove AppDb entry if FdbEntry type == 'dynamic'
+            if (type == "dynamic")
+                m_table.del(key);
         }
         else if (op == DEL_COMMAND)
         {
