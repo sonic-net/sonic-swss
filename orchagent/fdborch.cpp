@@ -3,6 +3,7 @@
 #include <vector>
 
 #include "logger.h"
+#include "tokenize.h"
 #include "fdborch.h"
 
 extern sai_fdb_api_t *sai_fdb_api;
@@ -253,15 +254,17 @@ bool FdbOrch::splitKey(const string& key, FdbEntry& entry)
     string mac_address_str;
     string vlan_str;
 
-    size_t found = key.rfind(':');
-    if (found == string::npos)
+    auto fields = tokenize(key, ':');
+
+    if (fields.size() < 2 || fields.size() > 2)
     {
         SWSS_LOG_ERROR("Failed to parse key: %s", key.c_str());
         return false;
     }
 
-    mac_address_str = key.substr(0, found);
-    vlan_str = key.substr(found + 1, string::npos);
+    vlan_str = fields[0];
+    mac_address_str = fields[1];
+
     if (vlan_str.length() <= 4) // "Vlan"
     {
         SWSS_LOG_ERROR("Failed to extract vlan interface name from the key: %s", key.c_str());
