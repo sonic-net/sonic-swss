@@ -11,7 +11,14 @@ struct FdbEntry
     sai_vlan_id_t vlan;
     bool operator<(const FdbEntry& other) const
     {
-        return tie(mac, vlan) < tie(other.mac, other.vlan);
+        // operator<(const MacAddress&) works incorrectly for some reason
+        if (memcmp(mac.getMac(), other.mac.getMac(), 6) < 0)
+            return true;
+
+        if (memcmp(other.mac.getMac(), mac.getMac(), 6) < 0)
+            return false;
+
+        return vlan < other.vlan;
     }
 };
 
