@@ -185,7 +185,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     1) "port"
     2) "Ethernet0"
     3) "type"
-    4) "dynamic"
+    4) "static"
 
 ---------------------------------------------
 ###QUEUE_TABLE
