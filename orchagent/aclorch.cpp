@@ -1009,9 +1009,13 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             shared_ptr<AclRule> newRule;
             sai_object_id_t table_oid = getTableById(table_id);
 
+            /* ACL table is not yet created */
+            /* TODO: Remove ACL_TABLE_UNKNOWN as a table with this type cannot be successfully created */
             if (table_oid == SAI_NULL_OBJECT_ID || m_AclTables[table_oid].type == ACL_TABLE_UNKNOWN)
             {
-                bAllAttributesOk = false;
+                SWSS_LOG_INFO("Wait for ACL table %s to be created", table_id.c_str());
+                it++;
+                continue;
             }
 
             if (bAllAttributesOk)
