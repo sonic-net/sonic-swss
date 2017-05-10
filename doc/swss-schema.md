@@ -409,6 +409,145 @@ It's possible to create separate configuration files for different ASIC platform
 
 ----------------------------------------------
 
+###ACL\_TABLE
+Stores information about ACL tables on the switch.  Port names are defined in [port_config.ini](../portsyncd/port_config.ini).
+
+    key           = ACL_TABLE:name          ; acl_table_name must be unique
+    ;field        = value
+    policy_desc   = 1*255VCHAR              ; name of the ACL policy table description
+    type          = "mirror"/"l3"           ; type of acl table, every type of
+                                            ; table defines the match/action a
+                                            ; specific set of match and actions.
+    ports         = [0-max_ports]*port_name ; the ports to which this ACL
+                                            ; table is applied, can be emtry
+                                            ; value annotations
+    port_name     = 1*64VCHAR               ; name of the port, must be unique
+    max_ports     = 1*5DIGIT                ; number of ports supported on the chip
+
+
+
+###ACL\_RULE\_TABLE
+Stores rules associated with a specific ACL table on the switch.
+
+    key: ACL_RULE_TABLE:table_name:rule_name   ; key of the rule entry in the table,
+                                               ; seq is the order of the rules
+                                               ; when the packet is filtered by the
+                                               ; ACL "policy_name".
+                                               ; A rule is always assocaited with a
+                                               ; policy.
+
+    ;field        = value
+    priority      = 1*3DIGIT                   ; rule priority. Valid values range
+                                               ; could be platform dependent
+
+    packet_action = "forward"/"drop"/"mirror"  ; action when the fields are
+                                               ; matched (mirror action only
+                                               ; available to mirror acl table
+                                               ; type)
+
+    mirror_action = 1*255VCHAR                 ; refer to the mirror session
+                                               ; (only available to mirror acl
+                                               ; table type)
+
+    ether_type    = h16                        ; Ethernet type field
+
+    ip_type       = ip_types                   ; options of the l2_protocol_type
+                                               ; field. Only v4 is support for
+                                               ; this stage.
+
+    ip_protocol   = h8                         ; options of the l3_protocol_type field
+
+    src_ip        = ipv4_prefix                ; options of the source ipv4
+                                               ; address (and mask) field
+
+    dst_ip        = ipv4_prefix                ; options of the destination ipv4
+                                               ; address (and mask) field
+
+    l4_src_port   = port_num                   ; source L4 port or the
+    l4_dst_port   = port_num                   ; destination L4 port
+
+    l4_src_port_range = port_num_L-port_num_H  ; source ports range of L4 ports field
+    l4_dst_port_range = port_num_L-port_num_H  ; destination ports range of L4 ports field
+
+    tcp_flags     = h8/h8                      ; TCP flags field and mask
+    dscp          = h8                         ; DSCP field (only available for mirror
+                                               ; table type)
+
+    ;value annotations
+    ip_types = any | ip | ipv4 | ipv4any | non_ipv4 | ipv6any | non_ipv6
+    port_num      = 1*5DIGIT   ; a number between 0 and 65535
+    port_num_L    = 1*5DIGIT   ; a number between 0 and 65535,
+                               ; port_num_L < port_num_H
+    port_num_H    = 1*5DIGIT   ; a number between 0 and 65535,
+                               ; port_num_L < port_num_H
+    ipv6_prefix   =                 6( h16 ":" ) ls32
+       /                       "::" 5( h16 ":" ) ls32
+       / [               h16 ] "::" 4( h16 ":" ) ls32
+       / [ *1( h16 ":" ) h16 ] "::" 3( h16 ":" ) ls32
+       / [ *2( h16 ":" ) h16 ] "::" 2( h16 ":" ) ls32
+       / [ *3( h16 ":" ) h16 ] "::"    h16 ":"   ls32
+       / [ *4( h16 ":" ) h16 ] "::"              ls32
+       / [ *5( h16 ":" ) h16 ] "::"              h16
+       / [ *6( h16 ":" ) h16 ] "::"
+    h8          = 1*2HEXDIG
+    h16         = 1*4HEXDIG
+    ls32        = ( h16 ":" h16 ) / IPv4address
+    ipv4_prefix = dec-octet "." dec-octet "." dec-octet "." dec-octet “/” %d1-32
+    dec-octet   = DIGIT                     ; 0-9
+                    / %x31-39 DIGIT         ; 10-99
+                    / "1" 2DIGIT            ; 100-199
+                    / "2" %x30-34 DIGIT     ; 200-249
+
+Example:
+
+    [
+        {
+            "ACL_TABLE:Drop_IP": {
+                "policy_desc" : "Drop_Traffic",
+                "type" : "L3",
+                "ports" : "Ethernet0,Ethernet4"
+            },
+            "OP": "SET"
+        },
+        {
+            "ACL_RULE_TABLE:Drop_IP:TheDrop": {
+                "priority" : "55",
+                "SRC_IP" : "20.0.0.0/25",
+                "DST_IP" : "20.0.0.0/23",
+                "L4_SRC_PORT" : "80",
+                "PACKET_ACTION" : "DROP"
+            },
+            "OP": "SET"
+        }
+    ]
+
+Equivalent RedisDB entry:
+
+    127.0.0.1:6379> KEYS *ACL*
+    1) "ACL_TABLE:Drop_IP"
+    2) "ACL_RULE_TABLE:Drop_IP:TheDrop"
+    127.0.0.1:6379> HGETALL ACL_TABLE:Drop_IP
+    1) "policy_desc"
+    2) "Drop_Traffic"
+    3) "ports"
+    4) "Ethernet0,Ethernet4"
+    5) "type"
+    6) "L3"
+    127.0.0.1:6379> HGETALL ACL_RULE_TABLE:Drop_IP:TheDrop
+     1) "DST_IP"
+     2) "20.0.0.0/23"
+     3) "L4_SRC_PORT"
+     4) "80"
+     5) "PACKET_ACTION"
+     6) "DROP"
+     7) "SRC_IP"
+     8) "20.0.0.0/25"
+     9) "priority"
+    10) "55"
+    127.0.0.1:6379>
+
+----------------------------------------------
+
 ###Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?  
 
