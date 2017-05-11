@@ -566,7 +566,7 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
             // and current next hop is still in next hop group - do nothing.
             if (session.nexthopInfo.prefix == update.prefix && update.nexthopGroup.getIpAddresses().count(session.nexthopInfo.nexthop))
             {
-                return;
+                continue;
             }
         }
 
@@ -582,26 +582,26 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
             {
                 deactivateSession(name, session);
             }
-            return;
+            continue;
         }
 
         if (session.status)
         {
             if (!updateSessionDstMac(name, session))
             {
-                return;
+                continue;
             }
 
             if (!updateSessionDstPort(name, session))
             {
-                return;
+                continue;
             }
         }
         else
         {
             if (!activateSession(name, session))
             {
-                return;
+                continue;
             }
         }
     }
@@ -638,19 +638,19 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
                 {
                     deactivateSession(name, session);
                 }
-               return;
+               continue;
             }
 
             if (session.status)
             {
                 if (!updateSessionDstMac(name, session))
                 {
-                    return;
+                    continue;
                 }
 
                 if (!updateSessionDstPort(name, session))
                 {
-                    return;
+                    continue;
                 }
             }
             else
@@ -748,7 +748,7 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
             // We interesting only in first LAG member
             if (update.lag.m_members.size() > 1)
             {
-                return;
+                continue;
             }
 
             const string& memberName = *update.lag.m_members.begin();
@@ -771,7 +771,7 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
                 deactivateSession(name, session);
                 session.neighborInfo.portId = SAI_OBJECT_TYPE_NULL;
 
-                return;
+                continue;
             }
 
             // Get another LAG member and update session

@@ -583,6 +583,13 @@ bool AclRuleMirror::create()
         throw runtime_error("Failed to get mirror session state");
     }
 
+    // Increase session reference count regardless of state to deny
+    // attempt to remove mirror session with attached ACL rules.
+    if (!m_pMirrorOrch->increaseRefCount(m_sessionName))
+    {
+        throw runtime_error("Failed to increase mirror session reference count");
+    }
+
     if (!state)
     {
         return true;
@@ -607,11 +614,21 @@ bool AclRuleMirror::create()
 
     m_state = true;
 
-    return m_pMirrorOrch->increaseRefCount(m_sessionName);
+    return true;
 }
 
 bool AclRuleMirror::remove()
 {
+    if (!m_pMirrorOrch->decreaseRefCount(m_sessionName))
+    {
+        throw runtime_error("Failed to decrease mirror session reference count");
+    }
+
+    if (!m_state)
+    {
+        return true;
+    }
+
     if (!AclRule::remove())
     {
         return false;
@@ -619,7 +636,7 @@ bool AclRuleMirror::remove()
 
     m_state = false;
 
-    return m_pMirrorOrch->decreaseRefCount(m_sessionName);
+    return true;
 }
 
 void AclRuleMirror::update(SubjectType type, void *cntx)
