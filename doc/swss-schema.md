@@ -548,6 +548,66 @@ Equivalent RedisDB entry:
 
 ----------------------------------------------
 
+###PORT\_MIRROR\_TABLE
+Stores information about mirroring session and its properties.
+
+    key       = PORT_MIRROR_TABLE:mirror_session_name ; mirror_session_name is
+                                                      ; unique session
+                                                      ; identifier
+    ; field   = value
+    status    = "active"/"inactive"   ; Session state.
+    src_ip    = ipv4_address          ; Session souce IP address
+    dst_ip    = ipv4_address          ; Session destination IP address
+    gre_type  = h16                   ; Session GRE protocol type
+    dscp      = h8                    ; Session DSCP
+    ttl       = h8                    ; Session TTL
+    queue     = h8                    ; Session output queue
+
+    ;value annotations
+    mirror_session_name = 1*255VCHAR
+    h8                  = 1*2HEXDIG
+    h16                 = 1*4HEXDIG
+    ipv4_address        = dec-octet "." dec-octet "." dec-octet "." dec-octet “/” %d1-32
+    dec-octet           = DIGIT                     ; 0-9
+                           / %x31-39 DIGIT         ; 10-99
+                           / "1" 2DIGIT            ; 100-199
+                           / "2" %x30-34 DIGIT     ; 200-249
+
+Example:
+
+    [
+        {
+            "MIRROR_SESSION_TABLE:session_1": {
+                "src_ip": "1.1.1.1",
+                "dst_ip": "2.2.2.2",
+                "gre_type": "0x6558",
+                "dscp": "50",
+                "ttl": "64",
+                "queue": "0"
+            },
+            "OP": "SET"
+        }
+    ]
+
+Equivalent RedisDB entry:
+
+    127.0.0.1:6379> KEYS *MIRROR*
+    1) "MIRROR_SESSION_TABLE:session_1"
+    127.0.0.1:6379> HGETALL MIRROR_SESSION_TABLE:session_1
+     1) "src_ip"
+     2) "1.1.1.1"
+     3) "dst_ip"
+     4) "2.2.2.2
+     5) "gre_type"
+     6) "0x6558"
+     7) "dscp"
+     8) "50"
+     9) "ttl"
+    10) "64"
+    11) "queue"
+    12) "0"
+    127.0.0.1:6379>
+
 ###Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?  
 
