@@ -25,7 +25,7 @@
     },
     {
         "BUFFER_POOL_TABLE:egress_lossless_pool0": {
-            "size": "113664",
+            "size": "3637248",
             "type": "egress",
             "mode": "static"
         },
@@ -33,7 +33,7 @@
     },
     {
         "BUFFER_POOL_TABLE:egress_lossless_pool1": {
-            "size": "113664",
+            "size": "3637248",
             "type": "egress",
             "mode": "static"
         },
