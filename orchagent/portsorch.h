@@ -80,6 +80,7 @@ private:
     bool removeLagMember(Port lag, Port port);
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);
+    bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
 };
 #endif /* SWSS_PORTSORCH_H */
 

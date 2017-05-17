@@ -223,6 +223,24 @@ bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
     return true;
 }
 
+bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_MTU;
+    attr.value.u32 = mtu;
+
+    sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set MTU %u to port pid:%lx", mtu, id);
+        return false;
+    }
+    SWSS_LOG_INFO("Set MTU %u to port pid:%lx", mtu, id);
+    return true;
+}
+
 bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
 {
     SWSS_LOG_ENTER();
@@ -303,6 +321,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
         {
             set<int> lane_set;
             string admin_status;
+            uint32_t mtu = 0;
+
             for (auto i : kfvFieldsValues(t))
             {
                 /* Get lane information of a physical port and initialize the port */
@@ -322,6 +342,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 /* Set port admin status */
                 if (fvField(i) == "admin_status")
                     admin_status = fvValue(i);
+
+                /* Set port mtu */
+                if (fvField(i) == "mtu")
+                    mtu = stoul(fvValue(i));
             }
 
             if (lane_set.size())
@@ -378,6 +402,24 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
+                        it++;
+                        continue;
+                    }
+                }
+                else
+                    SWSS_LOG_ERROR("Failed to get port id by alias:%s", alias.c_str());
+            }
+
+            if (mtu != 0)
+            {
+                Port p;
+                if (getPort(alias, p))
+                {
+                    if (setPortMtu(p.m_port_id, mtu))
+                        SWSS_LOG_NOTICE("Set port %s MTU to %u", alias.c_str(), mtu);
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s MTU to %u", alias.c_str(), mtu);
                         it++;
                         continue;
                     }
