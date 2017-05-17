@@ -137,16 +137,24 @@ void NeighOrch::doTask(Consumer &consumer)
         }
 
         string alias = key.substr(0, found);
-        Port p;
 
-        if (!gPortsOrch->getPort(alias, p))
+        if (alias == "eth0" || alias == "lo" || alias == "docker0")
         {
             it = consumer.m_toSync.erase(it);
             continue;
         }
 
+        Port p;
+        if (!gPortsOrch->getPort(alias, p))
+        {
+            SWSS_LOG_INFO("Port %s doesn't exist", alias.c_str());
+            it++;
+            continue;
+        }
+
         if (!p.m_rif_id)
         {
+            SWSS_LOG_INFO("Router interface doesn't exist on %s", alias.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
