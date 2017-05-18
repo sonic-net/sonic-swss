@@ -9,6 +9,9 @@
 
 #include <map>
 
+#define FCS_LEN 4
+#define VLAN_TAG_LEN 4
+
 static const map<sai_port_oper_status_t, string> oper_status_strings =
 {
     { SAI_PORT_OPER_STATUS_UNKNOWN,     "unknown" },

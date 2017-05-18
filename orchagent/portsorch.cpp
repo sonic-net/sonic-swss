@@ -5,6 +5,7 @@
 #include <sstream>
 #include <set>
 
+#include <netinet/if_ether.h>
 #include "net/if.h"
 
 #include "logger.h"
@@ -229,15 +230,16 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_MTU;
-    attr.value.u32 = mtu;
+    /* mtu + 14 + 4 + 4 = 22 bytes */
+    attr.value.u32 = mtu + sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN;
 
     sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set MTU %u to port pid:%lx", mtu, id);
+        SWSS_LOG_ERROR("Failed to set MTU %u to port pid:%lx", attr.value.u32, id);
         return false;
     }
-    SWSS_LOG_INFO("Set MTU %u to port pid:%lx", mtu, id);
+    SWSS_LOG_INFO("Set MTU %u to port pid:%lx", attr.value.u32, id);
     return true;
 }
 
