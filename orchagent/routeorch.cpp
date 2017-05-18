@@ -144,13 +144,13 @@ void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr)
     }
 
     for (auto iter = observerEntry->second.observers.begin(); iter != observerEntry->second.observers.end(); ++iter)
-       {
-           if (observer == *iter)
-           {
-               m_observers.erase(iter);
-               break;
-           }
-       }
+    {
+        if (observer == *iter)
+        {
+            m_observers.erase(iter);
+            break;
+        }
+    }
 }
 
 void RouteOrch::doTask(Consumer& consumer)
@@ -215,7 +215,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 if (fvField(i) == "nexthop")
                     ip_addresses = IpAddresses(fvValue(i));
 
-                if (fvField(i) == "ifindex")
+                if (fvField(i) == "ifname")
                     alias = fvValue(i);
             }
 
@@ -415,8 +415,8 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
     {
         if (!m_neighOrch->hasNextHop(it))
         {
-            SWSS_LOG_INFO("Failed to get next hop entry ip:%s",
-                    it.to_string().c_str());
+            SWSS_LOG_INFO("Failed to get next hop %s in %s",
+                    it.to_string().c_str(), ipAddresses.to_string().c_str());
             return false;
         }
 
@@ -505,8 +505,8 @@ void RouteOrch::addTempRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     {
         if (!m_neighOrch->hasNextHop(*it))
         {
-            SWSS_LOG_INFO("Failed to get next hop entry ip:%s",
-                   (*it).to_string().c_str());
+            SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                   (*it).to_string().c_str(), ipPrefix.to_string().c_str());
             it = next_hop_set.erase(it);
         }
         else
@@ -544,8 +544,8 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
         }
         else
         {
-            SWSS_LOG_INFO("Failed to get next hop entry ip:%s",
-                    nextHops.to_string().c_str());
+            SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                    nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
             return false;
         }
     }
@@ -707,22 +707,17 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
 
     if (ipPrefix.isDefaultRoute())
     {
-        if (ipPrefix.isV4())
-        {
-            m_syncdRoutes[ipPrefix] = IpAddresses("0.0.0.0");
-        }
-        else
-        {
-            m_syncdRoutes[ipPrefix] = IpAddresses("::");
-        }
+        m_syncdRoutes[ipPrefix] = IpAddresses();
 
-        /* Notify about default route next hop change. */
+        /* Notify about default route next hop change */
         notifyNextHopChangeObservers(ipPrefix, m_syncdRoutes[ipPrefix], true);
     }
     else
     {
         m_syncdRoutes.erase(ipPrefix);
-        notifyNextHopChangeObservers(ipPrefix, IpAddresses("0.0.0.0"), false);
+
+        /* Notify about the route next hop removal */
+        notifyNextHopChangeObservers(ipPrefix, IpAddresses(), false);
     }
     return true;
 }
