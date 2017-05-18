@@ -124,11 +124,6 @@ void OrchDaemon::start()
 
         if (ret == Select::TIMEOUT)
         {
-            /* After every TIMEOUT, periodically check all m_toSync map to
-             * execute all the remaining tasks that need to be retried. */
-            for (Orch *o : m_orchList)
-                o->doTask();
-
             /* Let sairedis to flush all SAI function call to ASIC DB.
              * Normally the redis pipeline will flush when enough request
              * accumulated. Still it is possible that small amount of
@@ -140,6 +135,14 @@ void OrchDaemon::start()
 
         Orch *o = getOrchByConsumer((ConsumerStateTable *)s);
         o->execute(((ConsumerStateTable *)s)->getTableName());
+
+        /* After each iteration, periodically check all m_toSync map to
+         * execute all the remaining tasks that need to be retried. */
+
+        /* TODO: Abstract Orch class to have a specific todo list */
+        for (Orch *o : m_orchList)
+            o->doTask();
+
     }
 }
 
