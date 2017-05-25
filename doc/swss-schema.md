@@ -1,12 +1,12 @@
-Schema data is defined in ABNF [RFC5234](https://tools.ietf.org/html/rfc5234) syntax.  
+Schema data is defined in ABNF [RFC5234](https://tools.ietf.org/html/rfc5234) syntax.
 
-###Definitions of common tokens
+### Definitions of common tokens
     name                    = 1*DIGIT/1*ALPHA
     ref_hash_key_reference  = "[" hash_key "]" ;The token is a refernce to another valid DB key.
     hash_key                = name ; a valid key name (i.e. exists in DB)
 
 
-###PORT_TABLE
+### PORT_TABLE
 Stores information for physical switch ports managed by the switch chip.  device_names are defined in [port_config.ini](../portsyncd/port_config.ini).  Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE.   See INTF_TABLE.
 
     ;Defines layer 2 ports
@@ -17,13 +17,13 @@ Stores information for physical switch ports managed by the switch chip.  device
     admin_status        = BIT           ; is the port enabled (1) or disabled (0)
     oper_status         = BIT           ; physical status up (1) or down (0) of the link attached to this port
     lanes               = list of lanes ; (need format spec???)
-    ifname              = 1*64VCHAR     ; name of the port, must be unique 
-    mac                 = 12HEXDIG      ; 
+    ifname              = 1*64VCHAR     ; name of the port, must be unique
+    mac                 = 12HEXDIG      ;
 
     ;QOS Mappings
     map_dscp_to_tc  = ref_hash_key_reference
     map_tc_to_queue = ref_hash_key_reference
-    
+
     Example:
     127.0.0.1:6379> hgetall PORT_TABLE:ETHERNET4
     1) "dscp_to_tc_map"
@@ -32,18 +32,18 @@ Stores information for physical switch ports managed by the switch chip.  device
     4) "[TC_TO_QUEUE_MAP_TABLE:AZURE]"
 
 ---------------------------------------------
-###INTF_TABLE
+### INTF_TABLE
 intfsyncd manages this table.  In SONiC, CPU (management) and logical ports (vlan, loopback, LAG) are declared in /etc/network/interface and loaded into the INTF_TABLE.
 
 IP prefixes are formatted according to [RFC5954](https://tools.ietf.org/html/rfc5954) with a prefix length appended to the end
 
-    ;defines logical network interfaces, an attachment to a PORT and list of 0 or more 
+    ;defines logical network interfaces, an attachment to a PORT and list of 0 or more
     ;ip prefixes
     ;
     ;Status: stable
     key            = INTF_TABLE:ifname:IPprefix   ; an instance of this key will be repeated for each prefix
     IPprefix       = IPv4prefix / IPv6prefix   ; an instance of this key/value pair will be repeated for each prefix
-    scope          = "global" / "local"        ; local is an interface visible on this localhost only 
+    scope          = "global" / "local"        ; local is an interface visible on this localhost only
     if_mtu         = 1*4DIGIT                  ; MTU for the interface
     family         = "IPv4" / "IPv6"           ; address family
 
@@ -60,7 +60,7 @@ IP prefixes are formatted according to [RFC5954](https://tools.ietf.org/html/rfc
      h16           = 1*4HEXDIG
      ls32          = ( h16 ":" h16 ) / IPv4address
 
-     IPv4prefix    = dec-octet "." dec-octet "." dec-octet "." dec-octet “/” %d1-32  
+     IPv4prefix    = dec-octet "." dec-octet "." dec-octet "." dec-octet “/” %d1-32
 
      dec-octet     = DIGIT                 ; 0-9
                     / %x31-39 DIGIT         ; 10-99
@@ -98,7 +98,7 @@ For example (reorder output)
     8) "65536"
 
 ---------------------------------------------
-###VLAN_TABLE
+### VLAN_TABLE
     ;Defines VLANs and the interfaces which are members of the vlan
     ;Status: work in progress
     key                 = VLAN_TABLE:"vlan"vlanid ; DIGIT 0-4095 with prefix "Vlan"
@@ -111,7 +111,7 @@ For example (reorder output)
 
 
 ---------------------------------------------
-###LAG_TABLE
+### LAG_TABLE
     ;a logical, link aggregation group interface (802.3ad) made of one or more ports
     ;In SONiC, data is loaded by teamsyncd
     ;Status: work in progress
@@ -150,27 +150,27 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     6) "half"
 
 ---------------------------------------------
-###ROUTE_TABLE
+### ROUTE_TABLE
     ;Stores a list of routes
     ;Status: Mandatory
     key           = ROUTE_TABLE:prefix
     nexthop       = *prefix, ;IP addresses separated “,” (empty indicates no gateway)
     intf          = ifindex? PORT_TABLE.key  ; zero or more separated by “,” (zero indicates no interface)
     blackhole     = BIT ; Set to 1 if this route is a blackhole (or null0)
-  
+
 ---------------------------------------------
-###NEIGH_TABLE
-    ; Stores the neighbors or next hop IP address and output port or 
+### NEIGH_TABLE
+    ; Stores the neighbors or next hop IP address and output port or
     ; interface for routes
-    ; Note: neighbor_sync process will resolve mac addr for neighbors 
+    ; Note: neighbor_sync process will resolve mac addr for neighbors
     ; using libnl to get neighbor table
     ;Status: Mandatory
     key           = prefix PORT_TABLE.name / VLAN_INTF_TABLE.name / LAG_INTF_TABLE.name = macaddress ; (may be empty)
-    neigh         = 12HEXDIG         ;  mac address of the neighbor 
+    neigh         = 12HEXDIG         ;  mac address of the neighbor
     family        = "IPv4" / "IPv6"  ; address family
 
 ---------------------------------------------
-###FDB_TABLE
+### FDB_TABLE
 
     ; Stores FDB entries which were inserted into SAI state manually
     ; Notes:
@@ -188,7 +188,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     4) "static"
 
 ---------------------------------------------
-###QUEUE_TABLE
+### QUEUE_TABLE
 
     ; QUEUE table. Defines port queue.
     ; SAI mapping - port queue.
@@ -210,7 +210,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     4) "[WRED_PROFILE_TABLE:AZURE]"
 
 ---------------------------------------------
-###TC\_TO\_QUEUE\_MAP\_TABLE
+### TC\_TO\_QUEUE\_MAP\_TABLE
     ; TC to queue map
     ;SAI mapping - qos_map with SAI_QOS_MAP_ATTR_TYPE == SAI_QOS_MAP_TC_TO_QUEUE. See saiqosmaps.h
     key                    = "TC_TO_QUEUE_MAP_TABLE:"name
@@ -218,29 +218,29 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     tc_num = 1*DIGIT
     ;values
     queue  = 1*DIGIT; queue index
-    
+
     Example:
     27.0.0.1:6379> hgetall TC_TO_QUEUE_MAP_TABLE:AZURE
     1) "5" ;tc
     2) "1" ;queue index
-    3) "6" 
-    4) "1" 
+    3) "6"
+    4) "1"
 
 ---------------------------------------------
-###DSCP\_TO\_TC\_MAP\_TABLE
+### DSCP\_TO\_TC\_MAP\_TABLE
     ; dscp to TC map
     ;SAI mapping - qos_map object with SAI_QOS_MAP_ATTR_TYPE == sai_qos_map_type_t::SAI_QOS_MAP_DSCP_TO_TC
     key        = "DSCP_TO_TC_MAP_TABLE:"name
     ;field    value
     dscp_value = 1*DIGIT
     tc_value   = 1*DIGIT
-    
+
     Example:
     127.0.0.1:6379> hgetall "DSCP_TO_TC_MAP_TABLE:AZURE"
      1) "3" ;dscp
      2) "3" ;tc
-     3) "6" 
-     4) "5" 
+     3) "6"
+     4) "5"
      5) "7"
      6) "5"
      7) "8"
@@ -249,7 +249,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     10) "8"
 
 ---------------------------------------------
-###SCHEDULER_TABLE
+### SCHEDULER_TABLE
     ; Scheduler table
     ; SAI mapping - saicheduler.h
     key      = "SCHEDULER_TABLE":name
@@ -257,7 +257,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     type     = "DWRR"/"WRR"/"PRIORITY"
     weight   = 1*DIGIT
     priority = 1*DIGIT
-    
+
     Example:
     127.0.0.1:6379> hgetall SCHEDULER_TABLE:BEST_EFFORT
     1) "type"
@@ -271,7 +271,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     4) "35"
 
 ---------------------------------------------
-###WRED\_PROFILE\_TABLE
+### WRED\_PROFILE\_TABLE
     ; WRED profile
     ; SAI mapping - saiwred.h
     key                     = "WRED_PROFILE_TABLE:"name
@@ -280,7 +280,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     green_max_threshold     = byte_count
     red_max_threshold       = byte_count
     byte_count              = 1*DIGIT
-    ecn                     = "ecn_none" / "ecn_green" / "ecn_yellow" / "ecn_red" /  "ecn_green_yellow" / "ecn_green_red" / "ecn_yellow_red" / "ecn_all" 
+    ecn                     = "ecn_none" / "ecn_green" / "ecn_yellow" / "ecn_red" /  "ecn_green_yellow" / "ecn_green_red" / "ecn_yellow_red" / "ecn_all"
     wred_green_enable       = "true" / "false"
     wred_yellow_enable      = "true" / "false"
     wred_red_enable         = "true" / "false"
@@ -304,7 +304,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 
 
 ----------------------------------------------
-###TUNNEL_DECAP_TABLE
+### TUNNEL_DECAP_TABLE
     ; Stores tunnel decap rules
     key                     = TUNNEL_DECAP_TABLE:name
     ;field                      value
@@ -327,11 +327,11 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     7) "ttl_mode"
     8) "uniform"
     9) "tunnel_type"
-    10) "IPINIP" 
+    10) "IPINIP"
 
 ---------------------------------------------
 
-###LLDP_ENTRY_TABLE
+### LLDP_ENTRY_TABLE
     ; current LLDP neighbor information.
     port_table_key           = LLDP_ENTRY_TABLE:ifname ; .1.0.8802.1.1.2.1
     ; field                    value
@@ -350,10 +350,10 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     6) "Ethernet7"
     7) "lldp_rem_sys_desc"
     8) "Debian - SONiC v2"
-    
+
 ---------------------------------------------
 
-###COPP_TABLE
+### COPP_TABLE
 Control plane policing configuration table.
 The settings in this table configure trap group, which is assigned a list of trap IDs (protocols), priority of CPU queue priority, and a policer.
 The CPU queue priority is strict priority.
@@ -366,7 +366,7 @@ packet_action = "drop" | "forward" | "copy" | "copy_cancel" | "trap" | "log" | "
     queue         = number; strict queue priority. Higher number means higher priority.
     trap_ids      = name_list; Acceptable values: bgp, lacp, arp, lldp, snmp, ssh, ttl error, ip2me
     trap_action   = packet_action; trap action which will be applied to all trap_ids.
-    
+
     ;Settings for embedded policer. NOTE - if no policer settings are specified, then no policer is created.
     meter_type  = "packets" | "bytes"
     mode        = "sr_tcm" | "tr_tcm" | "storm"
@@ -375,7 +375,7 @@ packet_action = "drop" | "forward" | "copy" | "copy_cancel" | "trap" | "log" | "
     cir         = number ;packets or bytes depending on the meter_type value
     pbs         = number ;packets or bytes depending on the meter_type value
     pir         = number ;packets or bytes depending on the meter_type value
-    
+
     green_action   = packet_action
     yellow_action  = packet_action
     red_action     = packet_action
@@ -405,11 +405,11 @@ packet_action = "drop" | "forward" | "copy" | "copy_cancel" | "trap" | "log" | "
     127.0.0.1:6379>
 
 Note: The configuration will be created as json file to be consumed by swssconfig tool, which will place the table into the redis database.
-It's possible to create separate configuration files for different ASIC platforms. 
+It's possible to create separate configuration files for different ASIC platforms.
 
 ----------------------------------------------
 
-###ACL\_TABLE
+### ACL\_TABLE
 Stores information about ACL tables on the switch.  Port names are defined in [port_config.ini](../portsyncd/port_config.ini).
 
     key           = ACL_TABLE:name          ; acl_table_name must be unique
@@ -426,7 +426,7 @@ Stores information about ACL tables on the switch.  Port names are defined in [p
 
 
 
-###ACL\_RULE\_TABLE
+### ACL\_RULE\_TABLE
 Stores rules associated with a specific ACL table on the switch.
 
     key: ACL_RULE_TABLE:table_name:rule_name   ; key of the rule entry in the table,
@@ -548,7 +548,7 @@ Equivalent RedisDB entry:
 
 ----------------------------------------------
 
-###PORT\_MIRROR\_TABLE
+### PORT\_MIRROR\_TABLE
 Stores information about mirroring session and its properties.
 
     key       = PORT_MIRROR_TABLE:mirror_session_name ; mirror_session_name is
@@ -608,10 +608,10 @@ Equivalent RedisDB entry:
     12) "0"
     127.0.0.1:6379>
 
-###Configuration files
-What configuration files should we have?  Do apps, orch agent each need separate files?  
+### Configuration files
+What configuration files should we have?  Do apps, orch agent each need separate files?
 
-[port_config.ini](https://github.com/stcheng/swss/blob/mock/portsyncd/port_config.ini) - defines physical port information  
+[port_config.ini](https://github.com/stcheng/swss/blob/mock/portsyncd/port_config.ini) - defines physical port information
 
 portsyncd reads from port_config.ini and updates PORT_TABLE in APP_DB
 
