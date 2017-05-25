@@ -383,11 +383,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             vector.push_back(tuple);
                             m_counterTable->set("", vector);
 
-                            SWSS_LOG_NOTICE("Port is initialized alias:%s", alias.c_str());
-
+                            SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
                         }
                         else
-                            SWSS_LOG_ERROR("Failed to initialize port alias:%s", alias.c_str());
+                            SWSS_LOG_ERROR("Failed to initialize port %s", alias.c_str());
                     }
                 }
                 else
@@ -819,10 +818,8 @@ bool PortsOrch::initializePort(Port &p)
     /* Create host interface */
     addHostIntfs(p.m_port_id, p.m_alias, p.m_hif_id);
 
-    // TODO: Assure if_nametoindex(p.m_alias.c_str()) != 0
-    // TODO: Get port oper status
-
 #if 0
+    // TODO: Assure if_nametoindex(p.m_alias.c_str()) != 0
     p.m_ifindex = if_nametoindex(p.m_alias.c_str());
     if (p.m_ifindex == 0)
     {
@@ -831,8 +828,17 @@ bool PortsOrch::initializePort(Port &p)
     }
 #endif
 
-    /* Set port admin status DOWN */
+    /* Set default port admin status to DOWN */
     setPortAdminStatus(p.m_port_id, false);
+
+    /**
+     * Create default database port oper status as DOWN
+     * This status will be updated when receiving port_oper_status_notification.
+     */
+    vector<FieldValueTuple> vector;
+    FieldValueTuple tuple("oper_status", "down");
+    vector.push_back(tuple);
+    m_portTable->set(p.m_alias, vector);
 
     return true;
 }
