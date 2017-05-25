@@ -10,6 +10,8 @@ extern "C" {
 #include <thread>
 #include <chrono>
 #include <getopt.h>
+#include <unistd.h>
+
 #include <sairedis.h>
 #include "orchdaemon.h"
 #include "logger.h"
@@ -154,13 +156,14 @@ string getTimestamp()
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-m MAC]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-m MAC]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
     cout << "                    1: record SAI call sequence as sairedis*.rec" << endl;
     cout << "                    2: record SwSS task sequence as swss*.rec" << endl;
     cout << "                    3: enable both above two records" << endl;
+    cout << "    -d record_location: set record logs folder location (default .)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
 }
 
@@ -173,7 +176,9 @@ int main(int argc, char **argv)
     int opt;
     sai_status_t status;
 
-    while ((opt = getopt(argc, argv, "m:r:h")) != -1)
+    string record_location = ".";
+
+    while ((opt = getopt(argc, argv, "m:r:d:h")) != -1)
     {
         switch (opt)
         {
@@ -204,6 +209,14 @@ int main(int argc, char **argv)
                 exit(EXIT_FAILURE);
             }
             break;
+        case 'd':
+            record_location = optarg;
+            if (access(record_location.c_str(), W_OK))
+            {
+                SWSS_LOG_ERROR("Failed to access writable directory %s", record_location.c_str());
+                exit(EXIT_FAILURE);
+            }
+            break;
         case 'h':
             usage();
             exit(EXIT_SUCCESS);
@@ -224,23 +237,38 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    /* Enable SAI Redis recording */
     sai_attribute_t attr;
+
+    /* Disable/enable SAI Redis recording */
+    if (gSairedisRecord)
+    {
+        attr.id = SAI_REDIS_SWITCH_ATTR_RECORDING_OUTPUT_DIR;
+        attr.value.s8list.count = record_location.size();
+        attr.value.s8list.list = (signed char *) record_location.c_str();
+
+        status = sai_switch_api->set_switch_attribute(&attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAI Redis recording output folder to %s, rv:%d", record_location.c_str(), status);
+            exit(EXIT_FAILURE);
+        }
+    }
+
     attr.id = SAI_REDIS_SWITCH_ATTR_RECORD;
     attr.value.booldata = gSairedisRecord;
 
     status = sai_switch_api->set_switch_attribute(&attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to enable SAI Redis recording %d", status);
+        SWSS_LOG_ERROR("Failed to set SAI Redis recording to %s, rv:%d", gSairedisRecord ? "true" : "false", status);
         exit(EXIT_FAILURE);
     }
 
-    /* Enable SwSS recording */
+    /* Disable/enable SwSS recording */
     if (gSwssRecord)
     {
         gRecordFile = "swss." + getTimestamp() + ".rec";
-        gRecordOfs.open(gRecordFile);
+        gRecordOfs.open(record_location + "/" + gRecordFile);
         if (!gRecordOfs.is_open())
         {
             SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());
