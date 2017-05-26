@@ -81,7 +81,28 @@ int test_profile_get_next_value (
 {
     SWSS_LOG_ENTER();
 
-    return -1;
+    static auto it = gProfileMap.begin();
+
+    if (value == NULL)
+    {
+        // Restarts enumeration
+        it = gProfileMap.begin();
+    }
+    else if (it == gProfileMap.end())
+    {
+        return -1;
+    }
+    else
+    {
+        *variable = it->first.c_str();
+        *value = it->second.c_str();
+        it++;
+    }
+
+    if (it != gProfileMap.end())
+        return 0;
+    else
+        return -1;
 }
 
 const service_method_table_t test_services = {
