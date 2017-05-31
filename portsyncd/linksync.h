@@ -20,7 +20,7 @@ public:
 
 private:
     ProducerStateTable m_portTableProducer, m_vlanTableProducer, m_vlanMemberTableProducer, m_lagTableProducer;
-    Table m_portTableConsumer, m_vlanTableConsumer, m_vlanMemberTableConsumer, m_lagTableConsumer;
+    Table m_portTableConsumer, m_vlanMemberTableConsumer, m_lagTableConsumer;
 
     std::map<unsigned int, std::string> m_ifindexNameMap;
 };

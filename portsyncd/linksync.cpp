@@ -37,7 +37,7 @@ LinkSync::LinkSync(DBConnector *db) :
     m_lagTableProducer(db, APP_LAG_TABLE_NAME),
     m_portTableConsumer(db, APP_PORT_TABLE_NAME),
     m_vlanMemberTableConsumer(db, APP_VLAN_MEMBER_TABLE_NAME),
-    m_lagTableConsumer(db, APP_VLAN_MEMBER_TABLE_NAME)
+    m_lagTableConsumer(db, APP_LAG_TABLE_NAME)
 {
     /* See the comments for g_portSet in portsyncd.cpp */
     for (string port : g_portSet)
