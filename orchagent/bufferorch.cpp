@@ -85,7 +85,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Unknown pool type specified:%s\n", type.c_str());
+                    SWSS_LOG_ERROR("Unknown pool type specified:%s", type.c_str());
                     return task_process_status::task_invalid_entry;
                 }
                 attr.id = SAI_BUFFER_POOL_ATTR_TYPE;
@@ -104,7 +104,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Unknown pool mode specified:%s\n", mode.c_str());
+                    SWSS_LOG_ERROR("Unknown pool mode specified:%s", mode.c_str());
                     return task_process_status::task_invalid_entry;
                 }
                 attr.id = SAI_BUFFER_POOL_ATTR_TH_MODE;
@@ -112,7 +112,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             }
             else
             {
-                SWSS_LOG_ERROR("Unknown pool field specified:%s, ignoring\n", fvField(*i).c_str());
+                SWSS_LOG_ERROR("Unknown pool field specified:%s, ignoring", fvField(*i).c_str());
                 continue;
             }
         }
@@ -153,7 +153,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
     }
     else
     {
-        SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         return task_process_status::task_invalid_entry;
     }
     return task_process_status::task_success;
@@ -192,10 +192,10 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
                 {
                     if(ref_resolve_status::not_resolved == resolve_result)
                     {
-                        SWSS_LOG_WARN("Missing or invalid pool reference specified\n");
+                        SWSS_LOG_WARN("Missing or invalid pool reference specified");
                         return task_process_status::task_need_retry;
                     }
-                    SWSS_LOG_ERROR("Resolving pool reference failed\n");
+                    SWSS_LOG_ERROR("Resolving pool reference failed");
                     return task_process_status::task_failed;
                 }
                 attr.id = SAI_BUFFER_PROFILE_ATTR_POOL_ID;
@@ -234,7 +234,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             }
             else
             {
-                SWSS_LOG_ERROR("Unknown buffer profile field specified:%s, ignoring\n", fvField(*i).c_str());
+                SWSS_LOG_ERROR("Unknown buffer profile field specified:%s, ignoring", fvField(*i).c_str());
                 continue;
             }
         }
@@ -274,7 +274,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
     }
     else
     {
-        SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         return task_process_status::task_invalid_entry;
     }
     return task_process_status::task_success;
@@ -298,7 +298,7 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
     tokens = tokenize(key, delimiter);
     if (tokens.size() != 2)
     {
-        SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens\n", key.c_str());
+        SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
         return task_process_status::task_invalid_entry;
     }
     vector<string> port_names = tokenize(tokens[0], list_item_delimiter);
@@ -311,10 +311,10 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
     {
         if(ref_resolve_status::not_resolved == resolve_result)
         {
-            SWSS_LOG_WARN("Missing or invalid queue buffer profile reference specified\n");
+            SWSS_LOG_WARN("Missing or invalid queue buffer profile reference specified");
             return task_process_status::task_need_retry;
         }
-        SWSS_LOG_ERROR("Resolving queue profile reference failed\n");
+        SWSS_LOG_ERROR("Resolving queue profile reference failed");
         return task_process_status::task_failed;
     }
     sai_attribute_t attr;
@@ -326,7 +326,7 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
         if (!gPortsOrch->getPort(port_name, port))
         {
-            SWSS_LOG_ERROR("Port with alias:%s not found\n", port_name.c_str());
+            SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
         for (size_t ind = range_low; ind <= range_high; ind++)
@@ -369,7 +369,7 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     tokens = tokenize(key, delimiter);
     if (tokens.size() != 2)
     {
-        SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens\n", key.c_str());
+        SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
         return task_process_status::task_invalid_entry;
     }
     vector<string> port_names = tokenize(tokens[0], list_item_delimiter);
@@ -383,10 +383,10 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     {
         if(ref_resolve_status::not_resolved == resolve_result)
         {
-            SWSS_LOG_WARN("Missing or invalid pg profile reference specified\n");
+            SWSS_LOG_WARN("Missing or invalid pg profile reference specified");
             return task_process_status::task_need_retry;
         }
-        SWSS_LOG_ERROR("Resolving pg profile reference failed\n");
+        SWSS_LOG_ERROR("Resolving pg profile reference failed");
         return task_process_status::task_failed;
     }
     sai_attribute_t attr;
@@ -398,7 +398,7 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
         if (!gPortsOrch->getPort(port_name, port))
         {
-            SWSS_LOG_ERROR("Port with alias:%s not found\n", port_name.c_str());
+            SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
         for (size_t ind = range_low; ind <= range_high; ind++)
@@ -438,7 +438,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
     if (consumer.m_consumer->getTableName() != APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME)
     {
-        SWSS_LOG_ERROR("Key with invalid table type passed in %s, expected:%s\n", key.c_str(), APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
+        SWSS_LOG_ERROR("Key with invalid table type passed in %s, expected:%s", key.c_str(), APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
         return task_process_status::task_invalid_entry;
     }
     vector<string> port_names = tokenize(key, list_item_delimiter);
@@ -448,10 +448,10 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
     {
         if(ref_resolve_status::not_resolved == resolve_status)
         {
-            SWSS_LOG_WARN("Missing or invalid ingress buffer profile reference specified for:%s\n", key.c_str());
+            SWSS_LOG_WARN("Missing or invalid ingress buffer profile reference specified for:%s", key.c_str());
             return task_process_status::task_need_retry;
         }
-        SWSS_LOG_ERROR("Failed resolving ingress buffer profile reference specified for:%s\n", key.c_str());
+        SWSS_LOG_ERROR("Failed resolving ingress buffer profile reference specified for:%s", key.c_str());
         return task_process_status::task_failed;
     }
     sai_attribute_t attr;
@@ -462,7 +462,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
     {
         if (!gPortsOrch->getPort(port_name, port))
         {
-            SWSS_LOG_ERROR("Port with alias:%s not found\n", port_name.c_str());
+            SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
         sai_status_t sai_status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
@@ -494,10 +494,10 @@ task_process_status BufferOrch::processEgressBufferProfileList(Consumer &consume
     {
         if(ref_resolve_status::not_resolved == resolve_status)
         {
-            SWSS_LOG_WARN("Missing or invalid egress buffer profile reference specified for:%s\n", key.c_str());
+            SWSS_LOG_WARN("Missing or invalid egress buffer profile reference specified for:%s", key.c_str());
             return task_process_status::task_need_retry;
         }
-        SWSS_LOG_ERROR("Failed resolving egress buffer profile reference specified for:%s\n", key.c_str());
+        SWSS_LOG_ERROR("Failed resolving egress buffer profile reference specified for:%s", key.c_str());
         return task_process_status::task_failed;
     }
     sai_attribute_t attr;
@@ -508,7 +508,7 @@ task_process_status BufferOrch::processEgressBufferProfileList(Consumer &consume
     {
         if (!gPortsOrch->getPort(port_name, port))
         {
-            SWSS_LOG_ERROR("Port with alias:%s not found\n", port_name.c_str());
+            SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
         sai_status_t sai_status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
@@ -531,13 +531,13 @@ void BufferOrch::doTask(Consumer &consumer)
         string map_type_name = consumer.m_consumer->getTableName();
         if (m_buffer_type_maps.find(map_type_name) == m_buffer_type_maps.end())
         {
-            SWSS_LOG_ERROR("Unrecognised qos table encountered:%s\n", map_type_name.c_str());
+            SWSS_LOG_ERROR("Unrecognised qos table encountered:%s", map_type_name.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
         if (m_bufferHandlerMap.find(map_type_name) == m_bufferHandlerMap.end())
         {
-            SWSS_LOG_ERROR("No handler for key:%s found.\n", map_type_name.c_str());
+            SWSS_LOG_ERROR("No handler for key:%s found.", map_type_name.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -555,7 +555,7 @@ void BufferOrch::doTask(Consumer &consumer)
             SWSS_LOG_ERROR("Processing buffer task item failed, exiting.");
             return;
         case task_process_status::task_need_retry:
-            SWSS_LOG_ERROR("Processing buffer task item failed, will retry.");
+            SWSS_LOG_INFO("Processing buffer task item failed, will retry.");
             it++;
             break;
         default:

@@ -101,7 +101,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
     {
         if (SAI_NULL_OBJECT_ID == sai_object)
         {
-            SWSS_LOG_ERROR("Object with name:%s not found.\n", qos_object_name.c_str());
+            SWSS_LOG_ERROR("Object with name:%s not found.", qos_object_name.c_str());
             return task_process_status::task_invalid_entry;
         }
         if (!removeQosItem(sai_object))
@@ -114,7 +114,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
     }
     else
     {
-        SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         return task_process_status::task_invalid_entry;
     }
     return task_process_status::task_success;
@@ -734,7 +734,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
         sai_object = (*(m_qos_maps[qos_map_type_name]))[qos_object_name];
         if (sai_object == SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_ERROR("Error sai_object must exist for key %s\n", qos_object_name.c_str());
+            SWSS_LOG_ERROR("Error sai_object must exist for key %s", qos_object_name.c_str());
             return task_process_status::task_invalid_entry;
         }
     }
@@ -811,7 +811,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
     {
         if (SAI_NULL_OBJECT_ID == sai_object)
         {
-            SWSS_LOG_ERROR("Object with name:%s not found.\n", qos_object_name.c_str());
+            SWSS_LOG_ERROR("Object with name:%s not found.", qos_object_name.c_str());
             return task_process_status::task_invalid_entry;
         }
         sai_status = sai_scheduler_api->remove_scheduler_profile(sai_object);
@@ -825,7 +825,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
     }
     else
     {
-        SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+        SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         return task_process_status::task_invalid_entry;
     }
     return task_process_status::task_success;
@@ -978,7 +978,7 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
     tokens = tokenize(key, delimiter);
     if (tokens.size() != 2)
     {
-        SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens\n", key.c_str());
+        SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
         return task_process_status::task_invalid_entry;
     }
     port_names = tokenize(tokens[0], list_item_delimiter);
@@ -993,7 +993,7 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
         if (!gPortsOrch->getPort(port_name, port))
         {
-            SWSS_LOG_ERROR("Port with alias:%s not found\n", port_name.c_str());
+            SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
         }
         SWSS_LOG_DEBUG("processing range:%d-%d", range_low, range_high);
@@ -1016,12 +1016,12 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                    SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
                     return task_process_status::task_invalid_entry;
                 }
                 if (!result)
                 {
-                    SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%zd, line:%d\n", scheduler_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
+                    SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%zd, line:%d", scheduler_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
                     return task_process_status::task_failed;
                 }
                 SWSS_LOG_DEBUG("Applied scheduler to port:%s", port_name.c_str());
@@ -1030,10 +1030,10 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
             {
                 if(ref_resolve_status::not_resolved == resolve_result)
                 {
-                    SWSS_LOG_INFO("Missing or invalid scheduler reference\n");
+                    SWSS_LOG_INFO("Missing or invalid scheduler reference");
                     return task_process_status::task_need_retry;
                 }
-                SWSS_LOG_ERROR("Resolving scheduler reference failed\n");
+                SWSS_LOG_ERROR("Resolving scheduler reference failed");
                 return task_process_status::task_failed;
             }
 
@@ -1052,12 +1052,12 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                    SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
                     return task_process_status::task_invalid_entry;
                 }
                 if (!result)
                 {
-                    SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%zd, line:%d\n", wred_profile_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
+                    SWSS_LOG_ERROR("Failed setting field:%s to port:%s, queue:%zd, line:%d", wred_profile_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
                     return task_process_status::task_failed;
                 }
                 SWSS_LOG_DEBUG("Applied wred profile to port:%s", port_name.c_str());
@@ -1066,10 +1066,10 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
             {
                 if(ref_resolve_status::not_resolved == resolve_result)
                 {
-                    SWSS_LOG_ERROR("Missing or invalid wred reference\n");
+                    SWSS_LOG_INFO("Missing or invalid wred reference");
                     return task_process_status::task_need_retry;
                 }
-                SWSS_LOG_ERROR("Resolving wred reference failed\n");
+                SWSS_LOG_ERROR("Resolving wred reference failed");
                 return task_process_status::task_failed;
             }
         }
@@ -1089,7 +1089,7 @@ bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t 
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed setting sai object:%lx for port:%s, status:%d\n", map_id, port.m_alias.c_str(), status);
+        SWSS_LOG_ERROR("Failed setting sai object:%lx for port:%s, status:%d", map_id, port.m_alias.c_str(), status);
         return false;
     }
     return true;
@@ -1120,25 +1120,25 @@ task_process_status QosOrch::ResolveMapAndApplyToPort(
         }
         else
         {
-            SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
             return task_process_status::task_invalid_entry;
         }
         if (!result)
         {
-            SWSS_LOG_ERROR("Failed setting field:%s to port:%s, line:%d\n", field_name.c_str(), port.m_alias.c_str(), __LINE__);
+            SWSS_LOG_ERROR("Failed setting field:%s to port:%s, line:%d", field_name.c_str(), port.m_alias.c_str(), __LINE__);
             return task_process_status::task_failed;
         }
-        SWSS_LOG_DEBUG("Applied field:%s to port:%s, line:%d\n", field_name.c_str(), port.m_alias.c_str(), __LINE__);
+        SWSS_LOG_DEBUG("Applied field:%s to port:%s, line:%d", field_name.c_str(), port.m_alias.c_str(), __LINE__);
         return task_process_status::task_success;
     }
     else if (resolve_result != ref_resolve_status::field_not_found)
     {
         if(ref_resolve_status::not_resolved == resolve_result)
         {
-            SWSS_LOG_ERROR("Missing or invalid %s reference\n", field_name.c_str());
+            SWSS_LOG_INFO("Missing or invalid %s reference", field_name.c_str());
             return task_process_status::task_need_retry;
         }
-        SWSS_LOG_ERROR("Resolving %s reference failed\n", field_name.c_str());
+        SWSS_LOG_ERROR("Resolving %s reference failed", field_name.c_str());
         return task_process_status::task_failed;
     }
     return task_process_status::task_success;
@@ -1246,13 +1246,13 @@ void QosOrch::doTask(Consumer &consumer)
         string qos_map_type_name = consumer.m_consumer->getTableName();
         if (m_qos_maps.find(qos_map_type_name) == m_qos_maps.end())
         {
-            SWSS_LOG_ERROR("Unrecognised qos table encountered:%s\n", qos_map_type_name.c_str());
+            SWSS_LOG_ERROR("Unrecognised qos table encountered:%s", qos_map_type_name.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
         if (m_qos_handler_map.find(qos_map_type_name) == m_qos_handler_map.end())
         {
-            SWSS_LOG_ERROR("No handler for key:%s found.\n", qos_map_type_name.c_str());
+            SWSS_LOG_ERROR("No handler for key:%s found.", qos_map_type_name.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
