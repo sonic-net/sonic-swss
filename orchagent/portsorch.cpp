@@ -451,6 +451,66 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         /* Ensure the key starts with "Vlan" otherwise ignore */
         if (strncmp(key.c_str(), VLAN_PREFIX, 4))
         {
+            SWSS_LOG_ERROR("Invalid key format. No 'Vlan' prefix: %s", key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        int vlan_id;
+        vlan_id = stoi(key.substr(4)); // FIXME: might raise exception
+
+        string vlan_alias, port_alias;
+        vlan_alias = VLAN_PREFIX + to_string(vlan_id);
+        string op = kfvOp(t);
+
+        if (op == SET_COMMAND)
+        {
+            /* Duplicate entry */
+            if (m_portList.find(vlan_alias) != m_portList.end())
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            if (addVlan(vlan_alias))
+                it = consumer.m_toSync.erase(it);
+            else
+                it++;
+        }
+        else if (op == DEL_COMMAND)
+        {
+            Port vlan;
+            getPort(vlan_alias, vlan);
+
+            if (removeVlan(vlan))
+                it = consumer.m_toSync.erase(it);
+            else
+                it++;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+            it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+void PortsOrch::doVlanMemberTask(Consumer &consumer)
+{
+    if (!isInitDone())
+        return;
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto &t = it->second;
+
+        string key = kfvKey(t);
+
+        /* Ensure the key starts with "Vlan" otherwise ignore */
+        if (strncmp(key.c_str(), VLAN_PREFIX, 4))
+        {
+            SWSS_LOG_ERROR("Invalid key format. No 'Vlan' prefix: %s", key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -459,109 +519,77 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         size_t found = key.find(':');
         int vlan_id;
         string vlan_alias, port_alias;
-        if (found == string::npos)
-            vlan_id = stoi(key);
+        if (found != string::npos)
+        {
+            vlan_id = stoi(key.substr(0, found)); // FIXME: might raise exception
+            port_alias = key.substr(found+1);
+        }
         else
         {
-            vlan_id = stoi(key.substr(0, found));
-            port_alias = key.substr(found+1);
+            SWSS_LOG_ERROR("Invalid key format. No member port is presented: %s",
+                           kfvKey(t).c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
         }
 
         vlan_alias = VLAN_PREFIX + to_string(vlan_id);
         string op = kfvOp(t);
 
-        /* Manipulate VLAN when port_alias is empty */
-        if (port_alias == "")
+        assert(m_portList.find(vlan_alias) != m_portList.end());
+        Port vlan, port;
+
+        /* When VLAN member is to be created before VLAN is created */
+        if (!getPort(vlan_alias, vlan))
         {
-            if (op == SET_COMMAND)
-            {
-                /* Duplicate entry */
-                if (m_portList.find(vlan_alias) != m_portList.end())
-                {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
+            SWSS_LOG_INFO("Failed to locate VLAN %s", vlan_alias.c_str());
+            it++;
+            continue;
+        }
 
-                if (addVlan(vlan_alias))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
+        if (!getPort(port_alias, port))
+        {
+            SWSS_LOG_ERROR("Failed to locate port %s", port_alias.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
+        if (op == SET_COMMAND)
+        {
+            /* Duplicate entry */
+            if (vlan.m_members.find(port_alias) != vlan.m_members.end())
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
-            else if (op == DEL_COMMAND)
-            {
-                Port vlan;
-                getPort(vlan_alias, vlan);
 
-                if (removeVlan(vlan))
+            /* Assert the port doesn't belong to any VLAN */
+            assert(!port.m_vlan_id && !port.m_vlan_member_id);
+
+            if (addVlanMember(vlan, port))
+                it = consumer.m_toSync.erase(it);
+            else
+                it++;
+        }
+        else if (op == DEL_COMMAND)
+        {
+            if (vlan.m_members.find(port_alias) != vlan.m_members.end())
+            {
+                /* Assert the port belongs the a VLAN */
+                assert(port.m_vlan_id && port.m_vlan_member_id);
+
+                if (removeVlanMember(vlan, port))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;
             }
             else
-            {
-                SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+                /* Cannot locate the VLAN */
                 it = consumer.m_toSync.erase(it);
-            }
         }
-        /* Manipulate member */
         else
         {
-            assert(m_portList.find(vlan_alias) != m_portList.end());
-            Port vlan, port;
-
-            /* When VLAN member is to be created before VLAN is created */
-            if (!getPort(vlan_alias, vlan))
-            {
-                SWSS_LOG_INFO("Failed to locate VLAN %s", vlan_alias.c_str());
-                it++;
-                continue;
-            }
-
-            if (!getPort(port_alias, port))
-            {
-                SWSS_LOG_ERROR("Failed to locate port %s", port_alias.c_str());
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-
-            if (op == SET_COMMAND)
-            {
-                /* Duplicate entry */
-                if (vlan.m_members.find(port_alias) != vlan.m_members.end())
-                {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-
-                /* Assert the port doesn't belong to any VLAN */
-                assert(!port.m_vlan_id && !port.m_vlan_member_id);
-
-                if (addVlanMember(vlan, port))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
-            }
-            else if (op == DEL_COMMAND)
-            {
-                if (vlan.m_members.find(port_alias) != vlan.m_members.end())
-                {
-                    /* Assert the port belongs the a VLAN */
-                    assert(port.m_vlan_id && port.m_vlan_member_id);
-
-                    if (removeVlanMember(vlan, port))
-                        it = consumer.m_toSync.erase(it);
-                    else
-                        it++;
-                }
-                else
-                    /* Cannot locate the VLAN */
-                    it = consumer.m_toSync.erase(it);
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-                it = consumer.m_toSync.erase(it);
-            }
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+            it = consumer.m_toSync.erase(it);
         }
     }
 }
@@ -732,6 +760,8 @@ void PortsOrch::doTask(Consumer &consumer)
         doPortTask(consumer);
     else if (table_name == APP_VLAN_TABLE_NAME)
         doVlanTask(consumer);
+    else if (table_name == APP_VLAN_MEMBER_TABLE_NAME)
+        doVlanMemberTask(consumer);
     else if (table_name == APP_LAG_TABLE_NAME)
         doLagTask(consumer);
     else if (table_name == APP_LAG_MEMBER_TABLE_NAME)

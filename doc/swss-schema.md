@@ -106,7 +106,7 @@ For example (reorder output)
     oper_status         = "down" / "up"        ; operating status
     mtu                 = 1*4DIGIT             ; MTU for the IP interface of the VLAN
 
-    key                 = VLAN_TABLE:vlanid:ifname ; physical port member of VLAN
+    key                 = VLAN_MEMBER_TABLE:vlanid:ifname ; physical port member of VLAN
     tagging_mode        = "untagged" / "tagged" / "priority_tagged" ; default value as untagged
 
 

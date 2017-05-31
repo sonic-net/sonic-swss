@@ -36,6 +36,7 @@ bool OrchDaemon::init()
     vector<string> ports_tables = {
         APP_PORT_TABLE_NAME,
         APP_VLAN_TABLE_NAME,
+        APP_VLAN_MEMBER_TABLE_NAME,
         APP_LAG_TABLE_NAME,
         APP_LAG_MEMBER_TABLE_NAME
     };

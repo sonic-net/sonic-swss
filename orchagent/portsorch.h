@@ -63,6 +63,7 @@ private:
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
+    void doVlanMemberTask(Consumer &consumer);
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
 
