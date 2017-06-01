@@ -555,6 +555,23 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            string tagging_mode = "untagged";
+
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "tagging_mode")
+                    tagging_mode = fvValue(i);
+            }
+
+            if (tagging_mode != "untagged" &&
+                tagging_mode != "tagged"   &&
+                tagging_mode != "priority_tagged")
+            {
+                SWSS_LOG_ERROR("Wrong tagging_mode '%s' for key: %s", tagging_mode.c_str(), kfvKey(t).c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             /* Duplicate entry */
             if (vlan.m_members.find(port_alias) != vlan.m_members.end())
             {
@@ -565,7 +582,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
             /* Assert the port doesn't belong to any VLAN */
             assert(!port.m_vlan_id && !port.m_vlan_member_id);
 
-            if (addVlanMember(vlan, port))
+            if (addVlanMember(vlan, port, tagging_mode))
                 it = consumer.m_toSync.erase(it);
             else
                 it++;
@@ -952,7 +969,7 @@ bool PortsOrch::removeVlan(Port vlan)
     return true;
 }
 
-bool PortsOrch::addVlanMember(Port vlan, Port port)
+bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
 {
     SWSS_LOG_ENTER();
 
@@ -965,6 +982,16 @@ bool PortsOrch::addVlanMember(Port vlan, Port port)
 
     attr.id = SAI_VLAN_MEMBER_ATTR_PORT_ID;
     attr.value.oid = port.m_port_id;
+    attrs.push_back(attr);
+
+    attr.id = SAI_VLAN_MEMBER_ATTR_TAGGING_MODE;
+    if (tagging_mode == "untagged")
+        attr.value.s32 = SAI_VLAN_PORT_UNTAGGED;
+    else if (tagging_mode == "tagged")
+        attr.value.s32 = SAI_VLAN_PORT_TAGGED;
+    else if (tagging_mode == "priority_tagged")
+        attr.value.s32 = SAI_VLAN_PORT_PRIORITY_TAGGED;
+    else assert(false);
     attrs.push_back(attr);
 
     sai_object_id_t vlan_member_id;

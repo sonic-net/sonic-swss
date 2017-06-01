@@ -75,7 +75,7 @@ private:
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
-    bool addVlanMember(Port vlan, Port port);
+    bool addVlanMember(Port vlan, Port port, string& tagging_mode);
     bool removeVlanMember(Port vlan, Port port);
 
     bool addLag(string lag);
