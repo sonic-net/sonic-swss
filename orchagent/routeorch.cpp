@@ -552,11 +552,28 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     /* The route is pointing to a next hop group */
     else
     {
-        if (!hasNextHopGroup(nextHops)) /* Create a new next hop group */
+        /* Check if there is already an existing next hop group */
+        if (!hasNextHopGroup(nextHops))
         {
+            /* Try to create a new next hop group */
             if (!addNextHopGroup(nextHops))
             {
-                /* Add a temporary route when a next hop group cannot be added */
+                /* Failed to create the next hop group and check if a temporary route is needed */
+
+                /* If the current next hop is part of the next hop group to sync,
+                 * then return false and no need to add another temporary route. */
+                if (it_route != m_syncdRoutes.end() && it_route->second.getSize() == 1)
+                {
+                    IpAddress ip_address(it_route->second.to_string());
+                    if (nextHops.contains(ip_address))
+                    {
+                        return false;
+                    }
+                }
+
+                /* Add a temporary route when a next hop group cannot be added,
+                 * and there is no temporary route right now or the current temporary
+                 * route is not pointing to a member of the next hop group to sync. */
                 addTempRoute(ipPrefix, nextHops);
                 /* Return false since the original route is not successfully added */
                 return false;
