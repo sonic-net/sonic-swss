@@ -53,6 +53,9 @@ sai_object_id_t gVirtualRouterId;
 sai_object_id_t gUnderlayIfId;
 MacAddress gMacAddress;
 
+#define DEFAULT_BATCH_SIZE  128
+int gBatchSize = DEFAULT_BATCH_SIZE;
+
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
 ofstream gRecordOfs;
@@ -177,7 +180,7 @@ string getTimestamp()
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-m MAC]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -185,6 +188,7 @@ void usage()
     cout << "                    2: record SwSS task sequence as swss*.rec" << endl;
     cout << "                    3: enable both above two records" << endl;
     cout << "    -d record_location: set record logs folder location (default .)" << endl;
+    cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
 }
 
@@ -199,10 +203,13 @@ int main(int argc, char **argv)
 
     string record_location = ".";
 
-    while ((opt = getopt(argc, argv, "m:r:d:h")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:d:h")) != -1)
     {
         switch (opt)
         {
+        case 'b':
+            gBatchSize = atoi(optarg);
+            break;
         case 'm':
             gMacAddress = MacAddress(optarg);
             break;

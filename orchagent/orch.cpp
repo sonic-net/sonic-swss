@@ -10,6 +10,8 @@
 
 using namespace swss;
 
+extern int gBatchSize;
+
 extern mutex gDbMutex;
 extern PortsOrch *gPortsOrch;
 
@@ -21,7 +23,7 @@ extern string getTimestamp();
 Orch::Orch(DBConnector *db, string tableName) :
     m_db(db)
 {
-    Consumer consumer(new ConsumerStateTable(m_db, tableName));
+    Consumer consumer(new ConsumerStateTable(m_db, tableName, gBatchSize));
     m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
 }
 
@@ -30,7 +32,7 @@ Orch::Orch(DBConnector *db, vector<string> &tableNames) :
 {
     for(auto it : tableNames)
     {
-        Consumer consumer(new ConsumerStateTable(m_db, it));
+        Consumer consumer(new ConsumerStateTable(m_db, it, gBatchSize));
         m_consumerMap.insert(ConsumerMapPair(it, consumer));
     }
 }
