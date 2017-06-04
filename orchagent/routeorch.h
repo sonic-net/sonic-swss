@@ -60,6 +60,7 @@ private:
     bool m_resync;
 
     RouteTable m_syncdRoutes;
+    RouteTable m_syncdTempRoutes;
     NextHopGroupTable m_syncdNextHopGroups;
 
     NextHopObserverTable m_nextHopObservers;

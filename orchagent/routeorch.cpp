@@ -490,13 +490,19 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
 
         m_syncdNextHopGroups.erase(ipAddresses);
     }
-
     return true;
 }
 
 void RouteOrch::addTempRoute(IpPrefix ipPrefix, IpAddresses nextHops)
 {
     SWSS_LOG_ENTER();
+
+    /* Check if the same temporary route is already inserted or not */
+    if (m_syncdTempRoutes.find(ipPrefix) != m_syncdTempRoutes.end() &&
+        m_syncdTempRoutes[ipPrefix] == nextHops)
+    {
+        return;
+    }
 
     auto next_hop_set = nextHops.getIpAddresses();
 
@@ -523,7 +529,11 @@ void RouteOrch::addTempRoute(IpPrefix ipPrefix, IpAddresses nextHops)
 
     /* Set the route's temporary next hop to be the randomly picked one */
     IpAddresses tmp_next_hop((*it).to_string());
-    addRoute(ipPrefix, tmp_next_hop);
+    if (addRoute(ipPrefix, tmp_next_hop))
+    {
+        /* Add the temporary route to m_syncdTempRoute when addRoute succeeded */
+        m_syncdTempRoutes[ipPrefix] = nextHops;
+    }
 }
 
 bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
@@ -665,6 +675,16 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     }
 
     m_syncdRoutes[ipPrefix] = nextHops;
+
+    /**
+     * If a route is added to m_syncdRoutes and was added to m_syncdTempRoutes,
+     * remove this entry from the m_syncdTempRoutes.
+     */
+    if (m_syncdTempRoutes.find(ipPrefix) != m_syncdTempRoutes.end() &&
+        m_syncdTempRoutes[ipPrefix] == nextHops)
+    {
+        m_syncdTempRoutes.erase(ipPrefix);
+    }
 
     notifyNextHopChangeObservers(ipPrefix, nextHops, true);
     return true;
