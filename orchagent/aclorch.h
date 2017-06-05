@@ -231,7 +231,7 @@ inline void split(string str, Iterable& out, char delim = ' ')
 class AclOrch : public Orch, public Observer
 {
 public:
-    AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch);
+    AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch));
     ~AclOrch();
     void update(SubjectType, void *);
 
@@ -270,6 +270,8 @@ private:
 
     PortsOrch *m_portOrch;
     MirrorOrch *m_mirrorOrch;
+    NeighOrch *m_neighOrch;
+    RouteOrch *m_routeOrch;
 
     thread m_countersThread;
 };

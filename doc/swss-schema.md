@@ -450,16 +450,18 @@ Stores rules associated with a specific ACL table on the switch.
                                                ; available to mirror acl table
                                                ; type)
 
-    mirror_action = 1*255VCHAR                 ; refer to the mirror session
-                                               ; (only available to mirror acl
-                                               ; table type)
-
-    redirect_action = 1*255VCHAR               ; destination of redirect action
+    packet_action_param = 1*255VCHAR           ; parameter of packet action
+                                               ; currently supports arguments for Redirect action only
+                                               ; destination of redirect action
                                                ; it could be:
                                                : name of physical port.          Example: "Ethernet10"
                                                : name of LAG port                Example: "PortChannel5"
                                                : next-hop ip address             Example: "10.0.0.1"
                                                : next-hop group set of addresses Example: "10.0.0.1:10.0.0.3"
+
+    mirror_action = 1*255VCHAR                 ; refer to the mirror session
+                                               ; (only available to mirror acl
+                                               ; table type)
 
     ether_type    = h16                        ; Ethernet type field
 

@@ -78,7 +78,7 @@ bool OrchDaemon::init()
         APP_ACL_TABLE_NAME,
         APP_ACL_RULE_TABLE_NAME
     };
-    AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch);
+    AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
     m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch};
     m_select = new Select();
