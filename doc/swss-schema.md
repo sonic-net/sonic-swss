@@ -444,20 +444,15 @@ Stores rules associated with a specific ACL table on the switch.
     priority      = 1*3DIGIT                   ; rule priority. Valid values range
                                                ; could be platform dependent
 
-    packet_action = "forward"/"drop"/"mirror"/"redirect"
-                                               ; action when the fields are
-                                               ; matched (mirror action only
-                                               ; available to mirror acl table
-                                               ; type)
-
-    packet_action_param = 1*255VCHAR           ; parameter of packet action
-                                               ; currently supports arguments for Redirect action only
-                                               ; destination of redirect action
+    packet_action = "forward"/"drop"/"redirect:"redirect_parameter
+                                               ; an action when the fields are matched
+                                               ; we have a parameter in case of packet_action="redirect"
+                                               ; This parameter defines a destination for redirected packets
                                                ; it could be:
                                                : name of physical port.          Example: "Ethernet10"
                                                : name of LAG port                Example: "PortChannel5"
                                                : next-hop ip address             Example: "10.0.0.1"
-                                               : next-hop group set of addresses Example: "10.0.0.1:10.0.0.3"
+                                               : next-hop group set of addresses Example: "10.0.0.1,10.0.0.3"
 
     mirror_action = 1*255VCHAR                 ; refer to the mirror session
                                                ; (only available to mirror acl
