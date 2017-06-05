@@ -523,7 +523,7 @@ sai_object_id_t AclRuleL3::validateRedirectParameter(const string& redirect_valu
         return false;
     }
 
-    if (colon_pos + 1 == redirect_value)
+    if (colon_pos + 1 == redirect_value.length())
     {
         SWSS_LOG_ERROR("Redirect action rule must have a target after 'REDIRECT:' action");
         return false;

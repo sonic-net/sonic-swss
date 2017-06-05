@@ -100,7 +100,7 @@ bool RouteOrch::hasNextHopGroup(IpAddresses ipAddresses)
     return m_syncdNextHopGroups.find(ipAddresses) != m_syncdNextHopGroups.end();
 }
 
-sai_object_id_t RouteOrch::getNextHopGroupId(IpAddresses& ipAddresses)
+sai_object_id_t RouteOrch::getNextHopGroupId(const IpAddresses& ipAddresses)
 {
     assert(hasNextHopGroup(ipAddresses));
     return m_syncdNextHopGroups[ipAddresses]->next_hop_group_id;
