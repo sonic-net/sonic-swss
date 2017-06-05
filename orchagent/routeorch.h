@@ -48,6 +48,7 @@ public:
     RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch);
 
     bool hasNextHopGroup(IpAddresses);
+    sai_object_id_t getNextHopGroupId(IpAddresses&);
 
     void attach(Observer *, const IpAddress&);
     void detach(Observer *, const IpAddress&);

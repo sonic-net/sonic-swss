@@ -100,6 +100,12 @@ bool RouteOrch::hasNextHopGroup(IpAddresses ipAddresses)
     return m_syncdNextHopGroups.find(ipAddresses) != m_syncdNextHopGroups.end();
 }
 
+sai_object_id_t RouteOrch::getNextHopGroupId(IpAddresses& ipAddresses)
+{
+    assert(hasNextHopGroup(ipAddresses));
+    return m_syncdNextHopGroups[ipAddresses]->next_hop_group_id;
+}
+
 void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
 {
     SWSS_LOG_ENTER();

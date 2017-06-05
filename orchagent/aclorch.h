@@ -43,6 +43,7 @@
 
 #define PACKET_ACTION_FORWARD   "FORWARD"
 #define PACKET_ACTION_DROP      "DROP"
+#define PACKET_ACTION_REDIRECT  "REDIRECT"
 
 #define IP_TYPE_ANY             "ANY"
 #define IP_TYPE_IP              "IP"
@@ -185,6 +186,8 @@ public:
     bool validateAddMatch(string attr_name, string attr_value);
     bool validate();
     void update(SubjectType, void *);
+private:
+    sai_attribute_id_t validateRedirectParameter(const string& redirect_param);
 };
 
 class AclRuleMirror: public AclRule
