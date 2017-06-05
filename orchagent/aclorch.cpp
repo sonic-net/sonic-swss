@@ -493,7 +493,7 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
     }
     else if (attr_value.find(PACKET_ACTION_REDIRECT) != string::npos)
     {
-        sai_attribute_id_t param_id = validateRedirectParameter(attr_value);
+        sai_object_id_t param_id = validateRedirectParameter(attr_value);
         if (!param_id)
         {
             return false;
@@ -511,7 +511,7 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
     return true;
 }
 
-sai_attribute_id_t AclRuleL3::validateRedirectParameter(const string& redirect_value)
+sai_object_id_t AclRuleL3::validateRedirectParameter(const string& redirect_value)
 {
     // This function should return sai attribute id of redirect destination
 

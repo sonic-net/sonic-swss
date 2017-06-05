@@ -187,7 +187,7 @@ public:
     bool validate();
     void update(SubjectType, void *);
 private:
-    sai_attribute_id_t validateRedirectParameter(const string& redirect_param);
+    sai_object_id_t validateRedirectParameter(const string& redirect_param);
 };
 
 class AclRuleMirror: public AclRule
@@ -234,7 +234,7 @@ inline void split(string str, Iterable& out, char delim = ' ')
 class AclOrch : public Orch, public Observer
 {
 public:
-    AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch));
+    AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
     ~AclOrch();
     void update(SubjectType, void *);
 
