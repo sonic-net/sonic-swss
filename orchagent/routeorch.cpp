@@ -103,7 +103,7 @@ bool RouteOrch::hasNextHopGroup(IpAddresses ipAddresses)
 sai_object_id_t RouteOrch::getNextHopGroupId(const IpAddresses& ipAddresses)
 {
     assert(hasNextHopGroup(ipAddresses));
-    return m_syncdNextHopGroups[ipAddresses]->next_hop_group_id;
+    return m_syncdNextHopGroups[ipAddresses].next_hop_group_id;
 }
 
 void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)

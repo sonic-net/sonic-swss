@@ -493,8 +493,11 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
     }
     else if (attr_value.find(PACKET_ACTION_REDIRECT) != string::npos)
     {
-        sai_object_id_t param_id = validateRedirectParameter(attr_value);
-        if (!param_id)
+        // resize attr_value to remove argument, _attr_value still has the argument
+        attr_value.resize(string(PACKET_ACTION_REDIRECT).length());
+
+        sai_object_id_t param_id = validateRedirectParameter(_attr_value);
+        if (param_id == SAI_NULL_OBJECT_ID)
         {
             return false;
         }
@@ -520,13 +523,13 @@ sai_object_id_t AclRuleL3::validateRedirectParameter(const string& redirect_valu
     if (redirect_value[colon_pos] != ':')
     {
         SWSS_LOG_ERROR("Redirect action rule must have ':' after REDIRECT");
-        return false;
+        return SAI_NULL_OBJECT_ID;
     }
 
     if (colon_pos + 1 == redirect_value.length())
     {
         SWSS_LOG_ERROR("Redirect action rule must have a target after 'REDIRECT:' action");
-        return false;
+        return SAI_NULL_OBJECT_ID;
     }
 
     string target = redirect_value.substr(colon_pos + 1);
@@ -535,15 +538,18 @@ sai_object_id_t AclRuleL3::validateRedirectParameter(const string& redirect_valu
     Port port;
     if(m_pAclOrch->m_portOrch->getPort(target, port))
     {
-        if (port.m_type != Port::PHY)
+        if (port.m_type == Port::PHY)
         {
             return port.m_port_id;
-        } else if (port.m_type != Port::LAG)
+        }
+        else if (port.m_type == Port::LAG)
         {
             return port.m_lag_id;
-        } else {
+        }
+        else
+        {
             SWSS_LOG_ERROR("Wrong port type for REDIRECT action. Only physical ports and LAG ports are supported");
-            return 0;
+            return SAI_NULL_OBJECT_ID;
         }
     }
 
@@ -554,12 +560,12 @@ sai_object_id_t AclRuleL3::validateRedirectParameter(const string& redirect_valu
         if (!ip.isV4())
         {
             SWSS_LOG_ERROR("ACL Redirect action supports only IPv4 addresses"); // FIXME: should we enable ipv6 ?
-            return 0;
+            return SAI_NULL_OBJECT_ID;
         }
         if (!m_pAclOrch->m_neighOrch->hasNextHop(ip))
         {
             SWSS_LOG_ERROR("ACL Redirect action target next hop ip: '%s' doesn't exist on the switch", ip.to_string().c_str());
-            return 0;
+            return SAI_NULL_OBJECT_ID;
         }
 
         return m_pAclOrch->m_neighOrch->getNextHopId(ip);
@@ -577,7 +583,7 @@ sai_object_id_t AclRuleL3::validateRedirectParameter(const string& redirect_valu
         if (!m_pAclOrch->m_routeOrch->hasNextHopGroup(ips))
         {
             SWSS_LOG_ERROR("ACL Redirect action target next hop ip list: '%s' doesn't exist on the switch", ips.to_string().c_str());
-            return 0;
+            return SAI_NULL_OBJECT_ID;
         }
         return m_pAclOrch->m_routeOrch->getNextHopGroupId(ips);
     }
@@ -588,7 +594,7 @@ sai_object_id_t AclRuleL3::validateRedirectParameter(const string& redirect_valu
 
     SWSS_LOG_ERROR("ACL Redirect action target '%s' wasn't recognized", target.c_str());
 
-    return 0;
+    return SAI_NULL_OBJECT_ID;
 }
 
 bool AclRuleL3::validateAddMatch(string attr_name, string attr_value)

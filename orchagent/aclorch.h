@@ -245,6 +245,12 @@ public:
         return m_countersTable;
     }
 
+    // FIXME: Add getters for them? I'd better to add a common directory of orch objects and use it everywhere
+    PortsOrch *m_portOrch;
+    MirrorOrch *m_mirrorOrch;
+    NeighOrch *m_neighOrch;
+    RouteOrch *m_routeOrch;
+
 private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
@@ -270,11 +276,6 @@ private:
     static bool m_bCollectCounters;
     static swss::DBConnector m_db;
     static swss::Table m_countersTable;
-
-    PortsOrch *m_portOrch;
-    MirrorOrch *m_mirrorOrch;
-    NeighOrch *m_neighOrch;
-    RouteOrch *m_routeOrch;
 
     thread m_countersThread;
 };
