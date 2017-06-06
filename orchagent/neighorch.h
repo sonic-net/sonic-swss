@@ -54,11 +54,11 @@ public:
 
     bool hasNextHop(IpAddress);
 
-    sai_object_id_t getNextHopId(IpAddress);
-    int getNextHopRefCount(IpAddress);
+    sai_object_id_t getNextHopId(const IpAddress&);
+    int getNextHopRefCount(const IpAddress&);
 
-    void increaseNextHopRefCount(IpAddress);
-    void decreaseNextHopRefCount(IpAddress);
+    void increaseNextHopRefCount(const IpAddress&);
+    void decreaseNextHopRefCount(const IpAddress&);
 
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
 

@@ -74,38 +74,38 @@ bool NeighOrch::removeNextHop(IpAddress ipAddress, string alias)
     return true;
 }
 
-sai_object_id_t NeighOrch::getNextHopId(IpAddress ipAddress)
+sai_object_id_t NeighOrch::getNextHopId(const IpAddress &ipAddress)
 {
     assert(hasNextHop(ipAddress));
     return m_syncdNextHops[ipAddress].next_hop_id;
 }
 
-int NeighOrch::getNextHopRefCount(IpAddress ipAddress)
+int NeighOrch::getNextHopRefCount(const IpAddress &ipAddress)
 {
     assert(hasNextHop(ipAddress));
     return m_syncdNextHops[ipAddress].ref_count;
 }
 
-void NeighOrch::increaseNextHopRefCount(IpAddress ipAddress)
+void NeighOrch::increaseNextHopRefCount(const IpAddress &ipAddress)
 {
     assert(hasNextHop(ipAddress));
     m_syncdNextHops[ipAddress].ref_count ++;
 }
 
-void NeighOrch::decreaseNextHopRefCount(IpAddress ipAddress)
+void NeighOrch::decreaseNextHopRefCount(const IpAddress &ipAddress)
 {
     assert(hasNextHop(ipAddress));
     m_syncdNextHops[ipAddress].ref_count --;
 }
 
-bool NeighOrch::getNeighborEntry(const IpAddress& ipAddress, NeighborEntry& neighborEntry, MacAddress& macAddress)
+bool NeighOrch::getNeighborEntry(const IpAddress &ipAddress, NeighborEntry &neighborEntry, MacAddress &macAddress)
 {
     if (!hasNextHop(ipAddress))
     {
         return false;
     }
 
-    for (const auto& entry : m_syncdNeighbors)
+    for (const auto &entry : m_syncdNeighbors)
     {
         if (entry.first.ip_address == ipAddress)
         {

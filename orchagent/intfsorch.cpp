@@ -23,7 +23,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName) :
     SWSS_LOG_ENTER();
 }
 
-sai_object_id_t IntfsOrch::getRouterIntfsId(string alias)
+sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
 {
     Port port;
     gPortsOrch->getPort(alias, port);
@@ -31,7 +31,7 @@ sai_object_id_t IntfsOrch::getRouterIntfsId(string alias)
     return port.m_rif_id;
 }
 
-void IntfsOrch::increaseRouterIntfsRefCount(const string alias)
+void IntfsOrch::increaseRouterIntfsRefCount(const string &alias)
 {
     SWSS_LOG_ENTER();
 
@@ -40,7 +40,7 @@ void IntfsOrch::increaseRouterIntfsRefCount(const string alias)
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
 }
 
-void IntfsOrch::decreaseRouterIntfsRefCount(const string alias)
+void IntfsOrch::decreaseRouterIntfsRefCount(const string &alias)
 {
     SWSS_LOG_ENTER();
 
