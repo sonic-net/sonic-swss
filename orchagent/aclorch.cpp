@@ -496,7 +496,7 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
         // resize attr_value to remove argument, _attr_value still has the argument
         attr_value.resize(string(PACKET_ACTION_REDIRECT).length());
 
-        sai_object_id_t param_id = validateRedirectParameter(_attr_value);
+        sai_object_id_t param_id = getRedirectObjectId(_attr_value);
         if (param_id == SAI_NULL_OBJECT_ID)
         {
             return false;
