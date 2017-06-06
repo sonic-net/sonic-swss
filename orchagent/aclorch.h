@@ -187,7 +187,7 @@ public:
     bool validate();
     void update(SubjectType, void *);
 private:
-    sai_object_id_t validateRedirectParameter(const string& redirect_param);
+    sai_object_id_t getRedirectObjectId(const string& redirect_param);
 };
 
 class AclRuleMirror: public AclRule

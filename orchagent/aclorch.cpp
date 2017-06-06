@@ -514,10 +514,9 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
     return true;
 }
 
-sai_object_id_t AclRuleL3::validateRedirectParameter(const string& redirect_value)
+// This method should return sai attribute id of the redirect destination
+sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
 {
-    // This function should return sai attribute id of redirect destination
-
     // check that we have a colon after redirect rule
     size_t colon_pos = string(PACKET_ACTION_REDIRECT).length();
     if (redirect_value[colon_pos] != ':')
