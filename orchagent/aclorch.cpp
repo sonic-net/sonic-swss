@@ -346,9 +346,26 @@ bool AclRule::create()
     {
         SWSS_LOG_ERROR("Failed to create ACL rule");
         AclRange::remove(range_objects, range_object_list.count);
+        decreaseNextHopRefCount();
     }
 
     return (status == SAI_STATUS_SUCCESS);
+}
+
+void AclRule::decreaseNextHopRefCount()
+{
+    if (!m_redirect_target_next_hop.empty())
+    {
+        m_pAclOrch->m_neighOrch->decreaseNextHopRefCount(m_redirect_target_next_hop);
+        m_redirect_target_next_hop.clear();
+    }
+    if (!m_redirect_target_next_hop_group.empty())
+    {
+        m_pAclOrch->m_routeOrch->decreaseNextHopRefCount(m_redirect_target_next_hop_group);
+        m_redirect_target_next_hop_group.clear();
+    }
+
+    return;
 }
 
 bool AclRule::remove()
@@ -363,6 +380,8 @@ bool AclRule::remove()
     }
 
     m_ruleOid = SAI_NULL_OBJECT_ID;
+
+    decreaseNextHopRefCount();
 
     res = removeRanges();
     res &= removeCounter();
@@ -555,19 +574,16 @@ sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
     // Try to parse nexthop ip address
     try
     {
-        IpAddress ip(target);
-        if (!ip.isV4())
+        m_redirect_target_next_hop = target;
+        if (!m_pAclOrch->m_neighOrch->hasNextHop(m_redirect_target_next_hop))
         {
-            SWSS_LOG_ERROR("ACL Redirect action supports only IPv4 addresses"); // FIXME: should we enable ipv6 ?
-            return SAI_NULL_OBJECT_ID;
-        }
-        if (!m_pAclOrch->m_neighOrch->hasNextHop(ip))
-        {
-            SWSS_LOG_ERROR("ACL Redirect action target next hop ip: '%s' doesn't exist on the switch", ip.to_string().c_str());
+            SWSS_LOG_ERROR("ACL Redirect action target next hop ip: '%s' doesn't exist on the switch",
+                m_redirect_target_next_hop.to_string().c_str());
             return SAI_NULL_OBJECT_ID;
         }
 
-        return m_pAclOrch->m_neighOrch->getNextHopId(ip);
+        m_pAclOrch->m_neighOrch->increaseNextHopRefCount(m_redirect_target_next_hop);
+        return m_pAclOrch->m_neighOrch->getNextHopId(m_redirect_target_next_hop);
     }
     catch (...)
     {
@@ -577,14 +593,16 @@ sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
     // try to parse nh group ip addresses
     try
     {
-        IpAddresses ips(target);
-        // FIXME: should I check all addresses are V4?
-        if (!m_pAclOrch->m_routeOrch->hasNextHopGroup(ips))
+        m_redirect_target_next_hop_group = target;
+        if (!m_pAclOrch->m_routeOrch->hasNextHopGroup(m_redirect_target_next_hop_group))
         {
-            SWSS_LOG_ERROR("ACL Redirect action target next hop ip list: '%s' doesn't exist on the switch", ips.to_string().c_str());
+            SWSS_LOG_ERROR("ACL Redirect action target next hop ip list: '%s' doesn't exist on the switch",
+                m_redirect_target_next_hop_group.to_string().c_str());
             return SAI_NULL_OBJECT_ID;
         }
-        return m_pAclOrch->m_routeOrch->getNextHopGroupId(ips);
+
+        m_pAclOrch->m_routeOrch->increaseNextHopRefCount(m_redirect_target_next_hop_group);
+        return m_pAclOrch->m_routeOrch->getNextHopGroupId(m_redirect_target_next_hop_group);
     }
     catch (...)
     {
