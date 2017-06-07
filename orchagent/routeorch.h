@@ -53,6 +53,9 @@ public:
     void attach(Observer *, const IpAddress&);
     void detach(Observer *, const IpAddress&);
 
+    void increaseNextHopRefCount(IpAddresses);
+    void decreaseNextHopRefCount(IpAddresses);
+
 private:
     NeighOrch *m_neighOrch;
 
@@ -64,9 +67,6 @@ private:
     NextHopGroupTable m_syncdNextHopGroups;
 
     NextHopObserverTable m_nextHopObservers;
-
-    void increaseNextHopRefCount(IpAddresses);
-    void decreaseNextHopRefCount(IpAddresses);
 
     bool addNextHopGroup(IpAddresses);
     bool removeNextHopGroup(IpAddresses);

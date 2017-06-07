@@ -356,12 +356,12 @@ void AclRule::decreaseNextHopRefCount()
 {
     if (!m_redirect_target_next_hop.empty())
     {
-        m_pAclOrch->m_neighOrch->decreaseNextHopRefCount(m_redirect_target_next_hop);
+        m_pAclOrch->m_neighOrch->decreaseNextHopRefCount(IpAddress(m_redirect_target_next_hop));
         m_redirect_target_next_hop.clear();
     }
     if (!m_redirect_target_next_hop_group.empty())
     {
-        m_pAclOrch->m_routeOrch->decreaseNextHopRefCount(m_redirect_target_next_hop_group);
+        m_pAclOrch->m_routeOrch->decreaseNextHopRefCount(IpAddresses(m_redirect_target_next_hop_group));
         m_redirect_target_next_hop_group.clear();
     }
 
@@ -574,16 +574,16 @@ sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
     // Try to parse nexthop ip address
     try
     {
-        m_redirect_target_next_hop = target;
-        if (!m_pAclOrch->m_neighOrch->hasNextHop(m_redirect_target_next_hop))
+        IpAddress ip(target);
+        if (!m_pAclOrch->m_neighOrch->hasNextHop(ip))
         {
-            SWSS_LOG_ERROR("ACL Redirect action target next hop ip: '%s' doesn't exist on the switch",
-                m_redirect_target_next_hop.to_string().c_str());
+            SWSS_LOG_ERROR("ACL Redirect action target next hop ip: '%s' doesn't exist on the switch", ip.to_string().c_str());
             return SAI_NULL_OBJECT_ID;
         }
 
-        m_pAclOrch->m_neighOrch->increaseNextHopRefCount(m_redirect_target_next_hop);
-        return m_pAclOrch->m_neighOrch->getNextHopId(m_redirect_target_next_hop);
+        m_redirect_target_next_hop = target;
+        m_pAclOrch->m_neighOrch->increaseNextHopRefCount(ip);
+        return m_pAclOrch->m_neighOrch->getNextHopId(ip);
     }
     catch (...)
     {
@@ -593,16 +593,16 @@ sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
     // try to parse nh group ip addresses
     try
     {
-        m_redirect_target_next_hop_group = target;
-        if (!m_pAclOrch->m_routeOrch->hasNextHopGroup(m_redirect_target_next_hop_group))
+        IpAddresses ips(target);
+        if (!m_pAclOrch->m_routeOrch->hasNextHopGroup(ips))
         {
-            SWSS_LOG_ERROR("ACL Redirect action target next hop ip list: '%s' doesn't exist on the switch",
-                m_redirect_target_next_hop_group.to_string().c_str());
+            SWSS_LOG_ERROR("ACL Redirect action target next hop ip list: '%s' doesn't exist on the switch", ips.to_string().c_str());
             return SAI_NULL_OBJECT_ID;
         }
 
-        m_pAclOrch->m_routeOrch->increaseNextHopRefCount(m_redirect_target_next_hop_group);
-        return m_pAclOrch->m_routeOrch->getNextHopGroupId(m_redirect_target_next_hop_group);
+        m_redirect_target_next_hop_group = target;
+        m_pAclOrch->m_routeOrch->increaseNextHopRefCount(ips);
+        return m_pAclOrch->m_routeOrch->getNextHopGroupId(ips);
     }
     catch (...)
     {

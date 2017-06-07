@@ -177,8 +177,8 @@ protected:
     uint32_t m_priority;
     map <sai_acl_entry_attr_t, sai_attribute_value_t> m_matches;
     map <sai_acl_entry_attr_t, sai_attribute_value_t> m_actions;
-    IpAddress   m_redirect_target_next_hop;
-    IpAddresses m_redirect_target_next_hop_group;
+    string m_redirect_target_next_hop;
+    string m_redirect_target_next_hop_group;
 };
 
 class AclRuleL3: public AclRule
