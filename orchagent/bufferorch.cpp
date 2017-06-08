@@ -118,7 +118,6 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
-            SWSS_LOG_DEBUG("Modifying existing sai object:%lx ", sai_object);
             sai_status = sai_buffer_api->set_buffer_pool_attr(sai_object, &attribs[0]);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
@@ -129,15 +128,14 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         }
         else
         {
-            SWSS_LOG_DEBUG("Creating new sai object");
             sai_status = sai_buffer_api->create_buffer_pool(&sai_object, attribs.size(), attribs.data());
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed to create buffer pool, name:%s, status:%d", object_name.c_str(), sai_status);
+                SWSS_LOG_ERROR("Failed to create buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
                 return task_process_status::task_failed;
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name] = sai_object;
-            SWSS_LOG_DEBUG("Created new pool:%lx, type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
+            SWSS_LOG_NOTICE("Created buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
         }
     }
     else if (op == DEL_COMMAND)
@@ -145,9 +143,10 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         sai_status = sai_buffer_api->remove_buffer_pool(sai_object);
         if (SAI_STATUS_SUCCESS != sai_status)
         {
-            SWSS_LOG_ERROR("Failed to remove buffer pool, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
+            SWSS_LOG_ERROR("Failed to remove buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
             return task_process_status::task_failed;
         }
+        SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
     }
@@ -192,7 +191,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
                 {
                     if(ref_resolve_status::not_resolved == resolve_result)
                     {
-                        SWSS_LOG_WARN("Missing or invalid pool reference specified");
+                        SWSS_LOG_INFO("Missing or invalid pool reference specified");
                         return task_process_status::task_need_retry;
                     }
                     SWSS_LOG_ERROR("Resolving pool reference failed");
@@ -250,15 +249,14 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
         }
         else
         {
-            SWSS_LOG_DEBUG("Creating new sai object");
             sai_status = sai_buffer_api->create_buffer_profile(&sai_object, attribs.size(), attribs.data());
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed to create buffer profile, name:%s, status:%d", object_name.c_str(), sai_status);
+                SWSS_LOG_ERROR("Failed to create buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
                 return task_process_status::task_failed;
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name] = sai_object;
-            SWSS_LOG_DEBUG("Created new sai object:%lx, type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
+            SWSS_LOG_NOTICE("Created buffer profile %s with type %s", object_name.c_str(), map_type_name.c_str());
         }
     }
     else if (op == DEL_COMMAND)
@@ -266,9 +264,10 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
         sai_status = sai_buffer_api->remove_buffer_profile(sai_object);
         if (SAI_STATUS_SUCCESS != sai_status)
         {
-            SWSS_LOG_ERROR("Failed to remove buffer profile, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
+            SWSS_LOG_ERROR("Failed to remove buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
             return task_process_status::task_failed;
         }
+        SWSS_LOG_NOTICE("Remove buffer profile %s with type %s", object_name.c_str(), map_type_name.c_str());
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
     }
@@ -311,7 +310,7 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
     {
         if(ref_resolve_status::not_resolved == resolve_result)
         {
-            SWSS_LOG_WARN("Missing or invalid queue buffer profile reference specified");
+            SWSS_LOG_INFO("Missing or invalid queue buffer profile reference specified");
             return task_process_status::task_need_retry;
         }
         SWSS_LOG_ERROR("Resolving queue profile reference failed");
@@ -383,7 +382,7 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     {
         if(ref_resolve_status::not_resolved == resolve_result)
         {
-            SWSS_LOG_WARN("Missing or invalid pg profile reference specified");
+            SWSS_LOG_INFO("Missing or invalid pg profile reference specified");
             return task_process_status::task_need_retry;
         }
         SWSS_LOG_ERROR("Resolving pg profile reference failed");
@@ -448,7 +447,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
     {
         if(ref_resolve_status::not_resolved == resolve_status)
         {
-            SWSS_LOG_WARN("Missing or invalid ingress buffer profile reference specified for:%s", key.c_str());
+            SWSS_LOG_INFO("Missing or invalid ingress buffer profile reference specified for:%s", key.c_str());
             return task_process_status::task_need_retry;
         }
         SWSS_LOG_ERROR("Failed resolving ingress buffer profile reference specified for:%s", key.c_str());
@@ -494,7 +493,7 @@ task_process_status BufferOrch::processEgressBufferProfileList(Consumer &consume
     {
         if(ref_resolve_status::not_resolved == resolve_status)
         {
-            SWSS_LOG_WARN("Missing or invalid egress buffer profile reference specified for:%s", key.c_str());
+            SWSS_LOG_INFO("Missing or invalid egress buffer profile reference specified for:%s", key.c_str());
             return task_process_status::task_need_retry;
         }
         SWSS_LOG_ERROR("Failed resolving egress buffer profile reference specified for:%s", key.c_str());
@@ -565,4 +564,3 @@ void BufferOrch::doTask(Consumer &consumer)
         }
     }
 }
-
