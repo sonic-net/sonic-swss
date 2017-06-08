@@ -361,7 +361,18 @@ void AclRule::decreaseNextHopRefCount()
     }
     if (!m_redirect_target_next_hop_group.empty())
     {
-        m_pAclOrch->m_routeOrch->decreaseNextHopRefCount(IpAddresses(m_redirect_target_next_hop_group));
+        IpAddresses target = IpAddresses(m_redirect_target_next_hop_group);
+        m_pAclOrch->m_routeOrch->decreaseNextHopRefCount(target);
+        // remove next hop group in case it's not used by anything else
+        if (m_pAclOrch->m_routeOrch->isRefCounterZero(target))
+        {
+            if (!m_pAclOrch->m_routeOrch->removeNextHopGroup(target))
+            {
+                SWSS_LOG_ERROR("Failed to remove unused next hop group '%s'", m_redirect_target_next_hop_group.c_str());
+                // FIXME: what else could we do here?
+            }
+            SWSS_LOG_DEBUG("Removed acl redirect target next hop group '%s'", m_redirect_target_next_hop_group.c_str());
+        }
         m_redirect_target_next_hop_group.clear();
     }
 
@@ -596,8 +607,14 @@ sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
         IpAddresses ips(target);
         if (!m_pAclOrch->m_routeOrch->hasNextHopGroup(ips))
         {
-            SWSS_LOG_ERROR("ACL Redirect action target next hop ip list: '%s' doesn't exist on the switch", ips.to_string().c_str());
-            return SAI_NULL_OBJECT_ID;
+            SWSS_LOG_INFO("ACL Redirect action target next hop group: '%s' doesn't exist on the switch. Creating it.", ips.to_string().c_str());
+
+            if(!m_pAclOrch->m_routeOrch->addNextHopGroup(ips))
+            {
+                SWSS_LOG_ERROR("Can't create required target next hop group '%s'", ips.to_string().c_str());
+                return SAI_NULL_OBJECT_ID;
+            }
+            SWSS_LOG_DEBUG("Created acl redirect target next hop group '%s'", ips.to_string().c_str());
         }
 
         m_redirect_target_next_hop_group = target;

@@ -95,7 +95,7 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
     SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
 }
 
-bool RouteOrch::hasNextHopGroup(IpAddresses ipAddresses)
+bool RouteOrch::hasNextHopGroup(const IpAddresses& ipAddresses) const
 {
     return m_syncdNextHopGroups.find(ipAddresses) != m_syncdNextHopGroups.end();
 }
@@ -397,6 +397,16 @@ void RouteOrch::decreaseNextHopRefCount(IpAddresses ipAddresses)
     {
         m_syncdNextHopGroups[ipAddresses].ref_count --;
     }
+}
+
+bool RouteOrch::isRefCounterZero(const IpAddresses& ipAddresses) const
+{
+    if (!hasNextHopGroup(ipAddresses))
+    {
+        return true;
+    }
+
+    return m_syncdNextHopGroups.at(ipAddresses).ref_count == 0;
 }
 
 bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
