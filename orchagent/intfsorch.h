@@ -9,13 +9,14 @@
 #include "macaddress.h"
 
 #include <map>
+#include <set>
 
 extern sai_object_id_t gVirtualRouterId;
 extern MacAddress gMacAddress;
 
 struct IntfsEntry
 {
-    IpAddresses         ip_addresses;
+    std::set<IpPrefix>  ip_addresses;
     int                 ref_count;
 };
 
