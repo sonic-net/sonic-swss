@@ -124,7 +124,7 @@ struct AclRuleCounters
 class AclRule
 {
 public:
-    AclRule(AclOrch *m_pAclOrch, string rule, string table);
+    AclRule(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type);
     virtual bool validateAddPriority(string attr_name, string attr_value);
     virtual bool validateAddMatch(string attr_name, string attr_value);
     virtual bool validateAddAction(string attr_name, string attr_value) = 0;
@@ -156,7 +156,7 @@ public:
         return m_counterOid;
     }
 
-    static shared_ptr<AclRule> makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, string rule, string table);
+    static shared_ptr<AclRule> makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
     virtual ~AclRule() {}
 
 protected:
@@ -171,6 +171,7 @@ protected:
     AclOrch *m_pAclOrch;
     string m_id;
     string m_tableId;
+    acl_table_type_t m_tableType;
     sai_object_id_t m_tableOid;
     sai_object_id_t m_ruleOid;
     sai_object_id_t m_counterOid;
@@ -184,7 +185,7 @@ protected:
 class AclRuleL3: public AclRule
 {
 public:
-    AclRuleL3(AclOrch *m_pAclOrch, string rule, string table);
+    AclRuleL3(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type);
 
     bool validateAddAction(string attr_name, string attr_value);
     bool validateAddMatch(string attr_name, string attr_value);
@@ -197,8 +198,9 @@ private:
 class AclRuleMirror: public AclRule
 {
 public:
-    AclRuleMirror(AclOrch *m_pAclOrch, MirrorOrch *m_pMirrorOrch, string rule, string table);
+    AclRuleMirror(AclOrch *m_pAclOrch, MirrorOrch *m_pMirrorOrch, string rule, string table, acl_table_type_t type);
     bool validateAddAction(string attr_name, string attr_value);
+    bool validateAddMatch(string attr_name, string attr_value);
     bool validate();
     bool create();
     bool remove();

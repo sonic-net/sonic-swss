@@ -86,10 +86,11 @@ inline string trim(const std::string& str, const std::string& whitespace = " \t"
     return str.substr(strBegin, strRange);
 }
 
-AclRule::AclRule(AclOrch *aclOrch, string rule, string table) :
+AclRule::AclRule(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
         m_pAclOrch(aclOrch),
         m_id(rule),
         m_tableId(table),
+        m_tableType(type),
         m_tableOid(SAI_NULL_OBJECT_ID),
         m_ruleOid(SAI_NULL_OBJECT_ID),
         m_counterOid(SAI_NULL_OBJECT_ID),
@@ -420,18 +421,45 @@ AclRuleCounters AclRule::getCounters()
     return AclRuleCounters(counter_attr[0].value.u64, counter_attr[1].value.u64);
 }
 
-shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, string rule, string table)
+shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data)
 {
-    switch (type)
+    string action;
+    bool action_found = false;
+    /* Find action configured by user. Based on action type create rule. */
+    for (const auto& itr : kfvFieldsValues(data))
     {
-    case ACL_TABLE_L3:
-        return make_shared<AclRuleL3>(acl, rule, table);
-    case ACL_TABLE_MIRROR:
-        return make_shared<AclRuleMirror>(acl, mirror, rule, table);
-    case ACL_TABLE_UNKNOWN:
-    default:
-        throw runtime_error("Unknown rule type.");
+        string attr_name = toUpper(fvField(itr));
+        string attr_value = fvValue(itr);
+        if (attr_name == ACTION_PACKET_ACTION || attr_name == ACTION_MIRROR_ACTION)
+        {
+            action_found = true;
+            action = attr_name;
+            break;
+        }
     }
+
+    if (!action_found)
+    {
+        throw runtime_error("ACL rule action is not found in rule " + rule);
+    }
+
+    if (type != ACL_TABLE_L3 && type != ACL_TABLE_MIRROR)
+    {
+        throw runtime_error("Unknown table type.");
+    }
+
+    /* Mirror rules can exist in both tables*/
+    if (action == ACTION_MIRROR_ACTION)
+    {
+        return make_shared<AclRuleMirror>(acl, mirror, rule, table, type);
+    }
+    /* L3 rules can exist only in L3 table */
+    else if (type == ACL_TABLE_L3)
+    {
+        return make_shared<AclRuleL3>(acl, rule, table, type);
+    }
+
+    throw runtime_error("Wrong combination of table type and action in rule " + rule);
 }
 
 bool AclRule::createCounter()
@@ -499,8 +527,8 @@ bool AclRule::removeCounter()
     return true;
 }
 
-AclRuleL3::AclRuleL3(AclOrch *aclOrch, string rule, string table) :
-        AclRule(aclOrch, rule, table)
+AclRuleL3::AclRuleL3(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
+        AclRule(aclOrch, rule, table, type)
 {
 }
 
@@ -662,8 +690,8 @@ void AclRuleL3::update(SubjectType, void *)
     // Do nothing
 }
 
-AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table) :
-        AclRule(aclOrch, rule, table),
+AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table, acl_table_type_t type) :
+        AclRule(aclOrch, rule, table, type),
         m_state(false),
         m_pMirrorOrch(mirror)
 {
@@ -686,6 +714,17 @@ bool AclRuleMirror::validateAddAction(string attr_name, string attr_value)
     m_sessionName = attr_value;
 
     return true;
+}
+
+bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
+{
+    if (m_tableType == ACL_TABLE_L3 && attr_name == MATCH_DSCP)
+    {
+        SWSS_LOG_ERROR("DSCP match is not supported for the tables of type L3");
+        return false;
+    }
+
+    return AclRule::validateAddMatch(attr_name, attr_value);
 }
 
 bool AclRuleMirror::validate()
@@ -749,11 +788,6 @@ bool AclRuleMirror::create()
 
 bool AclRuleMirror::remove()
 {
-    if (!m_pMirrorOrch->decreaseRefCount(m_sessionName))
-    {
-        throw runtime_error("Failed to decrease mirror session reference count");
-    }
-
     if (!m_state)
     {
         return true;
@@ -762,6 +796,11 @@ bool AclRuleMirror::remove()
     if (!AclRule::remove())
     {
         return false;
+    }
+
+    if (!m_pMirrorOrch->decreaseRefCount(m_sessionName))
+    {
+        throw runtime_error("Failed to decrease mirror session reference count");
     }
 
     m_state = false;
@@ -991,11 +1030,6 @@ void AclOrch::update(SubjectType type, void *cntx)
 
     for (const auto& table : m_AclTables)
     {
-        if (table.second.type != ACL_TABLE_MIRROR)
-        {
-            continue;
-        }
-
         for (auto& rule : table.second.rules)
         {
             rule.second->update(type, cntx);
@@ -1169,9 +1203,9 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 
             if (bAllAttributesOk)
             {
-                newRule = AclRule::makeShared(m_AclTables[table_oid].type, this, m_mirrorOrch, rule_id, table_id);
+                newRule = AclRule::makeShared(m_AclTables[table_oid].type, this, m_mirrorOrch, rule_id, table_id, t);
 
-                for (auto itr : kfvFieldsValues(t))
+                for (const auto& itr : kfvFieldsValues(t))
                 {
                     string attr_name = toUpper(fvField(itr));
                     string attr_value = fvValue(itr);
@@ -1198,6 +1232,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                     }
                 }
             }
+
             // validate and create ACL rule
             if (bAllAttributesOk && newRule->validate())
             {
