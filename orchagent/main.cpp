@@ -17,6 +17,7 @@ extern "C" {
 
 #include "orchdaemon.h"
 #include "saihelper.h"
+#include <signal.h>
 
 using namespace std;
 using namespace swss;
@@ -70,11 +71,34 @@ void usage()
     cout << "    -m MAC: set switch MAC address" << endl;
 }
 
+void sighup_handler(int signo)
+{
+    /*
+     * Don't do any logging since they are using mutexes.
+     */
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_PERFORM_LOG_ROTATE;
+    attr.value.booldata = true;
+
+    if (sai_switch_api != NULL)
+    {
+        sai_switch_api->set_switch_attribute(&attr);
+    }
+}
+
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("orchagent");
 
     SWSS_LOG_ENTER();
+
+    if (signal(SIGHUP, sighup_handler) == SIG_ERR)
+    {
+        SWSS_LOG_ERROR("failed to setup SIGHUP action");
+        exit(1);
+    }
 
     int opt;
     sai_status_t status;
