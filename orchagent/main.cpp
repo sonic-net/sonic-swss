@@ -39,6 +39,7 @@ int gBatchSize = DEFAULT_BATCH_SIZE;
 
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
+bool gLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
 
@@ -76,6 +77,7 @@ void sighup_handler(int signo)
     /*
      * Don't do any logging since they are using mutexes.
      */
+    gLogRotate = true;
 
     sai_attribute_t attr;
 
@@ -197,8 +199,8 @@ int main(int argc, char **argv)
     /* Disable/enable SwSS recording */
     if (gSwssRecord)
     {
-        gRecordFile = "swss." + getTimestamp() + ".rec";
-        gRecordOfs.open(record_location + "/" + gRecordFile);
+        gRecordFile = record_location + "/" + "swss." + getTimestamp() + ".rec";
+        gRecordOfs.open(gRecordFile);
         if (!gRecordOfs.is_open())
         {
             SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());

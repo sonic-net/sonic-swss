@@ -17,6 +17,7 @@ extern PortsOrch *gPortsOrch;
 
 extern bool gSwssRecord;
 extern ofstream gRecordOfs;
+extern bool gLogRotate;
 extern string gRecordFile;
 extern string getTimestamp();
 
@@ -232,6 +233,25 @@ void Orch::doTask()
     }
 }
 
+void Orch::logfileReopen()
+{
+    gRecordOfs.close();
+
+    /*
+     * On log rotate we will use the same file name, we are assuming that
+     * logrotate deamon move filename to filename.1 and we will create new
+     * empty file here.
+     */
+
+    gRecordOfs.open(gRecordFile);
+
+    if (!gRecordOfs.is_open())
+    {
+        SWSS_LOG_ERROR("failed to open gRecordOfs file %s: %s", gRecordFile.c_str(), strerror(errno));
+        return;
+    }
+}
+
 void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 {
     string s = consumer.m_consumer->getTableName() + ":" + kfvKey(tuple)
@@ -242,6 +262,20 @@ void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
     }
 
     gRecordOfs << getTimestamp() << "|" << s << endl;
+
+    if (gLogRotate)
+    {
+        gLogRotate = false;
+
+        logfileReopen();
+
+        /* double check since reopen could fail */
+
+        if (gRecordOfs.is_open())
+        {
+            gRecordOfs << getTimestamp() << "|" << "#|logrotate on: " << gRecordFile << std::endl;
+        }
+    }
 }
 
 ref_resolve_status Orch::resolveFieldRefArray(
