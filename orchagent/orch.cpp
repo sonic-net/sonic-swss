@@ -268,13 +268,6 @@ void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
         gLogRotate = false;
 
         logfileReopen();
-
-        /* double check since reopen could fail */
-
-        if (gRecordOfs.is_open())
-        {
-            gRecordOfs << getTimestamp() << "|" << "#|logrotate on: " << gRecordFile << std::endl;
-        }
     }
 }
 
