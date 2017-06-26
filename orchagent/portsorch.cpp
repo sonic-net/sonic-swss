@@ -1014,7 +1014,6 @@ bool PortsOrch::addVlan(string vlan_alias)
 {
     SWSS_LOG_ENTER();
 
-    // TODO: how to use vlan_oid??
     sai_object_id_t vlan_oid;
 
     sai_vlan_id_t vlan_id = stoi(vlan_alias.substr(4));
@@ -1031,17 +1030,8 @@ bool PortsOrch::addVlan(string vlan_alias)
 
     SWSS_LOG_NOTICE("Create an empty VLAN %s vid:%hu", vlan_alias.c_str(), vlan_id);
 
-/*
-    // create vlan rif(s)
-    sai_attribute_t rif_attr_list[2];
-    rif_attr_list[0].id = SAI_ROUTER_INTERFACE_ATTR_VLAN_ID;
-    rif_attr_list[0].value = vlan_id;
-    rif_attr_list[1].id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
-    rif_attr_list[1].value = mac;
-    sai_create_rif_fn(&rif1, 2, rif_list);
-*/
-
     Port vlan(vlan_alias, Port::VLAN);
+    vlan.m_vlan_oid = vlan_oid;
     vlan.m_vlan_id = vlan_id;
     vlan.m_members = set<string>();
     m_portList[vlan_alias] = vlan;
@@ -1060,7 +1050,7 @@ bool PortsOrch::removeVlan(Port vlan)
         return false;
     }
 
-    sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_id);
+    sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove VLAN %s vid:%hu", vlan.m_alias.c_str(), vlan.m_vlan_id);
@@ -1082,7 +1072,7 @@ bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
     vector<sai_attribute_t> attrs;
 
     attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_ID;
-    attr.value.u16 = vlan.m_vlan_id;
+    attr.value.oid = vlan.m_vlan_oid;
     attrs.push_back(attr);
 
     attr.id = SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID;
@@ -1110,6 +1100,7 @@ bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
     SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%lx",
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_id, port.m_port_id);
 
+#if 0
     // Set port bind mode
     sai_attribute_t port_attr;
     port_attr.id = SAI_PORT_ATTR_BIND_MODE;
@@ -1121,6 +1112,7 @@ bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
                 port.m_port_id, status);
         return false;
     }
+#endif
 
     port.m_vlan_id = vlan.m_vlan_id;
     port.m_port_vlan_id = vlan.m_vlan_id;

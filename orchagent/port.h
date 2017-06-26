@@ -54,6 +54,7 @@ public:
     int                 m_index = 0;    // PHY_PORT: index
     int                 m_ifindex = 0;
     sai_object_id_t     m_port_id = 0;
+    sai_object_id_t     m_vlan_oid = 0;
     sai_vlan_id_t       m_vlan_id = 0;
     sai_vlan_id_t       m_port_vlan_id = DEFAULT_PORT_VLAN_ID;  // Port VLAN ID
     sai_object_id_t     m_vlan_member_id = 0;
