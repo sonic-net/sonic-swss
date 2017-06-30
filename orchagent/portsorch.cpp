@@ -243,6 +243,67 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
     return true;
 }
 
+bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    // validate speed value
+    attr.id = SAI_PORT_ATTR_SUPPORTED_SPEED;
+    attr.value.u32list.count = 0;
+    attr.value.u32list.list = NULL;
+    status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+    if (status == SAI_STATUS_BUFFER_OVERFLOW)
+    {
+        uint32_t speeds[attr.value.u32list.count];
+        attr.value.u32list.list = speeds;
+        status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            int32_t speed_idx = attr.value.u32list.count;
+            while(speed_idx-- > 0) {
+                if(speed == speeds[speed_idx])
+                    break;
+            }
+            if (speed_idx >= 0)
+            {
+                return true;
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to get supported speed list for port %lx\n", port_id);
+        }
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to get number of supported speeds for port %lx\n", port_id);
+    }
+
+    return false;
+}
+
+bool PortsOrch::setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    attr.id = SAI_PORT_ATTR_SPEED;
+    attr.value.u32 = speed;
+
+    status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set speed %u for port pid:%lx", attr.value.u32, port_id);
+        return false;
+    }
+
+    SWSS_LOG_INFO("Set speed %u for port pid:%lx", attr.value.u32, port_id);
+    return true;
+}
+
 bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
 {
     SWSS_LOG_ENTER();
@@ -324,6 +385,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             set<int> lane_set;
             string admin_status;
             uint32_t mtu = 0;
+            uint32_t speed = 0;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -348,6 +410,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 /* Set port mtu */
                 if (fvField(i) == "mtu")
                     mtu = stoul(fvValue(i));
+
+                /* Set port speed */
+                if (fvField(i) == "speed")
+                    speed = stoul(fvValue(i));
             }
 
             if (lane_set.size())
@@ -393,10 +459,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     SWSS_LOG_ERROR("Failed to locate port lane combination alias:%s", alias.c_str());
             }
 
-            if (admin_status != "")
+            Port p;
+            if (!getPort(alias, p))
             {
-                Port p;
-                if (getPort(alias, p))
+                SWSS_LOG_ERROR("Failed to get port id by alias:%s", alias.c_str());
+            }
+            else
+            {
+                if (admin_status != "")
                 {
                     if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
                         SWSS_LOG_NOTICE("Set port %s admin status to %s", alias.c_str(), admin_status.c_str());
@@ -406,15 +476,36 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it++;
                         continue;
                     }
-                }
-                else
-                    SWSS_LOG_ERROR("Failed to get port id by alias:%s", alias.c_str());
-            }
 
-            if (mtu != 0)
-            {
-                Port p;
-                if (getPort(alias, p))
+                    // set speed only if port isn't up
+                    if (speed != 0)
+                    {
+                        if (!validatePortSpeed(p.m_port_id, speed))
+                        {
+                            SWSS_LOG_ERROR("Failed to set speed %u for port %s. The value is not supported", speed, alias.c_str());
+                            it++;
+                            continue;
+                        }
+
+                        if (admin_status == "up")
+                        {
+                            SWSS_LOG_WARN("Port speed for port %s will be applied when port goes down", alias.c_str());
+                        }
+                        else
+                        {
+                            if (setPortSpeed(p.m_port_id, speed))
+                                SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
+                            else
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                                it++;
+                                continue;
+                            }
+                        }
+                    }
+                }
+
+                if (mtu != 0)
                 {
                     if (setPortMtu(p.m_port_id, mtu))
                         SWSS_LOG_NOTICE("Set port %s MTU to %u", alias.c_str(), mtu);
@@ -425,8 +516,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
                 }
-                else
-                    SWSS_LOG_ERROR("Failed to get port id by alias:%s", alias.c_str());
             }
         }
         else
