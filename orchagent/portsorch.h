@@ -87,6 +87,7 @@ private:
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
     bool validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
     bool setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
+    bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 };
 #endif /* SWSS_PORTSORCH_H */
 

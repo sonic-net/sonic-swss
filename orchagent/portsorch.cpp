@@ -294,14 +294,24 @@ bool PortsOrch::setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
     attr.value.u32 = speed;
 
     status = sai_port_api->set_port_attribute(port_id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to set speed %u for port pid:%lx", attr.value.u32, port_id);
-        return false;
-    }
 
-    SWSS_LOG_INFO("Set speed %u for port pid:%lx", attr.value.u32, port_id);
-    return true;
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    attr.id = SAI_PORT_ATTR_SPEED;
+    attr.value.u32 = 0;
+
+    status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+    speed = attr.value.u32;
+
+    return status == SAI_STATUS_SUCCESS;
 }
 
 bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
@@ -466,6 +476,47 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
+                if (speed != 0)
+                {
+                    sai_uint32_t current_speed;
+
+                    if (!validatePortSpeed(p.m_port_id, speed))
+                    {
+                        SWSS_LOG_ERROR("Failed to set speed %u for port %s. The value is not supported", speed, alias.c_str());
+                        it++;
+                        continue;
+                    }
+
+                    if (getPortSpeed(p.m_port_id, current_speed))
+                    {
+                        if (speed != current_speed)
+                        {
+                            if(setPortAdminStatus(p.m_port_id, false))
+                            {
+                                if (setPortSpeed(p.m_port_id, speed))
+                                {
+                                    SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                                    it++;
+                                    continue;
+                                }
+                            }
+                            else
+                            {
+                                SWSS_LOG_ERROR("Failed to set port admin status DOWN to set speed");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to get current speed for port %s", alias.c_str());
+                    }
+
+                }
+
                 if (admin_status != "")
                 {
                     if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
@@ -475,33 +526,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
                         it++;
                         continue;
-                    }
-
-                    // set speed only if port isn't up
-                    if (speed != 0)
-                    {
-                        if (!validatePortSpeed(p.m_port_id, speed))
-                        {
-                            SWSS_LOG_ERROR("Failed to set speed %u for port %s. The value is not supported", speed, alias.c_str());
-                            it++;
-                            continue;
-                        }
-
-                        if (admin_status == "up")
-                        {
-                            SWSS_LOG_WARN("Port speed for port %s will be applied when port goes down", alias.c_str());
-                        }
-                        else
-                        {
-                            if (setPortSpeed(p.m_port_id, speed))
-                                SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
-                            else
-                            {
-                                SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
-                                it++;
-                                continue;
-                            }
-                        }
                     }
                 }
 
