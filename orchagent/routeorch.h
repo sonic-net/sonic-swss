@@ -12,20 +12,14 @@
 
 #include <map>
 
-using namespace std;
-using namespace swss;
-
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
 
-/* NextHopGroupMember: next_hop_id, next_hop_group_member */
-typedef map<sai_object_id_t, sai_object_id_t> NextHopGroupMember;
-
 struct NextHopGroupEntry
 {
-    sai_object_id_t     next_hop_group_id;  // next hop group id
-    int                 ref_count;          // reference count
-    NextHopGroupMember  next_hop_group_members;
+    sai_object_id_t         next_hop_group_id;      // next hop group id
+    std::set<sai_object_id_t>    next_hop_group_members; // next hop group member ids
+    int                     ref_count;              // reference count
 };
 
 struct NextHopUpdate
@@ -37,11 +31,11 @@ struct NextHopUpdate
 struct NextHopObserverEntry;
 
 /* NextHopGroupTable: next hop group IP addersses, NextHopGroupEntry */
-typedef map<IpAddresses, NextHopGroupEntry> NextHopGroupTable;
+typedef std::map<IpAddresses, NextHopGroupEntry> NextHopGroupTable;
 /* RouteTable: destination network, next hop IP address(es) */
-typedef map<IpPrefix, IpAddresses> RouteTable;
+typedef std::map<IpPrefix, IpAddresses> RouteTable;
 /* NextHopObserverTable: Destination IP address, next hop observer entry */
-typedef map<IpAddress, NextHopObserverEntry> NextHopObserverTable;
+typedef std::map<IpAddress, NextHopObserverEntry> NextHopObserverTable;
 
 struct NextHopObserverEntry
 {

@@ -23,6 +23,19 @@ extern sai_object_id_t gSwitchId;
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 
+/*
+ * Initialize PortsOrch
+ * 0) By default, a switch has one CPU port, one 802.1Q bridge, and one default
+ *    VLAN. All ports are in .1Q bridge as bridge ports, and all bridge ports
+ *    are in default VLAN as VLAN members.
+ * 1) Query switch CPU port.
+ * 2) Query ports associated with lane mappings
+ * 3) Query switch .1Q bridge and all its bridge ports.
+ * 4) Query switch default VLAN and all its VLAN members.
+ * 5) Remove each VLAN member from default VLAN and each bridge port from .1Q
+ *    bridge. By design, SONiC switch starts with all bridge ports removed from
+ *    default VLAN and all ports removed from .1Q bridge.
+ */
 PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         Orch(db, tableNames)
 {
@@ -45,11 +58,13 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get CPU port");
+        SWSS_LOG_ERROR("Failed to get CPU port, rv:%d", status);
         throw "PortsOrch initialization failure";
     }
 
-    m_cpuPort = attr.value.oid;
+    m_cpuPort = Port("CPU", Port::CPU);
+    m_cpuPort.m_port_id = attr.value.oid;
+    m_portList[m_cpuPort.m_alias] = m_cpuPort;
 
     /* Get port number */
     attr.id = SAI_SWITCH_ATTR_PORT_NUMBER;
@@ -57,13 +72,12 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get port number");
+        SWSS_LOG_ERROR("Failed to get port number, rv:%d", status);
         throw "PortsOrch initialization failure";
     }
 
     m_portCount = attr.value.u32;
-
-    SWSS_LOG_NOTICE("Get port number : %d", m_portCount);
+    SWSS_LOG_NOTICE("Get %d ports", m_portCount);
 
     /* Get port list */
     vector<sai_object_id_t> port_list;
@@ -76,7 +90,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get port list");
+        SWSS_LOG_ERROR("Failed to get port list, rv:%d", status);
         throw "PortsOrch initialization failure";
     }
 
@@ -110,105 +124,82 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
         m_portListLaneMap[tmp_lane_set] = port_list[i];
     }
 
-    // Get default bridge id and VLAN id
-    vector<sai_attribute_t> switch_attrs;
-    sai_attribute_t switch_attr;
-    switch_attr.id = SAI_SWITCH_ATTR_DEFAULT_1Q_BRIDGE_ID;
-    switch_attrs.push_back(switch_attr);
-    switch_attr.id = SAI_SWITCH_ATTR_DEFAULT_VLAN_ID;
-    switch_attrs.push_back(switch_attr);
+    /* Get default 1Q bridge and default VLAN */
+    vector<sai_attribute_t> attrs;
+    attr.id = SAI_SWITCH_ATTR_DEFAULT_1Q_BRIDGE_ID;
+    attrs.push_back(attr);
+    attr.id = SAI_SWITCH_ATTR_DEFAULT_VLAN_ID;
+    attrs.push_back(attr);
 
-    status = sai_switch_api->get_switch_attribute(gSwitchId, switch_attrs.size(), switch_attrs.data());
+    status = sai_switch_api->get_switch_attribute(gSwitchId, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get default 1Q_BRIDGE: %d", status);
-        throw "PortsOrch initialization failure";
-    }
-    m_default1QBridge = switch_attrs[0].value.oid;
-    m_defaultVlan = switch_attrs[1].value.oid;
-
-    // Get all bridge ports in the default 1Q bridge
-    sai_attribute_t bridge_attr;
-    bridge_attr.id = SAI_BRIDGE_ATTR_PORT_LIST;
-    vector<sai_object_id_t> bp_list(100);
-    bridge_attr.value.objlist.list = bp_list.data();
-    bridge_attr.value.objlist.count = bp_list.size();
-
-    status = sai_bridge_api->get_bridge_attribute(m_default1QBridge, 1, &bridge_attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to get bridge ports in default 1Q_BRIDGE: %d", status);
+        SWSS_LOG_ERROR("Failed to get default 1Q bridge and/or default VLAN, rv:%d", status);
         throw "PortsOrch initialization failure";
     }
 
-    // For every bridge port from default bridge ...
-    for (i = 0; i < bridge_attr.value.objlist.count; ++i)
-    {
-        sai_object_id_t bridge_port_id = bridge_attr.value.objlist.list[i];
+    m_default1QBridge = attrs[0].value.oid;
+    m_defaultVlan = attrs[1].value.oid;
 
-        // Get the bridge port attributes
-        sai_attribute_t bport_attr = { 0 };
-        bport_attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
-        status = sai_bridge_api->get_bridge_port_attribute(bridge_port_id, 1, &bport_attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to get bridge port %lx type attribute: %d", bridge_port_id, status);
-            throw "PortsOrch initialization failure";
-        }
+    removeDefaultVlanMembers();
+    removeDefaultBridgePorts();
+}
 
-        if (bport_attr.value.s32 != SAI_BRIDGE_PORT_TYPE_PORT) continue;
+void PortsOrch::removeDefaultVlanMembers()
+{
+    /* Get VLAN members in default VLAN */
+    vector<sai_object_id_t> vlan_member_list(m_portCount);
 
-        // Set the learning_mode
-        bport_attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
-        bport_attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
-        status = sai_bridge_api->set_bridge_port_attribute(bridge_port_id, &bport_attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to set bridge port %lx learning_mode attribute: %d", bridge_port_id, status);
-            throw "PortsOrch initialization failure";
-        }
+    sai_attribute_t attr;
+    attr.id = SAI_VLAN_ATTR_MEMBER_LIST;
+    attr.value.objlist.count = vlan_member_list.size();
+    attr.value.objlist.list = vlan_member_list.data();
 
-        // Get the port id
-        bport_attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
-        status = sai_bridge_api->get_bridge_port_attribute(bridge_port_id, 1, &bport_attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to get bridge port %lx port_id attribute: %d", bridge_port_id, status);
-            throw "PortsOrch initialization failure";
-        }
-        sai_object_id_t port_id = bport_attr.value.oid;
-        m_bridgePort.insert({port_id, bridge_port_id});
-    }
-
-    // Get all the bridge ports in the dfault VLAN
-    sai_attribute_t vlan_attr;
-    vlan_attr.id = SAI_VLAN_ATTR_MEMBER_LIST;
-    vector<sai_object_id_t> vm_list(100);
-    vlan_attr.value.objlist.list = vm_list.data();
-    vlan_attr.value.objlist.count = vm_list.size();
-    status = sai_vlan_api->get_vlan_attribute(m_defaultVlan, 1, &vlan_attr);
+    sai_status_t status = sai_vlan_api->get_vlan_attribute(m_defaultVlan, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get VLAN members in default VLAN: %d", status);
+        SWSS_LOG_ERROR("Failed to get VLAN member list in default VLAN, rv:%d", status);
         throw "PortsOrch initialization failure";
     }
 
-    // For every VLAN member in the default VLAN ...
-    for (i = 0; i < vlan_attr.value.objlist.count; ++i)
+    /* Remove VLAN members in default VLAN */
+    for (size_t i = 0; i < attr.value.objlist.count; i++)
     {
-        sai_object_id_t vlan_member_id = vlan_attr.value.objlist.list[i];
-
-        // Get the VLAN member attribute
-        sai_attribute_t vm_attr;
-        vm_attr.id = SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID;
-        status = sai_vlan_api->get_vlan_member_attribute(vlan_member_id, 1, &vm_attr);
+        status = sai_vlan_api->remove_vlan_member(vlan_member_list[i]);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to vlan member %lx bridge port attribute: %d", vlan_member_id, status);
+            SWSS_LOG_ERROR("Failed to remove VLAN member, rv:%d", status);
             throw "PortsOrch initialization failure";
         }
-        sai_object_id_t bridge_port_id = vm_attr.value.oid;
-        m_bridgePortVlanMember[bridge_port_id] = vlan_member_id;
+    }
+}
+
+void PortsOrch::removeDefaultBridgePorts()
+{
+    /* Get bridge ports in default 1Q bridge */
+    vector<sai_object_id_t> bridge_port_list(m_portCount);
+
+    sai_attribute_t attr;
+    attr.id = SAI_BRIDGE_ATTR_PORT_LIST;
+    attr.value.objlist.count = bridge_port_list.size();
+    attr.value.objlist.list = bridge_port_list.data();
+
+    sai_status_t status = sai_bridge_api->get_bridge_attribute(m_default1QBridge, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get bridge port list in default 1Q bridge, rv:%d", status);
+        throw "PortsOrch initialization failure";
+    }
+
+    /* Remove bridge ports in default 1Q bridge */
+    for (size_t i = 0; i < attr.value.objlist.count; i++)
+    {
+        status = sai_bridge_api->remove_bridge_port(bridge_port_list[i]);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove bridge port, rv:%d", status);
+            throw "PortsOrch initialization failure";
+        }
     }
 }
 
@@ -222,35 +213,19 @@ map<string, Port>& PortsOrch::getAllPorts()
     return m_portList;
 }
 
-bool PortsOrch::getBridgePort(sai_object_id_t bridge_port_id, Port &port)
-{
-    if (m_bridgePort.right.find(bridge_port_id) == m_bridgePort.right.end())
-        return false;
-
-    sai_object_id_t port_id = m_bridgePort.right.at(bridge_port_id);
-
-    // TODO: optimize by dictionary query
-    for (auto& pair: m_portList)
-    {
-        auto& port1 = pair.second;
-        if (port1.m_port_id == port_id)
-        {
-            port = port1;
-            return true;
-        }
-    }
-
-    return false;
-}
-
 bool PortsOrch::getPort(string alias, Port &p)
 {
     SWSS_LOG_ENTER();
 
     if (m_portList.find(alias) == m_portList.end())
+    {
         return false;
-    p = m_portList[alias];
-    return true;
+    }
+    else
+    {
+        p = m_portList[alias];
+        return true;
+    }
 }
 
 bool PortsOrch::getPort(sai_object_id_t id, Port &port)
@@ -283,14 +258,30 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
     return false;
 }
 
+bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &it: m_portList)
+    {
+        if (it.second.m_bridge_port_id == bridge_port_id)
+        {
+            port = it.second;
+            return true;
+        }
+    }
+
+    return false;
+}
+
 void PortsOrch::setPort(string alias, Port p)
 {
     m_portList[alias] = p;
 }
 
-sai_object_id_t PortsOrch::getCpuPort()
+void PortsOrch::getCpuPort(Port &port)
 {
-    return m_cpuPort;
+    port = m_cpuPort;
 }
 
 bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
@@ -571,7 +562,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             Port vlan;
             getPort(vlan_alias, vlan);
 
-            if (removeVlan(vlan))
+            if (removeVlan(vlan) && removeBridgePort(vlan))
                 it = consumer.m_toSync.erase(it);
             else
                 it++;
@@ -671,7 +662,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
             /* Assert the port doesn't belong to any VLAN */
             assert(!port.m_vlan_id && !port.m_vlan_member_id);
 
-            if (addVlanMember(vlan, port, tagging_mode))
+            if (addBridgePort(port) && addVlanMember(vlan, port, tagging_mode))
                 it = consumer.m_toSync.erase(it);
             else
                 it++;
@@ -840,8 +831,11 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             /* Assert the LAG member exists */
             assert(lag.m_members.find(port_alias) != lag.m_members.end());
 
-            /* Assert the port belongs to a LAG */
-            assert(port.m_lag_id && port.m_lag_member_id);
+            if (!port.m_lag_id || !port.m_lag_member_id)
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
 
             if (removeLagMember(lag, port))
                 it = consumer.m_toSync.erase(it);
@@ -965,6 +959,7 @@ bool PortsOrch::initializePort(Port &p)
 #endif
 
     /* Set default port admin status to DOWN */
+    /* XXX: Do we need this? The default port admin status is false */
     setPortAdminStatus(p.m_port_id, false);
 
     /**
@@ -1006,6 +1001,75 @@ bool PortsOrch::addHostIntfs(sai_object_id_t id, string alias, sai_object_id_t &
     }
 
     SWSS_LOG_NOTICE("Create host interface for port %s", alias.c_str());
+
+    return true;
+}
+
+bool PortsOrch::addBridgePort(Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+    attr.value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
+    attrs.push_back(attr);
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
+    attr.value.oid = port.m_port_id;
+    attrs.push_back(attr);
+
+    /* Create a bridge port with admin status set to UP */
+    attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+    attr.value.booldata = true;
+    // XXX: Right now this attribute is not supported
+    // attrs.push_back(attr);
+
+    sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to add bridge port %s to default 1Q bridge, rv:%d",
+            port.m_alias.c_str(), status);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Add bridge port %s to default 1Q bridge", port.m_alias.c_str());
+
+    return true;
+}
+
+bool PortsOrch::removeBridgePort(Port port)
+{
+    SWSS_LOG_ENTER();
+
+    /* Set bridge port admin status to DOWN */
+    sai_attribute_t attr;
+    attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+    attr.value.booldata = false;
+
+    sai_status_t status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set bridge port %s admin status to DOWN, rv:%d",
+            port.m_alias.c_str(), status);
+        return false;
+    }
+
+    /* Flush FDB entries pointing to this bridge port */
+    // TODO: Remove all FDB entries associated with this bridge port before
+    //       removing the bridge port itself
+
+    /* Remove bridge port */
+    status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove bridge port %s from default 1Q bridge, rv:%d",
+            port.m_alias.c_str(), status);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Remove bridge port %s from default 1Q bridge", port.m_alias.c_str());
 
     return true;
 }
@@ -1076,10 +1140,10 @@ bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
     attrs.push_back(attr);
 
     attr.id = SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID;
-    attr.value.oid = m_bridgePort.left.at(port.m_port_id);
+    attr.value.oid = port.m_bridge_port_id;
     attrs.push_back(attr);
 
-    attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE;              
+    attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE;
     if (tagging_mode == "untagged")
         attr.value.s32 = SAI_VLAN_TAGGING_MODE_UNTAGGED;
     else if (tagging_mode == "tagged")
@@ -1113,7 +1177,7 @@ bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
             return false;
         }
 
-        SWSS_LOG_INFO("Set port %s VLAN ID to %hu", port.m_alias.c_str(), vlan.m_vlan_id);
+        SWSS_LOG_NOTICE("Set untagged port %s VLAN ID to %hu", port.m_alias.c_str(), vlan.m_vlan_id);
     }
 
 #if 0
@@ -1295,46 +1359,6 @@ bool PortsOrch::removeLagMember(Port lag, Port port)
 
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
-
-    return true;
-}
-
-bool PortsOrch::removeBridgePort(Port port)
-{
-    // port id -> bridge port id
-    sai_object_id_t port_id = port.m_port_id;
-    auto foundBridgePort = m_bridgePort.left.find(port_id);
-    if (foundBridgePort == m_bridgePort.left.end())
-    {
-        SWSS_LOG_ERROR("Failed to find port %lx in default 1Q_BRIDGE", port_id);
-        return false;
-    }
-    sai_object_id_t bridge_port_id = foundBridgePort->second;
-
-    // Remove vlan membership of this bridge port
-    auto foundVlanMember = m_bridgePortVlanMember.find(bridge_port_id);
-    if (foundVlanMember == m_bridgePortVlanMember.end())
-    {
-        SWSS_LOG_ERROR("Failed to find bridge port %lx in default VLAN", bridge_port_id);
-        return false;
-    }
-    sai_object_id_t vlan_member_id = foundVlanMember->second;
-    m_bridgePortVlanMember.erase(foundVlanMember);
-    sai_status_t status = sai_vlan_api->remove_vlan_member(vlan_member_id);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove vlan member %lx from default VLAN: %d", vlan_member_id, status);
-        return false;
-    }
-
-    // Remove bridge port from default 1Q bridge
-    m_bridgePort.left.erase(foundBridgePort);
-    status = sai_bridge_api->remove_bridge_port(bridge_port_id);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove port %lx from default 1Q_BRIDGE: %d", bridge_port_id, status);
-        return false;
-    }
 
     return true;
 }

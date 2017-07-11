@@ -40,7 +40,7 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
         m_maxNextHopGroupCount = attr.value.s32;
 
         /*
-         * ASIC specific workaround to re-calculate maximum ECMP groups 
+         * ASIC specific workaround to re-calculate maximum ECMP groups
          * according to diferent ECMP mode used.
          *
          * On Mellanox platform, the maximum ECMP groups returned is the value
@@ -494,7 +494,7 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
         }
 
         // Save the membership into next hop structure
-        next_hop_group_entry.next_hop_group_members[next_hop_group_id] = next_hop_group_member_id;
+        next_hop_group_entry.next_hop_group_members.insert(next_hop_group_member_id);
     }
 
     /* Increate the ref_count for the next hops used by the next hop group. */
@@ -523,13 +523,12 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
         auto next_hop_group_entry = m_syncdNextHopGroups[ipAddresses];
         sai_object_id_t next_hop_group_id = next_hop_group_entry.next_hop_group_id;
 
-        for (auto& pair: next_hop_group_entry.next_hop_group_members)
+        for (auto next_hop_group_member_id: next_hop_group_entry.next_hop_group_members)
         {
-            auto& next_hop_group_member_id = pair.second;
             status = sai_next_hop_group_api->remove_next_hop_group_member(next_hop_group_member_id);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to remove next hop group member %lx: %d\n", next_hop_group_member_id, status);
+                SWSS_LOG_ERROR("Failed to remove next hop group member %lx, rv:%d", next_hop_group_member_id, status);
                 return false;
             }
         }
@@ -537,7 +536,7 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
         sai_status_t status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to remove next hop group nhgid:%lx\n", next_hop_group_id);
+            SWSS_LOG_ERROR("Failed to remove next hop group %lx, rv:%d", next_hop_group_id, status);
             return false;
         }
 

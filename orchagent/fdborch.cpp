@@ -8,7 +8,7 @@
 
 extern sai_fdb_api_t *sai_fdb_api;
 
-void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_object_id_t portOid)
+void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_object_id_t bridge_port_id)
 {
     SWSS_LOG_ENTER();
 
@@ -19,9 +19,9 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
     switch (type)
     {
     case SAI_FDB_EVENT_LEARNED:
-        if (!m_portsOrch->getBridgePort(portOid, update.port))
+        if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
         {
-            SWSS_LOG_ERROR("Failed to get port for %lu OID", portOid);
+            SWSS_LOG_ERROR("Failed to get port by bridge port ID %lu", bridge_port_id);
             return;
         }
 
@@ -60,13 +60,14 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
     sai_status_t status = sai_fdb_api->get_fdb_entry_attribute(&entry, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get port for FDB entry OID");
+        SWSS_LOG_ERROR("Failed to get bridge port ID for FDB entry %s, rv:%d",
+            mac.to_string().c_str(), status);
         return false;
     }
 
-    if (!m_portsOrch->getBridgePort(attr.value.oid, port))
+    if (!m_portsOrch->getPortByBridgePortId(attr.value.oid, port))
     {
-        SWSS_LOG_ERROR("Failed to get port for %lu OID", attr.value.oid);
+        SWSS_LOG_ERROR("Failed to get port by bridge port ID %lu", attr.value.oid);
         return false;
     }
 

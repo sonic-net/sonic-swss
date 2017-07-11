@@ -206,11 +206,6 @@ bool IntfsOrch::addRouterIntfs(Port &port)
         return true;
     }
 
-    if (port.m_type == Port::PHY)
-    {
-        gPortsOrch->removeBridgePort(port);
-    }
-
     /* Create router interface if the router interface doesn't exist */
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -365,8 +360,11 @@ void IntfsOrch::addIp2MeRoute(const IpPrefix &ip_prefix)
     attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     attrs.push_back(attr);
 
+    Port cpu_port;
+    gPortsOrch->getCpuPort(cpu_port);
+
     attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    attr.value.oid = gPortsOrch->getCpuPort();
+    attr.value.oid = cpu_port.m_port_id;
     attrs.push_back(attr);
 
     sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, attrs.size(), attrs.data());

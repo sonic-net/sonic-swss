@@ -2,7 +2,6 @@
 #define SWSS_PORTSORCH_H
 
 #include <map>
-#include <boost/bimap.hpp>
 
 #include "orch.h"
 #include "port.h"
@@ -48,25 +47,24 @@ public:
     bool getBridgePort(sai_object_id_t id, Port &port);
     bool getPort(string alias, Port &port);
     bool getPort(sai_object_id_t id, Port &port);
+    bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);
     void setPort(string alias, Port port);
-    sai_object_id_t getCpuPort();
+    void getCpuPort(Port &port);
 
     bool setHostIntfsOperStatus(sai_object_id_t id, bool up);
     void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
-    bool removeBridgePort(Port port);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
 
     bool m_initDone = false;
-    sai_object_id_t m_cpuPort;
+    Port m_cpuPort;
+    // TODO: Add Bridge/Vlan class
     sai_object_id_t m_default1QBridge;
     sai_object_id_t m_defaultVlan;
 
     sai_uint32_t m_portCount;
     map<set<int>, sai_object_id_t> m_portListLaneMap;
-    boost::bimap<sai_object_id_t, sai_object_id_t> m_bridgePort; // port id -> bridge port id
-    map<sai_object_id_t, sai_object_id_t> m_bridgePortVlanMember; // bridge port id -> vlan member id
     map<string, Port> m_portList;
 
     void doTask(Consumer &consumer);
@@ -76,11 +74,17 @@ private:
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
 
+    void removeDefaultVlanMembers();
+    void removeDefaultBridgePorts();
+
     bool initializePort(Port &port);
     void initializePriorityGroups(Port &port);
     void initializeQueues(Port &port);
 
     bool addHostIntfs(sai_object_id_t router_intfs_id, string alias, sai_object_id_t &host_intfs_id);
+
+    bool addBridgePort(Port &port);
+    bool removeBridgePort(Port port);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
@@ -94,6 +98,8 @@ private:
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
+
+    bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 };
 #endif /* SWSS_PORTSORCH_H */
 
