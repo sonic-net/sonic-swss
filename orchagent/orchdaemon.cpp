@@ -84,7 +84,10 @@ bool OrchDaemon::init()
     };
     AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
-    m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch};
+    vector<string> pfc_wd_tables = { APP_PFC_WD_TABLE_NAME };
+    PfcWdOrch *pfc_wd = new PfcDurationWatchdog(m_applDb, pfc_wd_tables);
+
+    m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch, pfc_wd };
     m_select = new Select();
 
     return true;
