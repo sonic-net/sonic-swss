@@ -959,7 +959,7 @@ bool PortsOrch::initializePort(Port &p)
 #endif
 
     /* Set default port admin status to DOWN */
-    /* XXX: Do we need this? The default port admin status is false */
+    /* FIXME: Do we need this? The default port admin status is false */
     setPortAdminStatus(p.m_port_id, false);
 
     /**
@@ -1023,7 +1023,7 @@ bool PortsOrch::addBridgePort(Port &port)
     /* Create a bridge port with admin status set to UP */
     attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
     attr.value.booldata = true;
-    // XXX: Right now this attribute is not supported
+    // FIXME: Right now this attribute is not supported
     // attrs.push_back(attr);
 
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, attrs.size(), attrs.data());
