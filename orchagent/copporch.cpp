@@ -42,6 +42,7 @@ map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"igmp_v2_report", SAI_HOSTIF_TRAP_TYPE_IGMP_TYPE_V2_REPORT},
     {"igmp_v3_report", SAI_HOSTIF_TRAP_TYPE_IGMP_TYPE_V3_REPORT},
     {"sample_packet", SAI_HOSTIF_TRAP_TYPE_SAMPLEPACKET},
+    {"udld", SAI_HOSTIF_TRAP_TYPE_UDLD},
     {"switch_cust_range", SAI_HOSTIF_TRAP_TYPE_SWITCH_CUSTOM_RANGE_BASE},
     {"arp_req", SAI_HOSTIF_TRAP_TYPE_ARP_REQUEST},
     {"arp_resp", SAI_HOSTIF_TRAP_TYPE_ARP_RESPONSE},
