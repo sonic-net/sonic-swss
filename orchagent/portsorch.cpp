@@ -255,8 +255,8 @@ bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
     status = sai_port_api->get_port_attribute(port_id, 1, &attr);
     if (status == SAI_STATUS_BUFFER_OVERFLOW)
     {
-        uint32_t speeds[attr.value.u32list.count];
-        attr.value.u32list.list = speeds;
+        std::vector<uint32_t> speeds(attr.value.u32list.count);
+        attr.value.u32list.list = speeds.data();
         status = sai_port_api->get_port_attribute(port_id, 1, &attr);
         if (status == SAI_STATUS_SUCCESS)
         {
@@ -309,7 +309,9 @@ bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)
     attr.value.u32 = 0;
 
     status = sai_port_api->get_port_attribute(port_id, 1, &attr);
-    speed = attr.value.u32;
+
+    if (status == SAI_STATUS_SUCCESS)
+        speed = attr.value.u32;
 
     return status == SAI_STATUS_SUCCESS;
 }
