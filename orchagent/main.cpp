@@ -161,34 +161,13 @@ int main(int argc, char **argv)
 
     initSaiApi();
 
-    SWSS_LOG_NOTICE("sai_switch_api: create a switch");
-
-    vector<sai_attribute_t> switch_attrs;
-
-    sai_attribute_t switch_attr;
-    switch_attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
-    switch_attr.value.booldata = true;
-    switch_attrs.push_back(switch_attr);
-
-    switch_attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
-    switch_attr.value.ptr = (void *)on_fdb_event;
-    switch_attrs.push_back(switch_attr);
-
-    switch_attr.id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;
-    switch_attr.value.ptr = (void *)on_port_state_change;
-    switch_attrs.push_back(switch_attr);
-
-    switch_attr.id = SAI_SWITCH_ATTR_SHUTDOWN_REQUEST_NOTIFY;
-    switch_attr.value.ptr = (void *)on_switch_shutdown_request;
-    switch_attrs.push_back(switch_attr);
-
-    sai_attribute_t attr;
-
     /*
      * NOTE: Notice that all redis attributes here are using SAI_NULL_OBJECT_ID
      * as switch id, because thsoe operations don't require actual switch to be
      * performed, and they should be executed before creating switch.
      */
+
+    sai_attribute_t attr;
 
     /* Disable/enable SAI Redis recording */
     if (gSairedisRecord)
@@ -227,19 +206,16 @@ int main(int argc, char **argv)
         }
     }
 
-    SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
-
     attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
     attr.value.s32 = SAI_REDIS_NOTIFY_SYNCD_INIT_VIEW;
     status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW %d", status);
+        SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW, rv:%d", status);
         exit(EXIT_FAILURE);
     }
-
-    SWSS_LOG_NOTICE("Enable redis pipeline");
+    SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
 
     attr.id = SAI_REDIS_SWITCH_ATTR_USE_PIPELINE;
     attr.value.booldata = true;
@@ -247,39 +223,57 @@ int main(int argc, char **argv)
     status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to enable redis pipeline %d", status);
+        SWSS_LOG_ERROR("Failed to enable redis pipeline, rv:%d", status);
         exit(EXIT_FAILURE);
     }
+    SWSS_LOG_NOTICE("Enable redis pipeline");
 
-    status = sai_switch_api->create_switch(&gSwitchId, switch_attrs.size(), switch_attrs.data());
+    vector<sai_attribute_t> attrs;
+
+    attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
+    attr.value.ptr = (void *)on_fdb_event;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;
+    attr.value.ptr = (void *)on_port_state_change;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_SHUTDOWN_REQUEST_NOTIFY;
+    attr.value.ptr = (void *)on_switch_shutdown_request;
+    attrs.push_back(attr);
+
+    if (gMacAddress)
+    {
+        attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
+        memcpy(attr.value.mac, gMacAddress.getMac(), 6);
+        attrs.push_back(attr);
+    }
+
+    status = sai_switch_api->create_switch(&gSwitchId, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create a switch %d", status);
+        SWSS_LOG_ERROR("Failed to create a switch, rv:%d", status);
         exit(EXIT_FAILURE);
     }
+    SWSS_LOG_NOTICE("Create a switch");
 
-    attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
+    /* Get switch source MAC address if not provided */
     if (!gMacAddress)
     {
+        attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
         status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get MAC address from switch %d", status);
+            SWSS_LOG_ERROR("Failed to get MAC address from switch, rv:%d", status);
             exit(EXIT_FAILURE);
         }
         else
         {
             gMacAddress = attr.value.mac;
-        }
-    }
-    else
-    {
-        memcpy(attr.value.mac, gMacAddress.getMac(), 6);
-        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to set MAC address to switch %d", status);
-            exit(EXIT_FAILURE);
         }
     }
 
