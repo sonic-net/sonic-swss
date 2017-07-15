@@ -46,18 +46,6 @@ string gRecordFile;
 /* Global database mutex */
 mutex gDbMutex;
 
-string getTimestamp()
-{
-    char buffer[64];
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-
-    size_t size = strftime(buffer, 32 ,"%Y-%m-%d.%T.", localtime(&tv.tv_sec));
-    snprintf(&buffer[size], 32, "%06ld", tv.tv_usec);
-
-    return string(buffer);
-}
-
 void usage()
 {
     cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC]" << endl;
@@ -80,7 +68,6 @@ void sighup_handler(int signo)
     gLogRotate = true;
 
     sai_attribute_t attr;
-
     attr.id = SAI_REDIS_SWITCH_ATTR_PERFORM_LOG_ROTATE;
     attr.value.booldata = true;
 
@@ -160,74 +147,9 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("--- Starting Orchestration Agent ---");
 
     initSaiApi();
-
-    /*
-     * NOTE: Notice that all redis attributes here are using SAI_NULL_OBJECT_ID
-     * as switch id, because thsoe operations don't require actual switch to be
-     * performed, and they should be executed before creating switch.
-     */
+    initSaiRedis(record_location);
 
     sai_attribute_t attr;
-
-    /* Disable/enable SAI Redis recording */
-    if (gSairedisRecord)
-    {
-        attr.id = SAI_REDIS_SWITCH_ATTR_RECORDING_OUTPUT_DIR;
-        attr.value.s8list.count = record_location.size();
-        attr.value.s8list.list = (signed char *) record_location.c_str();
-
-        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to set SAI Redis recording output folder to %s, rv:%d", record_location.c_str(), status);
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    attr.id = SAI_REDIS_SWITCH_ATTR_RECORD;
-    attr.value.booldata = gSairedisRecord;
-
-    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to set SAI Redis recording to %s, rv:%d", gSairedisRecord ? "true" : "false", status);
-        exit(EXIT_FAILURE);
-    }
-
-    /* Disable/enable SwSS recording */
-    if (gSwssRecord)
-    {
-        gRecordFile = record_location + "/" + "swss." + getTimestamp() + ".rec";
-        gRecordOfs.open(gRecordFile);
-        if (!gRecordOfs.is_open())
-        {
-            SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
-    attr.value.s32 = SAI_REDIS_NOTIFY_SYNCD_INIT_VIEW;
-    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW, rv:%d", status);
-        exit(EXIT_FAILURE);
-    }
-    SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
-
-    attr.id = SAI_REDIS_SWITCH_ATTR_USE_PIPELINE;
-    attr.value.booldata = true;
-
-    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to enable redis pipeline, rv:%d", status);
-        exit(EXIT_FAILURE);
-    }
-    SWSS_LOG_NOTICE("Enable redis pipeline");
-
     vector<sai_attribute_t> attrs;
 
     attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
