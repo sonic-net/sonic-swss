@@ -4,6 +4,7 @@
 #include <fstream>
 #include <sstream>
 #include <set>
+#include <algorithm>
 
 #include <netinet/if_ether.h>
 #include "net/if.h"
@@ -248,39 +249,40 @@ bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
     sai_attribute_t attr;
     sai_status_t status;
 
-    // validate speed value
-    attr.id = SAI_PORT_ATTR_SUPPORTED_SPEED;
-    attr.value.u32list.count = 0;
-    attr.value.u32list.list = NULL;
-    status = sai_port_api->get_port_attribute(port_id, 1, &attr);
-    if (status == SAI_STATUS_BUFFER_OVERFLOW)
+
+    // "Lazy" query of supported speeds for given port
+    // Once received the list will be stored in m_portSupportedSpeeds
+    if (!m_portSupportedSpeeds.count(port_id))
     {
-        std::vector<uint32_t> speeds(attr.value.u32list.count);
-        attr.value.u32list.list = speeds.data();
+        attr.id = SAI_PORT_ATTR_SUPPORTED_SPEED;
+        attr.value.u32list.count = 0;
+        attr.value.u32list.list = NULL;
         status = sai_port_api->get_port_attribute(port_id, 1, &attr);
-        if (status == SAI_STATUS_SUCCESS)
+        if (status == SAI_STATUS_BUFFER_OVERFLOW)
         {
-            int32_t speed_idx = attr.value.u32list.count;
-            while(speed_idx-- > 0) {
-                if(speed == speeds[speed_idx])
-                    break;
-            }
-            if (speed_idx >= 0)
+            std::vector<sai_uint32_t> speeds(attr.value.u32list.count);
+            attr.value.u32list.list = speeds.data();
+            status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+            if (status == SAI_STATUS_SUCCESS)
             {
-                return true;
+                m_portSupportedSpeeds[port_id] = speeds;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to get supported speed list for port %lx\n", port_id);
+                return false;
             }
         }
         else
         {
-            SWSS_LOG_ERROR("Failed to get supported speed list for port %lx\n", port_id);
+            SWSS_LOG_ERROR("Failed to get number of supported speeds for port %lx\n", port_id);
+            return false;
         }
     }
-    else
-    {
-        SWSS_LOG_ERROR("Failed to get number of supported speeds for port %lx\n", port_id);
-    }
 
-    return false;
+    PortSupportedSpeeds &supp_speeds = m_portSupportedSpeeds[port_id];
+
+    return std::find(supp_speeds.begin(), supp_speeds.end(), speed) != supp_speeds.end();
 }
 
 bool PortsOrch::setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
