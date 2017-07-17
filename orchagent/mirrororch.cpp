@@ -327,7 +327,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session, const
 
     if (session.neighborInfo.port.m_type == Port::VLAN)
     {
-        session.neighborInfo.vlanId = session.neighborInfo.port.m_vlan_id;
+        session.neighborInfo.vlanId = session.neighborInfo.port.m_vlan_info.vlan_id;
 
         Port member;
         if (!m_fdbOrch->getPort(session.neighborInfo.mac, session.neighborInfo.vlanId, member))

@@ -12,6 +12,7 @@ extern "C" {
 #include "dbconnector.h"
 #include "consumerstatetable.h"
 #include "producerstatetable.h"
+#include "gettimestamp.h"
 
 using namespace std;
 using namespace swss;

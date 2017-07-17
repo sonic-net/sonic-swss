@@ -323,6 +323,109 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
     return true;
 }
 
+bool PortsOrch::setPortPvid (Port &port, sai_uint32_t pvid)
+{
+    SWSS_LOG_ENTER();
+
+    vector<sai_object_id_t>   idv;
+
+    if (port.m_type == Port::PHY)
+    {
+        idv.push_back(port.m_port_id);
+    }
+    else if (port.m_type == Port::LAG)
+    {
+        Port member;
+        auto it = port.m_members.begin();
+         while (it != port.m_members.end())
+         {
+            const string& memberName = *it;
+            if (!getPort(memberName, member))
+            {
+                SWSS_LOG_ERROR("Failed to get port for %s alias\n", memberName.c_str());
+                assert(false);
+                return false;
+            }
+            idv.push_back(member.m_port_id);
+            it++;
+         }
+    }
+    else
+    {
+        SWSS_LOG_ERROR("PortsOrch::setPortPvid port type %d not supported", port.m_type);
+        return false;
+    }
+
+    for (const auto& id: idv)
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_PORT_ATTR_PORT_VLAN_ID;
+        attr.value.u32 = pvid;
+
+        sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set pvid %u to port pid:%lx", attr.value.u32, id);
+            return false;
+        }
+        SWSS_LOG_INFO("Set pvid %u to port pid:%lx", attr.value.u32, id);
+    }
+    return true;
+}
+
+bool PortsOrch::setHostIntfsStripTag(Port &port, bool strip)
+{
+    SWSS_LOG_ENTER();
+
+    vector<Port *>   portv;
+
+    if (port.m_type == Port::PHY)
+    {
+        portv.push_back(&port);
+    }
+    else if (port.m_type == Port::LAG)
+    {
+        Port member;
+        auto it = port.m_members.begin();
+         while (it != port.m_members.end())
+         {
+            const string& memberName = *it;
+            if (!getPort(memberName, member))
+            {
+                SWSS_LOG_ERROR("Failed to get port for %s alias\n", memberName.c_str());
+                assert(false);
+                return false;
+            }
+            portv.push_back(&member);
+            it++;
+         }
+    }
+    else
+    {
+        SWSS_LOG_ERROR("PortsOrch::setPortPvid port type %d not supported", port.m_type);
+        return false;
+    }
+
+    for (const auto p: portv)
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_HOSTIF_ATTR_STRIP_TAG;
+        attr.value.booldata = strip;
+
+        sai_status_t status = sai_hostif_api->set_hostif_attribute(p->m_hif_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_WARN("Failed to set VLAN tag stripping %s to host interface %s",
+                          strip ? "TRUE" : "FALSE", p->m_alias.c_str());
+            return false;
+        }
+        SWSS_LOG_NOTICE("Set VLAN tag stripping %s to host interface %s",
+                          strip ? "TRUE" : "FALSE", p->m_alias.c_str());
+    }
+
+    return true;
+}
+
 bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
 {
     SWSS_LOG_ENTER();
@@ -404,6 +507,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             set<int> lane_set;
             string admin_status;
             uint32_t mtu = 0;
+            uint32_t pvid = 0;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -428,6 +532,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 /* Set port mtu */
                 if (fvField(i) == "mtu")
                     mtu = stoul(fvValue(i));
+
+                /* Set port pvid */
+                if (fvField(i) == "pvid")
+                    pvid = stoul(fvValue(i));
             }
 
             if (lane_set.size())
@@ -508,6 +616,27 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 else
                     SWSS_LOG_ERROR("Failed to get port id by alias:%s", alias.c_str());
             }
+
+            if (pvid != 0)
+            {
+                Port p;
+                if (getPort(alias, p))
+                {
+                    if (setPortPvid(p, pvid))
+                    {
+                        p.m_port_vlan_id = pvid;
+                        SWSS_LOG_NOTICE("Set port %s pvid to %u", alias.c_str(), pvid);
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s pvid to %u", alias.c_str(), pvid);
+                        it++;
+                        continue;
+                    }
+                }
+                else
+                    SWSS_LOG_ERROR("Failed to get port id by alias:%s", alias.c_str());
+            }
         }
         else
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
@@ -545,24 +674,58 @@ void PortsOrch::doVlanTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            /* Duplicate entry */
-            if (m_portList.find(vlan_alias) != m_portList.end())
+            if (m_portList.find(vlan_alias) == m_portList.end())
             {
-                it = consumer.m_toSync.erase(it);
-                continue;
+                if (addVlan(vlan_alias) == false)
+                {
+                    it++;
+                    continue;
+                }
             }
 
-            if (addVlan(vlan_alias))
-                it = consumer.m_toSync.erase(it);
-            else
-                it++;
+            string autostate;
+            uint32_t mtu = 0;
+            for (auto i : kfvFieldsValues(t))
+            {
+                /* Set port autostate */
+                if (fvField(i) == "autostate")
+                {
+                    autostate = fvValue(i);
+                }
+
+                /* Set port mtu */
+                if (fvField(i) == "mtu")
+                {
+                    mtu = stoul(fvValue(i));
+                }
+
+                // TODO: unicast_miss_flood, multicast_miss_flood, broadcast_miss_flood
+            }
+
+            if (autostate != "")
+            {
+                Port v;
+                getPort(vlan_alias, v);
+                v.m_vlan_info.autostate = autostate;
+                // TODO: update VLAN interface operational state based on autostate and member state.
+            }
+
+            if (mtu != 0)
+            {
+                Port v;
+                getPort(vlan_alias, v);
+                v.m_vlan_info.mtu = mtu;
+                // TODO: update vlan routeif mtu
+            }
+
+            it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
         {
             Port vlan;
             getPort(vlan_alias, vlan);
 
-            if (removeVlan(vlan) && removeBridgePort(vlan))
+            if (removeVlan(vlan))
                 it = consumer.m_toSync.erase(it);
             else
                 it++;
@@ -659,9 +822,6 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                 continue;
             }
 
-            /* Assert the port doesn't belong to any VLAN */
-            assert(!port.m_vlan_id && !port.m_vlan_member_id);
-
             if (addBridgePort(port) && addVlanMember(vlan, port, tagging_mode))
                 it = consumer.m_toSync.erase(it);
             else
@@ -671,10 +831,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
         {
             if (vlan.m_members.find(port_alias) != vlan.m_members.end())
             {
-                /* Assert the port belongs the a VLAN */
-                assert(port.m_vlan_id && port.m_vlan_member_id);
-
-                if (removeVlanMember(vlan, port))
+                if (removeVlanMember(vlan, port) && removeBridgePort(port))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;
@@ -833,6 +990,8 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
 
             if (!port.m_lag_id || !port.m_lag_member_id)
             {
+                SWSS_LOG_WARN("Member %s not found in LAG %s lid:%lx lmid:%lx,",
+                        port.m_alias.c_str(), lag.m_alias.c_str(), lag.m_lag_id, port.m_lag_member_id);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -971,6 +1130,17 @@ bool PortsOrch::initializePort(Port &p)
     vector.push_back(tuple);
     m_portTable->set(p.m_alias, vector);
 
+    /*
+     * Port has been removed from 1q bridge at PortsOrch constructor,
+     * also start stipping off VLAN tag.
+     */
+    bool rv = setHostIntfsStripTag(p, true);
+    if (rv != true)
+    {
+        SWSS_LOG_ERROR("Failed to set tag stripping to true for hostif of port %s", p.m_alias.c_str());
+        return false;
+    }
+
     return true;
 }
 
@@ -1009,6 +1179,9 @@ bool PortsOrch::addBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
 
+    if (port.m_bridge_port_id)
+        return true;
+
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
@@ -1017,20 +1190,41 @@ bool PortsOrch::addBridgePort(Port &port)
     attrs.push_back(attr);
 
     attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
-    attr.value.oid = port.m_port_id;
-    attrs.push_back(attr);
+    if (port.m_type == Port::PHY)
+    {
+        attr.value.oid = port.m_port_id;
+    }
+    else if  (port.m_type == Port::LAG)
+    {
+        attr.value.oid = port.m_lag_id;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to add bridge port %s to default 1Q bridge, invalid porty type %d",
+            port.m_alias.c_str(), port.m_type);
+        return false;
+    }
 
+    attrs.push_back(attr);
+#if 0  //TODO: integrate with new LIBSAI
     /* Create a bridge port with admin status set to UP */
     attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
     attr.value.booldata = true;
     // FIXME: Right now this attribute is not supported
     // attrs.push_back(attr);
-
+#endif
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to add bridge port %s to default 1Q bridge, rv:%d",
             port.m_alias.c_str(), status);
+        return false;
+    }
+
+    bool rv = setHostIntfsStripTag(port, false);
+    if (rv != true)
+    {
+        SWSS_LOG_ERROR("Failed to set tag stripping to false for hostif of port %s", port.m_alias.c_str());
         return false;
     }
 
@@ -1043,6 +1237,14 @@ bool PortsOrch::removeBridgePort(Port port)
 {
     SWSS_LOG_ENTER();
 
+    if (port.m_vlan_members.size() > 0)
+    {
+        // TODO: print out all remaining VLAN IDs this port is member of
+        SWSS_LOG_DEBUG("Port %s still in %lu VLAN", port.m_alias.c_str(), port.m_vlan_members.size());
+        return true;
+    }
+
+#if 0  //TODO: integrate with new LIBSAI
     /* Set bridge port admin status to DOWN */
     sai_attribute_t attr;
     attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
@@ -1055,17 +1257,24 @@ bool PortsOrch::removeBridgePort(Port port)
             port.m_alias.c_str(), status);
         return false;
     }
-
+#endif
     /* Flush FDB entries pointing to this bridge port */
     // TODO: Remove all FDB entries associated with this bridge port before
     //       removing the bridge port itself
 
     /* Remove bridge port */
-    status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
+    sai_status_t status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove bridge port %s from default 1Q bridge, rv:%d",
             port.m_alias.c_str(), status);
+        return false;
+    }
+
+    bool rv = setHostIntfsStripTag(port, true);
+    if (rv != true)
+    {
+        SWSS_LOG_ERROR("Failed to set tag stripping to true for hostif of port %s", port.m_alias.c_str());
         return false;
     }
 
@@ -1095,8 +1304,10 @@ bool PortsOrch::addVlan(string vlan_alias)
     SWSS_LOG_NOTICE("Create an empty VLAN %s vid:%hu", vlan_alias.c_str(), vlan_id);
 
     Port vlan(vlan_alias, Port::VLAN);
-    vlan.m_vlan_oid = vlan_oid;
-    vlan.m_vlan_id = vlan_id;
+    vlan.m_vlan_info.vlan_oid = vlan_oid;
+    vlan.m_vlan_info.vlan_id = vlan_id;
+    vlan.m_vlan_info.autostate = "disabled";
+    vlan.m_vlan_info.mtu = 1500;
     vlan.m_members = set<string>();
     m_portList[vlan_alias] = vlan;
 
@@ -1114,14 +1325,16 @@ bool PortsOrch::removeVlan(Port vlan)
         return false;
     }
 
-    sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_oid);
+    sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove VLAN %s vid:%hu", vlan.m_alias.c_str(), vlan.m_vlan_id);
+        SWSS_LOG_ERROR("Failed to remove VLAN %s vid:%hu",
+                vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Remove VLAN %s vid:%hu", vlan.m_alias.c_str(), vlan.m_vlan_id);
+    SWSS_LOG_NOTICE("Remove VLAN %s vid:%hu", vlan.m_alias.c_str(),
+		vlan.m_vlan_info.vlan_id);
 
     m_portList.erase(vlan.m_alias);
 
@@ -1136,21 +1349,23 @@ bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
     vector<sai_attribute_t> attrs;
 
     attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_ID;
-    attr.value.oid = vlan.m_vlan_oid;
+    attr.value.oid = vlan.m_vlan_info.vlan_oid;
     attrs.push_back(attr);
 
     attr.id = SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID;
     attr.value.oid = port.m_bridge_port_id;
     attrs.push_back(attr);
 
+    sai_vlan_tagging_mode_t sai_tagging_mode = SAI_VLAN_TAGGING_MODE_TAGGED;
     attr.id = SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE;
     if (tagging_mode == "untagged")
-        attr.value.s32 = SAI_VLAN_TAGGING_MODE_UNTAGGED;
+        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_UNTAGGED;
     else if (tagging_mode == "tagged")
-        attr.value.s32 = SAI_VLAN_TAGGING_MODE_TAGGED;
+        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_TAGGED;
     else if (tagging_mode == "priority_tagged")
-        attr.value.s32 = SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED;
+        sai_tagging_mode = SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED;
     else assert(false);
+    attr.value.s32 = sai_tagging_mode;
     attrs.push_back(attr);
 
     sai_object_id_t vlan_member_id;
@@ -1158,28 +1373,22 @@ bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to add member %s to VLAN %s vid:%hu pid:%lx",
-                port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_id, port.m_port_id);
+                port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
         return false;
     }
     SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%lx",
-            port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_id, port.m_port_id);
+            port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
 
-    if (tagging_mode == "untagged") // set pvlan id for untagged port only
+    // Use untagged VLAN as pvid of the member port when no pvid has been configured explictly
+    if (port.m_port_vlan_id == DEFAULT_PORT_VLAN_ID && sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
     {
-        attr.id = SAI_PORT_ATTR_PORT_VLAN_ID;
-        attr.value.u16 = vlan.m_vlan_id;
-
-        status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if(!setPortPvid(port, vlan.m_vlan_info.vlan_id))
         {
-            SWSS_LOG_ERROR("Failed to set port VLAN ID vid:%hu pid:%lx",
-                    vlan.m_vlan_id, port.m_port_id);
             return false;
         }
-
-        SWSS_LOG_NOTICE("Set untagged port %s VLAN ID to %hu", port.m_alias.c_str(), vlan.m_vlan_id);
     }
 
+#if 0 //TODO: integrate with new LibSAI
     attr.id = SAI_PORT_ATTR_BIND_MODE;
     attr.value.s32 = SAI_PORT_BIND_MODE_PORT;
 
@@ -1190,10 +1399,11 @@ bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
                 port.m_alias.c_str(), status);
         return false;
     }
+#endif
 
-    port.m_vlan_id = vlan.m_vlan_id;
-    port.m_port_vlan_id = vlan.m_vlan_id;
-    port.m_vlan_member_id = vlan_member_id;
+    // a physical port may join multiple vlans
+    VlanMemberEntry vme = {vlan_member_id, sai_tagging_mode};
+    port.m_vlan_members[vlan.m_vlan_info.vlan_id] = vme;
     m_portList[port.m_alias] = port;
     vlan.m_members.insert(port.m_alias);
     m_portList[vlan.m_alias] = vlan;
@@ -1208,33 +1418,35 @@ bool PortsOrch::removeVlanMember(Port vlan, Port port)
 {
     SWSS_LOG_ENTER();
 
-    sai_status_t status = sai_vlan_api->remove_vlan_member(port.m_vlan_member_id);
+    sai_object_id_t            vlan_member_id;
+    sai_vlan_tagging_mode_t    sai_tagging_mode;
+    auto vlan_member = port.m_vlan_members.find(vlan.m_vlan_info.vlan_id);
+
+    /* Assert the port belongs to this VLAN */
+    assert (vlan_member != port.m_vlan_members.end());
+    sai_tagging_mode = vlan_member->second.vlan_mode;
+    vlan_member_id = vlan_member->second.vlan_member_id;
+    sai_status_t status = sai_vlan_api->remove_vlan_member(vlan_member_id);
 
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove member %s from VLAN %s vid:%hx vmid:%lx",
-                port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_id, port.m_vlan_member_id);
+                port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, vlan_member_id);
         return false;
     }
-
+    port.m_vlan_members.erase(vlan_member);
     SWSS_LOG_NOTICE("Remove member %s from VLAN %s lid:%hx vmid:%lx",
-            port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_id, port.m_vlan_member_id);
+            port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, vlan_member_id);
 
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_PORT_VLAN_ID;
-    attr.value.u16 = DEFAULT_PORT_VLAN_ID;
-
-    status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    // Restore to default pvid if no pvid has been configured explictly and this port was in untagged mode
+    if (port.m_port_vlan_id == DEFAULT_PORT_VLAN_ID && sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
     {
-        SWSS_LOG_ERROR("Failed to reset port VLAN ID to DEFAULT_PORT_VLAN_ID pid:%lx",
-                port.m_port_id);
-        return false;
+        if(!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
+        {
+            return false;
+        }
     }
 
-    port.m_vlan_id = 0;
-    port.m_port_vlan_id = DEFAULT_PORT_VLAN_ID;
-    port.m_vlan_member_id = 0;
     m_portList[port.m_alias] = port;
     vlan.m_members.erase(port.m_alias);
     m_portList[vlan.m_alias] = vlan;
@@ -1276,6 +1488,11 @@ bool PortsOrch::removeLag(Port lag)
     if (lag.m_members.size() > 0)
     {
         SWSS_LOG_ERROR("Failed to remove non-empty LAG %s", lag.m_alias.c_str());
+        return false;
+    }
+    if (lag.m_vlan_members.size() > 0)
+    {
+        SWSS_LOG_ERROR("Failed to remove LAG %s, it is still in VLAN", lag.m_alias.c_str());
         return false;
     }
 
@@ -1328,6 +1545,19 @@ bool PortsOrch::addLagMember(Port lag, Port port)
 
     m_portList[lag.m_alias] = lag;
 
+    if (lag.m_vlan_members.size() > 0)
+    {
+        bool rv = setHostIntfsStripTag(port, false);
+        if (rv != true)
+        {
+            SWSS_LOG_ERROR("Failed to set tag stripping to false for hostif of port %s which is in LAG %s",
+                    port.m_alias.c_str(), lag.m_alias.c_str());
+            return false;
+        }
+        return true;
+    }
+
+
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
@@ -1354,6 +1584,17 @@ bool PortsOrch::removeLagMember(Port lag, Port port)
     lag.m_members.erase(port.m_alias);
     m_portList[lag.m_alias] = lag;
 
+    if (lag.m_vlan_members.size() > 0)
+    {
+        bool rv = setHostIntfsStripTag(port, true);
+        if (rv != true)
+        {
+            SWSS_LOG_ERROR("Failed to set tag stripping to true for hostif of port %s which is leaving LAG %s",
+                    port.m_alias.c_str(), lag.m_alias.c_str());
+            return false;
+        }
+        return true;
+    }
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 

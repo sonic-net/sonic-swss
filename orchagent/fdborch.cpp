@@ -302,7 +302,7 @@ bool FdbOrch::splitKey(const string& key, FdbEntry& entry)
         return false;
     }
 
-    entry.vlan = port.m_vlan_id;
- 
+    entry.vlan = port.m_vlan_info.vlan_id;
+
     return true;
 }

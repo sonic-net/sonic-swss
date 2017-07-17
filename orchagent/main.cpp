@@ -62,6 +62,7 @@ void usage()
 
 void sighup_handler(int signo)
 {
+#if 0  //TODO: Integrate with latest syncd (maybe 1.0.3)
     /*
      * Don't do any logging since they are using mutexes.
      */
@@ -75,6 +76,7 @@ void sighup_handler(int signo)
     {
         sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     }
+#endif
 }
 
 int main(int argc, char **argv)
@@ -168,13 +170,6 @@ int main(int argc, char **argv)
     attr.value.ptr = (void *)on_switch_shutdown_request;
     attrs.push_back(attr);
 
-    if (gMacAddress)
-    {
-        attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
-        memcpy(attr.value.mac, gMacAddress.getMac(), 6);
-        attrs.push_back(attr);
-    }
-
     status = sai_switch_api->create_switch(&gSwitchId, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -183,10 +178,9 @@ int main(int argc, char **argv)
     }
     SWSS_LOG_NOTICE("Create a switch");
 
-    /* Get switch source MAC address if not provided */
+    attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
     if (!gMacAddress)
     {
-        attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
         status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -196,6 +190,16 @@ int main(int argc, char **argv)
         else
         {
             gMacAddress = attr.value.mac;
+        }
+    }
+    else
+    {
+        memcpy(attr.value.mac, gMacAddress.getMac(), 6);
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set MAC address to switch %d", status);
+            exit(EXIT_FAILURE);
         }
     }
 

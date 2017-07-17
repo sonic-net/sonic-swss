@@ -19,7 +19,6 @@ extern bool gSwssRecord;
 extern ofstream gRecordOfs;
 extern bool gLogRotate;
 extern string gRecordFile;
-extern string getTimestamp();
 
 Orch::Orch(DBConnector *db, string tableName) :
     m_db(db)

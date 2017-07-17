@@ -82,6 +82,7 @@ private:
     void initializeQueues(Port &port);
 
     bool addHostIntfs(sai_object_id_t router_intfs_id, string alias, sai_object_id_t &host_intfs_id);
+    bool setHostIntfsStripTag(Port &port, bool strip);
 
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port port);
@@ -98,6 +99,8 @@ private:
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
+    bool setPortPvid (Port &port, sai_uint32_t pvid);
+
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 };
