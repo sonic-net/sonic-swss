@@ -14,6 +14,8 @@ extern sai_policer_api_t*   sai_policer_api;
 extern sai_switch_api_t*    sai_switch_api;
 extern sai_object_id_t      gSwitchId;
 
+#define MLNX_PLATFORM_SUBSTRING     "mlnx"
+
 map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
     {"bytes", SAI_METER_TYPE_BYTES}
@@ -87,33 +89,37 @@ CoppOrch::CoppOrch(DBConnector *db, string tableName) :
     Orch(db, tableName)
 {
     SWSS_LOG_ENTER();
-    initDefaultHostTable();
+
+    initDefaultHostIntfTable();
     initDefaultTrapGroup();
     initDefaultTrapIds();
 };
 
-void CoppOrch::initDefaultHostTable()
+void CoppOrch::initDefaultHostIntfTable()
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t host_table_entry[4];
-    vector<sai_attribute_t> sai_if_channel_attrs;
+    sai_object_id_t default_hostif_table_id;
+    vector<sai_attribute_t> attrs;
 
-    sai_attribute_t sai_if_channel_attr;
-    sai_if_channel_attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TYPE;
-    sai_if_channel_attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_TYPE_WILDCARD;
-    sai_if_channel_attrs.push_back(sai_if_channel_attr);
+    sai_attribute_t attr;
+    attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TYPE;
+    attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_TYPE_WILDCARD;
+    attrs.push_back(attr);
 
-    sai_if_channel_attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_CHANNEL_TYPE;
-    sai_if_channel_attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_CHANNEL_TYPE_NETDEV_PHYSICAL_PORT;
-    sai_if_channel_attrs.push_back(sai_if_channel_attr);
+    attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_CHANNEL_TYPE;
+    attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_CHANNEL_TYPE_NETDEV_PHYSICAL_PORT;
+    attrs.push_back(attr);
 
     sai_status_t status = sai_hostif_api->create_hostif_table_entry(
-        &host_table_entry[0], gSwitchId, (uint32_t)sai_if_channel_attrs.size(), sai_if_channel_attrs.data());
+        &default_hostif_table_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create hostif table entry, rc=%d", status);
+        SWSS_LOG_ERROR("Failed to create default host interface table, rv:%d", status);
+        throw "CoppOrch initialization failure";
     }
+
+    SWSS_LOG_NOTICE("Create default host interface table");
 }
 
 void CoppOrch::initDefaultTrapIds()
@@ -131,9 +137,19 @@ void CoppOrch::initDefaultTrapIds()
     attr.value.oid = m_trap_group_map[default_trap_group];
     trap_id_attrs.push_back(attr);
 
+    /* Mellanox platform doesn't support trap priority setting */
+    char *platform = getenv("platform");
+    if (!platform || !strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    {
+        attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY;
+        attr.value.u32 = 0;
+        trap_id_attrs.push_back(attr);
+    }
+
     if (!applyAttributesToTrapIds(m_trap_group_map[default_trap_group], default_trap_ids, trap_id_attrs))
     {
         SWSS_LOG_ERROR("Failed to set attributes to default trap IDs");
+        throw "CoppOrch initialization failure";
     }
 
     SWSS_LOG_INFO("Set attributes to default trap IDs");
@@ -149,7 +165,8 @@ void CoppOrch::initDefaultTrapGroup()
     sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get default trap group, rc=%d", status);
+        SWSS_LOG_ERROR("Failed to get default trap group, rv:%d", status);
+        throw "CoppOrch initialization failure";
     }
 
     SWSS_LOG_INFO("Get default trap group");
@@ -173,52 +190,25 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
                                         const vector<sai_hostif_trap_type_t> &trap_id_list,
                                         vector<sai_attribute_t> &trap_id_attribs)
 {
-    sai_status_t status;
-
-    vector<sai_attribute_t> attrs(1);
-    attrs[0].id = SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE;
-
     for (auto trap_id : trap_id_list)
     {
-        auto found = m_trap_type_map.find(trap_id);
-        if (found == m_trap_type_map.end())
-        {
-            // Reuse the first element in attrs list
-            attrs.resize(1);
-            attrs[0].value.s32 = trap_id;
-            attrs.insert(attrs.end(), trap_id_attribs.begin(), trap_id_attribs.end());
+        sai_attribute_t attr;
+        vector<sai_attribute_t> attrs;
 
-            sai_object_id_t hostif_trap_id;
-            status = sai_hostif_api->create_hostif_trap(&hostif_trap_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to create trap %d, rc=%d", trap_id, status);
-                return false;
-            }
-            m_syncdTrapIds[trap_id] = hostif_trap_id;
-        }
-        else
-        {
-            // Set caller provided attributes
-            for (auto attr : trap_id_attribs)
-            {
-                status = sai_hostif_api->set_hostif_trap_attribute(trap_id, &attr);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to set attribute %d to trap %d, rc=%d", attr.id, trap_id, status);
-                    return false;
-                }
-            }
-            // Set the trap group attribute
-            status = sai_hostif_api->set_hostif_trap_attribute(trap_id, &attrs[1]);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to set trap group attribute to trap %d, rc=%d", trap_id, status);
-                return false;
-            }
-        }
+        attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE;
+        attr.value.s32 = trap_id;
+        attrs.push_back(attr);
 
-        m_syncdTrapIds[trap_id] = trap_group_id;
+        attrs.insert(attrs.end(), trap_id_attribs.begin(), trap_id_attribs.end());
+
+        sai_object_id_t hostif_trap_id;
+        sai_status_t status = sai_hostif_api->create_hostif_trap(&hostif_trap_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create trap %d, rv:%d", trap_id, status);
+            return false;
+        }
+        m_syncdTrapIds[trap_id] = hostif_trap_id;
     }
 
     return true;
@@ -227,6 +217,7 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
 bool CoppOrch::applyTrapIds(sai_object_id_t trap_group, vector<string> &trap_id_name_list, vector<sai_attribute_t> &trap_id_attribs)
 {
     SWSS_LOG_ENTER();
+
     vector<sai_hostif_trap_type_t> trap_id_list;
 
     getTrapIdList(trap_id_name_list, trap_id_list);
@@ -345,37 +336,44 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
     {
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
         {
-            SWSS_LOG_DEBUG("field:%s, value:%s", fvField(*i).c_str(), fvValue(*i).c_str());
             sai_attribute_t attr;
+
             if (fvField(*i) == copp_trap_id_list)
             {
                 trap_id_list = tokenize(fvValue(*i), list_item_delimiter);
             }
             else if (fvField(*i) == copp_queue_field)
             {
-                queue_ind = fvValue(*i);
-                SWSS_LOG_DEBUG("queue data:%s", queue_ind.c_str());
                 attr.id = SAI_HOSTIF_TRAP_GROUP_ATTR_QUEUE;
-                attr.value.u32 = (uint32_t)stoul(queue_ind);
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 trap_gr_attribs.push_back(attr);
             }
             //
-            // Trap id related attributes
+            // Trap related attributes
             //
             else if (fvField(*i) == copp_trap_action_field)
             {
-                SWSS_LOG_DEBUG("trap action:%s", fvValue(*i).c_str());
                 sai_packet_action_t trap_action = packet_action_map.at(fvValue(*i));
                 attr.id = SAI_HOSTIF_TRAP_ATTR_PACKET_ACTION;
                 attr.value.s32 = trap_action;
                 trap_id_attribs.push_back(attr);
+            }
+            else if (fvField(*i) == copp_trap_priority_field)
+            {
+                /* Mellanox platform doesn't support trap priority setting */
+                char *platform = getenv("platform");
+                if (!platform || !strstr(platform, MLNX_PLATFORM_SUBSTRING))
+                {
+                    attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY,
+                    attr.value.u32 = (uint32_t)stoul(fvValue(*i));
+                    trap_id_attribs.push_back(attr);
+                }
             }
             //
             // process policer attributes
             //
             else if (fvField(*i) == copp_policer_meter_type_field)
             {
-                SWSS_LOG_DEBUG("policer meter:%s", fvValue(*i).c_str());
                 sai_meter_type_t meter_value = policer_meter_map.at(fvValue(*i));
                 attr.id = SAI_POLICER_ATTR_METER_TYPE;
                 attr.value.s32 = meter_value;
@@ -383,7 +381,6 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             }
             else if (fvField(*i) == copp_policer_mode_field)
             {
-                SWSS_LOG_DEBUG("policer mode:%s", fvValue(*i).c_str());
                 sai_policer_mode_t mode = policer_mode_map.at(fvValue(*i));
                 attr.id = SAI_POLICER_ATTR_MODE;
                 attr.value.s32 = mode;
@@ -391,7 +388,6 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             }
             else if (fvField(*i) == copp_policer_color_field)
             {
-                SWSS_LOG_DEBUG("policer color mode:%s", fvValue(*i).c_str());
                 sai_policer_color_source_t color = policer_color_aware_map.at(fvValue(*i));
                 attr.id = SAI_POLICER_ATTR_COLOR_SOURCE;
                 attr.value.s32 = color;
@@ -402,32 +398,27 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 attr.id = SAI_POLICER_ATTR_CBS;
                 attr.value.u64 = stoul(fvValue(*i));
                 policer_attribs.push_back(attr);
-                SWSS_LOG_DEBUG("obtained cbs:%lu", attr.value.u64);
             }
             else if (fvField(*i) == copp_policer_cir_field)
             {
                 attr.id = SAI_POLICER_ATTR_CIR;
                 attr.value.u64 = stoul(fvValue(*i));
                 policer_attribs.push_back(attr);
-                SWSS_LOG_DEBUG("obtained cir:%lu", attr.value.u64);
             }
             else if (fvField(*i) == copp_policer_pbs_field)
             {
                 attr.id = SAI_POLICER_ATTR_PBS;
                 attr.value.u64 = stoul(fvValue(*i));
                 policer_attribs.push_back(attr);
-                SWSS_LOG_DEBUG("obtained pbs:%lu", attr.value.u64);
             }
             else if (fvField(*i) == copp_policer_pir_field)
             {
                 attr.id = SAI_POLICER_ATTR_PIR;
                 attr.value.u64 = stoul(fvValue(*i));
                 policer_attribs.push_back(attr);
-                SWSS_LOG_DEBUG("obtained pir:%lu", attr.value.u64);
             }
             else if (fvField(*i) == copp_policer_action_green_field)
             {
-                SWSS_LOG_DEBUG("green action:%s", queue_ind.c_str());
                 sai_packet_action_t policer_action = packet_action_map.at(fvValue(*i));
                 attr.id = SAI_POLICER_ATTR_GREEN_PACKET_ACTION;
                 attr.value.s32 = policer_action;
@@ -435,7 +426,6 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             }
             else if (fvField(*i) == copp_policer_action_red_field)
             {
-                SWSS_LOG_DEBUG("red action:%s", queue_ind.c_str());
                 sai_packet_action_t policer_action = packet_action_map.at(fvValue(*i));
                 attr.id = SAI_POLICER_ATTR_RED_PACKET_ACTION;
                 attr.value.s32 = policer_action;
@@ -443,7 +433,6 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             }
             else if (fvField(*i) == copp_policer_action_yellow_field)
             {
-                SWSS_LOG_DEBUG("yellowaction:%s", queue_ind.c_str());
                 sai_packet_action_t policer_action = packet_action_map.at(fvValue(*i));
                 attr.id = SAI_POLICER_ATTR_YELLOW_PACKET_ACTION;
                 attr.value.s32 = policer_action;
