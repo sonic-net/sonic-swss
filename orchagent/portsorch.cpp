@@ -177,7 +177,7 @@ void PortsOrch::removeDefaultVlanMembers()
 void PortsOrch::removeDefaultBridgePorts()
 {
     /* Get bridge ports in default 1Q bridge */
-    vector<sai_object_id_t> bridge_port_list(m_portCount);
+    vector<sai_object_id_t> bridge_port_list(m_portCount + 1);
 
     sai_attribute_t attr;
     attr.id = SAI_BRIDGE_ATTR_PORT_LIST;
