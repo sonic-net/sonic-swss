@@ -177,6 +177,8 @@ void PortsOrch::removeDefaultVlanMembers()
 void PortsOrch::removeDefaultBridgePorts()
 {
     /* Get bridge ports in default 1Q bridge */
+    // FIXME: Mellanox SAI implementation will response SAI_BRIDGE_ATTR_PORT_LIST
+    // all the front panel ports and CPU port. The CPU bug should be there by SAI spec.
     vector<sai_object_id_t> bridge_port_list(m_portCount + 1);
 
     sai_attribute_t attr;
