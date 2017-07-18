@@ -6,6 +6,8 @@
 #include "orch.h"
 
 const string copp_trap_id_list                = "trap_ids";
+const string copp_trap_action_field           = "trap_action";
+const string copp_trap_priority_field         = "trap_priority";
 const string copp_queue_field                 = "queue";
 // policer fields
 const string copp_policer_meter_type_field    = "meter_type";
@@ -15,7 +17,6 @@ const string copp_policer_cbs_field           = "cbs";
 const string copp_policer_cir_field           = "cir";
 const string copp_policer_pbs_field           = "pbs";
 const string copp_policer_pir_field           = "pir";
-const string copp_trap_action_field           = "trap_action";
 const string copp_policer_action_green_field  = "green_action";
 const string copp_policer_action_red_field    = "red_action";
 const string copp_policer_action_yellow_field = "yellow_action";

@@ -111,6 +111,10 @@ void CoppOrch::initDefaultTrapIds()
     attr.value.s32 = SAI_HOSTIF_TRAP_CHANNEL_NETDEV;
     trap_id_attrs.push_back(attr);
 
+    attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY;
+    attr.value.u32 = 0;
+    trap_id_attrs.push_back(attr);
+
     if (!applyAttributesToTrapIds(m_trap_group_map[default_trap_group], default_trap_ids, trap_id_attrs))
     {
         SWSS_LOG_ERROR("Failed to set attributes to default trap IDs");
@@ -319,6 +323,12 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 sai_packet_action_t trap_action = packet_action_map.at(fvValue(*i));
                 attr.id = SAI_HOSTIF_TRAP_ATTR_PACKET_ACTION;
                 attr.value.s32 = trap_action;
+                trap_id_attribs.push_back(attr);
+            }
+            else if (fvField(*i) == copp_trap_priority_field)
+            {
+                attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY,
+                attr.value.u32 = stoul(fvValue(*i), nullptr, 0);
                 trap_id_attribs.push_back(attr);
             }
             //
