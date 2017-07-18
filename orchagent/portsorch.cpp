@@ -249,7 +249,6 @@ bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
     sai_attribute_t attr;
     sai_status_t status;
 
-
     // "Lazy" query of supported speeds for given port
     // Once received the list will be stored in m_portSupportedSpeeds
     if (!m_portSupportedSpeeds.count(port_id))
