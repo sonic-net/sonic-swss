@@ -343,7 +343,6 @@ bool PortsOrch::setPortPvid (Port &port, sai_uint32_t pvid)
             if (!getPort(memberName, member))
             {
                 SWSS_LOG_ERROR("Failed to get port for %s alias\n", memberName.c_str());
-                assert(false);
                 return false;
             }
             idv.push_back(member.m_port_id);
@@ -393,7 +392,6 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, bool strip)
             if (!getPort(memberName, member))
             {
                 SWSS_LOG_ERROR("Failed to get port for %s alias\n", memberName.c_str());
-                assert(false);
                 return false;
             }
             portv.push_back(&member);
@@ -1227,20 +1225,22 @@ bool PortsOrch::addBridgePort(Port &port)
         SWSS_LOG_ERROR("Failed to set tag stripping to false for hostif of port %s", port.m_alias.c_str());
         return false;
     }
-
+    m_portList[port.m_alias] = port;
     SWSS_LOG_NOTICE("Add bridge port %s to default 1Q bridge", port.m_alias.c_str());
 
     return true;
 }
 
-bool PortsOrch::removeBridgePort(Port port)
+bool PortsOrch::removeBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
 
     if (port.m_vlan_members.size() > 0)
     {
-        // TODO: print out all remaining VLAN IDs this port is member of
-        SWSS_LOG_DEBUG("Port %s still in %lu VLAN", port.m_alias.c_str(), port.m_vlan_members.size());
+        for (auto &vme: port.m_vlan_members)
+        {
+            SWSS_LOG_DEBUG("Port %s still in VLAN %d", port.m_alias.c_str(), vme.first);
+        }
         return true;
     }
 
@@ -1270,6 +1270,7 @@ bool PortsOrch::removeBridgePort(Port port)
             port.m_alias.c_str(), status);
         return false;
     }
+    port.m_bridge_port_id = 0;
 
     bool rv = setHostIntfsStripTag(port, true);
     if (rv != true)
@@ -1280,6 +1281,7 @@ bool PortsOrch::removeBridgePort(Port port)
 
     SWSS_LOG_NOTICE("Remove bridge port %s from default 1Q bridge", port.m_alias.c_str());
 
+    m_portList[port.m_alias] = port;
     return true;
 }
 
@@ -1341,7 +1343,7 @@ bool PortsOrch::removeVlan(Port vlan)
     return true;
 }
 
-bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
+bool PortsOrch::addVlanMember(Port &vlan, Port &port, string& tagging_mode)
 {
     SWSS_LOG_ENTER();
 
@@ -1414,7 +1416,7 @@ bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
     return true;
 }
 
-bool PortsOrch::removeVlanMember(Port vlan, Port port)
+bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
 {
     SWSS_LOG_ENTER();
 
@@ -1510,7 +1512,7 @@ bool PortsOrch::removeLag(Port lag)
     return true;
 }
 
-bool PortsOrch::addLagMember(Port lag, Port port)
+bool PortsOrch::addLagMember(Port &lag, Port &port)
 {
     SWSS_LOG_ENTER();
 
@@ -1564,7 +1566,7 @@ bool PortsOrch::addLagMember(Port lag, Port port)
     return true;
 }
 
-bool PortsOrch::removeLagMember(Port lag, Port port)
+bool PortsOrch::removeLagMember(Port &lag, Port &port)
 {
     sai_status_t status = sai_lag_api->remove_lag_member(port.m_lag_member_id);
 

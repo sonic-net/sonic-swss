@@ -85,17 +85,17 @@ private:
     bool setHostIntfsStripTag(Port &port, bool strip);
 
     bool addBridgePort(Port &port);
-    bool removeBridgePort(Port port);
+    bool removeBridgePort(Port &port);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
-    bool addVlanMember(Port vlan, Port port, string& tagging_mode);
-    bool removeVlanMember(Port vlan, Port port);
+    bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
+    bool removeVlanMember(Port &vlan, Port &port);
 
     bool addLag(string lag);
     bool removeLag(Port lag);
-    bool addLagMember(Port lag, Port port);
-    bool removeLagMember(Port lag, Port port);
+    bool addLagMember(Port &lag, Port &port);
+    bool removeLagMember(Port &lag, Port &port);
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
