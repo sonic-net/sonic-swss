@@ -1025,8 +1025,7 @@ bool PortsOrch::addBridgePort(Port &port)
     /* Create a bridge port with admin status set to UP */
     attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
     attr.value.booldata = true;
-    // FIXME: Right now this attribute is not supported
-    // attrs.push_back(attr);
+    attrs.push_back(attr);
 
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
