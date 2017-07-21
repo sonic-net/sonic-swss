@@ -172,13 +172,16 @@ void PortsOrch::removeDefaultVlanMembers()
             throw "PortsOrch initialization failure";
         }
     }
+
+    SWSS_LOG_NOTICE("Remove VLAN members from default VLAN");
 }
 
 void PortsOrch::removeDefaultBridgePorts()
 {
-    /* Get bridge ports in default 1Q bridge */
-    // FIXME: Mellanox SAI implementation will response SAI_BRIDGE_ATTR_PORT_LIST
-    // all the front panel ports and CPU port. The CPU bug should be there by SAI spec.
+    /* Get bridge ports in default 1Q bridge
+     * By default, there will be m_portCount number of SAI_BRIDGE_PORT_TYPE_PORT
+     * ports and one SAI_BRIDGE_PORT_TYPE_1Q_ROUTER port. The former type of
+     * ports will be removed. */
     vector<sai_object_id_t> bridge_port_list(m_portCount + 1);
 
     sai_attribute_t attr;
@@ -193,16 +196,32 @@ void PortsOrch::removeDefaultBridgePorts()
         throw "PortsOrch initialization failure";
     }
 
-    /* Remove bridge ports in default 1Q bridge */
-    for (size_t i = 0; i < attr.value.objlist.count; i++)
+    auto bridge_port_count = attr.value.objlist.count;
+
+    /* Remove SAI_BRIDGE_PORT_TYPE_PORT bridge ports in default 1Q bridge */
+    for (size_t i = 0; i < bridge_port_count; i++)
     {
-        status = sai_bridge_api->remove_bridge_port(bridge_port_list[i]);
+        attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+        attr.value.s32 = SAI_NULL_OBJECT_ID;
+
+        status = sai_bridge_api->get_bridge_port_attribute(bridge_port_list[i], 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to remove bridge port, rv:%d", status);
+            SWSS_LOG_ERROR("Failed to get bridge port type, rv:%d", status);
             throw "PortsOrch initialization failure";
         }
+        if (attr.value.s32 == SAI_BRIDGE_PORT_TYPE_PORT)
+        {
+            status = sai_bridge_api->remove_bridge_port(bridge_port_list[i]);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove bridge port, rv:%d", status);
+                throw "PortsOrch initialization failure";
+            }
+        }
     }
+
+    SWSS_LOG_NOTICE("Remove bridge ports from default 1Q bridge");
 }
 
 bool PortsOrch::isInitDone()
