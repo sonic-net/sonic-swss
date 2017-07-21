@@ -704,7 +704,19 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
         sai_status_t status = sai_route_api->set_route_attribute(&route_entry, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set route %s to drop", ipPrefix.to_string().c_str());
+            SWSS_LOG_ERROR("Failed to set route %s packet action to drop, rv:%d",
+                    ipPrefix.to_string().c_str(), status);
+            return false;
+        }
+
+        attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
+        attr.value.oid = SAI_NULL_OBJECT_ID;
+
+        status = sai_route_api->set_route_attribute(&route_entry, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set route %s next hop ID to NULL, rv:%d",
+                    ipPrefix.to_string().c_str(), status);
             return false;
         }
     }
