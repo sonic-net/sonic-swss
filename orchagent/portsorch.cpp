@@ -163,7 +163,7 @@ void PortsOrch::removeDefaultVlanMembers()
     }
 
     /* Remove VLAN members in default VLAN */
-    for (size_t i = 0; i < attr.value.objlist.count; i++)
+    for (uint32_t i = 0; i < attr.value.objlist.count; i++)
     {
         status = sai_vlan_api->remove_vlan_member(vlan_member_list[i]);
         if (status != SAI_STATUS_SUCCESS)
@@ -199,7 +199,7 @@ void PortsOrch::removeDefaultBridgePorts()
     auto bridge_port_count = attr.value.objlist.count;
 
     /* Remove SAI_BRIDGE_PORT_TYPE_PORT bridge ports in default 1Q bridge */
-    for (size_t i = 0; i < bridge_port_count; i++)
+    for (uint32_t i = 0; i < bridge_port_count; i++)
     {
         attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
         attr.value.s32 = SAI_NULL_OBJECT_ID;
