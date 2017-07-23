@@ -13,6 +13,7 @@ extern sai_hostif_api_t*    sai_hostif_api;
 extern sai_policer_api_t*   sai_policer_api;
 extern sai_switch_api_t*    sai_switch_api;
 
+#define MLNX_PLATFORM_SUBSTRING     "mlnx"
 
 map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
@@ -111,9 +112,14 @@ void CoppOrch::initDefaultTrapIds()
     attr.value.s32 = SAI_HOSTIF_TRAP_CHANNEL_NETDEV;
     trap_id_attrs.push_back(attr);
 
-    attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY;
-    attr.value.u32 = 0;
-    trap_id_attrs.push_back(attr);
+    /* Mellanox platform doesn't support trap priority setting */
+    char *platform = getenv("platform");
+    if (!platform || !strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    {
+        attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY;
+        attr.value.u32 = 0;
+        trap_id_attrs.push_back(attr);
+    }
 
     if (!applyAttributesToTrapIds(m_trap_group_map[default_trap_group], default_trap_ids, trap_id_attrs))
     {
@@ -315,7 +321,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 trap_gr_attribs.push_back(attr);
             }
             //
-            // Trap id related attributes
+            // Trap related attributes
             //
             else if (fvField(*i) == copp_trap_action_field)
             {
@@ -327,9 +333,14 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             }
             else if (fvField(*i) == copp_trap_priority_field)
             {
-                attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY,
-                attr.value.u32 = stoul(fvValue(*i), nullptr, 0);
-                trap_id_attribs.push_back(attr);
+                /* Mellanox platform doesn't support trap priority setting */
+                char *platform = getenv("platform");
+                if (!platform || !strstr(platform, MLNX_PLATFORM_SUBSTRING))
+                {
+                    attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY,
+                    attr.value.u32 = stoul(fvValue(*i), nullptr, 0);
+                    trap_id_attribs.push_back(attr);
+                }
             }
             //
             // process policer attributes
