@@ -204,7 +204,7 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
     overlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
     overlay_intf_attrs.push_back(overlay_intf_attr);
 
-    status = sai_router_intfs_api->create_router_interface(&overlayIfId, gSwitchId, overlay_intf_attrs.size(), overlay_intf_attrs.data());
+    status = sai_router_intfs_api->create_router_interface(&overlayIfId, gSwitchId, (uint32_t)overlay_intf_attrs.size(), overlay_intf_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create overlay router interface %d", status);
@@ -267,7 +267,7 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
 
     // write attributes to ASIC_DB
     sai_object_id_t tunnel_id;
-    status = sai_tunnel_api->create_tunnel(&tunnel_id, gSwitchId, tunnel_attrs.size(), tunnel_attrs.data());
+    status = sai_tunnel_api->create_tunnel(&tunnel_id, gSwitchId, (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create tunnel");
@@ -344,7 +344,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, IpAddresses ds
 
             // create the tunnel table entry
             sai_object_id_t tunnel_term_table_entry_id;
-            sai_status_t status = sai_tunnel_api->create_tunnel_term_table_entry(&tunnel_term_table_entry_id, gSwitchId, tunnel_table_entry_attrs.size(), tunnel_table_entry_attrs.data());
+            sai_status_t status = sai_tunnel_api->create_tunnel_term_table_entry(&tunnel_term_table_entry_id, gSwitchId, (uint32_t)tunnel_table_entry_attrs.size(), tunnel_table_entry_attrs.data());
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to create tunnel entry table for ip: %s", ip.c_str());

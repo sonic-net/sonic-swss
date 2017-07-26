@@ -41,7 +41,7 @@ sai_status_t Port::bindAclTable(sai_object_id_t& group_member_oid, sai_object_id
         group_attr.value.s32 = SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
         group_attrs.push_back(group_attr);
 
-        status = sai_acl_api->create_acl_table_group(&groupOid, gSwitchId, group_attrs.size(), group_attrs.data());
+        status = sai_acl_api->create_acl_table_group(&groupOid, gSwitchId, (uint32_t)group_attrs.size(), group_attrs.data());
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create ACL table group: %d", status);
@@ -72,18 +72,18 @@ sai_status_t Port::bindAclTable(sai_object_id_t& group_member_oid, sai_object_id
 
     sai_attribute_t member_attr;
     member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID;
-    member_attr.value.s32 = groupOid;
+    member_attr.value.oid = groupOid;
     member_attrs.push_back(member_attr);
 
     member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID;
-    member_attr.value.s32 = table_oid;
+    member_attr.value.oid = table_oid;
     member_attrs.push_back(member_attr);
 
     member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
     member_attr.value.s32 = 100; // TODO: double check!
     member_attrs.push_back(member_attr);
 
-    status = sai_acl_api->create_acl_table_group_member(&group_member_oid, gSwitchId, member_attrs.size(), member_attrs.data());
+    status = sai_acl_api->create_acl_table_group_member(&group_member_oid, gSwitchId, (uint32_t)member_attrs.size(), member_attrs.data());
     if (status != SAI_STATUS_SUCCESS) {
         SWSS_LOG_ERROR("Failed to create member table %lu for ACL table group %lu: %d",
                 table_oid, groupOid, status);

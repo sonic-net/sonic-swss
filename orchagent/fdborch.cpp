@@ -207,7 +207,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     attrs.push_back(attr);
 
-    status = sai_fdb_api->create_fdb_entry(&fdb_entry, attrs.size(), attrs.data());
+    status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to add FDB entry. mac=%s, vlan=%d. port_name %s. type %s",

@@ -451,7 +451,7 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
 
     sai_object_id_t next_hop_group_id;
     sai_status_t status = sai_next_hop_group_api->
-            create_next_hop_group(&next_hop_group_id, gSwitchId, nhg_attrs.size(), nhg_attrs.data());
+            create_next_hop_group(&next_hop_group_id, gSwitchId, (uint32_t)nhg_attrs.size(), nhg_attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -482,7 +482,7 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
 
         sai_object_id_t next_hop_group_member_id;
         status = sai_next_hop_group_api->
-                create_next_hop_group_member(&next_hop_group_member_id, gSwitchId, nhgm_attrs.size(), nhgm_attrs.data());
+                create_next_hop_group_member(&next_hop_group_member_id, gSwitchId, (uint32_t)nhgm_attrs.size(), nhgm_attrs.data());
 
         if (status != SAI_STATUS_SUCCESS)
         {

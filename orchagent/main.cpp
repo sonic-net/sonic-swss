@@ -175,7 +175,7 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
-    status = sai_switch_api->create_switch(&gSwitchId, attrs.size(), attrs.data());
+    status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create a switch, rv:%d", status);
@@ -224,7 +224,7 @@ int main(int argc, char **argv)
     underlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
     underlay_intf_attrs.push_back(underlay_intf_attr);
 
-    status = sai_router_intfs_api->create_router_interface(&gUnderlayIfId, gSwitchId, underlay_intf_attrs.size(), underlay_intf_attrs.data());
+    status = sai_router_intfs_api->create_router_interface(&gUnderlayIfId, gSwitchId, (uint32_t)underlay_intf_attrs.size(), underlay_intf_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create underlay router interface %d", status);

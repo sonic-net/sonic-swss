@@ -254,7 +254,7 @@ bool IntfsOrch::addRouterIntfs(Port &port)
     }
     attrs.push_back(attr);
 
-    sai_status_t status = sai_router_intfs_api->create_router_interface(&port.m_rif_id, gSwitchId, attrs.size(), attrs.data());
+    sai_status_t status = sai_router_intfs_api->create_router_interface(&port.m_rif_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create router interface for port %s, rv:%d", port.m_alias.c_str(), status);
@@ -312,7 +312,7 @@ void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     attr.value.oid = port.m_rif_id;
     attrs.push_back(attr);
 
-    sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, attrs.size(), attrs.data());
+    sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create subnet route to %s from %s, rv:%d",
@@ -367,7 +367,7 @@ void IntfsOrch::addIp2MeRoute(const IpPrefix &ip_prefix)
     attr.value.oid = cpu_port.m_port_id;
     attrs.push_back(attr);
 
-    sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, attrs.size(), attrs.data());
+    sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);

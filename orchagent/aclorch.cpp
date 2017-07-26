@@ -109,7 +109,7 @@ bool AclRule::validateAddPriority(string attr_name, string attr_value)
     {
         char *endp = NULL;
         errno = 0;
-        m_priority = strtol(attr_value.c_str(), &endp, 0);
+        m_priority = (uint32_t)strtol(attr_value.c_str(), &endp, 0);
         // chack conversion was successfull and the value is within the allowed range
         status = (errno == 0) &&
                  (endp == attr_value.c_str() + attr_value.size()) &&
@@ -161,23 +161,23 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             flags = trim(flagsData[0]);
             mask = trim(flagsData[1]);
 
-            val = strtol(flags.c_str(), &endp, 0);
+            val = (uint32_t)strtol(flags.c_str(), &endp, 0);
             if (errno || (endp != flags.c_str() + flags.size()) ||
                 (val < 0) || (val > UCHAR_MAX))
             {
                 SWSS_LOG_ERROR("TCP flags parse error, value: %s(=%d), errno: %d", flags.c_str(), val, errno);
                 return false;
             }
-            value.aclfield.data.u8 = val;
+            value.aclfield.data.u8 = (uint8_t)val;
 
-            val = strtol(mask.c_str(), &endp, 0);
+            val = (uint32_t)strtol(mask.c_str(), &endp, 0);
             if (errno || (endp != mask.c_str() + mask.size()) ||
                 (val < 0) || (val > UCHAR_MAX))
             {
                 SWSS_LOG_ERROR("TCP mask parse error, value: %s(=%d), errno: %d", mask.c_str(), val, errno);
                 return false;
             }
-            value.aclfield.mask.u8 = val;
+            value.aclfield.mask.u8 = (uint8_t)val;
         }
         else if(attr_name == MATCH_ETHER_TYPE || attr_name == MATCH_L4_SRC_PORT || attr_name == MATCH_L4_DST_PORT)
         {
@@ -344,7 +344,7 @@ bool AclRule::create()
         rule_attrs.push_back(attr);
     }
 
-    status = sai_acl_api->create_acl_entry(&m_ruleOid, gSwitchId, rule_attrs.size(), rule_attrs.data());
+    status = sai_acl_api->create_acl_entry(&m_ruleOid, gSwitchId, (uint32_t)rule_attrs.size(), rule_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create ACL rule");
@@ -483,7 +483,7 @@ bool AclRule::createCounter()
     attr.value.booldata = true;
     counter_attrs.push_back(attr);
 
-    if (sai_acl_api->create_acl_counter(&m_counterOid, gSwitchId, counter_attrs.size(), counter_attrs.data()) != SAI_STATUS_SUCCESS)
+    if (sai_acl_api->create_acl_counter(&m_counterOid, gSwitchId, (uint32_t)counter_attrs.size(), counter_attrs.data()) != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create counter for the rule %s in table %s", m_id.c_str(), m_tableId.c_str());
         return false;
@@ -891,7 +891,7 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
         attr.value.u32range.max = max;
         range_attrs.push_back(attr);
 
-        status = sai_acl_api->create_acl_range(&range_oid, gSwitchId, range_attrs.size(), range_attrs.data());
+        status = sai_acl_api->create_acl_range(&range_oid, gSwitchId, (uint32_t)range_attrs.size(), range_attrs.data());
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create range object");
@@ -985,14 +985,13 @@ AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attrs[] =
-    {
-        { SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY },
-        { SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY }
-    };
+    sai_attribute_t attrs[2];
+    
+    attrs[0].id = SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY;
+    attrs[1].id = SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY;
 
     // get min/max allowed priority
-    if (sai_switch_api->get_switch_attribute(gSwitchId, sizeof(attrs)/sizeof(attrs[0]), attrs) == SAI_STATUS_SUCCESS)
+    if (sai_switch_api->get_switch_attribute(gSwitchId, 2, attrs) == SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_INFO("Got ACL entry priority values, min: %u, max: %u", attrs[0].value.u32, attrs[1].value.u32);
         AclRule::setRulePriorities(attrs[0].value.u32, attrs[1].value.u32);
@@ -1454,11 +1453,11 @@ sai_status_t AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &ta
     }
 
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE;
-    attr.value.s32list.count = sizeof(range_types_list) / sizeof(range_types_list[0]);
+    attr.value.s32list.count = (uint32_t)(sizeof(range_types_list) / sizeof(range_types_list[0]));
     attr.value.s32list.list = range_types_list;
     table_attrs.push_back(attr);
 
-    status = sai_acl_api->create_acl_table(&table_oid, gSwitchId, table_attrs.size(), table_attrs.data());
+    status = sai_acl_api->create_acl_table(&table_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
 
     if (status == SAI_STATUS_SUCCESS)
     {

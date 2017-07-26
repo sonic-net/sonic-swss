@@ -157,13 +157,13 @@ bool DscpToTcMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     SWSS_LOG_ENTER();
     sai_attribute_t list_attr;
     sai_qos_map_list_t dscp_map_list;
-    dscp_map_list.count = kfvFieldsValues(tuple).size();
+    dscp_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
     dscp_map_list.list = new sai_qos_map_t[dscp_map_list.count]();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
-        dscp_map_list.list[ind].key.dscp = stoi(fvField(*i));
-        dscp_map_list.list[ind].value.tc = stoi(fvValue(*i));
+        dscp_map_list.list[ind].key.dscp = (uint8_t)stoi(fvField(*i));
+        dscp_map_list.list[ind].value.tc = (uint8_t)stoi(fvValue(*i));
         SWSS_LOG_DEBUG("key.dscp:%d, value.tc:%d", dscp_map_list.list[ind].key.dscp, dscp_map_list.list[ind].value.tc);
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
@@ -190,7 +190,7 @@ sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &at
     qos_map_attr.value.qosmap.list = attributes[0].value.qosmap.list;
     qos_map_attrs.push_back(qos_map_attr);
 
-    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, qos_map_attrs.size(), qos_map_attrs.data());
+    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
         SWSS_LOG_ERROR("Failed to create dscp_to_tc map. status:%d", sai_status);
@@ -212,13 +212,13 @@ bool TcToQueueMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple 
     SWSS_LOG_ENTER();
     sai_attribute_t list_attr;
     sai_qos_map_list_t tc_map_list;
-    tc_map_list.count = kfvFieldsValues(tuple).size();
+    tc_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
     tc_map_list.list = new sai_qos_map_t[tc_map_list.count]();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
-        tc_map_list.list[ind].key.tc = stoi(fvField(*i));
-        tc_map_list.list[ind].value.queue_index = stoi(fvValue(*i));
+        tc_map_list.list[ind].key.tc = (uint8_t)stoi(fvField(*i));
+        tc_map_list.list[ind].value.queue_index = (uint8_t)stoi(fvValue(*i));
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = tc_map_list.count;
@@ -244,7 +244,7 @@ sai_object_id_t TcToQueueMapHandler::addQosItem(const vector<sai_attribute_t> &a
     qos_map_attr.value.qosmap.list = attributes[0].value.qosmap.list;
     qos_map_attrs.push_back(qos_map_attr);
 
-    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, qos_map_attrs.size(), qos_map_attrs.data());
+    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
         SWSS_LOG_ERROR("Failed to create tc_to_queue map. status:%d", sai_status);
@@ -406,7 +406,7 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     {
         attrs.push_back(attrib);
     }
-    sai_status = sai_wred_api->create_wred(&sai_object, gSwitchId, attrs.size(), attrs.data());
+    sai_status = sai_wred_api->create_wred(&sai_object, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create wred profile: %d", sai_status);
@@ -440,13 +440,13 @@ bool TcToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple
     SWSS_LOG_ENTER();
     sai_attribute_t     list_attr;
     sai_qos_map_list_t  tc_to_pg_map_list;
-    tc_to_pg_map_list.count = kfvFieldsValues(tuple).size();
+    tc_to_pg_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
     tc_to_pg_map_list.list = new sai_qos_map_t[tc_to_pg_map_list.count]();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
-        tc_to_pg_map_list.list[ind].key.tc = stoi(fvField(*i));
-        tc_to_pg_map_list.list[ind].value.pg = stoi(fvValue(*i));
+        tc_to_pg_map_list.list[ind].key.tc = (uint8_t)stoi(fvField(*i));
+        tc_to_pg_map_list.list[ind].value.pg = (uint8_t)stoi(fvValue(*i));
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = tc_to_pg_map_list.count;
@@ -471,7 +471,7 @@ sai_object_id_t TcToPgHandler::addQosItem(const vector<sai_attribute_t> &attribu
     qos_map_attr.value.qosmap.list = attributes[0].value.qosmap.list;
     qos_map_attrs.push_back(qos_map_attr);
 
-    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, qos_map_attrs.size(), qos_map_attrs.data());
+    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
         SWSS_LOG_ERROR("Failed to create tc_to_queue map. status:%d", sai_status);
@@ -493,13 +493,13 @@ bool PfcPrioToPgHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &
     SWSS_LOG_ENTER();
     sai_attribute_t     list_attr;
     sai_qos_map_list_t  pfc_prio_to_pg_map_list;
-    pfc_prio_to_pg_map_list.count = kfvFieldsValues(tuple).size();
+    pfc_prio_to_pg_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
     pfc_prio_to_pg_map_list.list = new sai_qos_map_t[pfc_prio_to_pg_map_list.count]();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
-        pfc_prio_to_pg_map_list.list[ind].key.prio = stoi(fvField(*i));
-        pfc_prio_to_pg_map_list.list[ind].value.pg = stoi(fvValue(*i));
+        pfc_prio_to_pg_map_list.list[ind].key.prio = (uint8_t)stoi(fvField(*i));
+        pfc_prio_to_pg_map_list.list[ind].value.pg = (uint8_t)stoi(fvValue(*i));
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = pfc_prio_to_pg_map_list.count;
@@ -525,7 +525,7 @@ sai_object_id_t PfcPrioToPgHandler::addQosItem(const vector<sai_attribute_t> &at
     qos_map_attr.value.qosmap.list = attributes[0].value.qosmap.list;
     qos_map_attrs.push_back(qos_map_attr);
 
-    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, qos_map_attrs.size(), qos_map_attrs.data());
+    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
         SWSS_LOG_ERROR("Failed to create tc_to_queue map. status:%d", sai_status);
@@ -547,13 +547,13 @@ bool PfcToQueueHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &t
     SWSS_LOG_ENTER();
     sai_attribute_t     list_attr;
     sai_qos_map_list_t  pfc_to_queue_map_list;
-    pfc_to_queue_map_list.count = kfvFieldsValues(tuple).size();
+    pfc_to_queue_map_list.count = (uint32_t)kfvFieldsValues(tuple).size();
     pfc_to_queue_map_list.list = new sai_qos_map_t[pfc_to_queue_map_list.count]();
     uint32_t ind = 0;
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++, ind++)
     {
-        pfc_to_queue_map_list.list[ind].key.prio = stoi(fvField(*i));
-        pfc_to_queue_map_list.list[ind].value.queue_index = stoi(fvValue(*i));
+        pfc_to_queue_map_list.list[ind].key.prio = (uint8_t)stoi(fvField(*i));
+        pfc_to_queue_map_list.list[ind].value.queue_index = (uint8_t)stoi(fvValue(*i));
     }
     list_attr.id = SAI_QOS_MAP_ATTR_MAP_TO_VALUE_LIST;
     list_attr.value.qosmap.count = pfc_to_queue_map_list.count;
@@ -580,7 +580,7 @@ sai_object_id_t PfcToQueueHandler::addQosItem(const vector<sai_attribute_t> &att
     qos_map_attr.value.qosmap.list = attributes[0].value.qosmap.list;
     qos_map_attrs.push_back(qos_map_attr);
 
-    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, qos_map_attrs.size(), qos_map_attrs.data());
+    sai_status = sai_qos_map_api->create_qos_map(&sai_object, gSwitchId, (uint32_t)qos_map_attrs.size(), qos_map_attrs.data());
     if (SAI_STATUS_SUCCESS != sai_status)
     {
         SWSS_LOG_ERROR("Failed to create tc_to_queue map. status:%d", sai_status);
@@ -670,7 +670,7 @@ sai_object_id_t QosOrch::initSystemAclTable()
     attr.value.booldata = true;
     attrs.push_back(attr);
 
-    status = sai_acl_api->create_acl_table(&acl_table_id, gSwitchId, attrs.size(), attrs.data());
+    status = sai_acl_api->create_acl_table(&acl_table_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create a system ACL table for ECN coloring, rv:%d", status);
@@ -733,7 +733,7 @@ void QosOrch::initAclEntryForEcn(sai_object_id_t acl_table_id, sai_uint32_t prio
     attr.value.aclaction.parameter.s32 = color;
     attrs.push_back(attr);
 
-    status = sai_acl_api->create_acl_entry(&acl_entry_id, gSwitchId, attrs.size(), attrs.data());
+    status = sai_acl_api->create_acl_entry(&acl_entry_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create a system ACL entry for ECN coloring, rv=%d", status);
@@ -808,7 +808,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             else if (fvField(*i) == scheduler_weight_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_SCHEDULING_WEIGHT;
-                attr.value.u8 = stoi(fvValue(*i));
+                attr.value.u8 = (uint8_t)stoi(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_priority_field_name)
@@ -836,7 +836,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
         }
         else
         {
-            sai_status = sai_scheduler_api->create_scheduler(&sai_object, gSwitchId, sai_attr_list.size(), sai_attr_list.data());
+            sai_status = sai_scheduler_api->create_scheduler(&sai_object, gSwitchId, (uint32_t)sai_attr_list.size(), sai_attr_list.data());
             if (sai_status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to create scheduler profile [%s:%s], rv:%d",
@@ -1218,8 +1218,8 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             queue_indexes = tokenize(fvValue(*it), list_item_delimiter);
             for(string q_ind : queue_indexes)
             {
-                sai_uint8_t q_val = stoi(q_ind);
-                pfc_enable |= (1 << q_val);
+                sai_uint8_t q_val = (uint8_t)stoi(q_ind);
+                pfc_enable |= (uint8_t)(1 << q_val);
             }
         }
     }

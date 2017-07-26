@@ -109,7 +109,7 @@ void CoppOrch::initDefaultHostTable()
     sai_if_channel_attrs.push_back(sai_if_channel_attr);
 
     sai_status_t status = sai_hostif_api->create_hostif_table_entry(
-        &host_table_entry[0], gSwitchId, sai_if_channel_attrs.size(), sai_if_channel_attrs.data());
+        &host_table_entry[0], gSwitchId, (uint32_t)sai_if_channel_attrs.size(), sai_if_channel_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create hostif table entry, rc=%d", status);
@@ -189,7 +189,7 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
             attrs.insert(attrs.end(), trap_id_attribs.begin(), trap_id_attribs.end());
 
             sai_object_id_t hostif_trap_id;
-            status = sai_hostif_api->create_hostif_trap(&hostif_trap_id, gSwitchId, attrs.size(), attrs.data());
+            status = sai_hostif_api->create_hostif_trap(&hostif_trap_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to create trap %d, rc=%d", trap_id, status);
@@ -300,7 +300,7 @@ bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &po
     sai_object_id_t policer_id;
     sai_status_t sai_status;
 
-    sai_status = sai_policer_api->create_policer(&policer_id, gSwitchId, policer_attribs.size(), policer_attribs.data());
+    sai_status = sai_policer_api->create_policer(&policer_id, gSwitchId, (uint32_t)policer_attribs.size(), policer_attribs.data());
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create policer trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
@@ -356,7 +356,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 queue_ind = fvValue(*i);
                 SWSS_LOG_DEBUG("queue data:%s", queue_ind.c_str());
                 attr.id = SAI_HOSTIF_TRAP_GROUP_ATTR_QUEUE;
-                attr.value.u32 = stoul(queue_ind);
+                attr.value.u32 = (uint32_t)stoul(queue_ind);
                 trap_gr_attribs.push_back(attr);
             }
             //
@@ -507,7 +507,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
         {
             sai_object_id_t new_trap;
 
-            sai_status = sai_hostif_api->create_hostif_trap_group(&new_trap, gSwitchId, trap_gr_attribs.size(), trap_gr_attribs.data());
+            sai_status = sai_hostif_api->create_hostif_trap_group(&new_trap, gSwitchId, (uint32_t)trap_gr_attribs.size(), trap_gr_attribs.data());
             if (sai_status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to create host interface trap group %s, rc=%d", trap_group_name.c_str(), sai_status);

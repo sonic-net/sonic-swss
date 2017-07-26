@@ -101,7 +101,7 @@ void initSaiApi()
 {
     SWSS_LOG_ENTER();
 
-    sai_api_initialize(0, (service_method_table_t *)&test_services);
+    sai_api_initialize(0, (const service_method_table_t *)&test_services);
 
     sai_api_query(SAI_API_SWITCH,               (void **)&sai_switch_api);
     sai_api_query(SAI_API_BRIDGE,               (void **)&sai_bridge_api);
@@ -188,8 +188,8 @@ void initSaiRedis(const string &record_location)
     if (gSairedisRecord)
     {
         attr.id = SAI_REDIS_SWITCH_ATTR_RECORDING_OUTPUT_DIR;
-        attr.value.s8list.count = record_location.size();
-        attr.value.s8list.list = (signed char *) record_location.c_str();
+        attr.value.s8list.count = (uint32_t)record_location.size();
+        attr.value.s8list.list = (int8_t*)const_cast<char *>(record_location.c_str());
 
         status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
         if (status != SAI_STATUS_SUCCESS)

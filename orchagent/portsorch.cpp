@@ -84,7 +84,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     port_list.resize(m_portCount);
 
     attr.id = SAI_SWITCH_ATTR_PORT_LIST;
-    attr.value.objlist.count = port_list.size();
+    attr.value.objlist.count = (uint32_t)port_list.size();
     attr.value.objlist.list = port_list.data();
 
     status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
@@ -131,7 +131,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     attr.id = SAI_SWITCH_ATTR_DEFAULT_VLAN_ID;
     attrs.push_back(attr);
 
-    status = sai_switch_api->get_switch_attribute(gSwitchId, attrs.size(), attrs.data());
+    status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get default 1Q bridge and/or default VLAN, rv:%d", status);
@@ -152,7 +152,7 @@ void PortsOrch::removeDefaultVlanMembers()
 
     sai_attribute_t attr;
     attr.id = SAI_VLAN_ATTR_MEMBER_LIST;
-    attr.value.objlist.count = vlan_member_list.size();
+    attr.value.objlist.count = (uint32_t)vlan_member_list.size();
     attr.value.objlist.list = vlan_member_list.data();
 
     sai_status_t status = sai_vlan_api->get_vlan_attribute(m_defaultVlan, 1, &attr);
@@ -186,7 +186,7 @@ void PortsOrch::removeDefaultBridgePorts()
 
     sai_attribute_t attr;
     attr.id = SAI_BRIDGE_ATTR_PORT_LIST;
-    attr.value.objlist.count = bridge_port_list.size();
+    attr.value.objlist.count = (uint32_t)bridge_port_list.size();
     attr.value.objlist.list = bridge_port_list.data();
 
     sai_status_t status = sai_bridge_api->get_bridge_attribute(m_default1QBridge, 1, &attr);
@@ -332,7 +332,7 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_MTU;
     /* mtu + 14 + 4 + 4 = 22 bytes */
-    attr.value.u32 = mtu + sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN;
+    attr.value.u32 = (uint32_t)(mtu + sizeof(struct ether_header) + FCS_LEN + VLAN_TAG_LEN);
 
     sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -448,7 +448,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 /* Set port mtu */
                 if (fvField(i) == "mtu")
-                    mtu = stoul(fvValue(i));
+                    mtu = (uint32_t)stoul(fvValue(i));
             }
 
             if (lane_set.size())
@@ -468,7 +468,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     {
                         Port p(alias, Port::PHY);
 
-                        p.m_index = m_portList.size(); // TODO: Assume no deletion of physical port
+                        p.m_index = (uint32_t)m_portList.size(); // TODO: Assume no deletion of physical port
                         p.m_port_id = id;
 
                         /* Initialize the port and create router interface and host interface */
@@ -911,7 +911,7 @@ void PortsOrch::initializeQueues(Port &port)
     }
 
     attr.id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
-    attr.value.objlist.count = port.m_queue_ids.size();
+    attr.value.objlist.count = (uint32_t)port.m_queue_ids.size();
     attr.value.objlist.list = port.m_queue_ids.data();
 
     status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
@@ -945,7 +945,7 @@ void PortsOrch::initializePriorityGroups(Port &port)
     }
 
     attr.id = SAI_PORT_ATTR_INGRESS_PRIORITY_GROUP_LIST;
-    attr.value.objlist.count = port.m_priority_group_ids.size();
+    attr.value.objlist.count = (uint32_t)port.m_priority_group_ids.size();
     attr.value.objlist.list = port.m_priority_group_ids.data();
 
     status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
@@ -1014,7 +1014,7 @@ bool PortsOrch::addHostIntfs(sai_object_id_t id, string alias, sai_object_id_t &
     strncpy((char *)&attr.value.chardata, alias.c_str(), HOSTIF_NAME_SIZE);
     attrs.push_back(attr);
 
-    sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, attrs.size(), attrs.data());
+    sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create host interface for port %s", alias.c_str());
@@ -1046,7 +1046,7 @@ bool PortsOrch::addBridgePort(Port &port)
     attr.value.booldata = true;
     attrs.push_back(attr);
 
-    sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, attrs.size(), attrs.data());
+    sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to add bridge port %s to default 1Q bridge, rv:%d",
@@ -1100,7 +1100,7 @@ bool PortsOrch::addVlan(string vlan_alias)
 
     sai_object_id_t vlan_oid;
 
-    sai_vlan_id_t vlan_id = stoi(vlan_alias.substr(4));
+    sai_vlan_id_t vlan_id = (uint16_t)stoi(vlan_alias.substr(4));
     sai_attribute_t attr;
     attr.id = SAI_VLAN_ATTR_VLAN_ID;
     attr.value.u16 = vlan_id;
@@ -1174,7 +1174,7 @@ bool PortsOrch::addVlanMember(Port vlan, Port port, string& tagging_mode)
     attrs.push_back(attr);
 
     sai_object_id_t vlan_member_id;
-    sai_status_t status = sai_vlan_api->create_vlan_member(&vlan_member_id, gSwitchId, attrs.size(), attrs.data());
+    sai_status_t status = sai_vlan_api->create_vlan_member(&vlan_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to add member %s to VLAN %s vid:%hu pid:%lx",
@@ -1318,7 +1318,7 @@ bool PortsOrch::addLagMember(Port lag, Port port)
     attrs.push_back(attr);
 
     sai_object_id_t lag_member_id;
-    sai_status_t status = sai_lag_api->create_lag_member(&lag_member_id, gSwitchId, attrs.size(), attrs.data());
+    sai_status_t status = sai_lag_api->create_lag_member(&lag_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {

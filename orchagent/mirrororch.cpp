@@ -423,7 +423,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     // TOS value format is the following:
     // DSCP 6 bits | ECN 2 bits
     attr.id =SAI_MIRROR_SESSION_ATTR_TOS;
-    attr.value.u16 = session.dscp << MIRROR_SESSION_DSCP_SHIFT;
+    attr.value.u16 = (uint16_t)(session.dscp << MIRROR_SESSION_DSCP_SHIFT);
     attrs.push_back(attr);
 
     attr.id =SAI_MIRROR_SESSION_ATTR_TTL;
@@ -452,7 +452,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
     session.status = true;
 
-    status = sai_mirror_api->create_mirror_session(&session.sessionId, gSwitchId, attrs.size(), attrs.data());
+    status = sai_mirror_api->create_mirror_session(&session.sessionId, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to activate mirroring session %s\n", name.c_str());
