@@ -396,6 +396,10 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
     attrs.push_back(attr);
 
+    attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
     attr.id =SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
     attr.value.u16 = ETH_P_8021Q;
     attrs.push_back(attr);
