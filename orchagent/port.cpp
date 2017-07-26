@@ -44,7 +44,7 @@ sai_status_t Port::bindAclTable(sai_object_id_t& group_member_oid, sai_object_id
         status = sai_acl_api->create_acl_table_group(&groupOid, gSwitchId, group_attrs.size(), group_attrs.data());
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to create ACL table group: %d", status);
+            SWSS_LOG_ERROR("Failed to create ACL table group, rv:%d", status);
             return status;
         }
 
@@ -54,13 +54,16 @@ sai_status_t Port::bindAclTable(sai_object_id_t& group_member_oid, sai_object_id
         sai_attribute_t port_attr;
         port_attr.id = SAI_PORT_ATTR_INGRESS_ACL;
         port_attr.value.oid = groupOid;
+
         status = sai_port_api->set_port_attribute(m_port_id, &port_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to bind port %lu to ACL table group %lu: %d",
-                    m_port_id, groupOid, status);
+            SWSS_LOG_ERROR("Failed to bind port %s to ACL table group %lx, rv:%d",
+                    m_alias.c_str(), groupOid, status);
             return status;
         }
+
+        SWSS_LOG_NOTICE("Create ACL table group and bind port %s to it", m_alias.c_str());
     }
     else
     {
@@ -72,20 +75,21 @@ sai_status_t Port::bindAclTable(sai_object_id_t& group_member_oid, sai_object_id
 
     sai_attribute_t member_attr;
     member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID;
-    member_attr.value.s32 = groupOid;
+    member_attr.value.oid = groupOid;
     member_attrs.push_back(member_attr);
 
     member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID;
-    member_attr.value.s32 = table_oid;
+    member_attr.value.oid = table_oid;
     member_attrs.push_back(member_attr);
 
     member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
-    member_attr.value.s32 = 100; // TODO: double check!
+    member_attr.value.u32 = 100; // TODO: double check!
     member_attrs.push_back(member_attr);
 
     status = sai_acl_api->create_acl_table_group_member(&group_member_oid, gSwitchId, member_attrs.size(), member_attrs.data());
-    if (status != SAI_STATUS_SUCCESS) {
-        SWSS_LOG_ERROR("Failed to create member table %lu for ACL table group %lu: %d",
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create member in ACL table group %lx for ACL table group %lx, rv:%d",
                 table_oid, groupOid, status);
         return status;
     }
