@@ -222,12 +222,20 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             }
             else if (fvField(*i) == buffer_dynamic_th_field_name)
             {
+                attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
+                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC;
+                attribs.push_back(attr);
+
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
                 attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attribs.push_back(attr);
             }
             else if (fvField(*i) == buffer_static_th_field_name)
             {
+                attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
+                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC;
+                attribs.push_back(attr);
+
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
                 attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attribs.push_back(attr);
