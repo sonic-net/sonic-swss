@@ -515,7 +515,7 @@ bool AclRule::removeCounter()
         return true;
     }
 
-    if (sai_acl_api->remove_acl_entry(m_counterOid) != SAI_STATUS_SUCCESS)
+    if (sai_acl_api->remove_acl_counter(m_counterOid) != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove ACL counter for rule %s in table %s", m_id.c_str(), m_tableId.c_str());
         return false;
