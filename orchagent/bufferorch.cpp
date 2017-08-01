@@ -223,7 +223,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             else if (fvField(*i) == buffer_dynamic_th_field_name)
             {
                 attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
-                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC;
+                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_INHERIT_BUFFER_POOL_MODE;
                 attribs.push_back(attr);
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
@@ -233,7 +233,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             else if (fvField(*i) == buffer_static_th_field_name)
             {
                 attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
-                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC;
+                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_INHERIT_BUFFER_POOL_MODE;
                 attribs.push_back(attr);
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
