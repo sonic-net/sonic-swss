@@ -199,8 +199,8 @@ int main(int argc, char **argv)
     /* Disable/enable SwSS recording */
     if (gSwssRecord)
     {
-        gRecordFile = record_location + "/" + "swss." + getTimestamp() + ".rec";
-        gRecordOfs.open(gRecordFile);
+        gRecordFile = record_location + "/" + "swss.rec";
+        gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
         if (!gRecordOfs.is_open())
         {
             SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());
