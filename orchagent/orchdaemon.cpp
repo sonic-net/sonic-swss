@@ -68,9 +68,11 @@ bool OrchDaemon::init()
         APP_BUFFER_QUEUE_TABLE_NAME,
         APP_BUFFER_PG_TABLE_NAME,
         APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
-        APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
+        APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME,
+        APP_BUFFER_PORT_CONFIG_TO_PG_PROFILE_TABLE,
+        APP_BUFFER_PORT_CABLE_LENGTH_TABLE
     };
-    BufferOrch *buffer_orch = new BufferOrch(m_applDb, buffer_tables);
+    BufferOrch *buffer_orch = new BufferOrch(m_applDb, buffer_tables, gPortsOrch);
 
     MirrorOrch *mirror_orch = new MirrorOrch(m_applDb, APP_MIRROR_SESSION_TABLE_NAME, gPortsOrch, route_orch, neigh_orch, gFdbOrch);
 

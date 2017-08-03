@@ -20,26 +20,48 @@ const string buffer_pool_mode_dynamic_value = "dynamic";
 const string buffer_pool_mode_static_value  = "static";
 const string buffer_profile_list_field_name = "profile_list";
 
-class BufferOrch : public Orch
+const string pgs = "3-4";
+const vector<uint32_t> supported_speed = { 10000, 25000, 40000, 50000, 100000 };
+const vector<uint32_t> supported_cable = { 5, 40, 300 };
+
+
+class BufferOrch : public Orch, public Observer, public Subject
 {
 public:
-    BufferOrch(DBConnector *db, vector<string> &tableNames);
+    BufferOrch(DBConnector *db, vector<string> &tableNames, PortsOrch *portsOrch);
     static type_map m_buffer_type_maps;
 private:
     typedef task_process_status (BufferOrch::*buffer_table_handler)(Consumer& consumer);
     typedef map<string, buffer_table_handler> buffer_table_handler_map;
     typedef pair<string, buffer_table_handler> buffer_handler_pair;
+    typedef map<string, string> cable_length_map;
+    typedef map<string, string> port_config_profile_map;
 
     virtual void doTask(Consumer& consumer);
+    virtual void update(SubjectType type, void *cntx);
+    void updatePortProfile(const PortSpeedUpdate& update);
     void initTableHandlers();
+    bool getTableValue(string table_name, string table_key, string item_key, string &item_value);
+    bool getTableValue(string table_name, string table_key, string item_key, uint32_t &item_value);
+    bool setTableValue(string table_name, string table_key, string item_key, string &item_value);
+    bool setTableValue(string table_name, string table_key, string item_key, uint32_t &item_value);
+    string cutTableKey(string fullTableName);
+    uint32_t roundUp(uint32_t value, vector<uint32_t> round_values);
+
     task_process_status processBufferPool(Consumer &consumer);
     task_process_status processBufferProfile(Consumer &consumer);
     task_process_status processQueue(Consumer &consumer);
     task_process_status processPriorityGroup(Consumer &consumer);
     task_process_status processIngressBufferProfileList(Consumer &consumer);
     task_process_status processEgressBufferProfileList(Consumer &consumer);
+    task_process_status processPortConfigToPgProfile(Consumer &consumer);
+    task_process_status processPortCableLenth(Consumer &consumer);
 
+    swss::DBConnector m_db;
+    PortsOrch *m_portsOrch;
+    cable_length_map m_cableLengthMap;
     buffer_table_handler_map m_bufferHandlerMap;
+    port_config_profile_map m_portConfigProfileMap;
 };
 #endif /* SWSS_BUFFORCH_H */
 

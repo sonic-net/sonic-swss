@@ -11,8 +11,6 @@ extern sai_queue_api_t *sai_queue_api;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_buffer_api_t *sai_buffer_api;
 
-extern PortsOrch *gPortsOrch;
-
 using namespace std;
 
 type_map BufferOrch::m_buffer_type_maps = {
@@ -21,14 +19,39 @@ type_map BufferOrch::m_buffer_type_maps = {
     {APP_BUFFER_QUEUE_TABLE_NAME, new object_map()},
     {APP_BUFFER_PG_TABLE_NAME, new object_map()},
     {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_map()},
-    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()}
+    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()},
+    {APP_BUFFER_PORT_CONFIG_TO_PG_PROFILE_TABLE, new object_map()},
+    {APP_BUFFER_PORT_CABLE_LENGTH_TABLE, new object_map()}
 };
 
-BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
+BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames, PortsOrch *portsOrch) :
+    Orch(db, tableNames),
+    m_portsOrch(portsOrch),
+    m_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
-};
+
+    m_portsOrch->attach(this);
+}
+
+void BufferOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    assert(cntx);
+
+    switch(type) {
+    case SUBJECT_TYPE_PORT_SPEED_CHANGE:
+    {
+        PortSpeedUpdate *update = static_cast<PortSpeedUpdate *>(cntx);
+        updatePortProfile(*update);
+        break;
+    }
+    default:
+        break;
+    }
+}
 
 void BufferOrch::initTableHandlers()
 {
@@ -39,6 +62,9 @@ void BufferOrch::initTableHandlers()
     m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PG_TABLE_NAME, &BufferOrch::processPriorityGroup));
     m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, &BufferOrch::processIngressBufferProfileList));
     m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferOrch::processEgressBufferProfileList));
+    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_CONFIG_TO_PG_PROFILE_TABLE, &BufferOrch::processPortConfigToPgProfile));
+    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_CABLE_LENGTH_TABLE, &BufferOrch::processPortCableLenth));
+
 }
 
 task_process_status BufferOrch::processBufferPool(Consumer &consumer)
@@ -323,7 +349,7 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
     {
         Port port;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
-        if (!gPortsOrch->getPort(port_name, port))
+        if (!m_portsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
@@ -395,7 +421,7 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     {
         Port port;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
-        if (!gPortsOrch->getPort(port_name, port))
+        if (!m_portsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
@@ -459,7 +485,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
     attr.value.objlist.list = profile_list.data();
     for (string port_name : port_names)
     {
-        if (!gPortsOrch->getPort(port_name, port))
+        if (!m_portsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
@@ -505,7 +531,7 @@ task_process_status BufferOrch::processEgressBufferProfileList(Consumer &consume
     attr.value.objlist.list = profile_list.data();
     for (string port_name : port_names)
     {
-        if (!gPortsOrch->getPort(port_name, port))
+        if (!m_portsOrch->getPort(port_name, port))
         {
             SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
             return task_process_status::task_invalid_entry;
@@ -520,17 +546,292 @@ task_process_status BufferOrch::processEgressBufferProfileList(Consumer &consume
     return task_process_status::task_success;
 }
 
+/*
+Input sample "BUFFER_PORT_CABLE_LENGTH_TABLE:"
+             "port_alias" : "cable_length"
+*/
+task_process_status BufferOrch::processPortCableLenth(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    KeyOpFieldsValuesTuple tuple = consumer.m_toSync.begin()->second;
+    string key = kfvKey(tuple);
+    string op = kfvOp(tuple);
+
+    if (op != SET_COMMAND)
+    {
+        return task_process_status::task_invalid_operation;
+    }
+
+    for (auto itp : kfvFieldsValues(tuple))
+    {
+        Port port;
+        string port_name = fvField(itp);
+        string cable_length = fvValue(itp);
+
+        if (!m_portsOrch->getPort(port_name, port))
+        {
+            SWSS_LOG_ERROR("Port with alias:%s not found", port_name.c_str());
+            return task_process_status::task_invalid_entry;
+        }
+
+        m_cableLengthMap[port_name] = cable_length;
+    }
+
+    return task_process_status::task_success;
+}
+
+/*
+Input sample "PORT_CONFIG_TO_PG_PROFILE_TABLE:"
+             "40000_5"          : "[BUFFER_PROFILE_TABLE:pg_lossless_40G_5m_profile]",
+             "<speed>_<length>" : "[profile_name]",
+             ...
+*/
+task_process_status BufferOrch::processPortConfigToPgProfile(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    KeyOpFieldsValuesTuple tuple = consumer.m_toSync.begin()->second;
+    string table_name = consumer.m_consumer->getTableName();
+    //sai_object_id_t buffer_profile_id;
+    string op = kfvOp(tuple);
+
+    SWSS_LOG_DEBUG("Processing:%s", table_name.c_str());
+
+    if (op != SET_COMMAND)
+    {
+        return task_process_status::task_invalid_operation;
+    }
+
+    for (auto it : kfvFieldsValues(tuple))
+    {
+        string port_config = fvField(it);
+        string buffer_profile_name = fvValue(it);
+
+        m_portConfigProfileMap[port_config] = buffer_profile_name;
+    }
+
+    return task_process_status::task_success;
+}
+
+/*
+Read string value fron the DB for given table/key
+*/
+bool BufferOrch::getTableValue(string table_name, string table_key, string item_key, string &item_value)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> values;
+    swss::Table table(&m_db, table_name);
+
+    table.get(table_key, values);
+
+    for(auto it : values)
+    {
+        if (fvField(it) == item_key)
+        {
+            item_value = fvValue(it);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+/*
+Read integer value fron the DB for given table/key
+*/
+bool BufferOrch::getTableValue(string table_name, string table_key, string item_key, uint32_t &item_value)
+{
+    SWSS_LOG_ENTER();
+
+    string str_item_value;
+
+    bool status = getTableValue(table_name, table_key, item_key, str_item_value);
+    if (status)
+    {
+        item_value = stoul(str_item_value);
+    }
+
+    return status;
+}
+
+/*
+Write string value fron the DB for given table/key
+*/
+bool BufferOrch::setTableValue(string table_name, string table_key, string item_key, string &item_value)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> values;
+    swss::Table table(&m_db, table_name);
+
+    FieldValueTuple fv(item_key, item_value);
+    values.push_back(fv);
+
+    table.set(table_key, values);
+
+    // since table.set returns void - check result by reading the value back
+    string value;
+    bool read_status = getTableValue(table_name, table_key, item_key, value);
+
+    return read_status && value == item_value;
+}
+
+/*
+Write integer value fron the DB for given table/key
+*/
+bool BufferOrch::setTableValue(string table_name, string table_key, string item_key, uint32_t &item_value)
+{
+    SWSS_LOG_ENTER();
+
+    string str_value = to_string(item_value);
+
+    return setTableValue(table_name, table_key, item_key, str_value);
+}
+
+/*
+Return "key" part from the full table name used in the buffers configuration syntax
+Input: [BUFFER_POOL_TABLE:ingress_lossless_pg_pool]
+Return: ingress_lossless_pg_pool
+*/
+string BufferOrch::cutTableKey(string fullTableName)
+{
+    SWSS_LOG_ENTER();
+
+    size_t first = fullTableName.find(":");
+    size_t last = fullTableName.find("]");
+
+    if (first == string::npos || last == string::npos)
+    {
+        SWSS_LOG_DEBUG("Expected delimiters not found");
+        return fullTableName;
+    }
+
+    return fullTableName.substr(first + 1, last - first - 1);
+}
+
+/*
+Round up input value to the closest equal or greater value from the list
+Input: 56, [10, 25, 40, 50, 100]
+Return: 100
+*/
+uint32_t BufferOrch::roundUp(uint32_t value, vector<uint32_t> round_values)
+{
+    SWSS_LOG_ENTER();
+
+    for(auto round_val : round_values)
+    {
+        if (round_val >= value)
+            return round_val;
+    }
+
+    return value;
+}
+
+void BufferOrch::updatePortProfile(const PortSpeedUpdate& update)
+{
+    SWSS_LOG_ENTER();
+
+    string port_name = update.port.m_alias;
+
+    if (m_cableLengthMap.count(port_name) == 0)
+    {
+        SWSS_LOG_ERROR("Cable length is not configured for port %s. Unable to update buffer profile", port_name.c_str());
+        return;
+    }
+
+    uint32_t port_speed = roundUp(update.speed, supported_speed);
+    string cable_length = m_cableLengthMap[port_name];
+    string port_config = to_string(port_speed) + "_" + cable_length;
+
+    if (m_portConfigProfileMap.count(port_config) == 0)
+    {
+        SWSS_LOG_ERROR("Buffer profile is not configured for port %s, speed %d, cable length %s. "
+                       "Unable to update buffer profile", port_name.c_str(), port_speed, cable_length.c_str());
+        return;
+    }
+
+    // get old profile
+    string old_profile_name;
+    if (!getTableValue(APP_BUFFER_PG_TABLE_NAME, port_name + ":" + pgs, buffer_profile_field_name, old_profile_name))
+    {
+        ;
+        SWSS_LOG_ERROR("Failed to read %s from table %s", buffer_profile_field_name.c_str(),
+                       (string(APP_BUFFER_PG_TABLE_NAME) + port_name + ":" + pgs).c_str());
+        return;
+    }
+    old_profile_name = cutTableKey(old_profile_name);
+
+    // get old profile size
+    uint32_t old_profile_size;
+    if (!getTableValue(APP_BUFFER_PROFILE_TABLE_NAME, old_profile_name, buffer_size_field_name, old_profile_size))
+    {
+        SWSS_LOG_ERROR("Failed to read %s from table %s", buffer_size_field_name.c_str(),
+                       (string(APP_BUFFER_PROFILE_TABLE_NAME) + old_profile_name).c_str());
+        return;
+    }
+
+    //get new profile
+    string new_profile_name = cutTableKey(m_portConfigProfileMap[port_config]);
+
+    // get new profile size
+    uint32_t new_profile_size;
+    if (!getTableValue(APP_BUFFER_PROFILE_TABLE_NAME, new_profile_name, buffer_size_field_name, new_profile_size))
+    {
+        SWSS_LOG_ERROR("Failed to read %s from table %s", buffer_size_field_name.c_str(),
+                       (string(APP_BUFFER_PROFILE_TABLE_NAME) + new_profile_name).c_str());
+        return;
+    }
+
+    // get profile pool name
+    string pool_name;
+    if (!getTableValue(APP_BUFFER_PROFILE_TABLE_NAME, old_profile_name, buffer_pool_field_name, pool_name))
+    {
+        SWSS_LOG_ERROR("Failed to read %s from table %s", buffer_pool_field_name.c_str(),
+                       (string(APP_BUFFER_PROFILE_TABLE_NAME) + old_profile_name).c_str());
+        return;
+    }
+    pool_name = cutTableKey(pool_name);
+
+    // get old pool size
+    uint32_t pool_size;
+    if (!getTableValue(APP_BUFFER_POOL_TABLE_NAME, pool_name, buffer_size_field_name, pool_size))
+    {
+        SWSS_LOG_ERROR("Failed to read %s from table %s", buffer_size_field_name.c_str(),
+                       (string(APP_BUFFER_POOL_TABLE_NAME) + pool_name).c_str());
+        return;
+    }
+
+    // write new pool size
+    pool_size = pool_size - old_profile_size + new_profile_size;
+    if (!setTableValue(APP_BUFFER_POOL_TABLE_NAME, pool_name, buffer_size_field_name, pool_size))
+    {
+        SWSS_LOG_ERROR("Failed to write %s to table %s", buffer_size_field_name.c_str(),
+                       (string(APP_BUFFER_POOL_TABLE_NAME) + pool_name).c_str());
+        return;
+    }
+
+    // update port profile
+    if (!setTableValue(APP_BUFFER_PG_TABLE_NAME, port_name + ":" + pgs, buffer_profile_field_name, m_portConfigProfileMap[port_config]))
+    {
+        SWSS_LOG_ERROR("Failed to write %s to table %s", buffer_profile_field_name.c_str(),
+                       (string(APP_BUFFER_PG_TABLE_NAME) + port_name + ":" + pgs).c_str());
+        return;
+    }
+    SWSS_LOG_NOTICE("Port %s buffer PG profile for pfc enabled queues changed to %s", port_name.c_str(), new_profile_name.c_str());
+}
+
 void BufferOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple tuple = it->second;
         string map_type_name = consumer.m_consumer->getTableName();
         if (m_buffer_type_maps.find(map_type_name) == m_buffer_type_maps.end())
         {
-            SWSS_LOG_ERROR("Unrecognised qos table encountered:%s", map_type_name.c_str());
+            SWSS_LOG_ERROR("Unrecognised buffers table encountered:%s", map_type_name.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -548,6 +849,10 @@ void BufferOrch::doTask(Consumer &consumer)
             break;
         case task_process_status::task_invalid_entry:
             SWSS_LOG_ERROR("Invalid buffer task item was encountered, removing from queue.");
+            it = consumer.m_toSync.erase(it);
+            break;
+        case task_process_status::task_invalid_operation:
+            SWSS_LOG_ERROR("Invalid operation for the table, removing from queue (table %s)", map_type_name.c_str());
             it = consumer.m_toSync.erase(it);
             break;
         case task_process_status::task_failed:
