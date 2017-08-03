@@ -132,8 +132,11 @@
             "wred_yellow_enable":"true",
             "ecn":"ecn_all",
             "red_max_threshold":"512000",
+            "red_min_threshold":"512000",
             "yellow_max_threshold":"512000",
-            "green_max_threshold": "184320"
+            "yellow_min_threshold":"512000",
+            "green_max_threshold": "184320",
+            "green_min_threshold": "184320"
         },
         "OP": "SET"
     },

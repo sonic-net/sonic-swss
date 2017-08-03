@@ -283,8 +283,9 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             attr.id = SAI_WRED_ATTR_YELLOW_MAX_THRESHOLD;
             attr.value.s32 = stoi(fvValue(*i));
             attribs.push_back(attr);
-
-            // set min threshold to the same value as MAX
+        }
+        else if (fvField(*i) == yellow_min_threshold_field_name)
+        {
             attr.id = SAI_WRED_ATTR_YELLOW_MIN_THRESHOLD;
             attr.value.s32 = stoi(fvValue(*i));
             attribs.push_back(attr);
@@ -294,19 +295,21 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             attr.id = SAI_WRED_ATTR_GREEN_MAX_THRESHOLD;
             attr.value.s32 = stoi(fvValue(*i));
             attribs.push_back(attr);
-
-            // set min threshold to the same value as MAX
-            attr.id = SAI_WRED_ATTR_GREEN_MIN_THRESHOLD;
-            attr.value.s32 = stoi(fvValue(*i));
-            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == green_min_threshold_field_name)
+        {
+           attr.id = SAI_WRED_ATTR_GREEN_MIN_THRESHOLD;
+           attr.value.s32 = stoi(fvValue(*i));
+           attribs.push_back(attr);
         }
         else if (fvField(*i) == red_max_threshold_field_name)
         {
             attr.id = SAI_WRED_ATTR_RED_MAX_THRESHOLD;
             attr.value.s32 = stoi(fvValue(*i));
             attribs.push_back(attr);
-
-            // set min threshold to the same value as MAX
+        }
+        else if (fvField(*i) == red_min_threshold_field_name)
+        {
             attr.id = SAI_WRED_ATTR_RED_MIN_THRESHOLD;
             attr.value.s32 = stoi(fvValue(*i));
             attribs.push_back(attr);

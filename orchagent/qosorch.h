@@ -13,8 +13,11 @@ const string tc_to_pg_map_field_name           = "tc_to_pg_map";
 const string tc_to_queue_field_name            = "tc_to_queue_map";
 const string scheduler_field_name              = "scheduler";
 const string red_max_threshold_field_name      = "red_max_threshold";
+const string red_min_threshold_field_name      = "red_min_threshold";
 const string yellow_max_threshold_field_name   = "yellow_max_threshold";
+const string yellow_min_threshold_field_name   = "yellow_min_threshold";
 const string green_max_threshold_field_name    = "green_max_threshold";
+const string green_min_threshold_field_name    = "green_min_threshold";
 
 const string wred_profile_field_name           = "wred_profile";
 const string wred_red_enable_field_name        = "wred_red_enable";
