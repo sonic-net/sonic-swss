@@ -658,10 +658,6 @@ sai_object_id_t QosOrch::initSystemAclTable()
     attr.value.s32 = SAI_ACL_STAGE_INGRESS;
     attrs.push_back(attr);
 
-    attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
-    attr.value.u32 = 10;
-    attrs.push_back(attr);
-
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_ECN;
     attr.value.booldata = true;
     attrs.push_back(attr);
