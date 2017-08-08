@@ -188,24 +188,22 @@ int main(int argc, char **argv)
         try
         {
             ifstream fs(i);
-            if (fs.is_open())
-            {
-                if (!load_json_db_data(fs, db_items))
-                {
-                    SWSS_LOG_ERROR("Failed loading data from JSON file %s", i.c_str());
-                    return EXIT_FAILURE;
-                }
-
-                if (!write_db_data(db_items))
-                {
-                    SWSS_LOG_ERROR("Failed applying data from JSON file %s", i.c_str());
-                    return EXIT_FAILURE;
-                }
-            }
-            else
+            if (!fs)
             {
                 SWSS_LOG_ERROR("Failed to open file %s", i.c_str());
-                cout << "Failed to open file:" << i.c_str() << endl;
+                cerr << "Failed to open file " << i.c_str() << endl;
+                return EXIT_FAILURE;
+            }
+
+            if (!load_json_db_data(fs, db_items))
+            {
+                SWSS_LOG_ERROR("Failed loading data from JSON file %s", i.c_str());
+                return EXIT_FAILURE;
+            }
+
+            if (!write_db_data(db_items))
+            {
+                SWSS_LOG_ERROR("Failed applying data from JSON file %s", i.c_str());
                 return EXIT_FAILURE;
             }
         }
