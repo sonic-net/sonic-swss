@@ -180,6 +180,9 @@ int VlanCfgMgr::vlan_show(int argc, char **argv)
     char *filter_dev = NULL;
     unsigned int if_index;
     string cmd = "bridge vlan show";
+    string redis_cmd_db = "redis-cli -n ";
+    string redis_cmd_keys = "\\*VLAN\\*";
+    string redis_cmd;
     short vid = -1;
 
     while (argc > 0) {
@@ -193,6 +196,13 @@ int VlanCfgMgr::vlan_show(int argc, char **argv)
         argc--; argv++;
     }
 
+    redis_cmd_db += std::to_string(CONFIG_DB) + " ";
+
+    if (vid >= 0) {
+        redis_cmd_keys += std::to_string(vid) + "\\*";
+    }
+
+   // redis_cmd += " hgetall ";
     if (filter_dev) {
         if_index = if_nametoindex(filter_dev);
         if (if_index == 0) {
@@ -201,15 +211,22 @@ int VlanCfgMgr::vlan_show(int argc, char **argv)
         }
         cmd += " dev ";
         cmd += filter_dev;
+
+        redis_cmd_keys += filter_dev;
+        redis_cmd_keys += "\\*";
     }
+    redis_cmd = redis_cmd_db + " KEYS " + redis_cmd_keys;
+    redis_cmd += " | xargs -n 1  -I %   sh -c 'echo %; ";
+    redis_cmd += redis_cmd_db + "hgetall %; echo'";
 
+    cout << "-----Redis CFGDB data---" << endl;
+    cout << redis_cmd <<endl;
+    cout << swss::exec(redis_cmd.c_str()) << endl;
+
+    cout << "----Linux bridge vlan data----" << endl;
     cout << swss::exec(cmd.c_str()) << endl;
-
-    // TODO: show VLAN and VLAN member table content
-    vid = vid;
     return 0;
 }
-
 
 VlanCfgMgr::VlanCfgMgr(DBConnector *db) :
     m_vlanTableProducer(db, CFG_VLAN_TABLE_NAME),
