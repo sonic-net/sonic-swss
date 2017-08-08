@@ -44,6 +44,7 @@ protected:
     virtual void doTask(Consumer &consumer) = 0;
     void recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
     string dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
+    bool SyncCfgDB(string tableName, Table &tableConsumer);
 };
 
 #endif /* SWSS_CFGORCH_H */

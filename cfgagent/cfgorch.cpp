@@ -66,6 +66,53 @@ bool CfgOrch::hasSelectable(ConsumerStateTable *selectable) const
     return false;
 }
 
+bool CfgOrch::SyncCfgDB(string tableName, Table &tableConsumer)
+{
+    SWSS_LOG_ENTER();
+
+    lock_guard<mutex> lock(gDbMutex);
+
+    auto consumer_it = m_consumerMap.find(tableName);
+    if (consumer_it == m_consumerMap.end())
+    {
+        SWSS_LOG_ERROR("Unrecognized tableName:%s\n", tableName.c_str());
+        return false;
+    }
+    Consumer& consumer = consumer_it->second;
+
+    KeyOpFieldsValuesTuple tuple;
+    vector<KeyOpFieldsValuesTuple> tuples;
+
+    tableConsumer.getTableContent(tuples);
+    for (auto tuple : tuples)
+    {
+        string key = kfvKey(tuple);
+
+        /* Record incoming tasks, for init op is empty in the record */
+        if (gSwssCfgRecord)
+        {
+            recordTuple(consumer, tuple);
+        }
+
+        /* Directly put it into consumer.m_toSync map */
+        if (consumer.m_toSync.find(key) == consumer.m_toSync.end())
+        {
+           consumer.m_toSync[key] = make_tuple(key, SET_COMMAND, kfvFieldsValues(tuple));
+        }
+        /*
+         * Syncing from DB directly, don't expect duplicate keys.
+         * Or there is pending task from consumber state pipe, in this case just skip it.
+         */
+        else
+        {
+            SWSS_LOG_WARN("Duplicate key %s found in tableName:%s\n", key.c_str(), tableName.c_str());
+            continue;
+        }
+        doTask(consumer);
+    }
+    return true;
+}
+
 bool CfgOrch::execute(string tableName)
 {
     SWSS_LOG_ENTER();

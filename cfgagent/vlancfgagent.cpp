@@ -48,8 +48,12 @@ VlanCfgAgent::VlanCfgAgent(DBConnector *cfgDb, DBConnector *appDb, vector<string
     cmd = "bridge vlan del vid " + std::to_string(DEFAULT_VLAN_ID)
             + " dev " + DOT1Q_BRIDGE_NAME + " self";
     swss::exec(cmd.c_str());
+}
 
-    // TODO: is there need to sync with CFGDB ?
+void VlanCfgAgent::SyncCfgDB()
+{
+    CfgOrch::SyncCfgDB(CFG_VLAN_TABLE_NAME, m_cfgVlanTableConsumer);
+    CfgOrch::SyncCfgDB(CFG_VLAN_MEMBER_TABLE_NAME, m_cfgVlanMemberTableConsumer);
 }
 
 bool VlanCfgAgent::addHostVlan(int vlan_id)

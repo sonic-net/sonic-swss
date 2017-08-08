@@ -117,8 +117,8 @@ int main(int argc, char **argv)
 
         Table porttableconsumer(&appDb, APP_PORT_TABLE_NAME);
 
-        VlanCfgAgent vlancfgagent(&cfgDb, &appDb, cfg_vlan_tables);
         PortCfgAgent portcfgagent(&cfgDb, &appDb, CFG_PORT_TABLE_NAME);
+        VlanCfgAgent vlancfgagent(&cfgDb, &appDb, cfg_vlan_tables);
         IntfCfgAgent intfcfgagent(&cfgDb, &appDb, CFG_INTF_TABLE_NAME);
         std::vector<CfgOrch *> cfgOrchList = {&vlancfgagent, &portcfgagent, &intfcfgagent};
 
@@ -150,6 +150,7 @@ int main(int argc, char **argv)
                     {
                         gInitDone = true;
                         SWSS_LOG_NOTICE("Physical ports hostif init done\n");
+                        vlancfgagent.SyncCfgDB();
                     }
                 }
                 continue;

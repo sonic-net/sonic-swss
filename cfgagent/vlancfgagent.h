@@ -15,7 +15,7 @@ class VlanCfgAgent : public CfgOrch
 {
 public:
     VlanCfgAgent(DBConnector *cfgDb, DBConnector *appDb, vector<string> tableNames);
-
+    void SyncCfgDB();
 private:
 	ProducerStateTable m_vlanTableProducer, m_vlanMemberTableProducer;
     Table m_cfgVlanTableConsumer, m_cfgVlanMemberTableConsumer;

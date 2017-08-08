@@ -202,7 +202,6 @@ int VlanCfgMgr::vlan_show(int argc, char **argv)
         redis_cmd_keys += std::to_string(vid) + "\\*";
     }
 
-   // redis_cmd += " hgetall ";
     if (filter_dev) {
         if_index = if_nametoindex(filter_dev);
         if (if_index == 0) {
