@@ -14,9 +14,11 @@ class IntfCfgAgent : public CfgOrch
 {
 public:
     IntfCfgAgent(DBConnector *cfgDb, DBConnector *appDb, string tableName);
+    void SyncCfgDB();
 
 private:
 	ProducerStateTable m_intfTableProducer;
+	Table m_cfgIntfTableConsumer;
 
     bool setIntfIp(string &alias, string &opCmd, string &ipPrefixStr);
     void doTask(Consumer &consumer);

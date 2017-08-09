@@ -14,16 +14,17 @@
 using namespace std;
 using namespace swss;
 
-#define DEFAULT_PORT_VLAN_ID     1
-
-const string INTFS_PREFIX = "Ethernet";
-extern bool gInitDone;
-
 IntfCfgAgent::IntfCfgAgent(DBConnector *cfgDb, DBConnector *appDb, string tableName) :
         CfgOrch(cfgDb, tableName),
+        m_cfgIntfTableConsumer(cfgDb, tableName),
         m_intfTableProducer(appDb, APP_INTF_TABLE_NAME)
 {
 
+}
+
+void IntfCfgAgent::SyncCfgDB()
+{
+    CfgOrch::SyncCfgDB(CFG_INTF_TABLE_NAME, m_cfgIntfTableConsumer);
 }
 
 bool IntfCfgAgent::setIntfIp(string &alias, string &opCmd, string &ipPrefixStr)
@@ -39,9 +40,6 @@ bool IntfCfgAgent::setIntfIp(string &alias, string &opCmd, string &ipPrefixStr)
 void IntfCfgAgent::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-    // Don't start port processing until hostifs for physical ports are ready
-    if (!gInitDone)
-        return;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -68,7 +66,7 @@ void IntfCfgAgent::doTask(Consumer &consumer)
             setIntfIp(alias, opCmd, ipPrefixStr);
         }
 
-        SWSS_LOG_DEBUG("Intf doTask: %s", (dumpTuple(consumer, t)).c_str());
+        SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
 
         it = consumer.m_toSync.erase(it);
             continue;

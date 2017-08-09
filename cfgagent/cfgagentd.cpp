@@ -151,6 +151,8 @@ int main(int argc, char **argv)
                         gInitDone = true;
                         SWSS_LOG_NOTICE("Physical ports hostif init done\n");
                         vlancfgagent.SyncCfgDB();
+                        /* Sync interface config after VLAN */
+                        intfcfgagent.SyncCfgDB();
                     }
                 }
                 continue;

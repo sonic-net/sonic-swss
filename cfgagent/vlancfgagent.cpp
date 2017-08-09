@@ -327,10 +327,6 @@ void VlanCfgAgent::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    // Don't start vlan processing until hostifs for physical ports are ready
-    if (!gInitDone)
-        return;
-
     string table_name = consumer.m_consumer->getTableName();
 
     if (table_name == CFG_VLAN_TABLE_NAME)

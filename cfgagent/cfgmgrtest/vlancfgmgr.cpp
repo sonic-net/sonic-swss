@@ -8,10 +8,7 @@
 #include <cerrno>
 #include <cstring>
 #include "schema.h"
-#include "logger.h"
-#include "dbconnector.h"
 #include "redisclient.h"
-#include "producerstatetable.h"
 #include "exec.h"
 #include "cfgmgr.h"
 #include "vlancfgmgr.h"
@@ -21,7 +18,7 @@ using namespace swss;
 
 #define VLAN_PREFIX         "Vlan"
 
-[[ noreturn ]] void usage(std::string program, int status, std::string message)
+[[ noreturn ]] static void usage(std::string program, int status, std::string message)
 {
     if (message.size() != 0)
     {
