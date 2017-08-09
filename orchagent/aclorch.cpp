@@ -186,8 +186,8 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if(attr_name == MATCH_DSCP)
         {
-            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value, 0, 63);
-            value.aclfield.mask.u8 = 0xFF;
+            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value, 0, 0x3F);
+            value.aclfield.mask.u8 = 0x3F;
         }
         else if(attr_name == MATCH_IP_PROTOCOL)
         {
