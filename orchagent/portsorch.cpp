@@ -23,6 +23,11 @@ extern sai_object_id_t gSwitchId;
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 
+static char* hostif_vlan_tag[] = {
+    [SAI_HOSTIF_VLAN_TAG_STRIP]     = "SAI_HOSTIF_VLAN_TAG_STRIP",
+    [SAI_HOSTIF_VLAN_TAG_KEEP]      = "SAI_HOSTIF_VLAN_TAG_KEEP",
+    [SAI_HOSTIF_VLAN_TAG_ORIGINAL]  = "SAI_HOSTIF_VLAN_TAG_ORIGINAL"
+};
 /*
  * Initialize PortsOrch
  * 0) By default, a switch has one CPU port, one 802.1Q bridge, and one default
@@ -372,7 +377,7 @@ bool PortsOrch::setPortPvid (Port &port, sai_uint32_t pvid)
     return true;
 }
 
-bool PortsOrch::setHostIntfsStripTag(Port &port, bool strip)
+bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
 {
     SWSS_LOG_ENTER();
 
@@ -407,18 +412,18 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, bool strip)
     for (const auto p: portv)
     {
         sai_attribute_t attr;
-        attr.id = SAI_HOSTIF_ATTR_STRIP_TAG;
-        attr.value.booldata = strip;
+        attr.id = SAI_HOSTIF_ATTR_VLAN_TAG;
+        attr.value.s32 = strip;
 
         sai_status_t status = sai_hostif_api->set_hostif_attribute(p->m_hif_id, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_WARN("Failed to set VLAN tag stripping %s to host interface %s",
-                          strip ? "TRUE" : "FALSE", p->m_alias.c_str());
+            SWSS_LOG_WARN("Failed to set %s to host interface %s",
+                          hostif_vlan_tag[strip], p->m_alias.c_str());
             return false;
         }
-        SWSS_LOG_NOTICE("Set VLAN tag stripping %s to host interface %s",
-                          strip ? "TRUE" : "FALSE", p->m_alias.c_str());
+        SWSS_LOG_NOTICE("Set %s to host interface %s",
+                          hostif_vlan_tag[strip], p->m_alias.c_str());
     }
 
     return true;
@@ -1132,10 +1137,11 @@ bool PortsOrch::initializePort(Port &p)
      * Port has been removed from 1q bridge at PortsOrch constructor,
      * also start stipping off VLAN tag.
      */
-    bool rv = setHostIntfsStripTag(p, true);
+    bool rv = setHostIntfsStripTag(p, SAI_HOSTIF_VLAN_TAG_STRIP);
     if (rv != true)
     {
-        SWSS_LOG_ERROR("Failed to set tag stripping to true for hostif of port %s", p.m_alias.c_str());
+        SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
+            hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], p.m_alias.c_str());
         return false;
     }
 
@@ -1219,10 +1225,11 @@ bool PortsOrch::addBridgePort(Port &port)
         return false;
     }
 
-    bool rv = setHostIntfsStripTag(port, false);
+    bool rv = setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP);
     if (rv != true)
     {
-        SWSS_LOG_ERROR("Failed to set tag stripping to false for hostif of port %s", port.m_alias.c_str());
+        SWSS_LOG_ERROR("Failed to set for hostif of port %s",
+            hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], port.m_alias.c_str());
         return false;
     }
     m_portList[port.m_alias] = port;
@@ -1272,10 +1279,11 @@ bool PortsOrch::removeBridgePort(Port &port)
     }
     port.m_bridge_port_id = 0;
 
-    bool rv = setHostIntfsStripTag(port, true);
+    bool rv = setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP);
     if (rv != true)
     {
-        SWSS_LOG_ERROR("Failed to set tag stripping to true for hostif of port %s", port.m_alias.c_str());
+        SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
+            hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
         return false;
     }
 
@@ -1549,11 +1557,11 @@ bool PortsOrch::addLagMember(Port &lag, Port &port)
 
     if (lag.m_vlan_members.size() > 0)
     {
-        bool rv = setHostIntfsStripTag(port, false);
+        bool rv = setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP);
         if (rv != true)
         {
-            SWSS_LOG_ERROR("Failed to set tag stripping to false for hostif of port %s which is in LAG %s",
-                    port.m_alias.c_str(), lag.m_alias.c_str());
+            SWSS_LOG_ERROR("Failed to set %s for hostif of port %s which is in LAG %s",
+                    hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], port.m_alias.c_str(), lag.m_alias.c_str());
             return false;
         }
         return true;
@@ -1588,11 +1596,11 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
 
     if (lag.m_vlan_members.size() > 0)
     {
-        bool rv = setHostIntfsStripTag(port, true);
+        bool rv = setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP);
         if (rv != true)
         {
-            SWSS_LOG_ERROR("Failed to set tag stripping to true for hostif of port %s which is leaving LAG %s",
-                    port.m_alias.c_str(), lag.m_alias.c_str());
+            SWSS_LOG_ERROR("Failed to set %s for hostif of port %s which is leaving LAG %s",
+                    hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str(), lag.m_alias.c_str());
             return false;
         }
         return true;
