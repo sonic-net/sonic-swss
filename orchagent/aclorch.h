@@ -13,7 +13,6 @@
 #include "mirrororch.h"
 #include "observer.h"
 
-#define DEFAULT_TABLE_PRIORITY 10
 // ACL counters update interval in the DB
 // Value is in seconds. Should not be less than 5 seconds
 // (in worst case update of 1265 counters takes almost 5 sec)

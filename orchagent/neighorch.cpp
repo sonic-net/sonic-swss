@@ -43,7 +43,7 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, string alias)
     next_hop_attrs.push_back(next_hop_attr);
 
     sai_object_id_t next_hop_id;
-    sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, gSwitchId, next_hop_attrs.size(), next_hop_attrs.data());
+    sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, gSwitchId, (uint32_t)next_hop_attrs.size(), next_hop_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",

@@ -184,27 +184,33 @@ int main(int argc, char **argv)
     {
         SWSS_LOG_NOTICE("Loading config from JSON file:%s...", i.c_str());
 
-        ifstream fs;
         vector<KeyOpFieldsValuesTuple> db_items;
         try
         {
-            fs.open(i, fstream::in);
+            ifstream fs(i);
+            if (!fs)
+            {
+                SWSS_LOG_ERROR("Failed to open file %s", i.c_str());
+                cerr << "Failed to open file " << i.c_str() << endl;
+                return EXIT_FAILURE;
+            }
+
             if (!load_json_db_data(fs, db_items))
             {
-                SWSS_LOG_ERROR("Failed loading data from JSON file:%s", i.c_str());
+                SWSS_LOG_ERROR("Failed loading data from JSON file %s", i.c_str());
                 return EXIT_FAILURE;
             }
 
             if (!write_db_data(db_items))
             {
-                SWSS_LOG_ERROR("Failed applying data from JSON file:%s", i.c_str());
+                SWSS_LOG_ERROR("Failed applying data from JSON file %s", i.c_str());
                 return EXIT_FAILURE;
             }
         }
         catch(const exception &e)
         {
-            SWSS_LOG_ERROR("Exception caught:%s", e.what());
-            cout << "Exception caught:" << e.what() << endl;
+            SWSS_LOG_ERROR("Exception caught: %s", e.what());
+            cout << "Exception caught: " << e.what() << endl;
                 return EXIT_FAILURE;
         }
     }

@@ -109,7 +109,7 @@ void FpmLink::readMe()
         throw FpmConnectionClosedException();
     if (read < 0)
         throw system_error(errno, system_category());
-    m_pos+= read;
+    m_pos+= (uint32_t)read;
 
     /* Check for complete messages */
     while (true)
@@ -140,5 +140,5 @@ void FpmLink::readMe()
     }
 
     memmove(m_messageBuffer, m_messageBuffer + start, m_pos - start);
-    m_pos = m_pos - start;
+    m_pos = m_pos - (uint32_t)start;
 }

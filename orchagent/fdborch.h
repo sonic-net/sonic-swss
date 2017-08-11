@@ -45,7 +45,6 @@ private:
 
     bool addFdbEntry(const FdbEntry&, const string&, const string&);
     bool removeFdbEntry(const FdbEntry&);
-    bool splitKey(const string&, FdbEntry&);
 };
 
 #endif /* SWSS_FDBORCH_H */

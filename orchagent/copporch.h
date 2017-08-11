@@ -5,8 +5,13 @@
 #include <set>
 #include "orch.h"
 
+// trap fields
 const string copp_trap_id_list                = "trap_ids";
+const string copp_trap_action_field           = "trap_action";
+const string copp_trap_priority_field         = "trap_priority";
+
 const string copp_queue_field                 = "queue";
+
 // policer fields
 const string copp_policer_meter_type_field    = "meter_type";
 const string copp_policer_mode_field          = "mode";
@@ -15,7 +20,6 @@ const string copp_policer_cbs_field           = "cbs";
 const string copp_policer_cir_field           = "cir";
 const string copp_policer_pbs_field           = "pbs";
 const string copp_policer_pir_field           = "pir";
-const string copp_trap_action_field           = "trap_action";
 const string copp_policer_action_green_field  = "green_action";
 const string copp_policer_action_red_field    = "red_action";
 const string copp_policer_action_yellow_field = "yellow_action";
@@ -23,7 +27,7 @@ const string copp_policer_action_yellow_field = "yellow_action";
 /* TrapGroupPolicerTable: trap group ID, policer ID */
 typedef map<sai_object_id_t, sai_object_id_t> TrapGroupPolicerTable;
 /* TrapIdTrapGroupTable: trap ID, trap group ID */
-typedef map<sai_hostif_trap_type_t, sai_object_id_t> TrapIdTrapGroupTable, TrapTypeMap;
+typedef map<sai_hostif_trap_type_t, sai_object_id_t> TrapIdTrapGroupTable;
 
 class CoppOrch : public Orch
 {
@@ -31,12 +35,11 @@ public:
     CoppOrch(DBConnector *db, string tableName);
 protected:
     object_map m_trap_group_map;
-    TrapTypeMap m_trap_type_map;
 
     TrapGroupPolicerTable m_trap_group_policer_map;
     TrapIdTrapGroupTable m_syncdTrapIds;
 
-    void initDefaultHostTable();
+    void initDefaultHostIntfTable();
     void initDefaultTrapGroup();
     void initDefaultTrapIds();
 

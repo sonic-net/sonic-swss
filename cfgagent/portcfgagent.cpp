@@ -93,12 +93,12 @@ void PortCfgAgent::doTask(Consumer &consumer)
 
                 /* Set port mtu */
                 if (fvField(i) == "mtu") {
-                    mtu = stoul(fvValue(i));
+                    mtu = (uint32_t)stoul(fvValue(i));
                     setHostPortMtu(alias, mtu);
                 }
 
                 if (fvField(i) == "pvid") {
-                    pvid = stoul(fvValue(i));
+                    pvid = (uint32_t)stoul(fvValue(i));
                     setHostPortPvid(alias, pvid);
                     // set APPDB directly for pvid config
                     m_portTableProducer.set(alias, kfvFieldsValues(t));

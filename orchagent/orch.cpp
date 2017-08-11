@@ -335,8 +335,8 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
             SWSS_LOG_ERROR("malformed index range in:%s. Must contain 2 tokens\n", input.c_str());
             return false;
         }
-        range_low = stoul(range_values[0]);
-        range_high = stoul(range_values[1]);
+        range_low = (uint32_t)stoul(range_values[0]);
+        range_high = (uint32_t)stoul(range_values[1]);
         if (range_low >= range_high)
         {
             SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than righ value.\n", input.c_str());
@@ -345,7 +345,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
     }
     else
     {
-        range_low = range_high = stoul(input);
+        range_low = range_high = (uint32_t)stoul(input);
     }
     SWSS_LOG_DEBUG("resulting range:%d-%d", range_low, range_high);
     return true;

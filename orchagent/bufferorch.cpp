@@ -70,7 +70,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             if (fvField(*i) == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attribs.push_back(attr);
             }
             else if (fvField(*i) == buffer_pool_type_field_name)
@@ -129,7 +129,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         }
         else
         {
-            sai_status = sai_buffer_api->create_buffer_pool(&sai_object, gSwitchId, attribs.size(), attribs.data());
+            sai_status = sai_buffer_api->create_buffer_pool(&sai_object, gSwitchId, (uint32_t)attribs.size(), attribs.data());
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to create buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
@@ -204,32 +204,40 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             }
             else if (fvField(*i) == buffer_xon_field_name)
             {
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_TH;
                 attribs.push_back(attr);
             }
             else if (fvField(*i) == buffer_xoff_field_name)
             {
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XOFF_TH;
                 attribs.push_back(attr);
             }
             else if (fvField(*i) == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attribs.push_back(attr);
             }
             else if (fvField(*i) == buffer_dynamic_th_field_name)
             {
+                attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
+                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC;
+                attribs.push_back(attr);
+
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attribs.push_back(attr);
             }
             else if (fvField(*i) == buffer_static_th_field_name)
             {
+                attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
+                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC;
+                attribs.push_back(attr);
+
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attribs.push_back(attr);
             }
             else
@@ -250,7 +258,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
         }
         else
         {
-            sai_status = sai_buffer_api->create_buffer_profile(&sai_object, gSwitchId, attribs.size(), attribs.data());
+            sai_status = sai_buffer_api->create_buffer_profile(&sai_object, gSwitchId, (uint32_t)attribs.size(), attribs.data());
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to create buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
@@ -456,7 +464,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
     }
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_INGRESS_BUFFER_PROFILE_LIST;
-    attr.value.objlist.count = profile_list.size();
+    attr.value.objlist.count = (uint32_t)profile_list.size();
     attr.value.objlist.list = profile_list.data();
     for (string port_name : port_names)
     {
@@ -502,7 +510,7 @@ task_process_status BufferOrch::processEgressBufferProfileList(Consumer &consume
     }
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_EGRESS_BUFFER_PROFILE_LIST;
-    attr.value.objlist.count = profile_list.size();
+    attr.value.objlist.count = (uint32_t)profile_list.size();
     attr.value.objlist.list = profile_list.data();
     for (string port_name : port_names)
     {

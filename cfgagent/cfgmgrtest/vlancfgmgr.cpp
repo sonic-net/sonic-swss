@@ -48,7 +48,7 @@ using namespace swss;
 int VlanCfgMgr::vlan_modify(Operation cmd, int argc, char **argv)
 {
     char *dev = NULL;
-    short vid = -1;
+    int vid = -1;
     unsigned short flags = 0;
     unsigned int if_index;
     string key = VLAN_PREFIX;
@@ -180,7 +180,7 @@ int VlanCfgMgr::vlan_show(int argc, char **argv)
     string redis_cmd_db = "redis-cli -n ";
     string redis_cmd_keys = "\\*VLAN\\*";
     string redis_cmd;
-    short vid = -1;
+    int vid = -1;
 
     while (argc > 0) {
         if (matches(*argv, "dev") == 0) {

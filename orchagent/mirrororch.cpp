@@ -396,21 +396,29 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
-    attr.value.u16 = ETH_P_8021Q;
-    attrs.push_back(attr);
+    /* Add the VLAN header when the packet is sent out from a VLAN */
+    if (session.neighborInfo.vlanId)
+    {
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_VLAN_ID;
-    attr.value.u16 = session.neighborInfo.vlanId;
-    attrs.push_back(attr);
+        attr.id =SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
+        attr.value.u16 = ETH_P_8021Q;
+        attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_PRI;
-    attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_PRI;
-    attrs.push_back(attr);
+        attr.id =SAI_MIRROR_SESSION_ATTR_VLAN_ID;
+        attr.value.u16 = session.neighborInfo.vlanId;
+        attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_CFI;
-    attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_CFI;
-    attrs.push_back(attr);
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_PRI;
+        attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_PRI;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_CFI;
+        attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_CFI;
+        attrs.push_back(attr);
+    }
 
     attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
     attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
@@ -423,7 +431,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     // TOS value format is the following:
     // DSCP 6 bits | ECN 2 bits
     attr.id =SAI_MIRROR_SESSION_ATTR_TOS;
-    attr.value.u16 = session.dscp << MIRROR_SESSION_DSCP_SHIFT;
+    attr.value.u16 = (uint16_t)(session.dscp << MIRROR_SESSION_DSCP_SHIFT);
     attrs.push_back(attr);
 
     attr.id =SAI_MIRROR_SESSION_ATTR_TTL;
@@ -452,7 +460,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
     session.status = true;
 
-    status = sai_mirror_api->create_mirror_session(&session.sessionId, gSwitchId, attrs.size(), attrs.data());
+    status = sai_mirror_api->create_mirror_session(&session.sessionId, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to activate mirroring session %s\n", name.c_str());

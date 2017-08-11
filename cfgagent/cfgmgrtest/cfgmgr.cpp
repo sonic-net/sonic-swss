@@ -38,7 +38,7 @@ static const struct cmd {
     { "intf",   do_intf },
     { "vlan",   do_vlan },
     { "help",   do_help },
-    { 0 }
+    { NULL,        NULL }
 };
 
 static int do_cmd(const char *argv0, int argc, char **argv)

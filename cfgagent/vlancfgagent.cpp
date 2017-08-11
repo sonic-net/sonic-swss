@@ -198,7 +198,7 @@ void VlanCfgAgent::doVlanTask(Consumer &consumer)
 
                 /* Set port mtu */
                 if (fvField(i) == "mtu") {
-                    mtu = stoul(fvValue(i));
+                    mtu = (uint32_t)stoul(fvValue(i));
                     setHostVlanMtu(vlan_id, mtu);
                 }
                 /*

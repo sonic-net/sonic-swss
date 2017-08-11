@@ -70,8 +70,8 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
     status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create v4 default route with packet action drop");
-        throw runtime_error("Failed to create v4 default route with packet action drop");
+        SWSS_LOG_ERROR("Failed to create IPv4 default route with packet action drop");
+        throw runtime_error("Failed to create IPv4 default route with packet action drop");
     }
 
     /* Add default IPv4 route into the m_syncdRoutes */
@@ -87,8 +87,8 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
     status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create v6 default route with packet action drop");
-        throw runtime_error("Failed to create v6 default route with packet action drop");
+        SWSS_LOG_ERROR("Failed to create IPv6 default route with packet action drop");
+        throw runtime_error("Failed to create IPv6 default route with packet action drop");
     }
 
     /* Add default IPv6 route into the m_syncdRoutes */
@@ -451,18 +451,17 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
 
     sai_object_id_t next_hop_group_id;
     sai_status_t status = sai_next_hop_group_api->
-            create_next_hop_group(&next_hop_group_id, gSwitchId, nhg_attrs.size(), nhg_attrs.data());
+            create_next_hop_group(&next_hop_group_id, gSwitchId, (uint32_t)nhg_attrs.size(), nhg_attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create next hop group nh:%s\n",
-                       ipAddresses.to_string().c_str());
+        SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
+                       ipAddresses.to_string().c_str(), status);
         return false;
     }
 
     m_nextHopGroupCount ++;
-    SWSS_LOG_NOTICE("Create next hop group nhgid:%lx nh:%s \n",
-                    next_hop_group_id, ipAddresses.to_string().c_str());
+    SWSS_LOG_NOTICE("Create next hop group %s", ipAddresses.to_string().c_str());
 
     NextHopGroupEntry next_hop_group_entry;
     next_hop_group_entry.next_hop_group_id = next_hop_group_id;
@@ -483,7 +482,7 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
 
         sai_object_id_t next_hop_group_member_id;
         status = sai_next_hop_group_api->
-                create_next_hop_group_member(&next_hop_group_member_id, gSwitchId, nhgm_attrs.size(), nhgm_attrs.data());
+                create_next_hop_group_member(&next_hop_group_member_id, gSwitchId, (uint32_t)nhgm_attrs.size(), nhgm_attrs.data());
 
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -748,9 +747,25 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
         sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to set route %s to drop", ipPrefix.to_string().c_str());
+            SWSS_LOG_ERROR("Failed to set route %s packet action to drop, rv:%d",
+                    ipPrefix.to_string().c_str(), status);
             return false;
         }
+
+        SWSS_LOG_INFO("Set route %s packet action to drop", ipPrefix.to_string().c_str());
+
+        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        attr.value.oid = SAI_NULL_OBJECT_ID;
+
+        status = sai_route_api->set_route_entry_attribute(&route_entry, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set route %s next hop ID to NULL, rv:%d",
+                    ipPrefix.to_string().c_str(), status);
+            return false;
+        }
+
+        SWSS_LOG_INFO("Set route %s next hop ID to NULL", ipPrefix.to_string().c_str());
     }
     else
     {
