@@ -13,6 +13,8 @@
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
 
+typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
+
 static const map<sai_port_oper_status_t, string> oper_status_strings =
 {
     { SAI_PORT_OPER_STATUS_UNKNOWN,     "unknown" },
@@ -57,6 +59,8 @@ private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
 
+    std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
+
     bool m_initDone = false;
     Port m_cpuPort;
     // TODO: Add Bridge/Vlan class
@@ -100,6 +104,10 @@ private:
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
+
+    bool validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
+    bool setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
+    bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 };
 #endif /* SWSS_PORTSORCH_H */
 

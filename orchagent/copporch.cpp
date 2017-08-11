@@ -53,7 +53,7 @@ map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"vrrp", SAI_HOSTIF_TRAP_TYPE_VRRP},
     {"bgp", SAI_HOSTIF_TRAP_TYPE_BGP},
     {"dhcpv6", SAI_HOSTIF_TRAP_TYPE_DHCPV6},
-    {"ospvfv6", SAI_HOSTIF_TRAP_TYPE_OSPFV6},
+    {"ospfv6", SAI_HOSTIF_TRAP_TYPE_OSPFV6},
     {"vrrpv6", SAI_HOSTIF_TRAP_TYPE_VRRPV6},
     {"bgpv6", SAI_HOSTIF_TRAP_TYPE_BGPV6},
     {"neigh_discovery", SAI_HOSTIF_TRAP_TYPE_IPV6_NEIGHBOR_DISCOVERY},

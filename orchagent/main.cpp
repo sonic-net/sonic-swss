@@ -160,6 +160,18 @@ int main(int argc, char **argv)
     attr.value.ptr = (void *)on_fdb_event;
     attrs.push_back(attr);
 
+    /* Disable/enable SwSS recording */
+    if (gSwssRecord)
+    {
+        gRecordFile = record_location + "/" + "swss.rec";
+        gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
+        if (!gRecordOfs.is_open())
+        {
+            SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());
+            exit(EXIT_FAILURE);
+        }
+    }
+
     attr.id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;
     attr.value.ptr = (void *)on_port_state_change;
     attrs.push_back(attr);
