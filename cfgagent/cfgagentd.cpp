@@ -51,6 +51,7 @@ int main(int argc, char **argv)
 
     int opt;
     string record_location = ".";
+    bool teamd_init_done = false;
 
     while ((opt = getopt(argc, argv, "b:r:d:h")) != -1)
     {
@@ -116,6 +117,7 @@ int main(int argc, char **argv)
         DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
         Table porttableconsumer(&appDb, APP_PORT_TABLE_NAME);
+        Table lagtableconsumer(&appDb, APP_LAG_TABLE_NAME);
 
         PortCfgAgent portcfgagent(&cfgDb, &appDb, CFG_PORT_TABLE_NAME);
         VlanCfgAgent vlancfgagent(&cfgDb, &appDb, cfg_vlan_tables);
@@ -150,9 +152,21 @@ int main(int argc, char **argv)
                     {
                         gInitDone = true;
                         SWSS_LOG_NOTICE("Physical ports hostif init done\n");
-                        vlancfgagent.SyncCfgDB();
-                        /* Sync interface config after VLAN */
-                        intfcfgagent.SyncCfgDB();
+                    }
+                }
+                else
+                {
+                    if (teamd_init_done == false)
+                    {
+                        vector<FieldValueTuple> temp;
+                        if (lagtableconsumer.get("ConfigDone", temp))
+                        {
+                            teamd_init_done = true;
+                            SWSS_LOG_NOTICE("Teamd lag init done\n");
+                            vlancfgagent.SyncCfgDB();
+                            /* Sync interface config after VLAN */
+                            intfcfgagent.SyncCfgDB();
+                        }
                     }
                 }
                 continue;
