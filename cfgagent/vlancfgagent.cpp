@@ -144,7 +144,7 @@ bool VlanCfgAgent::removeHostVlanMember(int vlan_id, string &port_alias, bool de
 
     if (detach)
     {
-        cmd = "ip link set " + port_alias + " no master";
+        cmd = "ip link set " + port_alias + " nomaster";
         swss::exec(cmd.c_str());
     }
 
