@@ -5,6 +5,7 @@
 #include <vector>
 #include <set>
 #include <map>
+#include <list>
 #include "dbconnector.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -134,34 +135,70 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
         throw "Port configuration file not found!";
     }
 
+    list<string> header = {"name", "lanes", "alias", "speed"};
     string line;
     while (getline(infile, line))
     {
         if (line.at(0) == '#')
         {
+            /* Find out what info is specified in the configuration file */
+            for (auto it = header.begin(); it != header.end();)
+            {
+                if (line.find(*it) == string::npos)
+                {
+                    it = header.erase(it);
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+
             continue;
         }
 
         istringstream iss(line);
-        string name, lanes, alias;
-        iss >> name >> lanes >> alias;
+        map<string, string> entry;
+
+        /* Read port configuration entry */
+        for (auto column : header)
+        {
+            iss >> entry[column];
+        }
 
         /* If port has no alias, then use its' name as alias */
-        if (alias == "")
+        string alias;
+        if ((entry.find("alias") != entry.end()) && (entry["alias"] != ""))
         {
-            alias = name;
+            alias = entry["alias"];
         }
-        FieldValueTuple lanes_attr("lanes", lanes);
+        else
+        {
+            alias = entry["name"];
+        }
+
+        FieldValueTuple lanes_attr("lanes", entry["lanes"]);
         FieldValueTuple alias_attr("alias", alias);
 
         vector<FieldValueTuple> attrs;
         attrs.push_back(lanes_attr);
         attrs.push_back(alias_attr);
 
-        p.set(name, attrs);
+        if ((entry.find("speed") != entry.end()) && (entry["speed"] != ""))
+        {
+            FieldValueTuple speed_attr("speed", entry["speed"]);
+            attrs.push_back(speed_attr);
+        }
 
-        g_portSet.insert(name);
+        p.set(entry["name"], attrs);
+
+        g_portSet.insert(entry["name"]);
     }
 
     infile.close();
+
+    /* Notify that all ports added */
+    FieldValueTuple finish_notice("count", to_string(g_portSet.size()));
+    vector<FieldValueTuple> attrs = { finish_notice };
+    p.set("PortConfigDone", attrs);
 }
