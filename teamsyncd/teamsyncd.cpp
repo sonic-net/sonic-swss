@@ -25,6 +25,7 @@ int main(int argc, char **argv)
         {
             NetLink netlink;
 
+            nl_socket_set_nonblocking(netlink.getSocket());
             netlink.registerGroup(RTNLGRP_LINK);
             cout << "Listens to teamd events..." << endl;
             netlink.dumpRequest(RTM_GETLINK);
