@@ -5,6 +5,7 @@
 #include <sstream>
 #include <set>
 #include <algorithm>
+#include <tuple>
 
 #include <netinet/if_ether.h>
 #include "net/if.h"
@@ -461,6 +462,107 @@ void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_
     }
 }
 
+bool PortsOrch::createPort(const set<int> &lane_set, uint32_t speed)
+{
+    SWSS_LOG_ENTER();
+
+    vector<uint32_t> lanes(lane_set.begin(), lane_set.end());
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+
+    attr.id = SAI_PORT_ATTR_SPEED;
+    attr.value.u32 = speed;
+    attrs.push_back(attr);
+
+    attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
+    attr.value.u32list.list = lanes.data();
+    attr.value.u32list.count = lanes.size();
+    attrs.push_back(attr);
+
+    sai_object_id_t port_id;
+    sai_status_t status = sai_port_api->create_port(&port_id, gSwitchId, attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create port with the speed %u, rv:%d", speed, status);
+        return false;
+    }
+
+    m_portListLaneMap[lane_set] = port_id;
+
+    SWSS_LOG_INFO("Create port %lx with the speed %u", port_id, speed);
+
+    return true;
+}
+
+bool PortsOrch::removePort(const set<int> &lane_set)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status = sai_port_api->remove_port(m_portListLaneMap[lane_set]);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove port %lx, rv:%d", m_portListLaneMap[lane_set], status);
+        return false;
+    }
+
+    SWSS_LOG_INFO("Remove port %lx", m_portListLaneMap[lane_set]);
+
+    return true;
+}
+
+bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
+{
+    SWSS_LOG_ENTER();
+
+    /* Determine if the lane combination exists in switch */
+    if (m_portListLaneMap.find(lane_set) != m_portListLaneMap.end())
+    {
+        sai_object_id_t id = m_portListLaneMap[lane_set];
+
+        /* Determine if the port has already been initialized before */
+        if (m_portList.find(alias) != m_portList.end() && m_portList[alias].m_port_id == id)
+        {
+            SWSS_LOG_INFO("Port has already been initialized before alias:%s", alias.c_str());
+        }
+        else
+        {
+            Port p(alias, Port::PHY);
+
+            p.m_index = m_portList.size(); // TODO: Assume no deletion of physical port
+            p.m_port_id = id;
+
+            /* Initialize the port and create router interface and host interface */
+            if (initializePort(p))
+            {
+                /* Add port to port list */
+                m_portList[alias] = p;
+                /* Add port name map to counter table */
+                std::stringstream ss;
+                ss << hex << p.m_port_id;
+                FieldValueTuple tuple(p.m_alias, ss.str());
+                vector<FieldValueTuple> vector;
+                vector.push_back(tuple);
+                m_counterTable->set("", vector);
+
+                SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to initialize port %s", alias.c_str());
+                return false;
+            }
+        }
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to locate port lane combination alias:%s", alias.c_str());
+        return false;
+    }
+
+    return true;
+}
+
 void PortsOrch::doPortTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -472,6 +574,19 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         string alias = kfvKey(t);
         string op = kfvOp(t);
+
+        if (alias == "PortConfigDone")
+        {
+            m_portConfigDone = true;
+
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "count")
+                {
+                    m_portCount = stoul(fvValue(i));
+                }
+            }
+        }
 
         /* Get notification from application */
         /* portsyncd application:
@@ -514,7 +629,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         int lane = stoi(lane_str);
                         lane_set.insert(lane);
                     }
-
                 }
 
                 /* Set port admin status */
@@ -530,47 +644,52 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     speed = (uint32_t)stoul(fvValue(i));
             }
 
+            /* Collect information about all received ports */
             if (lane_set.size())
             {
-                /* Determine if the lane combination exists in switch */
-                if (m_portListLaneMap.find(lane_set) !=
-                    m_portListLaneMap.end())
-                {
-                    sai_object_id_t id = m_portListLaneMap[lane_set];
+                m_lanesALiasSpeedMap[lane_set] = make_tuple(alias, speed);
+            }
 
-                    /* Determin if the port has already been initialized before */
-                    if (m_portList.find(alias) != m_portList.end() && m_portList[alias].m_port_id == id)
+            /* Once all ports received, go through the each port and perform appropriate actions:
+             * 1. Remove ports which don't exist anymore
+             * 2. Create new ports
+             * 3. Initialize all ports
+             */
+            if (m_portConfigDone && (m_lanesALiasSpeedMap.size() == m_portCount))
+            {
+                for (auto it = m_portListLaneMap.begin(); it != m_portListLaneMap.end();)
+                {
+                    if (m_lanesALiasSpeedMap.find(it->first) == m_lanesALiasSpeedMap.end())
                     {
-                        SWSS_LOG_INFO("Port has already been initialized before alias:%s", alias.c_str());
+                        if (!removePort(it->first))
+                        {
+                            throw runtime_error("PortsOrch initialization failure.");
+                        }
+                        it = m_portListLaneMap.erase(it);
                     }
                     else
                     {
-                        Port p(alias, Port::PHY);
-
-                        p.m_index = (uint32_t)m_portList.size(); // TODO: Assume no deletion of physical port
-                        p.m_port_id = id;
-
-                        /* Initialize the port and create router interface and host interface */
-                        if (initializePort(p))
-                        {
-                            /* Add port to port list */
-                            m_portList[alias] = p;
-                            /* Add port name map to counter table */
-                            std::stringstream ss;
-                            ss << hex << p.m_port_id;
-                            FieldValueTuple tuple(p.m_alias, ss.str());
-                            vector<FieldValueTuple> vector;
-                            vector.push_back(tuple);
-                            m_counterTable->set("", vector);
-
-                            SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
-                        }
-                        else
-                            SWSS_LOG_ERROR("Failed to initialize port %s", alias.c_str());
+                        ++it;
                     }
                 }
-                else
-                    SWSS_LOG_ERROR("Failed to locate port lane combination alias:%s", alias.c_str());
+
+                for (auto it = m_lanesALiasSpeedMap.begin(); it != m_lanesALiasSpeedMap.end();)
+                {
+                    if (m_portListLaneMap.find(it->first) == m_portListLaneMap.end())
+                    {
+                        if (!createPort(it->first, get<1>(it->second)))
+                        {
+                            throw runtime_error("PortsOrch initialization failure.");
+                        }
+                    }
+
+                    if (!initPort(get<0>(it->second), it->first))
+                    {
+                        throw runtime_error("PortsOrch initialization failure.");
+                    }
+
+                    it = m_lanesALiasSpeedMap.erase(it);
+                }
             }
 
             Port p;
