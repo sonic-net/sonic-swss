@@ -21,7 +21,7 @@ type_map BufferOrch::m_buffer_type_maps = {
     {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_map()},
     {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()},
     {APP_BUFFER_PORT_CONFIG_TO_PG_PROFILE_TABLE, new object_map()},
-    {APP_BUFFER_PORT_CABLE_LENGTH_TABLE, new object_map()}
+    {APP_BUFFER_PORT_CABLE_LENGTH_TABLE, new object_map()},
 };
 
 BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames, PortsOrch *portsOrch) :
@@ -39,13 +39,19 @@ void BufferOrch::update(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
 
-    assert(cntx);
-
     switch(type) {
     case SUBJECT_TYPE_PORT_SPEED_CHANGE:
     {
         PortSpeedUpdate *update = static_cast<PortSpeedUpdate *>(cntx);
-        updatePortProfile(*update);
+        if (update)
+        {
+            updatePortProfile(*update);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Invalid context for SUBJECT_TYPE_PORT_SPEED_CHANGE event");
+            throw runtime_error("Invalid context for SUBJECT_TYPE_PORT_SPEED_CHANGE event");
+        }
         break;
     }
     default:
@@ -64,7 +70,6 @@ void BufferOrch::initTableHandlers()
     m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferOrch::processEgressBufferProfileList));
     m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_CONFIG_TO_PG_PROFILE_TABLE, &BufferOrch::processPortConfigToPgProfile));
     m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_CABLE_LENGTH_TABLE, &BufferOrch::processPortCableLenth));
-
 }
 
 task_process_status BufferOrch::processBufferPool(Consumer &consumer)
