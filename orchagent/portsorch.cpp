@@ -268,13 +268,22 @@ bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
             }
             else
             {
-                SWSS_LOG_ERROR("Failed to get supported speed list for port %lx\n", port_id);
+                SWSS_LOG_ERROR("Failed to get supported speed list for port %lx", port_id);
                 return false;
             }
         }
+        // TODO: change to macro SAI_STATUS_IS_ATTR_NOT_SUPPORTED once it is fixed in SAI
+        // https://github.com/opencomputeproject/SAI/pull/710
+        else if (((status) & (~0xFFFF)) == SAI_STATUS_ATTR_NOT_SUPPORTED_0)
+        {
+            // unable to validate speed if attribute is not supported on platform
+            // assuming input value is correct
+            SWSS_LOG_WARN("Unable to validate speed for port %lx. Not supported by platform", port_id);
+            return true;
+        }
         else
         {
-            SWSS_LOG_ERROR("Failed to get number of supported speeds for port %lx\n", port_id);
+            SWSS_LOG_ERROR("Failed to get number of supported speeds for port %lx", port_id);
             return false;
         }
     }
