@@ -30,7 +30,7 @@ private:
     bool setHostVlanAdminState(int vlan_id, string &admin_status);
     bool setHostVlanMtu(int vlan_id, uint32_t mtu);
     bool addHostVlanMember(int vlan_id, string &port_alias, string& tagging_mode);
-    bool removeHostVlanMember(int vlan_id, string &port_alias, bool detach);
+    bool removeHostVlanMember(int vlan_id, string &port_alias);
 };
 
 }

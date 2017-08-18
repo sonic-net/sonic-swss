@@ -134,15 +134,18 @@ bool VlanCfgAgent::addHostVlanMember(int vlan_id, string &port_alias, string& ta
     return true;
 }
 
-bool VlanCfgAgent::removeHostVlanMember(int vlan_id, string &port_alias, bool detach)
+bool VlanCfgAgent::removeHostVlanMember(int vlan_id, string &port_alias)
 {
-    string cmd;
-    // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
+    string cmd, res;
+
     cmd = "bridge vlan del vid " + to_string(vlan_id) + " dev "
             + port_alias;
     swss::exec(cmd.c_str());
 
-    if (detach)
+    // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
+    cmd = "bridge vlan show dev " + port_alias + " | grep None";
+    res = swss::exec(cmd.c_str());
+    if (! res.empty())
     {
         cmd = "ip link set " + port_alias + " nomaster";
         swss::exec(cmd.c_str());
@@ -310,7 +313,7 @@ void VlanCfgAgent::doVlanMemberTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            removeHostVlanMember(vlan_id, port_alias, false);
+            removeHostVlanMember(vlan_id, port_alias);
             m_vlanMemberTableProducer.del(kfvKey(t));
             SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
             it = consumer.m_toSync.erase(it);

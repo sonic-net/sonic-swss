@@ -55,6 +55,7 @@ public:
 
     bool setHostIntfsOperStatus(sai_object_id_t id, bool up);
     void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
+    void removeDefaultVlanMembers();
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
@@ -78,7 +79,6 @@ private:
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
 
-    void removeDefaultVlanMembers();
     void removeDefaultBridgePorts();
 
     bool initializePort(Port &port);

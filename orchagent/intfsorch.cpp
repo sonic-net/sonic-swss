@@ -287,7 +287,8 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
 
     port.m_rif_id = 0;
     gPortsOrch->setPort(port.m_alias, port);
-
+    /* Clean this port from default VLAN */
+    gPortsOrch->removeDefaultVlanMembers();
     SWSS_LOG_NOTICE("Remove router interface for port %s", port.m_alias.c_str());
 
     return true;

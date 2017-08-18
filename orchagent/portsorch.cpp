@@ -1399,6 +1399,14 @@ bool PortsOrch::removeBridgePort(Port &port)
         return false;
     }
 
+    bool rv = setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP);
+    if (rv != true)
+    {
+        SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
+            hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
+        return false;
+    }
+
     /* Flush FDB entries pointing to this bridge port */
     // TODO: Remove all FDB entries associated with this bridge port before
     //       removing the bridge port itself
@@ -1412,14 +1420,6 @@ bool PortsOrch::removeBridgePort(Port &port)
         return false;
     }
     port.m_bridge_port_id = 0;
-
-    bool rv = setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP);
-    if (rv != true)
-    {
-        SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
-            hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
-        return false;
-    }
 
     SWSS_LOG_NOTICE("Remove bridge port %s from default 1Q bridge", port.m_alias.c_str());
 
