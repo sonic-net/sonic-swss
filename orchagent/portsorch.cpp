@@ -179,7 +179,7 @@ void PortsOrch::removeDefaultVlanMembers()
         }
     }
 
-    SWSS_LOG_NOTICE("Remove VLAN members from default VLAN");
+    SWSS_LOG_NOTICE("Remove %d VLAN members from default VLAN", attr.value.objlist.count);
 }
 
 void PortsOrch::removeDefaultBridgePorts()
@@ -399,6 +399,31 @@ bool PortsOrch::setPortPvid (Port &port, sai_uint32_t pvid)
     return true;
 }
 
+bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
+{
+
+    if (port.m_port_vlan_id != DEFAULT_PORT_VLAN_ID)
+    {
+        pvid = port.m_port_vlan_id;
+        return true;
+    }
+
+    if (port.m_vlan_members.size() == 0)
+    {
+        pvid = DEFAULT_PORT_VLAN_ID;
+        return true;
+    }
+
+    for (auto &vme: port.m_vlan_members)
+    {
+        if(vme.second.vlan_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED) {
+            pvid =  vme.first;
+            return true;
+        }
+    }
+    SWSS_LOG_ERROR("Failed to get pvid for port %s",  port.m_alias.c_str());
+    return false;
+}
 bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
 {
     SWSS_LOG_ENTER();
@@ -1685,9 +1710,10 @@ bool PortsOrch::addLagMember(Port &lag, Port &port)
                     hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], port.m_alias.c_str(), lag.m_alias.c_str());
             return false;
         }
-        return true;
     }
-
+    sai_uint32_t pvid = DEFAULT_PORT_VLAN_ID;
+    getPortPvid(lag, pvid);
+    setPortPvid (port, pvid);
 
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
@@ -1724,7 +1750,6 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
                     hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str(), lag.m_alias.c_str());
             return false;
         }
-        return true;
     }
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));

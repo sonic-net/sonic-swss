@@ -104,7 +104,7 @@ private:
     bool setPortAdminStatus(sai_object_id_t id, bool up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
-
+    bool getPortPvid(Port &port, sai_uint32_t &pvid);
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 

@@ -134,6 +134,7 @@ bool VlanCfgAgent::addHostVlanMember(int vlan_id, string &port_alias, string& ta
     return true;
 }
 
+
 bool VlanCfgAgent::removeHostVlanMember(int vlan_id, string &port_alias)
 {
     string cmd, res;

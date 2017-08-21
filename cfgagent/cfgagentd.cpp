@@ -98,6 +98,7 @@ int main(int argc, char **argv)
     {
         gCfgRecordFile = record_location + "/" + "swss.cfg.rec";
         gCfgRecordOfs.open(gCfgRecordFile, std::ofstream::out | std::ofstream::app);
+
         if (!gCfgRecordOfs.is_open())
         {
             SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gCfgRecordFile.c_str());
