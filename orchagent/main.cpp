@@ -64,8 +64,8 @@ void usage()
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
-    cout << "                    1: record SAI call sequence as sairedis*.rec" << endl;
-    cout << "                    2: record SwSS task sequence as swss*.rec" << endl;
+    cout << "                    1: record SAI call sequence as sairedis.rec" << endl;
+    cout << "                    2: record SwSS task sequence as swss.rec" << endl;
     cout << "                    3: enable both above two records" << endl;
     cout << "    -d record_location: set record logs folder location (default .)" << endl;
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
