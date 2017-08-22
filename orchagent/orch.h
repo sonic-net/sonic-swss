@@ -27,6 +27,7 @@ typedef enum
 {
     task_success,
     task_invalid_entry,
+    task_invalid_operation,
     task_failed,
     task_need_retry,
     task_ignore

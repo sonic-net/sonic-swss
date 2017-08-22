@@ -293,7 +293,7 @@ bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
     return std::find(supp_speeds.begin(), supp_speeds.end(), speed) != supp_speeds.end();
 }
 
-bool PortsOrch::setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
+bool PortsOrch::setPortSpeed(Port &port, sai_uint32_t speed)
 {
     SWSS_LOG_ENTER();
 
@@ -303,7 +303,10 @@ bool PortsOrch::setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
     attr.id = SAI_PORT_ATTR_SPEED;
     attr.value.u32 = speed;
 
-    status = sai_port_api->set_port_attribute(port_id, &attr);
+    status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+
+    PortSpeedUpdate update = { port, speed };
+    notify(SUBJECT_TYPE_PORT_SPEED_CHANGE, static_cast<void *>(&update));
 
     return status == SAI_STATUS_SUCCESS;
 }
@@ -505,7 +508,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         {
                             if(setPortAdminStatus(p.m_port_id, false))
                             {
-                                if (setPortSpeed(p.m_port_id, speed))
+                                if (setPortSpeed(p, speed))
                                 {
                                     SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
                                 }
