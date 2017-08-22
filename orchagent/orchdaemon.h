@@ -34,7 +34,7 @@ private:
     std::vector<Orch *> m_orchList;
     Select *m_select;
 
-    Orch *getOrchByConsumer(ConsumerStateTable *c);
+    Orch *getOrchByConsumer(TableConsumable *c);
     void flush();
 };
 

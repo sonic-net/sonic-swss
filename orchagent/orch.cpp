@@ -59,7 +59,7 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-bool Orch::hasSelectable(ConsumerStateTable *selectable) const
+bool Orch::hasSelectable(TableConsumable *selectable) const
 {
     for(auto it : m_consumerMap) {
         if (it.second.m_consumer == selectable) {

@@ -138,8 +138,9 @@ void OrchDaemon::start()
             continue;
         }
 
-        Orch *o = getOrchByConsumer((ConsumerStateTable *)s);
-        o->execute(((ConsumerStateTable *)s)->getTableName());
+        TableConsumable *c = (TableConsumable *)s;
+        Orch *o = getOrchByConsumer(c);
+        o->execute(c->getTableName());
 
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
@@ -151,7 +152,7 @@ void OrchDaemon::start()
     }
 }
 
-Orch *OrchDaemon::getOrchByConsumer(ConsumerStateTable *c)
+Orch *OrchDaemon::getOrchByConsumer(TableConsumable *c)
 {
     SWSS_LOG_ENTER();
 
