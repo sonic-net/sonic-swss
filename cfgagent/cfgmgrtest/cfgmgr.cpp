@@ -5,7 +5,7 @@ using namespace std;
 [[ noreturn ]] void usage()
 {
     std::cout << "Usage: cfgmgr OBJECT { COMMAND | help }" << std::endl
-              << "\t  where  OBJECT := { port | lag | vlan | intf }\n" << std::endl;
+              << "\t  where  OBJECT := { port | lag | vlan | intf | switch }\n" << std::endl;
     exit(0);
 }
 
@@ -37,6 +37,7 @@ static const struct cmd {
     { "lag",    do_lag },
     { "intf",   do_intf },
     { "vlan",   do_vlan },
+    { "switch", do_switch },
     { "help",   do_help },
     { NULL,        NULL }
 };

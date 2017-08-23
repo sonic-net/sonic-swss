@@ -9,7 +9,7 @@ else
 DBGFLAGS = -g
 endif
 
-cfgagentd_SOURCES = cfgagentd.cpp vlancfgagent.cpp portcfgagent.cpp intfcfgagent.cpp cfgorch.cpp
+cfgagentd_SOURCES = cfgagentd.cpp vlancfgagent.cpp portcfgagent.cpp intfcfgagent.cpp switchcfgagent.cpp cfgorch.cpp
 
 cfgagentd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 cfgagentd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)

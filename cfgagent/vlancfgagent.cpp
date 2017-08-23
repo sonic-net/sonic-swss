@@ -8,6 +8,7 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "cfgagent/vlancfgagent.h"
+#include "cfgagent/switchcfgagent.h"
 #include "exec.h"
 
 
@@ -20,6 +21,7 @@ using namespace swss;
 
 extern bool gInitDone;
 extern MacAddress gMacAddress;
+extern SwitchCfgAgent *gSwtichcfgagent;
 
 VlanCfgAgent::VlanCfgAgent(DBConnector *cfgDb, DBConnector *appDb, vector<string> tableNames) :
         CfgOrch(cfgDb, tableNames),
@@ -50,10 +52,10 @@ VlanCfgAgent::VlanCfgAgent(DBConnector *cfgDb, DBConnector *appDb, vector<string
     swss::exec(cmd.c_str());
 }
 
-void VlanCfgAgent::SyncCfgDB()
+void VlanCfgAgent::syncCfgDB()
 {
-    CfgOrch::SyncCfgDB(CFG_VLAN_TABLE_NAME, m_cfgVlanTableConsumer);
-    CfgOrch::SyncCfgDB(CFG_VLAN_MEMBER_TABLE_NAME, m_cfgVlanMemberTableConsumer);
+    CfgOrch::syncCfgDB(CFG_VLAN_TABLE_NAME, m_cfgVlanTableConsumer);
+    CfgOrch::syncCfgDB(CFG_VLAN_MEMBER_TABLE_NAME, m_cfgVlanMemberTableConsumer);
 }
 
 bool VlanCfgAgent::addHostVlan(int vlan_id)
@@ -131,6 +133,8 @@ bool VlanCfgAgent::addHostVlanMember(int vlan_id, string &port_alias, string& ta
             + port_alias;
     }
     swss::exec(cmd.c_str());
+    // Apply switch level flood control to this port
+    gSwtichcfgagent->updateHostFloodControl(port_alias);
     return true;
 }
 
@@ -199,16 +203,16 @@ void VlanCfgAgent::doVlanTask(Consumer &consumer)
                     admin_status = fvValue(i);
                     setHostVlanAdminState(vlan_id, admin_status);
                 }
-
                 /* Set port mtu */
-                if (fvField(i) == "mtu") {
+                else if (fvField(i) == "mtu") {
                     mtu = (uint32_t)stoul(fvValue(i));
                     setHostVlanMtu(vlan_id, mtu);
                 }
                 /*
                  * fields: unicast_miss_flood, multicast_miss_flood,
-                 * broadcast_miss_flood,  and autostate are for lower
-                 * layer procesing.
+                 * broadcast_flood,  and autostate are for lower
+                 * layer procesing. VLAN scope flood control mechanism
+                 * is not available yet.
                  *
                  * fileds: description, for upper layer only?
                  *

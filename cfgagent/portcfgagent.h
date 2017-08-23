@@ -1,5 +1,5 @@
-#ifndef __PORTCFGORCH__
-#define __PORTCFGORCH__
+#ifndef __PORTCFGAGENT__
+#define __PORTCFGAGENT__
 
 #include "dbconnector.h"
 #include "cfgorch.h"

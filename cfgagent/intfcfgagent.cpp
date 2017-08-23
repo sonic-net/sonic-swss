@@ -22,9 +22,9 @@ IntfCfgAgent::IntfCfgAgent(DBConnector *cfgDb, DBConnector *appDb, string tableN
 
 }
 
-void IntfCfgAgent::SyncCfgDB()
+void IntfCfgAgent::syncCfgDB()
 {
-    CfgOrch::SyncCfgDB(CFG_INTF_TABLE_NAME, m_cfgIntfTableConsumer);
+    CfgOrch::syncCfgDB(CFG_INTF_TABLE_NAME, m_cfgIntfTableConsumer);
 }
 
 bool IntfCfgAgent::setIntfIp(string &alias, string &opCmd, string &ipPrefixStr)

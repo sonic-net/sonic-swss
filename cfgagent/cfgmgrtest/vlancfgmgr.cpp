@@ -29,7 +29,7 @@ using namespace swss;
               << "\t\t [ mtu MTU ] \n"
               << "\t\t [ unicast_miss_flood { true | false } ] \n"
               << "\t\t [ multicast_miss_flood { true | false } ] \n"
-              << "\t\t [ broadcast_miss_flood { true | false } ] \n"
+              << "\t\t [ broadcast_flood { true | false } ] \n"
               << "\t\t [ desc DESCRIPTION] " << std::endl
               << "\t" << program << " vlan { add | del } vlan VLAN_ID dev DEV [ pvid ] [ untagged ]" << std::endl
               << "\t" << program << " vlan show [ dev DEV ] [ vlan VLAN_ID ]" << std::endl;
@@ -54,9 +54,9 @@ int VlanCfgMgr::vlan_modify(Operation cmd, int argc, char **argv)
     string key = VLAN_PREFIX;
     string admin = "up";
     unsigned int mtu = 1500; // for VLAN router interface.
-    string unicast_miss_flood = "false";
-    string multicast_miss_flood  = "false";
-    string broadcast_miss_flood  = "false";
+    string unicast_miss_flood = "true";
+    string multicast_miss_flood  = "true";
+    string broadcast_flood  = "true";
     string desc = "";
 
     while (argc > 0) {
@@ -81,9 +81,9 @@ int VlanCfgMgr::vlan_modify(Operation cmd, int argc, char **argv)
         } else if (matches(*argv, "multicast_miss_flood") == 0) {
             NEXT_ARG();
             multicast_miss_flood = *argv;
-        } else if (matches(*argv, "broadcast_miss_flood") == 0) {
+        } else if (matches(*argv, "broadcast_flood") == 0) {
             NEXT_ARG();
-            broadcast_miss_flood = *argv;
+            broadcast_flood = *argv;
         } else if (matches(*argv, "desc") == 0) {
             NEXT_ARG();
             desc = *argv;
@@ -126,7 +126,7 @@ int VlanCfgMgr::vlan_modify(Operation cmd, int argc, char **argv)
             fvVector.push_back(uf);
             FieldValueTuple mf("multicast_miss_flood", multicast_miss_flood);
             fvVector.push_back(mf);
-            FieldValueTuple bf("broadcast_miss_flood", broadcast_miss_flood);
+            FieldValueTuple bf("broadcast_flood", broadcast_flood);
             fvVector.push_back(bf);
 
             FieldValueTuple d("description", desc);

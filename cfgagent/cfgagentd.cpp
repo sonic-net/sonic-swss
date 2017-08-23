@@ -15,6 +15,7 @@
 #include "cfgagent/vlancfgagent.h"
 #include "cfgagent/portcfgagent.h"
 #include "cfgagent/intfcfgagent.h"
+#include "cfgagent/switchcfgagent.h"
 
 using namespace std;
 using namespace swss;
@@ -32,6 +33,8 @@ ofstream gCfgRecordOfs;
 string gCfgRecordFile;
 /* Global database mutex */
 mutex gDbMutex;
+
+SwitchCfgAgent *gSwtichcfgagent;
 
 void usage()
 {
@@ -123,7 +126,8 @@ int main(int argc, char **argv)
         PortCfgAgent portcfgagent(&cfgDb, &appDb, CFG_PORT_TABLE_NAME);
         VlanCfgAgent vlancfgagent(&cfgDb, &appDb, cfg_vlan_tables);
         IntfCfgAgent intfcfgagent(&cfgDb, &appDb, CFG_INTF_TABLE_NAME);
-        std::vector<CfgOrch *> cfgOrchList = {&vlancfgagent, &portcfgagent, &intfcfgagent};
+        gSwtichcfgagent = new SwitchCfgAgent(&cfgDb, &appDb, CFG_SWITCH_TABLE_NAME);
+        std::vector<CfgOrch *> cfgOrchList = {&vlancfgagent, &portcfgagent, &intfcfgagent, gSwtichcfgagent};
 
         swss::Select s;
         for (CfgOrch *o : cfgOrchList)
@@ -131,6 +135,7 @@ int main(int argc, char **argv)
             s.addSelectables(o->getSelectables());
         }
 
+        gSwtichcfgagent->syncCfgDB();
         SWSS_LOG_NOTICE("starting main loop");
 
         while (true)
@@ -164,9 +169,9 @@ int main(int argc, char **argv)
                         {
                             teamd_init_done = true;
                             SWSS_LOG_NOTICE("Teamd lag init done\n");
-                            vlancfgagent.SyncCfgDB();
+                            vlancfgagent.syncCfgDB();
                             /* Sync interface config after VLAN */
-                            intfcfgagent.SyncCfgDB();
+                            intfcfgagent.syncCfgDB();
                         }
                     }
                 }

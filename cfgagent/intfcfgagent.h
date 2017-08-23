@@ -1,5 +1,5 @@
-#ifndef __INTFCFGORCH__
-#define __INTFCFGORCH__
+#ifndef __INTFCFGAGENT__
+#define __INTFCFGAGENT__
 
 #include "dbconnector.h"
 #include "cfgorch.h"
@@ -14,7 +14,7 @@ class IntfCfgAgent : public CfgOrch
 {
 public:
     IntfCfgAgent(DBConnector *cfgDb, DBConnector *appDb, string tableName);
-    void SyncCfgDB();
+    void syncCfgDB();
 
 private:
 	ProducerStateTable m_intfTableProducer;

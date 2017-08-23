@@ -66,7 +66,7 @@ bool CfgOrch::hasSelectable(ConsumerStateTable *selectable) const
     return false;
 }
 
-bool CfgOrch::SyncCfgDB(string tableName, Table &tableConsumer)
+bool CfgOrch::syncCfgDB(string tableName, Table &tableConsumer)
 {
     SWSS_LOG_ENTER();
 

@@ -1,5 +1,5 @@
-#ifndef __VLANCFGORCH__
-#define __VLANCFGORCH__
+#ifndef __VLANCFGAGENT__
+#define __VLANCFGAGENT__
 
 #include "dbconnector.h"
 #include "cfgorch.h"
@@ -15,7 +15,7 @@ class VlanCfgAgent : public CfgOrch
 {
 public:
     VlanCfgAgent(DBConnector *cfgDb, DBConnector *appDb, vector<string> tableNames);
-    void SyncCfgDB();
+    void syncCfgDB();
 private:
 	ProducerStateTable m_vlanTableProducer, m_vlanMemberTableProducer;
     Table m_cfgVlanTableConsumer, m_cfgVlanMemberTableConsumer;

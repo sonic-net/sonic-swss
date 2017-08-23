@@ -13,6 +13,7 @@ extern int do_port(int argc, char **argv);
 extern int do_lag(int argc, char **argv);
 extern int do_intf(int argc, char **argv);
 extern int do_vlan(int argc, char **argv);
+extern int do_switch(int argc, char **argv);
 
 #define NEXT_ARG() do { argv++; if (--argc <= 0) incomplete_command(); } while(0)
 #define NEXT_ARG_OK() (argc - 1 > 0)
