@@ -5,11 +5,9 @@ extern "C" {
 
 #include <fstream>
 #include <map>
-#include <sys/time.h>
-
 #include <logger.h>
 #include <sairedis.h>
-
+#include "gettimestamp.h"
 #include "saihelper.h"
 
 using namespace std;
@@ -152,18 +150,6 @@ void initSaiApi()
     sai_log_set(SAI_API_ACL,                    SAI_LOG_LEVEL_NOTICE);
 }
 
-string getTimestamp()
-{
-    char buffer[64];
-    struct timeval tv;
-    gettimeofday(&tv, NULL);
-
-    size_t size = strftime(buffer, 32 ,"%Y-%m-%d.%T.", localtime(&tv.tv_sec));
-    snprintf(&buffer[size], 32, "%06ld", tv.tv_usec);
-
-    return string(buffer);
-}
-
 void initSaiRedis(const string &record_location)
 {
     /**
@@ -196,18 +182,6 @@ void initSaiRedis(const string &record_location)
         {
             SWSS_LOG_ERROR("Failed to set SAI Redis recording output folder to %s, rv:%d",
                 record_location.c_str(), status);
-            exit(EXIT_FAILURE);
-        }
-    }
-
-    /* Disable/enable SwSS recording */
-    if (gSwssRecord)
-    {
-        gRecordFile = record_location + "/" + "swss.rec";
-        gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
-        if (!gRecordOfs.is_open())
-        {
-            SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());
             exit(EXIT_FAILURE);
         }
     }

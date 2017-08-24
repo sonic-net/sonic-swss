@@ -8,10 +8,27 @@ extern "C" {
 #include <set>
 #include <string>
 #include <vector>
+#include <map>
 
 #define DEFAULT_PORT_VLAN_ID    1
 
 namespace swss {
+
+struct VlanMemberEntry
+{
+    sai_object_id_t            vlan_member_id;
+    sai_vlan_tagging_mode_t    vlan_mode;
+};
+
+typedef std::map<sai_vlan_id_t, VlanMemberEntry> port_vlan_members_t;
+
+struct VlanInfo
+{
+    sai_object_id_t     vlan_oid;
+    sai_vlan_id_t       vlan_id;
+    std::string         autostate;
+    uint32_t            mtu;
+};
 
 class Port
 {
@@ -54,11 +71,10 @@ public:
     int                 m_index = 0;    // PHY_PORT: index
     int                 m_ifindex = 0;
     sai_object_id_t     m_port_id = 0;
-    sai_object_id_t     m_vlan_oid = 0;
+    VlanInfo            m_vlan_info;
     sai_object_id_t     m_bridge_port_id = 0;   // TODO: port could have multiple bridge port IDs
-    sai_vlan_id_t       m_vlan_id = 0;
     sai_vlan_id_t       m_port_vlan_id = DEFAULT_PORT_VLAN_ID;  // Port VLAN ID
-    sai_object_id_t     m_vlan_member_id = 0;
+    port_vlan_members_t   m_vlan_members;
     sai_object_id_t     m_rif_id = 0;
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;

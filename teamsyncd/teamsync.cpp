@@ -154,13 +154,15 @@ int TeamSync::TeamPortSync::onChange()
 
         ifindex = team_get_port_ifindex(port);
         team_ifindex2ifname(m_team, ifindex, ifname, MAX_IFNAME);
-
         /* Skip the member that is removed from the LAG */
-        if (team_is_port_removed(port))
+        if (team_is_port_removed(port)) {
+            SWSS_LOG_DEBUG("TeamSync::TeamPortSync::onChange ifname %s removed", ifname);
             continue;
+        }
 
         team_get_port_enabled(m_team, ifindex, &enabled);
         tmp_lag_members[string(ifname)] = enabled;
+        SWSS_LOG_DEBUG("TeamSync::TeamPortSync::onChange ifname %s enabled:%d", ifname, enabled);
     }
 
     /* Compare old and new LAG members and set/del accordingly */
