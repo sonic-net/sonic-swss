@@ -200,18 +200,6 @@ void initSaiRedis(const string &record_location)
         }
     }
 
-    /* Disable/enable SwSS recording */
-    if (gSwssRecord)
-    {
-        gRecordFile = record_location + "/" + "swss.rec";
-        gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
-        if (!gRecordOfs.is_open())
-        {
-            SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());
-            exit(EXIT_FAILURE);
-        }
-    }
-
     attr.id = SAI_REDIS_SWITCH_ATTR_USE_PIPELINE;
     attr.value.booldata = true;
 
@@ -233,5 +221,4 @@ void initSaiRedis(const string &record_location)
         exit(EXIT_FAILURE);
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
-
 }
