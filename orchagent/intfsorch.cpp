@@ -246,7 +246,7 @@ bool IntfsOrch::addRouterIntfs(Port &port)
             break;
         case Port::VLAN:
             attr.id = SAI_ROUTER_INTERFACE_ATTR_VLAN_ID;
-            attr.value.oid = port.m_vlan_oid;
+            attr.value.oid = port.m_vlan_info.vlan_oid;
             break;
         default:
             SWSS_LOG_ERROR("Unsupported port type: %d", port.m_type);
@@ -287,7 +287,8 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
 
     port.m_rif_id = 0;
     gPortsOrch->setPort(port.m_alias, port);
-
+    /* Clean this port from default VLAN */
+    gPortsOrch->removeDefaultVlanMembers();
     SWSS_LOG_NOTICE("Remove router interface for port %s", port.m_alias.c_str());
 
     return true;

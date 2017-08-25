@@ -99,7 +99,7 @@ void FdbOrch::doTask(Consumer& consumer)
 
         FdbEntry entry;
         entry.mac = MacAddress(keys[1]);
-        entry.vlan = vlan.m_vlan_id;
+        entry.vlan = vlan.m_vlan_info.vlan_id;
 
         if (op == SET_COMMAND)
         {
