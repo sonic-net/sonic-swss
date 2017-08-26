@@ -100,7 +100,7 @@ private:
     bool removeLag(Port lag);
     bool addLagMember(Port &lag, Port &port);
     bool removeLagMember(Port &lag, Port &port);
-
+    void getLagMember(Port &lag, vector<Port> &portv);
     bool setPortAdminStatus(sai_object_id_t id, bool up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
     bool setPortPvid (Port &port, sai_uint32_t pvid);

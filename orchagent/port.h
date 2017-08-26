@@ -27,7 +27,6 @@ struct VlanInfo
     sai_object_id_t     vlan_oid;
     sai_vlan_id_t       vlan_id;
     std::string         autostate;
-    uint32_t            mtu;
 };
 
 class Port
@@ -70,16 +69,17 @@ public:
     Type                m_type;
     int                 m_index = 0;    // PHY_PORT: index
     int                 m_ifindex = 0;
+    sai_uint32_t        m_mtu;
     sai_object_id_t     m_port_id = 0;
     VlanInfo            m_vlan_info;
     sai_object_id_t     m_bridge_port_id = 0;   // TODO: port could have multiple bridge port IDs
     sai_vlan_id_t       m_port_vlan_id = DEFAULT_PORT_VLAN_ID;  // Port VLAN ID
-    port_vlan_members_t   m_vlan_members;
     sai_object_id_t     m_rif_id = 0;
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
     sai_object_id_t     m_acl_table_group_id = 0;
+    port_vlan_members_t m_vlan_members;
     std::set<std::string> m_members;
     std::vector<sai_object_id_t> m_queue_ids;
     std::vector<sai_object_id_t> m_priority_group_ids;
