@@ -172,18 +172,10 @@ void initSaiRedis(const string &record_location)
      * to be performed, and they should be executed before creating switch.
      */
 
-    /* Disable/enable SAI Redis recording */
     sai_attribute_t attr;
-    attr.id = SAI_REDIS_SWITCH_ATTR_RECORD;
-    attr.value.booldata = gSairedisRecord;
+    sai_status_t status;
 
-    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to %s SAI Redis recording, rv:%d",
-            gSairedisRecord ? "enable" : "disable", status);
-        exit(EXIT_FAILURE);
-    }
+    /* set recording dir before enable recording */
 
     if (gSairedisRecord)
     {
@@ -198,6 +190,19 @@ void initSaiRedis(const string &record_location)
                 record_location.c_str(), status);
             exit(EXIT_FAILURE);
         }
+    }
+
+    /* Disable/enable SAI Redis recording */
+
+    attr.id = SAI_REDIS_SWITCH_ATTR_RECORD;
+    attr.value.booldata = gSairedisRecord;
+
+    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to %s SAI Redis recording, rv:%d",
+            gSairedisRecord ? "enable" : "disable", status);
+        exit(EXIT_FAILURE);
     }
 
     attr.id = SAI_REDIS_SWITCH_ATTR_USE_PIPELINE;
