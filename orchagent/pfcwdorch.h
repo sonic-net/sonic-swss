@@ -5,7 +5,7 @@
 #include <condition_variable>
 #include "orch.h"
 #include "port.h"
-#include "pfcqueue.h"
+#include "pfcactionhandler.h"
 
 extern "C" {
 #include "sai.h"
@@ -45,9 +45,9 @@ public:
     virtual std::vector<sai_queue_stat_t> getQueueCounterIds(sai_object_id_t queueId) = 0;
     virtual std::string getStormDetectionCriteria(void) = 0;
 
-    virtual std::shared_ptr<PfcQueue> createForwardQueue(sai_object_id_t port,
+    virtual std::shared_ptr<PfcWdActionHandler> createForwardHandler(sai_object_id_t port,
             sai_object_id_t queue, uint32_t queueId) = 0;
-    virtual std::shared_ptr<PfcQueue> createDropQueue(sai_object_id_t port,
+    virtual std::shared_ptr<PfcWdActionHandler> createDropHandler(sai_object_id_t port,
             sai_object_id_t queue, uint32_t queueId) = 0;
 
     virtual bool startWd(sai_object_id_t queueId, sai_object_id_t portId,
@@ -68,7 +68,7 @@ private:
         // Remaining time till the next poll
         uint32_t pollTimeLeft = 0;
         uint32_t index = 0;
-        std::shared_ptr<PfcQueue> pfcQueue = { nullptr };
+        std::shared_ptr<PfcWdActionHandler> handler = { nullptr };
     };
 
     template <typename T>
@@ -107,9 +107,9 @@ public:
     virtual std::vector<sai_queue_stat_t> getQueueCounterIds(sai_object_id_t queueId);
     virtual std::string getStormDetectionCriteria(void);
 
-    virtual std::shared_ptr<PfcQueue> createForwardQueue(sai_object_id_t port,
+    virtual std::shared_ptr<PfcWdActionHandler> createForwardHandler(sai_object_id_t port,
             sai_object_id_t queue, uint32_t queueId);
-    virtual std::shared_ptr<PfcQueue> createDropQueue(sai_object_id_t port,
+    virtual std::shared_ptr<PfcWdActionHandler> createDropHandler(sai_object_id_t port,
             sai_object_id_t queue, uint32_t queueId);
 };
 

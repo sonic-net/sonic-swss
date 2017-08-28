@@ -35,7 +35,7 @@ orchagent_SOURCES = \
 		    aclorch.cpp \
 		    saihelper.cpp \
 		    pfcwdorch.cpp \
-		    pfcqueue.cpp \
+		    pfcactionhandler.cpp \
 		    aclorch.h \
 		    bufferorch.h \
 		    copporch.h \
@@ -47,7 +47,7 @@ orchagent_SOURCES = \
 		    observer.h \
 		    orch.h \
 		    orchdaemon.h \
-		    pfcqueue.h \
+		    pfcactionhandler.h \
 		    pfcwdorch.h \
 		    port.h \
 		    portsorch.h \

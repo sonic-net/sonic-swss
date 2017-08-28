@@ -1,4 +1,4 @@
-#include "pfcqueue.h"
+#include "pfcactionhandler.h"
 #include "logger.h"
 
 #include <vector>
@@ -8,7 +8,7 @@ extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_buffer_api_t *sai_buffer_api;
 
-PfcQueue::PfcQueue(sai_object_id_t port, sai_object_id_t queue, uint32_t queueId):
+PfcWdActionHandler::PfcWdActionHandler(sai_object_id_t port, sai_object_id_t queue, uint8_t queueId):
     m_port(port), m_queue(queue), m_queueId(queueId)
 {
     SWSS_LOG_ENTER();
@@ -21,7 +21,7 @@ PfcQueue::PfcQueue(sai_object_id_t port, sai_object_id_t queue, uint32_t queueId
     m_stats = getQueueStats();
 }
 
-PfcQueue::~PfcQueue(void)
+PfcWdActionHandler::~PfcWdActionHandler(void)
 {
     SWSS_LOG_ENTER();
 
@@ -35,7 +35,7 @@ PfcQueue::~PfcQueue(void)
             finalStats[1] - m_stats[1]);
 }
 
-std::vector<uint64_t> PfcQueue::getQueueStats(void)
+std::vector<uint64_t> PfcWdActionHandler::getQueueStats(void)
 {
     SWSS_LOG_ENTER();
 
@@ -60,8 +60,8 @@ std::vector<uint64_t> PfcQueue::getQueueStats(void)
     return std::move(queueStats);
 }
 
-PfcLossyQueue::PfcLossyQueue(sai_object_id_t port, sai_object_id_t queue, uint32_t queueId):
-    PfcQueue(port, queue, queueId)
+PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue, uint8_t queueId):
+    PfcWdActionHandler(port, queue, queueId)
 {
     SWSS_LOG_ENTER();
 
@@ -85,35 +85,35 @@ PfcLossyQueue::PfcLossyQueue(sai_object_id_t port, sai_object_id_t queue, uint32
     }
 }
 
-PfcLossyQueue::~PfcLossyQueue(void)
+PfcWdLossyHandler::~PfcWdLossyHandler(void)
 {
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
 
-    sai_status_t status = sai_port_api->get_port_attribute(port(), 1, &attr);
+    sai_status_t status = sai_port_api->get_port_attribute(getPort(), 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port 0x%lx: %d", port(), status);
-        throw std::runtime_error("PfcLossyQueue initialization failure");
+        SWSS_LOG_ERROR("Failed to get PFC mask on port 0x%lx: %d", getPort(), status);
+        return;
     }
 
     uint8_t pfcMask = attr.value.u8;
     attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
-    attr.value.u8 = pfcMask | (1 << queueId());
+    attr.value.u8 = pfcMask | (1 << getQueueId());
 
-    status = sai_port_api->set_port_attribute(port(), &attr);
+    status = sai_port_api->set_port_attribute(getPort(), &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set PFC mask on port 0x%lx: %d", port(), status);
-        throw std::runtime_error("PfcLossyQueue initialization failure");
+        SWSS_LOG_ERROR("Failed to set PFC mask on port 0x%lx: %d", getPort(), status);
+        return;
     }
 }
 
-PfcZeroBufferQueue::PfcZeroBufferQueue(sai_object_id_t port,
-        sai_object_id_t queue, uint32_t queueId):
-    PfcLossyQueue(port, queue, queueId)
+PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
+        sai_object_id_t queue, uint8_t queueId):
+    PfcWdLossyHandler(port, queue, queueId)
 {
     SWSS_LOG_ENTER();
 
@@ -125,7 +125,7 @@ PfcZeroBufferQueue::PfcZeroBufferQueue(sai_object_id_t port,
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get buffer profile ID on queue 0x%lx: %d", queue, status);
-        throw std::runtime_error("PfcZeroBufferQueue initialization failure");
+        return;
     }
 
     sai_object_id_t oldProfileId = attr.value.oid;
@@ -138,7 +138,7 @@ PfcZeroBufferQueue::PfcZeroBufferQueue(sai_object_id_t port,
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get buffer profile threshold mode for 0x%lx: %d", queue, status);
-        throw std::runtime_error("PfcZeroBufferQueue initialization failure");
+        return;
     }
 
     sai_buffer_profile_threshold_mode_t threshold_mode = static_cast<sai_buffer_profile_threshold_mode_t>(attr.value.u32);
@@ -159,7 +159,7 @@ PfcZeroBufferQueue::PfcZeroBufferQueue(sai_object_id_t port,
     else
     {
         SWSS_LOG_ERROR("Buffer mode in buffer 0x%lx is not supported", queue);
-        throw std::runtime_error("PfcZeroBufferQueue initialization failure");
+        return;
     }
 
     attr.id = SAI_QUEUE_ATTR_BUFFER_PROFILE_ID;
@@ -170,14 +170,14 @@ PfcZeroBufferQueue::PfcZeroBufferQueue(sai_object_id_t port,
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%lx: %d", queue, status);
-        throw std::runtime_error("PfcZeroBufferQueue initialization failure");
+        return;
     }
 
     // Save original buffer profile
     m_originalBufferProfile = oldProfileId;
 }
 
-PfcZeroBufferQueue::~PfcZeroBufferQueue(void)
+PfcWdZeroBufferHandler::~PfcWdZeroBufferHandler(void)
 {
     SWSS_LOG_ENTER();
 
@@ -186,20 +186,20 @@ PfcZeroBufferQueue::~PfcZeroBufferQueue(void)
     attr.value.oid = m_originalBufferProfile;
 
     // Set our zero buffer profile
-    sai_status_t status = sai_queue_api->set_queue_attribute(queue(), &attr);
+    sai_status_t status = sai_queue_api->set_queue_attribute(getQueue(), &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%lx: %d", queue(), status);
-        throw std::runtime_error("PfcZeroBufferQueue denitialization failure");
+        SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%lx: %d", getQueue(), status);
+        return;
     }
 }
 
-PfcZeroBufferQueue::ZeroBufferProfile::ZeroBufferProfile(void)
+PfcWdZeroBufferHandler::ZeroBufferProfile::ZeroBufferProfile(void)
 {
     SWSS_LOG_ENTER();
 }
 
-PfcZeroBufferQueue::ZeroBufferProfile::~ZeroBufferProfile(void)
+PfcWdZeroBufferHandler::ZeroBufferProfile::~ZeroBufferProfile(void)
 {
     SWSS_LOG_ENTER();
 
@@ -207,7 +207,7 @@ PfcZeroBufferQueue::ZeroBufferProfile::~ZeroBufferProfile(void)
     destroyDynamicProfile();
 }
 
-PfcZeroBufferQueue::ZeroBufferProfile &PfcZeroBufferQueue::ZeroBufferProfile::getInstance(void)
+PfcWdZeroBufferHandler::ZeroBufferProfile &PfcWdZeroBufferHandler::ZeroBufferProfile::getInstance(void)
 {
     SWSS_LOG_ENTER();
 
@@ -216,7 +216,7 @@ PfcZeroBufferQueue::ZeroBufferProfile &PfcZeroBufferQueue::ZeroBufferProfile::ge
     return instance;
 }
 
-sai_object_id_t PfcZeroBufferQueue::ZeroBufferProfile::getStaticProfile(void)
+sai_object_id_t PfcWdZeroBufferHandler::ZeroBufferProfile::getStaticProfile(void)
 {
     SWSS_LOG_ENTER();
 
@@ -228,7 +228,7 @@ sai_object_id_t PfcZeroBufferQueue::ZeroBufferProfile::getStaticProfile(void)
     return getInstance().m_zeroStaticBufferProfile;
 }
 
-sai_object_id_t PfcZeroBufferQueue::ZeroBufferProfile::getDynamicProfile(void)
+sai_object_id_t PfcWdZeroBufferHandler::ZeroBufferProfile::getDynamicProfile(void)
 {
     SWSS_LOG_ENTER();
 
@@ -240,7 +240,7 @@ sai_object_id_t PfcZeroBufferQueue::ZeroBufferProfile::getDynamicProfile(void)
     return getInstance().m_zeroDynamicBufferProfile;
 }
 
-void PfcZeroBufferQueue::ZeroBufferProfile::createStaticProfile(void)
+void PfcWdZeroBufferHandler::ZeroBufferProfile::createStaticProfile(void)
 {
     SWSS_LOG_ENTER();
 
@@ -268,7 +268,7 @@ void PfcZeroBufferQueue::ZeroBufferProfile::createStaticProfile(void)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create static zero buffer pool for PFC WD: %d", status);
-        throw std::runtime_error("PFC WD initialization failure");
+        return;
     }
 
     // Create static zero profile
@@ -294,12 +294,12 @@ void PfcZeroBufferQueue::ZeroBufferProfile::createStaticProfile(void)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create static zero buffer profile for PFC WD: %d", status);
-        throw std::runtime_error("PFC WD initialization failure");
+        return;
     }
 }
 
 
-void PfcZeroBufferQueue::ZeroBufferProfile::createDynamicProfile(void)
+void PfcWdZeroBufferHandler::ZeroBufferProfile::createDynamicProfile(void)
 {
     SWSS_LOG_ENTER();
 
@@ -327,7 +327,7 @@ void PfcZeroBufferQueue::ZeroBufferProfile::createDynamicProfile(void)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create dynamic zero buffer pool for PFC WD: %d", status);
-        throw std::runtime_error("PFC WD initialization failure");
+        return;
     }
 
     // Create dynamic zero profile
@@ -353,11 +353,11 @@ void PfcZeroBufferQueue::ZeroBufferProfile::createDynamicProfile(void)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create dynamic zero buffer profile for PFC WD: %d", status);
-        throw std::runtime_error("PFC WD initialization failure");
+        return;
     }
 }
 
-void PfcZeroBufferQueue::ZeroBufferProfile::destroyStaticProfile(void)
+void PfcWdZeroBufferHandler::ZeroBufferProfile::destroyStaticProfile(void)
 {
     SWSS_LOG_ENTER();
 
@@ -375,7 +375,7 @@ void PfcZeroBufferQueue::ZeroBufferProfile::destroyStaticProfile(void)
     }
 }
 
-void PfcZeroBufferQueue::ZeroBufferProfile::destroyDynamicProfile(void)
+void PfcWdZeroBufferHandler::ZeroBufferProfile::destroyDynamicProfile(void)
 {
     SWSS_LOG_ENTER();
 

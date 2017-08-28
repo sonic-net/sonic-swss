@@ -86,7 +86,8 @@ void PfcWdOrch::createEntry(const string& key, const vector<FieldValueTuple>& da
 
     uint32_t detectionTime = 0;
     uint32_t restorationTime = 0;
-    PfcWdAction action = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
+    // According to requirements, drop action is default
+    PfcWdAction action = PfcWdAction::PFC_WD_ACTION_DROP;
 
     Port port;
     if (!gPortsOrch->getPort(key, port))
@@ -169,12 +170,6 @@ void PfcWdOrch::createEntry(const string& key, const vector<FieldValueTuple>& da
     {
         SWSS_LOG_ERROR("%s missing", PFC_WD_RESTORATION_TIME);
         return;
-    }
-
-    // According to requirements, drop action is default
-    if (action == PfcWdAction::PFC_WD_ACTION_UNKNOWN)
-    {
-        action = PfcWdAction::PFC_WD_ACTION_DROP;
     }
 
     // Start Watchdog on every lossless queue
@@ -498,7 +493,7 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
         if (queueEntry.pollTimeLeft == nearestTime)
         {
             // Queue is being stormed
-            if (queueEntry.pfcQueue != nullptr)
+            if (queueEntry.handler != nullptr)
             {
                 stormedQueues.push_back(sai_serialize_object_id(queueId));
             }
@@ -543,14 +538,14 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
         {
             if (queueEntry.c_action == PfcWdAction::PFC_WD_ACTION_DROP)
             {
-                queueEntry.pfcQueue = createDropQueue(
+                queueEntry.handler = createDropHandler(
                         queueEntry.portId,
                         queueId,
                         queueEntry.index);
             }
             else if (queueEntry.c_action == PfcWdAction::PFC_WD_ACTION_FORWARD)
             {
-                queueEntry.pfcQueue = createForwardQueue(
+                queueEntry.handler = createForwardHandler(
                         queueEntry.portId,
                         queueId,
                         queueEntry.index);
@@ -566,7 +561,7 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
         // Queue is restored
         else if (restoreCheckReply.find(queueIdStr) != restoreCheckReply.end())
         {
-            queueEntry.pfcQueue = nullptr;
+            queueEntry.handler = nullptr;
             queueEntry.pollTimeLeft = queueEntry.c_detectionTime;
             setQueueDbStatus(queueIdStr, true);
         }
@@ -574,7 +569,7 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
         else
         {
             queueEntry.pollTimeLeft = queueEntry.pollTimeLeft == nearestTime ?
-                (queueEntry.pfcQueue == nullptr ?
+                (queueEntry.handler == nullptr ?
                  queueEntry.c_detectionTime :
                  queueEntry.c_restorationTime) :
                 queueEntry.pollTimeLeft - nearestTime;
@@ -687,11 +682,8 @@ std::vector<sai_port_stat_t> PfcDurationWatchdog::getPortCounterIds(sai_object_i
         SAI_PORT_STAT_PFC_7_RX_PKTS,
     };
 
-    sai_attribute_t attr =
-    {
-        .id = SAI_QUEUE_ATTR_INDEX,
-        .value = { },
-    };
+    sai_attribute_t attr;
+    attr.id = SAI_QUEUE_ATTR_INDEX;
 
     sai_status_t status = sai_queue_api->get_queue_attribute(queueId, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -730,14 +722,14 @@ std::string PfcDurationWatchdog::getStormDetectionCriteria(void)
     return "duration_criteria.lua";
 }
 
-std::shared_ptr<PfcQueue> PfcDurationWatchdog::createForwardQueue(sai_object_id_t port,
+std::shared_ptr<PfcWdActionHandler> PfcDurationWatchdog::createForwardHandler(sai_object_id_t port,
         sai_object_id_t queue, uint32_t queueId)
 {
-    return std::make_shared<PfcLossyQueue>(port, queue, queueId);
+    return std::make_shared<PfcWdLossyHandler>(port, queue, queueId);
 }
 
-std::shared_ptr<PfcQueue> PfcDurationWatchdog::createDropQueue(sai_object_id_t port,
+std::shared_ptr<PfcWdActionHandler> PfcDurationWatchdog::createDropHandler(sai_object_id_t port,
         sai_object_id_t queue, uint32_t queueId)
 {
-    return std::make_shared<PfcZeroBufferQueue>(port, queue, queueId);
+    return std::make_shared<PfcWdZeroBufferHandler>(port, queue, queueId);
 }

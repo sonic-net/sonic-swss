@@ -10,23 +10,23 @@ extern "C" {
 // PFC queue interface class
 // It resembles RAII behavior - pause storm is mitigated (queue is locked) on creation,
 // and is restored (queue released) on removal
-class PfcQueue
+class PfcWdActionHandler
 {
     public:
-        PfcQueue(sai_object_id_t port, sai_object_id_t queue, uint32_t queueId);
-        virtual ~PfcQueue(void) = 0;
+        PfcWdActionHandler(sai_object_id_t port, sai_object_id_t queue, uint8_t queueId);
+        virtual ~PfcWdActionHandler(void) = 0;
 
-        inline sai_object_id_t port(void)
+        inline sai_object_id_t getPort(void)
         {
             return m_port;
         }
 
-        inline sai_object_id_t queue(void)
+        inline sai_object_id_t getQueue(void)
         {
             return m_queue;
         }
 
-        inline sai_object_id_t queueId(void)
+        inline sai_object_id_t getQueueId(void)
         {
             return m_queueId;
         }
@@ -36,24 +36,24 @@ class PfcQueue
 
         sai_object_id_t m_port = SAI_NULL_OBJECT_ID;
         sai_object_id_t m_queue = SAI_NULL_OBJECT_ID;
-        uint32_t m_queueId = 0;
+        uint8_t m_queueId = 0;
         std::vector<uint64_t> m_stats;
 };
 
 // Pfc queue that implements forward action by disabling PFC on queue
-class PfcLossyQueue: public PfcQueue
+class PfcWdLossyHandler: public PfcWdActionHandler
 {
     public:
-        PfcLossyQueue(sai_object_id_t port, sai_object_id_t queue, uint32_t queueId);
-        virtual ~PfcLossyQueue(void);
+        PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue, uint8_t queueId);
+        virtual ~PfcWdLossyHandler(void);
 };
 
 // PFC queue that implements drop action by draining queue with buffer of zero size
-class PfcZeroBufferQueue: public PfcLossyQueue
+class PfcWdZeroBufferHandler: public PfcWdLossyHandler
 {
     public:
-        PfcZeroBufferQueue(sai_object_id_t port, sai_object_id_t queue, uint32_t queueId);
-        virtual ~PfcZeroBufferQueue(void);
+        PfcWdZeroBufferHandler(sai_object_id_t port, sai_object_id_t queue, uint8_t queueId);
+        virtual ~PfcWdZeroBufferHandler(void);
 
     private:
         // Singletone class for keeping shared data - zero buffer profiles
