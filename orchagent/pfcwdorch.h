@@ -29,10 +29,20 @@ public:
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action) = 0;
     virtual bool stopWd(sai_object_id_t queueId) = 0;
 
+    void setQueueDbStatus(const std::string& queueIdStr, bool operational);
+
+    inline ProducerStateTable &getPfcWdTable(void)
+    {
+        return m_pfcWdTable;
+    }
+
 private:
     static PfcWdAction deserializeAction(const string& key);
     void createEntry(const string& key, const vector<FieldValueTuple>& data);
     void deleteEntry(const string& name);
+
+    DBConnector m_pfcWdDb;
+    ProducerStateTable m_pfcWdTable;
 };
 
 class PfcWdSwOrch: public PfcWdOrch
@@ -73,7 +83,6 @@ private:
 
     template <typename T>
     static std::string counterIdsToStr(const std::vector<T> ids, std::string (*convert)(T));
-    void setQueueDbStatus(const std::string& queueIdStr, bool operational);
     bool addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portId,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     bool removeFromWatchdogDb(sai_object_id_t queueId);
@@ -85,9 +94,6 @@ private:
 
     std::map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
     std::mutex m_pfcWdMutex;
-
-    DBConnector m_pfcWdDb;
-    ProducerStateTable m_pfcWdTable;
 
     std::atomic_bool m_runPfcWdSwOrchThread = { false };
     std::shared_ptr<std::thread> m_pfcWatchdogThread = nullptr;

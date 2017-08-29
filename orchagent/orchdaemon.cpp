@@ -90,7 +90,6 @@ bool OrchDaemon::init()
     m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch };
     m_select = new Select();
 
-    SWSS_LOG_ERROR("marianp asic %s", platform.c_str());
     vector<string> pfc_wd_tables = {
         APP_PFC_WD_TABLE_NAME
     };

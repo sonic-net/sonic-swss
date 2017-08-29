@@ -23,7 +23,9 @@ extern sai_queue_api_t *sai_queue_api;
 extern PortsOrch *gPortsOrch;
 
 PfcWdOrch::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
-    Orch(db, tableNames)
+    Orch(db, tableNames),
+    m_pfcWdDb(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0),
+    m_pfcWdTable(&m_pfcWdDb, PFC_WD_STATE_TABLE)
 {
     SWSS_LOG_ENTER();
 }
@@ -241,10 +243,19 @@ void PfcWdOrch::deleteEntry(const string& name)
     }
 }
 
+void PfcWdOrch::setQueueDbStatus(const std::string& queueIdStr, bool operational)
+{
+    std::vector<FieldValueTuple> fieldValues;
+
+    fieldValues.emplace_back(PFC_WD_QUEUE_STATUS, operational ?
+                                                  PFC_WD_QUEUE_STATUS_OPERATIONAL :
+                                                  PFC_WD_QUEUE_STATUS_STORMED);
+
+    m_pfcWdTable.set(queueIdStr, fieldValues);
+}
+
 PfcWdSwOrch::PfcWdSwOrch(DBConnector *db, vector<string> &tableNames):
-    PfcWdOrch(db, tableNames),
-    m_pfcWdDb(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0),
-    m_pfcWdTable(&m_pfcWdDb, PFC_WD_STATE_TABLE)
+    PfcWdOrch(db, tableNames)
 {
     SWSS_LOG_ENTER();
 }
@@ -326,17 +337,6 @@ std::string PfcWdSwOrch::counterIdsToStr(const std::vector<T> ids, std::string (
     return str;
 }
 
-void PfcWdSwOrch::setQueueDbStatus(const std::string& queueIdStr, bool operational)
-{
-    std::vector<FieldValueTuple> fieldValues;
-
-    fieldValues.emplace_back(PFC_WD_QUEUE_STATUS, operational ?
-                                                  PFC_WD_QUEUE_STATUS_OPERATIONAL :
-                                                  PFC_WD_QUEUE_STATUS_STORMED);
-
-    m_pfcWdTable.set(queueIdStr, fieldValues);
-}
-
 bool PfcWdSwOrch::addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portId,
         uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
 {
@@ -372,7 +372,7 @@ bool PfcWdSwOrch::addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portI
 
     fieldValues.emplace_back(PFC_WD_QUEUE_STATUS, PFC_WD_QUEUE_STATUS_OPERATIONAL);
     std::string queueIdStr = sai_serialize_object_id(queueId);
-    m_pfcWdTable.set(queueIdStr, fieldValues);
+    getPfcWdTable().set(queueIdStr, fieldValues);
 
     return true;
 }
@@ -384,7 +384,7 @@ bool PfcWdSwOrch::removeFromWatchdogDb(sai_object_id_t queueId)
     // Remove from internal DB
     m_entryMap.erase(queueId);
     // Unregister in syncd
-    m_pfcWdTable.del(sai_serialize_object_id(queueId));
+    getPfcWdTable().del(sai_serialize_object_id(queueId));
 
     return true;
 }
