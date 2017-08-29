@@ -37,6 +37,8 @@ bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
 
+    string platform = getenv("platform") ? : "";
+
     vector<string> ports_tables = {
         APP_PORT_TABLE_NAME,
         APP_VLAN_TABLE_NAME,
@@ -84,11 +86,19 @@ bool OrchDaemon::init()
     };
     AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
-    vector<string> pfc_wd_tables = { APP_PFC_WD_TABLE_NAME };
-    PfcWdOrch *pfc_wd = new PfcDurationWatchdog(m_applDb, pfc_wd_tables);
 
-    m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch, pfc_wd };
+    m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch };
     m_select = new Select();
+
+    SWSS_LOG_ERROR("marianp asic %s", platform.c_str());
+    vector<string> pfc_wd_tables = {
+        APP_PFC_WD_TABLE_NAME
+    };
+
+    if (platform  == MLNX_PLATFORM_SUBSTRING)
+    {
+        m_orchList.push_back(new PfcDurationWatchdog(m_applDb, pfc_wd_tables));
+    }
 
     return true;
 }
