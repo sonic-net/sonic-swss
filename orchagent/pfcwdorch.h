@@ -73,8 +73,6 @@ private:
 
     template <typename T>
     static std::string counterIdsToStr(const std::vector<T> ids, std::string (*convert)(T));
-    static std::set<std::string> runRedisScript(DBConnector &db, const std::string& sha,
-            const std::vector<std::string>& keys, const std::vector<std::string>& argv);
     void setQueueDbStatus(const std::string& queueIdStr, bool operational);
     bool addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portId,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
