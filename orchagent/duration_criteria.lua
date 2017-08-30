@@ -70,9 +70,9 @@ for i = n, 1, -1 do
         end
 
         -- Save values for next run
-        redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS_last', packets_last)
-        redis.call('HSET', counters_table_name .. ':' .. KEYS[i], pfc_rx_pkt_key .. '_last', pfc_rx_packets_last)
-        redis.call('HSET', counters_table_name .. ':' .. KEYS[i], pfc_duration_key .. '_last', pfc_duration_last)
+        redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS_last', packets)
+        redis.call('HSET', counters_table_name .. ':' .. KEYS[i], pfc_rx_pkt_key .. '_last', pfc_rx_packets)
+        redis.call('HSET', counters_table_name .. ':' .. KEYS[i], pfc_duration_key .. '_last', pfc_duration)
     end
 end
 
