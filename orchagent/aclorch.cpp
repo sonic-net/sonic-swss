@@ -36,6 +36,7 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_TCP_FLAGS,         SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS },
     { MATCH_IP_TYPE,           SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE },
     { MATCH_DSCP,              SAI_ACL_ENTRY_ATTR_FIELD_DSCP },
+    { MATCH_TC,                SAI_ACL_ENTRY_ATTR_FIELD_TC },
     { MATCH_L4_SRC_PORT_RANGE, (sai_acl_entry_attr_t)SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE },
     { MATCH_L4_DST_PORT_RANGE, (sai_acl_entry_attr_t)SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE },
 };
@@ -226,6 +227,12 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 return false;
             }
         }
+        else if(attr_name == MATCH_TC)
+        {
+            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
+            value.aclfield.mask.u8 =0xFF;
+        }
+
     }
     catch (exception &e)
     {
@@ -1438,6 +1445,10 @@ sai_status_t AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &ta
     table_attrs.push_back(attr);
 
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS;
+    attr.value.booldata = true;
+    table_attrs.push_back(attr);
+
+    attr.id = SAI_ACL_TABLE_ATTR_FIELD_TC;
     attr.value.booldata = true;
     table_attrs.push_back(attr);
 
