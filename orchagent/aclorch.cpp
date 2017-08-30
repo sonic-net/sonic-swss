@@ -230,7 +230,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         else if(attr_name == MATCH_TC)
         {
             value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
-            value.aclfield.mask.u8 =0xFF;
+            value.aclfield.mask.u8 = 0xFF;
         }
 
     }
