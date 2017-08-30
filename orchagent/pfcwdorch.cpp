@@ -416,7 +416,6 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
 
     std::unique_lock<std::mutex> lk(m_pfcWdMutex);
 
-    SWSS_LOG_ERROR("%s %d", __FUNCTION__, nearestTime);
     // Select those queues for which timer expired
     std::vector<std::string> normalQueues;
     std::vector<std::string> stormedQueues;
