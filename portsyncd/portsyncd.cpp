@@ -5,6 +5,7 @@
 #include <vector>
 #include <set>
 #include <map>
+#include "exec.h"
 #include "dbconnector.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -30,7 +31,7 @@ using namespace swss;
 set<string> g_portSet;
 map<string, set<string>> g_vlanMap;
 bool g_init = false;
-
+bool g_minigraphVlan = false;
 void usage()
 {
     cout << "Usage: portsyncd [-p port_config.ini]" << endl;
@@ -40,6 +41,7 @@ void usage()
 
 void handlePortConfigFile(ProducerStateTable &p, string file);
 void handleVlanIntfFile(string file);
+void minigraphVlan();
 
 int main(int argc, char **argv)
 {
@@ -63,6 +65,7 @@ int main(int argc, char **argv)
         }
     }
 
+    minigraphVlan();
     DBConnector db(0, DBConnector::DEFAULT_UNIXSOCKET, 0);
     ProducerStateTable p(&db, APP_PORT_TABLE_NAME);
 
@@ -164,4 +167,16 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
     }
 
     infile.close();
+}
+
+void minigraphVlan()
+{
+    string vlan;
+
+    vlan = swss::exec("sonic-cfggen -m /etc/sonic/minigraph.xml -v 'minigraph_vlans.keys()'");
+    if(vlan.compare(0, 2, "[]"))
+    {
+        g_minigraphVlan = true;
+        cout << "VLAN configured from minigraph" << endl;
+    }
 }
