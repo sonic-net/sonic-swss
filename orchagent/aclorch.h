@@ -257,6 +257,11 @@ public:
     NeighOrch *m_neighOrch;
     RouteOrch *m_routeOrch;
 
+    void addAclTable(AclTable &aclTable, string table_id);
+    void removeAclTable(string table_id);
+    void addAclRule(shared_ptr<AclRule> aclRule, string table_id, string rule_id);
+    void removeAclRule(string table_id, string rule_id);
+
 private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
