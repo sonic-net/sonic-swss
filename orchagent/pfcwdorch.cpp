@@ -239,7 +239,7 @@ void PfcWdOrch::deleteEntry(const string& name)
             continue;
         }
 
-        SWSS_LOG_ERROR("Stopped PFC Watchdog on port %s queue %d", name.c_str(), i);
+        SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s queue %d", name.c_str(), i);
     }
 }
 
