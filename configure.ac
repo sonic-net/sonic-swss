@@ -83,6 +83,8 @@ AC_CONFIG_FILES([
     fpmsyncd/Makefile
     neighsyncd/Makefile
     intfsyncd/Makefile
+    cfgagent/Makefile
+    cfgagent/cfgmgrtest/Makefile
     portsyncd/Makefile
     teamsyncd/Makefile
     swssconfig/Makefile
