@@ -1,5 +1,5 @@
-#ifndef PFC_QUEUE_H
-#define PFC_QUEUE_H
+#ifndef PFC_ACTION_HANDLER_H
+#define PFC_ACTION_HANDLER_H
 
 #include <vector>
 
