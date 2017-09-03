@@ -94,7 +94,7 @@ bool OrchDaemon::init()
         APP_PFC_WD_TABLE_NAME
     };
 
-    if (platform  == MLNX_PLATFORM_SUBSTRING)
+    if (platform == MLNX_PLATFORM_SUBSTRING)
     {
         m_orchList.push_back(new PfcDurationWatchdog(m_applDb, pfc_wd_tables));
     }

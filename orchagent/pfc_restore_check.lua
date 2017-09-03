@@ -37,7 +37,7 @@ for i = n, 1, -1 do
             -- Check actual condition of queue being restored from PFC storm
             if (pfc_rx_packets - pfc_rx_packets_last == 0)
                 -- DEBUG CODE START. Uncomment to enable
-                and (debug_storm  ~= "enabled")
+                and (debug_storm ~= "enabled")
                 -- DEBUG CODE END.
             then
                 table.insert(rets, KEYS[i])
