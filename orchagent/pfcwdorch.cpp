@@ -434,7 +434,6 @@ bool PfcWdSwOrch::addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portI
                 action,
                 portId));
 
-    fieldValues.emplace_back(PFC_WD_QUEUE_STATUS, PFC_WD_QUEUE_STATUS_OPERATIONAL);
     std::string queueIdStr = sai_serialize_object_id(queueId);
     getPfcWdTable().set(queueIdStr, fieldValues);
 
