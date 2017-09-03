@@ -37,7 +37,7 @@ bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
 
-    string platform = getenv("platform") ? : "";
+    string platform = getenv("platform") ? getenv("platform") : "";
 
     vector<string> ports_tables = {
         APP_PORT_TABLE_NAME,
