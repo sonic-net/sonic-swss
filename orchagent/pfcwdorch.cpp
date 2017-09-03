@@ -8,13 +8,6 @@
 #define PFC_WD_DETECTION_TIME           "detection_time"
 #define PFC_WD_RESTORATION_TIME         "restoration_time"
 
-#define PFC_WD_QUEUE_STATUS             "PFC_WD_STATUS"
-#define PFC_WD_QUEUE_STATUS_OPERATIONAL "operational"
-#define PFC_WD_QUEUE_STATUS_STORMED     "stormed"
-
-#define PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED "PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED"
-#define PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED "PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED"
-
 #define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
 #define PFC_WD_DETECTION_TIME_MIN       100
 #define PFC_WD_RESTORATION_TIME_MAX     (60 * 1000)
@@ -27,10 +20,10 @@ extern PortsOrch *gPortsOrch;
 
 PfcWdOrch::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
-    m_pfcWdDb(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0),
-    m_countersDb(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0),
-    m_pfcWdTable(&m_pfcWdDb, PFC_WD_STATE_TABLE),
-    m_countersTable(&m_countersDb, COUNTERS_TABLE)
+    m_pfcWdDb(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_pfcWdTable(new ProducerStateTable(m_pfcWdDb.get(), PFC_WD_STATE_TABLE)),
+    m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE))
 {
     SWSS_LOG_ENTER();
 }
@@ -66,74 +59,6 @@ void PfcWdOrch::doTask(Consumer& consumer)
         }
 
         consumer.m_toSync.erase(it++);
-    }
-}
-
-void PfcWdOrch::updateWdCounters(const string& queueIdStr, bool operational)
-{
-    uint32_t detectCount = 0;
-    uint32_t restoreCount = 0;
-    vector<FieldValueTuple> resultFvValues;
-
-    getWdCounters(queueIdStr, detectCount, restoreCount);
-
-    if (operational)
-    {
-        restoreCount++;
-    }
-    else
-    {
-        detectCount++;
-    }
-
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, to_string(detectCount));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, to_string(restoreCount));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATUS, operational ?
-                                                     PFC_WD_QUEUE_STATUS_OPERATIONAL :
-                                                     PFC_WD_QUEUE_STATUS_STORMED);
-
-    m_countersTable.set(queueIdStr, resultFvValues);
-}
-
-void PfcWdOrch::initWdCounters(const string &queueIdStr)
-{
-    uint32_t detectCount = 0;
-    uint32_t restoreCount = 0;
-    vector<FieldValueTuple> resultFvValues;
-
-    getWdCounters(queueIdStr, detectCount, restoreCount);
-
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, to_string(detectCount));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, to_string(restoreCount));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATUS, PFC_WD_QUEUE_STATUS_OPERATIONAL);
-
-    m_countersTable.set(queueIdStr, resultFvValues);
-}
-
-void PfcWdOrch::getWdCounters(const string& queueIdStr, uint32_t& detectCount, uint32_t& restoreCount)
-{
-    vector<FieldValueTuple> fieldValues;
-    detectCount = 0;
-    restoreCount = 0;
-
-    if (!m_countersTable.get(queueIdStr, fieldValues))
-    {
-        return;
-    }
-
-    for (const auto& fv : fieldValues)
-    {
-        const auto field = fvField(fv);
-        const auto value = fvValue(fv);
-
-        if (field == PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED)
-        {
-            detectCount = stoul(value);
-        }
-        else if (field == PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED)
-        {
-            restoreCount = stoul(value);
-        }
     }
 }
 
@@ -268,7 +193,7 @@ void PfcWdOrch::createEntry(const string& key, const vector<FieldValueTuple>& da
 
         sai_object_id_t queueId = port.m_queue_ids[i];
 
-        initWdCounters(sai_serialize_object_id(queueId));
+        PfcWdActionHandler::initWdCounters(m_countersTable, sai_serialize_object_id(queueId));
 
         if (!startWd(queueId, port.m_port_id, detectionTime, restorationTime, action))
         {
@@ -278,7 +203,6 @@ void PfcWdOrch::createEntry(const string& key, const vector<FieldValueTuple>& da
 
         SWSS_LOG_NOTICE("Starting PFC Watchdog on port %s queue %d", key.c_str(), i);
     }
-
 }
 
 void PfcWdOrch::deleteEntry(const string& name)
@@ -435,7 +359,7 @@ bool PfcWdSwOrch::addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portI
                 portId));
 
     string queueIdStr = sai_serialize_object_id(queueId);
-    getPfcWdTable().set(queueIdStr, fieldValues);
+    getPfcWdTable()->set(queueIdStr, fieldValues);
 
     return true;
 }
@@ -447,7 +371,7 @@ bool PfcWdSwOrch::removeFromWatchdogDb(sai_object_id_t queueId)
     // Remove from internal DB
     m_entryMap.erase(queueId);
     // Unregister in syncd
-    getPfcWdTable().del(sai_serialize_object_id(queueId));
+    getPfcWdTable()->del(sai_serialize_object_id(queueId));
 
     return true;
 }
@@ -552,7 +476,6 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
                 throw runtime_error("Invalid PFC WD Action");
             }
 
-            updateWdCounters(queueIdStr, false);
             queueEntry.pollTimeLeft = queueEntry.c_restorationTime;
         }
         // Queue is restored
@@ -560,7 +483,6 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
         {
             queueEntry.handler = nullptr;
             queueEntry.pollTimeLeft = queueEntry.c_detectionTime;
-            updateWdCounters(queueIdStr, true);
         }
         // Update queue poll timer
         else
@@ -722,11 +644,11 @@ string PfcDurationWatchdog::getStormDetectionCriteria(void)
 shared_ptr<PfcWdActionHandler> PfcDurationWatchdog::createForwardHandler(sai_object_id_t port,
         sai_object_id_t queue, uint32_t queueId)
 {
-    return make_shared<PfcWdLossyHandler>(port, queue, queueId);
+    return make_shared<PfcWdLossyHandler>(port, queue, queueId, getCountersTable());
 }
 
 shared_ptr<PfcWdActionHandler> PfcDurationWatchdog::createDropHandler(sai_object_id_t port,
         sai_object_id_t queue, uint32_t queueId)
 {
-    return make_shared<PfcWdZeroBufferHandler>(port, queue, queueId);
+    return make_shared<PfcWdZeroBufferHandler>(port, queue, queueId, getCountersTable());
 }

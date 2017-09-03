@@ -29,24 +29,25 @@ public:
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action) = 0;
     virtual bool stopWd(sai_object_id_t queueId) = 0;
 
-    void updateWdCounters(const string& queueIdStr, bool operational);
-
-    inline ProducerStateTable &getPfcWdTable(void)
+    inline shared_ptr<ProducerStateTable> getPfcWdTable(void)
     {
         return m_pfcWdTable;
     }
 
+    inline shared_ptr<Table> getCountersTable(void)
+    {
+        return m_countersTable;;
+    }
+
 private:
-    void initWdCounters(const string &queueIdStr);
-    void getWdCounters(const string& queueIdStr, uint32_t& detectCount, uint32_t& restoreCount);
     static PfcWdAction deserializeAction(const string& key);
     void createEntry(const string& key, const vector<FieldValueTuple>& data);
     void deleteEntry(const string& name);
 
-    DBConnector m_pfcWdDb;
-    DBConnector m_countersDb;
-    ProducerStateTable m_pfcWdTable;
-    Table m_countersTable;
+    shared_ptr<DBConnector> m_pfcWdDb = nullptr;
+    shared_ptr<DBConnector> m_countersDb = nullptr;
+    shared_ptr<ProducerStateTable> m_pfcWdTable = nullptr;
+    shared_ptr<Table> m_countersTable = nullptr;
 };
 
 class PfcWdSwOrch: public PfcWdOrch

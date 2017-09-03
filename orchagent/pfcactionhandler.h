@@ -2,12 +2,16 @@
 #define PFC_ACTION_HANDLER_H
 
 #include <vector>
+#include <memory>
+
+#include "table.h"
 
 extern "C" {
 #include "sai.h"
 }
 
 using namespace std;
+using namespace swss;
 
 // PFC queue interface class
 // It resembles RAII behavior - pause storm is mitigated (queue is locked) on creation,
@@ -15,7 +19,8 @@ using namespace std;
 class PfcWdActionHandler
 {
     public:
-        PfcWdActionHandler(sai_object_id_t port, sai_object_id_t queue, uint8_t queueId);
+        PfcWdActionHandler(sai_object_id_t port, sai_object_id_t queue,
+                uint8_t queueId, shared_ptr<Table> countersTable);
         virtual ~PfcWdActionHandler(void) = 0;
 
         inline sai_object_id_t getPort(void)
@@ -33,12 +38,18 @@ class PfcWdActionHandler
             return m_queueId;
         }
 
+        static void initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr);
+
     private:
         vector<uint64_t> getQueueStats(void);
+        void updateWdCounters(const string& queueIdStr, bool operational);
+        static void getWdCounters(shared_ptr<Table>, const string& queueIdStr,
+                uint32_t& detectCount, uint32_t& restoreCount);
 
         sai_object_id_t m_port = SAI_NULL_OBJECT_ID;
         sai_object_id_t m_queue = SAI_NULL_OBJECT_ID;
         uint8_t m_queueId = 0;
+        shared_ptr<Table> m_countersTable = nullptr;
         vector<uint64_t> m_stats;
 };
 
@@ -46,7 +57,8 @@ class PfcWdActionHandler
 class PfcWdLossyHandler: public PfcWdActionHandler
 {
     public:
-        PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue, uint8_t queueId);
+        PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue,
+                uint8_t queueId, shared_ptr<Table> countersTable);
         virtual ~PfcWdLossyHandler(void);
 };
 
@@ -54,7 +66,8 @@ class PfcWdLossyHandler: public PfcWdActionHandler
 class PfcWdZeroBufferHandler: public PfcWdLossyHandler
 {
     public:
-        PfcWdZeroBufferHandler(sai_object_id_t port, sai_object_id_t queue, uint8_t queueId);
+        PfcWdZeroBufferHandler(sai_object_id_t port, sai_object_id_t queue,
+                uint8_t queueId, shared_ptr<Table> countersTable);
         virtual ~PfcWdZeroBufferHandler(void);
 
     private:

@@ -1,15 +1,27 @@
 #include "pfcactionhandler.h"
 #include "logger.h"
+#include "saiserialize.h"
 
 #include <vector>
+
+#define PFC_WD_QUEUE_STATUS             "PFC_WD_STATUS"
+#define PFC_WD_QUEUE_STATUS_OPERATIONAL "operational"
+#define PFC_WD_QUEUE_STATUS_STORMED     "stormed"
+
+#define PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED "PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED"
+#define PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED "PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED"
 
 extern sai_object_id_t gSwitchId;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_buffer_api_t *sai_buffer_api;
 
-PfcWdActionHandler::PfcWdActionHandler(sai_object_id_t port, sai_object_id_t queue, uint8_t queueId):
-    m_port(port), m_queue(queue), m_queueId(queueId)
+PfcWdActionHandler::PfcWdActionHandler(sai_object_id_t port, sai_object_id_t queue,
+        uint8_t queueId, shared_ptr<Table> countersTable):
+    m_port(port),
+    m_queue(queue),
+    m_queueId(queueId),
+    m_countersTable(countersTable)
 {
     SWSS_LOG_ENTER();
 
@@ -19,6 +31,7 @@ PfcWdActionHandler::PfcWdActionHandler(sai_object_id_t port, sai_object_id_t que
             m_port);
     
     m_stats = getQueueStats();
+    updateWdCounters(sai_serialize_object_id(m_queue), false);
 }
 
 PfcWdActionHandler::~PfcWdActionHandler(void)
@@ -26,6 +39,7 @@ PfcWdActionHandler::~PfcWdActionHandler(void)
     SWSS_LOG_ENTER();
 
     auto finalStats = getQueueStats();
+    updateWdCounters(sai_serialize_object_id(m_queue), true);
 
     SWSS_LOG_NOTICE(
             "Queue 0x%lx port 0x%lx restored from PFC storm. Tx packets: %lu. Dropped packets: %lu",
@@ -60,8 +74,78 @@ vector<uint64_t> PfcWdActionHandler::getQueueStats(void)
     return move(queueStats);
 }
 
-PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue, uint8_t queueId):
-    PfcWdActionHandler(port, queue, queueId)
+void PfcWdActionHandler::initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr)
+{
+    uint32_t detectCount = 0;
+    uint32_t restoreCount = 0;
+    vector<FieldValueTuple> resultFvValues;
+
+    getWdCounters(countersTable, queueIdStr, detectCount, restoreCount);
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, to_string(detectCount));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, to_string(restoreCount));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATUS, PFC_WD_QUEUE_STATUS_OPERATIONAL);
+
+    countersTable->set(queueIdStr, resultFvValues);
+}
+
+void PfcWdActionHandler::updateWdCounters(const string& queueIdStr, bool operational)
+{
+    uint32_t detectCount = 0;
+    uint32_t restoreCount = 0;
+    vector<FieldValueTuple> resultFvValues;
+
+    getWdCounters(m_countersTable, queueIdStr, detectCount, restoreCount);
+
+    if (operational)
+    {
+        restoreCount++;
+    }
+    else
+    {
+        detectCount++;
+    }
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, to_string(detectCount));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, to_string(restoreCount));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATUS, operational ?
+                                                     PFC_WD_QUEUE_STATUS_OPERATIONAL :
+                                                     PFC_WD_QUEUE_STATUS_STORMED);
+
+    m_countersTable->set(queueIdStr, resultFvValues);
+}
+
+void PfcWdActionHandler::getWdCounters(shared_ptr<Table> countersTable, const string& queueIdStr,
+        uint32_t& detectCount, uint32_t& restoreCount)
+{
+    vector<FieldValueTuple> fieldValues;
+    detectCount = 0;
+    restoreCount = 0;
+
+    if (!countersTable->get(queueIdStr, fieldValues))
+    {
+        return;
+    }
+
+    for (const auto& fv : fieldValues)
+    {
+        const auto field = fvField(fv);
+        const auto value = fvValue(fv);
+
+        if (field == PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED)
+        {
+            detectCount = stoul(value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED)
+        {
+            restoreCount = stoul(value);
+        }
+    }
+}
+
+PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue,
+        uint8_t queueId, shared_ptr<Table> countersTable):
+    PfcWdActionHandler(port, queue, queueId, countersTable)
 {
     SWSS_LOG_ENTER();
 
@@ -112,8 +196,8 @@ PfcWdLossyHandler::~PfcWdLossyHandler(void)
 }
 
 PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
-        sai_object_id_t queue, uint8_t queueId):
-    PfcWdLossyHandler(port, queue, queueId)
+        sai_object_id_t queue, uint8_t queueId, shared_ptr<Table> countersTable):
+    PfcWdLossyHandler(port, queue, queueId, countersTable)
 {
     SWSS_LOG_ENTER();
 
