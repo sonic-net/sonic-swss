@@ -172,37 +172,13 @@ void PfcWdOrch::createEntry(const string& key, const vector<FieldValueTuple>& da
         return;
     }
 
-    // Start Watchdog on every lossless queue
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
-
-    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (!startWdOnPort(port, detectionTime, restorationTime, action))
     {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+        SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
         return;
     }
 
-    uint8_t pfcMask = attr.value.u8;
-    for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
-    {
-        if ((pfcMask & (1 << i)) == 0)
-        {
-            continue;
-        }
-
-        sai_object_id_t queueId = port.m_queue_ids[i];
-
-        PfcWdActionHandler::initWdCounters(m_countersTable, sai_serialize_object_id(queueId));
-
-        if (!startWd(queueId, port.m_port_id, detectionTime, restorationTime, action))
-        {
-            SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s queue %d", key.c_str(), i);
-            continue;
-        }
-
-        SWSS_LOG_NOTICE("Starting PFC Watchdog on port %s queue %d", key.c_str(), i);
-    }
+    SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
 }
 
 void PfcWdOrch::deleteEntry(const string& name)
@@ -212,34 +188,13 @@ void PfcWdOrch::deleteEntry(const string& name)
     Port port;
     gPortsOrch->getPort(name, port);
 
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
-
-    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (!stopWdOnPort(port))
     {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+        SWSS_LOG_ERROR("Failed to stop PFC Watchdog on port %s", name.c_str());
         return;
     }
 
-    uint8_t pfcMask = attr.value.u8;
-    for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
-    {
-        if ((pfcMask & (1 << i)) == 0)
-        {
-            continue;
-        }
-
-        sai_object_id_t queueId = port.m_queue_ids[i];
-
-        if (!stopWd(queueId))
-        {
-            SWSS_LOG_ERROR("Failed to stop PFC Watchdog on port %s queue %d", name.c_str(), i);
-            continue;
-        }
-
-        SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s queue %d", name.c_str(), i);
-    }
+    SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s", name.c_str());
 }
 
 PfcWdSwOrch::PfcWdSwOrch(DBConnector *db, vector<string> &tableNames):
@@ -264,7 +219,79 @@ PfcWdSwOrch::PfcWdQueueEntry::PfcWdQueueEntry(uint32_t detectionTime, uint32_t r
     SWSS_LOG_ENTER();
 }
 
-bool PfcWdSwOrch::startWd(sai_object_id_t queueId, sai_object_id_t portId,
+bool PfcWdSwOrch::startWdOnPort(const Port& port,
+        uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
+{
+    // Start Watchdog on every lossless queue
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+        return false;
+    }
+
+    uint8_t pfcMask = attr.value.u8;
+    for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
+    {
+        if ((pfcMask & (1 << i)) == 0)
+        {
+            continue;
+        }
+
+        sai_object_id_t queueId = port.m_queue_ids[i];
+
+        PfcWdActionHandler::initWdCounters(getCountersTable(), sai_serialize_object_id(queueId));
+
+        if (!startWdOnQueue(queueId, port.m_port_id, detectionTime, restorationTime, action))
+        {
+            SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s queue %d", port.m_alias.c_str(), i);
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Starting PFC Watchdog on port %s queue %d", port.m_alias.c_str(), i);
+    }
+
+    return true;
+}
+
+bool PfcWdSwOrch::stopWdOnPort(const Port& port)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+        return false;
+    }
+
+    uint8_t pfcMask = attr.value.u8;
+    for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
+    {
+        if ((pfcMask & (1 << i)) == 0)
+        {
+            continue;
+        }
+
+        sai_object_id_t queueId = port.m_queue_ids[i];
+
+        if (!stopWdOnQueue(queueId))
+        {
+            SWSS_LOG_ERROR("Failed to stop PFC Watchdog on port %s queue %d", port.m_alias.c_str(), i);
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s queue %d", port.m_alias.c_str(), i);
+    }
+
+    return true;
+}
+
+bool PfcWdSwOrch::startWdOnQueue(sai_object_id_t queueId, sai_object_id_t portId,
         uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
 {
     SWSS_LOG_ENTER();
@@ -286,7 +313,7 @@ bool PfcWdSwOrch::startWd(sai_object_id_t queueId, sai_object_id_t portId,
     return true;
 }
 
-bool PfcWdSwOrch::stopWd(sai_object_id_t queueId)
+bool PfcWdSwOrch::stopWdOnQueue(sai_object_id_t queueId)
 {
     SWSS_LOG_ENTER();
 

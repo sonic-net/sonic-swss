@@ -25,9 +25,9 @@ public:
     virtual ~PfcWdOrch(void);
 
     virtual void doTask(Consumer& consumer);
-    virtual bool startWd(sai_object_id_t queueId, sai_object_id_t portId,
+    virtual bool startWdOnPort(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action) = 0;
-    virtual bool stopWd(sai_object_id_t queueId) = 0;
+    virtual bool stopWdOnPort(const Port& port) = 0;
 
     inline shared_ptr<ProducerStateTable> getPfcWdTable(void)
     {
@@ -65,9 +65,9 @@ public:
     virtual shared_ptr<PfcWdActionHandler> createDropHandler(sai_object_id_t port,
             sai_object_id_t queue, uint32_t queueId) = 0;
 
-    virtual bool startWd(sai_object_id_t queueId, sai_object_id_t portId,
+    virtual bool startWdOnPort(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
-    virtual bool stopWd(sai_object_id_t queueId);
+    virtual bool stopWdOnPort(const Port& port);
 
     //XXX Add port/queue state change event handlers
 private:
@@ -86,6 +86,9 @@ private:
         shared_ptr<PfcWdActionHandler> handler = { nullptr };
     };
 
+    bool startWdOnQueue(sai_object_id_t queueId, sai_object_id_t portId,
+            uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
+    bool stopWdOnQueue(sai_object_id_t queueId);
     template <typename T>
     static string counterIdsToStr(const vector<T> ids, string (*convert)(T));
     bool addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portId,
