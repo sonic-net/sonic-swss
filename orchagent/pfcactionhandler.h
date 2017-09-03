@@ -7,6 +7,8 @@ extern "C" {
 #include "sai.h"
 }
 
+using namespace std;
+
 // PFC queue interface class
 // It resembles RAII behavior - pause storm is mitigated (queue is locked) on creation,
 // and is restored (queue released) on removal
@@ -32,12 +34,12 @@ class PfcWdActionHandler
         }
 
     private:
-        std::vector<uint64_t> getQueueStats(void);
+        vector<uint64_t> getQueueStats(void);
 
         sai_object_id_t m_port = SAI_NULL_OBJECT_ID;
         sai_object_id_t m_queue = SAI_NULL_OBJECT_ID;
         uint8_t m_queueId = 0;
-        std::vector<uint64_t> m_stats;
+        vector<uint64_t> m_stats;
 };
 
 // Pfc queue that implements forward action by disabling PFC on queue

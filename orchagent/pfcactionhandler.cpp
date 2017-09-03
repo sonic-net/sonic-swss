@@ -35,17 +35,17 @@ PfcWdActionHandler::~PfcWdActionHandler(void)
             finalStats[1] - m_stats[1]);
 }
 
-std::vector<uint64_t> PfcWdActionHandler::getQueueStats(void)
+vector<uint64_t> PfcWdActionHandler::getQueueStats(void)
 {
     SWSS_LOG_ENTER();
 
-    std::vector<sai_queue_stat_t> queueStatIds =
+    vector<sai_queue_stat_t> queueStatIds =
     {
         SAI_QUEUE_STAT_PACKETS,
         SAI_QUEUE_STAT_DROPPED_PACKETS,
     };
 
-    std::vector<uint64_t> queueStats(queueStatIds.size(), 0);
+    vector<uint64_t> queueStats(queueStatIds.size(), 0);
 
     sai_status_t status = sai_queue_api->get_queue_stats(
             m_queue,
@@ -57,7 +57,7 @@ std::vector<uint64_t> PfcWdActionHandler::getQueueStats(void)
         SWSS_LOG_ERROR("Failed to get queue 0x%lx stats: %d", m_queue, status);
     }
 
-    return std::move(queueStats);
+    return move(queueStats);
 }
 
 PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue, uint8_t queueId):
@@ -245,7 +245,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createStaticProfile(void)
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
-    std::vector<sai_attribute_t> attribs;
+    vector<sai_attribute_t> attribs;
 
     // Create static zero pool
     attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
@@ -304,7 +304,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createDynamicProfile(void)
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
-    std::vector<sai_attribute_t> attribs;
+    vector<sai_attribute_t> attribs;
 
     // Create dynamic zero pool
     attr.id = SAI_BUFFER_POOL_ATTR_SIZE;

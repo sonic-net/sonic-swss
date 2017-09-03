@@ -29,7 +29,7 @@ public:
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action) = 0;
     virtual bool stopWd(sai_object_id_t queueId) = 0;
 
-    void updateWdCounters(const std::string& queueIdStr, bool operational);
+    void updateWdCounters(const string& queueIdStr, bool operational);
 
     inline ProducerStateTable &getPfcWdTable(void)
     {
@@ -37,8 +37,8 @@ public:
     }
 
 private:
-    void initWdCounters(const std::string &queueIdStr);
-    void getWdCounters(const std::string& queueIdStr, uint32_t& detectCount, uint32_t& restoreCount);
+    void initWdCounters(const string &queueIdStr);
+    void getWdCounters(const string& queueIdStr, uint32_t& detectCount, uint32_t& restoreCount);
     static PfcWdAction deserializeAction(const string& key);
     void createEntry(const string& key, const vector<FieldValueTuple>& data);
     void deleteEntry(const string& name);
@@ -55,13 +55,13 @@ public:
     PfcWdSwOrch(DBConnector *db, vector<string> &tableNames);
     virtual ~PfcWdSwOrch(void);
 
-    virtual std::vector<sai_port_stat_t> getPortCounterIds(sai_object_id_t queueId) = 0;
-    virtual std::vector<sai_queue_stat_t> getQueueCounterIds(sai_object_id_t queueId) = 0;
-    virtual std::string getStormDetectionCriteria(void) = 0;
+    virtual vector<sai_port_stat_t> getPortCounterIds(sai_object_id_t queueId) = 0;
+    virtual vector<sai_queue_stat_t> getQueueCounterIds(sai_object_id_t queueId) = 0;
+    virtual string getStormDetectionCriteria(void) = 0;
 
-    virtual std::shared_ptr<PfcWdActionHandler> createForwardHandler(sai_object_id_t port,
+    virtual shared_ptr<PfcWdActionHandler> createForwardHandler(sai_object_id_t port,
             sai_object_id_t queue, uint32_t queueId) = 0;
-    virtual std::shared_ptr<PfcWdActionHandler> createDropHandler(sai_object_id_t port,
+    virtual shared_ptr<PfcWdActionHandler> createDropHandler(sai_object_id_t port,
             sai_object_id_t queue, uint32_t queueId) = 0;
 
     virtual bool startWd(sai_object_id_t queueId, sai_object_id_t portId,
@@ -82,27 +82,27 @@ private:
         // Remaining time till the next poll
         uint32_t pollTimeLeft = 0;
         uint32_t index = 0;
-        std::shared_ptr<PfcWdActionHandler> handler = { nullptr };
+        shared_ptr<PfcWdActionHandler> handler = { nullptr };
     };
 
     template <typename T>
-    static std::string counterIdsToStr(const std::vector<T> ids, std::string (*convert)(T));
+    static string counterIdsToStr(const vector<T> ids, string (*convert)(T));
     bool addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portId,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     bool removeFromWatchdogDb(sai_object_id_t queueId);
     uint32_t getNearestPollTime(void);
-    void pollQueues(uint32_t nearestTime, DBConnector& db, std::string detectSha, std::string restoreSha);
+    void pollQueues(uint32_t nearestTime, DBConnector& db, string detectSha, string restoreSha);
     void pfcWatchdogThread(void);
     void startWatchdogThread(void);
     void endWatchdogThread(void);
 
-    std::map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
-    std::mutex m_pfcWdMutex;
+    map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
+    mutex m_pfcWdMutex;
 
-    std::atomic_bool m_runPfcWdSwOrchThread = { false };
-    std::shared_ptr<std::thread> m_pfcWatchdogThread = nullptr;
-    std::mutex m_mtxSleep;
-    std::condition_variable m_cvSleep;
+    atomic_bool m_runPfcWdSwOrchThread = { false };
+    shared_ptr<thread> m_pfcWatchdogThread = nullptr;
+    mutex m_mtxSleep;
+    condition_variable m_cvSleep;
 };
 
 class PfcDurationWatchdog: public PfcWdSwOrch
@@ -111,13 +111,13 @@ public:
     PfcDurationWatchdog(DBConnector *db, vector<string> &tableNames);
     virtual ~PfcDurationWatchdog(void);
 
-    virtual std::vector<sai_port_stat_t> getPortCounterIds(sai_object_id_t queueId);
-    virtual std::vector<sai_queue_stat_t> getQueueCounterIds(sai_object_id_t queueId);
-    virtual std::string getStormDetectionCriteria(void);
+    virtual vector<sai_port_stat_t> getPortCounterIds(sai_object_id_t queueId);
+    virtual vector<sai_queue_stat_t> getQueueCounterIds(sai_object_id_t queueId);
+    virtual string getStormDetectionCriteria(void);
 
-    virtual std::shared_ptr<PfcWdActionHandler> createForwardHandler(sai_object_id_t port,
+    virtual shared_ptr<PfcWdActionHandler> createForwardHandler(sai_object_id_t port,
             sai_object_id_t queue, uint32_t queueId);
-    virtual std::shared_ptr<PfcWdActionHandler> createDropHandler(sai_object_id_t port,
+    virtual shared_ptr<PfcWdActionHandler> createDropHandler(sai_object_id_t port,
             sai_object_id_t queue, uint32_t queueId);
 };
 

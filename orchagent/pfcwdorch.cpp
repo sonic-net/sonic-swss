@@ -69,11 +69,11 @@ void PfcWdOrch::doTask(Consumer& consumer)
     }
 }
 
-void PfcWdOrch::updateWdCounters(const std::string& queueIdStr, bool operational)
+void PfcWdOrch::updateWdCounters(const string& queueIdStr, bool operational)
 {
     uint32_t detectCount = 0;
     uint32_t restoreCount = 0;
-    std::vector<FieldValueTuple> resultFvValues;
+    vector<FieldValueTuple> resultFvValues;
 
     getWdCounters(queueIdStr, detectCount, restoreCount);
 
@@ -86,8 +86,8 @@ void PfcWdOrch::updateWdCounters(const std::string& queueIdStr, bool operational
         detectCount++;
     }
 
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, std::to_string(detectCount));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, std::to_string(restoreCount));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, to_string(detectCount));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, to_string(restoreCount));
     resultFvValues.emplace_back(PFC_WD_QUEUE_STATUS, operational ?
                                                      PFC_WD_QUEUE_STATUS_OPERATIONAL :
                                                      PFC_WD_QUEUE_STATUS_STORMED);
@@ -95,24 +95,24 @@ void PfcWdOrch::updateWdCounters(const std::string& queueIdStr, bool operational
     m_countersTable.set(queueIdStr, resultFvValues);
 }
 
-void PfcWdOrch::initWdCounters(const std::string &queueIdStr)
+void PfcWdOrch::initWdCounters(const string &queueIdStr)
 {
     uint32_t detectCount = 0;
     uint32_t restoreCount = 0;
-    std::vector<FieldValueTuple> resultFvValues;
+    vector<FieldValueTuple> resultFvValues;
 
     getWdCounters(queueIdStr, detectCount, restoreCount);
 
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, std::to_string(detectCount));
-    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, std::to_string(restoreCount));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, to_string(detectCount));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, to_string(restoreCount));
     resultFvValues.emplace_back(PFC_WD_QUEUE_STATUS, PFC_WD_QUEUE_STATUS_OPERATIONAL);
 
     m_countersTable.set(queueIdStr, resultFvValues);
 }
 
-void PfcWdOrch::getWdCounters(const std::string& queueIdStr, uint32_t& detectCount, uint32_t& restoreCount)
+void PfcWdOrch::getWdCounters(const string& queueIdStr, uint32_t& detectCount, uint32_t& restoreCount)
 {
-    std::vector<FieldValueTuple> fieldValues;
+    vector<FieldValueTuple> fieldValues;
     detectCount = 0;
     restoreCount = 0;
 
@@ -128,11 +128,11 @@ void PfcWdOrch::getWdCounters(const std::string& queueIdStr, uint32_t& detectCou
 
         if (field == PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED)
         {
-            detectCount = std::stoul(value);
+            detectCount = stoul(value);
         }
         else if (field == PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED)
         {
-            restoreCount = std::stoul(value);
+            restoreCount = stoul(value);
         }
     }
 }
@@ -141,7 +141,7 @@ PfcWdOrch::PfcWdAction PfcWdOrch::deserializeAction(const string& key)
 {
     SWSS_LOG_ENTER();
 
-    const std::map<std::string, PfcWdAction> actionMap =
+    const map<string, PfcWdAction> actionMap =
     {
         { "forward", PfcWdAction::PFC_WD_ACTION_FORWARD },
         { "drop", PfcWdAction::PFC_WD_ACTION_DROP },
@@ -346,7 +346,7 @@ bool PfcWdSwOrch::startWd(sai_object_id_t queueId, sai_object_id_t portId,
     SWSS_LOG_ENTER();
 
     {
-        std::unique_lock<std::mutex> lk(m_pfcWdMutex);
+        unique_lock<mutex> lk(m_pfcWdMutex);
 
         if (!addToWatchdogDb(queueId, portId, detectionTime, restorationTime, action))
         {
@@ -367,7 +367,7 @@ bool PfcWdSwOrch::stopWd(sai_object_id_t queueId)
     SWSS_LOG_ENTER();
 
     {
-        std::unique_lock<std::mutex> lk(m_pfcWdMutex);
+        unique_lock<mutex> lk(m_pfcWdMutex);
 
         removeFromWatchdogDb(queueId);
     }
@@ -381,11 +381,11 @@ bool PfcWdSwOrch::stopWd(sai_object_id_t queueId)
 }
 
 template <typename T>
-std::string PfcWdSwOrch::counterIdsToStr(const std::vector<T> ids, std::string (*convert)(T))
+string PfcWdSwOrch::counterIdsToStr(const vector<T> ids, string (*convert)(T))
 {
     SWSS_LOG_ENTER();
 
-    std::string str;
+    string str;
 
     for (const auto& i: ids)
     {
@@ -407,7 +407,7 @@ bool PfcWdSwOrch::addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portI
     SWSS_LOG_ENTER();
 
     // We register our queues in PFC_WD table so that syncd will know that it must poll them
-    std::vector<FieldValueTuple> fieldValues;
+    vector<FieldValueTuple> fieldValues;
 
     if (m_entryMap.find(queueId) != m_entryMap.end())
     {
@@ -418,14 +418,14 @@ bool PfcWdSwOrch::addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portI
     const auto& portCounterIds = getPortCounterIds(queueId);
     if (!portCounterIds.empty())
     {
-        std::string str = counterIdsToStr(portCounterIds, &sai_serialize_port_stat);
+        string str = counterIdsToStr(portCounterIds, &sai_serialize_port_stat);
         fieldValues.emplace_back(PFC_WD_PORT_COUNTER_ID_LIST, str);
     }
 
     const auto& queueCounterIds = getQueueCounterIds(queueId);
     if (!queueCounterIds.empty())
     {
-        std::string str = counterIdsToStr(queueCounterIds, sai_serialize_queue_stat);
+        string str = counterIdsToStr(queueCounterIds, sai_serialize_queue_stat);
         fieldValues.emplace_back(PFC_WD_QUEUE_COUNTER_ID_LIST, str);
     }
 
@@ -434,7 +434,7 @@ bool PfcWdSwOrch::addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portI
                 action,
                 portId));
 
-    std::string queueIdStr = sai_serialize_object_id(queueId);
+    string queueIdStr = sai_serialize_object_id(queueId);
     getPfcWdTable().set(queueIdStr, fieldValues);
 
     return true;
@@ -473,15 +473,15 @@ uint32_t PfcWdSwOrch::getNearestPollTime(void)
 }
 
 void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
-        std::string detectSha, std::string restoreSha)
+        string detectSha, string restoreSha)
 {
     SWSS_LOG_ENTER();
 
-    std::unique_lock<std::mutex> lk(m_pfcWdMutex);
+    unique_lock<mutex> lk(m_pfcWdMutex);
 
     // Select those queues for which timer expired
-    std::vector<std::string> normalQueues;
-    std::vector<std::string> stormedQueues;
+    vector<string> normalQueues;
+    vector<string> stormedQueues;
     for (const auto& queueKv : m_entryMap)
     {
         sai_object_id_t queueId = queueKv.first;
@@ -504,11 +504,11 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
 
     // Run scripts for selected queues to see if their state changed
     // from normal to stormed and vice versa
-    std::set<std::string> stormCheckReply;
-    std::set<std::string> restoreCheckReply;
-    static const std::vector<std::string> argv =
+    set<string> stormCheckReply;
+    set<string> restoreCheckReply;
+    static const vector<string> argv =
     {
-        std::to_string(COUNTERS_DB),
+        to_string(COUNTERS_DB),
         COUNTERS_TABLE
     };
 
@@ -528,7 +528,7 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
         sai_object_id_t queueId = queueKv.first;
         PfcWdQueueEntry& queueEntry = queueKv.second;
 
-        std::string queueIdStr = sai_serialize_object_id(queueId);
+        string queueIdStr = sai_serialize_object_id(queueId);
 
         // Queue became stormed
         if (stormCheckReply.find(queueIdStr) != stormCheckReply.end())
@@ -549,7 +549,7 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
             }
             else
             {
-                throw std::runtime_error("Invalid PFC WD Action");
+                throw runtime_error("Invalid PFC WD Action");
             }
 
             updateWdCounters(queueIdStr, false);
@@ -579,21 +579,21 @@ void PfcWdSwOrch::pfcWatchdogThread(void)
     DBConnector db(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
     // Load script for storm detection
-    std::string detectScriptName = getStormDetectionCriteria();
-    std::string detectLuaScript = loadLuaScript(detectScriptName);
-    std::string detectSha = loadRedisScript(&db, detectLuaScript);
+    string detectScriptName = getStormDetectionCriteria();
+    string detectLuaScript = loadLuaScript(detectScriptName);
+    string detectSha = loadRedisScript(&db, detectLuaScript);
 
     // Load script for restoration check
-    std::string restoreLuaScript = loadLuaScript("pfc_restore_check.lua");
-    std::string restoreSha = loadRedisScript(&db, restoreLuaScript);
+    string restoreLuaScript = loadLuaScript("pfc_restore_check.lua");
+    string restoreSha = loadRedisScript(&db, restoreLuaScript);
 
     while(m_runPfcWdSwOrchThread)
     {
-        std::unique_lock<std::mutex> lk(m_mtxSleep);
+        unique_lock<mutex> lk(m_mtxSleep);
 
         uint32_t sleepTime = getNearestPollTime();
 
-        m_cvSleep.wait_for(lk, std::chrono::milliseconds(sleepTime));
+        m_cvSleep.wait_for(lk, chrono::milliseconds(sleepTime));
 
         pollQueues(sleepTime, db, detectSha, restoreSha);
     }
@@ -610,8 +610,8 @@ void PfcWdSwOrch::startWatchdogThread(void)
 
     m_runPfcWdSwOrchThread = true;
 
-    m_pfcWatchdogThread = std::shared_ptr<std::thread>(
-            new std::thread(&PfcWdSwOrch::pfcWatchdogThread,
+    m_pfcWatchdogThread = shared_ptr<thread>(
+            new thread(&PfcWdSwOrch::pfcWatchdogThread,
             this));
 
     SWSS_LOG_INFO("PFC Watchdog thread started");
@@ -651,11 +651,11 @@ PfcDurationWatchdog::~PfcDurationWatchdog(void)
     SWSS_LOG_ENTER();
 }
 
-std::vector<sai_port_stat_t> PfcDurationWatchdog::getPortCounterIds(sai_object_id_t queueId)
+vector<sai_port_stat_t> PfcDurationWatchdog::getPortCounterIds(sai_object_id_t queueId)
 {
     SWSS_LOG_ENTER();
 
-    static const std::vector<sai_port_stat_t> PfcDurationIdMap =
+    static const vector<sai_port_stat_t> PfcDurationIdMap =
     {
         SAI_PORT_STAT_PFC_0_RX_PAUSE_DURATION,
         SAI_PORT_STAT_PFC_1_RX_PAUSE_DURATION,
@@ -667,7 +667,7 @@ std::vector<sai_port_stat_t> PfcDurationWatchdog::getPortCounterIds(sai_object_i
         SAI_PORT_STAT_PFC_7_RX_PAUSE_DURATION,
     };
 
-    static const std::vector<sai_port_stat_t> PfcRxPktsIdMap =
+    static const vector<sai_port_stat_t> PfcRxPktsIdMap =
     {
         SAI_PORT_STAT_PFC_0_RX_PKTS,
         SAI_PORT_STAT_PFC_1_RX_PKTS,
@@ -690,43 +690,43 @@ std::vector<sai_port_stat_t> PfcDurationWatchdog::getPortCounterIds(sai_object_i
     }
 
     size_t index = attr.value.u8;
-    std::vector<sai_port_stat_t> portStatIds =
+    vector<sai_port_stat_t> portStatIds =
     {
         PfcDurationIdMap[index],
         PfcRxPktsIdMap[index],
     };
 
-    return std::move(portStatIds);
+    return move(portStatIds);
 }
 
-std::vector<sai_queue_stat_t> PfcDurationWatchdog::getQueueCounterIds(sai_object_id_t queueId)
+vector<sai_queue_stat_t> PfcDurationWatchdog::getQueueCounterIds(sai_object_id_t queueId)
 {
     SWSS_LOG_ENTER();
 
-    std::vector<sai_queue_stat_t> queueStatIds =
+    vector<sai_queue_stat_t> queueStatIds =
     {
         SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
         SAI_QUEUE_STAT_PACKETS,
     };
 
-    return std::move(queueStatIds);
+    return move(queueStatIds);
 }
 
-std::string PfcDurationWatchdog::getStormDetectionCriteria(void)
+string PfcDurationWatchdog::getStormDetectionCriteria(void)
 {
     SWSS_LOG_ENTER();
 
     return "duration_criteria.lua";
 }
 
-std::shared_ptr<PfcWdActionHandler> PfcDurationWatchdog::createForwardHandler(sai_object_id_t port,
+shared_ptr<PfcWdActionHandler> PfcDurationWatchdog::createForwardHandler(sai_object_id_t port,
         sai_object_id_t queue, uint32_t queueId)
 {
-    return std::make_shared<PfcWdLossyHandler>(port, queue, queueId);
+    return make_shared<PfcWdLossyHandler>(port, queue, queueId);
 }
 
-std::shared_ptr<PfcWdActionHandler> PfcDurationWatchdog::createDropHandler(sai_object_id_t port,
+shared_ptr<PfcWdActionHandler> PfcDurationWatchdog::createDropHandler(sai_object_id_t port,
         sai_object_id_t queue, uint32_t queueId)
 {
-    return std::make_shared<PfcWdZeroBufferHandler>(port, queue, queueId);
+    return make_shared<PfcWdZeroBufferHandler>(port, queue, queueId);
 }
