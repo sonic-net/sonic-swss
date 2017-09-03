@@ -18,7 +18,8 @@ extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 extern PortsOrch *gPortsOrch;
 
-PfcWdOrch::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
+template <typename DropHandler, typename ForwardHandler>
+PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_pfcWdDb(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
     m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
@@ -28,12 +29,14 @@ PfcWdOrch::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
     SWSS_LOG_ENTER();
 }
 
-PfcWdOrch::~PfcWdOrch(void)
+template <typename DropHandler, typename ForwardHandler>
+PfcWdOrch<DropHandler, ForwardHandler>::~PfcWdOrch(void)
 {
     SWSS_LOG_ENTER();
 }
 
-void PfcWdOrch::doTask(Consumer& consumer)
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -62,7 +65,8 @@ void PfcWdOrch::doTask(Consumer& consumer)
     }
 }
 
-PfcWdOrch::PfcWdAction PfcWdOrch::deserializeAction(const string& key)
+template <typename DropHandler, typename ForwardHandler>
+PfcWdAction PfcWdOrch<DropHandler, ForwardHandler>::deserializeAction(const string& key)
 {
     SWSS_LOG_ENTER();
 
@@ -80,7 +84,9 @@ PfcWdOrch::PfcWdAction PfcWdOrch::deserializeAction(const string& key)
     return actionMap.at(key);
 }
 
-void PfcWdOrch::createEntry(const string& key, const vector<FieldValueTuple>& data)
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
+        const vector<FieldValueTuple>& data)
 {
     SWSS_LOG_ENTER();
 
@@ -181,7 +187,8 @@ void PfcWdOrch::createEntry(const string& key, const vector<FieldValueTuple>& da
     SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
 }
 
-void PfcWdOrch::deleteEntry(const string& name)
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const string& name)
 {
     SWSS_LOG_ENTER();
 
@@ -197,18 +204,22 @@ void PfcWdOrch::deleteEntry(const string& name)
     SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s", name.c_str());
 }
 
-PfcWdSwOrch::PfcWdSwOrch(DBConnector *db, vector<string> &tableNames):
-    PfcWdOrch(db, tableNames)
+template <typename DropHandler, typename ForwardHandler>
+PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(DBConnector *db, vector<string> &tableNames):
+    PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames)
 {
     SWSS_LOG_ENTER();
 }
 
-PfcWdSwOrch::~PfcWdSwOrch(void)
+template <typename DropHandler, typename ForwardHandler>
+PfcWdSwOrch<DropHandler, ForwardHandler>::~PfcWdSwOrch(void)
 {
     SWSS_LOG_ENTER();
 }
 
-PfcWdSwOrch::PfcWdQueueEntry::PfcWdQueueEntry(uint32_t detectionTime, uint32_t restorationTime,
+template <typename DropHandler, typename ForwardHandler>
+PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdQueueEntry::PfcWdQueueEntry(
+        uint32_t detectionTime, uint32_t restorationTime,
         PfcWdAction action, sai_object_id_t port):
     c_detectionTime(detectionTime),
     c_restorationTime(restorationTime),
@@ -219,7 +230,8 @@ PfcWdSwOrch::PfcWdQueueEntry::PfcWdQueueEntry(uint32_t detectionTime, uint32_t r
     SWSS_LOG_ENTER();
 }
 
-bool PfcWdSwOrch::startWdOnPort(const Port& port,
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnPort(const Port& port,
         uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
 {
     // Start Watchdog on every lossless queue
@@ -243,7 +255,9 @@ bool PfcWdSwOrch::startWdOnPort(const Port& port,
 
         sai_object_id_t queueId = port.m_queue_ids[i];
 
-        PfcWdActionHandler::initWdCounters(getCountersTable(), sai_serialize_object_id(queueId));
+        PfcWdActionHandler::initWdCounters(
+                PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable(),
+                sai_serialize_object_id(queueId));
 
         if (!startWdOnQueue(queueId, port.m_port_id, detectionTime, restorationTime, action))
         {
@@ -257,7 +271,8 @@ bool PfcWdSwOrch::startWdOnPort(const Port& port,
     return true;
 }
 
-bool PfcWdSwOrch::stopWdOnPort(const Port& port)
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnPort(const Port& port)
 {
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
@@ -291,7 +306,8 @@ bool PfcWdSwOrch::stopWdOnPort(const Port& port)
     return true;
 }
 
-bool PfcWdSwOrch::startWdOnQueue(sai_object_id_t queueId, sai_object_id_t portId,
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnQueue(sai_object_id_t queueId, sai_object_id_t portId,
         uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
 {
     SWSS_LOG_ENTER();
@@ -313,7 +329,8 @@ bool PfcWdSwOrch::startWdOnQueue(sai_object_id_t queueId, sai_object_id_t portId
     return true;
 }
 
-bool PfcWdSwOrch::stopWdOnQueue(sai_object_id_t queueId)
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnQueue(sai_object_id_t queueId)
 {
     SWSS_LOG_ENTER();
 
@@ -331,8 +348,10 @@ bool PfcWdSwOrch::stopWdOnQueue(sai_object_id_t queueId)
     return true;
 }
 
+template <typename DropHandler, typename ForwardHandler>
 template <typename T>
-string PfcWdSwOrch::counterIdsToStr(const vector<T> ids, string (*convert)(T))
+string PfcWdSwOrch<DropHandler, ForwardHandler>::counterIdsToStr(
+        const vector<T> ids, string (*convert)(T))
 {
     SWSS_LOG_ENTER();
 
@@ -352,7 +371,8 @@ string PfcWdSwOrch::counterIdsToStr(const vector<T> ids, string (*convert)(T))
     return str;
 }
 
-bool PfcWdSwOrch::addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portId,
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portId,
         uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
 {
     SWSS_LOG_ENTER();
@@ -386,24 +406,26 @@ bool PfcWdSwOrch::addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portI
                 portId));
 
     string queueIdStr = sai_serialize_object_id(queueId);
-    getPfcWdTable()->set(queueIdStr, fieldValues);
+    PfcWdOrch<DropHandler, ForwardHandler>::getPfcWdTable()->set(queueIdStr, fieldValues);
 
     return true;
 }
 
-bool PfcWdSwOrch::removeFromWatchdogDb(sai_object_id_t queueId)
+template <typename DropHandler, typename ForwardHandler>
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::removeFromWatchdogDb(sai_object_id_t queueId)
 {
     SWSS_LOG_ENTER();
 
     // Remove from internal DB
     m_entryMap.erase(queueId);
     // Unregister in syncd
-    getPfcWdTable()->del(sai_serialize_object_id(queueId));
+    PfcWdOrch<DropHandler, ForwardHandler>::getPfcWdTable()->del(sai_serialize_object_id(queueId));
 
     return true;
 }
 
-uint32_t PfcWdSwOrch::getNearestPollTime(void)
+template <typename DropHandler, typename ForwardHandler>
+uint32_t PfcWdSwOrch<DropHandler, ForwardHandler>::getNearestPollTime(void)
 {
     SWSS_LOG_ENTER();
 
@@ -423,7 +445,8 @@ uint32_t PfcWdSwOrch::getNearestPollTime(void)
     return nearestTime;
 }
 
-void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::pollQueues(uint32_t nearestTime, DBConnector& db,
         string detectSha, string restoreSha)
 {
     SWSS_LOG_ENTER();
@@ -486,17 +509,19 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
         {
             if (queueEntry.c_action == PfcWdAction::PFC_WD_ACTION_DROP)
             {
-                queueEntry.handler = createDropHandler(
+                queueEntry.handler = make_shared<DropHandler>(
                         queueEntry.portId,
                         queueId,
-                        queueEntry.index);
+                        queueEntry.index,
+                        PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
             }
             else if (queueEntry.c_action == PfcWdAction::PFC_WD_ACTION_FORWARD)
             {
-                queueEntry.handler = createForwardHandler(
+                queueEntry.handler = make_shared<ForwardHandler>(
                         queueEntry.portId,
                         queueId,
-                        queueEntry.index);
+                        queueEntry.index,
+                        PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
             }
             else
             {
@@ -523,7 +548,8 @@ void PfcWdSwOrch::pollQueues(uint32_t nearestTime, DBConnector& db,
     }
 }
 
-void PfcWdSwOrch::pfcWatchdogThread(void)
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::pfcWatchdogThread(void)
 {
     DBConnector db(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
@@ -548,7 +574,8 @@ void PfcWdSwOrch::pfcWatchdogThread(void)
     }
 }
 
-void PfcWdSwOrch::startWatchdogThread(void)
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::startWatchdogThread(void)
 {
     SWSS_LOG_ENTER();
 
@@ -566,7 +593,8 @@ void PfcWdSwOrch::startWatchdogThread(void)
     SWSS_LOG_INFO("PFC Watchdog thread started");
 }
 
-void PfcWdSwOrch::endWatchdogThread(void)
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::endWatchdogThread(void)
 {
     SWSS_LOG_ENTER();
 
@@ -589,18 +617,23 @@ void PfcWdSwOrch::endWatchdogThread(void)
     SWSS_LOG_INFO("PFC Watchdog thread ended");
 }
 
-PfcDurationWatchdog::PfcDurationWatchdog(DBConnector *db, vector<string> &tableNames):
-    PfcWdSwOrch(db, tableNames)
+template <typename DropHandler, typename ForwardHandler>
+PfcDurationWatchdog<DropHandler, ForwardHandler>::PfcDurationWatchdog(
+        DBConnector *db, vector<string> &tableNames):
+    PfcWdSwOrch<DropHandler, ForwardHandler>(db, tableNames)
 {
     SWSS_LOG_ENTER();
 }
 
-PfcDurationWatchdog::~PfcDurationWatchdog(void)
+template <typename DropHandler, typename ForwardHandler>
+PfcDurationWatchdog<DropHandler, ForwardHandler>::~PfcDurationWatchdog(void)
 {
     SWSS_LOG_ENTER();
 }
 
-vector<sai_port_stat_t> PfcDurationWatchdog::getPortCounterIds(sai_object_id_t queueId)
+template <typename DropHandler, typename ForwardHandler>
+vector<sai_port_stat_t> PfcDurationWatchdog<DropHandler, ForwardHandler>::getPortCounterIds(
+        sai_object_id_t queueId)
 {
     SWSS_LOG_ENTER();
 
@@ -648,7 +681,9 @@ vector<sai_port_stat_t> PfcDurationWatchdog::getPortCounterIds(sai_object_id_t q
     return move(portStatIds);
 }
 
-vector<sai_queue_stat_t> PfcDurationWatchdog::getQueueCounterIds(sai_object_id_t queueId)
+template <typename DropHandler, typename ForwardHandler>
+vector<sai_queue_stat_t> PfcDurationWatchdog<DropHandler, ForwardHandler>::getQueueCounterIds(
+        sai_object_id_t queueId)
 {
     SWSS_LOG_ENTER();
 
@@ -661,21 +696,13 @@ vector<sai_queue_stat_t> PfcDurationWatchdog::getQueueCounterIds(sai_object_id_t
     return move(queueStatIds);
 }
 
-string PfcDurationWatchdog::getStormDetectionCriteria(void)
+template <typename DropHandler, typename ForwardHandler>
+string PfcDurationWatchdog<DropHandler, ForwardHandler>::getStormDetectionCriteria(void)
 {
     SWSS_LOG_ENTER();
 
     return "duration_criteria.lua";
 }
 
-shared_ptr<PfcWdActionHandler> PfcDurationWatchdog::createForwardHandler(sai_object_id_t port,
-        sai_object_id_t queue, uint32_t queueId)
-{
-    return make_shared<PfcWdLossyHandler>(port, queue, queueId, getCountersTable());
-}
-
-shared_ptr<PfcWdActionHandler> PfcDurationWatchdog::createDropHandler(sai_object_id_t port,
-        sai_object_id_t queue, uint32_t queueId)
-{
-    return make_shared<PfcWdZeroBufferHandler>(port, queue, queueId, getCountersTable());
-}
+// Trick to keep member functions in a separate file
+template class PfcDurationWatchdog<PfcWdZeroBufferHandler, PfcWdLossyHandler>;

@@ -11,16 +11,17 @@ extern "C" {
 #include "sai.h"
 }
 
+enum class PfcWdAction
+{
+    PFC_WD_ACTION_UNKNOWN,
+    PFC_WD_ACTION_FORWARD,
+    PFC_WD_ACTION_DROP,
+};
+
+template <typename DropHandler, typename ForwardHandler>
 class PfcWdOrch: public Orch
 {
 public:
-    enum class PfcWdAction
-    {
-        PFC_WD_ACTION_UNKNOWN,
-        PFC_WD_ACTION_FORWARD,
-        PFC_WD_ACTION_DROP,
-    };
-
     PfcWdOrch(DBConnector *db, vector<string> &tableNames);
     virtual ~PfcWdOrch(void);
 
@@ -50,7 +51,8 @@ private:
     shared_ptr<Table> m_countersTable = nullptr;
 };
 
-class PfcWdSwOrch: public PfcWdOrch
+template <typename DropHandler, typename ForwardHandler>
+class PfcWdSwOrch: public PfcWdOrch<DropHandler, ForwardHandler>
 {
 public:
     PfcWdSwOrch(DBConnector *db, vector<string> &tableNames);
@@ -59,11 +61,6 @@ public:
     virtual vector<sai_port_stat_t> getPortCounterIds(sai_object_id_t queueId) = 0;
     virtual vector<sai_queue_stat_t> getQueueCounterIds(sai_object_id_t queueId) = 0;
     virtual string getStormDetectionCriteria(void) = 0;
-
-    virtual shared_ptr<PfcWdActionHandler> createForwardHandler(sai_object_id_t port,
-            sai_object_id_t queue, uint32_t queueId) = 0;
-    virtual shared_ptr<PfcWdActionHandler> createDropHandler(sai_object_id_t port,
-            sai_object_id_t queue, uint32_t queueId) = 0;
 
     virtual bool startWdOnPort(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
@@ -109,7 +106,8 @@ private:
     condition_variable m_cvSleep;
 };
 
-class PfcDurationWatchdog: public PfcWdSwOrch
+template <typename DropHandler, typename ForwardHandler>
+class PfcDurationWatchdog: public PfcWdSwOrch<DropHandler, ForwardHandler>
 {
 public:
     PfcDurationWatchdog(DBConnector *db, vector<string> &tableNames);
@@ -118,11 +116,6 @@ public:
     virtual vector<sai_port_stat_t> getPortCounterIds(sai_object_id_t queueId);
     virtual vector<sai_queue_stat_t> getQueueCounterIds(sai_object_id_t queueId);
     virtual string getStormDetectionCriteria(void);
-
-    virtual shared_ptr<PfcWdActionHandler> createForwardHandler(sai_object_id_t port,
-            sai_object_id_t queue, uint32_t queueId);
-    virtual shared_ptr<PfcWdActionHandler> createDropHandler(sai_object_id_t port,
-            sai_object_id_t queue, uint32_t queueId);
 };
 
 #endif

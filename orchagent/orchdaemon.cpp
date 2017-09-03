@@ -96,7 +96,7 @@ bool OrchDaemon::init()
 
     if (platform == MLNX_PLATFORM_SUBSTRING)
     {
-        m_orchList.push_back(new PfcDurationWatchdog(m_applDb, pfc_wd_tables));
+        m_orchList.push_back(new PfcDurationWatchdog<PfcWdZeroBufferHandler, PfcWdLossyHandler>(m_applDb, pfc_wd_tables));
     }
 
     return true;
