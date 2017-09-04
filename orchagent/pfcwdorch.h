@@ -26,6 +26,8 @@ public:
     virtual ~PfcWdOrch(void);
 
     virtual void doTask(Consumer& consumer);
+    virtual vector<sai_port_stat_t> getPortCounterIds(sai_object_id_t queueId);
+    virtual vector<sai_queue_stat_t> getQueueCounterIds(sai_object_id_t queueId);
     virtual bool startWdOnPort(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action) = 0;
     virtual bool stopWdOnPort(const Port& port) = 0;
@@ -41,9 +43,13 @@ public:
     }
 
 private:
+    template <typename T>
+    static string counterIdsToStr(const vector<T> ids, string (*convert)(T));
     static PfcWdAction deserializeAction(const string& key);
     void createEntry(const string& key, const vector<FieldValueTuple>& data);
     void deleteEntry(const string& name);
+    void registerInWdDb(const Port& port);
+    void unregisterFromWdDb(const Port& port);
 
     shared_ptr<DBConnector> m_pfcWdDb = nullptr;
     shared_ptr<DBConnector> m_countersDb = nullptr;
@@ -58,8 +64,6 @@ public:
     PfcWdSwOrch(DBConnector *db, vector<string> &tableNames);
     virtual ~PfcWdSwOrch(void);
 
-    virtual vector<sai_port_stat_t> getPortCounterIds(sai_object_id_t queueId) = 0;
-    virtual vector<sai_queue_stat_t> getQueueCounterIds(sai_object_id_t queueId) = 0;
     virtual string getStormDetectionCriteria(void) = 0;
 
     virtual bool startWdOnPort(const Port& port,
@@ -87,11 +91,6 @@ private:
     bool startWdOnQueue(sai_object_id_t queueId, uint8_t idx, sai_object_id_t portId,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     bool stopWdOnQueue(sai_object_id_t queueId);
-    template <typename T>
-    static string counterIdsToStr(const vector<T> ids, string (*convert)(T));
-    bool addToWatchdogDb(sai_object_id_t queueId, uint8_t idx, sai_object_id_t portId,
-            uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
-    bool removeFromWatchdogDb(sai_object_id_t queueId);
     uint32_t getNearestPollTime(void);
     void pollQueues(uint32_t nearestTime, DBConnector& db, string detectSha, string restoreSha);
     void pfcWatchdogThread(void);

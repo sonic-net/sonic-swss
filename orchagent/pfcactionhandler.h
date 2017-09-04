@@ -41,16 +41,23 @@ class PfcWdActionHandler
         static void initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr);
 
     private:
-        vector<uint64_t> getQueueStats(void);
-        void updateWdCounters(const string& queueIdStr, bool operational);
-        static void getWdCounters(shared_ptr<Table>, const string& queueIdStr,
-                uint32_t& detectCount, uint32_t& restoreCount);
+        struct PfcWdQueueStats
+        {
+            uint32_t detectCount  = 0;
+            uint32_t restoreCount = 0;
+            uint64_t txPkt        = 0;
+            uint64_t txDropPkt    = 0;
+            bool     operational  = true;
+        };
+
+        static PfcWdQueueStats getQueueStats(shared_ptr<Table> countersTable, const string &queueIdStr);
+        void updateWdCounters(const string& queueIdStr, const PfcWdQueueStats& stats);
 
         sai_object_id_t m_port = SAI_NULL_OBJECT_ID;
         sai_object_id_t m_queue = SAI_NULL_OBJECT_ID;
         uint8_t m_queueId = 0;
         shared_ptr<Table> m_countersTable = nullptr;
-        vector<uint64_t> m_stats;
+        PfcWdQueueStats m_stats;
 };
 
 // Pfc queue that implements forward action by disabling PFC on queue
