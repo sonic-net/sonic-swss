@@ -70,7 +70,8 @@ public:
 private:
     struct PfcWdQueueEntry
     {
-        PfcWdQueueEntry(uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action, sai_object_id_t port);
+        PfcWdQueueEntry(uint32_t detectionTime, uint32_t restorationTime,
+                PfcWdAction action, sai_object_id_t port, uint8_t idx);
 
         const uint32_t c_detectionTime = 0;
         const uint32_t c_restorationTime = 0;
@@ -79,16 +80,16 @@ private:
         sai_object_id_t portId = SAI_NULL_OBJECT_ID;
         // Remaining time till the next poll
         uint32_t pollTimeLeft = 0;
-        uint32_t index = 0;
+        uint8_t index = 0;
         shared_ptr<PfcWdActionHandler> handler = { nullptr };
     };
 
-    bool startWdOnQueue(sai_object_id_t queueId, sai_object_id_t portId,
+    bool startWdOnQueue(sai_object_id_t queueId, uint8_t idx, sai_object_id_t portId,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     bool stopWdOnQueue(sai_object_id_t queueId);
     template <typename T>
     static string counterIdsToStr(const vector<T> ids, string (*convert)(T));
-    bool addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portId,
+    bool addToWatchdogDb(sai_object_id_t queueId, uint8_t idx, sai_object_id_t portId,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     bool removeFromWatchdogDb(sai_object_id_t queueId);
     uint32_t getNearestPollTime(void);

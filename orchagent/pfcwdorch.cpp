@@ -220,12 +220,13 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::~PfcWdSwOrch(void)
 template <typename DropHandler, typename ForwardHandler>
 PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdQueueEntry::PfcWdQueueEntry(
         uint32_t detectionTime, uint32_t restorationTime,
-        PfcWdAction action, sai_object_id_t port):
+        PfcWdAction action, sai_object_id_t port, uint8_t idx):
     c_detectionTime(detectionTime),
     c_restorationTime(restorationTime),
     c_action(action),
     pollTimeLeft(c_detectionTime),
-    portId(port)
+    portId(port),
+    index(idx)
 {
     SWSS_LOG_ENTER();
 }
@@ -259,7 +260,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnPort(const Port& port,
                 PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable(),
                 sai_serialize_object_id(queueId));
 
-        if (!startWdOnQueue(queueId, port.m_port_id, detectionTime, restorationTime, action))
+        if (!startWdOnQueue(queueId, i, port.m_port_id, detectionTime, restorationTime, action))
         {
             SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s queue %d", port.m_alias.c_str(), i);
             return false;
@@ -307,7 +308,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnPort(const Port& port)
 }
 
 template <typename DropHandler, typename ForwardHandler>
-bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnQueue(sai_object_id_t queueId, sai_object_id_t portId,
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnQueue(sai_object_id_t queueId, uint8_t idx, sai_object_id_t portId,
         uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
 {
     SWSS_LOG_ENTER();
@@ -315,7 +316,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnQueue(sai_object_id_t qu
     {
         unique_lock<mutex> lk(m_pfcWdMutex);
 
-        if (!addToWatchdogDb(queueId, portId, detectionTime, restorationTime, action))
+        if (!addToWatchdogDb(queueId, idx, portId, detectionTime, restorationTime, action))
         {
             return false;
         }
@@ -372,7 +373,7 @@ string PfcWdSwOrch<DropHandler, ForwardHandler>::counterIdsToStr(
 }
 
 template <typename DropHandler, typename ForwardHandler>
-bool PfcWdSwOrch<DropHandler, ForwardHandler>::addToWatchdogDb(sai_object_id_t queueId, sai_object_id_t portId,
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::addToWatchdogDb(sai_object_id_t queueId, uint8_t idx, sai_object_id_t portId,
         uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
 {
     SWSS_LOG_ENTER();
@@ -403,7 +404,8 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::addToWatchdogDb(sai_object_id_t q
     m_entryMap.emplace(queueId, PfcWdQueueEntry(detectionTime,
                 restorationTime,
                 action,
-                portId));
+                portId,
+                idx));
 
     string queueIdStr = sai_serialize_object_id(queueId);
     PfcWdOrch<DropHandler, ForwardHandler>::getPfcWdTable()->set(queueIdStr, fieldValues);
