@@ -401,14 +401,8 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnPort(const Port& port)
         return false;
     }
 
-    uint8_t pfcMask = attr.value.u8;
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
-        if ((pfcMask & (1 << i)) == 0)
-        {
-            continue;
-        }
-
         sai_object_id_t queueId = port.m_queue_ids[i];
 
         if (!stopWdOnQueue(queueId))
@@ -416,8 +410,6 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnPort(const Port& port)
             SWSS_LOG_ERROR("Failed to stop PFC Watchdog on port %s queue %d", port.m_alias.c_str(), i);
             return false;
         }
-
-        SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s queue %d", port.m_alias.c_str(), i);
     }
 
     return true;
@@ -529,10 +521,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::pollQueues(uint32_t nearestTime, 
     // from normal to stormed and vice versa
     set<string> stormCheckReply;
     set<string> restoreCheckReply;
-    static const vector<string> argv =
+    vector<string> argv =
     {
         to_string(COUNTERS_DB),
-        COUNTERS_TABLE
+        COUNTERS_TABLE,
+        to_string(nearestTime * 1000)
     };
 
     if (!normalQueues.empty())
