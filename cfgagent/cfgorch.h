@@ -5,8 +5,8 @@
 #include <memory>
 
 #include "dbconnector.h"
-#include "consumerstatetable.h"
-#include "producerstatetable.h"
+#include "table.h"
+#include "subscriber.h"
 #include "gettimestamp.h"
 
 using namespace std;
@@ -14,8 +14,8 @@ using namespace swss;
 
 typedef map<string, KeyOpFieldsValuesTuple> SyncMap;
 struct Consumer {
-    Consumer(ConsumerStateTable* consumer) :m_consumer(consumer)  { }
-    ConsumerStateTable* m_consumer;
+    Consumer(Subscriber* consumer) :m_consumer(consumer)  { }
+    Subscriber* m_consumer;
     /* Store the latest 'golden' status */
     SyncMap m_toSync;
 };
@@ -30,7 +30,7 @@ public:
     virtual ~CfgOrch();
 
     vector<Selectable*> getSelectables();
-    bool hasSelectable(ConsumerStateTable* s) const;
+    bool hasSelectable(Subscriber* s) const;
 
     bool execute(string tableName);
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */

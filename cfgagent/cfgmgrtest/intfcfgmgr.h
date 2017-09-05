@@ -2,7 +2,7 @@
 #define __INTFCFGMGR__
 
 #include "dbconnector.h"
-#include "producerstatetable.h"
+#include "table.h"
 
 namespace swss {
 
@@ -21,7 +21,7 @@ public:
     int intf_show(int argc, char **argv);
 
 private:
-    ProducerStateTable m_intfTableProducer;
+    Table m_intfTableProducer;
     Table m_intfTableConsumer;
 };
 

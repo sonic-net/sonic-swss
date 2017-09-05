@@ -21,7 +21,7 @@ extern bool gInitDone;
 CfgOrch::CfgOrch(DBConnector *db, string tableName) :
     m_db(db)
 {
-    Consumer consumer(new ConsumerStateTable(m_db, tableName, gBatchSize));
+    Consumer consumer(new Subscriber(m_db, tableName));
     m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
 }
 
@@ -30,7 +30,7 @@ CfgOrch::CfgOrch(DBConnector *db, vector<string> &tableNames) :
 {
     for(auto it : tableNames)
     {
-        Consumer consumer(new ConsumerStateTable(m_db, it, gBatchSize));
+        Consumer consumer(new Subscriber(m_db, it));
         m_consumerMap.insert(ConsumerMapPair(it, consumer));
     }
 }
@@ -56,7 +56,7 @@ vector<Selectable *> CfgOrch::getSelectables()
     return selectables;
 }
 
-bool CfgOrch::hasSelectable(ConsumerStateTable *selectable) const
+bool CfgOrch::hasSelectable(Subscriber *selectable) const
 {
     for(auto it : m_consumerMap) {
         if (it.second.m_consumer == selectable) {
@@ -127,56 +127,64 @@ bool CfgOrch::execute(string tableName)
     }
     Consumer& consumer = consumer_it->second;
 
-    KeyOpFieldsValuesTuple new_data;
-    consumer.m_consumer->pop(new_data);
-
-    string key = kfvKey(new_data);
-    string op  = kfvOp(new_data);
-    /* Possible nothing popped, ie. the oparation is already merged with other operations */
-    if (op.empty())
+    int data_popped = 0;
+    while (1)
     {
-        return true;
-    }
+        KeyOpFieldsValuesTuple new_data;
+        consumer.m_consumer->pop(new_data);
 
-    /* Record incoming tasks */
-    if (gSwssCfgRecord)
-    {
-        recordTuple(consumer, new_data);
-    }
-
-    /* If a new task comes or if a DEL task comes, we directly put it into consumer.m_toSync map */
-    if (consumer.m_toSync.find(key) == consumer.m_toSync.end() || op == DEL_COMMAND)
-    {
-       consumer.m_toSync[key] = new_data;
-    }
-    /* If an old task is still there, we combine the old task with new task */
-    else
-    {
-        KeyOpFieldsValuesTuple existing_data = consumer.m_toSync[key];
-
-        auto new_values = kfvFieldsValues(new_data);
-        auto existing_values = kfvFieldsValues(existing_data);
-
-
-        for (auto it : new_values)
+        string key = kfvKey(new_data);
+        string op  = kfvOp(new_data);
+        /*
+         * Done with all new data. Or
+         * possible nothing popped, ie. the oparation is already merged with other operations
+         */
+        if (op.empty())
         {
-            string field = fvField(it);
-            string value = fvValue(it);
-
-            auto iu = existing_values.begin();
-            while (iu != existing_values.end())
-            {
-                string ofield = fvField(*iu);
-                if (field == ofield)
-                    iu = existing_values.erase(iu);
-                else
-                    iu++;
-            }
-            existing_values.push_back(FieldValueTuple(field, value));
+            SWSS_LOG_DEBUG("Number of kfv data popped: %d\n", data_popped);
+            break;
         }
-        consumer.m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
-    }
+        data_popped++;
 
+        /* Record incoming tasks */
+        if (gSwssCfgRecord)
+        {
+            recordTuple(consumer, new_data);
+        }
+
+        /* If a new task comes or if a DEL task comes, we directly put it into consumer.m_toSync map */
+        if (consumer.m_toSync.find(key) == consumer.m_toSync.end() || op == DEL_COMMAND)
+        {
+           consumer.m_toSync[key] = new_data;
+        }
+        /* If an old task is still there, we combine the old task with new task */
+        else
+        {
+            KeyOpFieldsValuesTuple existing_data = consumer.m_toSync[key];
+
+            auto new_values = kfvFieldsValues(new_data);
+            auto existing_values = kfvFieldsValues(existing_data);
+
+
+            for (auto it : new_values)
+            {
+                string field = fvField(it);
+                string value = fvValue(it);
+
+                auto iu = existing_values.begin();
+                while (iu != existing_values.end())
+                {
+                    string ofield = fvField(*iu);
+                    if (field == ofield)
+                        iu = existing_values.erase(iu);
+                    else
+                        iu++;
+                }
+                existing_values.push_back(FieldValueTuple(field, value));
+            }
+            consumer.m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
+        }
+    }
     if (!consumer.m_toSync.empty())
         doTask(consumer);
 

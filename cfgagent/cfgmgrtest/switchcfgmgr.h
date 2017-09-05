@@ -2,7 +2,7 @@
 #define __SWITCHCFGMGR__
 
 #include "dbconnector.h"
-#include "producerstatetable.h"
+#include "table.h"
 
 namespace swss {
 
@@ -21,7 +21,7 @@ public:
     int switch_show(int argc, char **argv);
 
 private:
-    ProducerStateTable m_switchTableProducer;
+    Table m_switchTableProducer;
     Table m_switchTableConsumer;
 };
 

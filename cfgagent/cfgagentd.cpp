@@ -23,9 +23,6 @@ using namespace swss;
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
 
-#define DEFAULT_BATCH_SIZE  128
-int gBatchSize = DEFAULT_BATCH_SIZE;
-
 MacAddress gMacAddress;
 bool gInitDone = false;
 bool gSwssCfgRecord = true;
@@ -44,7 +41,6 @@ void usage()
     cout << "                    0: do not record logs" << endl;
     cout << "                    1: record SwSS task sequence as swss.cfg.*.rec" << endl;
     cout << "    -d record_location: set record logs folder location (default .)" << endl;
-    cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
 }
 
 int main(int argc, char **argv)
@@ -60,9 +56,6 @@ int main(int argc, char **argv)
     {
         switch (opt)
         {
-        case 'b':
-            gBatchSize = atoi(optarg);
-            break;
         case 'r':
             if (!strcmp(optarg, "0"))
             {
@@ -180,9 +173,9 @@ int main(int argc, char **argv)
 
             for (CfgOrch *o : cfgOrchList)
             {
-                if (o->hasSelectable((ConsumerStateTable *)sel))
+                if (o->hasSelectable((Subscriber *)sel))
                 {
-                    o->execute(((ConsumerStateTable *)sel)->getTableName());
+                    o->execute(((Subscriber *)sel)->getTableName());
                 }
             }
         }

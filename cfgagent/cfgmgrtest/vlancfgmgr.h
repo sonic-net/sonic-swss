@@ -2,7 +2,7 @@
 #define __VLANCFGMGR__
 
 #include "dbconnector.h"
-#include "producerstatetable.h"
+#include "table.h"
 #include <set>
 #include <map>
 #include <string>
@@ -30,7 +30,7 @@ public:
     int vlan_show(int argc, char **argv);
 
 private:
-    ProducerStateTable m_vlanTableProducer, m_vlanMemberTableProducer;
+    Table m_vlanTableProducer, m_vlanMemberTableProducer;
     Table m_vlanMemberTableConsumer, m_vlanTableConsumer;
 
     std::map<std::string, std::set<std::string>> m_vlanMap;
