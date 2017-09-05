@@ -104,7 +104,7 @@ int main(int argc, char **argv)
 
     int opt;
     sai_status_t status;
-    bool gMacAgingTimeSet = false;
+    bool macAgingTimeSet = false;
     string record_location = ".";
     uint32_t macAgingTime = 0;
     while ((opt = getopt(argc, argv, "b:m:r:d:t:h")) != -1)
@@ -151,17 +151,19 @@ int main(int argc, char **argv)
             break;
         case 't':
         {
-            gMacAgingTimeSet = true;
+            macAgingTimeSet = true;
             int tmptime = stoi(optarg);
             if (tmptime < 0)
             {   
                 macAgingTime = 0;
-                SWSS_LOG_DEBUG("Input macAgingTime < 0, set macAgingTime to 0");
+                SWSS_LOG_WARN("Input macAgingTime < 0, set macAgingTime to 0");
             }
             else
+            {
                 macAgingTime = tmptime;
-        }
+            }
             break;
+        }
 
         case 'h':
             usage();
@@ -270,7 +272,7 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
     }
-    if (gMacAgingTimeSet)
+    if (macAgingTimeSet)
     {
         attr.id = SAI_SWITCH_ATTR_FDB_AGING_TIME;
         attr.value.u32 = macAgingTime;
