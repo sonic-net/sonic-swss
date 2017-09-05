@@ -1082,7 +1082,6 @@ void AclOrch::addAclTable(AclTable &newTable, string table_id)
     {
         SWSS_LOG_ERROR("Failed to create table %s", table_id.c_str());
     }
-
 }
 
 void AclOrch::removeAclTable(string table_id)
@@ -1104,7 +1103,6 @@ void AclOrch::removeAclTable(string table_id)
     {
         SWSS_LOG_ERROR("Failed to delete ACL table. Table %s does not exist", table_id.c_str());
     }
-
 }
 
 void AclOrch::addAclRule(shared_ptr<AclRule> newRule, string table_id, string rule_id)
@@ -1129,7 +1127,6 @@ void AclOrch::addAclRule(shared_ptr<AclRule> newRule, string table_id, string ru
     {
         SWSS_LOG_ERROR("Failed to create rule in table %s", table_id.c_str());
     }
-
 }
 
 void AclOrch::removeAclRule(string table_id, string rule_id)
@@ -1159,7 +1156,6 @@ void AclOrch::removeAclRule(string table_id, string rule_id)
     {
         SWSS_LOG_ERROR("Failed to delete rule %s from ACL table %s. Table does not exist", rule_id.c_str(), table_id.c_str());
     }
-
 }
 
 void AclOrch::doAclTableTask(Consumer &consumer)
