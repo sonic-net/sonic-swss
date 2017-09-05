@@ -29,6 +29,7 @@ const string LAG_PREFIX = "PortChannel";
 extern set<string> g_portSet;
 extern map<string, set<string>> g_vlanMap;
 extern bool g_init;
+extern bool g_minigraphVlan;
 
 LinkSync::LinkSync(DBConnector *db) :
     m_portTableProducer(db, APP_PORT_TABLE_NAME),
@@ -87,6 +88,14 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         key.compare(0, VLAN_PREFIX.length(), VLAN_PREFIX) &&
         key.compare(0, LAG_PREFIX.length(), LAG_PREFIX))
     {
+        return;
+    }
+
+    if (!g_minigraphVlan && key.compare(0, VLAN_PREFIX.length(), VLAN_PREFIX) == 0)
+    {
+        /*
+         * VLAN APP config doesn't rely on netlink when VLAN not configured from minigraph
+         */
         return;
     }
 
