@@ -462,7 +462,7 @@ void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_
     }
 }
 
-bool PortsOrch::createPort(const set<int> &lane_set, uint32_t speed)
+bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed)
 {
     SWSS_LOG_ENTER();
 
@@ -490,7 +490,7 @@ bool PortsOrch::createPort(const set<int> &lane_set, uint32_t speed)
 
     m_portListLaneMap[lane_set] = port_id;
 
-    SWSS_LOG_INFO("Create port %lx with the speed %u", port_id, speed);
+    SWSS_LOG_NOTICE("Create port %lx with the speed %u", port_id, speed);
 
     return true;
 }
@@ -506,7 +506,7 @@ bool PortsOrch::removePort(const set<int> &lane_set)
         return false;
     }
 
-    SWSS_LOG_INFO("Remove port %lx", m_portListLaneMap[lane_set]);
+    SWSS_LOG_NOTICE("Remove port %lx", m_portListLaneMap[lane_set]);
 
     return true;
 }
@@ -590,11 +590,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         /* Get notification from application */
         /* portsyncd application:
-         * When portsorch receives 'ConfigDone' message, it indicates port initialization
+         * When portsorch receives 'PortInitDone' message, it indicates port initialization
          * procedure is done. Before port initialization procedure, none of other tasks
          * are executed.
          */
-        if (alias == "ConfigDone")
+        if (alias == "PortInitDone")
         {
             /* portsyncd restarting case:
              * When portsyncd restarts, duplicate notifications may be received.
@@ -602,7 +602,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             if (!m_initDone)
             {
                 m_initDone = true;
-                SWSS_LOG_INFO("Get ConfigDone notification from portsyncd.");
+                SWSS_LOG_INFO("Get PortInitDone notification from portsyncd.");
             }
 
             it = consumer.m_toSync.erase(it);
@@ -647,7 +647,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             /* Collect information about all received ports */
             if (lane_set.size())
             {
-                m_lanesALiasSpeedMap[lane_set] = make_tuple(alias, speed);
+                m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed);
             }
 
             /* Once all ports received, go through the each port and perform appropriate actions:
@@ -655,11 +655,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
              * 2. Create new ports
              * 3. Initialize all ports
              */
-            if (m_portConfigDone && (m_lanesALiasSpeedMap.size() == m_portCount))
+            if (m_portConfigDone && (m_lanesAliasSpeedMap.size() == m_portCount))
             {
                 for (auto it = m_portListLaneMap.begin(); it != m_portListLaneMap.end();)
                 {
-                    if (m_lanesALiasSpeedMap.find(it->first) == m_lanesALiasSpeedMap.end())
+                    if (m_lanesAliasSpeedMap.find(it->first) == m_lanesAliasSpeedMap.end())
                     {
                         if (!removePort(it->first))
                         {
@@ -673,11 +673,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                for (auto it = m_lanesALiasSpeedMap.begin(); it != m_lanesALiasSpeedMap.end();)
+                for (auto it = m_lanesAliasSpeedMap.begin(); it != m_lanesAliasSpeedMap.end();)
                 {
                     if (m_portListLaneMap.find(it->first) == m_portListLaneMap.end())
                     {
-                        if (!createPort(it->first, get<1>(it->second)))
+                        if (!addPort(it->first, get<1>(it->second)))
                         {
                             throw runtime_error("PortsOrch initialization failure.");
                         }
@@ -688,7 +688,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         throw runtime_error("PortsOrch initialization failure.");
                     }
 
-                    it = m_lanesALiasSpeedMap.erase(it);
+                    it = m_lanesAliasSpeedMap.erase(it);
                 }
             }
 

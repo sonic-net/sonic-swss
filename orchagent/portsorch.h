@@ -70,7 +70,7 @@ private:
     bool m_portConfigDone = false;
     sai_uint32_t m_portCount;
     map<set<int>, sai_object_id_t> m_portListLaneMap;
-    map<set<int>, tuple<string, uint32_t>> m_lanesALiasSpeedMap;
+    map<set<int>, tuple<string, uint32_t>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
 
     void doTask(Consumer &consumer);
@@ -102,7 +102,7 @@ private:
     bool addLagMember(Port lag, Port port);
     bool removeLagMember(Port lag, Port port);
 
-    bool createPort(const set<int> &lane_set, uint32_t speed);
+    bool addPort(const set<int> &lane_set, uint32_t speed);
     bool removePort(const set<int> &lane_set);
     bool initPort(const string &alias, const set<int> &lane_set);
 
