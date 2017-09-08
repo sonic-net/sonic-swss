@@ -1242,43 +1242,36 @@ void QosOrch::doTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple tuple = it->second;
-        //
-        // make sure table is recognized, and we have handler for it
-        //
+        /* Make sure the handler is initialized for the task */
         string qos_map_type_name = consumer.m_consumer->getTableName();
-        if (m_qos_maps.find(qos_map_type_name) == m_qos_maps.end())
-        {
-            SWSS_LOG_ERROR("Unrecognised qos table encountered:%s", qos_map_type_name.c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
         if (m_qos_handler_map.find(qos_map_type_name) == m_qos_handler_map.end())
         {
-            SWSS_LOG_ERROR("No handler for key:%s found.", qos_map_type_name.c_str());
+            SWSS_LOG_ERROR("Task %s handler is not initialized", qos_map_type_name.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
-        task_process_status task_status = (this->*(m_qos_handler_map[qos_map_type_name]))(consumer);
+
+        auto task_status = (this->*(m_qos_handler_map[qos_map_type_name]))(consumer);
         switch(task_status)
         {
             case task_process_status::task_success :
                 it = consumer.m_toSync.erase(it);
-                SWSS_LOG_DEBUG("Successfully processed item, removing from queue.");
                 break;
             case task_process_status::task_invalid_entry :
-                SWSS_LOG_ERROR("Invalid QOS task item was encountered, removing from queue.");
+                SWSS_LOG_ERROR("Failed to process invalid QOS task");
                 it = consumer.m_toSync.erase(it);
                 break;
             case task_process_status::task_failed :
-                SWSS_LOG_ERROR("Processing QOS task item failed, exiting.");
+                SWSS_LOG_ERROR("Failed to process QOS task, drop it");
+                it = consumer.m_toSync.erase(it);
                 return;
             case task_process_status::task_need_retry :
-                SWSS_LOG_INFO("Processing QOS task item failed, will retry.");
+                SWSS_LOG_ERROR("Failed to process QOS task, retry it");
                 it++;
                 break;
             default:
-                SWSS_LOG_ERROR("Invdalid resolve result.");
+                SWSS_LOG_ERROR("Invalid task status %d", task_status);
+                it = consumer.m_toSync.erase(it);
                 break;
         }
     }
