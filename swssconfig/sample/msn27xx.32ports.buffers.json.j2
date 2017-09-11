@@ -117,6 +117,7 @@
 
 {# The following template part is for variable PG profile configuration #}
 {% set pg_range = '3-4' %}
+{# Lists of supported speed and cable length #}
 {% set supported_speed = [10000, 25000, 40000, 50000, 100000] %}
 {% set supported_cable = [5, 40, 300] %}
 
@@ -142,6 +143,8 @@
         }
 -%}
 
+{# PG profiles. All profiles reffered in portconfig2profile dictionary should be declared here #}
+{# Only those which were actually used will be created in SAI #}
 {%- set pg_profiles = {
         'pg_lossless_10G_5m_profile':   { 'xon': 18432, 'xoff': 16384, 'size': 34816, 'dynamic_th': 1 },
         'pg_lossless_25G_5m_profile':   { 'xon': 18432, 'xoff': 16384, 'size': 34816, 'dynamic_th': 1 },
@@ -163,6 +166,9 @@
         }
 -%}
 
+{# Port configuration to cable length look-up table #}
+{# Each record describes mapping of DUT (DUT port) role and neighbor role to cable length #}
+{# Roles described in the minigraph #}
 {% set ports2cable = {
         'ToRRouter_Server'       : '5',
         'LeafRouter_ToRRouter'   : '40',
