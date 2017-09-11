@@ -103,7 +103,7 @@ private:
     bool removeLagMember(Port lag, Port port);
 
     bool addPort(const set<int> &lane_set, uint32_t speed);
-    bool removePort(const set<int> &lane_set);
+    bool removePort(sai_object_id_t port_id);
     bool initPort(const string &alias, const set<int> &lane_set);
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);

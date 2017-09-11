@@ -495,18 +495,18 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed)
     return true;
 }
 
-bool PortsOrch::removePort(const set<int> &lane_set)
+bool PortsOrch::removePort(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    sai_status_t status = sai_port_api->remove_port(m_portListLaneMap[lane_set]);
+    sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove port %lx, rv:%d", m_portListLaneMap[lane_set], status);
+        SWSS_LOG_ERROR("Failed to remove port %lx, rv:%d", port_id, status);
         return false;
     }
 
-    SWSS_LOG_NOTICE("Remove port %lx", m_portListLaneMap[lane_set]);
+    SWSS_LOG_NOTICE("Remove port %lx", port_id);
 
     return true;
 }
@@ -661,7 +661,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     if (m_lanesAliasSpeedMap.find(it->first) == m_lanesAliasSpeedMap.end())
                     {
-                        if (!removePort(it->first))
+                        if (!removePort(it->second))
                         {
                             throw runtime_error("PortsOrch initialization failure.");
                         }
