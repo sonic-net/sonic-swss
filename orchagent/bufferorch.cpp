@@ -526,41 +526,37 @@ void BufferOrch::doTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple tuple = it->second;
-        string map_type_name = consumer.m_consumer->getTableName();
-        if (m_buffer_type_maps.find(map_type_name) == m_buffer_type_maps.end())
-        {
-            SWSS_LOG_ERROR("Unrecognised qos table encountered:%s", map_type_name.c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
+        /* Make sure the handler is initialized for the task */
+        auto map_type_name = consumer.m_consumer->getTableName();
         if (m_bufferHandlerMap.find(map_type_name) == m_bufferHandlerMap.end())
         {
             SWSS_LOG_ERROR("No handler for key:%s found.", map_type_name.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
-        task_process_status task_status = (this->*(m_bufferHandlerMap[map_type_name]))(consumer);
+
+        auto task_status = (this->*(m_bufferHandlerMap[map_type_name]))(consumer);
         switch(task_status)
         {
-        case task_process_status::task_success :
-            it = consumer.m_toSync.erase(it);
-            break;
-        case task_process_status::task_invalid_entry:
-            SWSS_LOG_ERROR("Invalid buffer task item was encountered, removing from queue.");
-            it = consumer.m_toSync.erase(it);
-            break;
-        case task_process_status::task_failed:
-            SWSS_LOG_ERROR("Processing buffer task item failed, exiting.");
-            return;
-        case task_process_status::task_need_retry:
-            SWSS_LOG_INFO("Processing buffer task item failed, will retry.");
-            it++;
-            break;
-        default:
-            SWSS_LOG_ERROR("Unknown task status: %d", task_status);
-            it = consumer.m_toSync.erase(it);
-            break;
+            case task_process_status::task_success :
+                it = consumer.m_toSync.erase(it);
+                break;
+            case task_process_status::task_invalid_entry:
+                SWSS_LOG_ERROR("Failed to process invalid buffer task");
+                it = consumer.m_toSync.erase(it);
+                break;
+            case task_process_status::task_failed:
+                SWSS_LOG_ERROR("Failed to process buffer task, drop it");
+                it = consumer.m_toSync.erase(it);
+                return;
+            case task_process_status::task_need_retry:
+                SWSS_LOG_INFO("Failed to process buffer task, retry it");
+                it++;
+                break;
+            default:
+                SWSS_LOG_ERROR("Invalid task status %d", task_status);
+                it = consumer.m_toSync.erase(it);
+                break;
         }
     }
 }

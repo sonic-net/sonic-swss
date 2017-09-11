@@ -1243,7 +1243,7 @@ void QosOrch::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         /* Make sure the handler is initialized for the task */
-        string qos_map_type_name = consumer.m_consumer->getTableName();
+        auto qos_map_type_name = consumer.m_consumer->getTableName();
         if (m_qos_handler_map.find(qos_map_type_name) == m_qos_handler_map.end())
         {
             SWSS_LOG_ERROR("Task %s handler is not initialized", qos_map_type_name.c_str());
@@ -1266,7 +1266,7 @@ void QosOrch::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 return;
             case task_process_status::task_need_retry :
-                SWSS_LOG_ERROR("Failed to process QOS task, retry it");
+                SWSS_LOG_INFO("Failed to process QOS task, retry it");
                 it++;
                 break;
             default:
