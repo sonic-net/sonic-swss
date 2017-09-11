@@ -20,6 +20,7 @@ for i = n, 1, -1 do
     local pfc_rx_pkt_key = ''
     local counter_num = 0
     local old_counter_num = 0
+    local is_deadlock = false
 
     local m = table.getn(counter_keys)
     for j = m, 1, -1 do
@@ -67,13 +68,18 @@ for i = n, 1, -1 do
                 -- DEBUG CODE END.
                 (occupancy_bytes == 0 and packets - packets_last == 0 and (pfc_duration - pfc_duration_last) > poll_time * 0.8) then
                 table.insert(rets, KEYS[i])
+                is_deadlock = true
             end
         end
 
         -- Save values for next run
         redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS_last', packets)
         redis.call('HSET', counters_table_name .. ':' .. KEYS[i], pfc_rx_pkt_key .. '_last', pfc_rx_packets)
-        redis.call('HSET', counters_table_name .. ':' .. KEYS[i], pfc_duration_key .. '_last', pfc_duration)
+        if is_deadlock then
+            redis.call('HDEL', counters_table_name .. ':' .. KEYS[i], pfc_duration_key .. '_last')
+        else
+            redis.call('HSET', counters_table_name .. ':' .. KEYS[i], pfc_duration_key .. '_last', pfc_duration)
+        end
     end
 end
 
