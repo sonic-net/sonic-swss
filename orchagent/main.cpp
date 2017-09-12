@@ -36,7 +36,6 @@ MacAddress gMacAddress;
 
 #define DEFAULT_BATCH_SIZE  128
 int gBatchSize = DEFAULT_BATCH_SIZE;
-
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
 bool gLogRotate = false;
@@ -70,6 +69,7 @@ void usage()
     cout << "    -d record_location: set record logs folder location (default .)" << endl;
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
+    cout << "    -t time: set switch MAC aging time" << endl;
 }
 
 void sighup_handler(int signo)
@@ -104,10 +104,10 @@ int main(int argc, char **argv)
 
     int opt;
     sai_status_t status;
-
+    bool macAgingTimeSet = false;
     string record_location = ".";
-
-    while ((opt = getopt(argc, argv, "b:m:r:d:h")) != -1)
+    uint32_t macAgingTime = 0;
+    while ((opt = getopt(argc, argv, "b:m:r:d:t:h")) != -1)
     {
         switch (opt)
         {
@@ -149,6 +149,22 @@ int main(int argc, char **argv)
                 exit(EXIT_FAILURE);
             }
             break;
+        case 't':
+        {
+            macAgingTimeSet = true;
+            int tmptime = stoi(optarg);
+            if (tmptime < 0)
+            {   
+                macAgingTime = 0;
+                SWSS_LOG_WARN("Input macAgingTime < 0, set macAgingTime to 0");
+            }
+            else
+            {
+                macAgingTime = tmptime;
+            }
+            break;
+        }
+
         case 'h':
             usage();
             exit(EXIT_SUCCESS);
@@ -254,6 +270,21 @@ int main(int argc, char **argv)
         {
             SWSS_LOG_ERROR("Failed to set MAC address to switch %d", status);
             exit(EXIT_FAILURE);
+        }
+    }
+    if (macAgingTimeSet)
+    {
+        attr.id = SAI_SWITCH_ATTR_FDB_AGING_TIME;
+        attr.value.u32 = macAgingTime;
+        status = sai_switch_api->set_switch_attribute(&attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set switch mac aging time to %d, rv:%d", macAgingTime, status);
+            exit(EXIT_FAILURE);
+        }
+        else
+        {
+            SWSS_LOG_DEBUG("Succeeded to set switch mac aging time to %d, rv:%d", macAgingTime, status);
         }
     }
 
