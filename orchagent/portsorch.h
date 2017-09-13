@@ -55,6 +55,7 @@ public:
 
     bool setHostIntfsOperStatus(sai_object_id_t id, bool up);
     void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
+    void removeDefaultVlanMembers();
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
@@ -78,30 +79,32 @@ private:
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
 
-    void removeDefaultVlanMembers();
     void removeDefaultBridgePorts();
 
     bool initializePort(Port &port);
     void initializePriorityGroups(Port &port);
     void initializeQueues(Port &port);
 
-    bool addHostIntfs(sai_object_id_t router_intfs_id, string alias, sai_object_id_t &host_intfs_id);
+    bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
+    bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
     bool addBridgePort(Port &port);
-    bool removeBridgePort(Port port);
+    bool removeBridgePort(Port &port);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
-    bool addVlanMember(Port vlan, Port port, string& tagging_mode);
-    bool removeVlanMember(Port vlan, Port port);
+    bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
+    bool removeVlanMember(Port &vlan, Port &port);
 
     bool addLag(string lag);
     bool removeLag(Port lag);
-    bool addLagMember(Port lag, Port port);
-    bool removeLagMember(Port lag, Port port);
-
+    bool addLagMember(Port &lag, Port &port);
+    bool removeLagMember(Port &lag, Port &port);
+    void getLagMember(Port &lag, vector<Port> &portv);
     bool setPortAdminStatus(sai_object_id_t id, bool up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
+    bool setPortPvid (Port &port, sai_uint32_t pvid);
+    bool getPortPvid(Port &port, sai_uint32_t &pvid);
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
