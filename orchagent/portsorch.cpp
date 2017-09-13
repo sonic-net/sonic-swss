@@ -353,7 +353,7 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
 bool PortsOrch::setPortPvid (Port &port, sai_uint32_t pvid)
 {
     SWSS_LOG_ENTER();
-    vector<Port>   portv;
+    vector<Port> portv;
 
     if (port.m_type == Port::PHY)
     {
@@ -388,6 +388,13 @@ bool PortsOrch::setPortPvid (Port &port, sai_uint32_t pvid)
 
 bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
 {
+    /* Just return false if the router interface exists */
+    if (port.m_rif_id)
+    {
+        SWSS_LOG_DEBUG("Router interface exists on %s, don't set pvid",
+                      port.m_alias.c_str());
+        return false;
+    }
 
     if (port.m_port_vlan_id != DEFAULT_PORT_VLAN_ID)
     {
@@ -414,7 +421,7 @@ bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
 bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
 {
     SWSS_LOG_ENTER();
-    vector<Port>   portv;
+    vector<Port> portv;
 
     if (port.m_type == Port::PHY)
     {
@@ -439,12 +446,12 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
         sai_status_t status = sai_hostif_api->set_hostif_attribute(p.m_hif_id, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_WARN("Failed to set %s to host interface %s",
-                          hostif_vlan_tag[strip], p.m_alias.c_str());
+            SWSS_LOG_ERROR("Failed to set %s to host interface %s",
+                        hostif_vlan_tag[strip], p.m_alias.c_str());
             return false;
         }
         SWSS_LOG_NOTICE("Set %s to host interface: %s",
-                          hostif_vlan_tag[strip], p.m_alias.c_str());
+                        hostif_vlan_tag[strip], p.m_alias.c_str());
     }
 
     return true;
@@ -1241,7 +1248,7 @@ bool PortsOrch::initializePort(Port &p)
     initializeQueues(p);
 
     /* Create host interface */
-    addHostIntfs(p.m_port_id, p.m_alias, p.m_hif_id);
+    addHostIntfs(p, p.m_alias, p.m_hif_id);
 
 #if 0
     // TODO: Assure if_nametoindex(p.m_alias.c_str()) != 0
@@ -1266,22 +1273,10 @@ bool PortsOrch::initializePort(Port &p)
     vector.push_back(tuple);
     m_portTable->set(p.m_alias, vector);
 
-    /*
-     * Port has been removed from 1q bridge at PortsOrch constructor,
-     * also start stipping off VLAN tag.
-     */
-    bool rv = setHostIntfsStripTag(p, SAI_HOSTIF_VLAN_TAG_STRIP);
-    if (rv != true)
-    {
-        SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
-            hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], p.m_alias.c_str());
-        return false;
-    }
-
     return true;
 }
 
-bool PortsOrch::addHostIntfs(sai_object_id_t id, string alias, sai_object_id_t &host_intfs_id)
+bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id)
 {
     SWSS_LOG_ENTER();
 
@@ -1293,7 +1288,7 @@ bool PortsOrch::addHostIntfs(sai_object_id_t id, string alias, sai_object_id_t &
     attrs.push_back(attr);
 
     attr.id = SAI_HOSTIF_ATTR_OBJ_ID;
-    attr.value.oid = id;
+    attr.value.oid = port.m_port_id;
     attrs.push_back(attr);
 
     attr.id = SAI_HOSTIF_ATTR_NAME;
@@ -1307,6 +1302,11 @@ bool PortsOrch::addHostIntfs(sai_object_id_t id, string alias, sai_object_id_t &
         return false;
     }
 
+    /*
+     * Port has been removed from 1q bridge at PortsOrch constructor,
+     * also start stipping off VLAN tag.
+     */
+    setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP);
     SWSS_LOG_NOTICE("Create host interface for port %s", alias.c_str());
 
     return true;
@@ -1545,8 +1545,8 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t            vlan_member_id;
-    sai_vlan_tagging_mode_t    sai_tagging_mode;
+    sai_object_id_t vlan_member_id;
+    sai_vlan_tagging_mode_t sai_tagging_mode;
     auto vlan_member = port.m_vlan_members.find(vlan.m_vlan_info.vlan_id);
 
     /* Assert the port belongs to this VLAN */
@@ -1568,7 +1568,7 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
     // Restore to default pvid if no pvid has been configured explictly and this port was in untagged mode
     if (port.m_port_vlan_id == DEFAULT_PORT_VLAN_ID && sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
     {
-        if(!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
+        if (!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
         {
             return false;
         }
@@ -1641,7 +1641,7 @@ void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
 {
     Port member;
 
-    for(auto &name: lag.m_members)
+    for (auto &name: lag.m_members)
     {
         if (!getPort(name, member))
         {
@@ -1698,8 +1698,8 @@ bool PortsOrch::addLagMember(Port &lag, Port &port)
         }
     }
     sai_uint32_t pvid = DEFAULT_PORT_VLAN_ID;
-    getPortPvid(lag, pvid);
-    setPortPvid (port, pvid);
+    if (getPortPvid(lag, pvid))
+        setPortPvid (port, pvid);
 
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
