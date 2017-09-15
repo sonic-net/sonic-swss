@@ -24,13 +24,14 @@ using namespace swss;
 class OrchDaemon
 {
 public:
-    OrchDaemon(DBConnector *);
+    OrchDaemon(DBConnector *, DBConnector *);
     ~OrchDaemon();
 
     bool init();
     void start();
 private:
     DBConnector *m_applDb;
+    DBConnector *m_configDb;
 
     std::vector<Orch *> m_orchList;
     Select *m_select;

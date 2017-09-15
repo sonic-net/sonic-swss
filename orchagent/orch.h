@@ -58,11 +58,15 @@ typedef enum
     failure
 } ref_resolve_status;
 
+typedef pair<DBConnector *, string> TableConnector;
+typedef pair<DBConnector *, vector<string>> TablesConnector;
+
 class Orch
 {
 public:
     Orch(DBConnector *db, string tableName);
     Orch(DBConnector *db, vector<string> &tableNames);
+    Orch(const vector<TableConnector>& tables);
     virtual ~Orch();
 
     vector<Selectable*> getSelectables();
@@ -73,7 +77,6 @@ public:
     void doTask();
 
 protected:
-    DBConnector *m_db;
     ConsumerMap m_consumerMap;
 
     /* Run doTask against a specific consumer */
@@ -84,6 +87,7 @@ protected:
     bool parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
     bool parseReference(type_map &type_maps, string &ref, string &table_name, string &object_name);
     ref_resolve_status resolveFieldRefArray(type_map&, const string&, KeyOpFieldsValuesTuple&, vector<sai_object_id_t>&);
+    void addConsumer(DBConnector *db, string tableName);
 };
 
 #endif /* SWSS_ORCH_H */

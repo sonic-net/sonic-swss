@@ -47,7 +47,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     m_counterTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_PORT_NAME_MAP));
 
     /* Initialize port table */
-    m_portTable = unique_ptr<Table>(new Table(m_db, APP_PORT_TABLE_NAME));
+    m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
 
     uint32_t i, j;
     sai_status_t status;

@@ -12,7 +12,7 @@
 #include "ipaddresses.h"
 #include "ipprefix.h"
 
-#include "producerstatetable.h"
+#include "table.h"
 
 #include <map>
 #include <inttypes.h>
@@ -52,19 +52,7 @@ struct MirrorEntry
     sai_object_id_t sessionId;
     int64_t refCount;
 
-    MirrorEntry() :
-        status(false),
-        greType(0),
-        dscp(0),
-        ttl(0),
-        queue(0),
-        addVLanTag(false),
-        sessionId(0),
-        refCount(0)
-    {
-        nexthopInfo.resolved = false;
-        neighborInfo.resolved = false;
-    }
+    MirrorEntry(const string& platform);
 };
 
 struct MirrorSessionUpdate
@@ -79,7 +67,7 @@ typedef map<string, MirrorEntry> MirrorTable;
 class MirrorOrch : public Orch, public Observer, public Subject
 {
 public:
-    MirrorOrch(DBConnector *db, string tableName,
+    MirrorOrch(TableConnector appDbConnector, TableConnector confDbConnector,
                PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch);
 
     void update(SubjectType, void *);
@@ -95,7 +83,7 @@ private:
     NeighOrch *m_neighOrch;
     FdbOrch *m_fdbOrch;
 
-    ProducerStateTable m_mirrorTableProducer;
+    Table m_mirrorTableProducer;
 
     MirrorTable m_syncdMirrors;
 

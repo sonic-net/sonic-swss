@@ -1049,14 +1049,20 @@ void AclOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
+    if (!m_portOrch->isInitDone())
+    {
+        /* Wait for ports initialization */
+        return;
+    }
+
     string table_name = consumer.m_consumer->getTableName();
 
-    if (table_name == APP_ACL_TABLE_NAME)
+    if (table_name == CFG_ACL_TABLE_NAME)
     {
         unique_lock<mutex> lock(m_countersMutex);
         doAclTableTask(consumer);
     }
-    else if (table_name == APP_ACL_RULE_TABLE_NAME)
+    else if (table_name == CFG_ACL_RULE_TABLE_NAME)
     {
         unique_lock<mutex> lock(m_countersMutex);
         doAclRuleTask(consumer);
@@ -1174,7 +1180,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t found = key.find(':');
+        size_t found = key.find('|');
         string table_id = key.substr(0, found);
         string op = kfvOp(t);
 
@@ -1250,7 +1256,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t found = key.find(':');
+        size_t found = key.find('|');
         string table_id = key.substr(0, found);
         string rule_id = key.substr(found + 1);
         string op = kfvOp(t);

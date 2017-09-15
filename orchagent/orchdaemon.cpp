@@ -20,8 +20,10 @@ PortsOrch *gPortsOrch;
 /* Global variable gFdbOrch declared */
 FdbOrch *gFdbOrch;
 
-OrchDaemon::OrchDaemon(DBConnector *applDb) :
-        m_applDb(applDb)
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb) :
+        m_applDb(applDb),
+        m_configDb(configDb)
+
 {
     SWSS_LOG_ENTER();
 }
@@ -31,6 +33,9 @@ OrchDaemon::~OrchDaemon()
     SWSS_LOG_ENTER();
     for (Orch *o : m_orchList)
         delete(o);
+
+    delete(m_configDb);
+    delete(m_applDb);
 }
 
 bool OrchDaemon::init()
@@ -78,13 +83,15 @@ bool OrchDaemon::init()
     };
     BufferOrch *buffer_orch = new BufferOrch(m_applDb, buffer_tables);
 
-    MirrorOrch *mirror_orch = new MirrorOrch(m_applDb, APP_MIRROR_SESSION_TABLE_NAME, gPortsOrch, route_orch, neigh_orch, gFdbOrch);
+    TableConnector appDbMirrorSession(m_applDb, APP_MIRROR_SESSION_TABLE_NAME);
+    TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
+    MirrorOrch *mirror_orch = new MirrorOrch(appDbMirrorSession, confDbMirrorSession, gPortsOrch, route_orch, neigh_orch, gFdbOrch);
 
     vector<string> acl_tables = {
-        APP_ACL_TABLE_NAME,
-        APP_ACL_RULE_TABLE_NAME
+        CFG_ACL_TABLE_NAME,
+        CFG_ACL_RULE_TABLE_NAME
     };
-    AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
+    AclOrch *acl_orch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
     m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch};
     m_select = new Select();
