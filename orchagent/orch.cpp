@@ -83,37 +83,37 @@ bool Orch::execute(string tableName)
     }
     Consumer& consumer = consumer_it->second;
 
-    std::deque<KeyOpFieldsValuesTuple> new_data;
-    consumer.m_consumer->pops(new_data);
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    consumer.m_consumer->pops(entries);
 
     /* Nothing popped */
-    if (new_data.empty())
+    if (entries.empty())
     {
         return true;
     }
 
-    for (auto new_data1: new_data)
+    for (auto entry: entries)
     {
-        string key = kfvKey(new_data1);
-        string op  = kfvOp(new_data1);
+        string key = kfvKey(entry);
+        string op  = kfvOp(entry);
 
         /* Record incoming tasks */
         if (gSwssRecord)
         {
-            recordTuple(consumer, new_data1);
+            recordTuple(consumer, entry);
         }
 
         /* If a new task comes or if a DEL task comes, we directly put it into consumer.m_toSync map */
         if (consumer.m_toSync.find(key) == consumer.m_toSync.end() || op == DEL_COMMAND)
         {
-           consumer.m_toSync[key] = new_data1;
+           consumer.m_toSync[key] = entry;
         }
         /* If an old task is still there, we combine the old task with new task */
         else
         {
             KeyOpFieldsValuesTuple existing_data = consumer.m_toSync[key];
 
-            auto new_values = kfvFieldsValues(new_data1);
+            auto new_values = kfvFieldsValues(entry);
             auto existing_values = kfvFieldsValues(existing_data);
 
 
