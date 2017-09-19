@@ -1067,6 +1067,104 @@ void AclOrch::doTask(Consumer &consumer)
     }
 }
 
+void AclOrch::addAclTable(AclTable &newTable, string table_id)
+{
+    sai_object_id_t table_oid = getTableById(table_id);
+
+    if (table_oid != SAI_NULL_OBJECT_ID)
+    {
+        // table already exists, delete it first
+        if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_INFO("Successfully deleted ACL table %s", table_id.c_str());
+            m_AclTables.erase(table_oid);
+        }
+    }
+    if (createBindAclTable(newTable, table_oid) == SAI_STATUS_SUCCESS)
+    {
+        m_AclTables[table_oid] = newTable;
+        SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", newTable.description.c_str(), table_oid);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to create table %s", table_id.c_str());
+    }
+}
+
+void AclOrch::removeAclTable(string table_id)
+{
+    sai_object_id_t table_oid = getTableById(table_id);
+    if (table_oid != SAI_NULL_OBJECT_ID)
+    {
+        if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_INFO("Successfully deleted ACL table %s", table_id.c_str());
+            m_AclTables.erase(table_oid);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to delete ACL table %s", table_id.c_str());
+        }
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to delete ACL table. Table %s does not exist", table_id.c_str());
+    }
+}
+
+void AclOrch::addAclRule(shared_ptr<AclRule> newRule, string table_id, string rule_id)
+{
+    sai_object_id_t table_oid = getTableById(table_id);
+    auto ruleIter = m_AclTables[table_oid].rules.find(rule_id);
+    if (ruleIter != m_AclTables[table_oid].rules.end())
+    {
+        // rule already exists - delete it first
+        if (ruleIter->second->remove())
+        {
+            m_AclTables[table_oid].rules.erase(ruleIter);
+            SWSS_LOG_INFO("Successfully deleted ACL rule: %s", rule_id.c_str());
+        }
+    }
+    if (newRule->create())
+    {
+        m_AclTables[table_oid].rules[rule_id] = newRule;
+        SWSS_LOG_INFO("Successfully created ACL rule %s in table %s", rule_id.c_str(), table_id.c_str());
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to create rule in table %s", table_id.c_str());
+    }
+}
+
+void AclOrch::removeAclRule(string table_id, string rule_id)
+{
+    sai_object_id_t table_oid = getTableById(table_id);
+    if (table_oid != SAI_NULL_OBJECT_ID)
+    {
+        auto ruleIter = m_AclTables[table_oid].rules.find(rule_id);
+        if (ruleIter != m_AclTables[table_oid].rules.end())
+        {
+            if (ruleIter->second->remove())
+            {
+                m_AclTables[table_oid].rules.erase(ruleIter);
+                SWSS_LOG_INFO("Successfully deleted ACL rule %s", rule_id.c_str());
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to delete ACL rule: %s", table_id.c_str());
+            }
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to delete ACL rule. Unknown rule %s", rule_id.c_str());
+        }
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to delete rule %s from ACL table %s. Table does not exist", rule_id.c_str(), table_id.c_str());
+    }
+}
+
 void AclOrch::doAclTableTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -1124,26 +1222,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             // validate and create ACL Table
             if (bAllAttributesOk && validateAclTable(newTable))
             {
-                sai_object_id_t table_oid = getTableById(table_id);
-
-                if (table_oid != SAI_NULL_OBJECT_ID)
-                {
-                    // table already exists, delete it first
-                    if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
-                    {
-                        SWSS_LOG_INFO("Successfully deleted ACL table %s", table_id.c_str());
-                        m_AclTables.erase(table_oid);
-                    }
-                }
-                if (createBindAclTable(newTable, table_oid) == SAI_STATUS_SUCCESS)
-                {
-                    m_AclTables[table_oid] = newTable;
-                    SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", newTable.description.c_str(), table_oid);
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed to create table %s", table_id.c_str());
-                }
+                addAclTable(newTable, table_id);
             }
             else
             {
@@ -1152,23 +1231,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            sai_object_id_t table_oid = getTableById(table_id);
-            if (table_oid != SAI_NULL_OBJECT_ID)
-            {
-                if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_INFO("Successfully deleted ACL table %s", table_id.c_str());
-                    m_AclTables.erase(table_oid);
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed to delete ACL table %s", table_id.c_str());
-                }
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Failed to delete ACL table. Table %s does not exist", table_id.c_str());
-            }
+            removeAclTable(table_id);
         }
         else
         {
@@ -1244,25 +1307,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             // validate and create ACL rule
             if (bAllAttributesOk && newRule->validate())
             {
-                auto ruleIter = m_AclTables[table_oid].rules.find(rule_id);
-                if (ruleIter != m_AclTables[table_oid].rules.end())
-                {
-                    // rule already exists - delete it first
-                    if (ruleIter->second->remove())
-                    {
-                        m_AclTables[table_oid].rules.erase(ruleIter);
-                        SWSS_LOG_INFO("Successfully deleted ACL rule: %s", rule_id.c_str());
-                    }
-                }
-                if (newRule->create())
-                {
-                    m_AclTables[table_oid].rules[rule_id] = newRule;
-                    SWSS_LOG_INFO("Successfully created ACL rule %s in table %s", rule_id.c_str(), table_id.c_str());
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed to create rule in table %s", table_id.c_str());
-                }
+                addAclRule(newRule, table_id, rule_id);
             }
             else
             {
@@ -1271,31 +1316,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            sai_object_id_t table_oid = getTableById(table_id);
-            if (table_oid != SAI_NULL_OBJECT_ID)
-            {
-                auto ruleIter = m_AclTables[table_oid].rules.find(rule_id);
-                if (ruleIter != m_AclTables[table_oid].rules.end())
-                {
-                    if (ruleIter->second->remove())
-                    {
-                        m_AclTables[table_oid].rules.erase(ruleIter);
-                        SWSS_LOG_INFO("Successfully deleted ACL rule %s", rule_id.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to delete ACL rule: %s", table_id.c_str());
-                    }
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Failed to delete ACL rule. Unknown rule %s", rule_id.c_str());
-                }
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Failed to delete rule %s from ACL table %s. Table does not exist", rule_id.c_str(), table_id.c_str());
-            }
+            removeAclRule(table_id, rule_id);
         }
         else
         {
