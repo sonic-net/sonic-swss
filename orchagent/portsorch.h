@@ -58,6 +58,7 @@ public:
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
+    unique_ptr<Table> m_queueTable;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 

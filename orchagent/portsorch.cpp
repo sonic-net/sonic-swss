@@ -15,6 +15,8 @@
 #include "converter.h"
 #include "saiserialize.h"
 
+#include "saiserialize.h"
+
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_port_api_t *sai_port_api;
@@ -22,6 +24,7 @@ extern sai_vlan_api_t *sai_vlan_api;
 extern sai_lag_api_t *sai_lag_api;
 extern sai_hostif_api_t* sai_hostif_api;
 extern sai_acl_api_t* sai_acl_api;
+extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
 
 #define VLAN_PREFIX         "Vlan"
@@ -51,6 +54,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
 
     /* Initialize port table */
     m_portTable = unique_ptr<Table>(new Table(m_db, APP_PORT_TABLE_NAME));
+
+    /* Initialize queue table */
+    m_queueTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_NAME_MAP));
 
     uint32_t i, j;
     sai_status_t status;
@@ -1174,7 +1180,21 @@ void PortsOrch::initializeQueues(Port &port)
         SWSS_LOG_ERROR("Failed to get queue list for port %s rv:%d", port.m_alias.c_str(), status);
         throw runtime_error("PortsOrch initialization failure.");
     }
+
     SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
+
+    /* Create the Queue map in the Counter DB */
+    vector<FieldValueTuple> queue_list;
+
+    for (size_t queue_index = 0; queue_index < port.m_queue_ids.size(); ++queue_index)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << queue_index;
+        FieldValueTuple tuple(name.str(), sai_serialize_object_id(port.m_queue_ids[queue_index]));
+        queue_list.push_back(tuple);
+    }
+
+    m_queueTable->set("", queue_list);
 }
 
 void PortsOrch::initializePriorityGroups(Port &port)
