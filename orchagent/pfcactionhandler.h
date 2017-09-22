@@ -43,8 +43,8 @@ class PfcWdActionHandler
     private:
         struct PfcWdQueueStats
         {
-            uint32_t detectCount  = 0;
-            uint32_t restoreCount = 0;
+            uint64_t detectCount  = 0;
+            uint64_t restoreCount = 0;
             uint64_t txPkt        = 0;
             uint64_t txDropPkt    = 0;
             bool     operational  = true;

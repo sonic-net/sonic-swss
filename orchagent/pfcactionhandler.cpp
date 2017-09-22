@@ -148,7 +148,7 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
 
     uint8_t pfcMask = attr.value.u8;
     attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
-    attr.value.u8 = pfcMask & ~(1 << queueId);
+    attr.value.u8 = static_cast<uint8_t>(pfcMask & ~(1 << queueId));
 
     status = sai_port_api->set_port_attribute(port, &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -173,7 +173,7 @@ PfcWdLossyHandler::~PfcWdLossyHandler(void)
 
     uint8_t pfcMask = attr.value.u8;
     attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
-    attr.value.u8 = pfcMask | (1 << getQueueId());
+    attr.value.u8 = static_cast<uint8_t>(pfcMask | (1 << getQueueId()));
 
     status = sai_port_api->set_port_attribute(getPort(), &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -335,7 +335,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createStaticProfile(void)
     sai_status_t status = sai_buffer_api->create_buffer_pool(
             &m_zeroStaticBufferPool,
             gSwitchId,
-            attribs.size(),
+            static_cast<uint32_t>(attribs.size()),
             attribs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -361,7 +361,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createStaticProfile(void)
     status = sai_buffer_api->create_buffer_profile(
             &m_zeroStaticBufferProfile,
             gSwitchId,
-            attribs.size(),
+            static_cast<uint32_t>(attribs.size()),
             attribs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -394,7 +394,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createDynamicProfile(void)
     sai_status_t status = sai_buffer_api->create_buffer_pool(
             &m_zeroDynamicBufferPool,
             gSwitchId,
-            attribs.size(),
+            static_cast<uint32_t>(attribs.size()),
             attribs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -420,7 +420,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createDynamicProfile(void)
     status = sai_buffer_api->create_buffer_profile(
             &m_zeroDynamicBufferProfile,
             gSwitchId,
-            attribs.size(),
+            static_cast<uint32_t>(attribs.size()),
             attribs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
