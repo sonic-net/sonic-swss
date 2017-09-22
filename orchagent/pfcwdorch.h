@@ -6,6 +6,7 @@
 #include "orch.h"
 #include "port.h"
 #include "pfcactionhandler.h"
+#include "producerstatetable.h"
 
 extern "C" {
 #include "sai.h"
