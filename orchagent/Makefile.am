@@ -34,6 +34,7 @@ orchagent_SOURCES = \
 		    fdborch.cpp \
 		    aclorch.cpp \
 		    saihelper.cpp \
+        switchorch.cpp \
 		    pfcwdorch.cpp \
 		    pfcactionhandler.cpp \
 		    aclorch.h \
@@ -54,6 +55,7 @@ orchagent_SOURCES = \
 		    qosorch.h \
 		    routeorch.h \
 		    saihelper.h \
+        switchorch.h \
 		    swssnet.h \
 		    tunneldecaporch.h
 

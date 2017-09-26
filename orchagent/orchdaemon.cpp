@@ -39,6 +39,8 @@ bool OrchDaemon::init()
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
+    SwitchOrch *switch_orch = new SwitchOrch(m_applDb, APP_SWITCH_TABLE_NAME);
+
     vector<string> ports_tables = {
         APP_PORT_TABLE_NAME,
         APP_VLAN_TABLE_NAME,
@@ -86,8 +88,7 @@ bool OrchDaemon::init()
     };
     AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
-
-    m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch };
+    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch};
     m_select = new Select();
 
     vector<string> pfc_wd_tables = {
@@ -150,8 +151,9 @@ void OrchDaemon::start()
             continue;
         }
 
-        Orch *o = getOrchByConsumer((ConsumerStateTable *)s);
-        o->execute(((ConsumerStateTable *)s)->getTableName());
+        TableConsumable *c = (TableConsumable *)s;
+        Orch *o = getOrchByConsumer(c);
+        o->execute(c->getTableName());
 
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
@@ -163,7 +165,7 @@ void OrchDaemon::start()
     }
 }
 
-Orch *OrchDaemon::getOrchByConsumer(ConsumerStateTable *c)
+Orch *OrchDaemon::getOrchByConsumer(TableConsumable *c)
 {
     SWSS_LOG_ENTER();
 
