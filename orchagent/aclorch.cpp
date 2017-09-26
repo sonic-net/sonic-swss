@@ -1067,101 +1067,127 @@ void AclOrch::doTask(Consumer &consumer)
     }
 }
 
-void AclOrch::addAclTable(AclTable &newTable, string table_id)
+bool AclOrch::addAclTable(AclTable &newTable, string table_id)
 {
     sai_object_id_t table_oid = getTableById(table_id);
 
     if (table_oid != SAI_NULL_OBJECT_ID)
     {
-        // table already exists, delete it first
-        if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
+        /* If ACL table exists, remove the table first.*/
+        if (!removeAclTable(table_id))
         {
-            SWSS_LOG_INFO("Successfully deleted ACL table %s", table_id.c_str());
-            m_AclTables.erase(table_oid);
+            SWSS_LOG_ERROR("Fail to remove the exsiting ACL table %s when try to add the new one.", table_id.c_str());
+            return false;
         }
     }
+
     if (createBindAclTable(newTable, table_oid) == SAI_STATUS_SUCCESS)
     {
         m_AclTables[table_oid] = newTable;
-        SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", newTable.description.c_str(), table_oid);
+        SWSS_LOG_NOTICE("Successfully created ACL table %s, oid: %lX", newTable.description.c_str(), table_oid);
+        return true;
     }
     else
     {
         SWSS_LOG_ERROR("Failed to create table %s", table_id.c_str());
+        return false;
     }
 }
 
-void AclOrch::removeAclTable(string table_id)
+bool AclOrch::removeAclTable(string table_id)
 {
     sai_object_id_t table_oid = getTableById(table_id);
-    if (table_oid != SAI_NULL_OBJECT_ID)
+    if (table_oid == SAI_NULL_OBJECT_ID)
     {
-        if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
+        SWSS_LOG_WARN("Skip deleting ACL table %s. Table does not exist.", table_id.c_str());
+        return true;
+    }
+
+    /* If ACL rules associate with this table, remove the rules first.*/
+    while (!m_AclTables[table_oid].rules.empty())
+    {
+        auto ruleIter = m_AclTables[table_oid].rules.begin();
+        if (!removeAclRule(table_id, ruleIter->first))
         {
-            SWSS_LOG_INFO("Successfully deleted ACL table %s", table_id.c_str());
-            m_AclTables.erase(table_oid);
+            SWSS_LOG_ERROR("Failed to delete existing ACL rule %s when removing the ACL table %s", ruleIter->first.c_str(), table_id.c_str());
+            return false;
         }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to delete ACL table %s", table_id.c_str());
-        }
+    }
+
+    if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Successfully deleted ACL table %s", table_id.c_str());
+        m_AclTables.erase(table_oid);
+        return true;
     }
     else
     {
-        SWSS_LOG_ERROR("Failed to delete ACL table. Table %s does not exist", table_id.c_str());
+        SWSS_LOG_ERROR("Failed to delete ACL table %s.", table_id.c_str());
+        return false;
     }
 }
 
-void AclOrch::addAclRule(shared_ptr<AclRule> newRule, string table_id, string rule_id)
+bool AclOrch::addAclRule(shared_ptr<AclRule> newRule, string table_id, string rule_id)
 {
     sai_object_id_t table_oid = getTableById(table_id);
+    if (table_oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Failed to add ACL rule %s in ACL table %s. Table doesn't exist", rule_id.c_str(), table_id.c_str());
+        return false;
+    }
+
     auto ruleIter = m_AclTables[table_oid].rules.find(rule_id);
     if (ruleIter != m_AclTables[table_oid].rules.end())
     {
-        // rule already exists - delete it first
+        // If ACL rule already exists, delete it first
         if (ruleIter->second->remove())
         {
             m_AclTables[table_oid].rules.erase(ruleIter);
-            SWSS_LOG_INFO("Successfully deleted ACL rule: %s", rule_id.c_str());
+            SWSS_LOG_NOTICE("Successfully deleted ACL rule: %s", rule_id.c_str());
         }
     }
+
     if (newRule->create())
     {
         m_AclTables[table_oid].rules[rule_id] = newRule;
-        SWSS_LOG_INFO("Successfully created ACL rule %s in table %s", rule_id.c_str(), table_id.c_str());
+        SWSS_LOG_NOTICE("Successfully created ACL rule %s in table %s", rule_id.c_str(), table_id.c_str());
+        return true;
     }
     else
     {
         SWSS_LOG_ERROR("Failed to create rule in table %s", table_id.c_str());
+        return false;
     }
 }
 
-void AclOrch::removeAclRule(string table_id, string rule_id)
+bool AclOrch::removeAclRule(string table_id, string rule_id)
 {
     sai_object_id_t table_oid = getTableById(table_id);
-    if (table_oid != SAI_NULL_OBJECT_ID)
+    if (table_oid == SAI_NULL_OBJECT_ID)
     {
-        auto ruleIter = m_AclTables[table_oid].rules.find(rule_id);
-        if (ruleIter != m_AclTables[table_oid].rules.end())
+        SWSS_LOG_WARN("Skip removing rule %s from ACL table %s. Table does not exist", rule_id.c_str(), table_id.c_str());
+        return true;
+    }
+
+    auto ruleIter = m_AclTables[table_oid].rules.find(rule_id);
+    if (ruleIter != m_AclTables[table_oid].rules.end())
+    {
+        if (ruleIter->second->remove())
         {
-            if (ruleIter->second->remove())
-            {
-                m_AclTables[table_oid].rules.erase(ruleIter);
-                SWSS_LOG_INFO("Successfully deleted ACL rule %s", rule_id.c_str());
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Failed to delete ACL rule: %s", table_id.c_str());
-            }
+            m_AclTables[table_oid].rules.erase(ruleIter);
+            SWSS_LOG_NOTICE("Successfully deleted ACL rule %s", rule_id.c_str());
+            return true;
         }
         else
         {
-            SWSS_LOG_ERROR("Failed to delete ACL rule. Unknown rule %s", rule_id.c_str());
+            SWSS_LOG_ERROR("Failed to delete ACL rule: %s", table_id.c_str());
+            return false;
         }
     }
     else
     {
-        SWSS_LOG_ERROR("Failed to delete rule %s from ACL table %s. Table does not exist", rule_id.c_str(), table_id.c_str());
+        SWSS_LOG_WARN("Skip deleting ACL rule. Unknown rule %s", rule_id.c_str());
+        return true;
     }
 }
 
@@ -1222,22 +1248,29 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             // validate and create ACL Table
             if (bAllAttributesOk && validateAclTable(newTable))
             {
-                addAclTable(newTable, table_id);
+                if (addAclTable(newTable, table_id))
+                    it = consumer.m_toSync.erase(it);
+                else
+                    it++;
             }
             else
             {
+                it = consumer.m_toSync.erase(it);
                 SWSS_LOG_ERROR("Failed to create ACL table. Table configuration is invalid");
             }
         }
         else if (op == DEL_COMMAND)
         {
-            removeAclTable(table_id);
+            if (removeAclTable(table_id))
+                it = consumer.m_toSync.erase(it);
+            else
+                it++;
         }
         else
         {
+            it = consumer.m_toSync.erase(it);
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         }
-        it = consumer.m_toSync.erase(it);
     }
 }
 
@@ -1307,22 +1340,29 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             // validate and create ACL rule
             if (bAllAttributesOk && newRule->validate())
             {
-                addAclRule(newRule, table_id, rule_id);
+                if(addAclRule(newRule, table_id, rule_id))
+                    it = consumer.m_toSync.erase(it);
+                else
+                    it++;
             }
             else
             {
+                it = consumer.m_toSync.erase(it);
                 SWSS_LOG_ERROR("Failed to create ACL rule. Rule configuration is invalid");
             }
         }
         else if (op == DEL_COMMAND)
         {
-            removeAclRule(table_id, rule_id);
+            if(removeAclRule(table_id, rule_id))
+                it = consumer.m_toSync.erase(it);
+            else
+                it++;
         }
         else
         {
+            it = consumer.m_toSync.erase(it);
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         }
-        it = consumer.m_toSync.erase(it);
     }
 }
 
