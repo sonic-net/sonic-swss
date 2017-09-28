@@ -36,6 +36,7 @@ public:
         virtual bool isMe(fd_set *fd);
         virtual int readCache();
         virtual void readMe();
+        void syncMember(const std::string& intfName);
 
     protected:
         int onChange();
@@ -45,6 +46,7 @@ public:
     private:
         ProducerStateTable *m_lagMemberTable;
         struct team_handle *m_team;
+        struct teamdctl *m_tdc;
         std::string m_lagName;
         int m_ifindex;
         std::map<std::string, bool> m_lagMembers; /* map[ifname] = status (enabled|disabled) */
