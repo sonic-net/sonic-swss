@@ -83,24 +83,32 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
         {
             public:
                 ~ZeroBufferProfile(void);
-                static sai_object_id_t getStaticProfile(void);
-                static sai_object_id_t getDynamicProfile(void);
+                static sai_object_id_t getZeroBufferProfile(bool ingress);
 
             private:
                 ZeroBufferProfile(void);
                 static ZeroBufferProfile &getInstance(void);
-                void createStaticProfile(void);
-                void createDynamicProfile(void);
-                void destroyStaticProfile(void);
-                void destroyDynamicProfile(void);
+                void createZeroBufferProfile(bool ingress);
+                void destroyZeroBufferProfile(bool ingress);
 
-                sai_object_id_t m_zeroStaticBufferPool = SAI_NULL_OBJECT_ID;
-                sai_object_id_t m_zeroDynamicBufferPool = SAI_NULL_OBJECT_ID;
-                sai_object_id_t m_zeroStaticBufferProfile = SAI_NULL_OBJECT_ID;
-                sai_object_id_t m_zeroDynamicBufferProfile = SAI_NULL_OBJECT_ID;
+                sai_object_id_t& getProfile(bool ingress)
+                {
+                    return ingress ? m_zeroIngressBufferProfile : m_zeroEgressBufferProfile;
+                }
+
+                sai_object_id_t& getPool(bool ingress)
+                {
+                    return ingress ? m_zeroIngressBufferPool : m_zeroEgressBufferPool;
+                }
+
+                sai_object_id_t m_zeroIngressBufferPool = SAI_NULL_OBJECT_ID;
+                sai_object_id_t m_zeroEgressBufferPool = SAI_NULL_OBJECT_ID;
+                sai_object_id_t m_zeroIngressBufferProfile = SAI_NULL_OBJECT_ID;
+                sai_object_id_t m_zeroEgressBufferProfile = SAI_NULL_OBJECT_ID;
         };
 
-        sai_object_id_t m_originalBufferProfile;
+        sai_object_id_t m_originalQueueBufferProfile = SAI_NULL_OBJECT_ID;
+        sai_object_id_t m_originalPgBufferProfile = SAI_NULL_OBJECT_ID;
 };
 
 #endif
