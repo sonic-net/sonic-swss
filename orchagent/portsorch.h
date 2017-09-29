@@ -96,7 +96,8 @@ private:
     void initializePriorityGroups(Port &port);
     void initializeQueues(Port &port);
 
-    bool addHostIntfs(sai_object_id_t router_intfs_id, string alias, sai_object_id_t &host_intfs_id);
+    bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
+    bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
