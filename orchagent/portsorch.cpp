@@ -345,11 +345,17 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
     return true;
 }
 
-bool PortsOrch::setPortPvid (Port &port, sai_uint32_t pvid)
+bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
 {
     SWSS_LOG_ENTER();
-    vector<Port> portv;
 
+    if (port.m_rif_id)
+    {
+        SWSS_LOG_ERROR("pvid setting for router interface is not allowed");
+        return false;
+    }
+
+    vector<Port> portv;
     if (port.m_type == Port::PHY)
     {
         portv.push_back(port);
@@ -378,6 +384,7 @@ bool PortsOrch::setPortPvid (Port &port, sai_uint32_t pvid)
         }
         SWSS_LOG_NOTICE("Set pvid %u to port: %s", attr.value.u32, p.m_alias.c_str());
     }
+    port.m_port_vlan_id = (sai_vlan_id_t)pvid;
     return true;
 }
 
@@ -391,26 +398,7 @@ bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
         return false;
     }
 
-    if (port.m_port_vlan_id != DEFAULT_PORT_VLAN_ID)
-    {
-        pvid = port.m_port_vlan_id;
-        return true;
-    }
-
-    if (port.m_vlan_members.size() == 0)
-    {
-        pvid = DEFAULT_PORT_VLAN_ID;
-        return true;
-    }
-
-    for (auto &vme: port.m_vlan_members)
-    {
-        if(vme.second.vlan_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED) {
-            pvid =  vme.first;
-            return true;
-        }
-    }
-    pvid = DEFAULT_PORT_VLAN_ID;
+    pvid = port.m_port_vlan_id;
     return true;
 }
 bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
@@ -576,7 +564,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
             set<int> lane_set;
             string admin_status;
             uint32_t mtu = 0;
-            uint32_t pvid = 0;
             uint32_t speed = 0;
 
             for (auto i : kfvFieldsValues(t))
@@ -602,10 +589,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 /* Set port MTU */
                 if (fvField(i) == "mtu")
                     mtu = (uint32_t)stoul(fvValue(i));
-
-                /* Set port pvid */
-                if (fvField(i) == "pvid")
-                    pvid = (uint32_t)stoul(fvValue(i));
 
                 /* Set port speed */
                 if (fvField(i) == "speed")
@@ -719,27 +702,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     if (setPortMtu(p.m_port_id, mtu))
                     {
-                        p.m_mtu = mtu;
                         SWSS_LOG_NOTICE("Set port %s MTU to %u", alias.c_str(), mtu);
                     }
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s MTU to %u", alias.c_str(), mtu);
-                        it++;
-                        continue;
-                    }
-                }
-
-                if (pvid != 0)
-                {
-                    if (setPortPvid(p, pvid))
-                    {
-                        p.m_port_vlan_id = (sai_vlan_id_t)pvid;
-                        SWSS_LOG_NOTICE("Set port %s pvid to %u", alias.c_str(), pvid);
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set port %s pvid to %u", alias.c_str(), pvid);
                         it++;
                         continue;
                     }
@@ -789,26 +756,6 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                     it++;
                     continue;
                 }
-            }
-
-            uint32_t mtu = 0;
-            for (auto i : kfvFieldsValues(t))
-            {
-                /* Set port mtu */
-                if (fvField(i) == "mtu")
-                {
-                    mtu = (uint32_t)stoul(fvValue(i));
-                }
-
-                // TODO: UNKNOWN_UNICAST_FLOOD_GROUP, UNKNOWN_MULTICAST_FLOOD_GROUP, BROADCAST_FLOOD_GROUP
-            }
-
-            if (mtu != 0)
-            {
-                Port v;
-                getPort(vlan_alias, v);
-                v.m_mtu = mtu;
-                // TODO: update MTU for the IP interface of the VLAN
             }
 
             it = consumer.m_toSync.erase(it);
@@ -915,7 +862,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                 continue;
             }
 
-            if (addBridgePort(port) && addVlanMember(vlan, port, tagging_mode))
+            if ((port.m_bridge_port_id || addBridgePort(port)) && addVlanMember(vlan, port, tagging_mode))
                 it = consumer.m_toSync.erase(it);
             else
                 it++;
@@ -1262,7 +1209,10 @@ bool PortsOrch::addBridgePort(Port &port)
     SWSS_LOG_ENTER();
 
     if (port.m_bridge_port_id)
+    {
+        SWSS_LOG_WARN("port %s already in 1Q bridge", port.m_alias.c_str());
         return true;
+    }
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -1376,7 +1326,6 @@ bool PortsOrch::addVlan(string vlan_alias)
     Port vlan(vlan_alias, Port::VLAN);
     vlan.m_vlan_info.vlan_oid = vlan_oid;
     vlan.m_vlan_info.vlan_id = vlan_id;
-    vlan.m_mtu = 9100;
     vlan.m_members = set<string>();
     m_portList[vlan_alias] = vlan;
 
@@ -1448,8 +1397,8 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode)
     SWSS_LOG_NOTICE("Add member %s to VLAN %s vid:%hu pid%lx",
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, port.m_port_id);
 
-    /* Use untagged VLAN as pvid of the member port when no pvid has been configured explictly */
-    if (port.m_port_vlan_id == DEFAULT_PORT_VLAN_ID && sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
+    /* Use untagged VLAN as pvid of the member port */
+    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
     {
         if(!setPortPvid(port, vlan.m_vlan_info.vlan_id))
         {
@@ -1494,8 +1443,8 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
     SWSS_LOG_NOTICE("Remove member %s from VLAN %s lid:%hx vmid:%lx",
             port.m_alias.c_str(), vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id, vlan_member_id);
 
-    /* Restore to default pvid if no pvid has been configured explictly and this port was in untagged mode */
-    if (port.m_port_vlan_id == DEFAULT_PORT_VLAN_ID && sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
+    /* Restore to default pvid if this port joined this VLAN in untagged mode previously */
+    if (sai_tagging_mode == SAI_VLAN_TAGGING_MODE_UNTAGGED)
     {
         if (!setPortPvid(port, DEFAULT_PORT_VLAN_ID))
         {
@@ -1616,9 +1565,11 @@ bool PortsOrch::addLagMember(Port &lag, Port &port)
 
     m_portList[lag.m_alias] = lag;
 
-    sai_uint32_t pvid = DEFAULT_PORT_VLAN_ID;
+    sai_uint32_t pvid;
     if (getPortPvid(lag, pvid))
+    {
         setPortPvid (port, pvid);
+    }
 
     LagMemberUpdate update = { lag, port, true };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
