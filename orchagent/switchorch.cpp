@@ -1,6 +1,7 @@
 #include <map>
 
 #include "switchorch.h"
+#include "converter.h"
 
 using namespace std;
 using namespace swss;
@@ -12,7 +13,9 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
 {
     {"fdb_unicast_miss_packet_action",      SAI_SWITCH_ATTR_FDB_UNICAST_MISS_PACKET_ACTION},
     {"fdb_broadcast_miss_packet_action",    SAI_SWITCH_ATTR_FDB_BROADCAST_MISS_PACKET_ACTION},
-    {"fdb_multicast_miss_packet_action",    SAI_SWITCH_ATTR_FDB_MULTICAST_MISS_PACKET_ACTION}
+    {"fdb_multicast_miss_packet_action",    SAI_SWITCH_ATTR_FDB_MULTICAST_MISS_PACKET_ACTION},
+    {"ecmp_hash_seed",                      SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED},
+    {"lag_hash_seed",                       SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_SEED}
 };
 
 const map<string, sai_packet_action_t> packet_action_map =
@@ -52,16 +55,32 @@ void SwitchOrch::doTask(Consumer &consumer)
                 }
 
                 auto value = fvValue(i);
-                if (packet_action_map.find(value) == packet_action_map.end())
-                {
-                    SWSS_LOG_ERROR("Unsupported packet action %s", value.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
 
                 sai_attribute_t attr;
                 attr.id = switch_attribute_map.at(attribute);
-                attr.value.s32 = packet_action_map.at(value);
+
+                switch (attr.id)
+                {
+                    case SAI_SWITCH_ATTR_FDB_UNICAST_MISS_PACKET_ACTION:
+                    case SAI_SWITCH_ATTR_FDB_BROADCAST_MISS_PACKET_ACTION:
+                    case SAI_SWITCH_ATTR_FDB_MULTICAST_MISS_PACKET_ACTION:
+                        if (packet_action_map.find(value) == packet_action_map.end())
+                        {
+                            SWSS_LOG_ERROR("Unsupported packet action %s", value.c_str());
+                            it = consumer.m_toSync.erase(it);
+                            continue;
+                        }
+                        attr.value.s32 = packet_action_map.at(value);
+                        break;
+
+                    case SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED:
+                    case SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_SEED:
+                        attr.value.u32 = to_uint<uint32_t>(value);
+                        break;
+
+                    default:
+                        break;
+                }
 
                 sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
@@ -83,3 +102,4 @@ void SwitchOrch::doTask(Consumer &consumer)
         }
     }
 }
+

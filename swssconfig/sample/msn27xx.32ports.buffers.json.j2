@@ -169,20 +169,26 @@
 {% set switch_role = DEVICE_METADATA['localhost']['type'] %}
 
 {%- macro cable_length(port_name) -%}
+    {%- set cable_len = [] -%}
     {%- for neighbor in DEVICE_NEIGHBOR -%}
-        {%- if DEVICE_NEIGHBOR[neighbor]['local_port'] == port_name -%}
-            {%- set neighbor_role = DEVICE_NEIGHBOR[neighbor]['type'] -%}
-            {%- set roles1 = switch_role + '_' + neighbor_role %}
-            {%- set roles2 = neighbor_role + '_' + switch_role -%}
-            {%- if roles1 in ports2cable -%}
-                {{ ports2cable[roles1] }}
-            {%- elif roles2 in ports2cable -%}
-                {{ ports2cable[roles2] }}
-            {%- else -%}
-                {{ supported_cable | last }}
-            {%- endif -%}
+        {%- if DEVICE_NEIGHBOR[neighbor].local_port and DEVICE_NEIGHBOR[neighbor].type -%}
+            {%- if DEVICE_NEIGHBOR[neighbor]['local_port'] == port_name -%}
+                {%- set neighbor_role = DEVICE_NEIGHBOR[neighbor]['type'] -%}
+                {%- set roles1 = switch_role + '_' + neighbor_role %}
+                {%- set roles2 = neighbor_role + '_' + switch_role -%}
+                {%- if roles1 in ports2cable -%}
+                    {%- if cable_len.append(ports2cable[roles1]) -%}{%- endif -%}
+                {%- elif roles2 in ports2cable -%}
+                    {%- if cable_len.append(ports2cable[roles2]) -%}{%- endif -%}
+                {%- endif -%}
+            {% endif %}
         {% endif %}
     {%- endfor -%}
+    {%- if cable_len -%}
+        {{ cable_len.0 }}
+    {%- else -%}
+        {{ supported_cable | last }}
+    {%- endif -%}
 {% endmacro %}
 
 {%- macro find_closest_greater_config(speed, cable) -%}
@@ -204,9 +210,13 @@
 {% set ingress_lossless_pg_pool_size =  [] %}
 {% set used_pg_profiles =  [] %}
 {% for port in PORT %}
-    {%- set speed = PORT[port]['speed'] -%}
+    {%- if PORT[port].speed -%}
+        {%- set speed = PORT[port]['speed'] -%}
+    {% else %}
+        {%- set speed = supported_speed|last -%}
+    {%- endif -%}
     {%- set cable = cable_length(port) -%}
-    {%- set port_config = speed + '_' + cable -%}
+    {%- set port_config = speed|string + '_' + cable -%}
     {%- if not port_config in portconfig2profile -%}
         {% set port_config = find_closest_greater_config(speed, cable) -%}
     {%- endif -%}
