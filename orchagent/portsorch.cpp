@@ -359,6 +359,7 @@ bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
         attr.id = SAI_PORT_ATTR_SUPPORTED_SPEED;
         attr.value.u32list.count = 0;
         attr.value.u32list.list = NULL;
+
         status = sai_port_api->get_port_attribute(port_id, 1, &attr);
         if (status == SAI_STATUS_BUFFER_OVERFLOW)
         {
@@ -542,7 +543,7 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
             p.m_index = static_cast<int32_t>(m_portList.size()); // TODO: Assume no deletion of physical port
             p.m_port_id = id;
 
-            /* Initialize the port and create router interface and host interface */
+            /* Initialize the port and create corresponding host interface */
             if (initializePort(p))
             {
                 /* Add port to port list */
@@ -679,7 +680,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                     else
                     {
-                        ++it;
+                        it++;
                     }
                 }
 
@@ -709,6 +710,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
+                /* Set port speed
+                 * 1. Get supported speed list and validate if the target speed is within the list
+                 * 2. Get the current port speed and check if it is the same as the target speed
+                 * 3. Set port admin status to DOWN before changing the speed
+                 * 4. Set port speed
+                 */
                 if (speed != 0)
                 {
                     sai_uint32_t current_speed;
@@ -724,7 +731,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     {
                         if (speed != current_speed)
                         {
-                            if(setPortAdminStatus(p.m_port_id, false))
+                            if (setPortAdminStatus(p.m_port_id, false))
                             {
                                 if (setPortSpeed(p.m_port_id, speed))
                                 {
@@ -747,13 +754,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     {
                         SWSS_LOG_ERROR("Failed to get current speed for port %s", alias.c_str());
                     }
-
                 }
 
                 if (admin_status != "")
                 {
                     if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
+                    {
                         SWSS_LOG_NOTICE("Set port %s admin status to %s", alias.c_str(), admin_status.c_str());
+                    }
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
@@ -765,7 +773,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (mtu != 0)
                 {
                     if (setPortMtu(p.m_port_id, mtu))
+                    {
                         SWSS_LOG_NOTICE("Set port %s MTU to %u", alias.c_str(), mtu);
+                    }
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s MTU to %u", alias.c_str(), mtu);
