@@ -871,10 +871,18 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
         {
             if (vlan.m_members.find(port_alias) != vlan.m_members.end())
             {
-                if (removeVlanMember(vlan, port) && removeBridgePort(port))
+                if (removeVlanMember(vlan, port))
+                {
+                    if (port.m_vlan_members.empty())
+                    {
+                        removeBridgePort(port);
+                    }
                     it = consumer.m_toSync.erase(it);
+                }
                 else
+                {
                     it++;
+                }
             }
             else
                 /* Cannot locate the VLAN */
@@ -1208,12 +1216,6 @@ bool PortsOrch::addBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
 
-    if (port.m_bridge_port_id)
-    {
-        SWSS_LOG_WARN("port %s already in 1Q bridge", port.m_alias.c_str());
-        return true;
-    }
-
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
@@ -1261,15 +1263,6 @@ bool PortsOrch::removeBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
 
-    if (port.m_vlan_members.size() > 0)
-    {
-        for (auto &vme: port.m_vlan_members)
-        {
-            SWSS_LOG_DEBUG("Port %s still in VLAN %d", port.m_alias.c_str(), vme.first);
-        }
-        return true;
-    }
-
     /* Set bridge port admin status to DOWN */
     sai_attribute_t attr;
     attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
@@ -1295,7 +1288,7 @@ bool PortsOrch::removeBridgePort(Port &port)
             port.m_alias.c_str(), status);
         return false;
     }
-    port.m_bridge_port_id = 0;
+    port.m_bridge_port_id = SAI_NULL_OBJECT_ID;
 
     SWSS_LOG_NOTICE("Remove bridge port %s from default 1Q bridge", port.m_alias.c_str());
 
@@ -1352,7 +1345,7 @@ bool PortsOrch::removeVlan(Port vlan)
     }
 
     SWSS_LOG_NOTICE("Remove VLAN %s vid:%hu", vlan.m_alias.c_str(),
-		vlan.m_vlan_info.vlan_id);
+            vlan.m_vlan_info.vlan_id);
 
     m_portList.erase(vlan.m_alias);
 
