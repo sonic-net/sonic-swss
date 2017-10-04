@@ -12,6 +12,7 @@ extern sai_switch_api_t *sai_switch_api;
 extern sai_buffer_api_t *sai_buffer_api;
 
 extern PortsOrch *gPortsOrch;
+extern sai_object_id_t gSwitchId;
 
 using namespace std;
 
@@ -69,7 +70,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             if (fvField(*i) == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attribs.push_back(attr);
             }
             else if (fvField(*i) == buffer_pool_type_field_name)
@@ -77,11 +78,11 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
                 string type = fvValue(*i);
                 if (type == buffer_value_ingress)
                 {
-                    attr.value.u32 = SAI_BUFFER_POOL_INGRESS;
+                    attr.value.u32 = SAI_BUFFER_POOL_TYPE_INGRESS;
                 }
                 else if (type == buffer_value_egress)
                 {
-                    attr.value.u32 = SAI_BUFFER_POOL_EGRESS;
+                    attr.value.u32 = SAI_BUFFER_POOL_TYPE_EGRESS;
                 }
                 else
                 {
@@ -96,18 +97,18 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
                 string mode = fvValue(*i);
                 if (mode == buffer_pool_mode_dynamic_value)
                 {
-                    attr.value.u32 = SAI_BUFFER_THRESHOLD_MODE_DYNAMIC;
+                    attr.value.u32 = SAI_BUFFER_POOL_THRESHOLD_MODE_DYNAMIC;
                 }
                 else if (mode == buffer_pool_mode_static_value)
                 {
-                    attr.value.u32 = SAI_BUFFER_THRESHOLD_MODE_STATIC;
+                    attr.value.u32 = SAI_BUFFER_POOL_THRESHOLD_MODE_STATIC;
                 }
                 else
                 {
                     SWSS_LOG_ERROR("Unknown pool mode specified:%s", mode.c_str());
                     return task_process_status::task_invalid_entry;
                 }
-                attr.id = SAI_BUFFER_POOL_ATTR_TH_MODE;
+                attr.id = SAI_BUFFER_POOL_ATTR_THRESHOLD_MODE;
                 attribs.push_back(attr);
             }
             else
@@ -118,7 +119,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
-            sai_status = sai_buffer_api->set_buffer_pool_attr(sai_object, &attribs[0]);
+            sai_status = sai_buffer_api->set_buffer_pool_attribute(sai_object, &attribs[0]);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
@@ -128,7 +129,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         }
         else
         {
-            sai_status = sai_buffer_api->create_buffer_pool(&sai_object, attribs.size(), attribs.data());
+            sai_status = sai_buffer_api->create_buffer_pool(&sai_object, gSwitchId, (uint32_t)attribs.size(), attribs.data());
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to create buffer pool %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
@@ -203,32 +204,40 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             }
             else if (fvField(*i) == buffer_xon_field_name)
             {
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_TH;
                 attribs.push_back(attr);
             }
             else if (fvField(*i) == buffer_xoff_field_name)
             {
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XOFF_TH;
                 attribs.push_back(attr);
             }
             else if (fvField(*i) == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attribs.push_back(attr);
             }
             else if (fvField(*i) == buffer_dynamic_th_field_name)
             {
+                attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
+                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC;
+                attribs.push_back(attr);
+
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attribs.push_back(attr);
             }
             else if (fvField(*i) == buffer_static_th_field_name)
             {
+                attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
+                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC;
+                attribs.push_back(attr);
+
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
-                attr.value.u32 = stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
                 attribs.push_back(attr);
             }
             else
@@ -240,7 +249,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
             SWSS_LOG_DEBUG("Modifying existing sai object:%lx ", sai_object);
-            sai_status = sai_buffer_api->set_buffer_profile_attr(sai_object, &attribs[0]);
+            sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribs[0]);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
@@ -249,7 +258,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
         }
         else
         {
-            sai_status = sai_buffer_api->create_buffer_profile(&sai_object, attribs.size(), attribs.data());
+            sai_status = sai_buffer_api->create_buffer_profile(&sai_object, gSwitchId, (uint32_t)attribs.size(), attribs.data());
             if (SAI_STATUS_SUCCESS != sai_status)
             {
                 SWSS_LOG_ERROR("Failed to create buffer profile %s with type %s, rv:%d", object_name.c_str(), map_type_name.c_str(), sai_status);
@@ -411,7 +420,7 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
             }
             pg_id = port.m_priority_group_ids[ind];
             SWSS_LOG_DEBUG("Applying buffer profile:0x%lx to port:%s pg index:%zd, pg sai_id:0x%lx", sai_buffer_profile, port_name.c_str(), ind, pg_id);
-            sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attr(pg_id, &attr);
+            sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attribute(pg_id, &attr);
             if (sai_status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to set port:%s pg:%zd buffer profile attribute, status:%d", port_name.c_str(), ind, sai_status);
@@ -455,7 +464,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
     }
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_INGRESS_BUFFER_PROFILE_LIST;
-    attr.value.objlist.count = profile_list.size();
+    attr.value.objlist.count = (uint32_t)profile_list.size();
     attr.value.objlist.list = profile_list.data();
     for (string port_name : port_names)
     {
@@ -501,7 +510,7 @@ task_process_status BufferOrch::processEgressBufferProfileList(Consumer &consume
     }
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_QOS_EGRESS_BUFFER_PROFILE_LIST;
-    attr.value.objlist.count = profile_list.size();
+    attr.value.objlist.count = (uint32_t)profile_list.size();
     attr.value.objlist.list = profile_list.data();
     for (string port_name : port_names)
     {
@@ -526,41 +535,37 @@ void BufferOrch::doTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple tuple = it->second;
-        string map_type_name = consumer.m_consumer->getTableName();
-        if (m_buffer_type_maps.find(map_type_name) == m_buffer_type_maps.end())
-        {
-            SWSS_LOG_ERROR("Unrecognised qos table encountered:%s", map_type_name.c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
+        /* Make sure the handler is initialized for the task */
+        auto map_type_name = consumer.m_consumer->getTableName();
         if (m_bufferHandlerMap.find(map_type_name) == m_bufferHandlerMap.end())
         {
             SWSS_LOG_ERROR("No handler for key:%s found.", map_type_name.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
-        task_process_status task_status = (this->*(m_bufferHandlerMap[map_type_name]))(consumer);
+
+        auto task_status = (this->*(m_bufferHandlerMap[map_type_name]))(consumer);
         switch(task_status)
         {
-        case task_process_status::task_success :
-            it = consumer.m_toSync.erase(it);
-            break;
-        case task_process_status::task_invalid_entry:
-            SWSS_LOG_ERROR("Invalid buffer task item was encountered, removing from queue.");
-            it = consumer.m_toSync.erase(it);
-            break;
-        case task_process_status::task_failed:
-            SWSS_LOG_ERROR("Processing buffer task item failed, exiting.");
-            return;
-        case task_process_status::task_need_retry:
-            SWSS_LOG_INFO("Processing buffer task item failed, will retry.");
-            it++;
-            break;
-        default:
-            SWSS_LOG_ERROR("Unknown task status: %d", task_status);
-            it = consumer.m_toSync.erase(it);
-            break;
+            case task_process_status::task_success :
+                it = consumer.m_toSync.erase(it);
+                break;
+            case task_process_status::task_invalid_entry:
+                SWSS_LOG_ERROR("Failed to process invalid buffer task");
+                it = consumer.m_toSync.erase(it);
+                break;
+            case task_process_status::task_failed:
+                SWSS_LOG_ERROR("Failed to process buffer task, drop it");
+                it = consumer.m_toSync.erase(it);
+                return;
+            case task_process_status::task_need_retry:
+                SWSS_LOG_INFO("Failed to process buffer task, retry it");
+                it++;
+                break;
+            default:
+                SWSS_LOG_ERROR("Invalid task status %d", task_status);
+                it = consumer.m_toSync.erase(it);
+                break;
         }
     }
 }

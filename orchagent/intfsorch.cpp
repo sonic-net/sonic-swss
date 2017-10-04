@@ -16,6 +16,7 @@ extern sai_router_interface_api_t*  sai_router_intfs_api;
 extern sai_route_api_t*             sai_route_api;
 
 extern PortsOrch *gPortsOrch;
+extern sai_object_id_t gSwitchId;
 
 IntfsOrch::IntfsOrch(DBConnector *db, string tableName) :
         Orch(db, tableName)
@@ -245,7 +246,7 @@ bool IntfsOrch::addRouterIntfs(Port &port)
             break;
         case Port::VLAN:
             attr.id = SAI_ROUTER_INTERFACE_ATTR_VLAN_ID;
-            attr.value.u16 = port.m_vlan_id;
+            attr.value.oid = port.m_vlan_oid;
             break;
         default:
             SWSS_LOG_ERROR("Unsupported port type: %d", port.m_type);
@@ -253,7 +254,7 @@ bool IntfsOrch::addRouterIntfs(Port &port)
     }
     attrs.push_back(attr);
 
-    sai_status_t status = sai_router_intfs_api->create_router_interface(&port.m_rif_id, attrs.size(), attrs.data());
+    sai_status_t status = sai_router_intfs_api->create_router_interface(&port.m_rif_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create router interface for port %s, rv:%d", port.m_alias.c_str(), status);
@@ -294,7 +295,8 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
 
 void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
 {
-    sai_unicast_route_entry_t unicast_route_entry;
+    sai_route_entry_t unicast_route_entry;
+    unicast_route_entry.switch_id = gSwitchId;
     unicast_route_entry.vr_id = gVirtualRouterId;
     copy(unicast_route_entry.destination, ip_prefix);
     subnet(unicast_route_entry.destination, unicast_route_entry.destination);
@@ -302,15 +304,15 @@ void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
-    attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
+    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
     attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     attrs.push_back(attr);
 
-    attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
+    attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
     attr.value.oid = port.m_rif_id;
     attrs.push_back(attr);
 
-    sai_status_t status = sai_route_api->create_route(&unicast_route_entry, attrs.size(), attrs.data());
+    sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create subnet route to %s from %s, rv:%d",
@@ -325,12 +327,13 @@ void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
 
 void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
 {
-    sai_unicast_route_entry_t unicast_route_entry;
+    sai_route_entry_t unicast_route_entry;
+    unicast_route_entry.switch_id = gSwitchId;
     unicast_route_entry.vr_id = gVirtualRouterId;
     copy(unicast_route_entry.destination, ip_prefix);
     subnet(unicast_route_entry.destination, unicast_route_entry.destination);
 
-    sai_status_t status = sai_route_api->remove_route(&unicast_route_entry);
+    sai_status_t status = sai_route_api->remove_route_entry(&unicast_route_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove subnet route to %s from %s, rv:%d",
@@ -345,22 +348,26 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
 
 void IntfsOrch::addIp2MeRoute(const IpPrefix &ip_prefix)
 {
-    sai_unicast_route_entry_t unicast_route_entry;
+    sai_route_entry_t unicast_route_entry;
+    unicast_route_entry.switch_id = gSwitchId;
     unicast_route_entry.vr_id = gVirtualRouterId;
     copy(unicast_route_entry.destination, ip_prefix.getIp());
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
-    attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
+    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
     attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     attrs.push_back(attr);
 
-    attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
-    attr.value.oid = gPortsOrch->getCpuPort();
+    Port cpu_port;
+    gPortsOrch->getCpuPort(cpu_port);
+
+    attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    attr.value.oid = cpu_port.m_port_id;
     attrs.push_back(attr);
 
-    sai_status_t status = sai_route_api->create_route(&unicast_route_entry, attrs.size(), attrs.data());
+    sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
@@ -372,11 +379,12 @@ void IntfsOrch::addIp2MeRoute(const IpPrefix &ip_prefix)
 
 void IntfsOrch::removeIp2MeRoute(const IpPrefix &ip_prefix)
 {
-    sai_unicast_route_entry_t unicast_route_entry;
+    sai_route_entry_t unicast_route_entry;
+    unicast_route_entry.switch_id = gSwitchId;
     unicast_route_entry.vr_id = gVirtualRouterId;
     copy(unicast_route_entry.destination, ip_prefix.getIp());
 
-    sai_status_t status = sai_route_api->remove_route(&unicast_route_entry);
+    sai_status_t status = sai_route_api->remove_route_entry(&unicast_route_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);

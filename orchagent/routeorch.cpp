@@ -4,6 +4,7 @@
 #include "swssnet.h"
 
 extern sai_object_id_t gVirtualRouterId;
+extern sai_object_id_t gSwitchId;
 
 extern sai_next_hop_group_api_t*    sai_next_hop_group_api;
 extern sai_route_api_t*             sai_route_api;
@@ -27,7 +28,7 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
 
-    sai_status_t status = sai_switch_api->get_switch_attribute(1, &attr);
+    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Failed to get switch attribute number of ECMP groups. \
@@ -39,7 +40,7 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
         m_maxNextHopGroupCount = attr.value.s32;
 
         /*
-         * ASIC specific workaround to re-calculate maximum ECMP groups 
+         * ASIC specific workaround to re-calculate maximum ECMP groups
          * according to diferent ECMP mode used.
          *
          * On Mellanox platform, the maximum ECMP groups returned is the value
@@ -57,19 +58,20 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
 
     IpPrefix default_ip_prefix("0.0.0.0/0");
 
-    sai_unicast_route_entry_t unicast_route_entry;
+    sai_route_entry_t unicast_route_entry;
     unicast_route_entry.vr_id = gVirtualRouterId;
+    unicast_route_entry.switch_id = gSwitchId;
     copy(unicast_route_entry.destination, default_ip_prefix);
     subnet(unicast_route_entry.destination, unicast_route_entry.destination);
 
-    attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
+    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
     attr.value.s32 = SAI_PACKET_ACTION_DROP;
 
-    status = sai_route_api->create_route(&unicast_route_entry, 1, &attr);
+    status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create v4 default route with packet action drop");
-        throw runtime_error("Failed to create v4 default route with packet action drop");
+        SWSS_LOG_ERROR("Failed to create IPv4 default route with packet action drop");
+        throw runtime_error("Failed to create IPv4 default route with packet action drop");
     }
 
     /* Add default IPv4 route into the m_syncdRoutes */
@@ -82,11 +84,11 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
     copy(unicast_route_entry.destination, v6_default_ip_prefix);
     subnet(unicast_route_entry.destination, unicast_route_entry.destination);
 
-    status = sai_route_api->create_route(&unicast_route_entry, 1, &attr);
+    status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create v6 default route with packet action drop");
-        throw runtime_error("Failed to create v6 default route with packet action drop");
+        SWSS_LOG_ERROR("Failed to create IPv6 default route with packet action drop");
+        throw runtime_error("Failed to create IPv6 default route with packet action drop");
     }
 
     /* Add default IPv6 route into the m_syncdRoutes */
@@ -444,38 +446,64 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
     vector<sai_attribute_t> nhg_attrs;
 
     nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_TYPE;
-    nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_ECMP;
-    nhg_attrs.push_back(nhg_attr);
-
-    nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_NEXT_HOP_LIST;
-    nhg_attr.value.objlist.count = next_hop_ids.size();
-    nhg_attr.value.objlist.list = next_hop_ids.data();
+    nhg_attr.value.s32 = SAI_NEXT_HOP_GROUP_TYPE_ECMP;
     nhg_attrs.push_back(nhg_attr);
 
     sai_object_id_t next_hop_group_id;
     sai_status_t status = sai_next_hop_group_api->
-            create_next_hop_group(&next_hop_group_id, nhg_attrs.size(), nhg_attrs.data());
+            create_next_hop_group(&next_hop_group_id, gSwitchId, (uint32_t)nhg_attrs.size(), nhg_attrs.data());
+
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create next hop group nh:%s\n",
-                       ipAddresses.to_string().c_str());
+        SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
+                       ipAddresses.to_string().c_str(), status);
         return false;
     }
 
     m_nextHopGroupCount ++;
-    SWSS_LOG_NOTICE("Create next hop group nhgid:%lx nh:%s \n",
-                    next_hop_group_id, ipAddresses.to_string().c_str());
+    SWSS_LOG_NOTICE("Create next hop group %s", ipAddresses.to_string().c_str());
+
+    NextHopGroupEntry next_hop_group_entry;
+    next_hop_group_entry.next_hop_group_id = next_hop_group_id;
+
+    for (auto nhid: next_hop_ids)
+    {
+        // Create a next hop group member
+        vector<sai_attribute_t> nhgm_attrs;
+
+        sai_attribute_t nhgm_attr;
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+        nhgm_attr.value.oid = next_hop_group_id;
+        nhgm_attrs.push_back(nhgm_attr);
+
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+        nhgm_attr.value.oid = nhid;
+        nhgm_attrs.push_back(nhgm_attr);
+
+        sai_object_id_t next_hop_group_member_id;
+        status = sai_next_hop_group_api->
+                create_next_hop_group_member(&next_hop_group_member_id, gSwitchId, (uint32_t)nhgm_attrs.size(), nhgm_attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            // TODO: do we need to clean up?
+            SWSS_LOG_ERROR("Failed to create next hop group %lx member %lx: %d\n",
+                           next_hop_group_id, next_hop_group_member_id, status);
+            return false;
+        }
+
+        // Save the membership into next hop structure
+        next_hop_group_entry.next_hop_group_members.insert(next_hop_group_member_id);
+    }
 
     /* Increate the ref_count for the next hops used by the next hop group. */
     for (auto it : next_hop_set)
         m_neighOrch->increaseNextHopRefCount(it);
 
     /*
-     * Initialize the next hop gruop structure with ref_count as 0. This
+     * Initialize the next hop group structure with ref_count as 0. This
      * count will increase once the route is successfully syncd.
      */
-    NextHopGroupEntry next_hop_group_entry;
-    next_hop_group_entry.next_hop_group_id = next_hop_group_id;
     next_hop_group_entry.ref_count = 0;
     m_syncdNextHopGroups[ipAddresses] = next_hop_group_entry;
 
@@ -486,15 +514,28 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
 {
     SWSS_LOG_ENTER();
 
+    sai_status_t status;
     assert(hasNextHopGroup(ipAddresses));
 
     if (m_syncdNextHopGroups[ipAddresses].ref_count == 0)
     {
-        sai_object_id_t next_hop_group_id = m_syncdNextHopGroups[ipAddresses].next_hop_group_id;
+        auto next_hop_group_entry = m_syncdNextHopGroups[ipAddresses];
+        sai_object_id_t next_hop_group_id = next_hop_group_entry.next_hop_group_id;
+
+        for (auto next_hop_group_member_id: next_hop_group_entry.next_hop_group_members)
+        {
+            status = sai_next_hop_group_api->remove_next_hop_group_member(next_hop_group_member_id);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove next hop group member %lx, rv:%d", next_hop_group_member_id, status);
+                return false;
+            }
+        }
+
         sai_status_t status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to remove next hop group nhgid:%lx\n", next_hop_group_id);
+            SWSS_LOG_ERROR("Failed to remove next hop group %lx, rv:%d", next_hop_group_id, status);
             return false;
         }
 
@@ -600,8 +641,9 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
     }
 
     /* Sync the route entry */
-    sai_unicast_route_entry_t route_entry;
+    sai_route_entry_t route_entry;
     route_entry.vr_id = gVirtualRouterId;
+    route_entry.switch_id = gSwitchId;
     copy(route_entry.destination, ipPrefix);
 
     sai_attribute_t route_attr;
@@ -614,11 +656,11 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
      */
     if (it_route == m_syncdRoutes.end())
     {
-        route_attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
+        route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
         route_attr.value.oid = next_hop_id;
 
         /* Default SAI_ROUTE_ATTR_PACKET_ACTION is SAI_PACKET_ACTION_FORWARD */
-        sai_status_t status = sai_route_api->create_route(&route_entry, 1, &route_attr);
+        sai_status_t status = sai_route_api->create_route_entry(&route_entry, 1, &route_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s",
@@ -643,10 +685,10 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
         /* Set the packet action to forward when there was no next hop (dropped) */
         if (it_route->second.getSize() == 0)
         {
-            route_attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
+            route_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
             route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
-            status = sai_route_api->set_route_attribute(&route_entry, &route_attr);
+            status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to set route %s with packet action forward, %d",
@@ -655,11 +697,11 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
             }
         }
 
-        route_attr.id = SAI_ROUTE_ATTR_NEXT_HOP_ID;
+        route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
         route_attr.value.oid = next_hop_id;
 
         /* Set the next hop ID to a new value */
-        status = sai_route_api->set_route_attribute(&route_entry, &route_attr);
+        status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set route %s with next hop(s) %s",
@@ -690,18 +732,19 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
 {
     SWSS_LOG_ENTER();
 
-    sai_unicast_route_entry_t route_entry;
+    sai_route_entry_t route_entry;
     route_entry.vr_id = gVirtualRouterId;
+    route_entry.switch_id = gSwitchId;
     copy(route_entry.destination, ipPrefix);
 
     // set to blackhole for default route
     if (ipPrefix.isDefaultRoute())
     {
         sai_attribute_t attr;
-        attr.id = SAI_ROUTE_ATTR_PACKET_ACTION;
+        attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
         attr.value.s32 = SAI_PACKET_ACTION_DROP;
 
-        sai_status_t status = sai_route_api->set_route_attribute(&route_entry, &attr);
+        sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set route %s packet action to drop, rv:%d",
@@ -719,10 +762,25 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
                     ipPrefix.to_string().c_str(), status);
             return false;
         }
+
+        SWSS_LOG_INFO("Set route %s packet action to drop", ipPrefix.to_string().c_str());
+
+        attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+        attr.value.oid = SAI_NULL_OBJECT_ID;
+
+        status = sai_route_api->set_route_entry_attribute(&route_entry, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set route %s next hop ID to NULL, rv:%d",
+                    ipPrefix.to_string().c_str(), status);
+            return false;
+        }
+
+        SWSS_LOG_INFO("Set route %s next hop ID to NULL", ipPrefix.to_string().c_str());
     }
     else
     {
-        sai_status_t status = sai_route_api->remove_route(&route_entry);
+        sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to remove route prefix:%s\n", ipPrefix.to_string().c_str());

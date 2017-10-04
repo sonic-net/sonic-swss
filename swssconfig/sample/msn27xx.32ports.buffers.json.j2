@@ -1,0 +1,293 @@
+[
+{% set port_names_list = [] %}
+{% for port in PORT %}
+    {%- if port_names_list.append(port) %}{% endif %}
+{% endfor %}
+{% set port_names = port_names_list | join(',') %}
+    {
+        "BUFFER_POOL_TABLE:ingress_lossless_pool": {
+            "size": "3024486",
+            "type": "ingress",
+            "mode": "dynamic"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_POOL_TABLE:ingress_lossy_pool": {
+            "size": "6422528",
+            "type": "ingress",
+            "mode": "dynamic"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_POOL_TABLE:egress_lossless_pool": {
+            "size": "7291456",
+            "type": "egress",
+            "mode": "dynamic"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_POOL_TABLE:egress_lossy_pool": {
+            "size": "8254464",
+            "type": "egress",
+            "mode": "dynamic"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_PROFILE_TABLE:ingress_lossless_profile": {
+            "pool":"[BUFFER_POOL_TABLE:ingress_lossless_pool]",
+            "size":"0",
+            "dynamic_th":"7"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_PROFILE_TABLE:ingress_lossy_profile": {
+            "pool":"[BUFFER_POOL_TABLE:ingress_lossy_pool]",
+            "size":"0",
+            "dynamic_th":"7"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_PROFILE_TABLE:egress_lossless_profile": {
+            "pool":"[BUFFER_POOL_TABLE:egress_lossless_pool]",
+            "size":"1518",
+            "dynamic_th":"7"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_PROFILE_TABLE:egress_lossy_profile": {
+            "pool":"[BUFFER_POOL_TABLE:egress_lossy_pool]",
+            "size":"4096",
+            "dynamic_th":"7"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_PROFILE_TABLE:pg_lossy_profile": {
+            "pool":"[BUFFER_POOL_TABLE:ingress_lossy_pool]",
+            "size":"0",
+            "dynamic_th":"3"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_PROFILE_TABLE:q_lossless_profile": {
+            "pool":"[BUFFER_POOL_TABLE:egress_lossless_pool]",
+            "size":"0",
+            "dynamic_th":"7"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_PROFILE_TABLE:q_lossy_profile": {
+            "pool":"[BUFFER_POOL_TABLE:egress_lossy_pool]",
+            "size":"0",
+            "dynamic_th":"1"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_PORT_INGRESS_PROFILE_LIST:{{ port_names }}": {
+            "profile_list" : "[BUFFER_PROFILE_TABLE:ingress_lossless_profile],[BUFFER_PROFILE_TABLE:ingress_lossy_profile]"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_PORT_EGRESS_PROFILE_LIST:{{ port_names }}": {
+            "profile_list" : "[BUFFER_PROFILE_TABLE:egress_lossless_profile],[BUFFER_PROFILE_TABLE:egress_lossy_profile]"
+        },
+        "OP": "SET"
+    },
+
+{# The following template part is for variable PG profile configuration #}
+{% set pg_range = '3-4' %}
+{# Lists of supported speed and cable length #}
+{% set supported_speed = [10000, 25000, 40000, 50000, 100000] %}
+{% set supported_cable = [5, 40, 300] %}
+
+{# The key in this lictionary consist of two parts: (port speed)_(cable length) #}
+{%- set portconfig2profile = {
+        '10000_5'   : 'pg_lossless_10G_5m_profile',
+        '25000_5'   : 'pg_lossless_25G_5m_profile',
+        '40000_5'   : 'pg_lossless_40G_5m_profile',
+        '50000_5'   : 'pg_lossless_50G_5m_profile',
+        '100000_5'  : 'pg_lossless_100G_5m_profile',
+
+        '10000_40'  : 'pg_lossless_10G_40m_profile',
+        '25000_40'  : 'pg_lossless_25G_40m_profile',
+        '40000_40'  : 'pg_lossless_40G_40m_profile',
+        '50000_40'  : 'pg_lossless_50G_40m_profile',
+        '100000_40' : 'pg_lossless_100G_40m_profile',
+
+        '10000_300' : 'pg_lossless_10G_300m_profile',
+        '25000_300' : 'pg_lossless_25G_300m_profile',
+        '40000_300' : 'pg_lossless_40G_300m_profile',
+        '50000_300' : 'pg_lossless_50G_300m_profile',
+        '100000_300': 'pg_lossless_100G_300m_profile'
+        }
+-%}
+
+{# PG profiles. All profiles reffered in portconfig2profile dictionary should be declared here #}
+{# Only those which were actually used will be created in SAI #}
+{%- set pg_profiles = {
+        'pg_lossless_10G_5m_profile':   { 'xon': 18432, 'xoff': 16384, 'size': 34816, 'dynamic_th': 1 },
+        'pg_lossless_25G_5m_profile':   { 'xon': 18432, 'xoff': 16384, 'size': 34816, 'dynamic_th': 1 },
+        'pg_lossless_40G_5m_profile':   { 'xon': 18432, 'xoff': 16384, 'size': 34816, 'dynamic_th': 1 },
+        'pg_lossless_50G_5m_profile':   { 'xon': 18432, 'xoff': 16384, 'size': 34816, 'dynamic_th': 1 },
+        'pg_lossless_100G_5m_profile':  { 'xon': 18432, 'xoff': 18432, 'size': 36864, 'dynamic_th': 1 },
+
+        'pg_lossless_10G_40m_profile':  { 'xon': 18432, 'xoff': 18432, 'size': 36864, 'dynamic_th': 1 },
+        'pg_lossless_25G_40m_profile':  { 'xon': 18432, 'xoff': 21504, 'size': 39936, 'dynamic_th': 1 },
+        'pg_lossless_40G_40m_profile':  { 'xon': 18432, 'xoff': 23552, 'size': 41984, 'dynamic_th': 1 },
+        'pg_lossless_50G_40m_profile':  { 'xon': 18432, 'xoff': 23552, 'size': 41984, 'dynamic_th': 1 },
+        'pg_lossless_100G_40m_profile': { 'xon': 18432, 'xoff': 35840, 'size': 54272, 'dynamic_th': 1 },
+
+        'pg_lossless_10G_300m_profile': { 'xon': 18432, 'xoff': 30720, 'size': 49152, 'dynamic_th': 1 },
+        'pg_lossless_25G_300m_profile': { 'xon': 18432, 'xoff': 53248, 'size': 71680, 'dynamic_th': 1 },
+        'pg_lossless_40G_300m_profile': { 'xon': 18432, 'xoff': 75776, 'size': 94208, 'dynamic_th': 1 },
+        'pg_lossless_50G_300m_profile': { 'xon': 18432, 'xoff': 75776, 'size': 94208, 'dynamic_th': 1 },
+        'pg_lossless_100G_300m_profile':{ 'xon': 18432, 'xoff': 165888,'size': 184320,'dynamic_th': 1 },
+        }
+-%}
+
+{# Port configuration to cable length look-up table #}
+{# Each record describes mapping of DUT (DUT port) role and neighbor role to cable length #}
+{# Roles described in the minigraph #}
+{% set ports2cable = {
+        'ToRRouter_Server'       : '5',
+        'LeafRouter_ToRRouter'   : '40',
+        'SpineRouter_LeafRouter' : '300'
+        }
+%}
+
+{% set switch_role = DEVICE_METADATA['localhost']['type'] %}
+
+{%- macro cable_length(port_name) -%}
+    {%- set cable_len = [] -%}
+    {%- for neighbor in DEVICE_NEIGHBOR -%}
+        {%- if DEVICE_NEIGHBOR[neighbor].local_port and DEVICE_NEIGHBOR[neighbor].type -%}
+            {%- if DEVICE_NEIGHBOR[neighbor]['local_port'] == port_name -%}
+                {%- set neighbor_role = DEVICE_NEIGHBOR[neighbor]['type'] -%}
+                {%- set roles1 = switch_role + '_' + neighbor_role %}
+                {%- set roles2 = neighbor_role + '_' + switch_role -%}
+                {%- if roles1 in ports2cable -%}
+                    {%- if cable_len.append(ports2cable[roles1]) -%}{%- endif -%}
+                {%- elif roles2 in ports2cable -%}
+                    {%- if cable_len.append(ports2cable[roles2]) -%}{%- endif -%}
+                {%- endif -%}
+            {% endif %}
+        {% endif %}
+    {%- endfor -%}
+    {%- if cable_len -%}
+        {{ cable_len.0 }}
+    {%- else -%}
+        {{ supported_cable | last }}
+    {%- endif -%}
+{% endmacro %}
+
+{%- macro find_closest_greater_config(speed, cable) -%}
+{%- set new_speed = [] -%}
+{%- for std_speed in supported_speed -%}
+    {%- if std_speed | int >= speed | int -%}
+        {%- if new_speed.append(std_speed) -%}{%- endif -%}
+    {% endif -%}
+{%- endfor -%}
+{%- set new_cable = [] -%}
+{%- for std_cable in supported_cable -%}
+    {% if std_cable | int >= cable | int -%}
+        {%- if new_cable.append(std_cable) -%}{%- endif -%}
+    {% endif %}
+{%- endfor -%}
+{{ new_speed.0 }}_{{ new_cable.0 }}
+{%- endmacro -%}
+
+{% set ingress_lossless_pg_pool_size =  [] %}
+{% set used_pg_profiles =  [] %}
+{% for port in PORT %}
+    {%- if PORT[port].speed -%}
+        {%- set speed = PORT[port]['speed'] -%}
+    {% else %}
+        {%- set speed = supported_speed|last -%}
+    {%- endif -%}
+    {%- set cable = cable_length(port) -%}
+    {%- set port_config = speed|string + '_' + cable -%}
+    {%- if not port_config in portconfig2profile -%}
+        {% set port_config = find_closest_greater_config(speed, cable) -%}
+    {%- endif -%}
+    {% set profile = portconfig2profile[port_config] -%}
+    {% if ingress_lossless_pg_pool_size.append(pg_profiles[profile]['size']) %}{% endif %}
+    {# add to list profiles which were actually used #}
+    {%- if profile not in used_pg_profiles and used_pg_profiles.append(profile) %}{% endif -%}
+    {
+        "BUFFER_PG_TABLE:{{ port }}:{{ pg_range }}": {
+                "profile" : "[BUFFER_PROFILE_TABLE:{{ profile }}]"
+        },
+        "OP": "SET"
+    },
+{% endfor -%}
+
+{# PG profiles declaration #}
+
+{% for profile_name in used_pg_profiles %}
+    {%- set profile_config = pg_profiles[profile_name] %}
+    {
+        "BUFFER_PROFILE_TABLE:{{ profile_name }}": {
+            "pool":"[BUFFER_POOL_TABLE:ingress_lossless_pg_pool]",
+            "xon":"{{ profile_config['xon'] }}",
+            "xoff":"{{ profile_config['xoff'] }}",
+            "size":"{{ profile_config['size'] }}",
+            "dynamic_th":"{{ profile_config['dynamic_th'] }}"
+        },
+        "OP": "SET"
+    },
+{% endfor -%}
+
+    {# Pool declaration #}
+    {
+        "BUFFER_POOL_TABLE:ingress_lossless_pg_pool": {
+            "size": "{{ ingress_lossless_pg_pool_size | sum }}",
+            "type": "ingress",
+            "mode": "dynamic"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_PG_TABLE:{{ port_names }}:0-1": {
+            "profile" : "[BUFFER_PROFILE_TABLE:pg_lossy_profile]"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_QUEUE_TABLE:{{ port_names }}:3-4": {
+            "profile" : "[BUFFER_PROFILE_TABLE:q_lossless_profile]"
+        },
+        "OP": "SET"
+    },
+    {
+        "BUFFER_QUEUE_TABLE:{{ port_names }}:0-1": {
+            "profile" : "[BUFFER_PROFILE_TABLE:q_lossy_profile]"
+        },
+        "OP": "SET"
+    },
+    {
+        "PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE:AZURE": {
+            "0": "0",
+            "1": "1",
+            "3": "3",
+            "4": "4"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_QOS_MAP_TABLE:{{ port_names }}": {
+            "pfc_to_pg_map"   : "[PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE:AZURE]"
+        },
+        "OP": "SET"
+    }
+]

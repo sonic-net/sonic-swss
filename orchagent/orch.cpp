@@ -59,7 +59,7 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-bool Orch::hasSelectable(ConsumerStateTable *selectable) const
+bool Orch::hasSelectable(TableConsumable *selectable) const
 {
     for(auto it : m_consumerMap) {
         if (it.second.m_consumer == selectable) {
@@ -83,54 +83,58 @@ bool Orch::execute(string tableName)
     }
     Consumer& consumer = consumer_it->second;
 
-    KeyOpFieldsValuesTuple new_data;
-    consumer.m_consumer->pop(new_data);
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    consumer.m_consumer->pops(entries);
 
-    string key = kfvKey(new_data);
-    string op  = kfvOp(new_data);
-    /* Possible nothing popped, ie. the oparation is already merged with other operations */
-    if (op.empty())
+    /* Nothing popped */
+    if (entries.empty())
     {
         return true;
     }
 
-    /* Record incoming tasks */
-    if (gSwssRecord)
+    for (auto entry: entries)
     {
-        recordTuple(consumer, new_data);
-    }
+        string key = kfvKey(entry);
+        string op  = kfvOp(entry);
 
-    /* If a new task comes or if a DEL task comes, we directly put it into consumer.m_toSync map */
-    if (consumer.m_toSync.find(key) == consumer.m_toSync.end() || op == DEL_COMMAND)
-    {
-       consumer.m_toSync[key] = new_data;
-    }
-    /* If an old task is still there, we combine the old task with new task */
-    else
-    {
-        KeyOpFieldsValuesTuple existing_data = consumer.m_toSync[key];
-
-        auto new_values = kfvFieldsValues(new_data);
-        auto existing_values = kfvFieldsValues(existing_data);
-
-
-        for (auto it : new_values)
+        /* Record incoming tasks */
+        if (gSwssRecord)
         {
-            string field = fvField(it);
-            string value = fvValue(it);
-
-            auto iu = existing_values.begin();
-            while (iu != existing_values.end())
-            {
-                string ofield = fvField(*iu);
-                if (field == ofield)
-                    iu = existing_values.erase(iu);
-                else
-                    iu++;
-            }
-            existing_values.push_back(FieldValueTuple(field, value));
+            recordTuple(consumer, entry);
         }
-        consumer.m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
+
+        /* If a new task comes or if a DEL task comes, we directly put it into consumer.m_toSync map */
+        if (consumer.m_toSync.find(key) == consumer.m_toSync.end() || op == DEL_COMMAND)
+        {
+           consumer.m_toSync[key] = entry;
+        }
+        /* If an old task is still there, we combine the old task with new task */
+        else
+        {
+            KeyOpFieldsValuesTuple existing_data = consumer.m_toSync[key];
+
+            auto new_values = kfvFieldsValues(entry);
+            auto existing_values = kfvFieldsValues(existing_data);
+
+
+            for (auto it : new_values)
+            {
+                string field = fvField(it);
+                string value = fvValue(it);
+
+                auto iu = existing_values.begin();
+                while (iu != existing_values.end())
+                {
+                    string ofield = fvField(*iu);
+                    if (field == ofield)
+                        iu = existing_values.erase(iu);
+                    else
+                        iu++;
+                }
+                existing_values.push_back(FieldValueTuple(field, value));
+            }
+            consumer.m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
+        }
     }
 
     if (!consumer.m_toSync.empty())
@@ -336,8 +340,8 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
             SWSS_LOG_ERROR("malformed index range in:%s. Must contain 2 tokens\n", input.c_str());
             return false;
         }
-        range_low = stoul(range_values[0]);
-        range_high = stoul(range_values[1]);
+        range_low = (uint32_t)stoul(range_values[0]);
+        range_high = (uint32_t)stoul(range_values[1]);
         if (range_low >= range_high)
         {
             SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than righ value.\n", input.c_str());
@@ -346,7 +350,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
     }
     else
     {
-        range_low = range_high = stoul(input);
+        range_low = range_high = (uint32_t)stoul(input);
     }
     SWSS_LOG_DEBUG("resulting range:%d-%d", range_low, range_high);
     return true;

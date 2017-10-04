@@ -17,6 +17,8 @@
 #include "mirrororch.h"
 #include "fdborch.h"
 #include "aclorch.h"
+#include "pfcwdorch.h"
+#include "switchorch.h"
 
 using namespace swss;
 
@@ -34,7 +36,7 @@ private:
     std::vector<Orch *> m_orchList;
     Select *m_select;
 
-    Orch *getOrchByConsumer(ConsumerStateTable *c);
+    Orch *getOrchByConsumer(TableConsumable *c);
     void flush();
 };
 

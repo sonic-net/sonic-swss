@@ -1,6 +1,9 @@
 #include <unistd.h>
 #include "orchdaemon.h"
 #include "logger.h"
+#include <sairedis.h>
+
+#define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 
 using namespace std;
@@ -10,6 +13,7 @@ using namespace swss;
 #define SELECT_TIMEOUT 1000
 
 extern sai_switch_api_t*           sai_switch_api;
+extern sai_object_id_t             gSwitchId;
 
 /* Global variable gPortsOrch declared */
 PortsOrch *gPortsOrch;
@@ -32,6 +36,10 @@ OrchDaemon::~OrchDaemon()
 bool OrchDaemon::init()
 {
     SWSS_LOG_ENTER();
+
+    string platform = getenv("platform") ? getenv("platform") : "";
+
+    SwitchOrch *switch_orch = new SwitchOrch(m_applDb, APP_SWITCH_TABLE_NAME);
 
     vector<string> ports_tables = {
         APP_PORT_TABLE_NAME,
@@ -80,8 +88,17 @@ bool OrchDaemon::init()
     };
     AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
-    m_orchList = { gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch};
+    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch};
     m_select = new Select();
+
+    vector<string> pfc_wd_tables = {
+        APP_PFC_WD_TABLE_NAME
+    };
+
+    if (platform == MLNX_PLATFORM_SUBSTRING)
+    {
+        m_orchList.push_back(new PfcDurationWatchdog<PfcWdZeroBufferHandler, PfcWdLossyHandler>(m_applDb, pfc_wd_tables));
+    }
 
     return true;
 }
@@ -93,7 +110,7 @@ void OrchDaemon::flush()
 
     sai_attribute_t attr;
     attr.id = SAI_REDIS_SWITCH_ATTR_FLUSH;
-    sai_status_t status = sai_switch_api->set_switch_attribute(&attr);
+    sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
@@ -134,8 +151,9 @@ void OrchDaemon::start()
             continue;
         }
 
-        Orch *o = getOrchByConsumer((ConsumerStateTable *)s);
-        o->execute(((ConsumerStateTable *)s)->getTableName());
+        TableConsumable *c = (TableConsumable *)s;
+        Orch *o = getOrchByConsumer(c);
+        o->execute(c->getTableName());
 
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
@@ -147,7 +165,7 @@ void OrchDaemon::start()
     }
 }
 
-Orch *OrchDaemon::getOrchByConsumer(ConsumerStateTable *c)
+Orch *OrchDaemon::getOrchByConsumer(TableConsumable *c)
 {
     SWSS_LOG_ENTER();
 

@@ -1,10 +1,11 @@
 #ifndef SWSS_PORTSORCH_H
 #define SWSS_PORTSORCH_H
 
+#include <map>
+
 #include "orch.h"
 #include "port.h"
 #include "observer.h"
-
 #include "macaddress.h"
 
 #include <map>
@@ -44,10 +45,13 @@ public:
 
     bool isInitDone();
 
+    map<string, Port>& getAllPorts();
+    bool getBridgePort(sai_object_id_t id, Port &port);
     bool getPort(string alias, Port &port);
     bool getPort(sai_object_id_t id, Port &port);
+    bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);
     void setPort(string alias, Port port);
-    sai_object_id_t getCpuPort();
+    void getCpuPort(Port &port);
 
     bool setHostIntfsOperStatus(sai_object_id_t id, bool up);
     void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
@@ -58,10 +62,15 @@ private:
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 
     bool m_initDone = false;
-    sai_object_id_t m_cpuPort;
+    Port m_cpuPort;
+    // TODO: Add Bridge/Vlan class
+    sai_object_id_t m_default1QBridge;
+    sai_object_id_t m_defaultVlan;
 
+    bool m_portConfigDone = false;
     sai_uint32_t m_portCount;
     map<set<int>, sai_object_id_t> m_portListLaneMap;
+    map<set<int>, tuple<string, uint32_t>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
 
     void doTask(Consumer &consumer);
@@ -71,11 +80,17 @@ private:
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
 
+    void removeDefaultVlanMembers();
+    void removeDefaultBridgePorts();
+
     bool initializePort(Port &port);
     void initializePriorityGroups(Port &port);
     void initializeQueues(Port &port);
 
     bool addHostIntfs(sai_object_id_t router_intfs_id, string alias, sai_object_id_t &host_intfs_id);
+
+    bool addBridgePort(Port &port);
+    bool removeBridgePort(Port port);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
@@ -87,8 +102,15 @@ private:
     bool addLagMember(Port lag, Port port);
     bool removeLagMember(Port lag, Port port);
 
+    bool addPort(const set<int> &lane_set, uint32_t speed);
+    bool removePort(sai_object_id_t port_id);
+    bool initPort(const string &alias, const set<int> &lane_set);
+
     bool setPortAdminStatus(sai_object_id_t id, bool up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
+
+    bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
+
     bool validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
     bool setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
