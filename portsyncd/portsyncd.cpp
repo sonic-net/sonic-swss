@@ -64,10 +64,11 @@ int main(int argc, char **argv)
         }
     }
 
-    DBConnector db(0, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    ProducerStateTable p(&db, APP_PORT_TABLE_NAME);
+    DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
 
-    LinkSync sync(&db);
+    LinkSync sync(&appl_db, &state_db);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
