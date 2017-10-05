@@ -5,7 +5,6 @@
 #include <vector>
 #include <set>
 #include <map>
-#include <list>
 #include "dbconnector.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -25,7 +24,7 @@ using namespace swss;
  * interfaces are already created and remove them from this set. We will
  * remove the rest of the ports in the set when receiving the first netlink
  * message indicating that the host interfaces are created. After the set
- * is empty, we send out the signal PortInitDone. g_init is used to limit the
+ * is empty, we send out the signal ConfigDone. g_init is used to limit the
  * command to be run only once.
  */
 set<string> g_portSet;
@@ -108,7 +107,7 @@ int main(int argc, char **argv)
                      */
                     FieldValueTuple finish_notice("lanes", "0");
                     vector<FieldValueTuple> attrs = { finish_notice };
-                    p.set("PortInitDone", attrs);
+                    p.set("ConfigDone", attrs);
 
                     g_init = true;
                 }
@@ -135,70 +134,34 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
         throw "Port configuration file not found!";
     }
 
-    list<string> header = {"name", "lanes", "alias", "speed"};
     string line;
     while (getline(infile, line))
     {
         if (line.at(0) == '#')
         {
-            /* Find out what info is specified in the configuration file */
-            for (auto it = header.begin(); it != header.end();)
-            {
-                if (line.find(*it) == string::npos)
-                {
-                    it = header.erase(it);
-                }
-                else
-                {
-                    ++it;
-                }
-            }
-
             continue;
         }
 
         istringstream iss(line);
-        map<string, string> entry;
+        string name, lanes, alias;
+        iss >> name >> lanes >> alias;
 
-        /* Read port configuration entry */
-        for (auto column : header)
+        /* If port has no alias, then use its' name as alias */
+        if (alias == "")
         {
-            iss >> entry[column];
+            alias = name;
         }
-
-        /* If port has no alias, then use its name as alias */
-        string alias;
-        if ((entry.find("alias") != entry.end()) && (entry["alias"] != ""))
-        {
-            alias = entry["alias"];
-        }
-        else
-        {
-            alias = entry["name"];
-        }
-
-        FieldValueTuple lanes_attr("lanes", entry["lanes"]);
+        FieldValueTuple lanes_attr("lanes", lanes);
         FieldValueTuple alias_attr("alias", alias);
 
         vector<FieldValueTuple> attrs;
         attrs.push_back(lanes_attr);
         attrs.push_back(alias_attr);
 
-        if ((entry.find("speed") != entry.end()) && (entry["speed"] != ""))
-        {
-            FieldValueTuple speed_attr("speed", entry["speed"]);
-            attrs.push_back(speed_attr);
-        }
+        p.set(name, attrs);
 
-        p.set(entry["name"], attrs);
-
-        g_portSet.insert(entry["name"]);
+        g_portSet.insert(name);
     }
 
     infile.close();
-
-    /* Notify that all ports added */
-    FieldValueTuple finish_notice("count", to_string(g_portSet.size()));
-    vector<FieldValueTuple> attrs = { finish_notice };
-    p.set("PortConfigDone", attrs);
 }
