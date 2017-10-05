@@ -424,6 +424,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::handleWdNotification(swss::Notifi
     if (entry == m_entryMap.end())
     {
         SWSS_LOG_ERROR("Queue %s is not registered", queueIdStr.c_str());
+        return;
     }
 
     if (event == "storm")
