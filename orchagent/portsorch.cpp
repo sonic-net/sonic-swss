@@ -466,10 +466,10 @@ void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_
     {
         if (it->second.m_port_id == id)
         {
-            vector<FieldValueTuple> vector;
+            vector<FieldValueTuple> tuples;
             FieldValueTuple tuple("oper_status", oper_status_strings.at(status));
-            vector.push_back(tuple);
-            m_portTable->set(it->first, vector);
+            tuples.push_back(tuple);
+            m_portTable->set(it->first, tuples);
         }
     }
 }
