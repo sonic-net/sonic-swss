@@ -14,8 +14,6 @@ extern sai_policer_api_t*   sai_policer_api;
 extern sai_switch_api_t*    sai_switch_api;
 extern sai_object_id_t      gSwitchId;
 
-#define MLNX_PLATFORM_SUBSTRING     "mlnx"
-
 map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
     {"bytes", SAI_METER_TYPE_BYTES}

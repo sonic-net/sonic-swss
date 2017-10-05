@@ -57,7 +57,6 @@
 #define IP_TYPE_ARP_REQUEST     "ARP_REQUEST"
 #define IP_TYPE_ARP_REPLY       "ARP_REPLY"
 
-#define MLNX_PLATFORM_SUBSTRING "mlnx"
 #define MLNX_MAX_RANGES_COUNT   16
 
 typedef enum
