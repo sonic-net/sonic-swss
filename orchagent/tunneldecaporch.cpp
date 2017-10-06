@@ -211,7 +211,7 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
         return false;
     }
 
-    SWSS_LOG_NOTICE("Created overlay router interface ID %lx\n", overlayIfId);
+    SWSS_LOG_NOTICE("Create overlay loopback router interface oid:%lx", overlayIfId);
 
     // tunnel type (only ipinip for now)
     attr.id = SAI_TUNNEL_ATTR_TYPE;
@@ -311,12 +311,15 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, IpAddresses ds
     attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID;
     attr.value.oid = gVirtualRouterId;
     tunnel_table_entry_attrs.push_back(attr);
+
     attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE;
     attr.value.u32 = SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP;
     tunnel_table_entry_attrs.push_back(attr);
+
     attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE;
     attr.value.s32 = SAI_TUNNEL_TYPE_IPINIP;
     tunnel_table_entry_attrs.push_back(attr);
+
     attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID;
     attr.value.oid = tunnel_id;
     tunnel_table_entry_attrs.push_back(attr);
@@ -335,7 +338,6 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, IpAddresses ds
         {
             SWSS_LOG_ERROR("%s already exists. Did not create entry.", ip.c_str());
         }
-
         else
         {
             attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP;

@@ -127,7 +127,21 @@
         "OP": "SET"
     },
     {
-        "WRED_PROFILE_TABLE:AZURE" : {
+        "WRED_PROFILE_TABLE:AZURE_LOSSY" : {
+            "wred_green_enable":"true",
+            "wred_yellow_enable":"true",
+            "ecn":"ecn_all",
+            "red_max_threshold":"512000",
+            "red_min_threshold":"512000",
+            "yellow_max_threshold":"512000",
+            "yellow_min_threshold":"512000",
+            "green_max_threshold": "184320",
+            "green_min_threshold": "184320"
+        },
+        "OP": "SET"
+    },
+    {
+        "WRED_PROFILE_TABLE:AZURE_LOSSLESS" : {
             "wred_green_enable":"true",
             "wred_yellow_enable":"true",
             "ecn":"ecn_all",
@@ -142,13 +156,14 @@
     },
     {
         "QUEUE_TABLE:Ethernet0,Ethernet4,Ethernet8,Ethernet12,Ethernet16,Ethernet20,Ethernet24,Ethernet28,Ethernet32,Ethernet36,Ethernet40,Ethernet44,Ethernet48,Ethernet52,Ethernet56,Ethernet60,Ethernet64,Ethernet68,Ethernet72,Ethernet76,Ethernet80,Ethernet84,Ethernet88,Ethernet92,Ethernet96,Ethernet100,Ethernet104,Ethernet108,Ethernet112,Ethernet116,Ethernet120,Ethernet124:0-1" : {
-            "wred_profile"  :   "[WRED_PROFILE_TABLE:AZURE]"
+            "wred_profile"  :   "[WRED_PROFILE_TABLE:AZURE_LOSSY]"
         },
         "OP": "SET"
     },
     {
         "QUEUE_TABLE:Ethernet0,Ethernet4,Ethernet8,Ethernet12,Ethernet16,Ethernet20,Ethernet24,Ethernet28,Ethernet32,Ethernet36,Ethernet40,Ethernet44,Ethernet48,Ethernet52,Ethernet56,Ethernet60,Ethernet64,Ethernet68,Ethernet72,Ethernet76,Ethernet80,Ethernet84,Ethernet88,Ethernet92,Ethernet96,Ethernet100,Ethernet104,Ethernet108,Ethernet112,Ethernet116,Ethernet120,Ethernet124:3-4" : {
-            "scheduler"     :   "[SCHEDULER_TABLE:scheduler.0]"
+            "scheduler"     :   "[SCHEDULER_TABLE:scheduler.0]",
+            "wred_profile"  :   "[WRED_PROFILE_TABLE:AZURE_LOSSLESS]"
         },
         "OP": "SET"
     },

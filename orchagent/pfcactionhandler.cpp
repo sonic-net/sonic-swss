@@ -1,6 +1,7 @@
 #include "pfcactionhandler.h"
 #include "logger.h"
 #include "saiserialize.h"
+#include "portsorch.h"
 
 #include <vector>
 
@@ -15,6 +16,7 @@
 #define SAI_QUEUE_STAT_DROPPED_PACKETS_STR "SAI_QUEUE_STAT_DROPPED_PACKETS"
 
 extern sai_object_id_t gSwitchId;
+extern PortsOrch *gPortsOrch;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_buffer_api_t *sai_buffer_api;
@@ -200,42 +202,10 @@ PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
         return;
     }
 
-    sai_object_id_t oldProfileId = attr.value.oid;
-#if 0
-    attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
-    attr.value.u32 = 0;
-
-    // Get threshold mode of buffer profile
-    status = sai_buffer_api->get_buffer_profile_attribute(oldProfileId, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to get buffer profile threshold mode for 0x%lx: %d", queue, status);
-        return;
-    }
-
-    sai_buffer_profile_threshold_mode_t threshold_mode = static_cast<sai_buffer_profile_threshold_mode_t>(attr.value.u32);
-#endif
-
-    // XXX: Remove when above is fixed
-    sai_buffer_profile_threshold_mode_t threshold_mode = SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC;
-
-    sai_object_id_t zeroBufferProfileId = SAI_NULL_OBJECT_ID;
-    if (threshold_mode == SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC)
-    {
-        zeroBufferProfileId = ZeroBufferProfile::getStaticProfile();
-    }
-    else if (threshold_mode == SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC)
-    {
-        zeroBufferProfileId = ZeroBufferProfile::getDynamicProfile();
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Buffer mode in buffer 0x%lx is not supported", queue);
-        return;
-    }
+    sai_object_id_t oldQueueProfileId = attr.value.oid;
 
     attr.id = SAI_QUEUE_ATTR_BUFFER_PROFILE_ID;
-    attr.value.oid = zeroBufferProfileId;
+    attr.value.oid = ZeroBufferProfile::getZeroBufferProfile(false);
 
     // Set our zero buffer profile
     status = sai_queue_api->set_queue_attribute(queue, &attr);
@@ -246,7 +216,43 @@ PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
     }
 
     // Save original buffer profile
-    m_originalBufferProfile = oldProfileId;
+    m_originalQueueBufferProfile = oldQueueProfileId;
+
+    // Get PG
+    Port portInstance;
+    if (!gPortsOrch->getPort(port, portInstance))
+    {
+        SWSS_LOG_ERROR("Cannot get port by ID 0x%lx", port);
+        return;
+    }
+
+    sai_object_id_t pg = portInstance.m_priority_group_ids[queueId];
+
+    attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
+
+    // Get PG's buffer profile
+    status = sai_buffer_api->get_ingress_priority_group_attribute(pg, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get buffer profile ID on PG 0x%lx: %d", pg, status);
+        return;
+    }
+
+    // Set zero profile to PG
+    sai_object_id_t oldPgProfileId = attr.value.oid;
+
+    attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
+    attr.value.oid = ZeroBufferProfile::getZeroBufferProfile(true);
+
+    status = sai_buffer_api->set_ingress_priority_group_attribute(pg, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set buffer profile ID on pg 0x%lx: %d", pg, status);
+        return;
+    }
+
+    // Save original buffer profile
+    m_originalPgBufferProfile = oldPgProfileId;
 }
 
 PfcWdZeroBufferHandler::~PfcWdZeroBufferHandler(void)
@@ -255,10 +261,30 @@ PfcWdZeroBufferHandler::~PfcWdZeroBufferHandler(void)
 
     sai_attribute_t attr;
     attr.id = SAI_QUEUE_ATTR_BUFFER_PROFILE_ID;
-    attr.value.oid = m_originalBufferProfile;
+    attr.value.oid = m_originalQueueBufferProfile;
+
+    // Set our zero buffer profile on a queue
+    sai_status_t status = sai_queue_api->set_queue_attribute(getQueue(), &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%lx: %d", getQueue(), status);
+        return;
+    }
+
+    Port portInstance;
+    if (!gPortsOrch->getPort(getPort(), portInstance))
+    {
+        SWSS_LOG_ERROR("Cannot get port by ID 0x%lx", getPort());
+        return;
+    }
+
+    sai_object_id_t pg = portInstance.m_priority_group_ids[getQueueId()];
+
+    attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
+    attr.value.oid = m_originalPgBufferProfile;
 
     // Set our zero buffer profile
-    sai_status_t status = sai_queue_api->set_queue_attribute(getQueue(), &attr);
+    status = sai_buffer_api->set_ingress_priority_group_attribute(pg, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%lx: %d", getQueue(), status);
@@ -275,8 +301,9 @@ PfcWdZeroBufferHandler::ZeroBufferProfile::~ZeroBufferProfile(void)
 {
     SWSS_LOG_ENTER();
 
-    destroyStaticProfile();
-    destroyDynamicProfile();
+    // Destory ingress and egress prifiles and pools
+    destroyZeroBufferProfile(true);
+    destroyZeroBufferProfile(false);
 }
 
 PfcWdZeroBufferHandler::ZeroBufferProfile &PfcWdZeroBufferHandler::ZeroBufferProfile::getInstance(void)
@@ -288,103 +315,32 @@ PfcWdZeroBufferHandler::ZeroBufferProfile &PfcWdZeroBufferHandler::ZeroBufferPro
     return instance;
 }
 
-sai_object_id_t PfcWdZeroBufferHandler::ZeroBufferProfile::getStaticProfile(void)
+sai_object_id_t PfcWdZeroBufferHandler::ZeroBufferProfile::getZeroBufferProfile(bool ingress)
 {
     SWSS_LOG_ENTER();
 
-    if (getInstance().m_zeroStaticBufferProfile == SAI_NULL_OBJECT_ID)
+    if (getInstance().getProfile(ingress) == SAI_NULL_OBJECT_ID)
     {
-        getInstance().createStaticProfile();
+        getInstance().createZeroBufferProfile(ingress);
     }
 
-    return getInstance().m_zeroStaticBufferProfile;
+    return getInstance().getProfile(ingress);
 }
 
-sai_object_id_t PfcWdZeroBufferHandler::ZeroBufferProfile::getDynamicProfile(void)
-{
-    SWSS_LOG_ENTER();
-
-    if (getInstance().m_zeroDynamicBufferProfile == SAI_NULL_OBJECT_ID)
-    {
-        getInstance().createDynamicProfile();
-    }
-
-    return getInstance().m_zeroDynamicBufferProfile;
-}
-
-void PfcWdZeroBufferHandler::ZeroBufferProfile::createStaticProfile(void)
+void PfcWdZeroBufferHandler::ZeroBufferProfile::createZeroBufferProfile(bool ingress)
 {
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attribs;
 
-    // Create static zero pool
+    // Create zero pool
     attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
     attr.value.u32 = 0;
     attribs.push_back(attr);
 
     attr.id = SAI_BUFFER_POOL_ATTR_TYPE;
-    attr.value.u32 = SAI_BUFFER_POOL_TYPE_EGRESS;
-    attribs.push_back(attr);
-
-    attr.id = SAI_BUFFER_POOL_ATTR_THRESHOLD_MODE;
-    attr.value.u32 = SAI_BUFFER_POOL_THRESHOLD_MODE_STATIC;
-    attribs.push_back(attr);
-
-    sai_status_t status = sai_buffer_api->create_buffer_pool(
-            &m_zeroStaticBufferPool,
-            gSwitchId,
-            static_cast<uint32_t>(attribs.size()),
-            attribs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create static zero buffer pool for PFC WD: %d", status);
-        return;
-    }
-
-    // Create static zero profile
-    attribs.clear();
-
-    attr.id = SAI_BUFFER_PROFILE_ATTR_POOL_ID;
-    attr.value.oid = m_zeroStaticBufferPool;
-    attribs.push_back(attr);
-
-    attr.id = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
-    attr.value.u32 = 0;
-    attribs.push_back(attr);
-
-    attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
-    attr.value.u32 = 0;
-    attribs.push_back(attr);
-
-    status = sai_buffer_api->create_buffer_profile(
-            &m_zeroStaticBufferProfile,
-            gSwitchId,
-            static_cast<uint32_t>(attribs.size()),
-            attribs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create static zero buffer profile for PFC WD: %d", status);
-        return;
-    }
-}
-
-
-void PfcWdZeroBufferHandler::ZeroBufferProfile::createDynamicProfile(void)
-{
-    SWSS_LOG_ENTER();
-
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attribs;
-
-    // Create dynamic zero pool
-    attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-    attr.value.u32 = 0;
-    attribs.push_back(attr);
-
-    attr.id = SAI_BUFFER_POOL_ATTR_TYPE;
-    attr.value.u32 = SAI_BUFFER_POOL_TYPE_EGRESS;
+    attr.value.u32 = ingress ? SAI_BUFFER_POOL_TYPE_INGRESS : SAI_BUFFER_POOL_TYPE_EGRESS;
     attribs.push_back(attr);
 
     attr.id = SAI_BUFFER_POOL_ATTR_THRESHOLD_MODE;
@@ -392,7 +348,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createDynamicProfile(void)
     attribs.push_back(attr);
 
     sai_status_t status = sai_buffer_api->create_buffer_pool(
-            &m_zeroDynamicBufferPool,
+            &getPool(ingress),
             gSwitchId,
             static_cast<uint32_t>(attribs.size()),
             attribs.data());
@@ -402,11 +358,15 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createDynamicProfile(void)
         return;
     }
 
-    // Create dynamic zero profile
+    // Create zero profile
     attribs.clear();
 
     attr.id = SAI_BUFFER_PROFILE_ATTR_POOL_ID;
-    attr.value.oid = m_zeroDynamicBufferPool;
+    attr.value.oid = getPool(ingress);
+    attribs.push_back(attr);
+
+    attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
+    attr.value.u32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC;
     attribs.push_back(attr);
 
     attr.id = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
@@ -418,7 +378,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createDynamicProfile(void)
     attribs.push_back(attr);
 
     status = sai_buffer_api->create_buffer_profile(
-            &m_zeroDynamicBufferProfile,
+            &getProfile(ingress),
             gSwitchId,
             static_cast<uint32_t>(attribs.size()),
             attribs.data());
@@ -429,38 +389,20 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createDynamicProfile(void)
     }
 }
 
-void PfcWdZeroBufferHandler::ZeroBufferProfile::destroyStaticProfile(void)
+void PfcWdZeroBufferHandler::ZeroBufferProfile::destroyZeroBufferProfile(bool ingress)
 {
     SWSS_LOG_ENTER();
 
-    sai_status_t status = sai_buffer_api->remove_buffer_profile(m_zeroStaticBufferProfile);
+    sai_status_t status = sai_buffer_api->remove_buffer_profile(getProfile(ingress));
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove static zero buffer profile for PFC WD: %d", status);
         return;
     }
 
-    status = sai_buffer_api->remove_buffer_pool(m_zeroStaticBufferPool);
+    status = sai_buffer_api->remove_buffer_pool(getPool(ingress));
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove static zero buffer pool for PFC WD: %d", status);
-    }
-}
-
-void PfcWdZeroBufferHandler::ZeroBufferProfile::destroyDynamicProfile(void)
-{
-    SWSS_LOG_ENTER();
-
-    sai_status_t status = sai_buffer_api->remove_buffer_profile(m_zeroDynamicBufferProfile);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove dynamic zero buffer profile for PFC WD: %d", status);
-        return;
-    }
-
-    status = sai_buffer_api->remove_buffer_pool(m_zeroDynamicBufferPool);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove dynamic zero buffer pool for PFC WD: %d", status);
     }
 }

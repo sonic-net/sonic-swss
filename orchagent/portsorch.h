@@ -58,6 +58,7 @@ public:
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
+    unique_ptr<Table> m_queueTable;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 
@@ -67,8 +68,10 @@ private:
     sai_object_id_t m_default1QBridge;
     sai_object_id_t m_defaultVlan;
 
+    bool m_portConfigDone = false;
     sai_uint32_t m_portCount;
     map<set<int>, sai_object_id_t> m_portListLaneMap;
+    map<set<int>, tuple<string, uint32_t>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
 
     void doTask(Consumer &consumer);
@@ -100,6 +103,11 @@ private:
     bool addLagMember(Port &lag, Port &port);
     bool removeLagMember(Port &lag, Port &port);
     void getLagMember(Port &lag, vector<Port> &portv);
+
+    bool addPort(const set<int> &lane_set, uint32_t speed);
+    bool removePort(sai_object_id_t port_id);
+    bool initPort(const string &alias, const set<int> &lane_set);
+
     bool setPortAdminStatus(sai_object_id_t id, bool up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
