@@ -862,7 +862,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                 continue;
             }
 
-            if ((port.m_bridge_port_id || addBridgePort(port)) && addVlanMember(vlan, port, tagging_mode))
+            if (addBridgePort(port) && addVlanMember(vlan, port, tagging_mode))
                 it = consumer.m_toSync.erase(it);
             else
                 it++;
@@ -1216,6 +1216,11 @@ bool PortsOrch::addBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
 
+    if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
@@ -1263,6 +1268,10 @@ bool PortsOrch::removeBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
 
+    if (port.m_bridge_port_id == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
     /* Set bridge port admin status to DOWN */
     sai_attribute_t attr;
     attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
