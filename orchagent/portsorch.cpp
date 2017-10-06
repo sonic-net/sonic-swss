@@ -55,8 +55,10 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     /* Initialize port table */
     m_portTable = unique_ptr<Table>(new Table(m_db, APP_PORT_TABLE_NAME));
 
-    /* Initialize queue table */
+    /* Initialize queue tables */
     m_queueTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_NAME_MAP));
+    m_queuePortTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_PORT_MAP));
+    m_queueIndexTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_INDEX_MAP));
 
     uint32_t i, j;
     sai_status_t status;
@@ -1184,17 +1186,31 @@ void PortsOrch::initializeQueues(Port &port)
     SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
 
     /* Create the Queue map in the Counter DB */
-    vector<FieldValueTuple> queue_list;
+    vector<FieldValueTuple> queueVector;
+    vector<FieldValueTuple> queuePortVector;
+    vector<FieldValueTuple> queueIndexVector;
 
-    for (size_t queue_index = 0; queue_index < port.m_queue_ids.size(); ++queue_index)
+    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
     {
         std::ostringstream name;
-        name << port.m_alias << ":" << queue_index;
-        FieldValueTuple tuple(name.str(), sai_serialize_object_id(port.m_queue_ids[queue_index]));
-        queue_list.push_back(tuple);
+        name << port.m_alias << ":" << queueIndex;
+        FieldValueTuple tuple(name.str(), sai_serialize_object_id(port.m_queue_ids[queueIndex]));
+        queueVector.push_back(tuple);
+
+        FieldValueTuple queuePortTuple(
+                sai_serialize_object_id(port.m_queue_ids[queueIndex]),
+                sai_serialize_object_id(port.m_port_id));
+        queuePortVector.push_back(queuePortTuple);
+
+        FieldValueTuple queueIndexTuple(
+                sai_serialize_object_id(port.m_queue_ids[queueIndex]),
+                to_string(queueIndex));
+        queueIndexVector.push_back(queueIndexTuple);
     }
 
-    m_queueTable->set("", queue_list);
+    m_queueTable->set("", queueVector);
+    m_queuePortTable->set("", queuePortVector);
+    m_queueIndexTable->set("", queueIndexVector);
 }
 
 void PortsOrch::initializePriorityGroups(Port &port)
