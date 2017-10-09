@@ -21,7 +21,7 @@ class PfcWdActionHandler
     public:
         PfcWdActionHandler(sai_object_id_t port, sai_object_id_t queue,
                 uint8_t queueId, shared_ptr<Table> countersTable);
-        virtual ~PfcWdActionHandler(void) = 0;
+        virtual ~PfcWdActionHandler(void);
 
         inline sai_object_id_t getPort(void)
         {

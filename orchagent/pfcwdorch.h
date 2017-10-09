@@ -18,6 +18,7 @@ enum class PfcWdAction
     PFC_WD_ACTION_UNKNOWN,
     PFC_WD_ACTION_FORWARD,
     PFC_WD_ACTION_DROP,
+    PFC_WD_ACTION_ALERT,
 };
 
 template <typename DropHandler, typename ForwardHandler>

@@ -97,6 +97,7 @@ PfcWdAction PfcWdOrch<DropHandler, ForwardHandler>::deserializeAction(const stri
     {
         { "forward", PfcWdAction::PFC_WD_ACTION_FORWARD },
         { "drop", PfcWdAction::PFC_WD_ACTION_DROP },
+        { "alert", PfcWdAction::PFC_WD_ACTION_ALERT },
     };
 
     if (actionMap.find(key) == actionMap.end())
@@ -440,6 +441,14 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::handleWdNotification(swss::Notifi
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_FORWARD)
         {
             entry->second.handler = make_shared<ForwardHandler>(
+                    entry->second.portId,
+                    entry->first,
+                    entry->second.index,
+                    PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
+        }
+        else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_ALERT)
+        {
+            entry->second.handler = make_shared<PfcWdActionHandler>(
                     entry->second.portId,
                     entry->first,
                     entry->second.index,
