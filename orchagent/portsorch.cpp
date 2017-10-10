@@ -410,6 +410,7 @@ bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
     pvid = port.m_port_vlan_id;
     return true;
 }
+
 bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
 {
     sai_attribute_t attr;
@@ -882,6 +883,11 @@ void PortsOrch::doVlanTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            /*
+             * Only creation is supported for now.
+             * We may add support for VLAN mac learning enable/disable,
+             * VLAN flooding control setting and etc. in the future.
+             */
             if (m_portList.find(vlan_alias) == m_portList.end())
             {
                 if (!addVlan(vlan_alias))
@@ -1672,7 +1678,7 @@ void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
     {
         if (!getPort(name, member))
         {
-            SWSS_LOG_ERROR("Failed to get port for %s alias\n", name.c_str());
+            SWSS_LOG_ERROR("Failed to get port for %s alias", name.c_str());
             return;
         }
         portv.push_back(member);
