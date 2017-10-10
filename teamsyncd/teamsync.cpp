@@ -16,10 +16,11 @@ using namespace swss;
 /* Taken from drivers/net/team/team.c */
 #define TEAM_DRV_NAME "team"
 
-TeamSync::TeamSync(DBConnector *db, Select *select) :
+TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_select(select),
     m_lagTable(db, APP_LAG_TABLE_NAME),
-    m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME)
+    m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME),
+    m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR)
 {
 }
 
@@ -72,6 +73,11 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
     m_select->addSelectable(sync.get());
     m_teamPorts[lagName] = sync;
+
+    fvVector.clear();
+    FieldValueTuple s("state", "ok");
+    fvVector.push_back(s);
+    m_stateLagTable.set(lagName, fvVector);
 }
 
 void TeamSync::removeLag(const string &lagName)
@@ -88,6 +94,7 @@ void TeamSync::removeLag(const string &lagName)
     /* No longer track the current team instance */
     m_select->removeSelectable(m_teamPorts[lagName].get());
     m_teamPorts.erase(lagName);
+    m_stateLagTable.del(lagName);
 }
 
 const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {
