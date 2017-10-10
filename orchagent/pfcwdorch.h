@@ -43,9 +43,10 @@ public:
         return m_countersDb;
     }
 
-private:
     static PfcWdAction deserializeAction(const string& key);
-    void createEntry(const string& key, const vector<FieldValueTuple>& data);
+    static string serializeAction(const PfcWdAction &action); 
+private:
+   void createEntry(const string& key, const vector<FieldValueTuple>& data);
     void deleteEntry(const string& name);
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
@@ -60,7 +61,8 @@ public:
             DBConnector *db,
             vector<string> &tableNames,
             vector<sai_port_stat_t> portStatIds,
-            vector<sai_queue_stat_t> queueStatIds);
+            vector<sai_queue_stat_t> queueStatIds,
+            vector<sai_queue_attr_t> queueAttrIds);
     virtual ~PfcWdSwOrch(void);
 
     virtual bool startWdOnPort(const Port& port,
@@ -97,6 +99,7 @@ private:
 
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
+    const vector<sai_queue_attr_t> c_queueAttrIds;
 
     shared_ptr<DBConnector> m_pfcWdDb = nullptr;
     shared_ptr<ProducerStateTable> m_pfcWdTable = nullptr;

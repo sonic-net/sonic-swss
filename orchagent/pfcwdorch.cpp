@@ -15,6 +15,8 @@
 #define PFC_WD_RESTORATION_TIME_MIN     100
 #define PFC_WD_TC_MAX                   8
 #define PFC_WD_POLL_TIMEOUT             5000
+#define MLNX_PLATFORM_SUBSTRING         "mlnx"
+#define BROADCOM_PLATFORM               "broadcom"
 
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
@@ -107,6 +109,27 @@ PfcWdAction PfcWdOrch<DropHandler, ForwardHandler>::deserializeAction(const stri
 
     return actionMap.at(key);
 }
+
+template <typename DropHandler, typename ForwardHandler>
+string PfcWdOrch<DropHandler, ForwardHandler>::serializeAction(const PfcWdAction& action)
+{
+    SWSS_LOG_ENTER();
+
+    const map<PfcWdAction, string> actionMap =
+    {
+        { PfcWdAction::PFC_WD_ACTION_FORWARD, "forward" },
+        { PfcWdAction::PFC_WD_ACTION_DROP, "drop" },
+        { PfcWdAction::PFC_WD_ACTION_ALERT, "alert" },
+    };
+
+    if (actionMap.find(action) == actionMap.end())
+    {
+        return "unknown";
+    }
+
+    return actionMap.at(action);
+}
+
 
 template <typename DropHandler, typename ForwardHandler>
 void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
@@ -270,6 +293,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         vector<FieldValueTuple> countersFieldValues;
         countersFieldValues.emplace_back("PFC_WD_DETECTION_TIME", to_string(detectionTime * 1000));
         countersFieldValues.emplace_back("PFC_WD_RESTORATION_TIME", to_string(restorationTime * 1000));
+        countersFieldValues.emplace_back("PFC_WD_ACTION", this->serializeAction(action));
+
         PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable()->set(queueIdStr, countersFieldValues);
 
         // We register our queues in PFC_WD table so that syncd will know that it must poll them
@@ -279,6 +304,12 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         {
             string str = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
             queueFieldValues.emplace_back(PFC_WD_QUEUE_COUNTER_ID_LIST, str);
+        }
+
+        if (!c_queueAttrIds.empty())
+        {
+            string str = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
+            queueFieldValues.emplace_back(PFC_WD_QUEUE_ATTR_ID_LIST, str);
         }
 
         // Create internal entry
@@ -313,51 +344,50 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         DBConnector *db,
         vector<string> &tableNames,
         vector<sai_port_stat_t> portStatIds,
-        vector<sai_queue_stat_t> queueStatIds):
+        vector<sai_queue_stat_t> queueStatIds,
+        vector<sai_queue_attr_t> queueAttrIds):
     PfcWdOrch<DropHandler,
     ForwardHandler>(db, tableNames),
     m_pfcWdDb(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
     m_pfcWdTable(new ProducerStateTable(m_pfcWdDb.get(), PFC_WD_STATE_TABLE)),
     c_portStatIds(portStatIds),
-    c_queueStatIds(queueStatIds)
+    c_queueStatIds(queueStatIds),
+    c_queueAttrIds(queueAttrIds)
 {
     SWSS_LOG_ENTER();
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
-    if (platform == "")
+    if (platform == MLNX_PLATFORM_SUBSTRING)
     {
-        SWSS_LOG_ERROR("Platform environment variable is not defined");
-        return;
+        SWSS_LOG_NOTICE("Current platform is mlnx");
+    }
+    else
+    {
+        platform = BROADCOM_PLATFORM;
+        SWSS_LOG_NOTICE("Current platform is broadcom");
     }
 
     string detectSha, restoreSha;
     string detectPluginName = "pfc_detect_" + platform + ".lua";
     string restorePluginName = "pfc_restore_" + platform + ".lua";
 
-    try
-    {
-        string detectLuaScript = swss::loadLuaScript(detectPluginName);
-        detectSha = swss::loadRedisScript(
-                PfcWdOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
-                detectLuaScript);
+    string detectLuaScript = swss::loadLuaScript(detectPluginName);
+    detectSha = swss::loadRedisScript(
+            PfcWdOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
+            detectLuaScript);
 
-        string restoreLuaScript = swss::loadLuaScript(restorePluginName);
-        restoreSha = swss::loadRedisScript(
-                PfcWdOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
-                restoreLuaScript);
+    string restoreLuaScript = swss::loadLuaScript(restorePluginName);
+    restoreSha = swss::loadRedisScript(
+            PfcWdOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
+            restoreLuaScript);
 
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(SAI_OBJECT_TYPE, sai_serialize_object_type(SAI_OBJECT_TYPE_QUEUE));
+    vector<FieldValueTuple> fieldValues;
+    fieldValues.emplace_back(SAI_OBJECT_TYPE, sai_serialize_object_type(SAI_OBJECT_TYPE_QUEUE));
 
-        auto pluginTable = ProducerStateTable(m_pfcWdDb.get(), PLUGIN_TABLE);
-        pluginTable.set(detectSha, fieldValues);
-        pluginTable.set(restoreSha, fieldValues);
-    }
-    catch (...)
-    {
-        SWSS_LOG_WARN("Lua scripts for PFC watchdog were not loaded");
-    }
+    auto pluginTable = ProducerStateTable(m_pfcWdDb.get(), PLUGIN_TABLE);
+    pluginTable.set(detectSha, fieldValues);
+    pluginTable.set(restoreSha, fieldValues);
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -428,9 +458,22 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::handleWdNotification(swss::Notifi
         return;
     }
 
+    SWSS_LOG_NOTICE("Receive notification, %s", event.c_str());
     if (event == "storm")
     {
-        if (entry->second.action == PfcWdAction::PFC_WD_ACTION_DROP)
+        if (entry->second.action == PfcWdAction::PFC_WD_ACTION_ALERT)
+        {
+            if(entry->second.handler == nullptr)
+            {
+                entry->second.handler = make_shared<PfcWdActionHandler>(
+                        entry->second.portId,
+                        entry->first,
+                        entry->second.index,
+                        PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
+            }
+
+        }
+        else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_DROP)
         {
             entry->second.handler = make_shared<DropHandler>(
                     entry->second.portId,
@@ -463,9 +506,13 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::handleWdNotification(swss::Notifi
     {
         entry->second.handler = nullptr;
     }
+    else if (event == "alert_end")
+    {
+        entry->second.handler = nullptr;
+    }
     else
     {
-        SWSS_LOG_ERROR("Received unknown event from plugin");
+        SWSS_LOG_ERROR("Received unknown event from plugin, %s", event.c_str());
     }
 }
 
@@ -551,3 +598,4 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::endWatchdogThread(void)
 
 // Trick to keep member functions in a separate file
 template class PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>;
+template class PfcWdSwOrch<PfcWdActionHandler, PfcWdActionHandler>;
