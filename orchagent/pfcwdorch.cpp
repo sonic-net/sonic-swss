@@ -358,36 +358,38 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
-    if (platform == MLNX_PLATFORM_SUBSTRING)
-    {
-        SWSS_LOG_NOTICE("Current platform is mlnx");
-    }
-    else
+    if (platform != MLNX_PLATFORM_SUBSTRING)
     {
         platform = BROADCOM_PLATFORM;
-        SWSS_LOG_NOTICE("Current platform is broadcom");
     }
 
     string detectSha, restoreSha;
     string detectPluginName = "pfc_detect_" + platform + ".lua";
     string restorePluginName = "pfc_restore_" + platform + ".lua";
 
-    string detectLuaScript = swss::loadLuaScript(detectPluginName);
-    detectSha = swss::loadRedisScript(
-            PfcWdOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
-            detectLuaScript);
+    try
+    {
+        string detectLuaScript = swss::loadLuaScript(detectPluginName);
+        detectSha = swss::loadRedisScript(
+                PfcWdOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
+                detectLuaScript);
 
-    string restoreLuaScript = swss::loadLuaScript(restorePluginName);
-    restoreSha = swss::loadRedisScript(
-            PfcWdOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
-            restoreLuaScript);
+        string restoreLuaScript = swss::loadLuaScript(restorePluginName);
+        restoreSha = swss::loadRedisScript(
+                PfcWdOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
+                restoreLuaScript);
 
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(SAI_OBJECT_TYPE, sai_serialize_object_type(SAI_OBJECT_TYPE_QUEUE));
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(SAI_OBJECT_TYPE, sai_serialize_object_type(SAI_OBJECT_TYPE_QUEUE));
 
-    auto pluginTable = ProducerStateTable(m_pfcWdDb.get(), PLUGIN_TABLE);
-    pluginTable.set(detectSha, fieldValues);
-    pluginTable.set(restoreSha, fieldValues);
+        auto pluginTable = ProducerStateTable(m_pfcWdDb.get(), PLUGIN_TABLE);
+        pluginTable.set(detectSha, fieldValues);
+        pluginTable.set(restoreSha, fieldValues);
+    }
+    catch (...)
+    {
+        SWSS_LOG_WARN("Lua scripts for PFC watchdog were not loaded");
+    }
 }
 
 template <typename DropHandler, typename ForwardHandler>
