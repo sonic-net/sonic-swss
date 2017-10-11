@@ -24,7 +24,7 @@ const char ref_end             = ']';
 const char comma               = ',';
 const char range_specifier     = '-';
 
-#define MLNX_PLATFORM_SUBSTRING "mlnx"
+#define MLNX_PLATFORM_SUBSTRING "mellanox"
 
 typedef enum
 {

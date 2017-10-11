@@ -5,8 +5,8 @@ CFLAGS_SAI = -I /usr/include/sai
 swssdir = $(datadir)/swss
 
 dist_swss_DATA = \
-		 pfc_detect_mlnx.lua  \
-		 pfc_restore_mlnx.lua
+		 pfc_detect_mellanox.lua  \
+		 pfc_restore_mellanox.lua
 
 bin_PROGRAMS = orchagent routeresync
 
