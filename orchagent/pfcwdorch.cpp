@@ -508,10 +508,6 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::handleWdNotification(swss::Notifi
     {
         entry->second.handler = nullptr;
     }
-    else if (event == "alert_end")
-    {
-        entry->second.handler = nullptr;
-    }
     else
     {
         SWSS_LOG_ERROR("Received unknown event from plugin, %s", event.c_str());

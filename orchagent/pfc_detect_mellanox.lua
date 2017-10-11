@@ -69,7 +69,7 @@ for i = n, 1, -1 do
                 end
             else
                 if pfc_wd_action == 'alert' and pfc_wd_status ~= 'operational' then
-                    redis.call('PUBLISH', 'PFC_WD', '["' .. KEYS[i] .. '","alert_end"]')
+                    redis.call('PUBLISH', 'PFC_WD', '["' .. KEYS[i] .. '","restore"]')
                 end 
                 time_left = detection_time
             end
