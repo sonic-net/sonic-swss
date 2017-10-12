@@ -133,7 +133,7 @@ bool OrchDaemon::init()
                     queueStatIds,
                     queueAttrIds));
     }
-    else
+    else if (platform == BRCM_PLATFORM_SUBSTRING)
     {
         static const vector<sai_port_stat_t> portStatIds =
         {

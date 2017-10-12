@@ -15,8 +15,6 @@
 #define PFC_WD_RESTORATION_TIME_MIN     100
 #define PFC_WD_TC_MAX                   8
 #define PFC_WD_POLL_TIMEOUT             5000
-#define MLNX_PLATFORM_SUBSTRING         "mlnx"
-#define BROADCOM_PLATFORM               "broadcom"
 
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
@@ -357,15 +355,15 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     SWSS_LOG_ENTER();
 
     string platform = getenv("platform") ? getenv("platform") : "";
-
-    if (platform != MLNX_PLATFORM_SUBSTRING)
+    if (platform == "")
     {
-        platform = BROADCOM_PLATFORM;
+        SWSS_LOG_ERROR("Platform environment variable is not defined");
+        return;
     }
 
     string detectSha, restoreSha;
     string detectPluginName = "pfc_detect_" + platform + ".lua";
-    string restorePluginName = "pfc_restore_" + platform + ".lua";
+    string restorePluginName = "pfc_restore.lua";
 
     try
     {
@@ -465,7 +463,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::handleWdNotification(swss::Notifi
     {
         if (entry->second.action == PfcWdAction::PFC_WD_ACTION_ALERT)
         {
-            if(entry->second.handler == nullptr)
+            if (entry->second.handler == nullptr)
             {
                 entry->second.handler = make_shared<PfcWdActionHandler>(
                         entry->second.portId,
@@ -473,7 +471,6 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::handleWdNotification(swss::Notifi
                         entry->second.index,
                         PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
             }
-
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_DROP)
         {
@@ -486,14 +483,6 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::handleWdNotification(swss::Notifi
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_FORWARD)
         {
             entry->second.handler = make_shared<ForwardHandler>(
-                    entry->second.portId,
-                    entry->first,
-                    entry->second.index,
-                    PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
-        }
-        else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_ALERT)
-        {
-            entry->second.handler = make_shared<PfcWdActionHandler>(
                     entry->second.portId,
                     entry->first,
                     entry->second.index,
