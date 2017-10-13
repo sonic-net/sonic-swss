@@ -43,6 +43,8 @@ void SwitchOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            bool retry = false;
+
             for (auto i : kfvFieldsValues(t))
             {
                 auto attribute = fvField(i);
@@ -50,8 +52,7 @@ void SwitchOrch::doTask(Consumer &consumer)
                 if (switch_attribute_map.find(attribute) == switch_attribute_map.end())
                 {
                     SWSS_LOG_ERROR("Unsupported switch attribute %s", attribute.c_str());
-                    it = consumer.m_toSync.erase(it);
-                    continue;
+                    break;
                 }
 
                 auto value = fvValue(i);
@@ -59,6 +60,7 @@ void SwitchOrch::doTask(Consumer &consumer)
                 sai_attribute_t attr;
                 attr.id = switch_attribute_map.at(attribute);
 
+                bool invalid_attr = false;
                 switch (attr.id)
                 {
                     case SAI_SWITCH_ATTR_FDB_UNICAST_MISS_PACKET_ACTION:
@@ -67,8 +69,8 @@ void SwitchOrch::doTask(Consumer &consumer)
                         if (packet_action_map.find(value) == packet_action_map.end())
                         {
                             SWSS_LOG_ERROR("Unsupported packet action %s", value.c_str());
-                            it = consumer.m_toSync.erase(it);
-                            continue;
+                            invalid_attr = true;
+                            break;
                         }
                         attr.value.s32 = packet_action_map.at(value);
                         break;
@@ -79,7 +81,13 @@ void SwitchOrch::doTask(Consumer &consumer)
                         break;
 
                     default:
+                        invalid_attr = true;
                         break;
+                }
+                if (invalid_attr)
+                {
+                    /* break from kfvFieldsValues for loop */
+                    break;
                 }
 
                 sai_status_t status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
@@ -87,11 +95,18 @@ void SwitchOrch::doTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("Failed to set switch attribute %s to %s, rv:%d",
                             attribute.c_str(), value.c_str(), status);
-                    it++;
-                    continue;
+                    retry = true;
+                    break;
                 }
 
                 SWSS_LOG_NOTICE("Set switch attribute %s to %s", attribute.c_str(), value.c_str());
+            }
+            if (retry == true)
+            {
+                it++;
+            }
+            else
+            {
                 it = consumer.m_toSync.erase(it);
             }
         }
