@@ -1,6 +1,5 @@
 swssconfig/sample/netbouncer.json etc/swss/config.d
 swssconfig/sample/00-copp.config.json etc/swss/config.d
-swssconfig/sample/msn27xx.32ports.buffers.json.j2 usr/share/sonic/templates
 swssconfig/sample/msn27xx.32ports.qos.json etc/swss/config.d
 swssconfig/sample/td2.32ports.buffers.json etc/swss/config.d
 swssconfig/sample/td2.32ports.qos.json etc/swss/config.d
