@@ -19,8 +19,8 @@ public:
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
 private:
-    ProducerStateTable m_portTableProducer, m_vlanTableProducer, m_vlanMemberTableProducer;
-    Table m_portTableConsumer, m_vlanMemberTableConsumer;
+    ProducerStateTable m_portTableProducer;
+    Table m_portTableConsumer;
 
     std::map<unsigned int, std::string> m_ifindexNameMap;
 };
