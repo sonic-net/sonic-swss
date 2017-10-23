@@ -341,11 +341,10 @@ template <typename DropHandler, typename ForwardHandler>
 PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         DBConnector *db,
         vector<string> &tableNames,
-        vector<sai_port_stat_t> portStatIds,
-        vector<sai_queue_stat_t> queueStatIds,
-        vector<sai_queue_attr_t> queueAttrIds):
-    PfcWdOrch<DropHandler,
-    ForwardHandler>(db, tableNames),
+        const vector<sai_port_stat_t> &portStatIds,
+        const vector<sai_queue_stat_t> &queueStatIds,
+        const vector<sai_queue_attr_t> &queueAttrIds):
+    PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
     m_pfcWdDb(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
     m_pfcWdTable(new ProducerStateTable(m_pfcWdDb.get(), PFC_WD_STATE_TABLE)),
     c_portStatIds(portStatIds),

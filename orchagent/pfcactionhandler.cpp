@@ -139,8 +139,11 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
 {
     acl_table_type_t table_type = ACL_TABLE_L3;
 
-    m_aclTable = "Table_" + sai_serialize_object_id(port) +"_" + sai_serialize_object_id(queue);
-    m_aclRule = "Rule_" + sai_serialize_object_id(port) +"_" + sai_serialize_object_id(queue);
+    string portstr = sai_serialize_object_id(port);
+    string queuestr = sai_serialize_object_id(queue);
+
+    m_aclTable = "Table_" + portstr + "_" + queuestr;
+    m_aclRule = "Rule_" + portstr + "_" + queuestr;
 
     /* TODO: Create Acl Table for all PFC WD enabled Ports in the init state*/
     createPfcAclTable(port);

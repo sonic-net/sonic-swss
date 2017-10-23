@@ -60,9 +60,9 @@ public:
     PfcWdSwOrch(
             DBConnector *db,
             vector<string> &tableNames,
-            vector<sai_port_stat_t> portStatIds,
-            vector<sai_queue_stat_t> queueStatIds,
-            vector<sai_queue_attr_t> queueAttrIds);
+            const vector<sai_port_stat_t> &portStatIds,
+            const vector<sai_queue_stat_t> &queueStatIds,
+            const vector<sai_queue_attr_t> &queueAttrIds);
     virtual ~PfcWdSwOrch(void);
 
     virtual bool startWdOnPort(const Port& port,
