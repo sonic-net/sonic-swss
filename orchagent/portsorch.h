@@ -7,6 +7,7 @@
 #include "port.h"
 #include "observer.h"
 #include "macaddress.h"
+#include "producerstatetable.h"
 
 #include <map>
 
@@ -61,6 +62,7 @@ private:
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
+    unique_ptr<ProducerStateTable> m_flexCounterTable;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 
