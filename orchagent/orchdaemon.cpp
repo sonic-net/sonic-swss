@@ -19,6 +19,8 @@ extern sai_object_id_t             gSwitchId;
 PortsOrch *gPortsOrch;
 /* Global variable gFdbOrch declared */
 FdbOrch *gFdbOrch;
+/*Global variable gAclOrch declared*/
+AclOrch *gAclOrch;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb) :
         m_applDb(applDb)
@@ -86,9 +88,9 @@ bool OrchDaemon::init()
         APP_ACL_TABLE_NAME,
         APP_ACL_RULE_TABLE_NAME
     };
-    AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
+    gAclOrch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
-    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch};
+    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch};
     m_select = new Select();
 
     vector<string> pfc_wd_tables = {

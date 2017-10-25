@@ -2,7 +2,6 @@
 #include "logger.h"
 #include "saiserialize.h"
 #include "portsorch.h"
-
 #include <vector>
 
 #define PFC_WD_QUEUE_STATUS             "PFC_WD_STATUS"
@@ -17,6 +16,7 @@
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
+extern AclOrch * gAclOrch;
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_buffer_api_t *sai_buffer_api;
@@ -131,6 +131,59 @@ void PfcWdActionHandler::updateWdCounters(const string& queueIdStr, const PfcWdQ
                                                      PFC_WD_QUEUE_STATUS_STORMED);
 
     m_countersTable->set(queueIdStr, resultFvValues);
+}
+
+PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
+        uint8_t queueId, shared_ptr<Table> countersTable):
+    PfcWdActionHandler(port, queue, queueId, countersTable)
+{
+    acl_table_type_t table_type = ACL_TABLE_L3;
+
+    m_aclTable = "Table_" + sai_serialize_object_id(port) +"_" + sai_serialize_object_id(queue);
+    m_aclRule = "Rule_" + sai_serialize_object_id(port) +"_" + sai_serialize_object_id(queue);
+
+    /* TODO: Create Acl Table for all PFC WD enabled Ports in the init state*/
+    createPfcAclTable(port);
+    shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_aclRule, m_aclTable, table_type);
+    createPfcAclRule(newRule, queueId);
+}
+
+PfcWdAclHandler::~PfcWdAclHandler(void)
+{
+    SWSS_LOG_ENTER();
+
+    gAclOrch->removeAclRule(m_aclTable, m_aclRule);
+    gAclOrch->removeAclTable(m_aclTable);
+}
+
+void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port)
+{
+    SWSS_LOG_ENTER();
+
+    AclTable newTable;
+    newTable.type = ACL_TABLE_L3;
+    newTable.ports.push_back(port);
+    newTable.id = m_aclTable;
+    gAclOrch->addAclTable(newTable, m_aclTable);
+}
+
+void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId)
+{
+    string attr_name, attr_value;
+
+    attr_name = "RULE_PRIORITY";
+    attr_value = "999";
+    rule->validateAddPriority(attr_name, attr_value);
+
+    attr_name = "MATCH_TC";
+    attr_value = to_string(queueId);
+    rule->validateAddMatch(attr_name, attr_value);
+
+    attr_name = ACTION_PACKET_ACTION;
+    attr_value = PACKET_ACTION_DROP;
+    rule->validateAddAction(attr_name, attr_value);
+
+    gAclOrch->addAclRule(rule, m_aclTable, m_aclRule);
 }
 
 PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue,
