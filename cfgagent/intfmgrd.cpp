@@ -4,7 +4,7 @@
 #include "select.h"
 #include "exec.h"
 #include "schema.h"
-#include "intfconf.h"
+#include "intfmgr.h"
 
 using namespace std;
 using namespace swss;
@@ -14,10 +14,10 @@ using namespace swss;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("intfconfd");
+    Logger::linkToDbNative("intfmgrd");
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("--- Starting intfconfd ---");
+    SWSS_LOG_NOTICE("--- Starting intfmgrd ---");
 
     try
     {
@@ -31,10 +31,10 @@ int main(int argc, char **argv)
         DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-        IntfConf intfconf(&cfgDb, &appDb, &stateDb, cfg_intf_tables);
+        IntfMgr intfmgr(&cfgDb, &appDb, &stateDb, cfg_intf_tables);
 
         // TODO: add tables in stateDB which interface depends on to monitor list
-        std::vector<OrchBase *> cfgOrchList = {&intfconf};
+        std::vector<OrchBase *> cfgOrchList = {&intfmgr};
 
         swss::Select s;
         for (OrchBase *o : cfgOrchList)
@@ -56,7 +56,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-               ((OrchBase *)&intfconf)->doTask();
+               ((OrchBase *)&intfmgr)->doTask();
                 continue;
             }
 

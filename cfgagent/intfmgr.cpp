@@ -4,7 +4,7 @@
 #include "producerstatetable.h"
 #include "tokenize.h"
 #include "ipprefix.h"
-#include "intfconf.h"
+#include "intfmgr.h"
 #include "exec.h"
 
 using namespace std;
@@ -13,7 +13,7 @@ using namespace swss;
 #define VLAN_PREFIX         "Vlan"
 #define LAG_PREFIX          "PortChannel"
 
-IntfConf::IntfConf(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, vector<string> tableNames) :
+IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         OrchBase(cfgDb, tableNames),
         m_cfgIntfTable(cfgDb, CFG_INTF_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
         m_cfgVlanIntfTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
@@ -24,23 +24,22 @@ IntfConf::IntfConf(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
 {
 }
 
-void IntfConf::syncCfgDB()
+void IntfMgr::syncCfgDB()
 {
     OrchBase::syncDB(CFG_INTF_TABLE_NAME, m_cfgIntfTable);
     OrchBase::syncDB(CFG_VLAN_INTF_TABLE_NAME, m_cfgVlanIntfTable);
 }
 
-bool IntfConf::setIntfIp(string &alias, string &opCmd, string &ipPrefixStr)
+bool IntfMgr::setIntfIp(const string &alias, const string &opCmd, const string &ipPrefixStr)
 {
     string cmd, res;
 
-    cmd = "ip address " + opCmd + " ";
-    cmd += ipPrefixStr + " dev " + alias;
+    cmd = "ip address " + opCmd + " " + ipPrefixStr + " dev " + alias;;
     swss::exec(cmd, res);
     return true;
 }
 
-bool IntfConf::isIntfStateOk(string &alias)
+bool IntfMgr::isIntfStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
 
@@ -48,7 +47,7 @@ bool IntfConf::isIntfStateOk(string &alias)
     {
         if (m_stateVlanTable.get(alias, temp))
         {
-            SWSS_LOG_DEBUG("Port %s is ready\n", alias.c_str());
+            SWSS_LOG_DEBUG("Vlan %s is ready\n", alias.c_str());
             return true;
         }
     }
@@ -68,7 +67,7 @@ bool IntfConf::isIntfStateOk(string &alias)
 
     return false;
 }
-void IntfConf::doTask(Consumer &consumer)
+void IntfMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -102,7 +101,12 @@ void IntfConf::doTask(Consumer &consumer)
         string op = kfvOp(t);
         if (op == SET_COMMAND)
         {
-            /* Don't proceed if port/lag/VLAN is not ready yet */
+            /*
+             * Don't proceed if port/lag/VLAN is not ready yet.
+             * The pending task will be checked periodially and retried.
+             * TODO: Subscribe to stateDB for port/lag/VLAN state and retry
+             * pending tasks immediately upon state change.
+             */
             if (!isIntfStateOk(alias))
             {
                 SWSS_LOG_DEBUG("Interface is not ready, skipping %s", kfvKey(t).c_str());
