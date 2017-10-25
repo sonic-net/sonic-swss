@@ -29,6 +29,7 @@ include /usr/share/dpkg/default.mk
 
 override_dh_auto_configure:
 	dh_auto_configure --
+	dh_auto_configure -- --enable-gtest
 
 override_dh_auto_install:
 	dh_auto_install --destdir=debian/swss
