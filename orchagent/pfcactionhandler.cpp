@@ -34,7 +34,7 @@ PfcWdActionHandler::PfcWdActionHandler(sai_object_id_t port, sai_object_id_t que
             "PFC Watchdog detected PFC storm on queue 0x%lx port 0x%lx",
             m_queue,
             m_port);
-    
+
     m_stats = getQueueStats(m_countersTable, sai_serialize_object_id(m_queue));
     m_stats.detectCount++;
     m_stats.operational = false;
@@ -141,33 +141,55 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
 
     string portstr = sai_serialize_object_id(port);
     string queuestr = sai_serialize_object_id(queue);
+    m_strTable = "Table_" + portstr + "_" + queuestr;
+    m_strRule = "Rule_" + portstr + "_" + queuestr;
 
-    m_aclTable = "Table_" + portstr + "_" + queuestr;
-    m_aclRule = "Rule_" + portstr + "_" + queuestr;
-
-    /* TODO: Create Acl Table for all PFC WD enabled Ports in the init state*/
-    createPfcAclTable(port);
-    shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_aclRule, m_aclTable, table_type);
-    createPfcAclRule(newRule, queueId);
+    auto found = m_aclTables.find(m_strTable);
+    if (found == m_aclTables.end())
+    {
+        // First time of handling PFC for this queue, create ACL table, and bind
+        createPfcAclTable(port);
+        shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_strRule, m_strTable, table_type);
+        createPfcAclRule(newRule, queueId);
+    }
+    else
+    {
+        // Otherwise just bind ACL table with the port
+        found->second.bind(port);
+    }
 }
 
 PfcWdAclHandler::~PfcWdAclHandler(void)
 {
     SWSS_LOG_ENTER();
 
-    gAclOrch->removeAclRule(m_aclTable, m_aclRule);
-    gAclOrch->removeAclTable(m_aclTable);
+    auto found = m_aclTables.find(m_strTable);
+    found->second.unbind(getPort());
+}
+
+void PfcWdAclHandler::clear()
+{
+    for (auto& tablepair: m_aclTables)
+    {
+        auto& table = tablepair.second;
+        gAclOrch->removeAclTable(table.getId());
+    }
 }
 
 void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port)
 {
     SWSS_LOG_ENTER();
 
-    AclTable newTable;
-    newTable.type = ACL_TABLE_L3;
-    newTable.link(port);
-    newTable.id = m_aclTable;
-    gAclOrch->addAclTable(newTable, m_aclTable);
+    auto inserted = m_aclTables.emplace(piecewise_construct,
+        std::forward_as_tuple(m_strTable),
+        std::forward_as_tuple());
+
+    assert(inserted.second);
+    AclTable& aclTable = inserted.first->second;
+    aclTable.type = ACL_TABLE_L3;
+    aclTable.link(port);
+    aclTable.id = m_strTable;
+    gAclOrch->addAclTable(aclTable, m_strTable);
 }
 
 void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId)
@@ -186,8 +208,10 @@ void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queue
     attr_value = PACKET_ACTION_DROP;
     rule->validateAddAction(attr_name, attr_value);
 
-    gAclOrch->addAclRule(rule, m_aclTable, m_aclRule);
+    gAclOrch->addAclRule(rule, m_strTable);
 }
+
+std::map<std::string, AclTable> PfcWdAclHandler::m_aclTables;
 
 PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue,
         uint8_t queueId, shared_ptr<Table> countersTable):

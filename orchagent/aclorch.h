@@ -230,6 +230,7 @@ public:
     {}
 
     sai_object_id_t getOid() { return m_oid; }
+    string getId() { return id; }
     bool validate();
     bool create();
 
@@ -243,6 +244,12 @@ public:
     bool unbind();
     // Link the ACL table with a port, for future bind or unbind
     void link(sai_object_id_t portOid);
+    // Add or overwrite a rule into the ACL table
+    bool add(shared_ptr<AclRule> newRule);
+    // Remove a rule from the ACL table
+    bool remove(string rule_id);
+    // Remove all rules from the ACL table
+    bool clear();
 };
 
 template <class Iterable>
@@ -280,7 +287,7 @@ public:
 
     bool addAclTable(AclTable &aclTable, string table_id);
     bool removeAclTable(string table_id);
-    bool addAclRule(shared_ptr<AclRule> aclRule, string table_id, string rule_id);
+    bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
 
 private:

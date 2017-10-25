@@ -981,6 +981,73 @@ void AclTable::link(sai_object_id_t portOid)
     ports.emplace(portOid, SAI_NULL_OBJECT_ID);
 }
 
+bool AclTable::add(shared_ptr<AclRule> newRule)
+{
+    string rule_id = newRule->getId();
+    auto ruleIter = rules.find(rule_id);
+    if (ruleIter != rules.end())
+    {
+        // If ACL rule already exists, delete it first
+        if (ruleIter->second->remove())
+        {
+            rules.erase(ruleIter);
+            SWSS_LOG_NOTICE("Successfully deleted ACL rule: %s", rule_id.c_str());
+        }
+    }
+
+    if (newRule->create())
+    {
+        rules[rule_id] = newRule;
+        SWSS_LOG_NOTICE("Successfully created ACL rule %s in table %s", rule_id.c_str(), id.c_str());
+        return true;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Failed to create rule in table %s", id.c_str());
+        return false;
+    }
+}
+
+bool AclTable::remove(string rule_id)
+{
+    auto ruleIter = rules.find(rule_id);
+    if (ruleIter != rules.end())
+    {
+        if (ruleIter->second->remove())
+        {
+            rules.erase(ruleIter);
+            SWSS_LOG_NOTICE("Successfully deleted ACL rule %s", rule_id.c_str());
+            return true;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to delete ACL rule: %s", rule_id.c_str());
+            return false;
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("Skip deleting ACL rule. Unknown rule %s", rule_id.c_str());
+        return true;
+    }
+}
+
+bool AclTable::clear()
+{
+    for (auto& rulepair: rules)
+    {
+        auto& rule = *rulepair.second;
+        bool suc = rule.remove();
+        if (!suc)
+        {
+            SWSS_LOG_ERROR("Failed to delete existing ACL rule %s when removing the ACL table %s", rule.getId().c_str(), id.c_str());
+            return false;
+        }
+    }
+    rules.clear();
+    return true;
+}
+
 AclRuleCounters AclRuleMirror::getCounters()
 {
     AclRuleCounters cnt(counters);
@@ -1245,15 +1312,8 @@ bool AclOrch::removeAclTable(string table_id)
     }
 
     /* If ACL rules associate with this table, remove the rules first.*/
-    while (!m_AclTables[table_oid].rules.empty())
-    {
-        auto ruleIter = m_AclTables[table_oid].rules.begin();
-        if (!removeAclRule(table_id, ruleIter->first))
-        {
-            SWSS_LOG_ERROR("Failed to delete existing ACL rule %s when removing the ACL table %s", ruleIter->first.c_str(), table_id.c_str());
-            return false;
-        }
-    }
+    bool suc = m_AclTables[table_oid].clear();
+    if (!suc) return false;
 
     if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
     {
@@ -1268,37 +1328,16 @@ bool AclOrch::removeAclTable(string table_id)
     }
 }
 
-bool AclOrch::addAclRule(shared_ptr<AclRule> newRule, string table_id, string rule_id)
+bool AclOrch::addAclRule(shared_ptr<AclRule> newRule, string table_id)
 {
     sai_object_id_t table_oid = getTableById(table_id);
     if (table_oid == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("Failed to add ACL rule %s in ACL table %s. Table doesn't exist", rule_id.c_str(), table_id.c_str());
+        SWSS_LOG_ERROR("Failed to add ACL rule in ACL table %s. Table doesn't exist", table_id.c_str());
         return false;
     }
 
-    auto ruleIter = m_AclTables[table_oid].rules.find(rule_id);
-    if (ruleIter != m_AclTables[table_oid].rules.end())
-    {
-        // If ACL rule already exists, delete it first
-        if (ruleIter->second->remove())
-        {
-            m_AclTables[table_oid].rules.erase(ruleIter);
-            SWSS_LOG_NOTICE("Successfully deleted ACL rule: %s", rule_id.c_str());
-        }
-    }
-
-    if (newRule->create())
-    {
-        m_AclTables[table_oid].rules[rule_id] = newRule;
-        SWSS_LOG_NOTICE("Successfully created ACL rule %s in table %s", rule_id.c_str(), table_id.c_str());
-        return true;
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Failed to create rule in table %s", table_id.c_str());
-        return false;
-    }
+    return m_AclTables[table_oid].add(newRule);
 }
 
 bool AclOrch::removeAclRule(string table_id, string rule_id)
@@ -1310,26 +1349,7 @@ bool AclOrch::removeAclRule(string table_id, string rule_id)
         return true;
     }
 
-    auto ruleIter = m_AclTables[table_oid].rules.find(rule_id);
-    if (ruleIter != m_AclTables[table_oid].rules.end())
-    {
-        if (ruleIter->second->remove())
-        {
-            m_AclTables[table_oid].rules.erase(ruleIter);
-            SWSS_LOG_NOTICE("Successfully deleted ACL rule %s", rule_id.c_str());
-            return true;
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to delete ACL rule: %s", table_id.c_str());
-            return false;
-        }
-    }
-    else
-    {
-        SWSS_LOG_WARN("Skip deleting ACL rule. Unknown rule %s", rule_id.c_str());
-        return true;
-    }
+    return m_AclTables[table_oid].remove(rule_id);
 }
 
 void AclOrch::doAclTableTask(Consumer &consumer)
@@ -1485,7 +1505,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             // validate and create ACL rule
             if (bAllAttributesOk && newRule->validate())
             {
-                if(addAclRule(newRule, table_id, rule_id))
+                if(addAclRule(newRule, table_id))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;

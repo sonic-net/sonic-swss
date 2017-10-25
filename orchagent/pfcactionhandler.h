@@ -66,9 +66,15 @@ class PfcWdAclHandler: public PfcWdActionHandler
         PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
                 uint8_t queueId, shared_ptr<Table> countersTable);
         virtual ~PfcWdAclHandler(void);
+
+        // class shared cleanup
+        static void clear();
     private:
-        string m_aclTable;
-        string m_aclRule;
+        // class shared dict: ACL table name -> ACL table
+        static std::map<std::string, AclTable> m_aclTables;
+
+        string m_strTable;
+        string m_strRule;
         void createPfcAclTable(sai_object_id_t port);
         void createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId);
 };
