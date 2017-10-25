@@ -4,11 +4,6 @@
 #include <map>
 #include <memory>
 
-extern "C" {
-#include "sai.h"
-#include "saistatus.h"
-}
-
 #include "dbconnector.h"
 #include "table.h"
 #include "consumertable.h"
@@ -38,7 +33,7 @@ class OrchBase
 {
 public:
     OrchBase(DBConnector *db, string tableName);
-    OrchBase(DBConnector *db, vector<string> &tableNames);
+    OrchBase(DBConnector *db, const vector<string> &tableNames);
     OrchBase(const vector<TableConnector>& tables);
     virtual ~OrchBase();
 

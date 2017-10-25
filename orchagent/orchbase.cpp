@@ -16,7 +16,7 @@ OrchBase::OrchBase(DBConnector *db, string tableName)
     addConsumer(db, tableName);
 }
 
-OrchBase::OrchBase(DBConnector *db, vector<string> &tableNames)
+OrchBase::OrchBase(DBConnector *db, const vector<string> &tableNames)
 {
     for(auto it : tableNames)
     {
