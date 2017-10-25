@@ -12,7 +12,7 @@ endif
 CFLAGS_GTEST =
 LDADD_GTEST =
 
-tests_SOURCES = swssnet_ut.cpp
+tests_SOURCES = swssnet_ut.cpp orchbase_ut.cpp $(top_srcdir)/orchagent/orchbase.cpp
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
