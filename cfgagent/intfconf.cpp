@@ -14,7 +14,7 @@ using namespace swss;
 #define LAG_PREFIX          "PortChannel"
 
 IntfConf::IntfConf(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, vector<string> tableNames) :
-        CfgOrch(cfgDb, tableNames),
+        OrchBase(cfgDb, tableNames),
         m_cfgIntfTable(cfgDb, CFG_INTF_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
         m_cfgVlanIntfTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
@@ -22,13 +22,12 @@ IntfConf::IntfConf(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME)
 {
-
 }
 
 void IntfConf::syncCfgDB()
 {
-    CfgOrch::syncCfgDB(CFG_INTF_TABLE_NAME, m_cfgIntfTable);
-    CfgOrch::syncCfgDB(CFG_VLAN_INTF_TABLE_NAME, m_cfgVlanIntfTable);
+    OrchBase::syncDB(CFG_INTF_TABLE_NAME, m_cfgIntfTable);
+    OrchBase::syncDB(CFG_VLAN_INTF_TABLE_NAME, m_cfgVlanIntfTable);
 }
 
 bool IntfConf::setIntfIp(string &alias, string &opCmd, string &ipPrefixStr)
@@ -89,7 +88,14 @@ void IntfConf::doTask(Consumer &consumer)
             continue;
         }
 
-        IpPrefix ip_prefix(kfvKey(t).substr(kfvKey(t).find(CONFIGDB_KEY_SEPARATOR)+1));
+        size_t pos = kfvKey(t).find(CONFIGDB_KEY_SEPARATOR);
+        if (pos == string::npos)
+        {
+            SWSS_LOG_DEBUG("Invalid key %s", kfvKey(t).c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+        IpPrefix ip_prefix(kfvKey(t).substr(pos+1));
 
         SWSS_LOG_DEBUG("intfs doTask: %s", (dumpTuple(consumer, t)).c_str());
 

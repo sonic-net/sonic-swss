@@ -43,6 +43,7 @@ deps/
 teamsyncd/teamsyncd
 fpmsyncd/fpmsyncd
 intfsyncd/intfsyncd
+cfgagent/intfconfd
 neighsyncd/neighsyncd
 portsyncd/portsyncd
 orchagent/orchagent

@@ -3,14 +3,14 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "cfgorch.h"
+#include "orchbase.h"
 
 #include <map>
 #include <string>
 
 namespace swss {
 
-class IntfConf : public CfgOrch
+class IntfConf : public OrchBase
 {
 public:
     IntfConf(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, vector<string> tableNames);

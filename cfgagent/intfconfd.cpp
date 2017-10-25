@@ -34,10 +34,10 @@ int main(int argc, char **argv)
         IntfConf intfconf(&cfgDb, &appDb, &stateDb, cfg_intf_tables);
 
         // TODO: add tables in stateDB which interface depends on to monitor list
-        std::vector<CfgOrch *> cfgOrchList = {&intfconf};
+        std::vector<OrchBase *> cfgOrchList = {&intfconf};
 
         swss::Select s;
-        for (CfgOrch *o : cfgOrchList)
+        for (OrchBase *o : cfgOrchList)
         {
             s.addSelectables(o->getSelectables());
         }
@@ -56,11 +56,11 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-               ((CfgOrch *)&intfconf)->doTask();
+               ((OrchBase *)&intfconf)->doTask();
                 continue;
             }
 
-            for (CfgOrch *o : cfgOrchList)
+            for (OrchBase *o : cfgOrchList)
             {
                 TableConsumable *c = (TableConsumable *)sel;
                 if (o->hasSelectable(c))
@@ -74,5 +74,5 @@ int main(int argc, char **argv)
     {
         SWSS_LOG_ERROR("Runtime error: %s", e.what());
     }
-    return 0;
+    return -1;
 }
