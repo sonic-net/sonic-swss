@@ -3,7 +3,7 @@
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "switchconfvlan.h"
+#include "switchconf.h"
 #include "exec.h"
 
 using namespace std;
@@ -12,28 +12,34 @@ using namespace swss;
 #define DOT1Q_BRIDGE_NAME   "Bridge"
 #define CFG_SWITCH_ATTR_NAME "SWITCH_ATTR"
 
-SwitchConfVlan::SwitchConfVlan(DBConnector *cfgDb, DBConnector *appDb, string tableName) :
-        CfgOrch(cfgDb, tableName),
-        m_cfgSwitchTableConsumer(cfgDb, tableName, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_appSwitchTableProducer(appDb, APP_SWITCH_TABLE_NAME)
+SwitchConf::SwitchConf(DBConnector *cfgDb, DBConnector *appDb, string tableName) :
+        OrchBase(cfgDb, tableName),
+        m_cfgSwitchTable(cfgDb, tableName, CONFIGDB_TABLE_NAME_SEPARATOR)
 {
-
+    /*
+     * There could be multiple configDB enforcers listening on SWITCH table.
+     * Only one of them will pass the configuration down to appDB, others
+     * get the config data for local consumtion.
+     */
+    if (appDb)
+    {
+        m_appSwitchTableProducer = make_shared<ProducerStateTable>(appDb, APP_SWITCH_TABLE_NAME);
+    }
 }
 
-SwitchConfVlan::~SwitchConfVlan()
+SwitchConf::~SwitchConf()
 {
-
 }
 
-void SwitchConfVlan::syncCfgDB()
+void SwitchConf::syncCfgDB()
 {
-    CfgOrch::syncCfgDB(CFG_SWITCH_TABLE_NAME, m_cfgSwitchTableConsumer);
+    OrchBase::syncDB(CFG_SWITCH_TABLE_NAME, m_cfgSwitchTable);
 }
 
 /*
  * ls /sys/class/net/Bridge/brif/ | xargs -n 1 -I % sh -c 'echo %; echo 0 > /sys/class/net/Bridge/brif/%/unicast_flood'
  */
-void SwitchConfVlan::updateHostFloodControl(string brif)
+void SwitchConf::updateHostFloodControl(string brif)
 {
     string brif_path = "/sys/class/net/";
     string cmd, res;
@@ -88,7 +94,7 @@ void SwitchConfVlan::updateHostFloodControl(string brif)
     }
 }
 
-void SwitchConfVlan::getHostFloodSetting(bool &flood, string &action)
+void SwitchConf::getHostFloodSetting(bool &flood, string &action)
 {
     if (action == "forward" || action == "trap")
     {
@@ -101,7 +107,7 @@ void SwitchConfVlan::getHostFloodSetting(bool &flood, string &action)
 
 }
 
-void SwitchConfVlan::doTask(Consumer &consumer)
+void SwitchConf::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -130,7 +136,10 @@ void SwitchConfVlan::doTask(Consumer &consumer)
             }
             string all_brif;
             updateHostFloodControl(all_brif);
-            m_appSwitchTableProducer.set(key, kfvFieldsValues(t));
+            if (m_appSwitchTableProducer !=nullptr)
+            {
+                m_appSwitchTableProducer->set(key, kfvFieldsValues(t));
+            }
         }
 
         it = consumer.m_toSync.erase(it);

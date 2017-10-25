@@ -6,7 +6,7 @@
 #include "schema.h"
 #include "macaddress.h"
 #include "producerstatetable.h"
-#include "switchconfvlan.h"
+#include "switchconf.h"
 #include "vlanconf.h"
 
 using namespace std;
@@ -16,7 +16,7 @@ using namespace swss;
 #define SELECT_TIMEOUT 1000
 
 MacAddress gMacAddress;
-SwitchConfVlan *gSwtichConfVlan;
+SwitchConf *gSwtichConfVlan;
 
 int main(int argc, char **argv)
 {
@@ -25,7 +25,7 @@ int main(int argc, char **argv)
 
     SWSS_LOG_NOTICE("--- Starting vlanconfd ---");
 
-    string mac_str, cfg_mac_str;
+    string mac_str;
     swss::exec("ip link show eth0 | grep ether | awk '{print $2}'", mac_str);
     gMacAddress = mac_str;
 
@@ -40,13 +40,14 @@ int main(int argc, char **argv)
         DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-        gSwtichConfVlan = new SwitchConfVlan(&cfgDb, &appDb, CFG_SWITCH_TABLE_NAME);
+
+        gSwtichConfVlan = new SwitchConf(&cfgDb, &appDb, CFG_SWITCH_TABLE_NAME);
         VlanConf vlanconf(&cfgDb, &appDb, &stateDb, cfg_vlan_tables);
 
-        std::vector<CfgOrch *> cfgOrchList = {&vlanconf, gSwtichConfVlan};
+        std::vector<OrchBase *> cfgOrchList = {&vlanconf, gSwtichConfVlan};
 
         swss::Select s;
-        for (CfgOrch *o : cfgOrchList)
+        for (OrchBase *o : cfgOrchList)
         {
             s.addSelectables(o->getSelectables());
         }
@@ -65,11 +66,11 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                ((CfgOrch *)&vlanconf)->doTask();
+                ((OrchBase *)&vlanconf)->doTask();
                 continue;
             }
 
-            for (CfgOrch *o : cfgOrchList)
+            for (OrchBase *o : cfgOrchList)
             {
                 TableConsumable *c = (TableConsumable *)sel;
                 if (o->hasSelectable(c))
@@ -83,5 +84,5 @@ int main(int argc, char **argv)
     {
         SWSS_LOG_ERROR("Runtime error: %s", e.what());
     }
-    return 0;
+    return -1;
 }

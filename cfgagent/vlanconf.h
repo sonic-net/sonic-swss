@@ -3,7 +3,7 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "cfgorch.h"
+#include "orchbase.h"
 
 #include <set>
 #include <map>
@@ -11,7 +11,7 @@
 
 namespace swss {
 
-class VlanConf : public CfgOrch
+class VlanConf : public OrchBase
 {
 public:
     VlanConf(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, vector<string> tableNames);

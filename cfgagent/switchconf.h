@@ -1,8 +1,8 @@
-#ifndef __SWITCHCONFVLAN__
-#define __SWITCHCONFVLAN__
+#ifndef __SWITCHCONF__
+#define __SWITCHCONF__
 
 #include "dbconnector.h"
-#include "cfgorch.h"
+#include "orchbase.h"
 
 #include <map>
 #include <string>
@@ -10,11 +10,11 @@
 namespace swss {
 
 
-class SwitchConfVlan : public CfgOrch
+class SwitchConf : public OrchBase
 {
 public:
-    SwitchConfVlan(DBConnector *cfgDb, DBConnector *appDb, string tableName);
-    virtual ~SwitchConfVlan();
+    SwitchConf(DBConnector *cfgDb, DBConnector *appDb, string tableName);
+    virtual ~SwitchConf();
     void updateHostFloodControl(string brif);
     void syncCfgDB();
 private:
@@ -22,8 +22,8 @@ private:
     bool m_multicast_miss_flood = true;
     bool m_broadcast_flood = true;
 
-	ProducerStateTable m_appSwitchTableProducer;
-	Table m_cfgSwitchTableConsumer;
+    shared_ptr<ProducerStateTable> m_appSwitchTableProducer = nullptr;
+	Table m_cfgSwitchTable;
 
     void doTask(Consumer &consumer);
     void getHostFloodSetting(bool &flood, string &action);

@@ -3,7 +3,7 @@
 #include "producerstatetable.h"
 #include "macaddress.h"
 #include "vlanconf.h"
-#include "switchconfvlan.h"
+#include "switchconf.h"
 #include "exec.h"
 #include "tokenize.h"
 
@@ -16,10 +16,10 @@ using namespace swss;
 #define DEFAULT_VLAN_ID     1
 
 extern MacAddress gMacAddress;
-extern SwitchConfVlan *gSwtichConfVlan;
+extern SwitchConf *gSwtichConfVlan;
 
 VlanConf::VlanConf(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, vector<string> tableNames) :
-        CfgOrch(cfgDb, tableNames),
+        OrchBase(cfgDb, tableNames),
         m_cfgVlanTable(cfgDb, CFG_VLAN_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
         m_cfgVlanMemberTable(cfgDb, CFG_VLAN_MEMBER_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
@@ -51,8 +51,8 @@ VlanConf::VlanConf(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
 
 void VlanConf::syncCfgDB()
 {
-    CfgOrch::syncCfgDB(CFG_VLAN_TABLE_NAME, m_cfgVlanTable);
-    CfgOrch::syncCfgDB(CFG_VLAN_MEMBER_TABLE_NAME, m_cfgVlanMemberTable);
+    OrchBase::syncDB(CFG_VLAN_TABLE_NAME, m_cfgVlanTable);
+    OrchBase::syncDB(CFG_VLAN_MEMBER_TABLE_NAME, m_cfgVlanMemberTable);
 }
 
 bool VlanConf::addHostVlan(int vlan_id)
@@ -404,6 +404,7 @@ void VlanConf::doVlanMemberTask(Consumer &consumer)
         vlan_alias = VLAN_PREFIX + to_string(vlan_id);
         string op = kfvOp(t);
 
+       // TODO:  store port/lag/VLAN data in local data structure and perform more validations.
         if (op == SET_COMMAND)
         {
             /* Don't proceed if member port/lag is not ready yet */
