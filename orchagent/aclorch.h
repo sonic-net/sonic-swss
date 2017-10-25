@@ -69,7 +69,6 @@ typedef enum
 typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
 typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
-typedef vector<sai_object_id_t> ports_list_t;
 typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
 
 class AclOrch;
@@ -214,14 +213,36 @@ protected:
     MirrorOrch *m_pMirrorOrch;
 };
 
-struct AclTable {
+class AclTable {
+    sai_object_id_t m_oid;
+public:
     string id;
     string description;
     acl_table_type_t type;
-    ports_list_t ports;
+    // Map port oid to group member oid
+    std::map<sai_object_id_t, sai_object_id_t> ports;
     // Map rule name to rule data
     map<string, shared_ptr<AclRule>> rules;
-    AclTable(): type(ACL_TABLE_UNKNOWN) {}
+
+    AclTable()
+        : type(ACL_TABLE_UNKNOWN)
+        , m_oid(SAI_NULL_OBJECT_ID)
+    {}
+
+    sai_object_id_t getOid() { return m_oid; }
+    bool validate();
+    bool create();
+
+    // Bind the ACL table to a port which is alread linked
+    bool bind(sai_object_id_t portOid);
+    // Unbind the ACL table to a port which is alread linked
+    bool unbind(sai_object_id_t portOid);
+    // Bind the ACL table to all ports linked
+    bool bind();
+    // Unbind the ACL table to all ports linked
+    bool unbind();
+    // Link the ACL table with a port, for future bind or unbind
+    void link(sai_object_id_t portOid);
 };
 
 template <class Iterable>
@@ -269,18 +290,17 @@ private:
 
     static void collectCountersThread(AclOrch *pAclOrch);
 
-    sai_status_t createBindAclTable(AclTable &aclTable, sai_object_id_t &table_oid);
+    bool createBindAclTable(AclTable &aclTable, sai_object_id_t &table_oid);
     sai_status_t bindAclTable(sai_object_id_t table_oid, AclTable &aclTable, bool bind = true);
     sai_status_t deleteUnbindAclTable(sai_object_id_t table_oid);
 
     bool processAclTableType(string type, acl_table_type_t &table_type);
-    bool processPorts(string portsList, ports_list_t& out);
+
+    bool processPorts(string portsList, std::function<void (sai_object_id_t)> inserter);
     bool validateAclTable(AclTable &aclTable);
 
     //vector <AclTable> m_AclTables;
     map <sai_object_id_t, AclTable> m_AclTables;
-    // ACL table OID to multiple ACL table group member
-    multimap <sai_object_id_t, sai_object_id_t> m_AclTableGroupMembers;
 
     static mutex m_countersMutex;
     static condition_variable m_sleepGuard;

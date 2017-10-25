@@ -165,7 +165,7 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port)
 
     AclTable newTable;
     newTable.type = ACL_TABLE_L3;
-    newTable.ports.push_back(port);
+    newTable.link(port);
     newTable.id = m_aclTable;
     gAclOrch->addAclTable(newTable, m_aclTable);
 }
