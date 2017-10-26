@@ -1,7 +1,7 @@
 INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/orchagent
 CFLAGS_SAI = -I /usr/include/sai
 
-bin_PROGRAMS = vlanconfd
+bin_PROGRAMS = vlanmgrd
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
@@ -9,7 +9,8 @@ else
 DBGFLAGS = -g
 endif
 
-vlanconfd_SOURCES = vlanconfd.cpp vlanconf.cpp switchconf.cpp $(top_srcdir)/orchagent/orchbase.cpp
-vlanconfd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
-vlanconfd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
-vlanconfd_LDADD = -lswsscommon
+vlanmgrd_SOURCES = vlanmgrd.cpp vlanmgr.cpp $(top_srcdir)/orchagent/orchbase.cpp
+vlanmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+vlanmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+vlanmgrd_LDADD = -lswsscommon
+

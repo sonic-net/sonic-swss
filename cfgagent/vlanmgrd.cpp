@@ -6,8 +6,7 @@
 #include "schema.h"
 #include "macaddress.h"
 #include "producerstatetable.h"
-#include "switchconf.h"
-#include "vlanconf.h"
+#include "vlanmgr.h"
 
 using namespace std;
 using namespace swss;
@@ -16,14 +15,13 @@ using namespace swss;
 #define SELECT_TIMEOUT 1000
 
 MacAddress gMacAddress;
-SwitchConf *gSwtichConfVlan;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("vlanconfd");
+    Logger::linkToDbNative("vlanmgrd");
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("--- Starting vlanconfd ---");
+    SWSS_LOG_NOTICE("--- Starting vlanmgrd ---");
 
     string mac_str;
     swss::exec("ip link show eth0 | grep ether | awk '{print $2}'", mac_str);
@@ -40,11 +38,9 @@ int main(int argc, char **argv)
         DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
+        VlanMgr vlanmgr(&cfgDb, &appDb, &stateDb, cfg_vlan_tables);
 
-        gSwtichConfVlan = new SwitchConf(&cfgDb, &appDb, CFG_SWITCH_TABLE_NAME);
-        VlanConf vlanconf(&cfgDb, &appDb, &stateDb, cfg_vlan_tables);
-
-        std::vector<OrchBase *> cfgOrchList = {&vlanconf, gSwtichConfVlan};
+        std::vector<OrchBase *> cfgOrchList = {&vlanmgr};
 
         swss::Select s;
         for (OrchBase *o : cfgOrchList)
@@ -61,12 +57,12 @@ int main(int argc, char **argv)
             ret = s.select(&sel, &fd, SELECT_TIMEOUT);
             if (ret == Select::ERROR)
             {
-                SWSS_LOG_NOTICE("Error: %s!\n", strerror(errno));
+                SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
                 continue;
             }
             if (ret == Select::TIMEOUT)
             {
-                ((OrchBase *)&vlanconf)->doTask();
+                ((OrchBase *)&vlanmgr)->doTask();
                 continue;
             }
 
