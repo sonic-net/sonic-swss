@@ -53,7 +53,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     m_counterTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_PORT_NAME_MAP));
 
     /* Initialize port table */
-    m_portTable = unique_ptr<Table>(new Table(m_db, APP_PORT_TABLE_NAME));
+    m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
 
     /* Initialize queue tables */
     m_queueTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_NAME_MAP));

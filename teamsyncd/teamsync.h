@@ -16,7 +16,7 @@ namespace swss {
 class TeamSync : public NetMsg
 {
 public:
-    TeamSync(DBConnector *db, Select *select);
+    TeamSync(DBConnector *db, DBConnector *stateDb, Select *select);
 
     /*
      * Listens to RTM_NEWLINK and RTM_DELLINK to undestand if there is a new
@@ -59,6 +59,7 @@ private:
     Select *m_select;
     ProducerStateTable m_lagTable;
     ProducerStateTable m_lagMemberTable;
+    Table m_stateLagTable;
     std::map<std::string, std::shared_ptr<TeamPortSync> > m_teamPorts;
 };
 
