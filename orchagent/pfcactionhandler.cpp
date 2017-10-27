@@ -139,10 +139,10 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
 {
     acl_table_type_t table_type = ACL_TABLE_L3;
 
-    string portstr = sai_serialize_object_id(port);
-    string queuestr = sai_serialize_object_id(queue);
-    m_strTable = "Table_" + portstr + "_" + queuestr;
-    m_strRule = "Rule_" + portstr + "_" + queuestr;
+    // There is one handler instance per queue ID
+    string queuestr = to_string(queueId);
+    m_strTable = "Table_PfcWdAclHandler_" + queuestr;
+    m_strRule = "Rule_PfcWdAclHandler_" + queuestr;
 
     auto found = m_aclTables.find(m_strTable);
     if (found == m_aclTables.end())
