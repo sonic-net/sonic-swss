@@ -1,5 +1,6 @@
 #include <unistd.h>
 #include <vector>
+#include <sstream>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
@@ -7,6 +8,7 @@
 #include "macaddress.h"
 #include "producerstatetable.h"
 #include "vlanmgr.h"
+#include "shellcmd.h"
 
 using namespace std;
 using namespace swss;
@@ -24,7 +26,9 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("--- Starting vlanmgrd ---");
 
     string mac_str;
-    swss::exec("ip link show eth0 | grep ether | awk '{print $2}'", mac_str);
+    stringstream cmd;
+    cmd << IP_CMD << " link show eth0 | " << GREP_CMD << " ether | " << AWK_CMD << " '{print $2}'";
+    swss::exec(cmd.str(), mac_str);
     gMacAddress = mac_str;
 
     try

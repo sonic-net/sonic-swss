@@ -5,6 +5,7 @@
 #include "vlanmgr.h"
 #include "exec.h"
 #include "tokenize.h"
+#include "shellcmd.h"
 
 using namespace std;
 using namespace swss;
@@ -13,6 +14,8 @@ using namespace swss;
 #define VLAN_PREFIX         "Vlan"
 #define LAG_PREFIX          "PortChannel"
 #define DEFAULT_VLAN_ID     1
+#define MAX_MTU             9100
+#define VLAN_HLEN            4
 
 extern MacAddress gMacAddress;
 
@@ -32,19 +35,19 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     stringstream cmd;
     string res;
 
-    cmd << "ip link del " << DOT1Q_BRIDGE_NAME;
+    cmd << IP_CMD << " link del " << DOT1Q_BRIDGE_NAME;
     swss::exec(cmd.str(), res);
 
     cmd.str("");
-    cmd << "ip link add " << DOT1Q_BRIDGE_NAME << " up type bridge";
+    cmd << IP_CMD << " link add " << DOT1Q_BRIDGE_NAME << " up type bridge";
     swss::exec(cmd.str(), res);
 
     cmd.str("");
-    cmd << "echo 1 > /sys/class/net/" << DOT1Q_BRIDGE_NAME << "/bridge/vlan_filtering";
+    cmd << ECHO_CMD << " 1 > /sys/class/net/" << DOT1Q_BRIDGE_NAME << "/bridge/vlan_filtering";
     swss::exec(cmd.str(), res);
 
     cmd.str("");
-    cmd << "bridge vlan del vid " << DEFAULT_VLAN_ID << " dev " << DOT1Q_BRIDGE_NAME << " self";
+    cmd << BRIDGE_CMD << " vlan del vid " << DEFAULT_VLAN_ID << " dev " << DOT1Q_BRIDGE_NAME << " self";
     swss::exec(cmd.str(), res);
 }
 
@@ -59,20 +62,20 @@ bool VlanMgr::addHostVlan(int vlan_id)
     stringstream cmd;
     string res;
 
-    cmd << "bridge vlan add vid " << vlan_id << " dev " << DOT1Q_BRIDGE_NAME << " self";
+    cmd << BRIDGE_CMD << " vlan add vid " << vlan_id << " dev " << DOT1Q_BRIDGE_NAME << " self";
     swss::exec(cmd.str(), res);
 
     cmd.str("");
-    cmd << "ip link add link " << DOT1Q_BRIDGE_NAME << " name " << VLAN_PREFIX << vlan_id << " type vlan id " << vlan_id;
+    cmd << IP_CMD << " link add link " << DOT1Q_BRIDGE_NAME << " name " << VLAN_PREFIX << vlan_id << " type vlan id " << vlan_id;
     swss::exec(cmd.str(), res);
 
     cmd.str("");
-    cmd << "ip link set " << VLAN_PREFIX << vlan_id << " address " << gMacAddress.to_string();
+    cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " address " << gMacAddress.to_string();
     swss::exec(cmd.str(), res);
 
     // Bring up vlan port by default
     cmd.str("");
-    cmd << "ip link set " << VLAN_PREFIX << vlan_id << " up";
+    cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " up";
     swss::exec(cmd.str(), res);
     return true;
 }
@@ -82,11 +85,11 @@ bool VlanMgr::removeHostVlan(int vlan_id)
     stringstream cmd;
     string res;
 
-    cmd << "ip link del " << VLAN_PREFIX << vlan_id;
+    cmd << IP_CMD << " link del " << VLAN_PREFIX << vlan_id;
     swss::exec(cmd.str(), res);
 
     cmd.str("");
-    cmd << "bridge vlan del vid " << vlan_id << " dev " << DOT1Q_BRIDGE_NAME << " self";
+    cmd << BRIDGE_CMD << " vlan del vid " << vlan_id << " dev " << DOT1Q_BRIDGE_NAME << " self";
     swss::exec(cmd.str(), res);
 
     return true;
@@ -97,7 +100,7 @@ bool VlanMgr::setHostVlanAdminState(int vlan_id, const string &admin_status)
     stringstream cmd;
     string res;
 
-    cmd << "ip link set " << VLAN_PREFIX << vlan_id << " " << admin_status;
+    cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " " << admin_status;
     swss::exec(cmd.str(), res);
     return true;
 }
@@ -107,7 +110,7 @@ bool VlanMgr::setHostVlanMtu(int vlan_id, uint32_t mtu)
     stringstream cmd;
     string res;
 
-    cmd << "ip link set " << VLAN_PREFIX << vlan_id << " mtu " << mtu;
+    cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " mtu " << mtu;
     swss::exec(cmd.str(), res);
     return true;
 }
@@ -118,23 +121,23 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
     string res;
 
     // Should be ok to run set master command more than one time.
-    cmd << "ip link set " << port_alias << " master " << DOT1Q_BRIDGE_NAME;
+    cmd << IP_CMD << " link set " << port_alias << " master " << DOT1Q_BRIDGE_NAME;
     swss::exec(cmd.str(), res);
     cmd.str("");
     if (tagging_mode == "untagged" || tagging_mode == "priority_tagged")
     {
         // We are setting pvid as untagged vlan id.
-        cmd << "bridge vlan add vid " << vlan_id << " dev " << port_alias << " pvid untagged";
+        cmd << BRIDGE_CMD << " vlan add vid " << vlan_id << " dev " << port_alias << " pvid untagged";
     }
     else
     {
-        cmd << "bridge vlan add vid " << vlan_id << " dev " << port_alias;
+        cmd << BRIDGE_CMD << " vlan add vid " << vlan_id << " dev " << port_alias;
     }
     swss::exec(cmd.str(), res);
 
     cmd.str("");
     // Bring up vlan member port and set MTU to 9100 by default
-    cmd << "ip link set " << port_alias << " up mtu 9100";
+    cmd << IP_CMD << " link set " << port_alias << " up mtu " << MAX_MTU;
     swss::exec(cmd.str(), res);
     return true;
 }
@@ -144,17 +147,17 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
     stringstream cmd;
     string res;
 
-    cmd << "bridge vlan del vid " << vlan_id << " dev " << port_alias;
+    cmd << BRIDGE_CMD << " vlan del vid " << vlan_id << " dev " << port_alias;
     swss::exec(cmd.str(), res);
 
     cmd.str("");
     // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
-    cmd << "bridge vlan show dev " << port_alias << " | grep None";
+    cmd << BRIDGE_CMD << " vlan show dev " << port_alias << " | " << GREP_CMD << " None";
     swss::exec(cmd.str(), res);
     if (!res.empty())
     {
         cmd.str("");
-        cmd << "ip link set " << port_alias << " nomaster";
+        cmd << IP_CMD << " link set " << port_alias << " nomaster";
         swss::exec(cmd.str(), res);
     }
 
@@ -349,7 +352,7 @@ void VlanMgr::processUntaggedVlanMembers(string vlan, const string &members)
             SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, consumer.m_toSync[member_key])).c_str());
         }
         /*
-         * There is pending task from consumber pipe, in this case just skip it.
+         * There is pending task from consumer pipe, in this case just skip it.
          */
         else
         {
@@ -414,7 +417,9 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "tagging_mode")
+                {
                     tagging_mode = fvValue(i);
+                }
             }
 
             if (tagging_mode != "untagged" &&
@@ -459,9 +464,13 @@ void VlanMgr::doTask(Consumer &consumer)
     string table_name = consumer.m_consumer->getTableName();
 
     if (table_name == CFG_VLAN_TABLE_NAME)
+    {
         doVlanTask(consumer);
+    }
     else if (table_name == CFG_VLAN_MEMBER_TABLE_NAME)
+    {
         doVlanMemberTask(consumer);
+    }
     else
     {
         SWSS_LOG_ERROR("Unknown config table %s ", table_name.c_str());
