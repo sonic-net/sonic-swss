@@ -51,7 +51,7 @@ int main(int argc, char **argv)
             ret = s.select(&sel, &fd, SELECT_TIMEOUT);
             if (ret == Select::ERROR)
             {
-                SWSS_LOG_NOTICE("Error: %s!\n", strerror(errno));
+                SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
                 continue;
             }
             if (ret == Select::TIMEOUT)

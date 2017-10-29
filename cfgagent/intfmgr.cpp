@@ -6,6 +6,7 @@
 #include "ipprefix.h"
 #include "intfmgr.h"
 #include "exec.h"
+#include "shellcmd.h"
 
 using namespace std;
 using namespace swss;
@@ -32,10 +33,11 @@ void IntfMgr::syncCfgDB()
 
 bool IntfMgr::setIntfIp(const string &alias, const string &opCmd, const string &ipPrefixStr)
 {
-    string cmd, res;
+    stringstream cmd;
+    string res;
 
-    cmd = "ip address " + opCmd + " " + ipPrefixStr + " dev " + alias;;
-    swss::exec(cmd, res);
+    cmd << IP_CMD << " address " << opCmd << " " << ipPrefixStr << " dev " << alias;;
+    swss::exec(cmd.str(), res);
     return true;
 }
 
@@ -47,7 +49,7 @@ bool IntfMgr::isIntfStateOk(const string &alias)
     {
         if (m_stateVlanTable.get(alias, temp))
         {
-            SWSS_LOG_DEBUG("Vlan %s is ready\n", alias.c_str());
+            SWSS_LOG_DEBUG("Vlan %s is ready", alias.c_str());
             return true;
         }
     }
@@ -55,13 +57,13 @@ bool IntfMgr::isIntfStateOk(const string &alias)
     {
         if (m_stateLagTable.get(alias, temp))
         {
-            SWSS_LOG_DEBUG("Lag %s is ready\n", alias.c_str());
+            SWSS_LOG_DEBUG("Lag %s is ready", alias.c_str());
             return true;
         }
     }
     else if (m_statePortTable.get(alias, temp))
     {
-        SWSS_LOG_DEBUG("Port %s is ready\n", alias.c_str());
+        SWSS_LOG_DEBUG("Port %s is ready", alias.c_str());
         return true;
     }
 
