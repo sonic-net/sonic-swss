@@ -137,6 +137,8 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
         uint8_t queueId, shared_ptr<Table> countersTable):
     PfcWdActionHandler(port, queue, queueId, countersTable)
 {
+    SWSS_LOG_ENTER();
+
     acl_table_type_t table_type = ACL_TABLE_L3;
 
     // There is one handler instance per queue ID
@@ -169,6 +171,8 @@ PfcWdAclHandler::~PfcWdAclHandler(void)
 
 void PfcWdAclHandler::clear()
 {
+    SWSS_LOG_ENTER();
+
     for (auto& tablepair: m_aclTables)
     {
         auto& table = tablepair.second;
@@ -194,6 +198,8 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port)
 
 void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId)
 {
+    SWSS_LOG_ENTER();
+
     string attr_name, attr_value;
 
     attr_name = "RULE_PRIORITY";

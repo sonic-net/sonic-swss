@@ -216,7 +216,7 @@ void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
         SWSS_LOG_ERROR("%s missing", PFC_WD_DETECTION_TIME);
         return;
     }
-    
+
     if (restorationTime == 0)
     {
         SWSS_LOG_ERROR("%s missing", PFC_WD_RESTORATION_TIME);

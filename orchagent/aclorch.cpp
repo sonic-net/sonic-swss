@@ -855,6 +855,8 @@ bool AclTable::validate()
 
 bool AclTable::create()
 {
+    SWSS_LOG_ENTER();
+
     sai_attribute_t attr;
     vector<sai_attribute_t> table_attrs;
     int32_t range_types_list[] =
@@ -927,6 +929,8 @@ bool AclTable::create()
 
 bool AclTable::bind(sai_object_id_t portOid)
 {
+    SWSS_LOG_ENTER();
+
     assert(ports.find(portOid) != ports.end());
 
     Port port;
@@ -950,6 +954,8 @@ bool AclTable::bind(sai_object_id_t portOid)
 
 bool AclTable::unbind(sai_object_id_t portOid)
 {
+    SWSS_LOG_ENTER();
+
     sai_object_id_t member = ports[portOid];
     sai_status_t status = sai_acl_api->remove_acl_table_group_member(member);
     if (status != SAI_STATUS_SUCCESS) {
@@ -962,6 +968,8 @@ bool AclTable::unbind(sai_object_id_t portOid)
 
 bool AclTable::bind()
 {
+    SWSS_LOG_ENTER();
+
     for (const auto& portpair: ports)
     {
         sai_object_id_t portOid = portpair.first;
@@ -973,6 +981,8 @@ bool AclTable::bind()
 
 bool AclTable::unbind()
 {
+    SWSS_LOG_ENTER();
+
     for (const auto& portpair: ports)
     {
         sai_object_id_t portOid = portpair.first;
@@ -984,11 +994,15 @@ bool AclTable::unbind()
 
 void AclTable::link(sai_object_id_t portOid)
 {
+    SWSS_LOG_ENTER();
+
     ports.emplace(portOid, SAI_NULL_OBJECT_ID);
 }
 
 bool AclTable::add(shared_ptr<AclRule> newRule)
 {
+    SWSS_LOG_ENTER();
+
     string rule_id = newRule->getId();
     auto ruleIter = rules.find(rule_id);
     if (ruleIter != rules.end())
@@ -1016,6 +1030,8 @@ bool AclTable::add(shared_ptr<AclRule> newRule)
 
 bool AclTable::remove(string rule_id)
 {
+    SWSS_LOG_ENTER();
+
     auto ruleIter = rules.find(rule_id);
     if (ruleIter != rules.end())
     {
@@ -1040,6 +1056,8 @@ bool AclTable::remove(string rule_id)
 
 bool AclTable::clear()
 {
+    SWSS_LOG_ENTER();
+
     for (auto& rulepair: rules)
     {
         auto& rule = *rulepair.second;
@@ -1283,6 +1301,8 @@ void AclOrch::doTask(Consumer &consumer)
 
 bool AclOrch::addAclTable(AclTable &newTable, string table_id)
 {
+    SWSS_LOG_ENTER();
+
     sai_object_id_t table_oid = getTableById(table_id);
 
     if (table_oid != SAI_NULL_OBJECT_ID)
@@ -1310,6 +1330,8 @@ bool AclOrch::addAclTable(AclTable &newTable, string table_id)
 
 bool AclOrch::removeAclTable(string table_id)
 {
+    SWSS_LOG_ENTER();
+
     sai_object_id_t table_oid = getTableById(table_id);
     if (table_oid == SAI_NULL_OBJECT_ID)
     {
