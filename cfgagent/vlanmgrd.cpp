@@ -28,7 +28,7 @@ int main(int argc, char **argv)
     string mac_str;
     stringstream cmd;
     cmd << IP_CMD << " link show eth0 | " << GREP_CMD << " ether | " << AWK_CMD << " '{print $2}'";
-    swss::exec(cmd.str(), mac_str);
+    EXEC_WITH_ERROR_THROW(cmd.str(), mac_str);
     gMacAddress = mac_str;
 
     try

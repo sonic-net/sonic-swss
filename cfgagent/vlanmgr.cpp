@@ -40,15 +40,15 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
     cmd.str("");
     cmd << IP_CMD << " link add " << DOT1Q_BRIDGE_NAME << " up type bridge";
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     cmd.str("");
     cmd << ECHO_CMD << " 1 > /sys/class/net/" << DOT1Q_BRIDGE_NAME << "/bridge/vlan_filtering";
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     cmd.str("");
     cmd << BRIDGE_CMD << " vlan del vid " << DEFAULT_VLAN_ID << " dev " << DOT1Q_BRIDGE_NAME << " self";
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
 void VlanMgr::syncCfgDB()
@@ -63,20 +63,21 @@ bool VlanMgr::addHostVlan(int vlan_id)
     string res;
 
     cmd << BRIDGE_CMD << " vlan add vid " << vlan_id << " dev " << DOT1Q_BRIDGE_NAME << " self";
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     cmd.str("");
     cmd << IP_CMD << " link add link " << DOT1Q_BRIDGE_NAME << " name " << VLAN_PREFIX << vlan_id << " type vlan id " << vlan_id;
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     cmd.str("");
     cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " address " << gMacAddress.to_string();
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     // Bring up vlan port by default
     cmd.str("");
     cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " up";
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
     return true;
 }
 
@@ -86,11 +87,11 @@ bool VlanMgr::removeHostVlan(int vlan_id)
     string res;
 
     cmd << IP_CMD << " link del " << VLAN_PREFIX << vlan_id;
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     cmd.str("");
     cmd << BRIDGE_CMD << " vlan del vid " << vlan_id << " dev " << DOT1Q_BRIDGE_NAME << " self";
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     return true;
 }
@@ -101,7 +102,7 @@ bool VlanMgr::setHostVlanAdminState(int vlan_id, const string &admin_status)
     string res;
 
     cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " " << admin_status;
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
     return true;
 }
 
@@ -111,8 +112,13 @@ bool VlanMgr::setHostVlanMtu(int vlan_id, uint32_t mtu)
     string res;
 
     cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " mtu " << mtu;
-    swss::exec(cmd.str(), res);
-    return true;
+    int ret = swss::exec(cmd.str(), res);
+    if (ret == 0)
+    {
+        return true;
+    }
+    /* VLAN mtu should not be larger than member mtu */
+    return false;
 }
 
 bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const string& tagging_mode)
@@ -122,7 +128,7 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
 
     // Should be ok to run set master command more than one time.
     cmd << IP_CMD << " link set " << port_alias << " master " << DOT1Q_BRIDGE_NAME;
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
     cmd.str("");
     if (tagging_mode == "untagged" || tagging_mode == "priority_tagged")
     {
@@ -133,12 +139,13 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
     {
         cmd << BRIDGE_CMD << " vlan add vid " << vlan_id << " dev " << port_alias;
     }
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     cmd.str("");
     // Bring up vlan member port and set MTU to 9100 by default
     cmd << IP_CMD << " link set " << port_alias << " up mtu " << MAX_MTU;
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
     return true;
 }
 
@@ -148,17 +155,17 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
     string res;
 
     cmd << BRIDGE_CMD << " vlan del vid " << vlan_id << " dev " << port_alias;
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     cmd.str("");
     // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
     cmd << BRIDGE_CMD << " vlan show dev " << port_alias << " | " << GREP_CMD << " None";
-    swss::exec(cmd.str(), res);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
     if (!res.empty())
     {
         cmd.str("");
         cmd << IP_CMD << " link set " << port_alias << " nomaster";
-        swss::exec(cmd.str(), res);
+        EXEC_WITH_ERROR_THROW(cmd.str(), res);
     }
 
     return true;
@@ -215,16 +222,23 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             /* set up host env .... */
             for (auto i : kfvFieldsValues(t))
             {
-                /* Set port admin status */
-                if (fvField(i) == "admin_status") {
+                /* Set vlan admin status */
+                if (fvField(i) == "admin_status")
+                {
                     admin_status = fvValue(i);
                     setHostVlanAdminState(vlan_id, admin_status);
                     fvVector.push_back(i);
                 }
-                /* Set port mtu */
-                else if (fvField(i) == "mtu") {
+                /* Set vlan mtu */
+                else if (fvField(i) == "mtu")
+                {
                     mtu = (uint32_t)stoul(fvValue(i));
-                    setHostVlanMtu(vlan_id, mtu);
+                    /*
+                     * TODO: support host VLAN mtu setting.
+                     * Host VLAN mtu should be set only after member configured
+                     * and VLAN state is not UNKOWN.
+                     */
+                    SWSS_LOG_DEBUG("%s mtu %u: Host VLAN mtu setting to be supported.", key.c_str(), mtu);
                     fvVector.push_back(i);
                 }
                 else if (fvField(i) == "members@") {
@@ -431,12 +445,13 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
                 continue;
             }
 
-            addHostVlanMember(vlan_id, port_alias, tagging_mode);
-
-            key = VLAN_PREFIX + to_string(vlan_id);
-            key += DEFAULT_KEY_SEPARATOR;
-            key += port_alias;
-            m_appVlanMemberTableProducer.set(key, kfvFieldsValues(t));
+            if (addHostVlanMember(vlan_id, port_alias, tagging_mode))
+            {
+                key = VLAN_PREFIX + to_string(vlan_id);
+                key += DEFAULT_KEY_SEPARATOR;
+                key += port_alias;
+                m_appVlanMemberTableProducer.set(key, kfvFieldsValues(t));
+            }
             it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
