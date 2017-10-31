@@ -37,8 +37,12 @@ bool IntfMgr::setIntfIp(const string &alias, const string &opCmd, const string &
     string res;
 
     cmd << IP_CMD << " address " << opCmd << " " << ipPrefixStr << " dev " << alias;;
-    swss::exec(cmd.str(), res);
-    return true;
+    int ret = swss::exec(cmd.str(), res);
+    if (ret == 0)
+    {
+        return true;
+    }
+    return false;
 }
 
 bool IntfMgr::isIntfStateOk(const string &alias)
