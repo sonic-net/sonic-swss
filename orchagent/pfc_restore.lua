@@ -18,7 +18,8 @@ for i = n, 1, -1 do
     local counter_keys = redis.call('HKEYS', counters_table_name .. ':' .. KEYS[i])
     local pfc_rx_pkt_key = ''
     local pfc_wd_status = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_STATUS')
-    if pfc_wd_status ~= 'operational' then
+    local pfc_wd_action = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_ACTION')
+    if pfc_wd_status ~= 'operational'  and pfc_wd_action ~= 'alert' then
         local restoration_time = tonumber(redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_RESTORATION_TIME'))
         local time_left = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_RESTORATION_TIME_LEFT')
         if time_left == nil then

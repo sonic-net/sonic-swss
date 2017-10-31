@@ -93,17 +93,18 @@ private:
     bool addHostIntfs(sai_object_id_t router_intfs_id, string alias, sai_object_id_t &host_intfs_id);
 
     bool addBridgePort(Port &port);
-    bool removeBridgePort(Port port);
+    bool removeBridgePort(Port &port);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
-    bool addVlanMember(Port vlan, Port port, string& tagging_mode);
-    bool removeVlanMember(Port vlan, Port port);
+    bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
+    bool removeVlanMember(Port &vlan, Port &port);
 
     bool addLag(string lag);
     bool removeLag(Port lag);
-    bool addLagMember(Port lag, Port port);
-    bool removeLagMember(Port lag, Port port);
+    bool addLagMember(Port &lag, Port &port);
+    bool removeLagMember(Port &lag, Port &port);
+    void getLagMember(Port &lag, vector<Port> &portv);
 
     bool addPort(const set<int> &lane_set, uint32_t speed);
     bool removePort(sai_object_id_t port_id);
@@ -111,6 +112,8 @@ private:
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
+    bool setPortPvid (Port &port, sai_uint32_t pvid);
+    bool getPortPvid(Port &port, sai_uint32_t &pvid);
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 

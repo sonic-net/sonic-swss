@@ -25,19 +25,49 @@
 #define MIRROR_SESSION_DSCP_MIN         0
 #define MIRROR_SESSION_DSCP_MAX         63
 
+#define MLNX_PLATFORM       "mlnx"
+
 extern sai_mirror_api_t *sai_mirror_api;
 extern sai_object_id_t gSwitchId;
 
 using namespace std::rel_ops;
 
-MirrorOrch::MirrorOrch(DBConnector *db, string tableName,
+MirrorEntry::MirrorEntry(const string& platform) :
+        status(false),
+        greType(0),
+        dscp(0),
+        ttl(0),
+        queue(0),
+        addVLanTag(false),
+        sessionId(0),
+        refCount(0)
+{
+    nexthopInfo.resolved = false;
+    neighborInfo.resolved = false;
+
+    if (platform == MLNX_PLATFORM)
+    {
+        greType = 0x6558;
+        queue = 1;
+    }
+    else
+    {
+        greType = 0x88be;
+        queue = 0;
+    }
+
+    dscp = 8;
+    ttl = 255;
+}
+
+MirrorOrch::MirrorOrch(TableConnector appDbConnector, TableConnector confDbConnector,
         PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch) :
-        Orch(db, tableName),
+        Orch(confDbConnector.first, confDbConnector.second),
         m_portsOrch(portOrch),
         m_routeOrch(routeOrch),
         m_neighOrch(neighOrch),
         m_fdbOrch(fdbOrch),
-        m_mirrorTableProducer(db, tableName)
+        m_mirrorTableProducer(appDbConnector.first, appDbConnector.second)
 {
     m_portsOrch->attach(this);
     m_neighOrch->attach(this);
@@ -104,7 +134,7 @@ bool MirrorOrch::getSessionState(const string& name, bool& state)
         return false;
     }
 
-    state = m_syncdMirrors[name].status;
+    state = m_syncdMirrors.find(name)->second.status;
 
     return true;
 }
@@ -118,7 +148,7 @@ bool MirrorOrch::getSessionOid(const string& name, sai_object_id_t& oid)
         return false;
     }
 
-    oid = m_syncdMirrors[name].sessionId;
+    oid = m_syncdMirrors.find(name)->second.sessionId;
 
     return true;
 }
@@ -132,7 +162,7 @@ bool MirrorOrch::increaseRefCount(const string& name)
         return false;
     }
 
-    ++m_syncdMirrors[name].refCount;
+    ++m_syncdMirrors.find(name)->second.refCount;
 
     return true;
 }
@@ -162,7 +192,7 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
 {
     SWSS_LOG_ENTER();
 
-    MirrorEntry entry = { };
+    MirrorEntry entry(getenv("platform"));
 
     for (auto i : data)
     {
@@ -200,12 +230,6 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
             else if (fvField(i) == MIRROR_SESSION_QUEUE)
             {
                 entry.queue = to_uint<uint8_t>(fvValue(i));
-            }
-            else if (fvField(i) == MIRROR_SESSION_STATUS)
-            {
-                // Status update always caused by MirrorOrch and should
-                // not be changed by users. Ignore it.
-                return;
             }
             else
             {
@@ -327,7 +351,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session, const
 
     if (session.neighborInfo.port.m_type == Port::VLAN)
     {
-        session.neighborInfo.vlanId = session.neighborInfo.port.m_vlan_id;
+        session.neighborInfo.vlanId = session.neighborInfo.port.m_vlan_info.vlan_id;
 
         Port member;
         if (!m_fdbOrch->getPort(session.neighborInfo.mac, session.neighborInfo.vlanId, member))

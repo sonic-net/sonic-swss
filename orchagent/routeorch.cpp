@@ -15,7 +15,6 @@ extern PortsOrch *gPortsOrch;
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
-#define MLNX_PLATFORM_SUBSTRING         "mlnx"
 
 RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
         Orch(db, tableName),

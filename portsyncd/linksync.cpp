@@ -30,18 +30,19 @@ extern set<string> g_portSet;
 extern map<string, set<string>> g_vlanMap;
 extern bool g_init;
 
-LinkSync::LinkSync(DBConnector *db) :
-    m_portTableProducer(db, APP_PORT_TABLE_NAME),
-    m_vlanTableProducer(db, APP_VLAN_TABLE_NAME),
-    m_vlanMemberTableProducer(db, APP_VLAN_MEMBER_TABLE_NAME),
-    m_portTableConsumer(db, APP_PORT_TABLE_NAME),
-    m_vlanMemberTableConsumer(db, APP_VLAN_MEMBER_TABLE_NAME)
+LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
+    m_portTableProducer(appl_db, APP_PORT_TABLE_NAME),
+    m_vlanTableProducer(appl_db, APP_VLAN_TABLE_NAME),
+    m_vlanMemberTableProducer(appl_db, APP_VLAN_MEMBER_TABLE_NAME),
+    m_portTable(appl_db, APP_PORT_TABLE_NAME),
+    m_vlanMemberTable(appl_db, APP_VLAN_MEMBER_TABLE_NAME),
+    m_statePortTable(state_db, STATE_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR)
 {
     /* See the comments for g_portSet in portsyncd.cpp */
     for (string port : g_portSet)
     {
         vector<FieldValueTuple> temp;
-        if (m_portTableConsumer.get(port, temp))
+        if (m_portTable.get(port, temp))
         {
             for (auto it : temp)
             {
@@ -55,7 +56,7 @@ LinkSync::LinkSync(DBConnector *db) :
     }
 
     vector<KeyOpFieldsValuesTuple> tuples;
-    m_vlanMemberTableConsumer.getTableContent(tuples);
+    m_vlanMemberTable.getTableContent(tuples);
 
     for (auto tuple : tuples)
     {
@@ -183,7 +184,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
      * non-front panel interfaces such as eth0, lo which are not in the
      * PORT_TABLE are ignored. */
     vector<FieldValueTuple> temp;
-    if (m_portTableConsumer.get(key, temp))
+    if (m_portTable.get(key, temp))
     {
         /* TODO: When port is removed from the kernel */
         if (nlmsg_type == RTM_DELLINK)
@@ -195,6 +196,10 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         if (!g_init && g_portSet.find(key) != g_portSet.end())
         {
             g_portSet.erase(key);
+            FieldValueTuple tuple("state", "ok");
+            vector<FieldValueTuple> vector;
+            vector.push_back(tuple);
+            m_statePortTable.set(key, vector);
         }
 
         m_portTableProducer.set(key, fvVector);

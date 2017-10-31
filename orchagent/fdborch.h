@@ -29,7 +29,7 @@ public:
     FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
         Orch(db, tableName),
         m_portsOrch(port),
-        m_table(Table(m_db, tableName))
+        m_table(Table(db, tableName))
     {
     }
 

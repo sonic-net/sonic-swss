@@ -4,9 +4,12 @@
 #include <sys/time.h>
 
 #include "orch.h"
+
+#include "subscriberstatetable.h"
 #include "portsorch.h"
 #include "tokenize.h"
 #include "logger.h"
+#include "consumerstatetable.h"
 
 using namespace swss;
 
@@ -21,26 +24,29 @@ extern bool gLogRotate;
 extern string gRecordFile;
 extern string getTimestamp();
 
-Orch::Orch(DBConnector *db, string tableName) :
-    m_db(db)
+Orch::Orch(DBConnector *db, string tableName)
 {
-    Consumer consumer(new ConsumerStateTable(m_db, tableName, gBatchSize));
-    m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
+    addConsumer(db, tableName);
 }
 
-Orch::Orch(DBConnector *db, vector<string> &tableNames) :
-    m_db(db)
+Orch::Orch(DBConnector *db, vector<string> &tableNames)
 {
     for(auto it : tableNames)
     {
-        Consumer consumer(new ConsumerStateTable(m_db, it, gBatchSize));
-        m_consumerMap.insert(ConsumerMapPair(it, consumer));
+        addConsumer(db, it);
+    }
+}
+
+Orch::Orch(const vector<TableConnector>& tables)
+{
+    for (auto it : tables)
+    {
+        addConsumer(it.first, it.second);
     }
 }
 
 Orch::~Orch()
 {
-    delete(m_db);
     for(auto &it : m_consumerMap)
         delete it.second.m_consumer;
 
@@ -354,4 +360,16 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
     }
     SWSS_LOG_DEBUG("resulting range:%d-%d", range_low, range_high);
     return true;
+}
+
+void Orch::addConsumer(DBConnector *db, string tableName)
+{
+    if (db->getDB() == CONFIG_DB)
+    {
+        Consumer consumer(new SubscriberStateTable(db, tableName));
+        m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
+    } else {
+        Consumer consumer(new ConsumerStateTable(db, tableName, gBatchSize));
+        m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
+    }
 }

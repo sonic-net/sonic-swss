@@ -9,6 +9,8 @@ const string buffer_size_field_name         = "size";
 const string buffer_pool_type_field_name    = "type";
 const string buffer_pool_mode_field_name    = "mode";
 const string buffer_pool_field_name         = "pool";
+const string buffer_pool_mode_dynamic_value = "dynamic";
+const string buffer_pool_mode_static_value  = "static";
 const string buffer_xon_field_name          = "xon";
 const string buffer_xoff_field_name         = "xoff";
 const string buffer_dynamic_th_field_name   = "dynamic_th";
@@ -16,8 +18,6 @@ const string buffer_static_th_field_name    = "static_th";
 const string buffer_profile_field_name      = "profile";
 const string buffer_value_ingress           = "ingress";
 const string buffer_value_egress            = "egress";
-const string buffer_pool_mode_dynamic_value = "dynamic";
-const string buffer_pool_mode_static_value  = "static";
 const string buffer_profile_list_field_name = "profile_list";
 
 class BufferOrch : public Orch

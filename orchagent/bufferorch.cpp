@@ -65,17 +65,20 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         vector<sai_attribute_t> attribs;
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
         {
-            SWSS_LOG_DEBUG("field:%s, value:%s", fvField(*i).c_str(), fvValue(*i).c_str());
+            string field = fvField(*i);
+            string value = fvValue(*i);
+
+            SWSS_LOG_DEBUG("field:%s, value:%s", field.c_str(), value.c_str());
             sai_attribute_t attr;
-            if (fvField(*i) == buffer_size_field_name)
+            if (field == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(value);
                 attribs.push_back(attr);
             }
-            else if (fvField(*i) == buffer_pool_type_field_name)
+            else if (field == buffer_pool_type_field_name)
             {
-                string type = fvValue(*i);
+                string type = value;
                 if (type == buffer_value_ingress)
                 {
                     attr.value.u32 = SAI_BUFFER_POOL_TYPE_INGRESS;
@@ -92,9 +95,9 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
                 attr.id = SAI_BUFFER_POOL_ATTR_TYPE;
                 attribs.push_back(attr);
             }
-            else if (fvField(*i) == buffer_pool_mode_field_name)
+            else if (field == buffer_pool_mode_field_name)
             {
-                string mode = fvValue(*i);
+                string mode = value;
                 if (mode == buffer_pool_mode_dynamic_value)
                 {
                     attr.value.u32 = SAI_BUFFER_POOL_THRESHOLD_MODE_DYNAMIC;
@@ -113,7 +116,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             }
             else
             {
-                SWSS_LOG_ERROR("Unknown pool field specified:%s, ignoring", fvField(*i).c_str());
+                SWSS_LOG_ERROR("Unknown pool field specified:%s, ignoring", field.c_str());
                 continue;
             }
         }
@@ -182,9 +185,12 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
         vector<sai_attribute_t> attribs;
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
         {
-            SWSS_LOG_DEBUG("field:%s, value:%s", fvField(*i).c_str(), fvValue(*i).c_str());
+            string field = fvField(*i);
+            string value = fvValue(*i);
+
+            SWSS_LOG_DEBUG("field:%s, value:%s", field.c_str(), value.c_str());
             sai_attribute_t attr;
-            if (fvField(*i) == buffer_pool_field_name)
+            if (field == buffer_pool_field_name)
             {
                 sai_object_id_t sai_pool;
                 ref_resolve_status resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_pool_field_name, tuple, sai_pool);
@@ -202,47 +208,47 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
                 attr.value.oid = sai_pool;
                 attribs.push_back(attr);
             }
-            else if (fvField(*i) == buffer_xon_field_name)
+            else if (field == buffer_xon_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_TH;
                 attribs.push_back(attr);
             }
-            else if (fvField(*i) == buffer_xoff_field_name)
+            else if (field == buffer_xoff_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XOFF_TH;
                 attribs.push_back(attr);
             }
-            else if (fvField(*i) == buffer_size_field_name)
+            else if (field == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
-                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(value);
                 attribs.push_back(attr);
             }
-            else if (fvField(*i) == buffer_dynamic_th_field_name)
+            else if (field == buffer_dynamic_th_field_name)
             {
                 attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
                 attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC;
                 attribs.push_back(attr);
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
-                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(value);
                 attribs.push_back(attr);
             }
-            else if (fvField(*i) == buffer_static_th_field_name)
+            else if (field == buffer_static_th_field_name)
             {
                 attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
                 attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC;
                 attribs.push_back(attr);
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
-                attr.value.u32 = (uint32_t)stoul(fvValue(*i));
+                attr.value.u32 = (uint32_t)stoul(value);
                 attribs.push_back(attr);
             }
             else
             {
-                SWSS_LOG_ERROR("Unknown buffer profile field specified:%s, ignoring", fvField(*i).c_str());
+                SWSS_LOG_ERROR("Unknown buffer profile field specified:%s, ignoring", field.c_str());
                 continue;
             }
         }

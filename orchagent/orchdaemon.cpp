@@ -19,9 +19,13 @@ extern sai_object_id_t             gSwitchId;
 PortsOrch *gPortsOrch;
 /* Global variable gFdbOrch declared */
 FdbOrch *gFdbOrch;
+/*Global variable gAclOrch declared*/
+AclOrch *gAclOrch;
 
-OrchDaemon::OrchDaemon(DBConnector *applDb) :
-        m_applDb(applDb)
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb) :
+        m_applDb(applDb),
+        m_configDb(configDb)
+
 {
     SWSS_LOG_ENTER();
 }
@@ -31,6 +35,9 @@ OrchDaemon::~OrchDaemon()
     SWSS_LOG_ENTER();
     for (Orch *o : m_orchList)
         delete(o);
+
+    delete(m_configDb);
+    delete(m_applDb);
 }
 
 bool OrchDaemon::init()
@@ -80,15 +87,17 @@ bool OrchDaemon::init()
     };
     BufferOrch *buffer_orch = new BufferOrch(m_applDb, buffer_tables);
 
-    MirrorOrch *mirror_orch = new MirrorOrch(m_applDb, APP_MIRROR_SESSION_TABLE_NAME, gPortsOrch, route_orch, neigh_orch, gFdbOrch);
+    TableConnector appDbMirrorSession(m_applDb, APP_MIRROR_SESSION_TABLE_NAME);
+    TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
+    MirrorOrch *mirror_orch = new MirrorOrch(appDbMirrorSession, confDbMirrorSession, gPortsOrch, route_orch, neigh_orch, gFdbOrch);
 
     vector<string> acl_tables = {
-        APP_ACL_TABLE_NAME,
-        APP_ACL_RULE_TABLE_NAME
+        CFG_ACL_TABLE_NAME,
+        CFG_ACL_RULE_TABLE_NAME
     };
-    AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
+    gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
-    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, acl_orch, gFdbOrch};
+    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch};
     m_select = new Select();
 
     vector<string> pfc_wd_tables = {
@@ -124,11 +133,54 @@ bool OrchDaemon::init()
             SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
         };
 
+        static const vector<sai_queue_attr_t> queueAttrIds;
+
         m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                     m_applDb,
                     pfc_wd_tables,
                     portStatIds,
-                    queueStatIds));
+                    queueStatIds,
+                    queueAttrIds));
+    }
+    else if (platform == BRCM_PLATFORM_SUBSTRING)
+    {
+        static const vector<sai_port_stat_t> portStatIds =
+        {
+            SAI_PORT_STAT_PFC_0_RX_PKTS,
+            SAI_PORT_STAT_PFC_1_RX_PKTS,
+            SAI_PORT_STAT_PFC_2_RX_PKTS,
+            SAI_PORT_STAT_PFC_3_RX_PKTS,
+            SAI_PORT_STAT_PFC_4_RX_PKTS,
+            SAI_PORT_STAT_PFC_5_RX_PKTS,
+            SAI_PORT_STAT_PFC_6_RX_PKTS,
+            SAI_PORT_STAT_PFC_7_RX_PKTS,
+            SAI_PORT_STAT_PFC_0_ON2OFF_RX_PKTS,
+            SAI_PORT_STAT_PFC_1_ON2OFF_RX_PKTS,
+            SAI_PORT_STAT_PFC_2_ON2OFF_RX_PKTS,
+            SAI_PORT_STAT_PFC_3_ON2OFF_RX_PKTS,
+            SAI_PORT_STAT_PFC_4_ON2OFF_RX_PKTS,
+            SAI_PORT_STAT_PFC_5_ON2OFF_RX_PKTS,
+            SAI_PORT_STAT_PFC_6_ON2OFF_RX_PKTS,
+            SAI_PORT_STAT_PFC_7_ON2OFF_RX_PKTS,
+        };
+
+        static const vector<sai_queue_stat_t> queueStatIds =
+        {
+            SAI_QUEUE_STAT_PACKETS,
+            SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
+        };
+
+        static const vector<sai_queue_attr_t> queueAttrIds =
+        {
+            SAI_QUEUE_ATTR_PAUSE_STATUS,
+        };
+
+        m_orchList.push_back(new PfcWdSwOrch<PfcWdActionHandler, PfcWdActionHandler>(
+                    m_applDb,
+                    pfc_wd_tables,
+                    portStatIds,
+                    queueStatIds,
+                    queueAttrIds));
     }
 
     return true;

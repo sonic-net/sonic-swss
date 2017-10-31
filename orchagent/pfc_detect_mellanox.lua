@@ -20,7 +20,8 @@ for i = n, 1, -1 do
     local old_counter_num = 0
     local is_deadlock = false
     local pfc_wd_status = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_STATUS')
-    if pfc_wd_status == 'operational' then
+    local pfc_wd_action = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_ACTION')
+    if pfc_wd_status == 'operational' or pfc_wd_action == 'alert' then
         local detection_time = tonumber(redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_DETECTION_TIME'))
         local time_left = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_DETECTION_TIME_LEFT')
         if not time_left  then
@@ -67,6 +68,9 @@ for i = n, 1, -1 do
                     time_left = time_left - poll_time
                 end
             else
+                if pfc_wd_action == 'alert' and pfc_wd_status ~= 'operational' then
+                    redis.call('PUBLISH', 'PFC_WD', '["' .. KEYS[i] .. '","restore"]')
+                end 
                 time_left = detection_time
             end
         end

@@ -610,7 +610,7 @@ QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNa
     // understand the underlying rationale.
 
     // Do not create color ACL on p4 platform as it does not support match dscp and ecn
-    char *platform = getenv("onie_platform");
+    char *platform = getenv("platform");
     if (!platform ||
         (platform && strcmp(platform, "x86_64-barefoot_p4-r0") != 0))
     {
