@@ -233,9 +233,6 @@ ref_resolve_status Orch::resolveFieldRefValue(
 
 void Orch::doTask()
 {
-    if (!gPortsOrch->isInitDone())
-        return;
-
     for(auto &it : m_consumerMap)
     {
         if (!it.second.m_toSync.empty())

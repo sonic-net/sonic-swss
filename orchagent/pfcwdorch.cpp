@@ -18,6 +18,7 @@
 
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
+
 extern PortsOrch *gPortsOrch;
 
 template <typename DropHandler, typename ForwardHandler>
@@ -39,6 +40,11 @@ template <typename DropHandler, typename ForwardHandler>
 void PfcWdOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
+
+    if (!gPortsOrch->isInitDone())
+    {
+        return;
+    }
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())

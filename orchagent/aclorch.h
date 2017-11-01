@@ -280,7 +280,6 @@ public:
     }
 
     // FIXME: Add getters for them? I'd better to add a common directory of orch objects and use it everywhere
-    PortsOrch *m_portOrch;
     MirrorOrch *m_mirrorOrch;
     NeighOrch *m_neighOrch;
     RouteOrch *m_routeOrch;

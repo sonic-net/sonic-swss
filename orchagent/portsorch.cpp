@@ -894,8 +894,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
 void PortsOrch::doVlanTask(Consumer &consumer)
 {
-    if (!isInitDone())
-        return;
+    SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -957,8 +956,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
 
 void PortsOrch::doVlanMemberTask(Consumer &consumer)
 {
-    if (!isInitDone())
-        return;
+    SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -1075,8 +1073,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
 
 void PortsOrch::doLagTask(Consumer &consumer)
 {
-    if (!isInitDone())
-        return;
+    SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -1125,8 +1122,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
 
 void PortsOrch::doLagMemberTask(Consumer &consumer)
 {
-    if (!isInitDone())
-        return;
+    SWSS_LOG_ENTER();
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -1241,15 +1237,34 @@ void PortsOrch::doTask(Consumer &consumer)
     string table_name = consumer.m_consumer->getTableName();
 
     if (table_name == APP_PORT_TABLE_NAME)
+    {
         doPortTask(consumer);
-    else if (table_name == APP_VLAN_TABLE_NAME)
-        doVlanTask(consumer);
-    else if (table_name == APP_VLAN_MEMBER_TABLE_NAME)
-        doVlanMemberTask(consumer);
-    else if (table_name == APP_LAG_TABLE_NAME)
-        doLagTask(consumer);
-    else if (table_name == APP_LAG_MEMBER_TABLE_NAME)
-        doLagMemberTask(consumer);
+    }
+    else
+    {
+        /* Wait for all ports to be initialized */
+        if (!isInitDone())
+        {
+            return;
+        }
+
+        if (table_name == APP_VLAN_TABLE_NAME)
+        {
+            doVlanTask(consumer);
+        }
+        else if (table_name == APP_VLAN_MEMBER_TABLE_NAME)
+        {
+            doVlanMemberTask(consumer);
+        }
+        else if (table_name == APP_LAG_TABLE_NAME)
+        {
+            doLagTask(consumer);
+        }
+        else if (table_name == APP_LAG_MEMBER_TABLE_NAME)
+        {
+            doLagMemberTask(consumer);
+        }
+    }
 }
 
 void PortsOrch::initializeQueues(Port &port)

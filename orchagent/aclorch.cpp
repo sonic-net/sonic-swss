@@ -605,7 +605,7 @@ sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
 
     // Try to parse physical port and LAG first
     Port port;
-    if(m_pAclOrch->m_portOrch->getPort(target, port))
+    if (gPortsOrch->getPort(target, port))
     {
         if (port.m_type == Port::PHY)
         {
@@ -1211,7 +1211,6 @@ bool AclRange::remove()
 
 AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch) :
         Orch(db, tableNames),
-        m_portOrch(portOrch),
         m_mirrorOrch(mirrorOrch),
         m_neighOrch(neighOrch),
         m_routeOrch(routeOrch)
@@ -1275,9 +1274,8 @@ void AclOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!m_portOrch->isInitDone())
+    if (!gPortsOrch->isInitDone())
     {
-        /* Wait for ports initialization */
         return;
     }
 
@@ -1586,7 +1584,7 @@ bool AclOrch::processPorts(string portsList, std::function<void (sai_object_id_t
     for (const auto& alias : strList)
     {
         Port port;
-        if (!m_portOrch->getPort(alias, port))
+        if (!gPortsOrch->getPort(alias, port))
         {
             SWSS_LOG_ERROR("Failed to process port. Port %s doesn't exist", alias.c_str());
             return false;

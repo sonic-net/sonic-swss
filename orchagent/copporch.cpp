@@ -1,6 +1,7 @@
 #include "sai.h"
-#include "tokenize.h"
 #include "copporch.h"
+#include "portsorch.h"
+#include "tokenize.h"
 #include "logger.h"
 
 #include <sstream>
@@ -12,7 +13,9 @@ using namespace std;
 extern sai_hostif_api_t*    sai_hostif_api;
 extern sai_policer_api_t*   sai_policer_api;
 extern sai_switch_api_t*    sai_switch_api;
+
 extern sai_object_id_t      gSwitchId;
+extern PortsOrch*           gPortsOrch;
 
 map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
@@ -584,6 +587,11 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
 void CoppOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+
+    if (gPortsOrch->isInitDone())
+    {
+        return;
+    }
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
