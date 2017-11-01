@@ -62,11 +62,11 @@ void PfcWdActionHandler::initCounters(void)
         return;
     }
 
-    m_stats = getQueueStats(m_countersTable, sai_serialize_object_id(m_queue));
-    m_stats.detectCount++;
-    m_stats.operational = false;
+    auto wdQueueStats = getQueueStats(m_countersTable, sai_serialize_object_id(m_queue));
+    wdQueueStats.detectCount++;
+    wdQueueStats.operational = false;
 
-    updateWdCounters(sai_serialize_object_id(m_queue), m_stats);
+    updateWdCounters(sai_serialize_object_id(m_queue), wdQueueStats);
 }
 
 void PfcWdActionHandler::commitCounters(void)

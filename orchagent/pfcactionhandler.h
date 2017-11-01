@@ -78,7 +78,6 @@ class PfcWdActionHandler
         sai_object_id_t m_queue = SAI_NULL_OBJECT_ID;
         uint8_t m_queueId = 0;
         shared_ptr<Table> m_countersTable = nullptr;
-        PfcWdQueueStats m_stats;
         PfcWdHwStats m_hwStats;
 };
 
