@@ -12,6 +12,7 @@
 #include "netlink.h"
 #include "producerstatetable.h"
 #include "portsyncd/linksync.h"
+#include "subscriberstatetable.h"
 
 #define DEFAULT_PORT_CONFIG_FILE     "port_config.ini"
 
@@ -41,12 +42,14 @@ void usage()
 
 void handlePortConfigFile(ProducerStateTable &p, string file);
 void handleVlanIntfFile(string file);
+void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map);
 
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("portsyncd");
     int opt;
     string port_config_file = DEFAULT_PORT_CONFIG_FILE;
+    map<string, KeyOpFieldsValuesTuple> port_cfg_map;
 
     while ((opt = getopt(argc, argv, "p:v:h")) != -1 )
     {
@@ -64,9 +67,11 @@ int main(int argc, char **argv)
         }
     }
 
+    DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
+    SubscriberStateTable portCfg(&cfgDb, CFG_PORT_TABLE_NAME);
 
     LinkSync sync(&appl_db, &state_db);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
@@ -84,6 +89,7 @@ int main(int argc, char **argv)
         handlePortConfigFile(p, port_config_file);
 
         s.addSelectable(&netlink);
+        s.addSelectable(&portCfg);
         while (true)
         {
             Selectable *temps;
@@ -113,6 +119,29 @@ int main(int argc, char **argv)
 
                     g_init = true;
                 }
+                if (!port_cfg_map.empty())
+                {
+                    handlePortConfig(p, port_cfg_map);
+                }
+            }
+
+            if (temps == (Selectable *)&portCfg)
+            {
+                std::deque<KeyOpFieldsValuesTuple> entries;
+                portCfg.pops(entries);
+
+                for (auto entry: entries)
+                {
+                    string key = kfvKey(entry);
+
+                    if (port_cfg_map.find(key) != port_cfg_map.end())
+                    {
+                        /* For now we simply drop previous pending port config */
+                        port_cfg_map.erase(key);
+                    }
+                    port_cfg_map[key] = entry;
+                }
+                handlePortConfig(p, port_cfg_map);
             }
         }
     }
@@ -202,4 +231,33 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
     FieldValueTuple finish_notice("count", to_string(g_portSet.size()));
     vector<FieldValueTuple> attrs = { finish_notice };
     p.set("PortConfigDone", attrs);
+}
+
+void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map)
+{
+
+    auto it = port_cfg_map.begin();
+    while (it != port_cfg_map.end())
+    {
+        KeyOpFieldsValuesTuple entry = it->second;
+        string key = kfvKey(entry);
+        string op  = kfvOp(entry);
+        auto values = kfvFieldsValues(entry);
+
+        /* only push down port config when port is not in hostif create pending state */
+        if (g_portSet.find(key) == g_portSet.end())
+        {
+            /* No support for port delete yet */
+            if (op == SET_COMMAND)
+            {
+                p.set(key, values);
+            }
+
+            it = port_cfg_map.erase(it);
+        }
+        else
+        {
+            it++;
+        }
+    }
 }

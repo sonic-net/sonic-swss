@@ -30,6 +30,13 @@ extern sai_object_id_t gSwitchId;
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 
+static map<string, sai_port_fec_mode_t> fec_mode_map =
+{
+    { "none",  SAI_PORT_FEC_MODE_NONE },
+    { "rs", SAI_PORT_FEC_MODE_RS },
+    { "fc", SAI_PORT_FEC_MODE_FC }
+};
+
 /*
  * Initialize PortsOrch
  * 0) By default, a switch has one CPU port, one 802.1Q bridge, and one default
@@ -353,6 +360,26 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
         return false;
     }
     SWSS_LOG_INFO("Set MTU %u to port pid:%lx", attr.value.u32, id);
+    return true;
+}
+
+bool PortsOrch::setPortFec(sai_object_id_t id, sai_port_fec_mode_t mode)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_FEC_MODE;
+    attr.value.s32 = mode;
+
+    sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set fec mode %d to port pid:%lx",
+                       mode, id);
+        return false;
+    }
+    SWSS_LOG_INFO("Set fec mode %d to port pid:%lx",
+                       mode, id);
     return true;
 }
 
@@ -688,6 +715,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
         {
             set<int> lane_set;
             string admin_status;
+            string fec_mode;
             uint32_t mtu = 0;
             uint32_t speed = 0;
 
@@ -717,6 +745,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 /* Set port speed */
                 if (fvField(i) == "speed")
                     speed = (uint32_t)stoul(fvValue(i));
+
+                /* Set port fec */
+                if (fvField(i) == "fec")
+                    fec_mode = fvValue(i);
             }
 
             /* Collect information about all received ports */
@@ -882,6 +914,34 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it++;
                         continue;
                     }
+                }
+
+                if (fec_mode != "")
+                {
+                    if (fec_mode_map.find(fec_mode) != fec_mode_map.end())
+                    {
+                        /* reset fec mode upon mode change */
+                        if (p.m_fec_mode != fec_mode_map[fec_mode])
+                        {
+                            p.m_fec_mode = fec_mode_map[fec_mode];
+                            if (setPortFec(p.m_port_id, p.m_fec_mode))
+                            {
+                                m_portList[alias] = p;
+                                SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                            }
+                            else
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                it++;
+                                continue;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Unknown fec mode %s", fec_mode.c_str());
+                    }
+
                 }
             }
         }
