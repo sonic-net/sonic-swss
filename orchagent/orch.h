@@ -1,18 +1,12 @@
 #ifndef SWSS_ORCH_H
 #define SWSS_ORCH_H
 
-#include <map>
-#include <memory>
-
 extern "C" {
 #include "sai.h"
 #include "saistatus.h"
 }
 
-#include "dbconnector.h"
-#include "table.h"
-#include "consumertable.h"
-#include "consumerstatetable.h"
+#include "orchbase.h"
 
 using namespace std;
 using namespace swss;
@@ -42,16 +36,6 @@ typedef pair<string, sai_object_id_t> object_map_pair;
 typedef map<string, object_map*> type_map;
 typedef pair<string, object_map*> type_map_pair;
 
-typedef map<string, KeyOpFieldsValuesTuple> SyncMap;
-struct Consumer {
-    Consumer(TableConsumable* consumer) : m_consumer(consumer)  { }
-    TableConsumable* m_consumer;
-    /* Store the latest 'golden' status */
-    SyncMap m_toSync;
-};
-typedef pair<string, Consumer> ConsumerMapPair;
-typedef map<string, Consumer> ConsumerMap;
-
 typedef enum
 {
     success,
@@ -61,20 +45,13 @@ typedef enum
     failure
 } ref_resolve_status;
 
-typedef pair<DBConnector *, string> TableConnector;
-typedef pair<DBConnector *, vector<string>> TablesConnector;
-
-class Orch
+class Orch : public OrchBase
 {
 public:
     Orch(DBConnector *db, string tableName);
     Orch(DBConnector *db, vector<string> &tableNames);
     Orch(const vector<TableConnector>& tables);
     virtual ~Orch();
-
-    vector<Selectable*> getSelectables();
-    bool hasSelectable(TableConsumable* s) const;
-
     bool execute(string tableName);
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     void doTask();
