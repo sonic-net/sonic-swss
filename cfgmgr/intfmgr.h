@@ -3,18 +3,17 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "orchbase.h"
+#include "orch.h"
 
 #include <map>
 #include <string>
 
 namespace swss {
 
-class IntfMgr : public OrchBase
+class IntfMgr : public Orch
 {
 public:
     IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames);
-    void syncCfgDB();
 
 private:
     ProducerStateTable m_appIntfTableProducer;

@@ -87,7 +87,7 @@ AC_CONFIG_FILES([
     teamsyncd/Makefile
     swssconfig/Makefile
     tests/Makefile
-    cfgagent/Makefile
+    cfgmgr/Makefile
 ])
 
 AC_OUTPUT

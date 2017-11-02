@@ -1,16 +1,35 @@
 #include <unistd.h>
 #include <vector>
+#include <mutex>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
 #include "schema.h"
 #include "intfmgr.h"
+#include <fstream>
+#include <iostream>
 
 using namespace std;
 using namespace swss;
 
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
+
+/*
+ * Following global variables are defined here for the purpose of
+ * using existing Orch class which is to be refactored soon to
+ * eliminate the direct exposure of the global variables.
+ *
+ * Once Orch class refactoring is done, these global variables
+ * should be removed from here.
+ */
+int gBatchSize = 0;
+bool gSwssRecord = false;
+bool gLogRotate = false;
+ofstream gRecordOfs;
+string gRecordFile;
+/* Global database mutex */
+mutex gDbMutex;
 
 int main(int argc, char **argv)
 {
@@ -34,10 +53,10 @@ int main(int argc, char **argv)
         IntfMgr intfmgr(&cfgDb, &appDb, &stateDb, cfg_intf_tables);
 
         // TODO: add tables in stateDB which interface depends on to monitor list
-        std::vector<OrchBase *> cfgOrchList = {&intfmgr};
+        std::vector<Orch *> cfgOrchList = {&intfmgr};
 
         swss::Select s;
-        for (OrchBase *o : cfgOrchList)
+        for (Orch *o : cfgOrchList)
         {
             s.addSelectables(o->getSelectables());
         }
@@ -56,11 +75,11 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-               ((OrchBase *)&intfmgr)->doTask();
+               ((Orch *)&intfmgr)->doTask();
                 continue;
             }
 
-            for (OrchBase *o : cfgOrchList)
+            for (Orch *o : cfgOrchList)
             {
                 TableConsumable *c = (TableConsumable *)sel;
                 if (o->hasSelectable(c))

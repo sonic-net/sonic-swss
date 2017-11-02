@@ -15,7 +15,7 @@ using namespace swss;
 #define LAG_PREFIX          "PortChannel"
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
-        OrchBase(cfgDb, tableNames),
+        Orch(cfgDb, tableNames),
         m_cfgIntfTable(cfgDb, CFG_INTF_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
         m_cfgVlanIntfTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
@@ -23,12 +23,6 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME)
 {
-}
-
-void IntfMgr::syncCfgDB()
-{
-    OrchBase::syncDB(CFG_INTF_TABLE_NAME, m_cfgIntfTable);
-    OrchBase::syncDB(CFG_VLAN_INTF_TABLE_NAME, m_cfgVlanIntfTable);
 }
 
 bool IntfMgr::setIntfIp(const string &alias, const string &opCmd, const string &ipPrefixStr)
