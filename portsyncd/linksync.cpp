@@ -23,11 +23,9 @@ using namespace swss;
 #define TEAM_DRV_NAME   "team"
 
 const string INTFS_PREFIX = "Ethernet";
-const string VLAN_PREFIX = "Vlan";
 const string LAG_PREFIX = "PortChannel";
 
 extern set<string> g_portSet;
-extern map<string, set<string>> g_vlanMap;
 extern bool g_init;
 
 LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :

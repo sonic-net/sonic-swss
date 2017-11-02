@@ -3,7 +3,7 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
-#include "orchbase.h"
+#include "orch.h"
 
 #include <set>
 #include <map>
@@ -11,11 +11,11 @@
 
 namespace swss {
 
-class VlanMgr : public OrchBase
+class VlanMgr : public Orch
 {
 public:
     VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames);
-    void syncCfgDB();
+
 private:
     ProducerStateTable m_appVlanTableProducer, m_appVlanMemberTableProducer;
     Table m_cfgVlanTable, m_cfgVlanMemberTable;

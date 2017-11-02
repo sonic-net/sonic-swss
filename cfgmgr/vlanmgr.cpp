@@ -20,7 +20,7 @@ using namespace swss;
 extern MacAddress gMacAddress;
 
 VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
-        OrchBase(cfgDb, tableNames),
+        Orch(cfgDb, tableNames),
         m_cfgVlanTable(cfgDb, CFG_VLAN_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
         m_cfgVlanMemberTable(cfgDb, CFG_VLAN_MEMBER_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
@@ -49,12 +49,6 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     cmd.str("");
     cmd << BRIDGE_CMD << " vlan del vid " << DEFAULT_VLAN_ID << " dev " << DOT1Q_BRIDGE_NAME << " self";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
-}
-
-void VlanMgr::syncCfgDB()
-{
-    OrchBase::syncDB(CFG_VLAN_TABLE_NAME, m_cfgVlanTable);
-    OrchBase::syncDB(CFG_VLAN_MEMBER_TABLE_NAME, m_cfgVlanMemberTable);
 }
 
 bool VlanMgr::addHostVlan(int vlan_id)

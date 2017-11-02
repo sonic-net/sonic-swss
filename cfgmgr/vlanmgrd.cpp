@@ -1,6 +1,9 @@
 #include <unistd.h>
 #include <vector>
 #include <sstream>
+#include <fstream>
+#include <iostream>
+#include <mutex>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
@@ -17,6 +20,22 @@ using namespace swss;
 #define SELECT_TIMEOUT 1000
 
 MacAddress gMacAddress;
+
+/*
+ * Following global variables are defined here for the purpose of
+ * using existing Orch class which is to be refactored soon to
+ * eliminate the direct exposure of the global variables.
+ *
+ * Once Orch class refactoring is done, these global variables
+ * should be removed from here.
+ */
+int gBatchSize = 0;
+bool gSwssRecord = false;
+bool gLogRotate = false;
+ofstream gRecordOfs;
+string gRecordFile;
+/* Global database mutex */
+mutex gDbMutex;
 
 int main(int argc, char **argv)
 {
@@ -44,10 +63,10 @@ int main(int argc, char **argv)
 
         VlanMgr vlanmgr(&cfgDb, &appDb, &stateDb, cfg_vlan_tables);
 
-        std::vector<OrchBase *> cfgOrchList = {&vlanmgr};
+        std::vector<Orch *> cfgOrchList = {&vlanmgr};
 
         swss::Select s;
-        for (OrchBase *o : cfgOrchList)
+        for (Orch *o : cfgOrchList)
         {
             s.addSelectables(o->getSelectables());
         }
@@ -66,11 +85,11 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                ((OrchBase *)&vlanmgr)->doTask();
+                ((Orch *)&vlanmgr)->doTask();
                 continue;
             }
 
-            for (OrchBase *o : cfgOrchList)
+            for (Orch *o : cfgOrchList)
             {
                 TableConsumable *c = (TableConsumable *)sel;
                 if (o->hasSelectable(c))

@@ -29,7 +29,6 @@ using namespace swss;
  * command to be run only once.
  */
 set<string> g_portSet;
-map<string, set<string>> g_vlanMap;
 bool g_init = false;
 
 void usage()
