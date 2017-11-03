@@ -6,6 +6,7 @@
 #include <set>
 #include <algorithm>
 #include <tuple>
+#include <sstream>
 
 #include <netinet/if_ether.h>
 #include "net/if.h"
@@ -50,19 +51,19 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     SWSS_LOG_ENTER();
 
     /* Initialize counter table */
-    DBConnector *counter_db(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
-    m_counterTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_PORT_NAME_MAP));
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
 
     /* Initialize port table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
 
     /* Initialize queue tables */
-    m_queueTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_NAME_MAP));
-    m_queuePortTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_PORT_MAP));
-    m_queueIndexTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_INDEX_MAP));    
+    m_queueTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_NAME_MAP));
+    m_queuePortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_PORT_MAP));
+    m_queueIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_INDEX_MAP));
 
-    DBConnector *flex_db(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
-    m_flexCounterTable = unique_ptr<ProducerStateTable>(new ProducerStateTable(flex_db, PFC_WD_STATE_TABLE));
+    m_flex_db = shared_ptr<DBConnector>(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_flexCounterTable = unique_ptr<ProducerStateTable>(new ProducerStateTable(m_flex_db.get(), PFC_WD_STATE_TABLE));
 
     uint32_t i, j;
     sai_status_t status;
@@ -627,20 +628,16 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 /* Add port to flex_counter for updating stat counters  */
                 string key = sai_serialize_object_id(p.m_port_id) + ":" + FLEX_STAT_COUNTER_POLL_MSECS;
 
-                string counters;
+                std::string delimiter = "";
+                std::ostringstream counters_stream;
                 for (int cntr = SAI_PORT_STAT_IF_IN_OCTETS; cntr <= SAI_PORT_STAT_PFC_7_ON2OFF_RX_PKTS; ++cntr)
                 {
-                    counters += sai_serialize_port_stat(static_cast<sai_port_stat_t>(cntr)) + ",";
-                }
-
-                // Remove trailing ','
-                if (!counters.empty())
-                {
-                    counters.pop_back();
+                    counters_stream << delimiter << sai_serialize_port_stat(static_cast<sai_port_stat_t>(cntr));
+                    delimiter = ",";
                 }
 
                 fields.clear();
-                fields.emplace_back(PFC_WD_PORT_COUNTER_ID_LIST, counters);
+                fields.emplace_back(PFC_WD_PORT_COUNTER_ID_LIST, counters_stream.str());
 
                 m_flexCounterTable->set(key, fields);
 
@@ -1335,20 +1332,16 @@ void PortsOrch::initializeQueues(Port &port)
 
         string key = sai_serialize_object_id(port.m_queue_ids[queueIndex]) + ":" + FLEX_STAT_COUNTER_POLL_MSECS;
 
-        string counters;
+        std::string delimiter = "";
+        std::ostringstream counters_stream;
         for (int cntr = SAI_QUEUE_STAT_PACKETS; cntr <= SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES ; ++cntr)
         {
-            counters += sai_serialize_queue_stat(static_cast<sai_queue_stat_t>(cntr)) + ",";
-        }
-
-        // Remove trailing ','
-        if (!counters.empty())
-        {
-            counters.pop_back();
+            counters_stream << delimiter << sai_serialize_queue_stat(static_cast<sai_queue_stat_t>(cntr));
+            delimiter = ",";
         }
 
         vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(PFC_WD_QUEUE_COUNTER_ID_LIST, counters);
+        fieldValues.emplace_back(PFC_WD_QUEUE_COUNTER_ID_LIST, counters_stream.str());
 
         m_flexCounterTable->set(key, fieldValues);
     }

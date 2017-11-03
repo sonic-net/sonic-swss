@@ -64,6 +64,9 @@ private:
     unique_ptr<Table> m_queueIndexTable;
     unique_ptr<ProducerStateTable> m_flexCounterTable;
 
+    shared_ptr<DBConnector> m_counter_db;
+    shared_ptr<DBConnector> m_flex_db;
+
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 
     bool m_initDone = false;
