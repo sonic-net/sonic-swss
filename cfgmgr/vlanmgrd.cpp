@@ -44,14 +44,19 @@ int main(int argc, char **argv)
 
     SWSS_LOG_NOTICE("--- Starting vlanmgrd ---");
 
-    string mac_str;
-    stringstream cmd;
-    cmd << IP_CMD << " link show eth0 | " << GREP_CMD << " ether | " << AWK_CMD << " '{print $2}'";
-    EXEC_WITH_ERROR_THROW(cmd.str(), mac_str);
-    gMacAddress = mac_str;
-
     try
     {
+        /*
+         * swss service starts after interfaces-config.service which will have
+         * switch_mac set.
+         * Dynamic switch_mac update is not supported for now.
+         */
+        string switch_mac_str;
+        stringstream cmd;
+        cmd << REDIS_CLI_CMD << " -n " << CONFIG_DB << " hget " << " \"SWITCH|SWITCH_ATTR\" " << " switch_mac";
+        EXEC_WITH_ERROR_THROW(cmd.str(), switch_mac_str);
+        gMacAddress = MacAddress(switch_mac_str);
+
         vector<string> cfg_vlan_tables = {
             CFG_VLAN_TABLE_NAME,
             CFG_VLAN_MEMBER_TABLE_NAME,

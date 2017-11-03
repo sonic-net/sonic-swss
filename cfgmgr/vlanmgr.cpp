@@ -230,7 +230,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                     /*
                      * TODO: support host VLAN mtu setting.
                      * Host VLAN mtu should be set only after member configured
-                     * and VLAN state is not UNKOWN.
+                     * and VLAN state is not UNKNOWN.
                      */
                     SWSS_LOG_DEBUG("%s mtu %u: Host VLAN mtu setting to be supported.", key.c_str(), mtu);
                     fvVector.push_back(i);
