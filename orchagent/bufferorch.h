@@ -11,6 +11,7 @@ const string buffer_pool_mode_field_name    = "mode";
 const string buffer_pool_field_name         = "pool";
 const string buffer_pool_mode_dynamic_value = "dynamic";
 const string buffer_pool_mode_static_value  = "static";
+const string buffer_pool_xoff_field_name    = "xoff";
 const string buffer_xon_field_name          = "xon";
 const string buffer_xoff_field_name         = "xoff";
 const string buffer_dynamic_th_field_name   = "dynamic_th";

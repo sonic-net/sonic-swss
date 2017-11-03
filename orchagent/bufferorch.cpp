@@ -114,6 +114,12 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
                 attr.id = SAI_BUFFER_POOL_ATTR_THRESHOLD_MODE;
                 attribs.push_back(attr);
             }
+            else if (field == buffer_pool_xoff_field_name)
+            {
+                attr.id = SAI_BUFFER_POOL_ATTR_XOFF_SIZE;
+                attr.value.u32 = (uint32_t)stoul(value);
+                attribs.push_back(attr);
+            }
             else
             {
                 SWSS_LOG_ERROR("Unknown pool field specified:%s, ignoring", field.c_str());
