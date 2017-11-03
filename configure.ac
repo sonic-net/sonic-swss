@@ -38,7 +38,7 @@ AC_ARG_ENABLE(gtest,
 esac],[gtest=false])
 AM_CONDITIONAL(GTEST, test x$gtest = xtrue)
 
-CFLAGS_COMMON="-std=c++11 -Wall -fPIC -Wno-write-strings -I/usr/include/libnl3 -I/usr/include/swss"
+CFLAGS_COMMON="-std=c++11 -Wall -fPIC -Wno-write-strings -I/usr/include/libnl3 -I/usr/include/swss -I/opt/bfn/install/include/switchsai"
 CFLAGS_COMMON+=" -Werror"
 CFLAGS_COMMON+=" -Wno-reorder"
 CFLAGS_COMMON+=" -Wcast-align"
