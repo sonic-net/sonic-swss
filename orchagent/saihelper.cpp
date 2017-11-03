@@ -39,6 +39,7 @@ sai_buffer_api_t*           sai_buffer_api;
 sai_acl_api_t*              sai_acl_api;
 sai_mirror_api_t*           sai_mirror_api;
 sai_fdb_api_t*              sai_fdb_api;
+sai_dtel_api_t*             sai_dtel_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gSairedisRecord;
