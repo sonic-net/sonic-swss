@@ -113,9 +113,8 @@ void IntfsOrch::doTask(Consumer &consumer)
             /* NOTE: Overlap checking is required to handle ifconfig weird behavior.
              * When set IP address using ifconfig command it applies it in two stages.
              * On stage one it sets IP address with netmask /8. On stage two it
-             * changes netmask to specified in command. As DB is async event to
-             * add IP address with original netmask may come before event to
-             * delete IP with netmask /8. To handle this we in case of overlap
+             * changes netmask to specified in command.
+             * To handle this we in case of overlap
              * we should wait until entry with /8 netmask will be removed.
              * Time frame between those event is quite small.*/
             bool overlaps = false;

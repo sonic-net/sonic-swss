@@ -2,7 +2,7 @@
 #define __INTFSYNC__
 
 #include "dbconnector.h"
-#include "producerstatetable.h"
+#include "producertable.h"
 #include "netmsg.h"
 
 namespace swss {
@@ -17,7 +17,7 @@ public:
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
 private:
-    ProducerStateTable m_intfTable;
+    ProducerTable m_intfTable;
 };
 
 }

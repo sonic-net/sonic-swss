@@ -368,7 +368,14 @@ void Orch::addConsumer(DBConnector *db, string tableName)
     {
         Consumer consumer(new SubscriberStateTable(db, tableName));
         m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
-    } else {
+    }
+    else if (tableName == APP_INTF_TABLE_NAME)
+    {
+        Consumer consumer(new ConsumerTable(db, tableName, gBatchSize));
+        m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
+    }
+    else
+    {
         Consumer consumer(new ConsumerStateTable(db, tableName, gBatchSize));
         m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
     }
