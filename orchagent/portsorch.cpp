@@ -362,7 +362,6 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
     return true;
 }
 
-<<<<<<< HEAD
 bool PortsOrch::setPortFec(sai_object_id_t id, sai_port_fec_mode_t mode)
 {
     SWSS_LOG_ENTER();
@@ -794,7 +793,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 /* Set port fec */
                 if (fvField(i) == "fec")
                     fec_mode = fvValue(i);
-                     speed = (uint32_t)stoul(fvValue(i));
 
                 /* Set autoneg */
                 if (fvField(i) == "autoneg")
@@ -936,8 +934,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
                 }
-<<<<<<< HEAD
-
+#if 0
                 if (fec_mode != "")
                 {
                     if (fec_mode_map.find(fec_mode) != fec_mode_map.end())
@@ -967,6 +964,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 }
                 else
                     SWSS_LOG_ERROR("Failed to get (fec) port id by alias:%s", alias.c_str());
+#endif
             }
         }
         else
@@ -1533,7 +1531,6 @@ bool PortsOrch::addBridgePort(Port &port)
     attrs.push_back(attr);
 
     attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
-<<<<<<< HEAD
     if (port.m_type == Port::PHY)
     {
         attr.value.oid = port.m_port_id;
