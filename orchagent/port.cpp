@@ -58,8 +58,8 @@ sai_status_t Port::bindAclTable(sai_object_id_t& group_member_oid, sai_object_id
         status = sai_port_api->set_port_attribute(m_port_id, &port_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to bind port %s to ACL table group %lx, rv:%d",
-                    m_alias.c_str(), groupOid, status);
+            SWSS_LOG_ERROR("Failed to bind port %lx(%s) to ACL table group %lx, rv:%d",
+                    m_port_id, m_alias.c_str(), groupOid, status);
             return status;
         }
 

@@ -3,7 +3,7 @@
 
 #include <vector>
 #include <memory>
-
+#include "aclorch.h"
 #include "table.h"
 
 extern "C" {
@@ -58,6 +58,25 @@ class PfcWdActionHandler
         uint8_t m_queueId = 0;
         shared_ptr<Table> m_countersTable = nullptr;
         PfcWdQueueStats m_stats;
+};
+
+class PfcWdAclHandler: public PfcWdActionHandler
+{
+    public:
+        PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
+                uint8_t queueId, shared_ptr<Table> countersTable);
+        virtual ~PfcWdAclHandler(void);
+
+        // class shared cleanup
+        static void clear();
+    private:
+        // class shared dict: ACL table name -> ACL table
+        static std::map<std::string, AclTable> m_aclTables;
+
+        string m_strTable;
+        string m_strRule;
+        void createPfcAclTable(sai_object_id_t port);
+        void createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId);
 };
 
 // Pfc queue that implements forward action by disabling PFC on queue

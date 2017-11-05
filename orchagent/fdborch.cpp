@@ -6,9 +6,10 @@
 #include "tokenize.h"
 #include "fdborch.h"
 
-extern sai_object_id_t gSwitchId;
+extern sai_fdb_api_t    *sai_fdb_api;
 
-extern sai_fdb_api_t *sai_fdb_api;
+extern sai_object_id_t  gSwitchId;
+extern PortsOrch*       gPortsOrch;
 
 void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_object_id_t bridge_port_id)
 {
@@ -79,6 +80,11 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
 void FdbOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
+
+    if (gPortsOrch->isInitDone())
+    {
+        return;
+    }
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())

@@ -38,7 +38,6 @@ void SwitchOrch::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         auto t = it->second;
-
         auto op = kfvOp(t);
 
         if (op == SET_COMMAND)

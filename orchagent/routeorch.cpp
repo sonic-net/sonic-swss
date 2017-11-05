@@ -164,6 +164,11 @@ void RouteOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
+    if (!gPortsOrch->isInitDone())
+    {
+        return;
+    }
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {

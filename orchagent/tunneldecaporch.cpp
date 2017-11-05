@@ -1,27 +1,30 @@
 #include <string.h>
 #include "tunneldecaporch.h"
+#include "portsorch.h"
 #include "logger.h"
 #include "swssnet.h"
 
 extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 
-extern sai_object_id_t gVirtualRouterId;
-extern sai_object_id_t gUnderlayIfId;
-extern sai_object_id_t gSwitchId;
+extern sai_object_id_t  gVirtualRouterId;
+extern sai_object_id_t  gUnderlayIfId;
+extern sai_object_id_t  gSwitchId;
+extern PortsOrch*       gPortsOrch;
 
 TunnelDecapOrch::TunnelDecapOrch(DBConnector *db, string tableName) : Orch(db, tableName)
 {
     SWSS_LOG_ENTER();
 }
 
-/**
- * Function Description:
- *    @brief reads from APP_DB and creates tunnel
- */
 void TunnelDecapOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
+
+    if (!gPortsOrch->isInitDone())
+    {
+        return;
+    }
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())

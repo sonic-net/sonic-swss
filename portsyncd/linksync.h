@@ -14,13 +14,13 @@ class LinkSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
-    LinkSync(DBConnector *db);
+    LinkSync(DBConnector *appl_db, DBConnector *state_db);
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
 private:
-    ProducerStateTable m_portTableProducer, m_vlanTableProducer, m_vlanMemberTableProducer;
-    Table m_portTableConsumer, m_vlanMemberTableConsumer;
+    ProducerStateTable m_portTableProducer;
+    Table m_portTable, m_statePortTable;
 
     std::map<unsigned int, std::string> m_ifindexNameMap;
 };

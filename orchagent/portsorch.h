@@ -7,6 +7,7 @@
 #include "port.h"
 #include "observer.h"
 #include "macaddress.h"
+#include "producerstatetable.h"
 
 #include <map>
 
@@ -61,6 +62,10 @@ private:
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
+    unique_ptr<ProducerStateTable> m_flexCounterTable;
+
+    shared_ptr<DBConnector> m_counter_db;
+    shared_ptr<DBConnector> m_flex_db;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 
@@ -114,6 +119,7 @@ private:
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
+    bool setPortFec(sai_object_id_t id, sai_port_fec_mode_t mode);
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
