@@ -16,7 +16,6 @@ using namespace swss;
 extern int gBatchSize;
 
 extern mutex gDbMutex;
-extern PortsOrch *gPortsOrch;
 
 extern bool gSwssRecord;
 extern ofstream gRecordOfs;
