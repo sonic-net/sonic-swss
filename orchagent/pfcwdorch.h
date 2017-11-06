@@ -62,8 +62,7 @@ public:
             vector<string> &tableNames,
             const vector<sai_port_stat_t> &portStatIds,
             const vector<sai_queue_stat_t> &queueStatIds,
-            const vector<sai_queue_attr_t> &queueAttrIds,
-            int pollInterval);
+            const vector<sai_queue_attr_t> &queueAttrIds);
     virtual ~PfcWdSwOrch(void);
 
     virtual bool startWdOnPort(const Port& port,
@@ -107,8 +106,6 @@ private:
 
     atomic_bool m_runPfcWdSwOrchThread = { false };
     shared_ptr<thread> m_pfcWatchdogThread = nullptr;
-
-    int m_pollInterval;
 };
 
 #endif
