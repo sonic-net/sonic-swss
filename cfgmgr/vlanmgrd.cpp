@@ -53,7 +53,7 @@ int main(int argc, char **argv)
          */
         string switch_mac_str;
         stringstream cmd;
-        cmd << REDIS_CLI_CMD << " -n " << CONFIG_DB << " hget " << " \"SWITCH|SWITCH_ATTR\" " << " switch_mac";
+        cmd << REDIS_CLI_CMD << " -n " << CONFIG_DB << " hget " << " \"DEVICE_METADATA|localhost\" " << " mac";
         EXEC_WITH_ERROR_THROW(cmd.str(), switch_mac_str);
         gMacAddress = MacAddress(switch_mac_str);
 
