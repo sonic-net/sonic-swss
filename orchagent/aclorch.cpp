@@ -39,11 +39,11 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_TC,                         SAI_ACL_ENTRY_ATTR_FIELD_TC },
     { MATCH_L4_SRC_PORT_RANGE,          (sai_acl_entry_attr_t)SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE },
     { MATCH_L4_DST_PORT_RANGE,          (sai_acl_entry_attr_t)SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE },
-    { MATCH_TUNNEL_VNI                  SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI },
-    { MATCH_INNER_ETHER_TYPE            SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE },
-    { MATCH_INNER_IP_PROTOCOL           SAI_ACL_ENTRY_ATTR_FIELD_INNER_IP_PROTOCOL },
-    { MATCH_INNER_L4_SRC_PORT           SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT },
-    { MATCH_INNER_L4_DST_PORT           SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT }
+    { MATCH_TUNNEL_VNI,                 SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI },
+    { MATCH_INNER_ETHER_TYPE,           SAI_ACL_ENTRY_ATTR_FIELD_INNER_ETHER_TYPE },
+    { MATCH_INNER_IP_PROTOCOL,          SAI_ACL_ENTRY_ATTR_FIELD_INNER_IP_PROTOCOL },
+    { MATCH_INNER_L4_SRC_PORT,          SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_SRC_PORT },
+    { MATCH_INNER_L4_DST_PORT,          SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT }
 };
 
 acl_rule_attr_lookup_t aclL3ActionLookup =
@@ -55,19 +55,19 @@ acl_rule_attr_lookup_t aclL3ActionLookup =
 
 acl_rule_attr_lookup_t aclDTelActionLookup =
 {
-    { ACTION_DTEL_FLOW_OP                SAI_ACL_ENTRY_ATTR_ACTION_DTEL_FLOW_OP },
-    { ACTION_DTEL_INT_SESSION            SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION },
-    { ACTION_DTEL_DROP_REPORT_ENABLE     SAI_ACL_ENTRY_ATTR_ACTION_DTEL_DROP_REPORT_ENABLE },
-    { ACTION_DTEL_FLOW_SAMPLE_PERCENT    SAI_ACL_ENTRY_ATTR_ACTION_DTEL_FLOW_SAMPLE_PERCENT },
-    { ACTION_DTEL_REPORT_ALL_PACKETS     SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS }
+    { ACTION_DTEL_FLOW_OP,                SAI_ACL_ENTRY_ATTR_ACTION_DTEL_FLOW_OP },
+    { ACTION_DTEL_INT_SESSION,            SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION },
+    { ACTION_DTEL_DROP_REPORT_ENABLE,     SAI_ACL_ENTRY_ATTR_ACTION_DTEL_DROP_REPORT_ENABLE },
+    { ACTION_DTEL_FLOW_SAMPLE_PERCENT,    SAI_ACL_ENTRY_ATTR_ACTION_DTEL_FLOW_SAMPLE_PERCENT },
+    { ACTION_DTEL_REPORT_ALL_PACKETS,     SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS }
 };
 
 acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
 {
-    { DTEL_FLOW_OP_NOP                SAI_ACL_DTEL_FLOW_OP_NOP },
-    { DTEL_FLOW_OP_POSTCARD           SAI_ACL_DTEL_FLOW_OP_POSTCARD },
-    { DTEL_FLOW_OP_INT                SAI_ACL_DTEL_FLOW_OP_INT },
-    { DTEL_FLOW_OP_IOAM               SAI_ACL_DTEL_FLOW_OP_IOAM }
+    { DTEL_FLOW_OP_NOP,                SAI_ACL_DTEL_FLOW_OP_NOP },
+    { DTEL_FLOW_OP_POSTCARD,           SAI_ACL_DTEL_FLOW_OP_POSTCARD },
+    { DTEL_FLOW_OP_INT,                SAI_ACL_DTEL_FLOW_OP_INT },
+    { DTEL_FLOW_OP_IOAM,               SAI_ACL_DTEL_FLOW_OP_IOAM }
 };
 
 static acl_table_type_lookup_t aclTableTypeLookUp =
@@ -956,10 +956,10 @@ bool AclRuleDTelFlowWatchList::validateAddAction(string attr_name, string attr_v
     {
         m_intSessionId = attr_value;
 
-        session_oid = m_pDTelOrch->getINTSessionOid(attr_value);
-        if (session_oid == SAI_NULL_OBJECT_ID)
+        bool ret = m_pDTelOrch->getINTSessionOid(attr_value, session_oid);
+        if (!ret)
         {
-            SWSS_LOG_ERROR("Invalid INT session id %s used for ACL action", m_intSessionId);
+            SWSS_LOG_ERROR("Invalid INT session id %s used for ACL action", m_intSessionId.c_str());
             return false;
         }
 
@@ -969,7 +969,7 @@ bool AclRuleDTelFlowWatchList::validateAddAction(string attr_name, string attr_v
         // attempt to remove INT session with attached ACL rules.
         if (!m_pDTelOrch->increaseINTSessionRefCount(m_intSessionId))
         {
-            SWSS_LOG_ERROR("Failed to increase INT session %s reference count", m_intSessionId);
+            SWSS_LOG_ERROR("Failed to increase INT session %s reference count", m_intSessionId.c_str());
             return false;
         }
     }
@@ -1015,7 +1015,7 @@ bool AclRuleDTelFlowWatchList::remove()
     {
         if (!m_pDTelOrch->decreaseINTSessionRefCount(m_intSessionId))
         {
-            SWSS_LOG_ERROR("Could not decrement INT session %s reference count", m_intSessionId);
+            SWSS_LOG_ERROR("Could not decrement INT session %s reference count", m_intSessionId.c_str());
             return false;
         }
     }
@@ -1044,11 +1044,11 @@ void AclRuleDTelFlowWatchList::update(SubjectType type, void *cntx)
     {
         SWSS_LOG_INFO("Activating INT watchlist %s for session %s", m_id.c_str(), m_intSessionId.c_str());
 
-        session_oid = m_pDTelOrch->getINTSessionOid(m_intSessionId);
-        if (session_oid == SAI_NULL_OBJECT_ID)
+        bool ret = m_pDTelOrch->getINTSessionOid(m_intSessionId, session_oid);
+        if (!ret)
         {
             SWSS_LOG_ERROR("Invalid INT session id used for ACL action");
-            return false;
+            return;
         }
 
         value.aclaction.enable = true;
@@ -1067,9 +1067,6 @@ void AclRuleDTelFlowWatchList::update(SubjectType type, void *cntx)
     }
     else
     {
-        // Store counters before deactivating ACL rule
-        counters += getCounters();
-
         SWSS_LOG_INFO("Deactivating INT watchlist %s for session %s", m_id.c_str(), m_intSessionId.c_str());
         remove();
     }
@@ -1993,7 +1990,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
     acl_action_list[3] = SAI_ACL_ACTION_TYPE_DTEL_FLOW_SAMPLE_PERCENT;
     attr.value.s32list.count = 4;
     attr.value.s32list.list = acl_action_list;
-    table_attrs.push_back(attr)
+    table_attrs.push_back(attr);
 
     status = sai_acl_api->create_acl_table(&table_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -2018,7 +2015,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
     table_attrs.push_back(attr);
 
     attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
-    vector<int32_t> bpoint_list;
+    bpoint_list.clear();
     bpoint_list.push_back(SAI_ACL_BIND_POINT_TYPE_SWITCH);
     attr.value.s32list.count = 1;
     attr.value.s32list.list = bpoint_list.data();
@@ -2049,11 +2046,10 @@ sai_status_t AclOrch::createDTelWatchListTables()
     table_attrs.push_back(attr);
 
     attr.id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
-    int32_t acl_action_list[1];
     acl_action_list[0] = SAI_ACL_ACTION_TYPE_DTEL_DROP_REPORT_ENABLE;
     attr.value.s32list.count = 1;
     attr.value.s32list.list = acl_action_list;
-    table_attrs.push_back(attr)
+    table_attrs.push_back(attr);
 
     status = sai_acl_api->create_acl_table(&table_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -2086,7 +2082,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
         return SAI_STATUS_FAILURE;
     }
 
-    status = sai_acl_api->delete_acl_table(table_oid);
+    status = sai_acl_api->remove_acl_table(table_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete table %s", table_id.c_str());
@@ -2097,8 +2093,6 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
 
     table_id = TABLE_TYPE_DTEL_DROP_WATCHLIST;
 
-    sai_status_t status;
-
     table_oid = getTableById(table_id);
 
     if (table_oid == SAI_NULL_OBJECT_ID)
@@ -2107,7 +2101,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
         return SAI_STATUS_FAILURE;
     }
 
-    status = sai_acl_api->delete_acl_table(table_oid);
+    status = sai_acl_api->remove_acl_table(table_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete table %s", table_id.c_str());

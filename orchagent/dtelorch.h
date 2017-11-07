@@ -2,7 +2,6 @@
 #define SWSS_DTELORCH_H
 
 #include "orch.h"
-
 #include "producerstatetable.h"
 #include "portsorch.h"
 
@@ -38,17 +37,12 @@
 #define REPORT_TAIL_DROP               "REPORT_TAIL_DROP"
 #define EVENT_REPORT_SESSION           "EVENT_REPORT_SESSION"
 #define EVENT_DSCP_VALUE               "EVENT_DSCP_VALUE"
-
-
-typedef enum
-{
-    DTEL_EVENT_TYPE_FLOW_STATE,
-    DTEL_EVENT_TYPE_FLOW_REPORT_ALL_PACKETS,
-    DTEL_EVENT_TYPE_FLOW_TCPFLAG,
-    DTEL_EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH,
-    DTEL_EVENT_TYPE_QUEUE_REPORT_TAIL_DROP,
-    DTEL_EVENT_TYPE_DROP_REPORT
-} dtel_event_type_t;
+#define EVENT_TYPE_FLOW_STATE                       "EVENT_TYPE_FLOW_STATE"
+#define EVENT_TYPE_FLOW_REPORT_ALL_PACKETS          "EVENT_TYPE_FLOW_REPORT_ALL_PACKETS"
+#define EVENT_TYPE_FLOW_TCPFLAG                     "EVENT_TYPE_FLOW_TCPFLAG"
+#define EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH    "EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH"
+#define EVENT_TYPE_QUEUE_REPORT_TAIL_DROP           "EVENT_TYPE_QUEUE_REPORT_TAIL_DROP"
+#define EVENT_TYPE_DROP_REPORT                      "EVENT_TYPE_DROP_REPORT"
 
 struct DTelINTSessionEntry
 {
@@ -96,7 +90,8 @@ struct DTelEventEntry
 typedef map<string, DTelINTSessionEntry> dTelINTSessionTable_t;
 typedef map<string, DTelReportSessionEntry> dTelReportSessionTable_t;
 typedef map<string, DTelPortEntry> dTelPortTable_t;
-typedef map<dtel_event_type_t, sai_object_id_t> dtelEventTable_t;
+typedef map<string, DTelEventEntry> dtelEventTable_t;
+typedef map<string, sai_dtel_event_type_t> dtelEventLookup_t;
 
 struct DTelINTSessionUpdate
 {
@@ -104,7 +99,7 @@ struct DTelINTSessionUpdate
     bool active;
 };
 
-class DTelOrch : public Orch, public Observer, public Subject
+class DTelOrch : public Orch, public Subject
 {
 public:
 	DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch);
@@ -112,7 +107,7 @@ public:
 
     bool increaseINTSessionRefCount(const string&);
     bool decreaseINTSessionRefCount(const string&);
-    bool getINTSessionOid(const string& name, sai_object_id_t& oid)
+    bool getINTSessionOid(const string& name, sai_object_id_t& oid);
 
 private:
 
@@ -120,7 +115,7 @@ private:
 	void doTask(Consumer &consumer);
     void doDtelTableTask(Consumer &consumer);
     void doDtelReportSessionTableTask(Consumer &consumer);
-    void doDtelIntSessionTableTask(Consumer &consumer);
+    void doDtelINTSessionTableTask(Consumer &consumer);
     void doDtelQueueReportTableTask(Consumer &consumer);
     void doDtelEventTableTask(Consumer &consumer);
 
@@ -131,22 +126,23 @@ private:
     bool decreaseReportSessionRefCount(const string& name);
     int64_t getReportSessionRefCount(const string& name);
     bool isQueueReportEnabled(const string& port, const string& queue);
-    bool getQueueReportOid(const string& port, const string& queue);
+    bool getQueueReportOid(const string& port, const string& queue, sai_object_id_t& oid);
+    void addPortQueue(const string& port, const string& queue, const sai_object_id_t& queue_report_oid);
     void removePortQueue(const string& port, const string& queue);
     bool isEventConfigured(const string& event);
-    bool getEventOid(const string& event);
+    bool getEventOid(const string& event, sai_object_id_t& oid);
     void addEvent(const string& event, const sai_object_id_t& event_oid, const string& report_session_id);
     void removeEvent(const string& event);
     void deleteReportSession(string &report_session_id);
     void deleteINTSession(string &int_session_id);
     void disableQueueReport(string &port, string &queue);
-    void deleteEvent(string &event);
+    void unConfigureEvent(string &event);
 
 	PortsOrch *m_portOrch;
 	dTelINTSessionTable_t m_dTelINTSessionTable;
     dTelReportSessionTable_t m_dTelReportSessionTable;
     dTelPortTable_t m_dTelPortTable;
     dtelEventTable_t m_dtelEventTable; 
-}
+};
 
 #endif /* SWSS_DTELORCH_H */

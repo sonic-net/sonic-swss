@@ -1,22 +1,29 @@
 #include "dtelorch.h"
+#include "logger.h"
+#include "schema.h"
+#include "converter.h"
+#include "ipprefix.h"
 
 using namespace std;
 using namespace swss;
 
+extern sai_switch_api_t* sai_switch_api;
+extern sai_dtel_api_t* sai_dtel_api;
+extern sai_object_id_t gVirtualRouterId;
 
-dtel_event_lookup_t dTelEventLookup =
+dtelEventLookup_t dTelEventLookup =
 {
-    { DTEL_EVENT_TYPE_FLOW_STATE                         SAI_DTEL_EVENT_TYPE_FLOW_STATE },
-    { DTEL_EVENT_TYPE_FLOW_REPORT_ALL_PACKETS            SAI_DTEL_EVENT_TYPE_FLOW_REPORT_ALL_PACKETS },
-    { DTEL_EVENT_TYPE_FLOW_TCPFLAG                       SAI_DTEL_EVENT_TYPE_FLOW_TCPFLAG },
-    { DTEL_EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH      SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH },
-    { DTEL_EVENT_TYPE_QUEUE_REPORT_TAIL_DROP             SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_TAIL_DROP },
-    { DTEL_EVENT_TYPE_DROP_REPORT                        SAI_DTEL_EVENT_TYPE_DROP_REPORT }
+    { EVENT_TYPE_FLOW_STATE,                         SAI_DTEL_EVENT_TYPE_FLOW_STATE },
+    { EVENT_TYPE_FLOW_REPORT_ALL_PACKETS,            SAI_DTEL_EVENT_TYPE_FLOW_REPORT_ALL_PACKETS },
+    { EVENT_TYPE_FLOW_TCPFLAG,                       SAI_DTEL_EVENT_TYPE_FLOW_TCPFLAG },
+    { EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH,      SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH },
+    { EVENT_TYPE_QUEUE_REPORT_TAIL_DROP,             SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_TAIL_DROP },
+    { EVENT_TYPE_DROP_REPORT,                        SAI_DTEL_EVENT_TYPE_DROP_REPORT }
 };
 
 DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch) :
         Orch(db, tableNames),
-        m_portOrch(portOrch),
+        m_portOrch(portOrch)
 {
     SWSS_LOG_ENTER();
 }
@@ -166,10 +173,10 @@ bool DTelOrch::isQueueReportEnabled(const string& port, const string& queue)
 {
     SWSS_LOG_ENTER();
 
-    DTelPortEntry port_entry = m_dTelPortTable.find(port);
+    auto port_entry_iter = m_dTelPortTable.find(port);
 
-    if (port_entry == m_dTelPortTable.end() || 
-        port_entry.queueTable.find(queue) == port_entry.queueTable.end())
+    if (port_entry_iter == m_dTelPortTable.end() || 
+        (port_entry_iter->second.queueTable).find(queue) == (port_entry_iter->second.queueTable).end())
     {
         return false;
     }
@@ -177,13 +184,13 @@ bool DTelOrch::isQueueReportEnabled(const string& port, const string& queue)
     return true;
 }
 
-bool DTelOrch::getQueueReportOid(const string& port, const string& queue)
+bool DTelOrch::getQueueReportOid(const string& port, const string& queue, sai_object_id_t& oid)
 {
     SWSS_LOG_ENTER();
 
     if (!isQueueReportEnabled(port, queue))
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Queue report not enabled on port %s, queue %s", port, queue);
+        SWSS_LOG_ERROR("DTEL ERROR: Queue report not enabled on port %s, queue %s", port.c_str(), queue.c_str());
         return false;
     }
 
@@ -196,8 +203,8 @@ void DTelOrch::removePortQueue(const string& port, const string& queue)
 {
     if (!isQueueReportEnabled(port, queue))
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Queue report not enabled on port %s, queue %s", port, queue);
-        return false;
+        SWSS_LOG_ERROR("DTEL ERROR: Queue report not enabled on port %s, queue %s", port.c_str(), queue.c_str());
+        return;
     }
 
     m_dTelPortTable[port].queueTable.erase(queue);
@@ -212,11 +219,11 @@ void DTelOrch::addPortQueue(const string& port, const string& queue, const sai_o
 {
     if (isQueueReportEnabled(port, queue))
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Queue report already enabled on port %s, queue %s", port, queue);
-        return false;
+        SWSS_LOG_ERROR("DTEL ERROR: Queue report already enabled on port %s, queue %s", port.c_str(), queue.c_str());
+        return;
     }
 
-    m_dTelPortTable[port] = new DTelPortEntry();
+    m_dTelPortTable[port] = DTelPortEntry();
     m_dTelPortTable[port].queueTable[queue] = queue_report_oid;
 }
 
@@ -232,13 +239,13 @@ bool DTelOrch::isEventConfigured(const string& event)
     return true;
 }
 
-bool DTelOrch::getEventOid(const string& event)
+bool DTelOrch::getEventOid(const string& event, sai_object_id_t& oid)
 {
     SWSS_LOG_ENTER();
 
     if (!isEventConfigured(event))
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Event not configured %s", event);
+        SWSS_LOG_ERROR("DTEL ERROR: Event not configured %s", event.c_str());
         return false;
     }
 
@@ -251,11 +258,14 @@ void DTelOrch::addEvent(const string& event, const sai_object_id_t& event_oid, c
 {
     if (isEventConfigured(event))
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Event is already configured %s", event);
+        SWSS_LOG_ERROR("DTEL ERROR: Event is already configured %s", event.c_str());
         return;
     }
 
-    m_dtelEventTable[event] = new m_dtelEventTable(event_oid, report_session_id);
+    DTelEventEntry event_entry;
+    event_entry.eventOid = event_oid;
+    event_entry.reportSessionId = report_session_id;
+    m_dtelEventTable[event] = event_entry;
 
     increaseReportSessionRefCount(report_session_id);
 }
@@ -264,7 +274,7 @@ void DTelOrch::removeEvent(const string& event)
 {
     if (!isEventConfigured(event))
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Event not configured %s", event);
+        SWSS_LOG_ERROR("DTEL ERROR: Event not configured %s", event.c_str());
         return;
     }
 
@@ -280,6 +290,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
+    sai_status_t status;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -288,12 +299,12 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
         string key = kfvKey(t);
         size_t found = key.find(':');
         string table_id = key.substr(0, found);
-        string attr = key.substr(found + 1);
+        string table_attr = key.substr(found + 1);
         string op = kfvOp(t);
 
         if (op == SET_COMMAND)
         {
-            if (attr == INT_ENDPOINT)
+            if (table_attr == INT_ENDPOINT)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_INT_ENDPOINT_ENABLE;
                 attr.value.booldata = true;
@@ -304,7 +315,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == INT_TRANSIT)
+            else if (table_attr == INT_TRANSIT)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_INT_TRANSIT_ENABLE;
                 attr.value.booldata = true;
@@ -315,7 +326,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == POSTCARD)
+            else if (table_attr == POSTCARD)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_POSTCARD_ENABLE;
                 attr.value.booldata = true;
@@ -326,7 +337,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == DROP_REPORT)
+            else if (table_attr == DROP_REPORT)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_DROP_REPORT_ENABLE;
                 attr.value.booldata = true;
@@ -337,7 +348,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == QUEUE_REPORT)
+            else if (table_attr == QUEUE_REPORT)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_QUEUE_REPORT_ENABLE;
                 attr.value.booldata = true;
@@ -348,12 +359,12 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == SWITCH_ID)
+            else if (table_attr == SWITCH_ID)
             {
-                auto i = kfvFieldsValues(t);
+                FieldValueTuple e = kfvFieldsValues(t)[0];
 
                 attr.id = SAI_SWITCH_ATTR_DTEL_SWITCH_ID;
-                attr.value.u32 = to_uint<uint32_t>(fvValue(i));
+                attr.value.u32 = to_uint<uint32_t>(fvValue(e));
                 status = sai_switch_api->set_switch_attribute(0, &attr);  
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -361,12 +372,12 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 } 
             }
-            else if (attr == FLOW_STATE_CLEAR_CYCLE)
+            else if (table_attr == FLOW_STATE_CLEAR_CYCLE)
             {
-                auto i = kfvFieldsValues(t);
+                FieldValueTuple e = kfvFieldsValues(t)[0];
 
                 attr.id = SAI_SWITCH_ATTR_DTEL_FLOW_STATE_CLEAR_CYCLE;
-                attr.value.u16 = to_uint<uint16_t>(fvValue(i));
+                attr.value.u16 = to_uint<uint16_t>(fvValue(e));
                 status = sai_switch_api->set_switch_attribute(0, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -374,12 +385,12 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }   
             }
-            else if (attr == LATENCY_SENSITIVITY)
+            else if (table_attr == LATENCY_SENSITIVITY)
             {
-                auto i = kfvFieldsValues(t);
+                FieldValueTuple e = kfvFieldsValues(t)[0];
 
                 attr.id = SAI_SWITCH_ATTR_DTEL_LATENCY_SENSITIVITY;
-                attr.value.u16 = to_uint<uint16_t>(fvValue(i));
+                attr.value.u16 = to_uint<uint16_t>(fvValue(e));
                 status = sai_switch_api->set_switch_attribute(0, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -387,11 +398,11 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == SINK_PORT_LIST)
+            else if (table_attr == SINK_PORT_LIST)
             {
                 vector<sai_object_id_t> port_list;
                 Port port;
-                attr.id = = SAI_SWITCH_ATTR_DTEL_SINK_PORT_LIST;
+                attr.id = SAI_SWITCH_ATTR_DTEL_SINK_PORT_LIST;
 
                 for (auto i : kfvFieldsValues(t))
                 {
@@ -410,8 +421,8 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
 
-                attr.value.objlist.count = port_list.size();
-                attr.value.objlist.list = port_list;
+                attr.value.objlist.count = (uint32_t)port_list.size();
+                attr.value.objlist.list = port_list.data();
                 status = sai_switch_api->set_switch_attribute(0, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -419,11 +430,11 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == INT_L4_DSCP)
+            else if (table_attr == INT_L4_DSCP)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_INT_L4_DSCP;
 
-                if (((uint32_t)kfvFieldsValues(tuple).size()) != 2)
+                if ((uint32_t)(kfvFieldsValues(t).size()) != 2)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: INT L4 DSCP attribute requires value and mask");
                     return;
@@ -433,16 +444,16 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 {
                     if (fvField(i) == INT_L4_DSCP_VALUE)
                     {
-                        attr.value.ternaryfield.value = to_uint<uint8_t>(fvValue(i));
+                        attr.value.ternaryfield.value.u8 = to_uint<uint8_t>(fvValue(i));
                     }
                     else if (fvField(i) == INT_L4_DSCP_MASK)
                     {
-                        attr.value.ternaryfield.mask = to_uint<uint8_t>(fvValue(i));
+                        attr.value.ternaryfield.mask.u8 = to_uint<uint8_t>(fvValue(i));
                     }
                 }
 
-                if (attr.value.ternaryfield.value == 0 ||
-                    attr.value.ternaryfield.mask == 0)
+                if (attr.value.ternaryfield.value.u8 == 0 ||
+                    attr.value.ternaryfield.mask.u8 == 0)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Invalid INT L4 DSCP value/mask");
                     return;
@@ -459,7 +470,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (attr == INT_ENDPOINT)
+            if (table_attr == INT_ENDPOINT)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_INT_ENDPOINT_ENABLE;
                 attr.value.booldata = false;
@@ -470,7 +481,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == INT_TRANSIT)
+            else if (table_attr == INT_TRANSIT)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_INT_TRANSIT_ENABLE;
                 attr.value.booldata = false;
@@ -481,7 +492,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == POSTCARD)
+            else if (table_attr == POSTCARD)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_POSTCARD_ENABLE;
                 attr.value.booldata = false;
@@ -492,7 +503,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == DROP_REPORT)
+            else if (table_attr == DROP_REPORT)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_DROP_REPORT_ENABLE;
                 attr.value.booldata = false;
@@ -503,7 +514,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == QUEUE_REPORT)
+            else if (table_attr == QUEUE_REPORT)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_QUEUE_REPORT_ENABLE;
                 attr.value.booldata = false;
@@ -514,7 +525,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == SWITCH_ID)
+            else if (table_attr == SWITCH_ID)
             {
                 auto i = kfvFieldsValues(t);
 
@@ -527,7 +538,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }  
             }
-            else if (attr == FLOW_STATE_CLEAR_CYCLE)
+            else if (table_attr == FLOW_STATE_CLEAR_CYCLE)
             {
                 auto i = kfvFieldsValues(t);
 
@@ -540,7 +551,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 } 
             }
-            else if (attr == LATENCY_SENSITIVITY)
+            else if (table_attr == LATENCY_SENSITIVITY)
             {
                 auto i = kfvFieldsValues(t);
 
@@ -553,9 +564,9 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == SINK_PORT_LIST)
+            else if (table_attr == SINK_PORT_LIST)
             {
-                attr.id = = SAI_SWITCH_ATTR_DTEL_SINK_PORT_LIST;
+                attr.id = SAI_SWITCH_ATTR_DTEL_SINK_PORT_LIST;
 
                 attr.value.objlist.count = 0;
                 attr.value.objlist.list = {};
@@ -566,11 +577,11 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     return;
                 }
             }
-            else if (attr == INT_L4_DSCP)
+            else if (table_attr == INT_L4_DSCP)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_INT_L4_DSCP;
-                attr.value.ternaryfield.value = 0;
-                attr.value.ternaryfield.mask = 0;
+                attr.value.ternaryfield.value.u8 = 0;
+                attr.value.ternaryfield.mask.u8 = 0;
                 status = sai_switch_api->set_switch_attribute(0, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -587,19 +598,24 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
 void DTelOrch::deleteReportSession(string &report_session_id)
 {
     sai_object_id_t report_session_oid;
+    sai_status_t status;
 
     if (!reportSessionExists(report_session_id))
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Report session %s does not exist", report_session_id);
+        SWSS_LOG_ERROR("DTEL ERROR: Report session %s does not exist", report_session_id.c_str());
         return;
     }
 
-    report_session_oid = getReportSessionOid(report_session_id);
+    if (!getReportSessionOid(report_session_id, report_session_oid))
+    {
+        SWSS_LOG_ERROR("DTEL ERROR: Could not get report session oid for session %s", report_session_id.c_str());
+        return;
+    }
 
     status = sai_dtel_api->remove_dtel_report_session(report_session_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Failed to delete report session %s", report_session_id);
+        SWSS_LOG_ERROR("DTEL ERROR: Failed to delete report session %s", report_session_id.c_str());
         return;
     }
 
@@ -610,7 +626,7 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
+    sai_status_t status;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -634,74 +650,80 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             vector<sai_attribute_t> report_session_attr;
-            vector<sai_ip4_t> dst_ip_list;
+            vector<sai_ip_address_t> dst_ip_list;
+            sai_ip_address_t dst_ip;
             sai_attribute_t rs_attr;
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == SRC_IP)
                 {
                     IpPrefix ip(fvValue(i));
-                    rs_attr.id = SAI_SWITCH_ATTR_DTEL_REPORT_SRC_IP;
+                    rs_attr.id = SAI_DTEL_REPORT_SESSION_ATTR_SRC_IP;
                     rs_attr.value.ip4 = ip.getIp().getV4Addr();
                     report_session_attr.push_back(rs_attr);
                 }
                 else if (fvField(i) == DST_IP_LIST)
                 {
+                    dst_ip.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
                     size_t prev = 0;
                     size_t next = fvValue(i).find(';');
-                    while (next != npos)
+                    while (next != std::string::npos)
                     {
                         IpPrefix ip(fvValue(i).substr(prev, next - prev));
-                        dst_ip_list.push_back(ip.getIp().getV4Addr());
+                        dst_ip.addr.ip4 = ip.getIp().getV4Addr();
+                        dst_ip_list.push_back(dst_ip);
                         prev = next + 1;
                         next = fvValue(i).find(';', prev);
                     }
 
                     /* Add the last IP */
                     IpPrefix ip(fvValue(i).substr(prev));
-                    dst_ip_list.push_back(ip.getIp().getV4Addr());
+                    dst_ip.addr.ip4 = ip.getIp().getV4Addr();
+                    dst_ip_list.push_back(dst_ip);
 
-                    rs_attr.id = SAI_SWITCH_ATTR_DTEL_REPORT_DST_IP_LIST;
-                    rs_attr.value.ip4list.count = dst_ip_list.size();
-                    rs_attr.value.ip4list.list = dst_ip_list;
+                    rs_attr.id = SAI_DTEL_REPORT_SESSION_ATTR_DST_IP_LIST;
+                    rs_attr.value.ipaddrlist.count = (uint32_t)dst_ip_list.size();
+                    rs_attr.value.ipaddrlist.list = dst_ip_list.data();
                     report_session_attr.push_back(rs_attr);
                 }
                 else if (fvField(i) == VRF)
                 {
-                    rs_attr.id = SAI_SWITCH_ATTR_DTEL_REPORT_VIRTUAL_ROUTER_ID;
+                    rs_attr.id = SAI_DTEL_REPORT_SESSION_ATTR_VIRTUAL_ROUTER_ID;
                     /* TODO: find a way to convert vrf to oid */
-                    rs_attr.id.value.oid = gVirtualRouterId;
+                    rs_attr.value.oid = gVirtualRouterId;
                     report_session_attr.push_back(rs_attr);
                 }
                 else if (fvField(i) == TRUNCATE_SIZE)
                 {
-                    rs_attr.id = SAI_SWITCH_ATTR_DTEL_REPORT_TRUNCATE_SIZE;
+                    rs_attr.id = SAI_DTEL_REPORT_SESSION_ATTR_TRUNCATE_SIZE;
                     rs_attr.value.u16 = to_uint<uint16_t>(fvValue(i));
                     report_session_attr.push_back(rs_attr);
                 }
                 else if (fvField(i) == UDP_DEST_PORT)
                 {
-                    rs_attr.id = SAI_SWITCH_ATTR_DTEL_REPORT_UDP_DST_PORT;
+                    rs_attr.id = SAI_DTEL_REPORT_SESSION_ATTR_UDP_DST_PORT;
                     rs_attr.value.u16 = to_uint<uint16_t>(fvValue(i));
                     report_session_attr.push_back(rs_attr);
                 }
             }
 
             status = sai_dtel_api->create_dtel_report_session(&report_session_oid, 
-                report_session_attr.size(), report_session_attr);
+                (uint32_t)report_session_attr.size(), report_session_attr.data());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT EP report session %s", report_session_id);
+                SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT EP report session %s", report_session_id.c_str());
                 return;
             }
 
-            m_dTelReportSessionTable[report_session_id] = new DTelReportSessionEntry(report_session_oid, 0);
+            DTelReportSessionEntry rs_entry;
+            rs_entry.reportSessionOid = report_session_oid;
+            m_dTelReportSessionTable[report_session_id] = rs_entry;
         }
         else if (op == DEL_COMMAND)
         {
             if(getReportSessionRefCount(report_session_id) != 0)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: References still exist on report session %s", report_session_id);
+                SWSS_LOG_ERROR("DTEL ERROR: References still exist on report session %s", report_session_id.c_str());
                 return;
             }
 
@@ -715,19 +737,24 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
 void DTelOrch::deleteINTSession(string &int_session_id)
 {
     sai_object_id_t int_session_oid;
+    sai_status_t status;
 
     if (!intSessionExists(int_session_id))
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Failed to get INT session oid %s", int_session_id);
+        SWSS_LOG_ERROR("DTEL ERROR: INT session %s does not exist", int_session_id.c_str());
         return;
     }
 
-    int_session_oid = getINTSessionOid(int_session_id);
+    if (!getINTSessionOid(int_session_id, int_session_oid))
+    {
+        SWSS_LOG_ERROR("DTEL ERROR: Failed to get INT session oid %s", int_session_id.c_str());
+        return;
+    }
 
     status = sai_dtel_api->remove_dtel_int_session(int_session_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Failed to delete INT session %s", int_session_id);
+        SWSS_LOG_ERROR("DTEL ERROR: Failed to delete INT session %s", int_session_id.c_str());
         return;
     }
 
@@ -742,7 +769,7 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
+    sai_status_t status;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -808,14 +835,16 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
             }
 
             status = sai_dtel_api->create_dtel_int_session(&int_session_oid, 
-                int_session_attr.size(), int_session_attr);
+                (uint32_t)int_session_attr.size(), int_session_attr.data());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT session %s", int_session_id);
+                SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT session %s", int_session_id.c_str());
                 return;
             }
 
-            m_dTelINTSessionTable[int_session_id] = new DTelINTSessionEntry(int_session_oid, 0);
+            DTelINTSessionEntry is_entry;
+            is_entry.intSessionOid = int_session_oid;
+            m_dTelINTSessionTable[int_session_id] = is_entry;
 
             /* Notify all interested parties about INT session being added */
             DTelINTSessionUpdate update = {int_session_id, true};
@@ -825,7 +854,7 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
         {
             if(getINTSessionRefCount(int_session_id) != 0)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: References still exist on INT session %s", int_session_id);
+                SWSS_LOG_ERROR("DTEL ERROR: References still exist on INT session %s", int_session_id.c_str());
                 return;
             }
             
@@ -839,19 +868,24 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
 void DTelOrch::disableQueueReport(string &port, string &queue)
 {
     sai_object_id_t queue_report_oid;
+    sai_status_t status;
 
     if (!isQueueReportEnabled(port, queue))
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Failed to get queue report oid for port %s, queue %s", port, queue);
+        SWSS_LOG_ERROR("DTEL ERROR: queue report not enabled for port %s, queue %s", port.c_str(), queue.c_str());
         return;
     }
 
-    queue_report_oid = getQueueReportOid(port, queue);
+    if (!getQueueReportOid(port, queue, queue_report_oid))
+    {
+        SWSS_LOG_ERROR("DTEL ERROR: Failed to get queue report oid for port %s, queue %s", port.c_str(), queue.c_str());
+        return;
+    }
 
     status = sai_dtel_api->remove_dtel_queue_report(queue_report_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Failed to disable queue report for port %s, queue %s", port, queue);
+        SWSS_LOG_ERROR("DTEL ERROR: Failed to disable queue report for port %s, queue %s", port.c_str(), queue.c_str());
         return;
     }
 
@@ -862,7 +896,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
+    sai_status_t status;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -882,7 +916,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
 
         if (!m_portOrch->getPort(port, port_obj))
         {
-            SWSS_LOG_ERROR("DTEL ERROR: Failed to process port for INT sink port list. Port %s doesn't exist", fvField(i).c_str());
+            SWSS_LOG_ERROR("DTEL ERROR: Failed to process port for INT sink port list. Port %s doesn't exist", port.c_str());
             return;
         }
 
@@ -931,10 +965,10 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
             }
 
             status = sai_dtel_api->create_dtel_queue_report(&queue_report_oid, 
-                queue_report_attr.size(), queue_report_attr);
+                (uint32_t)queue_report_attr.size(), queue_report_attr.data());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: Failed to enable queue report on port %s, queue %s", port, queue_id);
+                SWSS_LOG_ERROR("DTEL ERROR: Failed to enable queue report on port %s, queue %s", port.c_str(), queue_id.c_str());
                 return;
             }
 
@@ -952,19 +986,24 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
 void DTelOrch::unConfigureEvent(string &event)
 {
     sai_object_id_t event_oid;
+    sai_status_t status;
 
     if (!isEventConfigured(event))
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Event is not configured %s", event);
+        SWSS_LOG_ERROR("DTEL ERROR: Event is not configured %s", event.c_str());
         return;
     }
 
-    event_oid = getEventOid(event);
+    if (!getEventOid(event, event_oid))
+    {
+        SWSS_LOG_ERROR("DTEL ERROR: Could not get event oid for event %s", event.c_str());
+        return;
+    }
 
     status = sai_dtel_api->remove_dtel_event(event_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Failed to remove event %s", event);
+        SWSS_LOG_ERROR("DTEL ERROR: Failed to remove event %s", event.c_str());
         return;
     }
 
@@ -975,7 +1014,7 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
+    sai_status_t status;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -1002,7 +1041,7 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
             vector<sai_attribute_t> event_attr;
             sai_attribute_t e_attr;
             e_attr.id = SAI_DTEL_EVENT_ATTR_TYPE;
-            e_attr.value.s32 = dTelEventLookup[fvField(i)];
+            e_attr.value.s32 = dTelEventLookup[event];
             event_attr.push_back(e_attr);
 
             for (auto i : kfvFieldsValues(t))
@@ -1011,14 +1050,18 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
                 {
                     if (!reportSessionExists(fvValue(i)))
                     {
-                        SWSS_LOG_ERROR("DTEL ERROR: Report session %s used by event %s does not exist", fvValue(i), event);
+                        SWSS_LOG_ERROR("DTEL ERROR: Report session %s used by event %s does not exist", fvValue(i).c_str(), event.c_str());
                         return;
                     }
 
                     e_attr.id = SAI_DTEL_EVENT_ATTR_REPORT_SESSION;
-                    e_attr.value.oid = getReportSessionOid(fvValue(i));
+                    if (!getReportSessionOid(fvValue(i), e_attr.value.oid))
+                    {
+                        SWSS_LOG_ERROR("DTEL ERROR: Could not get report session oid for event %s, session %s", fvValue(i).c_str(), event.c_str());
+                        return;
+                    }
                     event_attr.push_back(e_attr);
-                    report_session_id = fvValue(i)
+                    report_session_id = fvValue(i);
                 }
                 else if (fvField(i) == EVENT_DSCP_VALUE)
                 {
@@ -1029,10 +1072,10 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
             }
 
             status = sai_dtel_api->create_dtel_event(&event_oid, 
-                event_attr.size(), event_attr);
+                (uint32_t)event_attr.size(), event_attr.data());
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: Failed to create event %s", event);
+                SWSS_LOG_ERROR("DTEL ERROR: Failed to create event %s", event.c_str());
                 return;
             }
 

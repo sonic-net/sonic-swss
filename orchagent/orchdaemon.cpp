@@ -86,7 +86,7 @@ bool OrchDaemon::init()
         APP_ACL_TABLE_NAME,
         APP_ACL_RULE_TABLE_NAME
     };
-    AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
+
     vector<string> dtel_tables = {
         APP_DTEL_TABLE_NAME,
         APP_DTEL_REPORT_SESSION_TABLE_NAME,
@@ -95,7 +95,8 @@ bool OrchDaemon::init()
         APP_DTEL_EVENT_ATTR_TABLE_NAME
     };
 
-    AclOrch *dtel_orch = new DTelOrch(m_applDb, dtel_tables, gPortsOrch);
+    DTelOrch *dtel_orch = new DTelOrch(m_applDb, dtel_tables, gPortsOrch);
+    AclOrch *acl_orch = new AclOrch(m_applDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch, dtel_orch);
 
 
     m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, /*tunnel_decap_orch,*/ qos_orch, buffer_orch, /*mirror_orch,*/ acl_orch, gFdbOrch, dtel_orch};

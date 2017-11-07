@@ -38,6 +38,7 @@ orchagent_SOURCES = \
         switchorch.cpp \
 		    pfcwdorch.cpp \
 		    pfcactionhandler.cpp \
+		    dtelorch.cpp \
 		    aclorch.h \
 		    bufferorch.h \
 		    copporch.h \
@@ -58,6 +59,7 @@ orchagent_SOURCES = \
 		    saihelper.h \
         switchorch.h \
 		    swssnet.h \
+		    dtelorch.h \
 		    tunneldecaporch.h
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

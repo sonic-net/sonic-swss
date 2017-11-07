@@ -40,6 +40,7 @@
 #define MATCH_DSCP                      "DSCP"
 #define MATCH_L4_SRC_PORT_RANGE         "L4_SRC_PORT_RANGE"
 #define MATCH_L4_DST_PORT_RANGE         "L4_DST_PORT_RANGE"
+#define MATCH_TC                        "TC"
 #define MATCH_TUNNEL_VNI                "TUNNEL_VNI"
 #define MATCH_INNER_ETHER_TYPE          "INNER_ETHER_TYPE"
 #define MATCH_INNER_IP_PROTOCOL         "INNER_IP_PROTOCOL"
@@ -77,7 +78,6 @@
 #define IP_TYPE_ARP_REQUEST     "ARP_REQUEST"
 #define IP_TYPE_ARP_REPLY       "ARP_REPLY"
 
-#define MLNX_PLATFORM_SUBSTRING "mlnx"
 #define MLNX_MAX_RANGES_COUNT   16
 
 typedef enum
@@ -180,7 +180,7 @@ public:
         return m_counterOid;
     }
 
-    static shared_ptr<AclRule> makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
+    static shared_ptr<AclRule> makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
     virtual ~AclRule() {}
 
 protected:
@@ -241,7 +241,7 @@ protected:
 class AclRuleDTelFlowWatchList: public AclRule
 {
 public:
-    AclRuleDTelFlowWatchList(DTelOrch *m_pDTelOrch, string rule, string table, acl_table_type_t type);
+    AclRuleDTelFlowWatchList(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table, acl_table_type_t type);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
     bool remove();
@@ -256,7 +256,7 @@ protected:
 class AclRuleDTelDropWatchList: public AclRule
 {
 public:
-    AclRuleDTelDropWatchList(DTelOrch *m_pDTelOrch, string rule, string table, acl_table_type_t type);
+    AclRuleDTelDropWatchList(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table, acl_table_type_t type);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
     void update(SubjectType, void *);
@@ -309,6 +309,11 @@ public:
     RouteOrch *m_routeOrch;
     DTelOrch *m_dTelOrch;
 
+    bool addAclTable(AclTable &aclTable, string table_id);
+    bool removeAclTable(string table_id);
+    bool addAclRule(shared_ptr<AclRule> aclRule, string table_id, string rule_id);
+    bool removeAclRule(string table_id, string rule_id);
+
 private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
@@ -323,6 +328,8 @@ private:
     bool processAclTableType(string type, acl_table_type_t &table_type);
     bool processPorts(string portsList, ports_list_t& out);
     bool validateAclTable(AclTable &aclTable);
+    sai_status_t createDTelWatchListTables();
+    sai_status_t deleteDTelWatchListTables();
 
     //vector <AclTable> m_AclTables;
     map <sai_object_id_t, AclTable> m_AclTables;
