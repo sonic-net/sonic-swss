@@ -250,6 +250,24 @@ void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple>
             if (op == SET_COMMAND)
             {
                 p.set(key, values);
+                for (auto fv : values)
+                {
+                    string field = fvField(fv);
+                    string value = fvValue(fv);
+
+                    /* Update the mtu field on host interface */
+                    if (field == "mtu")
+                    {
+                        char system_cmd[1024];
+                        snprintf(system_cmd, sizeof(system_cmd), "ip link set %s mtu %s", key.c_str(), value.c_str());
+                        int ret_val = system(system_cmd);
+                        if (ret_val != 0)
+                        {
+                            cerr << "Failed to set mtu " << value << " for " << key << endl;
+                        }
+                     }
+                 }
+
             }
 
             it = port_cfg_map.erase(it);
