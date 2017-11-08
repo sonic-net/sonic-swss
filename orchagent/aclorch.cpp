@@ -1279,7 +1279,7 @@ void AclOrch::doTask(Consumer &consumer)
         return;
     }
 
-    string table_name = consumer.m_consumer->getTableName();
+    string table_name = consumer.getTableName();
 
     if (table_name == CFG_ACL_TABLE_NAME)
     {

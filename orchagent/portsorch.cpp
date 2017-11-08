@@ -1315,7 +1315,7 @@ void PortsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    string table_name = consumer.m_consumer->getTableName();
+    string table_name = consumer.getTableName();
 
     if (table_name == APP_PORT_TABLE_NAME)
     {

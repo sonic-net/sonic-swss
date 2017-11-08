@@ -237,9 +237,8 @@ void OrchDaemon::start()
             continue;
         }
 
-        TableConsumable *c = (TableConsumable *)s;
-        Orch *o = getOrchByConsumer(c);
-        o->execute(c->getTableName());
+        auto *c = (Executor *)s;
+        c->execute();
 
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
@@ -249,20 +248,4 @@ void OrchDaemon::start()
             o->doTask();
 
     }
-}
-
-Orch *OrchDaemon::getOrchByConsumer(TableConsumable *c)
-{
-    SWSS_LOG_ENTER();
-
-    for (Orch *o : m_orchList)
-    {
-        if (o->hasSelectable(c))
-            return o;
-    }
-
-    SWSS_LOG_ERROR("Failed to get Orch class by ConsumerTable:%s",
-            c->getTableName().c_str());
-
-    return nullptr;
 }

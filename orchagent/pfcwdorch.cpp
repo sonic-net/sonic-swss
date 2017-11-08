@@ -4,6 +4,7 @@
 #include "converter.h"
 #include "redisapi.h"
 #include "select.h"
+#include "notifier.h"
 
 #define PFC_WD_ACTION                   "action"
 #define PFC_WD_DETECTION_TIME           "detection_time"
@@ -445,7 +446,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnPort(const Port& port)
 }
 
 template <typename DropHandler, typename ForwardHandler>
-void PfcWdSwOrch<DropHandler, ForwardHandler>::handleWdNotification(swss::NotificationConsumer& wdNotification)
+void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer& wdNotification)
 {
     SWSS_LOG_ENTER();
 
@@ -517,12 +518,12 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::pfcWatchdogThread(void)
 
     DBConnector db(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-    swss::Select s;
-    shared_ptr<swss::NotificationConsumer> wdNotification =
-        make_shared<swss::NotificationConsumer>(
-                PfcWdSwOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
-                "PFC_WD");
+    auto consumer = new swss::NotificationConsumer(
+            PfcWdSwOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
+            "PFC_WD");
+    auto wdNotification = make_shared<Notifier>(consumer, this);
 
+    swss::Select s;
     s.addSelectable(wdNotification.get());
 
     while(m_runPfcWdSwOrchThread)
@@ -536,7 +537,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::pfcWatchdogThread(void)
 
         if (sel == wdNotification.get())
         {
-            handleWdNotification(*wdNotification.get());
+            ((Executor *)sel)->execute();
         }
         else if (result == swss::Select::TIMEOUT)
         {

@@ -90,7 +90,7 @@ private:
     void registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     void unregisterFromWdDb(const Port& port);
-    void handleWdNotification(swss::NotificationConsumer &wdNotification);
+    void doTask(swss::NotificationConsumer &wdNotification);
     void pfcWatchdogThread(void);
     void startWatchdogThread(void);
     void endWatchdogThread(void);
