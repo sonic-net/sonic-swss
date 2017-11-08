@@ -26,7 +26,7 @@ using namespace swss;
  * interfaces are already created and remove them from this set. We will
  * remove the rest of the ports in the set when receiving the first netlink
  * message indicating that the host interfaces are created. After the set
- * is empty, we send out the signal ConfigDone. g_init is used to limit the
+ * is empty, we send out the signal PortInitDone. g_init is used to limit the
  * command to be run only once.
  */
 set<string> g_portSet;
@@ -185,16 +185,16 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
             }
 
             continue;
-         }
- 
-         istringstream iss(line);
+        }
+
+        istringstream iss(line);
         map<string, string> entry;
- 
+
         /* Read port configuration entry */
         for (auto column : header)
-         {
+        {
             iss >> entry[column];
-         }
+        }
 
         /* If port has no alias, then use its name as alias */
         string alias;
@@ -208,36 +208,36 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
         }
 
         FieldValueTuple lanes_attr("lanes", entry["lanes"]);
-         FieldValueTuple alias_attr("alias", alias);
- 
-         vector<FieldValueTuple> attrs;
-         attrs.push_back(lanes_attr);
-         attrs.push_back(alias_attr);
- 
+        FieldValueTuple alias_attr("alias", alias);
+
+        vector<FieldValueTuple> attrs;
+        attrs.push_back(lanes_attr);
+        attrs.push_back(alias_attr);
+
         if ((entry.find("speed") != entry.end()) && (entry["speed"] != ""))
         {
             FieldValueTuple speed_attr("speed", entry["speed"]);
             attrs.push_back(speed_attr);
         }
- 
+
         if ((entry.find("autoneg") != entry.end()) && (entry["autoneg"] != ""))
         {
             FieldValueTuple autoneg_attr("autoneg", entry["autoneg"]);
             attrs.push_back(autoneg_attr);
         }
- 
+
         if ((entry.find("fec") != entry.end()) && (entry["fec"] != ""))
         {
             FieldValueTuple fec_attr("fec", entry["fec"]);
             attrs.push_back(fec_attr);
         }
- 
+
         p.set(entry["name"], attrs);
 
         g_portSet.insert(entry["name"]);
-     }
- 
-     infile.close();
+    }
+
+    infile.close();
 
     /* Notify that all ports added */
     FieldValueTuple finish_notice("count", to_string(g_portSet.size()));

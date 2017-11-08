@@ -649,7 +649,6 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, int fe
     attr.value.u32 = fec;
     attrs.push_back(attr);
 
-    
     sai_object_id_t port_id;
     sai_status_t status = sai_port_api->create_port(&port_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -702,7 +701,7 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
             p.m_index = static_cast<int32_t>(m_portList.size()); // TODO: Assume no deletion of physical port
             p.m_port_id = id;
 
-            /* Initialize the port and create router interface and host interface */
+            /* Initialize the port and create corresponding host interface */
             if (initializePort(p))
             {
                 /* Add port to port list */
@@ -807,7 +806,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (fvField(i) == "admin_status")
                     admin_status = fvValue(i);
 
-                /* Set port mtu */
+                /* Set port MTU */
                 if (fvField(i) == "mtu")
                     mtu = (uint32_t)stoul(fvValue(i));
 
@@ -863,7 +862,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                     else
                     {
-                        ++it;
+                        it++;
                     }
                 }
 
@@ -902,6 +901,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             throw runtime_error("PortsOrch initialization failure.");
                         }
                     }
+
                     it = m_lanesAliasSpeedMap.erase(it);
                 }
             }
@@ -968,7 +968,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (admin_status != "")
                 {
                     if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
+                    {
                         SWSS_LOG_NOTICE("Set port %s admin status to %s", alias.c_str(), admin_status.c_str());
+                    }
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
@@ -980,7 +982,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (mtu != 0)
                 {
                     if (setPortMtu(p.m_port_id, mtu))
+                    {
                         SWSS_LOG_NOTICE("Set port %s MTU to %u", alias.c_str(), mtu);
+                    }
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s MTU to %u", alias.c_str(), mtu);
@@ -1037,6 +1041,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     {
                         SWSS_LOG_ERROR("Unknown fec mode %s", fec_mode.c_str());
                     }
+
                 }
 #endif
             }
