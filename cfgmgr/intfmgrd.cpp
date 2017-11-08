@@ -75,7 +75,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-               ((Orch *)&intfmgr)->doTask();
+                intfmgr.doTask();
                 continue;
             }
 

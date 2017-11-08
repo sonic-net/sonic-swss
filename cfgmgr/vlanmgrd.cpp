@@ -90,7 +90,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                ((Orch *)&vlanmgr)->doTask();
+                vlanmgr.doTask();
                 continue;
             }
 

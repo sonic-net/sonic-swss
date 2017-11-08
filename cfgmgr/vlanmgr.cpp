@@ -167,12 +167,11 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
 
 bool VlanMgr::isVlanMacOk()
 {
-    return !(!gMacAddress);
+    return !!gMacAddress;
 }
 
 void VlanMgr::doVlanTask(Consumer &consumer)
 {
-
     if (!isVlanMacOk())
     {
         SWSS_LOG_DEBUG("VLAN mac not ready, delaying VLAN task");

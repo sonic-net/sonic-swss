@@ -14,6 +14,7 @@ class IntfMgr : public Orch
 {
 public:
     IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames);
+    using Orch::doTask;
 
 private:
     ProducerStateTable m_appIntfTableProducer;

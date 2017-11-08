@@ -15,6 +15,7 @@ class VlanMgr : public Orch
 {
 public:
     VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames);
+    using Orch::doTask;
 
 private:
     ProducerStateTable m_appVlanTableProducer, m_appVlanMemberTableProducer;
