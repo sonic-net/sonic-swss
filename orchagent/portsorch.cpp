@@ -13,6 +13,8 @@
 #include "logger.h"
 #include "schema.h"
 #include "converter.h"
+#include "saiserialize.h"
+
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -21,6 +23,7 @@ extern sai_vlan_api_t *sai_vlan_api;
 extern sai_lag_api_t *sai_lag_api;
 extern sai_hostif_api_t* sai_hostif_api;
 extern sai_acl_api_t* sai_acl_api;
+extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
 
 #define VLAN_PREFIX         "Vlan"
@@ -50,6 +53,11 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
 
     /* Initialize port table */
     m_portTable = unique_ptr<Table>(new Table(m_db, APP_PORT_TABLE_NAME));
+
+/* Initialize queue tables */
+    m_queueTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_NAME_MAP));
+    m_queuePortTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_PORT_MAP));
+    m_queueIndexTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_INDEX_MAP));
 
     uint32_t i, j;
     sai_status_t status;
@@ -374,6 +382,56 @@ bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
     return false;
 }
 
+bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
+{
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    // "Lazy" query of supported speeds for given port
+    // Once received the list will be stored in m_portSupportedSpeeds
+    if (!m_portSupportedSpeeds.count(port_id))
+    {
+        attr.id = SAI_PORT_ATTR_SUPPORTED_SPEED;
+        attr.value.u32list.count = 0;
+        attr.value.u32list.list = NULL;
+
+        status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+        if (status == SAI_STATUS_BUFFER_OVERFLOW)
+        {
+            std::vector<sai_uint32_t> speeds(attr.value.u32list.count);
+            attr.value.u32list.list = speeds.data();
+            status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+                m_portSupportedSpeeds[port_id] = speeds;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to get supported speed list for port %lx", port_id);
+                return false;
+            }
+        }
+        // TODO: change to macro SAI_STATUS_IS_ATTR_NOT_SUPPORTED once it is fixed in SAI
+        // https://github.com/opencomputeproject/SAI/pull/710
+        else if (((status) & (~0xFFFF)) == SAI_STATUS_ATTR_NOT_SUPPORTED_0)
+        {
+            // unable to validate speed if attribute is not supported on platform
+            // assuming input value is correct
+            SWSS_LOG_WARN("Unable to validate speed for port %lx. Not supported by platform", port_id);
+            return true;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to get number of supported speeds for port %lx", port_id);
+            return false;
+        }
+    }
+
+    PortSupportedSpeeds &supp_speeds = m_portSupportedSpeeds[port_id];
+
+    return std::find(supp_speeds.begin(), supp_speeds.end(), speed) != supp_speeds.end();
+}
+
 bool PortsOrch::setPortSpeed(sai_object_id_t id, sai_uint32_t speed)
 {
     SWSS_LOG_ENTER();
@@ -390,6 +448,24 @@ bool PortsOrch::setPortSpeed(sai_object_id_t id, sai_uint32_t speed)
     }
     SWSS_LOG_INFO("Set speed %u to port pid:%lx", attr.value.u32, id);
     return true;
+}
+
+bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    attr.id = SAI_PORT_ATTR_SPEED;
+    attr.value.u32 = 0;
+
+    status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+
+    if (status == SAI_STATUS_SUCCESS)
+        speed = attr.value.u32;
+
+    return status == SAI_STATUS_SUCCESS;
 }
 
 bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
@@ -1190,7 +1266,35 @@ void PortsOrch::initializeQueues(Port &port)
         SWSS_LOG_ERROR("Failed to get queue list for port %s rv:%d", port.m_alias.c_str(), status);
         throw runtime_error("PortsOrch initialization failure.");
     }
+
     SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
+
+    /* Create the Queue map in the Counter DB */
+    vector<FieldValueTuple> queueVector;
+    vector<FieldValueTuple> queuePortVector;
+    vector<FieldValueTuple> queueIndexVector;
+
+    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << queueIndex;
+        FieldValueTuple tuple(name.str(), sai_serialize_object_id(port.m_queue_ids[queueIndex]));
+        queueVector.push_back(tuple);
+
+        FieldValueTuple queuePortTuple(
+                sai_serialize_object_id(port.m_queue_ids[queueIndex]),
+                sai_serialize_object_id(port.m_port_id));
+        queuePortVector.push_back(queuePortTuple);
+
+        FieldValueTuple queueIndexTuple(
+                sai_serialize_object_id(port.m_queue_ids[queueIndex]),
+                to_string(queueIndex));
+        queueIndexVector.push_back(queueIndexTuple);
+    }
+
+    m_queueTable->set("", queueVector);
+    m_queuePortTable->set("", queuePortVector);
+    m_queueIndexTable->set("", queueIndexVector);
 }
 
 void PortsOrch::initializePriorityGroups(Port &port)
