@@ -18,6 +18,7 @@ using namespace std;
 using namespace swss;
 
 const char delimiter           = ':';
+const char delimiter2          = '|';
 const char list_item_delimiter = ',';
 const char ref_start           = '[';
 const char ref_end             = ']';

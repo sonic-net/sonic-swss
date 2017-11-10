@@ -65,17 +65,17 @@ bool OrchDaemon::init()
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
     vector<string> qos_tables = {
-        APP_TC_TO_QUEUE_MAP_TABLE_NAME,
-        APP_SCHEDULER_TABLE_NAME,
-        APP_DSCP_TO_TC_MAP_TABLE_NAME,
-        APP_QUEUE_TABLE_NAME,
-        APP_PORT_QOS_MAP_TABLE_NAME,
-        APP_WRED_PROFILE_TABLE_NAME,
-        APP_TC_TO_PRIORITY_GROUP_MAP_NAME,
-        APP_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_NAME,
-        APP_PFC_PRIORITY_TO_QUEUE_MAP_NAME
+        CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
+        CFG_SCHEDULER_TABLE_NAME,
+        CFG_DSCP_TO_TC_MAP_TABLE_NAME,
+        CFG_QUEUE_TABLE_NAME,
+        CFG_PORT_QOS_MAP_TABLE_NAME,
+        CFG_WRED_PROFILE_TABLE_NAME,
+        CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
+        CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME,
+        CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME
     };
-    QosOrch *qos_orch = new QosOrch(m_applDb, qos_tables);
+    QosOrch *qos_orch = new QosOrch(m_configDb, qos_tables);
 
     vector<string> buffer_tables = {
         APP_BUFFER_POOL_TABLE_NAME,
