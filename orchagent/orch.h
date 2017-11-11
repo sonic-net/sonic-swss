@@ -14,6 +14,7 @@ extern "C" {
 #include "consumertable.h"
 #include "consumerstatetable.h"
 #include "notificationconsumer.h"
+#include "selectabletimer.h"
 
 using namespace std;
 using namespace swss;
@@ -141,6 +142,7 @@ public:
     /* Run doTask against a specific executor */
     virtual void doTask(Consumer &consumer) = 0;
     virtual void doTask(NotificationConsumer &consumer) { }
+    virtual void doTask(SelectableTimer &timer) { }
 
     /* TODO: refactor recording */
     static void recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
