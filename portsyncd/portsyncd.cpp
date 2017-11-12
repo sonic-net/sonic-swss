@@ -84,7 +84,6 @@ int main(int argc, char **argv)
 
         netlink.registerGroup(RTNLGRP_LINK);
         cout << "Listen to link messages..." << endl;
-        netlink.dumpRequest(RTM_GETLINK);
 
         handlePortConfigFile(p, port_config_file);
 
