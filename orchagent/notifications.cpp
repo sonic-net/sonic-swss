@@ -64,7 +64,8 @@ void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *d
         SWSS_LOG_NOTICE("Get port state change notification id:%lx status:%d", id, status);
 
         gPortsOrch->updateDbPortOperStatus(id, status);
-        gPortsOrch->setHostIntfsOperStatus(id, status == SAI_PORT_OPER_STATUS_UP);    }
+        gPortsOrch->setHostIntfsOperStatus(id, status == SAI_PORT_OPER_STATUS_UP);
+    }
 }
 
 void on_switch_shutdown_request()
