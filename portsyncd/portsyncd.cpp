@@ -13,6 +13,7 @@
 #include "producerstatetable.h"
 #include "portsyncd/linksync.h"
 #include "subscriberstatetable.h"
+#include "exec.h"
 
 #define DEFAULT_PORT_CONFIG_FILE     "port_config.ini"
 
@@ -30,7 +31,6 @@ using namespace swss;
  * command to be run only once.
  */
 set<string> g_portSet;
-map<string, set<string>> g_vlanMap;
 bool g_init = false;
 
 void usage()
@@ -84,7 +84,6 @@ int main(int argc, char **argv)
 
         netlink.registerGroup(RTNLGRP_LINK);
         cout << "Listen to link messages..." << endl;
-        netlink.dumpRequest(RTM_GETLINK);
 
         handlePortConfigFile(p, port_config_file);
 
@@ -263,6 +262,19 @@ void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple>
             if (op == SET_COMMAND)
             {
                 p.set(key, values);
+                for (auto fv : values)
+                {
+                    string field = fvField(fv);
+                    string value = fvValue(fv);
+
+                    /* Update the mtu field on host interface */
+                    if (field == "mtu")
+                    {
+                        string cmd, res;
+                        cmd = "ip link set " + key + " mtu " + value;
+                        swss::exec(cmd, res);
+                     }
+                }
             }
 
             it = port_cfg_map.erase(it);

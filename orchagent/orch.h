@@ -27,6 +27,9 @@ const char range_specifier     = '-';
 #define MLNX_PLATFORM_SUBSTRING "mellanox"
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
 
+#define CONFIGDB_KEY_SEPARATOR "|"
+#define DEFAULT_KEY_SEPARATOR  ":"
+
 typedef enum
 {
     task_success,
@@ -67,8 +70,8 @@ typedef pair<DBConnector *, vector<string>> TablesConnector;
 class Orch
 {
 public:
-    Orch(DBConnector *db, string tableName);
-    Orch(DBConnector *db, vector<string> &tableNames);
+    Orch(DBConnector *db, const string tableName);
+    Orch(DBConnector *db, const vector<string> &tableNames);
     Orch(const vector<TableConnector>& tables);
     virtual ~Orch();
 
@@ -86,6 +89,7 @@ protected:
     virtual void doTask(Consumer &consumer) = 0;
     void logfileReopen();
     void recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
+    string dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
     ref_resolve_status resolveFieldRefValue(type_map&, const string&, KeyOpFieldsValuesTuple&, sai_object_id_t&);
     bool parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
     bool parseReference(type_map &type_maps, string &ref, string &table_name, string &object_name);

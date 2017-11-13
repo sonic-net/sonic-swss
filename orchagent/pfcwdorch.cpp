@@ -223,12 +223,6 @@ void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
         return;
     }
 
-    if (restorationTime == 0)
-    {
-        SWSS_LOG_ERROR("%s missing", PFC_WD_RESTORATION_TIME);
-        return;
-    }
-
     if (!startWdOnPort(port, detectionTime, restorationTime, action))
     {
         SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
@@ -296,7 +290,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         // Store detection and restoration time for plugins
         vector<FieldValueTuple> countersFieldValues;
         countersFieldValues.emplace_back("PFC_WD_DETECTION_TIME", to_string(detectionTime * 1000));
-        countersFieldValues.emplace_back("PFC_WD_RESTORATION_TIME", to_string(restorationTime * 1000));
+        // Restoration time is optional
+        countersFieldValues.emplace_back("PFC_WD_RESTORATION_TIME",
+                restorationTime == 0 ?
+                "" :
+                to_string(restorationTime * 1000));
         countersFieldValues.emplace_back("PFC_WD_ACTION", this->serializeAction(action));
 
         PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable()->set(queueIdStr, countersFieldValues);

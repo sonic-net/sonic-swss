@@ -2,7 +2,7 @@
 #include <iostream>
 #include <mutex>
 #include <sys/time.h>
-
+#include "timestamp.h"
 #include "orch.h"
 
 #include "subscriberstatetable.h"
@@ -16,20 +16,18 @@ using namespace swss;
 extern int gBatchSize;
 
 extern mutex gDbMutex;
-extern PortsOrch *gPortsOrch;
 
 extern bool gSwssRecord;
 extern ofstream gRecordOfs;
 extern bool gLogRotate;
 extern string gRecordFile;
-extern string getTimestamp();
 
-Orch::Orch(DBConnector *db, string tableName)
+Orch::Orch(DBConnector *db, const string tableName)
 {
     addConsumer(db, tableName);
 }
 
-Orch::Orch(DBConnector *db, vector<string> &tableNames)
+Orch::Orch(DBConnector *db, const vector<string> &tableNames)
 {
     for(auto it : tableNames)
     {
@@ -276,6 +274,18 @@ void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 
         logfileReopen();
     }
+}
+
+string Orch::dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
+{
+    string s = consumer.m_consumer->getTableName() + ":" + kfvKey(tuple)
+               + "|" + kfvOp(tuple);
+    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
+    {
+        s += "|" + fvField(*i) + ":" + fvValue(*i);
+    }
+
+    return s;
 }
 
 ref_resolve_status Orch::resolveFieldRefArray(
