@@ -1242,6 +1242,7 @@ AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch
     auto timer = new SelectableTimer(interv);
     auto executor = new ExecutableTimer(timer, this);
     Orch::addExecutor("", executor);
+    timer->start();
 }
 
 AclOrch::~AclOrch()
