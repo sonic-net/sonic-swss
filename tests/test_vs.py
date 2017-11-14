@@ -13,8 +13,8 @@ def test_RouteAdd():
 
     # bring up interfaces that will be in use
 
-    assert os.system("docker exec -it " + DOCKER_NAME + " ifconfig Ethernet0 10.0.0.0/31 up") == 0
-    assert os.system("docker exec -it " + DOCKER_NAME + " ifconfig Ethernet4 10.0.0.2/31 up") == 0
+    assert os.system("docker exec -i " + DOCKER_NAME + " ifconfig Ethernet0 10.0.0.0/31 up") == 0
+    assert os.system("docker exec -i " + DOCKER_NAME + " ifconfig Ethernet4 10.0.0.2/31 up") == 0
 
     assert os.system("ip netns exec sw-srv0 ifconfig eth0 10.0.0.1/31") == 0
     os.system("ip netns exec sw-srv0 ip route add default via 10.0.0.0") == 0
