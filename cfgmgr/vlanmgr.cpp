@@ -341,7 +341,7 @@ void VlanMgr::processUntaggedVlanMembers(string vlan, const string &members)
         SWSS_LOG_ERROR("Failed to find tableName:%s", CFG_VLAN_MEMBER_TABLE_NAME);
         return;
     }
-    auto& consumer = (Consumer &)*consumer_it->second;
+    auto& consumer = static_cast<Consumer &>(*consumer_it->second);
 
     vector<string> vlanMembers = tokenize(members, ',');
 
