@@ -267,13 +267,12 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
     if (!c_portStatIds.empty())
     {
+        string key = sai_serialize_object_id(port.m_port_id) + ":" + std::to_string(m_pollInterval);
         vector<FieldValueTuple> fieldValues;
         string str = counterIdsToStr(c_portStatIds, &sai_serialize_port_stat);
         fieldValues.emplace_back(PFC_WD_PORT_COUNTER_ID_LIST, str);
 
-        m_pfcWdTable->set(
-                sai_serialize_object_id(port.m_port_id),
-                fieldValues);
+        m_pfcWdTable->set(key, fieldValues);
     }
 
     uint8_t pfcMask = attr.value.u8;
@@ -317,7 +316,9 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         // Create internal entry
         m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i));
 
-        m_pfcWdTable->set(queueIdStr, queueFieldValues);
+        string key = queueIdStr + ":" + std::to_string(m_pollInterval);
+
+        m_pfcWdTable->set(key, queueFieldValues);
 
         // Initialize PFC WD related counters
         PfcWdActionHandler::initWdCounters(
@@ -334,9 +335,10 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
         sai_object_id_t queueId = port.m_queue_ids[i];
+        string key = sai_serialize_object_id(queueId) + ":" + std::to_string(m_pollInterval);
 
         // Unregister in syncd
-        m_pfcWdTable->del(sai_serialize_object_id(queueId));
+        m_pfcWdTable->del(key);
         m_entryMap.erase(queueId);
     }
 }
@@ -347,13 +349,15 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         vector<string> &tableNames,
         const vector<sai_port_stat_t> &portStatIds,
         const vector<sai_queue_stat_t> &queueStatIds,
-        const vector<sai_queue_attr_t> &queueAttrIds):
+        const vector<sai_queue_attr_t> &queueAttrIds, 
+        int pollInterval):
     PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
     m_pfcWdDb(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
     m_pfcWdTable(new ProducerStateTable(m_pfcWdDb.get(), PFC_WD_STATE_TABLE)),
     c_portStatIds(portStatIds),
     c_queueStatIds(queueStatIds),
-    c_queueAttrIds(queueAttrIds)
+    c_queueAttrIds(queueAttrIds),
+    m_pollInterval(pollInterval)
 {
     SWSS_LOG_ENTER();
 

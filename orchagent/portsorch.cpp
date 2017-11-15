@@ -6,6 +6,7 @@
 #include <set>
 #include <algorithm>
 #include <tuple>
+#include <sstream>
 
 #include <netinet/if_ether.h>
 #include "net/if.h"
@@ -29,6 +30,7 @@ extern sai_object_id_t gSwitchId;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
+#define FLEX_STAT_COUNTER_POLL_MSECS "1000"
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
 {
@@ -56,16 +58,19 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     SWSS_LOG_ENTER();
 
     /* Initialize counter table */
-    DBConnector *counter_db(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
-    m_counterTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_PORT_NAME_MAP));
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
 
     /* Initialize port table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
 
     /* Initialize queue tables */
-    m_queueTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_NAME_MAP));
-    m_queuePortTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_PORT_MAP));
-    m_queueIndexTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_INDEX_MAP));
+    m_queueTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_NAME_MAP));
+    m_queuePortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_PORT_MAP));
+    m_queueIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_INDEX_MAP));
+
+    m_flex_db = shared_ptr<DBConnector>(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_flexCounterTable = unique_ptr<ProducerStateTable>(new ProducerStateTable(m_flex_db.get(), PFC_WD_STATE_TABLE));
 
     uint32_t i, j;
     sai_status_t status;
@@ -643,9 +648,25 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 m_portList[alias] = p;
                 /* Add port name map to counter table */
                 FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
-                vector<FieldValueTuple> vector;
-                vector.push_back(tuple);
-                m_counterTable->set("", vector);
+                vector<FieldValueTuple> fields;
+                fields.push_back(tuple);
+                m_counterTable->set("", fields);
+
+                /* Add port to flex_counter for updating stat counters  */
+                string key = sai_serialize_object_id(p.m_port_id) + ":" + FLEX_STAT_COUNTER_POLL_MSECS;
+
+                std::string delimiter = "";
+                std::ostringstream counters_stream;
+                for (int cntr = SAI_PORT_STAT_IF_IN_OCTETS; cntr <= SAI_PORT_STAT_PFC_7_ON2OFF_RX_PKTS; ++cntr)
+                {
+                    counters_stream << delimiter << sai_serialize_port_stat(static_cast<sai_port_stat_t>(cntr));
+                    delimiter = ",";
+                }
+
+                fields.clear();
+                fields.emplace_back(PFC_WD_PORT_COUNTER_ID_LIST, counters_stream.str());
+
+                m_flexCounterTable->set(key, fields);
 
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
@@ -1362,6 +1383,7 @@ void PortsOrch::initializeQueues(Port &port)
     SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
 
     /* Create the Queue map in the Counter DB */
+    /* Add stat counters to flex_counter */
     vector<FieldValueTuple> queueVector;
     vector<FieldValueTuple> queuePortVector;
     vector<FieldValueTuple> queueIndexVector;
@@ -1382,6 +1404,21 @@ void PortsOrch::initializeQueues(Port &port)
                 sai_serialize_object_id(port.m_queue_ids[queueIndex]),
                 to_string(queueIndex));
         queueIndexVector.push_back(queueIndexTuple);
+
+        string key = sai_serialize_object_id(port.m_queue_ids[queueIndex]) + ":" + FLEX_STAT_COUNTER_POLL_MSECS;
+
+        std::string delimiter = "";
+        std::ostringstream counters_stream;
+        for (int cntr = SAI_QUEUE_STAT_PACKETS; cntr <= SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES ; ++cntr)
+        {
+            counters_stream << delimiter << sai_serialize_queue_stat(static_cast<sai_queue_stat_t>(cntr));
+            delimiter = ",";
+        }
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(PFC_WD_QUEUE_COUNTER_ID_LIST, counters_stream.str());
+
+        m_flexCounterTable->set(key, fieldValues);
     }
 
     m_queueTable->set("", queueVector);

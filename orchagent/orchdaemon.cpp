@@ -11,6 +11,7 @@ using namespace swss;
 
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
+#define FLEX_COUNTER_POLL_MSECS 100
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
@@ -140,7 +141,8 @@ bool OrchDaemon::init()
                     pfc_wd_tables,
                     portStatIds,
                     queueStatIds,
-                    queueAttrIds));
+                    queueAttrIds,
+                    FLEX_COUNTER_POLL_MSECS));
     }
     else if (platform == BRCM_PLATFORM_SUBSTRING)
     {
@@ -180,7 +182,8 @@ bool OrchDaemon::init()
                     pfc_wd_tables,
                     portStatIds,
                     queueStatIds,
-                    queueAttrIds));
+                    queueAttrIds,
+                    FLEX_COUNTER_POLL_MSECS));
     }
 
     return true;
