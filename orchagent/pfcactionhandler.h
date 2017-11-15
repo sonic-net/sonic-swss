@@ -13,6 +13,14 @@ extern "C" {
 using namespace std;
 using namespace swss;
 
+struct PfcWdHwStats
+{
+    uint64_t txPkt     = 0;
+    uint64_t txDropPkt = 0;
+    uint64_t rxPkt     = 0;
+    uint64_t rxDropPkt = 0;
+};
+
 // PFC queue interface class
 // It resembles RAII behavior - pause storm is mitigated (queue is locked) on creation,
 // and is restored (queue released) on removal
@@ -39,15 +47,28 @@ class PfcWdActionHandler
         }
 
         static void initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr);
+        void initCounters(void);
+        void commitCounters(void);
+
+        virtual bool getHwCounters(PfcWdHwStats& counters)
+        {
+            return true;
+        };
 
     private:
         struct PfcWdQueueStats
         {
-            uint64_t detectCount  = 0;
-            uint64_t restoreCount = 0;
-            uint64_t txPkt        = 0;
-            uint64_t txDropPkt    = 0;
-            bool     operational  = true;
+            uint64_t detectCount   = 0;
+            uint64_t restoreCount  = 0;
+            uint64_t txPkt         = 0;
+            uint64_t txDropPkt     = 0;
+            uint64_t rxPkt         = 0;
+            uint64_t rxDropPkt     = 0;
+            uint64_t txPktLast     = 0;
+            uint64_t txDropPktLast = 0;
+            uint64_t rxPktLast     = 0;
+            uint64_t rxDropPktLast = 0;
+            bool     operational   = true;
         };
 
         static PfcWdQueueStats getQueueStats(shared_ptr<Table> countersTable, const string &queueIdStr);
@@ -57,7 +78,7 @@ class PfcWdActionHandler
         sai_object_id_t m_queue = SAI_NULL_OBJECT_ID;
         uint8_t m_queueId = 0;
         shared_ptr<Table> m_countersTable = nullptr;
-        PfcWdQueueStats m_stats;
+        PfcWdHwStats m_hwStats;
 };
 
 class PfcWdAclHandler: public PfcWdActionHandler
@@ -86,6 +107,7 @@ class PfcWdLossyHandler: public PfcWdActionHandler
         PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue,
                 uint8_t queueId, shared_ptr<Table> countersTable);
         virtual ~PfcWdLossyHandler(void);
+        virtual bool getHwCounters(PfcWdHwStats& counters);
 };
 
 // PFC queue that implements drop action by draining queue with buffer of zero size
