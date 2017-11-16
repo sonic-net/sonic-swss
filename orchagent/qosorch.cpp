@@ -684,8 +684,7 @@ sai_object_id_t QosOrch::initSystemAclTable()
 
         sai_object_id_t group_member_oid;
         // Note: group member OID is discarded
-        status = port.bindAclTable(group_member_oid, acl_table_id);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!gPortsOrch->bindAclTable(port.m_port_id, acl_table_id, group_member_oid))
         {
             SWSS_LOG_ERROR("Failed to bind the system ACL table globally, rv:%d", status);
             throw runtime_error("Failed to bind the system ACL table globally");

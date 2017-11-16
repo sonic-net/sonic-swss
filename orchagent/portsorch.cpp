@@ -383,6 +383,95 @@ bool PortsOrch::setPortFec(sai_object_id_t id, sai_port_fec_mode_t mode)
     return true;
 }
 
+bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid)
+{
+    sai_status_t status;
+    sai_object_id_t groupOid;
+
+    Port p;
+    if (!getPort(id, p))
+    {
+        return false;
+    }
+
+    auto &port = m_portList.find(p.m_alias)->second;
+
+    // If port ACL table group does not exist, create one
+    if (port.m_acl_table_group_id == 0)
+    {
+        sai_object_id_t bp_list[] = { SAI_ACL_BIND_POINT_TYPE_PORT };
+
+        vector<sai_attribute_t> group_attrs;
+        sai_attribute_t group_attr;
+
+        group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_ACL_STAGE;
+        group_attr.value.s32 = SAI_ACL_STAGE_INGRESS; // TODO: double check
+        group_attrs.push_back(group_attr);
+
+        group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_ACL_BIND_POINT_TYPE_LIST;
+        group_attr.value.objlist.count = 1;
+        group_attr.value.objlist.list = bp_list;
+        group_attrs.push_back(group_attr);
+
+        group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_TYPE;
+        group_attr.value.s32 = SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+        group_attrs.push_back(group_attr);
+
+        status = sai_acl_api->create_acl_table_group(&groupOid, gSwitchId, (uint32_t)group_attrs.size(), group_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create ACL table group, rv:%d", status);
+            return false;
+        }
+
+        port.m_acl_table_group_id = groupOid;
+
+        // Bind this ACL group to port OID
+        sai_attribute_t port_attr;
+        port_attr.id = SAI_PORT_ATTR_INGRESS_ACL;
+        port_attr.value.oid = groupOid;
+
+        status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to bind port %lx(%s) to ACL table group %lx, rv:%d",
+                    port.m_port_id, port.m_alias.c_str(), groupOid, status);
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Create ACL table group and bind port %s to it", port.m_alias.c_str());
+    }
+    else
+    {
+        groupOid = port.m_acl_table_group_id;
+    }
+
+    // Create an ACL group member with table_oid and groupOid
+    vector<sai_attribute_t> member_attrs;
+
+    sai_attribute_t member_attr;
+    member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID;
+    member_attr.value.oid = groupOid;
+    member_attrs.push_back(member_attr);
+
+    member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID;
+    member_attr.value.oid = table_oid;
+    member_attrs.push_back(member_attr);
+
+    member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
+    member_attr.value.u32 = 100; // TODO: double check!
+    member_attrs.push_back(member_attr);
+
+    status = sai_acl_api->create_acl_table_group_member(&group_member_oid, gSwitchId, (uint32_t)member_attrs.size(), member_attrs.data());
+    if (status != SAI_STATUS_SUCCESS) {
+        SWSS_LOG_ERROR("Failed to create member in ACL table group %lx for ACL table group %lx, rv:%d",
+                table_oid, groupOid, status);
+        return false;
+    }
+
+    return true;
+}
+
 bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
 {
     SWSS_LOG_ENTER();

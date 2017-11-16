@@ -933,26 +933,15 @@ bool AclTable::bind(sai_object_id_t portOid)
 
     assert(ports.find(portOid) != ports.end());
 
-    for (auto& pair: gPortsOrch->getAllPorts())
+    sai_object_id_t group_member_oid;
+    if (!gPortsOrch->bindAclTable(portOid, m_oid, group_member_oid))
     {
-        auto& port = pair.second;
-
-        if (port.m_type == Port::PHY && port.m_port_id == portOid)
-        {
-            sai_object_id_t group_member_oid;
-            sai_status_t status = port.bindAclTable(group_member_oid, m_oid);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                return false;
-            }
-
-            ports[portOid] = group_member_oid;
-
-            return true;
-        }
+        return false;
     }
 
-    return false;
+    ports[portOid] = group_member_oid;
+
+    return true;
 }
 
 bool AclTable::unbind(sai_object_id_t portOid)
