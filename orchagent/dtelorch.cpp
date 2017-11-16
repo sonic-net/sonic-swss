@@ -10,6 +10,7 @@ using namespace swss;
 extern sai_switch_api_t* sai_switch_api;
 extern sai_dtel_api_t* sai_dtel_api;
 extern sai_object_id_t gVirtualRouterId;
+extern sai_object_id_t gSwitchId;
 
 dtelEventLookup_t dTelEventLookup =
 {
@@ -708,7 +709,7 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
             }
 
             status = sai_dtel_api->create_dtel_report_session(&report_session_oid, 
-                (uint32_t)report_session_attr.size(), report_session_attr.data());
+                gSwitchId, (uint32_t)report_session_attr.size(), report_session_attr.data());
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT EP report session %s", report_session_id.c_str());
@@ -835,7 +836,7 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
             }
 
             status = sai_dtel_api->create_dtel_int_session(&int_session_oid, 
-                (uint32_t)int_session_attr.size(), int_session_attr.data());
+                gSwitchId, (uint32_t)int_session_attr.size(), int_session_attr.data());
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT session %s", int_session_id.c_str());
@@ -965,7 +966,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
             }
 
             status = sai_dtel_api->create_dtel_queue_report(&queue_report_oid, 
-                (uint32_t)queue_report_attr.size(), queue_report_attr.data());
+                gSwitchId, (uint32_t)queue_report_attr.size(), queue_report_attr.data());
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to enable queue report on port %s, queue %s", port.c_str(), queue_id.c_str());
@@ -1072,7 +1073,7 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
             }
 
             status = sai_dtel_api->create_dtel_event(&event_oid, 
-                (uint32_t)event_attr.size(), event_attr.data());
+                gSwitchId, (uint32_t)event_attr.size(), event_attr.data());
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to create event %s", event.c_str());
