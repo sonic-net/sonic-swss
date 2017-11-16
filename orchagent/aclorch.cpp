@@ -55,7 +55,7 @@ acl_rule_attr_lookup_t aclL3ActionLookup =
 
 acl_rule_attr_lookup_t aclDTelActionLookup =
 {
-    { ACTION_DTEL_FLOW_OP,                SAI_ACL_ENTRY_ATTR_ACTION_DTEL_FLOW_OP },
+    { ACTION_DTEL_FLOW_OP,                SAI_ACL_ENTRY_ATTR_ACTION_ACL_DTEL_FLOW_OP },
     { ACTION_DTEL_INT_SESSION,            SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION },
     { ACTION_DTEL_DROP_REPORT_ENABLE,     SAI_ACL_ENTRY_ATTR_ACTION_DTEL_DROP_REPORT_ENABLE },
     { ACTION_DTEL_FLOW_SAMPLE_PERCENT,    SAI_ACL_ENTRY_ATTR_ACTION_DTEL_FLOW_SAMPLE_PERCENT },
@@ -1984,7 +1984,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
 
     attr.id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
     int32_t acl_action_list[4];
-    acl_action_list[0] = SAI_ACL_ENTRY_ATTR_ACTION_DTEL_FLOW_OP;
+    acl_action_list[0] = SAI_ACL_ENTRY_ATTR_ACTION_ACL_DTEL_FLOW_OP;
     acl_action_list[1] = SAI_ACL_ACTION_TYPE_DTEL_INT_SESSION;
     acl_action_list[2] = SAI_ACL_ACTION_TYPE_DTEL_REPORT_ALL_PACKETS;
     acl_action_list[3] = SAI_ACL_ACTION_TYPE_DTEL_FLOW_SAMPLE_PERCENT;
