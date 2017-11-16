@@ -50,3 +50,59 @@ def test_RouteAdd():
 
     print "FAILED - route not found in ASIC db"
     assert 1 == 0
+
+def test_PortNotification():
+
+    # bring up interfaces that will be in use
+
+    assert os.system("docker exec -i " + DOCKER_NAME + " ifconfig Ethernet0 10.0.0.0/31 up") == 0
+    assert os.system("docker exec -i " + DOCKER_NAME + " ifconfig Ethernet4 10.0.0.2/31 up") == 0
+
+    assert os.system("ip netns exec sw-srv0 ifconfig eth0 10.0.0.1/31") == 0
+    os.system("ip netns exec sw-srv0 ip route add default via 10.0.0.0") == 0
+
+    assert os.system("ip netns exec sw-srv1 ifconfig eth0 10.0.0.3/31") == 0
+    os.system("ip netns exec sw-srv1 ip route add default via 10.0.0.2") == 0
+
+    # get neighbor and arp entry
+    assert os.system("ip netns exec sw-srv0 ping -c 1 10.0.0.3") == 0
+
+    assert os.system("ip netns exec sw-srv0 ip link set down dev eth0") == 0
+
+    os.system("sleep 1")
+
+    db = swsscommon.DBConnector(0, HOST_REDIS_SOCKET, 0)
+
+    tbl = swsscommon.Table(db, "PORT_TABLE")
+
+    (status, fvs) = tbl.get("Ethernet0")
+
+    assert status == True
+
+    oper_status = "unknown"
+
+    for v in fvs:
+        if v[0] == "oper_status":
+            oper_status = v[1]
+            break
+
+    assert oper_status == "down"
+
+    assert os.system("ip netns exec sw-srv0 ip link set up dev eth0") == 0
+
+    os.system("sleep 1")
+
+    (status, fvs) = tbl.get("Ethernet0")
+
+    assert status == True
+
+    oper_status = "unknown"
+
+    for v in fvs:
+        if v[0] == "oper_status":
+            oper_status = v[1]
+            break
+
+    assert oper_status == "up"
+
+    print "PASSED"
