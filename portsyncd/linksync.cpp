@@ -90,14 +90,42 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
                        nlmsg_type, key.c_str(), admin, oper, addrStr, ifindex, master);
     }
 
-    /* Insert or update the ifindex to key map */
-    m_ifindexNameMap[ifindex] = key;
-
     /* teamd instances are dealt in teamsyncd */
     if (type && !strcmp(type, TEAM_DRV_NAME))
     {
         return;
     }
+
+    /* In the event of swss restart, it is possible to get netlink messages during bridge
+     * delete, interface delete etc which are part of cleanup. These netlink messages for
+     * the front-panel interface must not be published or it will update the statedb with
+     * old interface info and result in subsequent failures. A new interface creation shall
+     * not have master or admin status iff_up. So if the first netlink message comes with these
+     * values set, it is considered to be happening during a cleanup process.
+     * Fix to ignore this and any further messages for this ifindex
+     */
+
+    static std::map<unsigned int, std::string> m_ifindexOldNameMap;
+    if (m_ifindexNameMap.find(ifindex) == m_ifindexNameMap.end())
+    {
+        if (master)
+        {
+            m_ifindexOldNameMap[ifindex] = key;
+            SWSS_LOG_INFO("nlmsg type:%d Ignoring for %d, master %d", nlmsg_type, ifindex, master);
+            return;
+        }
+        else if (m_ifindexOldNameMap.find(ifindex) != m_ifindexOldNameMap.end())
+        {
+            if (m_ifindexOldNameMap[ifindex] == key)
+            {
+                SWSS_LOG_INFO("nlmsg type:%d Ignoring message for old interface %d", nlmsg_type, ifindex);
+                return;
+            }
+        }
+    }
+
+    /* Insert or update the ifindex to key map */
+    m_ifindexNameMap[ifindex] = key;
 
     vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin ? "up" : "down");
