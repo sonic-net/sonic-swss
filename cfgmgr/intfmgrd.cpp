@@ -79,14 +79,8 @@ int main(int argc, char **argv)
                 continue;
             }
 
-            for (Orch *o : cfgOrchList)
-            {
-                TableConsumable *c = (TableConsumable *)sel;
-                if (o->hasSelectable(c))
-                {
-                    o->execute(c->getTableName());
-                }
-            }
+            auto *c = (Executor *)sel;
+            c->execute();
         }
     }
     catch(const std::exception &e)

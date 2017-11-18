@@ -60,7 +60,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
     auto it = consumer.m_toSync.begin();
     KeyOpFieldsValuesTuple tuple = it->second;
     string qos_object_name = kfvKey(tuple);
-    string qos_map_type_name = consumer.m_consumer->getTableName();
+    string qos_map_type_name = consumer.getTableName();
     string op = kfvOp(tuple);
 
     if (QosOrch::getTypeMap()[qos_map_type_name]->find(qos_object_name) != QosOrch::getTypeMap()[qos_map_type_name]->end())
@@ -684,8 +684,7 @@ sai_object_id_t QosOrch::initSystemAclTable()
 
         sai_object_id_t group_member_oid;
         // Note: group member OID is discarded
-        status = port.bindAclTable(group_member_oid, acl_table_id);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!gPortsOrch->bindAclTable(port.m_port_id, acl_table_id, group_member_oid))
         {
             SWSS_LOG_ERROR("Failed to bind the system ACL table globally, rv:%d", status);
             throw runtime_error("Failed to bind the system ACL table globally");
@@ -1285,7 +1284,7 @@ void QosOrch::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         /* Make sure the handler is initialized for the task */
-        auto qos_map_type_name = consumer.m_consumer->getTableName();
+        auto qos_map_type_name = consumer.getTableName();
         if (m_qos_handler_map.find(qos_map_type_name) == m_qos_handler_map.end())
         {
             SWSS_LOG_ERROR("Task %s handler is not initialized", qos_map_type_name.c_str());

@@ -60,10 +60,6 @@ public:
         return !(*this == o);
     }
 
-    // Output parameter:
-    //   group_member_oid   - the newly created group member OID for the table in a table group
-    sai_status_t bindAclTable(sai_object_id_t& group_member_oid, sai_object_id_t table_oid);
-
     std::string         m_alias;
     Type                m_type;
     int                 m_index = 0;    // PHY_PORT: index

@@ -5,6 +5,7 @@
 #include "schema.h"
 #include "ipprefix.h"
 #include "converter.h"
+#include "timer.h"
 
 using namespace std;
 using namespace swss;
@@ -933,22 +934,14 @@ bool AclTable::bind(sai_object_id_t portOid)
 
     assert(ports.find(portOid) != ports.end());
 
-    Port port;
-    bool found = gPortsOrch->getPort(portOid, port);
-    if (!found)
-    {
-        SWSS_LOG_ERROR("Failed to get port: %lx", portOid);
-        return false;
-    }
-    assert(port.m_type == Port::PHY);
-
     sai_object_id_t group_member_oid;
-    sai_status_t status = port.bindAclTable(group_member_oid, m_oid);
-    if (status != SAI_STATUS_SUCCESS) {
+    if (!gPortsOrch->bindAclTable(portOid, m_oid, group_member_oid))
+    {
         return false;
     }
 
     ports[portOid] = group_member_oid;
+
     return true;
 }
 
@@ -1237,7 +1230,11 @@ AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch
 
     // Should be initialized last to guaranty that object is
     // initialized before thread start.
-    m_countersThread = thread(AclOrch::collectCountersThread, this);
+    auto interv = timespec { .tv_sec = COUNTERS_READ_INTERVAL, .tv_nsec = 0 };
+    auto timer = new SelectableTimer(interv);
+    auto executor = new ExecutableTimer(timer, this);
+    Orch::addExecutor("", executor);
+    timer->start();
 }
 
 AclOrch::~AclOrch()
@@ -1246,8 +1243,6 @@ AclOrch::~AclOrch()
 
     m_bCollectCounters = false;
     m_sleepGuard.notify_all();
-
-    m_countersThread.join();
 }
 
 void AclOrch::update(SubjectType type, void *cntx)
@@ -1279,7 +1274,7 @@ void AclOrch::doTask(Consumer &consumer)
         return;
     }
 
-    string table_name = consumer.m_consumer->getTableName();
+    string table_name = consumer.getTableName();
 
     if (table_name == CFG_ACL_TABLE_NAME)
     {
@@ -1664,47 +1659,27 @@ sai_status_t AclOrch::deleteUnbindAclTable(sai_object_id_t table_oid)
     return sai_acl_api->remove_acl_table(table_oid);
 }
 
-void AclOrch::collectCountersThread(AclOrch* pAclOrch)
+void AclOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    while(m_bCollectCounters)
+    for (auto& table_it : m_AclTables)
     {
-        unique_lock<mutex> lock(m_countersMutex);
+        vector<swss::FieldValueTuple> values;
 
-        chrono::duration<double, milli> timeToSleep;
-        auto  updStart = chrono::steady_clock::now();
-
-        for (auto table_it : pAclOrch->m_AclTables)
+        for (auto rule_it : table_it.second.rules)
         {
-            vector<swss::FieldValueTuple> values;
+            AclRuleCounters cnt = rule_it.second->getCounters();
 
-            for (auto rule_it : table_it.second.rules)
-            {
-                AclRuleCounters cnt = rule_it.second->getCounters();
+            swss::FieldValueTuple fvtp("Packets", to_string(cnt.packets));
+            values.push_back(fvtp);
+            swss::FieldValueTuple fvtb("Bytes", to_string(cnt.bytes));
+            values.push_back(fvtb);
 
-                swss::FieldValueTuple fvtp("Packets", to_string(cnt.packets));
-                values.push_back(fvtp);
-                swss::FieldValueTuple fvtb("Bytes", to_string(cnt.bytes));
-                values.push_back(fvtb);
-
-                AclOrch::getCountersTable().set(table_it.second.id + ":" + rule_it.second->getId(), values, "");
-            }
-            values.clear();
+            AclOrch::getCountersTable().set(table_it.second.id + ":" + rule_it.second->getId(), values, "");
         }
-
-        timeToSleep = chrono::seconds(COUNTERS_READ_INTERVAL) - (chrono::steady_clock::now() - updStart);
-        if (timeToSleep > chrono::seconds(0))
-        {
-            SWSS_LOG_DEBUG("ACL counters DB update thread: sleeping %dms", (int)timeToSleep.count());
-            m_sleepGuard.wait_for(lock, timeToSleep);
-        }
-        else
-        {
-            SWSS_LOG_WARN("ACL counters DB update time is greater than the configured update period");
-        }
+        values.clear();
     }
-
 }
 
 sai_status_t AclOrch::bindAclTable(sai_object_id_t table_oid, AclTable &aclTable, bool bind)

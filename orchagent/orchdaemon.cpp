@@ -11,6 +11,7 @@ using namespace swss;
 
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
+#define FLEX_COUNTER_POLL_MSECS 100
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
@@ -140,7 +141,8 @@ bool OrchDaemon::init()
                     pfc_wd_tables,
                     portStatIds,
                     queueStatIds,
-                    queueAttrIds));
+                    queueAttrIds,
+                    FLEX_COUNTER_POLL_MSECS));
     }
     else if (platform == BRCM_PLATFORM_SUBSTRING)
     {
@@ -180,7 +182,8 @@ bool OrchDaemon::init()
                     pfc_wd_tables,
                     portStatIds,
                     queueStatIds,
-                    queueAttrIds));
+                    queueAttrIds,
+                    FLEX_COUNTER_POLL_MSECS));
     }
 
     return true;
@@ -234,9 +237,8 @@ void OrchDaemon::start()
             continue;
         }
 
-        TableConsumable *c = (TableConsumable *)s;
-        Orch *o = getOrchByConsumer(c);
-        o->execute(c->getTableName());
+        auto *c = (Executor *)s;
+        c->execute();
 
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
@@ -246,20 +248,4 @@ void OrchDaemon::start()
             o->doTask();
 
     }
-}
-
-Orch *OrchDaemon::getOrchByConsumer(TableConsumable *c)
-{
-    SWSS_LOG_ENTER();
-
-    for (Orch *o : m_orchList)
-    {
-        if (o->hasSelectable(c))
-            return o;
-    }
-
-    SWSS_LOG_ERROR("Failed to get Orch class by ConsumerTable:%s",
-            c->getTableName().c_str());
-
-    return nullptr;
 }
