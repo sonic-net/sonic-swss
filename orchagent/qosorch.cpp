@@ -1013,8 +1013,8 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
     vector<string> port_names;
 
     ref_resolve_status  resolve_result;
-    // sample "QUEUE_TABLE:ETHERNET4:1"
-    tokens = tokenize(key, delimiter2);
+    // sample "QUEUE: {Ethernet4|0-1}"
+    tokens = tokenize(key, config_db_key_delimiter);
     if (tokens.size() != 2)
     {
         SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());

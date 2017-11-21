@@ -172,7 +172,7 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name
     tokens = tokenize(ref_content, delimiter);
     if (tokens.size() != 2)
     {
-        tokens = tokenize(ref_content, delimiter2);
+        tokens = tokenize(ref_content, config_db_key_delimiter);
         if (tokens.size() != 2)
         {
             SWSS_LOG_ERROR("malformed reference:%s. Must contain 2 tokens\n", ref_content.c_str());
