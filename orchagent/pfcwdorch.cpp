@@ -269,7 +269,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
     if (!c_portStatIds.empty())
     {
-        string key = sai_serialize_object_id(port.m_port_id) + ":" + std::to_string(INT_MAX);
+        string key = sai_serialize_object_id(port.m_port_id) + ":" + std::to_string(m_pollInterval);
         vector<FieldValueTuple> fieldValues;
         string str = counterIdsToStr(c_portStatIds, &sai_serialize_port_stat);
         fieldValues.emplace_back(PFC_WD_PORT_COUNTER_ID_LIST, str);
@@ -318,7 +318,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         // Create internal entry
         m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i));
 
-        string key = queueIdStr + ":" + std::to_string(INT_MAX);
+        string key = queueIdStr + ":" + std::to_string(m_pollInterval);
 
         m_pfcWdTable->set(key, queueFieldValues);
 
@@ -337,7 +337,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
         sai_object_id_t queueId = port.m_queue_ids[i];
-        string key = sai_serialize_object_id(queueId) + ":" + std::to_string(INT_MAX);
+        string key = sai_serialize_object_id(queueId) + ":" + std::to_string(m_pollInterval);
 
         // Unregister in syncd
         m_pfcWdTable->del(key);
@@ -358,7 +358,8 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     m_pfcWdTable(new ProducerStateTable(m_pfcWdDb.get(), PFC_WD_STATE_TABLE)),
     c_portStatIds(portStatIds),
     c_queueStatIds(queueStatIds),
-    c_queueAttrIds(queueAttrIds)
+    c_queueAttrIds(queueAttrIds),
+    m_pollInterval(pollInterval)
 {
     SWSS_LOG_ENTER();
 
@@ -389,8 +390,10 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         fieldValues.emplace_back(SAI_OBJECT_TYPE, sai_serialize_object_type(SAI_OBJECT_TYPE_QUEUE));
 
         auto pluginTable = ProducerStateTable(m_pfcWdDb.get(), PLUGIN_TABLE);
-        pluginTable.set(detectSha, fieldValues);
-        pluginTable.set(restoreSha, fieldValues);
+        string detectShaKey =  detectSha + ":" + std::to_string(m_pollInterval);
+        string restoreShaKey =  restoreSha + ":" + std::to_string(m_pollInterval);
+        pluginTable.set(detectShaKey, fieldValues);
+        pluginTable.set(restoreShaKey, fieldValues);
     }
     catch (...)
     {

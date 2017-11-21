@@ -38,6 +38,14 @@ static map<string, sai_port_fec_mode_t> fec_mode_map =
     { "fc", SAI_PORT_FEC_MODE_FC }
 };
 
+static const vector<sai_queue_stat_t> queueStatIds =
+{
+    SAI_QUEUE_STAT_PACKETS,
+    SAI_QUEUE_STAT_BYTES,
+    SAI_QUEUE_STAT_DROPPED_PACKETS,
+    SAI_QUEUE_STAT_DROPPED_BYTES
+};
+
 /*
  * Initialize PortsOrch
  * 0) By default, a switch has one CPU port, one 802.1Q bridge, and one default
@@ -1599,9 +1607,9 @@ void PortsOrch::initializeQueues(Port &port)
 
         std::string delimiter = "";
         std::ostringstream counters_stream;
-        for (int cntr = SAI_QUEUE_STAT_PACKETS; cntr <= SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES ; ++cntr)
+        for (auto it = queueStatIds.begin(); it != queueStatIds.end(); it++)
         {
-            counters_stream << delimiter << sai_serialize_queue_stat(static_cast<sai_queue_stat_t>(cntr));
+            counters_stream << delimiter << sai_serialize_queue_stat(*it);
             delimiter = ",";
         }
 

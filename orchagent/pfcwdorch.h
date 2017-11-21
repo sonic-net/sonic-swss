@@ -101,6 +101,8 @@ private:
 
     atomic_bool m_runPfcWdSwOrchThread = { false };
     shared_ptr<thread> m_pfcWatchdogThread = nullptr;
+
+    int m_pollInterval;
 };
 
 #endif

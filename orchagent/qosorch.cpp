@@ -41,15 +41,15 @@ map<string, sai_port_attr_t> qos_to_attr_map = {
 };
 
 type_map QosOrch::m_qos_maps = {
-    {APP_DSCP_TO_TC_MAP_TABLE_NAME, new object_map()},
-    {APP_TC_TO_QUEUE_MAP_TABLE_NAME, new object_map()},
-    {APP_SCHEDULER_TABLE_NAME, new object_map()},
-    {APP_WRED_PROFILE_TABLE_NAME, new object_map()},
-    {APP_PORT_QOS_MAP_TABLE_NAME, new object_map()},
-    {APP_QUEUE_TABLE_NAME, new object_map()},
-    {APP_TC_TO_PRIORITY_GROUP_MAP_NAME, new object_map()},
-    {APP_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_NAME, new object_map()},
-    {APP_PFC_PRIORITY_TO_QUEUE_MAP_NAME, new object_map()}
+    {CFG_DSCP_TO_TC_MAP_TABLE_NAME, new object_map()},
+    {CFG_TC_TO_QUEUE_MAP_TABLE_NAME, new object_map()},
+    {CFG_SCHEDULER_TABLE_NAME, new object_map()},
+    {CFG_WRED_PROFILE_TABLE_NAME, new object_map()},
+    {CFG_PORT_QOS_MAP_TABLE_NAME, new object_map()},
+    {CFG_QUEUE_TABLE_NAME, new object_map()},
+    {CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_map()},
+    {CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_map()},
+    {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, new object_map()}
 };
 
 task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
@@ -743,16 +743,16 @@ void QosOrch::initAclEntryForEcn(sai_object_id_t acl_table_id, sai_uint32_t prio
 void QosOrch::initTableHandlers()
 {
     SWSS_LOG_ENTER();
-    m_qos_handler_map.insert(qos_handler_pair(APP_DSCP_TO_TC_MAP_TABLE_NAME, &QosOrch::handleDscpToTcTable));
-    m_qos_handler_map.insert(qos_handler_pair(APP_TC_TO_QUEUE_MAP_TABLE_NAME, &QosOrch::handleTcToQueueTable));
-    m_qos_handler_map.insert(qos_handler_pair(APP_SCHEDULER_TABLE_NAME, &QosOrch::handleSchedulerTable));
-    m_qos_handler_map.insert(qos_handler_pair(APP_QUEUE_TABLE_NAME, &QosOrch::handleQueueTable));
-    m_qos_handler_map.insert(qos_handler_pair(APP_PORT_QOS_MAP_TABLE_NAME, &QosOrch::handlePortQosMapTable));
-    m_qos_handler_map.insert(qos_handler_pair(APP_WRED_PROFILE_TABLE_NAME, &QosOrch::handleWredProfileTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_DSCP_TO_TC_MAP_TABLE_NAME, &QosOrch::handleDscpToTcTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_QUEUE_MAP_TABLE_NAME, &QosOrch::handleTcToQueueTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_SCHEDULER_TABLE_NAME, &QosOrch::handleSchedulerTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_QUEUE_TABLE_NAME, &QosOrch::handleQueueTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_PORT_QOS_MAP_TABLE_NAME, &QosOrch::handlePortQosMapTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_WRED_PROFILE_TABLE_NAME, &QosOrch::handleWredProfileTable));
 
-    m_qos_handler_map.insert(qos_handler_pair(APP_TC_TO_PRIORITY_GROUP_MAP_NAME, &QosOrch::handleTcToPgTable));
-    m_qos_handler_map.insert(qos_handler_pair(APP_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_NAME, &QosOrch::handlePfcPrioToPgTable));
-    m_qos_handler_map.insert(qos_handler_pair(APP_PFC_PRIORITY_TO_QUEUE_MAP_NAME, &QosOrch::handlePfcToQueueTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, &QosOrch::handleTcToPgTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, &QosOrch::handlePfcPrioToPgTable));
+    m_qos_handler_map.insert(qos_handler_pair(CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, &QosOrch::handlePfcToQueueTable));
 }
 
 task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
@@ -763,7 +763,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
 
     KeyOpFieldsValuesTuple tuple = consumer.m_toSync.begin()->second;
-    string qos_map_type_name = APP_SCHEDULER_TABLE_NAME;
+    string qos_map_type_name = CFG_SCHEDULER_TABLE_NAME;
     string qos_object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
 
@@ -1012,8 +1012,8 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
     vector<string> port_names;
 
     ref_resolve_status  resolve_result;
-    // sample "QUEUE_TABLE:ETHERNET4:1"
-    tokens = tokenize(key, delimiter);
+    // sample "QUEUE: {Ethernet4|0-1}"
+    tokens = tokenize(key, config_db_key_delimiter);
     if (tokens.size() != 2)
     {
         SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
