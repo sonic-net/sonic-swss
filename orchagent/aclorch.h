@@ -21,9 +21,13 @@
 #define TABLE_DESCRIPTION "POLICY_DESC"
 #define TABLE_TYPE        "TYPE"
 #define TABLE_PORTS       "PORTS"
+#define TABLE_STAGE       "STAGE"
 
 #define TABLE_TYPE_L3     "L3"
 #define TABLE_TYPE_MIRROR "MIRROR"
+
+#define TABLE_INGRESS     "INGRESS"
+#define TABLE_EGRESS      "EGRESS"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_SRC_IP            "SRC_IP"
@@ -66,7 +70,15 @@ typedef enum
     ACL_TABLE_MIRROR
 } acl_table_type_t;
 
+typedef enum
+{
+    ACL_STAGE_UNKNOWN,
+    ACL_STAGE_INGRESS,
+    ACL_STAGE_EGRESS
+} acl_stage_type_t;
+
 typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
+typedef map<string, acl_stage_type_t> acl_stage_type_lookup_t;
 typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
 typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
@@ -219,6 +231,8 @@ public:
     string id;
     string description;
     acl_table_type_t type;
+    acl_stage_type_t stage;
+
     // Map port oid to group member oid
     std::map<sai_object_id_t, sai_object_id_t> ports;
     // Map rule name to rule data
@@ -227,6 +241,7 @@ public:
     AclTable()
         : type(ACL_TABLE_UNKNOWN)
         , m_oid(SAI_NULL_OBJECT_ID)
+        , stage(ACL_STAGE_INGRESS)
     {}
 
     sai_object_id_t getOid() { return m_oid; }
@@ -302,7 +317,7 @@ private:
     sai_status_t deleteUnbindAclTable(sai_object_id_t table_oid);
 
     bool processAclTableType(string type, acl_table_type_t &table_type);
-
+    bool processAclTableStage(string stage, acl_stage_type_t &acl_stage);
     bool processPorts(string portsList, std::function<void (sai_object_id_t)> inserter);
     bool validateAclTable(AclTable &aclTable);
 
