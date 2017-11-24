@@ -76,6 +76,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     m_queueTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_NAME_MAP));
     m_queuePortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_PORT_MAP));
     m_queueIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_INDEX_MAP));
+    m_queueTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_TYPE_MAP));
 
     m_flex_db = shared_ptr<DBConnector>(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
     m_flexCounterTable = unique_ptr<ProducerStateTable>(new ProducerStateTable(m_flex_db.get(), PFC_WD_STATE_TABLE));
@@ -1484,6 +1485,7 @@ void PortsOrch::initializeQueues(Port &port)
     vector<FieldValueTuple> queueVector;
     vector<FieldValueTuple> queuePortVector;
     vector<FieldValueTuple> queueIndexVector;
+    vector<FieldValueTuple> queueTypeVector;
 
     for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
     {
@@ -1501,6 +1503,37 @@ void PortsOrch::initializeQueues(Port &port)
                 sai_serialize_object_id(port.m_queue_ids[queueIndex]),
                 to_string(queueIndex));
         queueIndexVector.push_back(queueIndexTuple);
+
+        sai_attribute_t attr;
+        attr.id = SAI_QUEUE_ATTR_TYPE;
+
+        sai_status_t status = sai_queue_api->get_queue_attribute(port.m_queue_ids[queueIndex], 1, &attr);
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            string queueType;
+
+            switch (attr.value.s32)
+            {
+            case SAI_QUEUE_TYPE_ALL:
+                queueType = "SAI_QUEUE_TYPE_ALL";
+                break;
+            case SAI_QUEUE_TYPE_UNICAST:
+                queueType = "SAI_QUEUE_TYPE_UNICAST";
+                break;
+            case SAI_QUEUE_TYPE_MULTICAST:
+                queueType = "SAI_QUEUE_TYPE_MULTICAST";
+                break;
+            default:
+                throw runtime_error("Unsupported queue " + to_string(queueIndex) +
+                        "(oid: " + to_string(port.m_queue_ids[queueIndex]) + ") type " + to_string(attr.value.s32));
+                break;
+            }
+
+            FieldValueTuple queueTypeTuple(
+                    sai_serialize_object_id(port.m_queue_ids[queueIndex]),
+                    queueType);
+            queueTypeVector.push_back(queueTypeTuple);
+        }
 
         string key = sai_serialize_object_id(port.m_queue_ids[queueIndex]) + ":" + FLEX_STAT_COUNTER_POLL_MSECS;
 
@@ -1521,6 +1554,7 @@ void PortsOrch::initializeQueues(Port &port)
     m_queueTable->set("", queueVector);
     m_queuePortTable->set("", queuePortVector);
     m_queueIndexTable->set("", queueIndexVector);
+    m_queueTypeTable->set("", queueTypeVector);
 }
 
 void PortsOrch::initializePriorityGroups(Port &port)

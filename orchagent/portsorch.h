@@ -63,6 +63,7 @@ private:
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
+    unique_ptr<Table> m_queueTypeTable;
     unique_ptr<ProducerStateTable> m_flexCounterTable;
 
     shared_ptr<DBConnector> m_counter_db;
