@@ -145,15 +145,14 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
     string queuestr = to_string(queueId);
     m_strIngressTable = "IngressTable_PfcWdAclHandler_" + queuestr;
     m_strEgressTable = "EgressTable_PfcWdAclHandler_" + queuestr;
-    m_strIngressRule = "IngressRule_PfcWdAclHandler_" + queuestr;
-    m_strEgressRule = "EgressRule_PfcWdAclHandler_" + queuestr;
+    m_strRule = "Rule_PfcWdAclHandler_" + queuestr;
 
     auto found = m_aclTables.find(m_strIngressTable);
     if (found == m_aclTables.end())
     {
         // First time of handling PFC for this queue, create ACL table, and bind
         createPfcAclTable(port, m_strIngressTable, true);
-        shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_strIngressRule, m_strIngressTable, table_type);
+        shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_strRule, m_strIngressTable, table_type);
         createPfcAclRule(newRule, queueId, m_strIngressTable);
     }
     else
@@ -167,7 +166,7 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
     {
         // First time of handling PFC for this queue, create ACL table, and bind
         createPfcAclTable(port, m_strEgressTable, false);
-        shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_strEgressRule, m_strEgressTable, table_type);
+        shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_strRule, m_strEgressTable, table_type);
         createPfcAclRule(newRule, queueId, m_strEgressTable);
     }
     else

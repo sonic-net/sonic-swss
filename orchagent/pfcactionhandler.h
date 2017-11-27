@@ -75,8 +75,7 @@ class PfcWdAclHandler: public PfcWdActionHandler
 
         string m_strIngressTable;
         string m_strEgressTable;
-        string m_strIngressRule;
-        string m_strEgressRule;
+        string m_strRule;
         void createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
         void createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId, string strTable);
 };

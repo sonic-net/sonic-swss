@@ -864,6 +864,12 @@ bool AclTable::create()
 {
     SWSS_LOG_ENTER();
 
+    if (stage == ACL_STAGE_UNKNOWN)
+    {
+        SWSS_LOG_ERROR("Unknown ACL stage for ACL table %s", id.c_str());
+        return false;
+    }
+
     sai_attribute_t attr;
     vector<sai_attribute_t> table_attrs;
 
@@ -917,21 +923,15 @@ bool AclTable::create()
 
     if(stage == ACL_STAGE_INGRESS)
     {
-        attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
-        attr.value.s32 = SAI_ACL_STAGE_INGRESS;
-        table_attrs.push_back(attr);
-
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE;
         attr.value.s32list.count = (uint32_t)(sizeof(range_types_list) / sizeof(range_types_list[0]));
         attr.value.s32list.list = range_types_list;
         table_attrs.push_back(attr);
     }
-    else
-    {
-        attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
-        attr.value.s32 = SAI_ACL_STAGE_EGRESS;
-        table_attrs.push_back(attr);
-    }
+
+    attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
+    attr.value.s32 = stage == ACL_STAGE_INGRESS ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
+    table_attrs.push_back(attr);
 
     if (type == ACL_TABLE_MIRROR)
     {
@@ -1445,7 +1445,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 }
                 else if (attr_name == TABLE_STAGE)
                 {
-                   if(!processAclTableStage(attr_value, newTable.stage))
+                   if (!processAclTableStage(attr_value, newTable.stage))
                    {
                        SWSS_LOG_ERROR("Failed to process table stage for table %s", table_id.c_str());
                    }
@@ -1643,14 +1643,15 @@ bool AclOrch::processAclTableStage(string stage, acl_stage_type_t &acl_stage)
 {
     SWSS_LOG_ENTER();
 
-    auto tt = aclStageLookUp.find(toUpper(stage));
+    auto iter = aclStageLookUp.find(toUpper(stage));
 
-    if (tt == aclStageLookUp.end())
+    if (iter == aclStageLookUp.end())
     {
+        acl_stage = ACL_STAGE_UNKNOWN;
         return false;
     }
 
-    acl_stage = tt->second;
+    acl_stage = iter->second;
 
     return true;
 }

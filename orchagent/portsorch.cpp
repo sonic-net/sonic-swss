@@ -398,6 +398,8 @@ bool PortsOrch::setPortFec(sai_object_id_t id, sai_port_fec_mode_t mode)
 
 bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, bool ingress)
 {
+    SWSS_LOG_ENTER();
+
     sai_status_t status;
     sai_object_id_t groupOid;
 
