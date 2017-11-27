@@ -626,6 +626,39 @@ bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)
     return status == SAI_STATUS_SUCCESS;
 }
 
+bool PortsOrch::getQueueType(sai_object_id_t queue_id, string &type)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_QUEUE_ATTR_TYPE;
+
+    sai_status_t status = sai_queue_api->get_queue_attribute(queue_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get queue type for queue %lu rv:%d", queue_id, status);
+        return false;
+    }
+
+    switch (attr.value.s32)
+    {
+    case SAI_QUEUE_TYPE_ALL:
+        type = "SAI_QUEUE_TYPE_ALL";
+        break;
+    case SAI_QUEUE_TYPE_UNICAST:
+        type = "SAI_QUEUE_TYPE_UNICAST";
+        break;
+    case SAI_QUEUE_TYPE_MULTICAST:
+        type = "SAI_QUEUE_TYPE_MULTICAST";
+        break;
+    default:
+        SWSS_LOG_ERROR("Got unsupported queue type %d for %lu queue", attr.value.s32, queue_id);
+        throw runtime_error("Got unsupported queue type");
+    }
+
+    return true;
+}
+
 bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
 {
     SWSS_LOG_ENTER();
@@ -1504,31 +1537,10 @@ void PortsOrch::initializeQueues(Port &port)
                 to_string(queueIndex));
         queueIndexVector.push_back(queueIndexTuple);
 
-        sai_attribute_t attr;
-        attr.id = SAI_QUEUE_ATTR_TYPE;
 
-        sai_status_t status = sai_queue_api->get_queue_attribute(port.m_queue_ids[queueIndex], 1, &attr);
-        if (status == SAI_STATUS_SUCCESS)
+        string queueType;
+        if (getQueueType(port.m_queue_ids[queueIndex], queueType))
         {
-            string queueType;
-
-            switch (attr.value.s32)
-            {
-            case SAI_QUEUE_TYPE_ALL:
-                queueType = "SAI_QUEUE_TYPE_ALL";
-                break;
-            case SAI_QUEUE_TYPE_UNICAST:
-                queueType = "SAI_QUEUE_TYPE_UNICAST";
-                break;
-            case SAI_QUEUE_TYPE_MULTICAST:
-                queueType = "SAI_QUEUE_TYPE_MULTICAST";
-                break;
-            default:
-                throw runtime_error("Unsupported queue " + to_string(queueIndex) +
-                        "(oid: " + to_string(port.m_queue_ids[queueIndex]) + ") type " + to_string(attr.value.s32));
-                break;
-            }
-
             FieldValueTuple queueTypeTuple(
                     sai_serialize_object_id(port.m_queue_ids[queueIndex]),
                     queueType);
