@@ -8,11 +8,11 @@
 struct FdbEntry
 {
     MacAddress mac;
-    sai_vlan_id_t vlan;
+    sai_object_id_t bv_id;
 
     bool operator<(const FdbEntry& other) const
     {
-        return tie(mac, vlan) < tie(other.mac, other.vlan);
+        return tie(mac, bv_id) < tie(other.mac, other.bv_id);
     }
 };
 
