@@ -46,6 +46,7 @@ struct MirrorEntry
         MacAddress mac;
         Port port;
         sai_vlan_id_t vlanId;
+        sai_object_id_t vlanOid;
         sai_object_id_t portId;
     } neighborInfo;
 

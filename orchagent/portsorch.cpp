@@ -14,9 +14,7 @@
 #include "logger.h"
 #include "schema.h"
 #include "converter.h"
-#include "saiserialize.h"
-
-#include "saiserialize.h"
+#include "sai_serialize.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -1798,7 +1796,7 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     attrs.push_back(attr);
 
     attr.id = SAI_HOSTIF_ATTR_NAME;
-    strncpy((char *)&attr.value.chardata, alias.c_str(), HOSTIF_NAME_SIZE);
+    strncpy((char *)&attr.value.chardata, alias.c_str(), SAI_HOSTIF_NAME_SIZE);
     attrs.push_back(attr);
 
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -1973,6 +1971,22 @@ bool PortsOrch::removeVlan(Port vlan)
     m_portList.erase(vlan.m_alias);
 
     return true;
+}
+
+bool PortsOrch::getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &it: m_portList)
+    {
+        if (it.second.m_type == Port::VLAN && it.second.m_vlan_info.vlan_id == vlan_id)
+        {
+            vlan = it.second;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode)
