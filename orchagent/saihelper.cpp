@@ -90,7 +90,7 @@ int test_profile_get_next_value (
         return -1;
 }
 
-const service_method_table_t test_services = {
+const sai_service_method_table_t test_services = {
     test_profile_get_value,
     test_profile_get_next_value
 };
@@ -99,7 +99,7 @@ void initSaiApi()
 {
     SWSS_LOG_ENTER();
 
-    sai_api_initialize(0, (const service_method_table_t *)&test_services);
+    sai_api_initialize(0, (const sai_service_method_table_t *)&test_services);
 
     sai_api_query(SAI_API_SWITCH,               (void **)&sai_switch_api);
     sai_api_query(SAI_API_BRIDGE,               (void **)&sai_bridge_api);

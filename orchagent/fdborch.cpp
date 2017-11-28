@@ -19,7 +19,7 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
 
     FdbUpdate update;
     update.entry.mac = entry->mac_address;
-    update.entry.vlan = entry->vlan_id;
+    update.entry.bv_id = entry->bv_id;
 
     switch (type)
     {
@@ -33,7 +33,7 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         update.add = true;
 
         (void)m_entries.insert(update.entry);
-        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into vlan %d", update.entry.mac.to_string().c_str(), entry->vlan_id);
+        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
         break;
     case SAI_FDB_EVENT_AGED:
     case SAI_FDB_EVENT_FLUSHED:
@@ -41,7 +41,7 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         update.add = false;
 
         (void)m_entries.erase(update.entry);
-        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from vlan %d", update.entry.mac.to_string().c_str(), entry->vlan_id);
+        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
         break;
     }
 
@@ -75,9 +75,15 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
 {
     SWSS_LOG_ENTER();
 
+    if (!m_portsOrch->getVlanByVlanId(vlan, port))
+    {
+        SWSS_LOG_ERROR("Failed to get vlan by vlan ID %d", vlan);
+        return false;
+    }
+
     sai_fdb_entry_t entry;
     memcpy(entry.mac_address, mac.getMac(), sizeof(sai_mac_t));
-    entry.vlan_id = vlan;
+    entry.bv_id = port.m_vlan_info.vlan_oid;
 
     sai_attribute_t attr;
     attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
@@ -127,7 +133,7 @@ void FdbOrch::doTask(Consumer& consumer)
 
         FdbEntry entry;
         entry.mac = MacAddress(keys[1]);
-        entry.vlan = vlan.m_vlan_info.vlan_id;
+        entry.bv_id = vlan.m_vlan_info.vlan_oid;
 
         if (op == SET_COMMAND)
         {
@@ -209,7 +215,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     {
         // FIXME: should we check that the entry are moving to another port?
         // FIXME: should we check that the entry are changing its type?
-        SWSS_LOG_ERROR("FDB entry already exists. mac=%s vlan=%d", entry.mac.to_string().c_str(), entry.vlan);
+        SWSS_LOG_ERROR("FDB entry already exists. mac=%s bv_id=0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
         return true;
     }
 
@@ -217,9 +223,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
 
     fdb_entry.switch_id = gSwitchId;
     memcpy(fdb_entry.mac_address, entry.mac.getMac(), sizeof(sai_mac_t));
-    fdb_entry.bridge_type = SAI_FDB_ENTRY_BRIDGE_TYPE_1Q;
-    fdb_entry.vlan_id = entry.vlan;
-    fdb_entry.bridge_id = SAI_NULL_OBJECT_ID;
+    fdb_entry.bv_id = entry.bv_id;
 
     Port port;
     /* Retry until port is created */
@@ -276,20 +280,20 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
 
     if (m_entries.count(entry) == 0)
     {
-        SWSS_LOG_ERROR("FDB entry isn't found. mac=%s vlan=%d", entry.mac.to_string().c_str(), entry.vlan);
+        SWSS_LOG_ERROR("FDB entry isn't found. mac=%s bv_id=0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
         return true;
     }
 
     sai_status_t status;
     sai_fdb_entry_t fdb_entry;
     memcpy(fdb_entry.mac_address, entry.mac.getMac(), sizeof(sai_mac_t));
-    fdb_entry.vlan_id = entry.vlan;
+    fdb_entry.bv_id = entry.bv_id;
 
     status = sai_fdb_api->remove_fdb_entry(&fdb_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove FDB entry. mac=%s, vlan=%d",
-                       entry.mac.to_string().c_str(), entry.vlan);
+        SWSS_LOG_ERROR("Failed to remove FDB entry. mac=%s, bv_id=0x%lx",
+                       entry.mac.to_string().c_str(), entry.bv_id);
         return true; //FIXME: it should be based on status. Some could be retried. some not
     }
 
