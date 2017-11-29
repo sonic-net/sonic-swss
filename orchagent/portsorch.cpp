@@ -1670,11 +1670,6 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
         return false;
     }
 
-    /*
-     * Port has been removed from 1q bridge at PortsOrch constructor,
-     * also start stripping off VLAN tag.
-     */
-    setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP);
     SWSS_LOG_NOTICE("Create host interface for port %s", alias.c_str());
 
     return true;
