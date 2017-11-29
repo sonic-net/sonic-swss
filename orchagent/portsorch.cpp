@@ -396,9 +396,15 @@ bool PortsOrch::setPortFec(sai_object_id_t id, sai_port_fec_mode_t mode)
     return true;
 }
 
-bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, bool ingress)
+bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage)
 {
     SWSS_LOG_ENTER();
+
+    if (acl_stage == ACL_STAGE_UNKNOWN)
+    {
+        SWSS_LOG_ERROR("Unknown Acl stage for Acl table %lx", table_oid);
+        return false;
+    }
 
     sai_status_t status;
     sai_object_id_t groupOid;
@@ -411,16 +417,17 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
 
     auto &port = m_portList.find(p.m_alias)->second;
 
-    if (ingress && port.m_ingress_acl_table_group_id != 0)
+    if (acl_stage == ACL_STAGE_INGRESS && port.m_ingress_acl_table_group_id != 0)
     {
         groupOid = port.m_ingress_acl_table_group_id;
     }
-    else if (!ingress && port.m_egress_acl_table_group_id != 0)
+    else if (acl_stage == ACL_STAGE_EGRESS && port.m_egress_acl_table_group_id != 0)
     {
         groupOid = port.m_egress_acl_table_group_id;
     }
-    else
+    else if (acl_stage == ACL_STAGE_INGRESS or acl_stage == ACL_STAGE_EGRESS)
     {
+        bool ingress = acl_stage == ACL_STAGE_INGRESS ? true : false;
         // If port ACL table group does not exist, create one
         sai_object_id_t bp_list[] = { SAI_ACL_BIND_POINT_TYPE_PORT };
 
@@ -428,7 +435,7 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
         sai_attribute_t group_attr;
 
         group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_ACL_STAGE;
-        group_attr.value.s32 = ingress? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS; // TODO: double check
+        group_attr.value.s32 = ingress ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS; // TODO: double check
         group_attrs.push_back(group_attr);
 
         group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_ACL_BIND_POINT_TYPE_LIST;

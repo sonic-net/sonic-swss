@@ -951,10 +951,7 @@ bool AclTable::bind(sai_object_id_t portOid)
     assert(ports.find(portOid) != ports.end());
 
     sai_object_id_t group_member_oid;
-
-    bool ingress = (stage == ACL_STAGE_INGRESS) ? true : false;
-
-    if (!gPortsOrch->bindAclTable(portOid, m_oid, group_member_oid, ingress))
+    if (!gPortsOrch->bindAclTable(portOid, m_oid, group_member_oid, stage))
     {
         return false;
     }

@@ -21,13 +21,9 @@
 #define TABLE_DESCRIPTION "POLICY_DESC"
 #define TABLE_TYPE        "TYPE"
 #define TABLE_PORTS       "PORTS"
-#define TABLE_STAGE       "STAGE"
 
 #define TABLE_TYPE_L3     "L3"
 #define TABLE_TYPE_MIRROR "MIRROR"
-
-#define TABLE_INGRESS     "INGRESS"
-#define TABLE_EGRESS      "EGRESS"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_SRC_IP            "SRC_IP"
@@ -70,15 +66,7 @@ typedef enum
     ACL_TABLE_MIRROR
 } acl_table_type_t;
 
-typedef enum
-{
-    ACL_STAGE_UNKNOWN,
-    ACL_STAGE_INGRESS,
-    ACL_STAGE_EGRESS
-} acl_stage_type_t;
-
 typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
-typedef map<string, acl_stage_type_t> acl_stage_type_lookup_t;
 typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
 typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;

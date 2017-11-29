@@ -3,13 +3,12 @@
 
 #include <map>
 
+#include "acltable.h"
 #include "orch.h"
 #include "port.h"
 #include "observer.h"
 #include "macaddress.h"
 #include "producerstatetable.h"
-
-#include <map>
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
@@ -56,7 +55,7 @@ public:
 
     bool setHostIntfsOperStatus(sai_object_id_t id, bool up);
     void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
-    bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, bool ingress = true);
+    bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage = ACL_STAGE_INGRESS);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
