@@ -143,6 +143,17 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
+            /*
+             * Doing some sanity-checking to prevent interfaces with overlapping
+             * subnets from being able to be configured in the system. Notice
+             * that previous 'overlap' logic only takes care of 'ifconfig' special
+             * behavior -- no system-wide overlap verification is done above.
+             */
+            if (!validIntfAddress(ip_prefix, alias)) {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             addSubnetRoute(port, ip_prefix);
             addIp2MeRoute(ip_prefix);
 
@@ -397,4 +408,84 @@ void IntfsOrch::removeIp2MeRoute(const IpPrefix &ip_prefix)
     }
 
     SWSS_LOG_NOTICE("Remove packet action trap route ip:%s", ip_prefix.getIp().to_string().c_str());
+}
+
+/*
+ * Function runs basic sanity-checks to verify that the new interface's ip
+ * address being configured does not overlap with any of the existing interfaces.
+ *
+ * There are two possible scenarios in which we can encounter overlapping
+ * interfaces:
+ *
+ * 1) Obviously, a configuration error caused by a user creating overlapping
+ *    interfaces.
+ *
+ * 2) A configuration change made through 'ifconfig' tool. In this case, the
+ *    following set of netlink messages is always generated. The exception to
+ *    this message sequence is the case in which the new ip-addr contains a /8
+ *    netmask -- in that case only 2.1) and 2.2) are expected. In all other
+ *    cases, this is the expected behavior:
+ *
+ *    2.1) A route-address/delete msg to eliminate the previous/existing ip-address.
+ *    2.2) A route-address/add to create the new ip-address with netmask /8.
+ *    2.3) A route-address/delete to eliminate the previous ip-address with mask /8.
+ *    2.4) A route-address/add to create the new ip-address with the proper netmask.
+ *
+ *    An overlap may be temporarily observed at the time 2.2) is processed if
+ *    there is another interface in the system that falls within the range of
+ *    2.2)'s subnet -- which is not difficult to envision given that we are talking
+ *    about a /8 netmask.
+ *
+ *    The present function will prevent this artificial ifconfig-induced overlap,
+ *    but only when this one is detected by comparing with interfaces other than
+ *    the one being modified. The logic to deal with overlaps found by comparing
+ *    with the _same_ interface that is being changed, wich will always take place
+ *    in this case, will continue to reside in doTask() routine.
+ *
+ *    Even though the above messages are generated in origin (ifconfig) in a
+ *    deterministic order (as displayed above), due to the async nature of
+ *    redis-DB event handling, the event associated to 2.3) may arrive to
+ *    orchAgent after 2.4) one. In those cases, we want to defer 2.4) processing
+ *    till we are fully done handling 2.3). This logic is already present in
+ *    doTask() function. In our case, regardless of the order in which msgs
+ *    arrive, we will proceed to silently discard the offending prefix whenever
+ *    an overlap is detected.
+ *
+ * The goal with this logic is to increase OA's robustness by preventing
+ * overlapping scenarios from bringing down swss pipeline. That is to say, that
+ * OA won't be taking any action to resolve the potential inconsistency that
+ * may show up between OA and northbound applications, by having OA discarding
+ * the overlapping state. It will be up to the offending northbound applications
+ * (cfgMgr, cli, ifconfig) to resolve any inconsistencies that may arise.
+ */
+bool IntfsOrch::validIntfAddress(const IpPrefix &ip_prefix, const string &alias)
+{
+    for (const auto &ifEntry : m_syncdIntfses)
+    {
+        /*
+         * As mentioned above, scenario 2) is handled in doTask() when preventing
+         * overlaps that take place by comparing with the same interface that is
+         * being modified.
+         */
+        if (ifEntry.first == alias)
+            continue;
+
+        for (const auto &ifPrefix: ifEntry.second.ip_addresses)
+        {
+            if (ifPrefix.isAddressInSubnet(ip_prefix.getIp()) ||
+                ip_prefix.isAddressInSubnet(ifPrefix.getIp()))
+            {
+                SWSS_LOG_ERROR("New ip-address %s for interface %s overlaps "
+                               "with existing ip-address %s on interface %s. "
+                               "Skipping...",
+                               ip_prefix.to_string().c_str(),
+                               alias.c_str(),
+                               ifPrefix.to_string().c_str(),
+                               ifEntry.first.c_str());
+                return false;
+            }
+        }
+    }
+
+    return true;
 }
