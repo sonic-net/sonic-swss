@@ -7,6 +7,7 @@
 #include "port.h"
 #include "observer.h"
 #include "macaddress.h"
+#include "producerstatetable.h"
 
 #include <map>
 
@@ -55,12 +56,17 @@ public:
 
     bool setHostIntfsOperStatus(sai_object_id_t id, bool up);
     void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
+    bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
+    unique_ptr<ProducerStateTable> m_flexCounterTable;
+
+    shared_ptr<DBConnector> m_counter_db;
+    shared_ptr<DBConnector> m_flex_db;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 

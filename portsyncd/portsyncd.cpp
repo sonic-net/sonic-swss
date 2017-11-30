@@ -13,6 +13,7 @@
 #include "producerstatetable.h"
 #include "portsyncd/linksync.h"
 #include "subscriberstatetable.h"
+#include "exec.h"
 
 #define DEFAULT_PORT_CONFIG_FILE     "port_config.ini"
 
@@ -83,7 +84,6 @@ int main(int argc, char **argv)
 
         netlink.registerGroup(RTNLGRP_LINK);
         cout << "Listen to link messages..." << endl;
-        netlink.dumpRequest(RTM_GETLINK);
 
         handlePortConfigFile(p, port_config_file);
 
@@ -258,16 +258,11 @@ void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple>
                     /* Update the mtu field on host interface */
                     if (field == "mtu")
                     {
-                        char system_cmd[1024];
-                        snprintf(system_cmd, sizeof(system_cmd), "ip link set %s mtu %s", key.c_str(), value.c_str());
-                        int ret_val = system(system_cmd);
-                        if (ret_val != 0)
-                        {
-                            cerr << "Failed to set mtu " << value << " for " << key << endl;
-                        }
+                        string cmd, res;
+                        cmd = "ip link set " + key + " mtu " + value;
+                        swss::exec(cmd, res);
                      }
-                 }
-
+                }
             }
 
             it = port_cfg_map.erase(it);

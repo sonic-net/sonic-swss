@@ -6,6 +6,7 @@
 #include <set>
 #include <algorithm>
 #include <tuple>
+#include <sstream>
 
 #include <netinet/if_ether.h>
 #include "net/if.h"
@@ -29,12 +30,21 @@ extern sai_object_id_t gSwitchId;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
+#define FLEX_STAT_COUNTER_POLL_MSECS "1000"
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
 {
     { "none",  SAI_PORT_FEC_MODE_NONE },
     { "rs", SAI_PORT_FEC_MODE_RS },
     { "fc", SAI_PORT_FEC_MODE_FC }
+};
+
+static const vector<sai_queue_stat_t> queueStatIds =
+{
+    SAI_QUEUE_STAT_PACKETS,
+    SAI_QUEUE_STAT_BYTES,
+    SAI_QUEUE_STAT_DROPPED_PACKETS,
+    SAI_QUEUE_STAT_DROPPED_BYTES
 };
 
 /*
@@ -56,16 +66,19 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     SWSS_LOG_ENTER();
 
     /* Initialize counter table */
-    DBConnector *counter_db(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
-    m_counterTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_PORT_NAME_MAP));
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
 
     /* Initialize port table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
 
     /* Initialize queue tables */
-    m_queueTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_NAME_MAP));
-    m_queuePortTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_PORT_MAP));
-    m_queueIndexTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_INDEX_MAP));
+    m_queueTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_NAME_MAP));
+    m_queuePortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_PORT_MAP));
+    m_queueIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_INDEX_MAP));
+
+    m_flex_db = shared_ptr<DBConnector>(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_flexCounterTable = unique_ptr<ProducerStateTable>(new ProducerStateTable(m_flex_db.get(), PFC_WD_STATE_TABLE));
 
     uint32_t i, j;
     sai_status_t status;
@@ -383,6 +396,95 @@ bool PortsOrch::setPortFec(sai_object_id_t id, sai_port_fec_mode_t mode)
     return true;
 }
 
+bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid)
+{
+    sai_status_t status;
+    sai_object_id_t groupOid;
+
+    Port p;
+    if (!getPort(id, p))
+    {
+        return false;
+    }
+
+    auto &port = m_portList.find(p.m_alias)->second;
+
+    // If port ACL table group does not exist, create one
+    if (port.m_acl_table_group_id == 0)
+    {
+        sai_object_id_t bp_list[] = { SAI_ACL_BIND_POINT_TYPE_PORT };
+
+        vector<sai_attribute_t> group_attrs;
+        sai_attribute_t group_attr;
+
+        group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_ACL_STAGE;
+        group_attr.value.s32 = SAI_ACL_STAGE_INGRESS; // TODO: double check
+        group_attrs.push_back(group_attr);
+
+        group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_ACL_BIND_POINT_TYPE_LIST;
+        group_attr.value.objlist.count = 1;
+        group_attr.value.objlist.list = bp_list;
+        group_attrs.push_back(group_attr);
+
+        group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_TYPE;
+        group_attr.value.s32 = SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+        group_attrs.push_back(group_attr);
+
+        status = sai_acl_api->create_acl_table_group(&groupOid, gSwitchId, (uint32_t)group_attrs.size(), group_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create ACL table group, rv:%d", status);
+            return false;
+        }
+
+        port.m_acl_table_group_id = groupOid;
+
+        // Bind this ACL group to port OID
+        sai_attribute_t port_attr;
+        port_attr.id = SAI_PORT_ATTR_INGRESS_ACL;
+        port_attr.value.oid = groupOid;
+
+        status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to bind port %lx(%s) to ACL table group %lx, rv:%d",
+                    port.m_port_id, port.m_alias.c_str(), groupOid, status);
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Create ACL table group and bind port %s to it", port.m_alias.c_str());
+    }
+    else
+    {
+        groupOid = port.m_acl_table_group_id;
+    }
+
+    // Create an ACL group member with table_oid and groupOid
+    vector<sai_attribute_t> member_attrs;
+
+    sai_attribute_t member_attr;
+    member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID;
+    member_attr.value.oid = groupOid;
+    member_attrs.push_back(member_attr);
+
+    member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID;
+    member_attr.value.oid = table_oid;
+    member_attrs.push_back(member_attr);
+
+    member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
+    member_attr.value.u32 = 100; // TODO: double check!
+    member_attrs.push_back(member_attr);
+
+    status = sai_acl_api->create_acl_table_group_member(&group_member_oid, gSwitchId, (uint32_t)member_attrs.size(), member_attrs.data());
+    if (status != SAI_STATUS_SUCCESS) {
+        SWSS_LOG_ERROR("Failed to create member in ACL table group %lx for ACL table group %lx, rv:%d",
+                table_oid, groupOid, status);
+        return false;
+    }
+
+    return true;
+}
+
 bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
 {
     SWSS_LOG_ENTER();
@@ -643,9 +745,25 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 m_portList[alias] = p;
                 /* Add port name map to counter table */
                 FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
-                vector<FieldValueTuple> vector;
-                vector.push_back(tuple);
-                m_counterTable->set("", vector);
+                vector<FieldValueTuple> fields;
+                fields.push_back(tuple);
+                m_counterTable->set("", fields);
+
+                /* Add port to flex_counter for updating stat counters  */
+                string key = sai_serialize_object_id(p.m_port_id) + ":" + FLEX_STAT_COUNTER_POLL_MSECS;
+
+                std::string delimiter = "";
+                std::ostringstream counters_stream;
+                for (int cntr = SAI_PORT_STAT_IF_IN_OCTETS; cntr <= SAI_PORT_STAT_PFC_7_ON2OFF_RX_PKTS; ++cntr)
+                {
+                    counters_stream << delimiter << sai_serialize_port_stat(static_cast<sai_port_stat_t>(cntr));
+                    delimiter = ",";
+                }
+
+                fields.clear();
+                fields.emplace_back(PFC_WD_PORT_COUNTER_ID_LIST, counters_stream.str());
+
+                m_flexCounterTable->set(key, fields);
 
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
@@ -1294,7 +1412,7 @@ void PortsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    string table_name = consumer.m_consumer->getTableName();
+    string table_name = consumer.getTableName();
 
     if (table_name == APP_PORT_TABLE_NAME)
     {
@@ -1362,6 +1480,7 @@ void PortsOrch::initializeQueues(Port &port)
     SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
 
     /* Create the Queue map in the Counter DB */
+    /* Add stat counters to flex_counter */
     vector<FieldValueTuple> queueVector;
     vector<FieldValueTuple> queuePortVector;
     vector<FieldValueTuple> queueIndexVector;
@@ -1382,6 +1501,21 @@ void PortsOrch::initializeQueues(Port &port)
                 sai_serialize_object_id(port.m_queue_ids[queueIndex]),
                 to_string(queueIndex));
         queueIndexVector.push_back(queueIndexTuple);
+
+        string key = sai_serialize_object_id(port.m_queue_ids[queueIndex]) + ":" + FLEX_STAT_COUNTER_POLL_MSECS;
+
+        std::string delimiter = "";
+        std::ostringstream counters_stream;
+        for (auto it = queueStatIds.begin(); it != queueStatIds.end(); it++)
+        {
+            counters_stream << delimiter << sai_serialize_queue_stat(*it);
+            delimiter = ",";
+        }
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(PFC_WD_QUEUE_COUNTER_ID_LIST, counters_stream.str());
+
+        m_flexCounterTable->set(key, fieldValues);
     }
 
     m_queueTable->set("", queueVector);

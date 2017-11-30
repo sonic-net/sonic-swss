@@ -1,5 +1,8 @@
 swssconfig/sample/netbouncer.json etc/swss/config.d
 swssconfig/sample/00-copp.config.json etc/swss/config.d
-swssconfig/sample/msn27xx.32ports.qos.json etc/swss/config.d
 swssconfig/sample/td2.32ports.buffers.json etc/swss/config.d
 swssconfig/sample/td2.32ports.qos.json etc/swss/config.d
+swssconfig/sample/th.64ports.buffers.json etc/swss/config.d
+swssconfig/sample/th.64ports.qos.json etc/swss/config.d
+swssconfig/sample/th2.118ports.buffers.json etc/swss/config.d
+swssconfig/sample/th2.118ports.qos.json etc/swss/config.d

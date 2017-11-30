@@ -293,6 +293,7 @@ private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
     void doAclRuleTask(Consumer &consumer);
+    void doTask(SelectableTimer &timer);
 
     static void collectCountersThread(AclOrch *pAclOrch);
 
@@ -313,8 +314,6 @@ private:
     static bool m_bCollectCounters;
     static swss::DBConnector m_db;
     static swss::Table m_countersTable;
-
-    thread m_countersThread;
 };
 
 #endif /* SWSS_ACLORCH_H */

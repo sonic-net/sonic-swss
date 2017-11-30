@@ -19,7 +19,6 @@ endif
 
 orchagent_SOURCES = \
 		    main.cpp \
-		    port.cpp \
 		    orchdaemon.cpp \
 		    orch.cpp \
 		    notifications.cpp \

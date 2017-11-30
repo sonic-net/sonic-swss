@@ -202,11 +202,11 @@ void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queue
 
     string attr_name, attr_value;
 
-    attr_name = "RULE_PRIORITY";
+    attr_name = RULE_PRIORITY;
     attr_value = "999";
     rule->validateAddPriority(attr_name, attr_value);
 
-    attr_name = "MATCH_TC";
+    attr_name = MATCH_TC;
     attr_value = to_string(queueId);
     rule->validateAddMatch(attr_name, attr_value);
 

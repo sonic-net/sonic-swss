@@ -44,7 +44,16 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
     cmd.str("");
     cmd << ECHO_CMD << " 1 > /sys/class/net/" << DOT1Q_BRIDGE_NAME << "/bridge/vlan_filtering";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    int ret = swss::exec(cmd.str(), res);
+    /* echo will fail in virtual switch since /sys directory is read-only.
+     * need to use ip command to setup the vlan_filtering which is not available in debian 8.
+     * Once we move sonic to debian 9, we can use IP command by default */
+    if (ret != 0)
+    {
+        cmd.str("");
+        cmd << IP_CMD << " link set " << DOT1Q_BRIDGE_NAME << " type bridge vlan_filtering 1";
+        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    }
 
     cmd.str("");
     cmd << BRIDGE_CMD << " vlan del vid " << DEFAULT_VLAN_ID << " dev " << DOT1Q_BRIDGE_NAME << " self";
@@ -167,12 +176,11 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
 
 bool VlanMgr::isVlanMacOk()
 {
-    return !(!gMacAddress);
+    return !!gMacAddress;
 }
 
 void VlanMgr::doVlanTask(Consumer &consumer)
 {
-
     if (!isVlanMacOk())
     {
         SWSS_LOG_DEBUG("VLAN mac not ready, delaying VLAN task");
@@ -342,7 +350,7 @@ void VlanMgr::processUntaggedVlanMembers(string vlan, const string &members)
         SWSS_LOG_ERROR("Failed to find tableName:%s", CFG_VLAN_MEMBER_TABLE_NAME);
         return;
     }
-    Consumer& consumer = consumer_it->second;
+    auto& consumer = static_cast<Consumer &>(*consumer_it->second);
 
     vector<string> vlanMembers = tokenize(members, ',');
 
@@ -470,7 +478,7 @@ void VlanMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    string table_name = consumer.m_consumer->getTableName();
+    string table_name = consumer.getTableName();
 
     if (table_name == CFG_VLAN_TABLE_NAME)
     {
