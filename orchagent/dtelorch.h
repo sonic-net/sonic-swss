@@ -133,10 +133,10 @@ private:
     bool getEventOid(const string& event, sai_object_id_t& oid);
     void addEvent(const string& event, const sai_object_id_t& event_oid, const string& report_session_id);
     void removeEvent(const string& event);
-    void deleteReportSession(string &report_session_id);
-    void deleteINTSession(string &int_session_id);
-    void disableQueueReport(string &port, string &queue);
-    void unConfigureEvent(string &event);
+    bool deleteReportSession(string &report_session_id);
+    bool deleteINTSession(string &int_session_id);
+    bool disableQueueReport(string &port, string &queue);
+    bool unConfigureEvent(string &event);
 
 	PortsOrch *m_portOrch;
 	dTelINTSessionTable_t m_dTelINTSessionTable;
