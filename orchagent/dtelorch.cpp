@@ -3,6 +3,7 @@
 #include "schema.h"
 #include "converter.h"
 #include "ipprefix.h"
+#include "swssnet.h"
 
 using namespace std;
 using namespace swss;
@@ -640,12 +641,6 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
         string table_id = key.substr(0, found);
         string report_session_id = key.substr(found + 1);
 
-        /* If report session already exists, delete it first */
-        if (reportSessionExists(report_session_id))
-        {
-            deleteReportSession(report_session_id);
-        }
-
         string op = kfvOp(t);
 
         if (op == SET_COMMAND)
@@ -654,13 +649,20 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
             vector<sai_ip_address_t> dst_ip_list;
             sai_ip_address_t dst_ip;
             sai_attribute_t rs_attr;
+
+	    /* If report session already exists, delete it first */
+	    if (reportSessionExists(report_session_id))
+	    {
+	        deleteReportSession(report_session_id);
+	    }
+
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == SRC_IP)
                 {
-                    IpPrefix ip(fvValue(i));
+                    IpAddress ip(fvValue(i));
                     rs_attr.id = SAI_DTEL_REPORT_SESSION_ATTR_SRC_IP;
-                    rs_attr.value.ip4 = ip.getIp().getV4Addr();
+		    copy(rs_attr.value.ipaddr, ip);
                     report_session_attr.push_back(rs_attr);
                 }
                 else if (fvField(i) == DST_IP_LIST)
@@ -670,16 +672,16 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
                     size_t next = fvValue(i).find(';');
                     while (next != std::string::npos)
                     {
-                        IpPrefix ip(fvValue(i).substr(prev, next - prev));
-                        dst_ip.addr.ip4 = ip.getIp().getV4Addr();
+                        IpAddress ip(fvValue(i).substr(prev, next - prev));
+			copy(dst_ip, ip);
                         dst_ip_list.push_back(dst_ip);
                         prev = next + 1;
                         next = fvValue(i).find(';', prev);
                     }
 
                     /* Add the last IP */
-                    IpPrefix ip(fvValue(i).substr(prev));
-                    dst_ip.addr.ip4 = ip.getIp().getV4Addr();
+                    IpAddress ip(fvValue(i).substr(prev));
+	            copy(dst_ip, ip);
                     dst_ip_list.push_back(dst_ip);
 
                     rs_attr.id = SAI_DTEL_REPORT_SESSION_ATTR_DST_IP_LIST;
@@ -716,7 +718,7 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
                 return;
             }
 
-            DTelReportSessionEntry rs_entry;
+            DTelReportSessionEntry rs_entry = { };
             rs_entry.reportSessionOid = report_session_oid;
             m_dTelReportSessionTable[report_session_id] = rs_entry;
         }
@@ -783,18 +785,19 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
         string table_id = key.substr(0, found);
         string int_session_id = key.substr(found + 1);
 
-        /* If INT session already exists, delete it first */
-        if (intSessionExists(int_session_id))
-        {
-            deleteINTSession(int_session_id);
-        }
-
         string op = kfvOp(t);
 
         if (op == SET_COMMAND)
         {
             vector<sai_attribute_t> int_session_attr;
             sai_attribute_t s_attr;
+
+            /* If INT session already exists, delete it first */
+            if (intSessionExists(int_session_id))
+            {
+                deleteINTSession(int_session_id);
+            }
+
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == COLLECT_SWITCH_ID)
@@ -921,12 +924,6 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
             return;
         }
 
-        /* If queue report is already enabled in port/queue, disable it first */
-        if (isQueueReportEnabled(port, queue_id))
-        {
-            disableQueueReport(port, queue_id);
-        }
-
         string op = kfvOp(t);
 
         if (op == SET_COMMAND)
@@ -936,6 +933,12 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
             qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_QUEUE_ID;
             qr_attr.value.oid = port_obj.m_queue_ids[q_ind];
             queue_report_attr.push_back(qr_attr);
+
+            /* If queue report is already enabled in port/queue, disable it first */
+            if (isQueueReportEnabled(port, queue_id))
+            {
+                disableQueueReport(port, queue_id);
+            }
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -1029,12 +1032,6 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
         string table_id = key.substr(0, found);
         string event = key.substr(found + 1);
 
-        /* If event is already configured, un-configure it first */
-        if (isEventConfigured(event))
-        {
-            unConfigureEvent(event);
-        }
-
         string op = kfvOp(t);
 
         if (op == SET_COMMAND)
@@ -1044,6 +1041,12 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
             e_attr.id = SAI_DTEL_EVENT_ATTR_TYPE;
             e_attr.value.s32 = dTelEventLookup[event];
             event_attr.push_back(e_attr);
+
+            /* If event is already configured, un-configure it first */
+            if (isEventConfigured(event))
+            {
+                unConfigureEvent(event);
+            }
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -1113,7 +1116,7 @@ void DTelOrch::doTask(Consumer &consumer)
     {
         doDtelQueueReportTableTask(consumer);
     }
-    else if (table_name == APP_DTEL_EVENT_ATTR_TABLE_NAME)
+    else if (table_name == APP_DTEL_EVENT_TABLE_NAME)
     {
         doDtelEventTableTask(consumer);
     }

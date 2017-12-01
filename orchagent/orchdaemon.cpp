@@ -92,7 +92,7 @@ bool OrchDaemon::init()
         APP_DTEL_REPORT_SESSION_TABLE_NAME,
         APP_DTEL_INT_SESSION_TABLE_NAME,
         APP_DTEL_QUEUE_REPORT_TABLE_NAME,
-        APP_DTEL_EVENT_ATTR_TABLE_NAME
+        APP_DTEL_EVENT_TABLE_NAME
     };
 
     DTelOrch *dtel_orch = new DTelOrch(m_applDb, dtel_tables, gPortsOrch);
