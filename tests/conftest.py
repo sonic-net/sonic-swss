@@ -5,35 +5,43 @@ import docker
 import pytest
 import commands
 
+def pytest_addoption(parser):
+    parser.addoption("--dvsname", action="store", default=None,
+                      help="dvs name")
+
 class VirtualServer(object):
     def __init__(self, ctn_name, pid, i):
-        self.nsname = "%s_srv%d" % (ctn_name, i)
+        self.nsname = "%s-srv%d" % (ctn_name, i)
         self.vifname = "vEthernet%d" % (i * 4)
+        self.cleanup = True
 
         # create netns
-        os.system("ip netns add %s" % self.nsname)
+        if os.path.exists("/var/run/netns/%s" % self.nsname):
+            self.cleanup = False
+        else:
+            os.system("ip netns add %s" % self.nsname)
 
-        # create vpeer link
-        os.system("ip link add %s type veth peer name %s" % (self.nsname[0:12], self.vifname))
-        os.system("ip link set %s netns %s" % (self.nsname[0:12], self.nsname))
-        os.system("ip link set %s netns %d" % (self.vifname, pid))
+            # create vpeer link
+            os.system("ip link add %s type veth peer name %s" % (self.nsname[0:12], self.vifname))
+            os.system("ip link set %s netns %s" % (self.nsname[0:12], self.nsname))
+            os.system("ip link set %s netns %d" % (self.vifname, pid))
 
-        # bring up link in the virtual server
-        os.system("ip netns exec %s ip link set dev %s name eth0" % (self.nsname, self.nsname[0:12]))
-        os.system("ip netns exec %s ip link set dev eth0 up" % (self.nsname))
+            # bring up link in the virtual server
+            os.system("ip netns exec %s ip link set dev %s name eth0" % (self.nsname, self.nsname[0:12]))
+            os.system("ip netns exec %s ip link set dev eth0 up" % (self.nsname))
 
-        # bring up link in the virtual switch
-        os.system("nsenter -t %d -n ip link set dev %s up" % (pid, self.vifname))
+            # bring up link in the virtual switch
+            os.system("nsenter -t %d -n ip link set dev %s up" % (pid, self.vifname))
 
     def __del__(self):
-        os.system("ip netns delete %s" % self.nsname)
+        if self.cleanup:
+            os.system("ip netns delete %s" % self.nsname)
 
     def runcmd(self, cmd):
         os.system("ip netns exec %s %s" % (self.nsname, cmd))
 
 class DockerVirtualSwitch(object):
-    def __init__(self):
-        self.name = "vs"
+    def __init__(self, name=None):
         self.pnames = ['fpmsyncd',
                        'intfmgrd',
                        'intfsyncd',
@@ -49,23 +57,56 @@ class DockerVirtualSwitch(object):
         self.mount = "/var/run/redis-vs"
         self.redis_sock = self.mount + '/' + "redis.sock"
         self.client = docker.from_env()
-        self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
-                command="bash", stdin_open=True)
-        (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % self.ctn_sw.name)
-        self.cnt_sw_pid = int(output)
-        self.servers = []
-        for i in range(32):
-            server = VirtualServer(self.ctn_sw.name, self.cnt_sw_pid, i)
-            self.servers.append(server)
-        self.ctn = self.client.containers.run('docker-sonic-vs', privileged=True, detach=True,
-                network_mode="container:%s" % self.ctn_sw.name,
-                volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
+
+        self.ctn = None
+        self.cleanup = True
+        if name != None:
+            # get virtual switch container
+            for ctn in self.client.containers.list():
+                if ctn.name == name:
+                    self.ctn = ctn
+                    (status, output) = commands.getstatusoutput("docker inspect --format '{{.HostConfig.NetworkMode}}' %s" % name)
+                    cnt_sw_id = output.split(':')[1]
+                    self.cleanup = False
+            if self.ctn == None:
+                raise NameError("cannot find container %s" % name)
+
+            # get base container
+            for ctn in self.client.containers.list():
+                if ctn.id == cnt_sw_id:
+                    cnt_sw_name = ctn.name
+           
+            (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % cnt_sw_name)
+            self.cnt_sw_pid = int(output)
+
+            # create virtual servers
+            self.servers = []
+            for i in range(32):
+                server = VirtualServer(cnt_sw_name, self.cnt_sw_pid, i)
+                self.servers.append(server)
+        else:
+            self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
+                    command="bash", stdin_open=True)
+            (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % self.ctn_sw.name)
+            self.cnt_sw_pid = int(output)
+
+            # create virtual server
+            self.servers = []
+            for i in range(32):
+                server = VirtualServer(self.ctn_sw.name, self.cnt_sw_pid, i)
+                self.servers.append(server)
+
+            # create virtual switch container
+            self.ctn = self.client.containers.run('docker-sonic-vs', privileged=True, detach=True,
+                    network_mode="container:%s" % self.ctn_sw.name,
+                    volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
 
     def destroy(self):
-        self.ctn.remove(force=True)
-        self.ctn_sw.remove(force=True)
-        for s in self.servers:
-            del(s)
+        if self.cleanup:
+            self.ctn.remove(force=True)
+            self.ctn_sw.remove(force=True)
+            for s in self.servers:
+                del(s)
 
     def ready(self, timeout=30):
         '''check if all processes in the dvs is ready'''
@@ -97,8 +138,7 @@ class DockerVirtualSwitch(object):
 
             started += 1
             if started > timeout:
-                print out
-                raise
+                raise ValueError(out)
 
             time.sleep(1)
 
@@ -109,7 +149,8 @@ class DockerVirtualSwitch(object):
         return self.ctn.exec_run(cmd)
 
 @pytest.yield_fixture(scope="module")
-def dvs():
-    dvs = DockerVirtualSwitch()
+def dvs(request):
+    name = request.config.getoption("--dvsname")
+    dvs = DockerVirtualSwitch(name)
     yield dvs
     dvs.destroy()
