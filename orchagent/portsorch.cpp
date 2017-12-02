@@ -593,11 +593,31 @@ bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
     vector<Port> portv;
     if (port.m_type == Port::PHY)
     {
-        portv.push_back(port);
+        sai_attribute_t attr;
+        attr.id = SAI_PORT_ATTR_PORT_VLAN_ID;
+        attr.value.u32 = pvid;
+
+        sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set pvid %u to port: %s", attr.value.u32, port.m_alias.c_str());
+            return false;
+        }
+        SWSS_LOG_NOTICE("Set pvid %u to port: %s", attr.value.u32, port.m_alias.c_str());
     }
     else if (port.m_type == Port::LAG)
     {
-        getLagMember(port, portv);
+        sai_attribute_t attr;
+        attr.id = SAI_LAG_ATTR_PORT_VLAN_ID;
+        attr.value.u32 = pvid;
+
+        sai_status_t status = sai_lag_api->set_lag_attribute(port.m_lag_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set pvid %u to lag: %s", attr.value.u32, port.m_alias.c_str());
+            return false;
+        }
+        SWSS_LOG_NOTICE("Set pvid %u to lag: %s", attr.value.u32, port.m_alias.c_str());
     }
     else
     {
@@ -605,20 +625,6 @@ bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
         return false;
     }
 
-    for (const auto p: portv)
-    {
-        sai_attribute_t attr;
-        attr.id = SAI_PORT_ATTR_PORT_VLAN_ID;
-        attr.value.u32 = pvid;
-
-        sai_status_t status = sai_port_api->set_port_attribute(p.m_port_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to set pvid %u to port: %s", attr.value.u32, p.m_alias.c_str());
-            return false;
-        }
-        SWSS_LOG_NOTICE("Set pvid %u to port: %s", attr.value.u32, p.m_alias.c_str());
-    }
     port.m_port_vlan_id = (sai_vlan_id_t)pvid;
     return true;
 }
