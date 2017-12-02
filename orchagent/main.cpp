@@ -173,7 +173,7 @@ int main(int argc, char **argv)
             SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());
             exit(EXIT_FAILURE);
         }
-        gRecordOfs << getTimestamp() << "|" << "recording on" << endl;
+        gRecordOfs << getTimestamp() << "|recording started" << endl;
     }
 
     attr.id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;
