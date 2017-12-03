@@ -4,10 +4,40 @@ import time
 import docker
 import pytest
 import commands
+from swsscommon import swsscommon
 
 def pytest_addoption(parser):
     parser.addoption("--dvsname", action="store", default=None,
                       help="dvs name")
+
+class AsicDbValidator(object):
+    def __init__(self, dvs):
+        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+        # get default dot1q vlan id
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+
+        keys = atbl.getKeys()
+        assert len(keys) == 1
+        self.default_vlan_id = keys[0]
+
+        # build port oid to front port name mapping
+        self.portmap = {}
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")
+        keys = atbl.getKeys()
+
+        for k in keys:
+            (status, fvs) = atbl.get(k)
+
+            assert status == True
+
+            for fv in fvs:
+                if fv[0] == "SAI_HOSTIF_ATTR_OBJ_ID":
+                    port_oid = fv[1]
+                elif fv[0] == "SAI_HOSTIF_ATTR_NAME":
+                    port_name = fv[1]
+
+            self.portmap[port_oid] = port_name
 
 class VirtualServer(object):
     def __init__(self, ctn_name, pid, i):
@@ -144,6 +174,9 @@ class DockerVirtualSwitch(object):
 
     def restart(self):
         self.ctn.restart()
+
+    def init_asicdb_validator(self):
+        self.asicdb = AsicDbValidator(self)
 
     def runcmd(self, cmd):
         return self.ctn.exec_run(cmd)

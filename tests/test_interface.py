@@ -3,11 +3,6 @@ import time
 import re
 import json
 
-def parse_route_key(rt_key):
-    (otype, kstr) = rt_key.split(':', 1)
-    assert otype == "SAI_OBJECT_TYPE_ROUTE_ENTRY"
-    return json.loads(kstr)
-
 def test_InterfaceIpChange(dvs):
 
     dvs.restart()
@@ -27,7 +22,7 @@ def test_InterfaceIpChange(dvs):
     keys = tbl.getKeys()
 
     for k in keys:
-        rt_key = parse_route_key(k)
+        rt_key = json.loads(k)
 
         if rt_key['dest'] == "10.0.0.0/31":
             subnet_found = True
@@ -49,7 +44,7 @@ def test_InterfaceIpChange(dvs):
     keys = tbl.getKeys()
 
     for k in keys:
-        rt_key = parse_route_key(k)
+        rt_key = json.loads(k)
 
         if rt_key['dest'] == "10.0.0.0/24":
             subnet_found = True
