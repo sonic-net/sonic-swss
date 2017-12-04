@@ -1,6 +1,8 @@
 #include <assert.h>
 #include <iostream>
 #include <vector>
+#include <unordered_map>
+#include <utility>
 
 #include "logger.h"
 #include "tokenize.h"
@@ -47,6 +49,26 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
     {
         observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
     }
+}
+
+void FdbOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    assert(cntx);
+
+    switch(type) {
+        case SUBJECT_TYPE_VLAN_MEMBER_CHANGE:
+        {
+            VlanMemberUpdate *update = static_cast<VlanMemberUpdate *>(cntx);
+            updateVlanMember(*update);
+            break;
+        }
+        default:
+            break;
+    }
+
+    return;
 }
 
 bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
@@ -157,6 +179,21 @@ void FdbOrch::doTask(Consumer& consumer)
     }
 }
 
+void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
+{
+    SWSS_LOG_ENTER();
+
+    if (!update.add) return; // we need only additions
+
+    string port_name = update.member.m_alias;
+    auto fdb_list = std::move(saved_fdb_entries[port_name]);
+    if(!fdb_list.empty())
+    {
+        for (const auto& fdb: fdb_list) // try to insert them
+            (void)addFdbEntry(fdb.entry, port_name, fdb.type);
+    }
+}
+
 bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const string& type)
 {
     SWSS_LOG_ENTER();
@@ -181,15 +218,19 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     /* Retry until port is created */
     if (!m_portsOrch->getPort(port_name, port))
     {
-        SWSS_LOG_INFO("Failed to locate port %s", port_name.c_str());
-        return false;
+        SWSS_LOG_DEBUG("Saving a fdb entry until port %s becomes active", port_name.c_str());
+        saved_fdb_entries[port_name].push_back({entry, type});
+
+        return true;
     }
 
     /* Retry until port is added to the VLAN */
     if (!port.m_bridge_port_id)
     {
-        SWSS_LOG_INFO("Port %s does not have a bridge port ID", port_name.c_str());
-        return false;
+        SWSS_LOG_DEBUG("Saving a fdb entry until port %s has got a bridge port ID", port_name.c_str());
+        saved_fdb_entries[port_name].push_back({entry, type});
+
+        return true;
     }
 
     sai_attribute_t attr;
@@ -212,7 +253,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     {
         SWSS_LOG_ERROR("Failed to create %s FDB %s on %s, rv:%d",
                 type.c_str(), entry.mac.to_string().c_str(), port_name.c_str(), status);
-        return false;
+        return false; //FIXME: it should be based on status. Some could be retried, some not
     }
 
     SWSS_LOG_NOTICE("Create %s FDB %s on %s", type.c_str(), entry.mac.to_string().c_str(), port_name.c_str());
@@ -242,7 +283,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
     {
         SWSS_LOG_ERROR("Failed to remove FDB entry. mac=%s, vlan=%d",
                        entry.mac.to_string().c_str(), entry.vlan);
-        return true;
+        return true; //FIXME: it should be based on status. Some could be retried. some not
     }
 
     (void)m_entries.erase(entry);
