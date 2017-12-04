@@ -5,12 +5,6 @@ import json
 
 def test_VlanMemberCreation(dvs):
 
-    dvs.restart()
-
-    dvs.ready()
-
-    dvs.init_asicdb_validator()
-
     db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
     adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
@@ -74,6 +68,6 @@ def test_VlanMemberCreation(dvs):
         elif fv[0] == "SAI_VLAN_MEMBER_ATTR_VLAN_ID":
             assert fv[1] == vlan_oid
         elif fv[0] == "SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID":
-            assert dvs.asicdb.portmap[bridge_port_map[fv[1]]] == "Ethernet0"
+            assert dvs.asicdb.portoidmap[bridge_port_map[fv[1]]] == "Ethernet0"
         else:
             assert False   

@@ -5,10 +5,6 @@ import json
 
 def test_InterfaceIpChange(dvs):
 
-    dvs.restart()
-
-    dvs.ready()
-
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
 
     time.sleep(1)

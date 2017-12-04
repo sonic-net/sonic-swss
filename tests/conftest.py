@@ -22,10 +22,12 @@ class AsicDbValidator(object):
         self.default_vlan_id = keys[0]
 
         # build port oid to front port name mapping
-        self.portmap = {}
+        self.portoidmap = {}
+        self.portnamemap = {}
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")
         keys = atbl.getKeys()
 
+        assert len(keys) == 32
         for k in keys:
             (status, fvs) = atbl.get(k)
 
@@ -37,7 +39,21 @@ class AsicDbValidator(object):
                 elif fv[0] == "SAI_HOSTIF_ATTR_NAME":
                     port_name = fv[1]
 
-            self.portmap[port_oid] = port_name
+            self.portoidmap[port_oid] = port_name
+            self.portnamemap[port_name] = port_oid
+
+        # get default acl table and acl rules
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
+        keys = atbl.getKeys()
+
+        assert len(keys) == 1
+        self.default_acl_table = keys[0]
+
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+        keys = atbl.getKeys()
+
+        assert len(keys) == 2
+        self.default_acl_entries = keys
 
 class VirtualServer(object):
     def __init__(self, ctn_name, pid, i):
@@ -114,6 +130,8 @@ class DockerVirtualSwitch(object):
             for i in range(32):
                 server = VirtualServer(cnt_sw_name, self.cnt_sw_pid, i)
                 self.servers.append(server)
+
+            self.restart()
         else:
             self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
                     command="bash", stdin_open=True)
@@ -131,6 +149,9 @@ class DockerVirtualSwitch(object):
                     network_mode="container:%s" % self.ctn_sw.name,
                     volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
 
+        self.check_ready()
+        self.init_asicdb_validator()
+
     def destroy(self):
         if self.cleanup:
             self.ctn.remove(force=True)
@@ -138,7 +159,7 @@ class DockerVirtualSwitch(object):
             for s in self.servers:
                 del(s)
 
-    def ready(self, timeout=30):
+    def check_ready(self, timeout=30):
         '''check if all processes in the dvs is ready'''
 
         re_space = re.compile('\s+')

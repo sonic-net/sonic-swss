@@ -4,10 +4,6 @@ import os
 
 def test_PortNotification(dvs):
 
-    dvs.restart()
-
-    dvs.ready()
-
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up") == 0
     dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up") == 0
 
