@@ -1,4 +1,5 @@
 #include "dtelorch.h"
+
 #include "logger.h"
 #include "schema.h"
 #include "converter.h"
@@ -298,10 +299,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
-        string key = kfvKey(t);
-        size_t found = key.find(':');
-        string table_id = key.substr(0, found);
-        string table_attr = key.substr(found + 1);
+        string table_attr = kfvKey(t);
         string op = kfvOp(t);
 
         if (op == SET_COMMAND)
@@ -638,10 +636,7 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
         sai_object_id_t report_session_oid;
 
         KeyOpFieldsValuesTuple t = it->second;
-        string key = kfvKey(t);
-        size_t found = key.find(':');
-        string table_id = key.substr(0, found);
-        string report_session_id = key.substr(found + 1);
+        string report_session_id = kfvKey(t);
 
         string op = kfvOp(t);
 
@@ -790,10 +785,7 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
         sai_object_id_t int_session_oid;
 
         KeyOpFieldsValuesTuple t = it->second;
-        string key = kfvKey(t);
-        size_t found = key.find(':');
-        string table_id = key.substr(0, found);
-        string int_session_id = key.substr(found + 1);
+        string int_session_id = kfvKey(t);
 
         string op = kfvOp(t);
 
@@ -927,12 +919,9 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
 
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t prev = key.find(':');
-        string table_id = key.substr(0, prev);
-        prev ++;
-        size_t next = key.find(':', prev);
-        string port = key.substr(prev, next - prev);
-        string queue_id = key.substr(next + 1);
+        size_t found = key.find(':');
+        string port = key.substr(0, found);
+        string queue_id = key.substr(found + 1);
         Port port_obj;
         uint32_t q_ind = stoi(queue_id);
         string op = kfvOp(t);
@@ -947,9 +936,6 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
         {
             vector<sai_attribute_t> queue_report_attr;
             sai_attribute_t qr_attr;
-            qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_QUEUE_ID;
-            qr_attr.value.oid = port_obj.m_queue_ids[q_ind];
-            queue_report_attr.push_back(qr_attr);
 
             /* If queue report is already enabled in port/queue, disable it first */
             if (isQueueReportEnabled(port, queue_id))
@@ -959,6 +945,10 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
                     goto queue_report_table_continue;
                 }
             }
+
+            qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_QUEUE_ID;
+            qr_attr.value.oid = port_obj.m_queue_ids[q_ind];
+            queue_report_attr.push_back(qr_attr);
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -1052,10 +1042,7 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
         string report_session_id;
 
         KeyOpFieldsValuesTuple t = it->second;
-        string key = kfvKey(t);
-        size_t found = key.find(':');
-        string table_id = key.substr(0, found);
-        string event = key.substr(found + 1);
+        string event = kfvKey(t);
 
         string op = kfvOp(t);
 
