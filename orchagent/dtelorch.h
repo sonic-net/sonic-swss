@@ -44,6 +44,9 @@
 #define EVENT_TYPE_QUEUE_REPORT_TAIL_DROP           "EVENT_TYPE_QUEUE_REPORT_TAIL_DROP"
 #define EVENT_TYPE_DROP_REPORT                      "EVENT_TYPE_DROP_REPORT"
 
+#define ENABLED             "TRUE"
+#define DISABLED            "FALSE"
+
 struct DTelINTSessionEntry
 {
     sai_object_id_t intSessionOid;

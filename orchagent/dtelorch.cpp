@@ -306,8 +306,10 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
         {
             if (table_attr == INT_ENDPOINT)
             {
+		FieldValueTuple e = kfvFieldsValues(t)[0];
+
                 attr.id = SAI_SWITCH_ATTR_DTEL_INT_ENDPOINT_ENABLE;
-                attr.value.booldata = true;
+                attr.value.booldata = (fvValue(e) == ENABLED) ? true : false;
                 status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -317,8 +319,10 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == INT_TRANSIT)
             {
+		FieldValueTuple e = kfvFieldsValues(t)[0];
+
                 attr.id = SAI_SWITCH_ATTR_DTEL_INT_TRANSIT_ENABLE;
-                attr.value.booldata = true;
+                attr.value.booldata = (fvValue(e) == ENABLED) ? true : false;
                 status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -328,8 +332,10 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == POSTCARD)
             {
+		FieldValueTuple e = kfvFieldsValues(t)[0];
+
                 attr.id = SAI_SWITCH_ATTR_DTEL_POSTCARD_ENABLE;
-                attr.value.booldata = true;
+                attr.value.booldata = (fvValue(e) == ENABLED) ? true : false;
                 status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -339,8 +345,10 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == DROP_REPORT)
             {
+		FieldValueTuple e = kfvFieldsValues(t)[0];
+
                 attr.id = SAI_SWITCH_ATTR_DTEL_DROP_REPORT_ENABLE;
-                attr.value.booldata = true;
+                attr.value.booldata = (fvValue(e) == ENABLED) ? true : false;
                 status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -350,8 +358,10 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == QUEUE_REPORT)
             {
+		FieldValueTuple e = kfvFieldsValues(t)[0];
+
                 attr.id = SAI_SWITCH_ATTR_DTEL_QUEUE_REPORT_ENABLE;
-                attr.value.booldata = true;
+                attr.value.booldata = (fvValue(e) == ENABLED) ? true : false;
                 status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -808,31 +818,31 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
                 if (fvField(i) == COLLECT_SWITCH_ID)
                 {
                     s_attr.id = SAI_DTEL_INT_SESSION_ATTR_COLLECT_SWITCH_ID;
-                    s_attr.value.booldata = true;
+                    s_attr.value.booldata = (fvValue(i) == ENABLED) ? true : false;
                     int_session_attr.push_back(s_attr);
                 }
                 else if (fvField(i) == COLLECT_INGRESS_TIMESTAMP)
                 {
                     s_attr.id = SAI_DTEL_INT_SESSION_ATTR_COLLECT_INGRESS_TIMESTAMP;
-                    s_attr.value.booldata = true;
+                    s_attr.value.booldata = (fvValue(i) == ENABLED) ? true : false;
                     int_session_attr.push_back(s_attr);
                 }
                 else if (fvField(i) == COLLECT_EGRESS_TIMESTAMP)
                 {
                     s_attr.id = SAI_DTEL_INT_SESSION_ATTR_COLLECT_EGRESS_TIMESTAMP;
-                    s_attr.value.booldata = true;
+                    s_attr.value.booldata = (fvValue(i) == ENABLED) ? true : false;
                     int_session_attr.push_back(s_attr);
                 }
                 else if (fvField(i) == COLLECT_SWITCH_PORTS)
                 {
                     s_attr.id = SAI_DTEL_INT_SESSION_ATTR_COLLECT_SWITCH_PORTS;
-                    s_attr.value.booldata = true;
+                    s_attr.value.booldata = (fvValue(i) == ENABLED) ? true : false;
                     int_session_attr.push_back(s_attr);
                 }
                 else if (fvField(i) == COLLECT_QUEUE_INFO)
                 {
                     s_attr.id = SAI_DTEL_INT_SESSION_ATTR_COLLECT_QUEUE_INFO;
-                    s_attr.value.booldata = true;
+                    s_attr.value.booldata = (fvValue(i) == ENABLED) ? true : false;
                     int_session_attr.push_back(s_attr);
                 }
                 else if (fvField(i) == MAX_HOP_COUNT)
@@ -955,7 +965,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
                 if (fvField(i) == REPORT_TAIL_DROP)
                 {
                     qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_TAIL_DROP;
-                    qr_attr.value.booldata = true;
+                    qr_attr.value.booldata = (fvValue(i) == ENABLED) ? true : false;
                     queue_report_attr.push_back(qr_attr);
                 }
                 else if (fvField(i) == QUEUE_DEPTH_THRESHOLD)
