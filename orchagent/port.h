@@ -73,7 +73,8 @@ public:
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
-    sai_object_id_t     m_acl_table_group_id = 0;
+    sai_object_id_t     m_ingress_acl_table_group_id = 0;
+    sai_object_id_t     m_egress_acl_table_group_id = 0;
     vlan_members_t      m_vlan_members;
     std::set<std::string> m_members;
     std::vector<sai_object_id_t> m_queue_ids;
