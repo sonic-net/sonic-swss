@@ -81,3 +81,13 @@ def test_VlanMemberCreation(dvs):
     for fv in fvs:
         if fv[0] == "SAI_PORT_ATTR_PORT_VLAN_ID":
             assert fv[1] == "2"
+
+    # check vlan tag for the host interface
+    atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")
+    (status, fvs) = atbl.get(dvs.asicdb.hostifnamemap["Ethernet0"])
+    assert status == True
+
+    assert "SAI_HOSTIF_ATTR_VLAN_TAG" in [fv[0] for fv in fvs]
+    for fv in fvs:
+        if fv[0] == "SAI_HOSTIF_ATTR_VLAN_TAG":
+            assert fv[1] == "SAI_HOSTIF_VLAN_TAG_KEEP"
