@@ -6,12 +6,12 @@ SWSS Integration tests runs on docker-sonic-vs which runs on top of SAI virtual 
 
 # How to run the tests
 
-- Install docker and pytest on your dev machine
+- Install docker and pytest on your dev machine. In case "--system" option is not available, you can ignore the option and try.
     ```
     sudo pip install --system docker==2.6.1
     sudo pip install --system pytest==3.3.0
     ```
-- Compile and install swss common library
+- Compile and install swss common library. Install libhiredis prior to installing libswss.
     ````
     cd sonic-swss-common
     dpkg-buildpackage -us -uc -b
