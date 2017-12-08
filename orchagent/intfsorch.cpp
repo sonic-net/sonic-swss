@@ -424,7 +424,8 @@ void IntfsOrch::addDirectedBroadcast(const Port &port, const IpAddress &ip_addr)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create broadcast entry %s rv:%d",
-                       ip_addr.to_string().c_str(), status);        return;
+                       ip_addr.to_string().c_str(), status);
+        return;
     }
 
     SWSS_LOG_NOTICE("Add broadcast route for ip:%s", ip_addr.to_string().c_str());
