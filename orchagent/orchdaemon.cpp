@@ -96,7 +96,6 @@ bool OrchDaemon::init()
         CFG_ACL_TABLE_NAME,
         CFG_ACL_RULE_TABLE_NAME
     };
-    gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
     vector<string> dtel_tables = {
         APP_DTEL_TABLE_NAME,
@@ -107,6 +106,7 @@ bool OrchDaemon::init()
     };
 
     DTelOrch *dtel_orch = new DTelOrch(m_applDb, dtel_tables, gPortsOrch);
+    gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch, dtel_orch);
 
     m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, /*tunnel_decap_orch,*/ qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch, dtel_orch};
     m_select = new Select();

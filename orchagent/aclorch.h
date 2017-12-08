@@ -265,6 +265,8 @@ protected:
 };
 
 struct AclTable {
+    sai_object_id_t m_oid;
+public:
     string id;
     string description;
     acl_table_type_t type;
