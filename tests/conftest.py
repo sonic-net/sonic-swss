@@ -24,6 +24,8 @@ class AsicDbValidator(object):
         # build port oid to front port name mapping
         self.portoidmap = {}
         self.portnamemap = {}
+        self.hostifoidmap = {}
+        self.hostifnamemap = {}
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")
         keys = atbl.getKeys()
 
@@ -41,6 +43,8 @@ class AsicDbValidator(object):
 
             self.portoidmap[port_oid] = port_name
             self.portnamemap[port_name] = port_oid
+            self.hostifoidmap[k] = port_name
+            self.hostifnamemap[port_name] = k
 
         # get default acl table and acl rules
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
