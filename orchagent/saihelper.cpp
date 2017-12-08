@@ -1,4 +1,5 @@
 extern "C" {
+
 #include "sai.h"
 #include "saistatus.h"
 }
@@ -37,6 +38,7 @@ sai_buffer_api_t*           sai_buffer_api;
 sai_acl_api_t*              sai_acl_api;
 sai_mirror_api_t*           sai_mirror_api;
 sai_fdb_api_t*              sai_fdb_api;
+sai_dtel_api_t*             sai_dtel_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gSairedisRecord;
@@ -124,6 +126,7 @@ void initSaiApi()
     sai_api_query(SAI_API_BUFFER,               (void **)&sai_buffer_api);
     sai_api_query(SAI_API_SCHEDULER_GROUP,      (void **)&sai_scheduler_group_api);
     sai_api_query(SAI_API_ACL,                  (void **)&sai_acl_api);
+    sai_api_query(SAI_API_DTEL,                 (void **)&sai_dtel_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -148,6 +151,7 @@ void initSaiApi()
     sai_log_set(SAI_API_BUFFER,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SCHEDULER_GROUP,        SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_ACL,                    SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_DTEL,                   SAI_LOG_LEVEL_NOTICE);
 }
 
 void initSaiRedis(const string &record_location)
