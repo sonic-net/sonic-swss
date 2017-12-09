@@ -98,14 +98,14 @@ bool OrchDaemon::init()
     };
 
     vector<string> dtel_tables = {
-        APP_DTEL_TABLE_NAME,
-        APP_DTEL_REPORT_SESSION_TABLE_NAME,
-        APP_DTEL_INT_SESSION_TABLE_NAME,
-        APP_DTEL_QUEUE_REPORT_TABLE_NAME,
-        APP_DTEL_EVENT_TABLE_NAME
+        CFG_DTEL_TABLE_NAME,
+        CFG_DTEL_REPORT_SESSION_TABLE_NAME,
+        CFG_DTEL_INT_SESSION_TABLE_NAME,
+        CFG_DTEL_QUEUE_REPORT_TABLE_NAME,
+        CFG_DTEL_EVENT_TABLE_NAME
     };
 
-    DTelOrch *dtel_orch = new DTelOrch(m_applDb, dtel_tables, gPortsOrch);
+    DTelOrch *dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
     gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch, dtel_orch);
 
     m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, /*tunnel_decap_orch,*/ qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch, dtel_orch};
