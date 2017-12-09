@@ -929,7 +929,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
 
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t found = key.find(':');
+        size_t found = key.find('|');
         string port = key.substr(0, found);
         string queue_id = key.substr(found + 1);
         Port port_obj;
@@ -1129,23 +1129,23 @@ void DTelOrch::doTask(Consumer &consumer)
 
     string table_name = consumer.getTableName();
 
-    if (table_name == APP_DTEL_TABLE_NAME)
+    if (table_name == CFG_DTEL_TABLE_NAME)
     {
         doDtelTableTask(consumer);
     }
-    else if (table_name == APP_DTEL_REPORT_SESSION_TABLE_NAME)
+    else if (table_name == CFG_DTEL_REPORT_SESSION_TABLE_NAME)
     {
         doDtelReportSessionTableTask(consumer);
     }
-    else if (table_name == APP_DTEL_INT_SESSION_TABLE_NAME)
+    else if (table_name == CFG_DTEL_INT_SESSION_TABLE_NAME)
     {
         doDtelINTSessionTableTask(consumer);
     }
-    else if (table_name == APP_DTEL_QUEUE_REPORT_TABLE_NAME)
+    else if (table_name == CFG_DTEL_QUEUE_REPORT_TABLE_NAME)
     {
         doDtelQueueReportTableTask(consumer);
     }
-    else if (table_name == APP_DTEL_EVENT_TABLE_NAME)
+    else if (table_name == CFG_DTEL_EVENT_TABLE_NAME)
     {
         doDtelEventTableTask(consumer);
     }
