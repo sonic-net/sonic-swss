@@ -17,12 +17,12 @@ extern sai_object_id_t gSwitchId;
 using namespace std;
 
 type_map BufferOrch::m_buffer_type_maps = {
-    {APP_BUFFER_POOL_TABLE_NAME, new object_map()},
-    {APP_BUFFER_PROFILE_TABLE_NAME, new object_map()},
-    {APP_BUFFER_QUEUE_TABLE_NAME, new object_map()},
-    {APP_BUFFER_PG_TABLE_NAME, new object_map()},
-    {APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_map()},
-    {APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()}
+    {CFG_BUFFER_POOL_TABLE_NAME, new object_map()},
+    {CFG_BUFFER_PROFILE_TABLE_NAME, new object_map()},
+    {CFG_BUFFER_QUEUE_TABLE_NAME, new object_map()},
+    {CFG_BUFFER_PG_TABLE_NAME, new object_map()},
+    {CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, new object_map()},
+    {CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()}
 };
 
 BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
@@ -34,12 +34,12 @@ BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, t
 void BufferOrch::initTableHandlers()
 {
     SWSS_LOG_ENTER();
-    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_POOL_TABLE_NAME, &BufferOrch::processBufferPool));
-    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PROFILE_TABLE_NAME, &BufferOrch::processBufferProfile));
-    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_QUEUE_TABLE_NAME, &BufferOrch::processQueue));
-    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PG_TABLE_NAME, &BufferOrch::processPriorityGroup));
-    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, &BufferOrch::processIngressBufferProfileList));
-    m_bufferHandlerMap.insert(buffer_handler_pair(APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferOrch::processEgressBufferProfileList));
+    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_POOL_TABLE_NAME, &BufferOrch::processBufferPool));
+    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PROFILE_TABLE_NAME, &BufferOrch::processBufferProfile));
+    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_QUEUE_TABLE_NAME, &BufferOrch::processQueue));
+    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PG_TABLE_NAME, &BufferOrch::processPriorityGroup));
+    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME, &BufferOrch::processIngressBufferProfileList));
+    m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferOrch::processEgressBufferProfileList));
 }
 
 task_process_status BufferOrch::processBufferPool(Consumer &consumer)
@@ -315,7 +315,7 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
     sai_uint32_t range_low, range_high;
 
     SWSS_LOG_DEBUG("Processing:%s", key.c_str());
-    tokens = tokenize(key, delimiter);
+    tokens = tokenize(key, config_db_key_delimiter);
     if (tokens.size() != 2)
     {
         SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
@@ -372,7 +372,7 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
 }
 
 /*
-Input sample "BUFFER_PG_TABLE:Ethernet4,Ethernet45:10-15"
+Input sample "BUFFER_PG_TABLE|Ethernet4,Ethernet45|10-15"
 */
 task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
 {
@@ -385,8 +385,13 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     vector<string> tokens;
     sai_uint32_t range_low, range_high;
 
+    if (op != SET_COMMAND)
+    {
+        return task_process_status::task_success;
+    }
+
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
-    tokens = tokenize(key, delimiter);
+    tokens = tokenize(key, config_db_key_delimiter);
     if (tokens.size() != 2)
     {
         SWSS_LOG_ERROR("malformed key:%s. Must contain 2 tokens", key.c_str());
@@ -456,9 +461,9 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
     string op = kfvOp(tuple);
 
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
-    if (consumer.getTableName() != APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME)
+    if (consumer.getTableName() != CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME)
     {
-        SWSS_LOG_ERROR("Key with invalid table type passed in %s, expected:%s", key.c_str(), APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
+        SWSS_LOG_ERROR("Key with invalid table type passed in %s, expected:%s", key.c_str(), CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
         return task_process_status::task_invalid_entry;
     }
     vector<string> port_names = tokenize(key, list_item_delimiter);

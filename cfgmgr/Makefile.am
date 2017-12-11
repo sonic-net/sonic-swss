@@ -1,7 +1,7 @@
 INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/orchagent
 CFLAGS_SAI = -I /usr/include/sai
 
-bin_PROGRAMS = vlanmgrd intfmgrd
+bin_PROGRAMS = vlanmgrd intfmgrd buffermgrd
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
@@ -18,3 +18,8 @@ intfmgrd_SOURCES = intfmgrd.cpp intfmgr.cpp $(top_srcdir)/orchagent/orch.cpp she
 intfmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 intfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 intfmgrd_LDADD = -lswsscommon
+
+buffermgrd_SOURCES = buffermgrd.cpp buffermgr.cpp $(top_srcdir)/orchagent/orch.cpp shellcmd.h
+buffermgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+buffermgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+buffermgrd_LDADD = -lswsscommon
