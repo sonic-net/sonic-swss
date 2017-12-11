@@ -44,7 +44,16 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
     cmd.str("");
     cmd << ECHO_CMD << " 1 > /sys/class/net/" << DOT1Q_BRIDGE_NAME << "/bridge/vlan_filtering";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    int ret = swss::exec(cmd.str(), res);
+    /* echo will fail in virtual switch since /sys directory is read-only.
+     * need to use ip command to setup the vlan_filtering which is not available in debian 8.
+     * Once we move sonic to debian 9, we can use IP command by default */
+    if (ret != 0)
+    {
+        cmd.str("");
+        cmd << IP_CMD << " link set " << DOT1Q_BRIDGE_NAME << " type bridge vlan_filtering 1";
+        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    }
 
     cmd.str("");
     cmd << BRIDGE_CMD << " vlan del vid " << DEFAULT_VLAN_ID << " dev " << DOT1Q_BRIDGE_NAME << " self";

@@ -3,6 +3,7 @@
 
 #include <map>
 
+#include "acltable.h"
 #include "orch.h"
 #include "port.h"
 #include "observer.h"
@@ -55,13 +56,14 @@ public:
 
     bool setHostIntfsOperStatus(sai_object_id_t id, bool up);
     void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
-    bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid);
+    bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage = ACL_STAGE_INGRESS);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
+    unique_ptr<Table> m_queueTypeTable;
     unique_ptr<ProducerStateTable> m_flexCounterTable;
 
     shared_ptr<DBConnector> m_counter_db;
@@ -95,7 +97,8 @@ private:
     void initializePriorityGroups(Port &port);
     void initializeQueues(Port &port);
 
-    bool addHostIntfs(sai_object_id_t router_intfs_id, string alias, sai_object_id_t &host_intfs_id);
+    bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
+    bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
@@ -126,6 +129,8 @@ private:
     bool validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
     bool setPortSpeed(sai_object_id_t id, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
+
+    bool getQueueType(sai_object_id_t queue_id, string &type);
 
     bool setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
