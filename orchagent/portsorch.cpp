@@ -1024,6 +1024,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     if (setPortMtu(p.m_port_id, mtu))
                     {
+                        p.m_mtu = mtu;
                         SWSS_LOG_NOTICE("Set port %s MTU to %u", alias.c_str(), mtu);
                     }
                     else
