@@ -51,8 +51,9 @@ acl_rule_attr_lookup_t aclL3ActionLookup =
 
 static acl_table_type_lookup_t aclTableTypeLookUp =
 {
-    { TABLE_TYPE_L3,     ACL_TABLE_L3 },
-    { TABLE_TYPE_MIRROR, ACL_TABLE_MIRROR }
+    { TABLE_TYPE_L3,        ACL_TABLE_L3 },
+    { TABLE_TYPE_MIRROR,    ACL_TABLE_MIRROR },
+    { TABLE_TYPE_CTRLPLANE, ACL_TABLE_CTRLPLANE }
 };
 
 static acl_stage_type_lookup_t aclStageLookUp =
@@ -855,7 +856,8 @@ void AclRuleMirror::update(SubjectType type, void *cntx)
 
 bool AclTable::validate()
 {
-    if (type == ACL_TABLE_UNKNOWN) return false;
+    // Control plane ACLs are handled by a separate process
+    if (type == ACL_TABLE_UNKNOWN || type == ACL_TABLE_CTRLPLANE) return false;
     if (ports.empty()) return false;
     return true;
 }
