@@ -783,30 +783,6 @@ bool PortsOrch::setPortFecMode(sai_object_id_t id, int fec)
     }
     SWSS_LOG_INFO("Set FEC %u to port pid:%lx", attr.value.u32, id);
 
-    attr.id = SAI_QUEUE_ATTR_TYPE;
-
-    sai_status_t status = sai_queue_api->get_queue_attribute(queue_id, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to get queue type for queue %lu rv:%d", queue_id, status);
-        return false;
-    }
-
-    switch (attr.value.s32)
-    {
-    case SAI_QUEUE_TYPE_ALL:
-        type = "SAI_QUEUE_TYPE_ALL";
-        break;
-    case SAI_QUEUE_TYPE_UNICAST:
-        type = "SAI_QUEUE_TYPE_UNICAST";
-        break;
-    case SAI_QUEUE_TYPE_MULTICAST:
-        type = "SAI_QUEUE_TYPE_MULTICAST";
-        break;
-    default:
-        SWSS_LOG_ERROR("Got unsupported queue type %d for %lu queue", attr.value.s32, queue_id);
-        throw runtime_error("Got unsupported queue type");
-    }
 
     return true;
 }
