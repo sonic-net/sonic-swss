@@ -15,10 +15,10 @@ using namespace swss;
 
 struct PfcWdHwStats
 {
-    uint64_t txPkt     = 0;
-    uint64_t txDropPkt = 0;
-    uint64_t rxPkt     = 0;
-    uint64_t rxDropPkt = 0;
+    uint64_t txPkt;
+    uint64_t txDropPkt;
+    uint64_t rxPkt;
+    uint64_t rxDropPkt;
 };
 
 // PFC queue interface class
@@ -52,23 +52,25 @@ class PfcWdActionHandler
 
         virtual bool getHwCounters(PfcWdHwStats& counters)
         {
+            memset(&counters, 0, sizeof(PfcWdHwStats));
+
             return true;
         };
 
     private:
         struct PfcWdQueueStats
         {
-            uint64_t detectCount   = 0;
-            uint64_t restoreCount  = 0;
-            uint64_t txPkt         = 0;
-            uint64_t txDropPkt     = 0;
-            uint64_t rxPkt         = 0;
-            uint64_t rxDropPkt     = 0;
-            uint64_t txPktLast     = 0;
-            uint64_t txDropPktLast = 0;
-            uint64_t rxPktLast     = 0;
-            uint64_t rxDropPktLast = 0;
-            bool     operational   = true;
+            uint64_t detectCount;
+            uint64_t restoreCount;
+            uint64_t txPkt;
+            uint64_t txDropPkt;
+            uint64_t rxPkt;
+            uint64_t rxDropPkt;
+            uint64_t txPktLast;
+            uint64_t txDropPktLast;
+            uint64_t rxPktLast;
+            uint64_t rxDropPktLast;
+            bool     operational;
         };
 
         static PfcWdQueueStats getQueueStats(shared_ptr<Table> countersTable, const string &queueIdStr);

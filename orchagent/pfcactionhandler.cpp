@@ -103,6 +103,8 @@ PfcWdActionHandler::PfcWdQueueStats PfcWdActionHandler::getQueueStats(shared_ptr
     SWSS_LOG_ENTER();
 
     PfcWdQueueStats stats;
+    memset(&stats, 0, sizeof(PfcWdQueueStats));
+    stats.operational = true;
     vector<FieldValueTuple> fieldValues;
 
     if (!countersTable->get(queueIdStr, fieldValues))
@@ -359,7 +361,6 @@ bool PfcWdLossyHandler::getHwCounters(PfcWdHwStats& counters)
     }
 
     // PG counters not yet supported in Mellanox platform
-#if 0
     Port portInstance;
     if (!gPortsOrch->getPort(getPort(), portInstance))
     {
@@ -382,12 +383,11 @@ bool PfcWdLossyHandler::getHwCounters(PfcWdHwStats& counters)
         SWSS_LOG_ERROR("Failed to fetch pg 0x%lx stats: %d", pg, status);
         return false;
     }
-#endif
 
     counters.txPkt = queueStats[0];
     counters.txDropPkt = queueStats[1];
-    //counters.rxPkt = pgStats[0];
-    //counters.rxDropPkt = pgStats[1];
+    counters.rxPkt = pgStats[0];
+    counters.rxDropPkt = pgStats[1];
 
     return true;
 }
