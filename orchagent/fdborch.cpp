@@ -183,7 +183,10 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
 {
     SWSS_LOG_ENTER();
 
-    if (!update.add) return; // we need only additions
+    if (!update.add)
+    {
+        return; // we need additions only
+    }
 
     string port_name = update.member.m_alias;
     auto fdb_list = std::move(saved_fdb_entries[port_name]);
