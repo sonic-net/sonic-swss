@@ -49,7 +49,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
     auto it = consumer.m_toSync.begin();
     KeyOpFieldsValuesTuple tuple = it->second;
-    string map_type_name = consumer.m_consumer->getTableName();
+    string map_type_name = consumer.getTableName();
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
 
@@ -175,7 +175,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
     auto it = consumer.m_toSync.begin();
     KeyOpFieldsValuesTuple tuple = it->second;
-    string map_type_name = consumer.m_consumer->getTableName();
+    string map_type_name = consumer.getTableName();
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
 
@@ -456,7 +456,7 @@ task_process_status BufferOrch::processIngressBufferProfileList(Consumer &consum
     string op = kfvOp(tuple);
 
     SWSS_LOG_DEBUG("processing:%s", key.c_str());
-    if (consumer.m_consumer->getTableName() != APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME)
+    if (consumer.getTableName() != APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME)
     {
         SWSS_LOG_ERROR("Key with invalid table type passed in %s, expected:%s", key.c_str(), APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME);
         return task_process_status::task_invalid_entry;
@@ -554,7 +554,7 @@ void BufferOrch::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         /* Make sure the handler is initialized for the task */
-        auto map_type_name = consumer.m_consumer->getTableName();
+        auto map_type_name = consumer.getTableName();
         if (m_bufferHandlerMap.find(map_type_name) == m_bufferHandlerMap.end())
         {
             SWSS_LOG_ERROR("No handler for key:%s found.", map_type_name.c_str());

@@ -6,6 +6,7 @@
 #include <set>
 #include <algorithm>
 #include <tuple>
+#include <sstream>
 
 #include <netinet/if_ether.h>
 #include "net/if.h"
@@ -29,6 +30,7 @@ extern sai_object_id_t gSwitchId;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
+#define FLEX_STAT_COUNTER_POLL_MSECS "1000"
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
 {
@@ -37,6 +39,19 @@ static map<string, sai_port_fec_mode_t> fec_mode_map =
     { "fc", SAI_PORT_FEC_MODE_FC }
 };
 
+static const vector<sai_queue_stat_t> queueStatIds =
+{
+    SAI_QUEUE_STAT_PACKETS,
+    SAI_QUEUE_STAT_BYTES,
+    SAI_QUEUE_STAT_DROPPED_PACKETS,
+    SAI_QUEUE_STAT_DROPPED_BYTES
+};
+
+static char* hostif_vlan_tag[] = {
+    [SAI_HOSTIF_VLAN_TAG_STRIP]     = "SAI_HOSTIF_VLAN_TAG_STRIP",
+    [SAI_HOSTIF_VLAN_TAG_KEEP]      = "SAI_HOSTIF_VLAN_TAG_KEEP",
+    [SAI_HOSTIF_VLAN_TAG_ORIGINAL]  = "SAI_HOSTIF_VLAN_TAG_ORIGINAL"
+};
 /*
  * Initialize PortsOrch
  * 0) By default, a switch has one CPU port, one 802.1Q bridge, and one default
@@ -56,16 +71,20 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     SWSS_LOG_ENTER();
 
     /* Initialize counter table */
-    DBConnector *counter_db(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
-    m_counterTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_PORT_NAME_MAP));
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
 
     /* Initialize port table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
 
     /* Initialize queue tables */
-    m_queueTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_NAME_MAP));
-    m_queuePortTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_PORT_MAP));
-    m_queueIndexTable = unique_ptr<Table>(new Table(counter_db, COUNTERS_QUEUE_INDEX_MAP));
+    m_queueTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_NAME_MAP));
+    m_queuePortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_PORT_MAP));
+    m_queueIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_INDEX_MAP));
+    m_queueTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_TYPE_MAP));
+
+    m_flex_db = shared_ptr<DBConnector>(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_flexCounterTable = unique_ptr<ProducerStateTable>(new ProducerStateTable(m_flex_db.get(), PFC_WD_STATE_TABLE));
 
     uint32_t i, j;
     sai_status_t status;
@@ -383,6 +402,115 @@ bool PortsOrch::setPortFec(sai_object_id_t id, sai_port_fec_mode_t mode)
     return true;
 }
 
+bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage)
+{
+    SWSS_LOG_ENTER();
+
+    if (acl_stage == ACL_STAGE_UNKNOWN)
+    {
+        SWSS_LOG_ERROR("Unknown Acl stage for Acl table %lx", table_oid);
+        return false;
+    }
+
+    sai_status_t status;
+    sai_object_id_t groupOid;
+
+    Port p;
+    if (!getPort(id, p))
+    {
+        return false;
+    }
+
+    auto &port = m_portList.find(p.m_alias)->second;
+
+    if (acl_stage == ACL_STAGE_INGRESS && port.m_ingress_acl_table_group_id != 0)
+    {
+        groupOid = port.m_ingress_acl_table_group_id;
+    }
+    else if (acl_stage == ACL_STAGE_EGRESS && port.m_egress_acl_table_group_id != 0)
+    {
+        groupOid = port.m_egress_acl_table_group_id;
+    }
+    else if (acl_stage == ACL_STAGE_INGRESS or acl_stage == ACL_STAGE_EGRESS)
+    {
+        bool ingress = acl_stage == ACL_STAGE_INGRESS ? true : false;
+        // If port ACL table group does not exist, create one
+        sai_object_id_t bp_list[] = { SAI_ACL_BIND_POINT_TYPE_PORT };
+
+        vector<sai_attribute_t> group_attrs;
+        sai_attribute_t group_attr;
+
+        group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_ACL_STAGE;
+        group_attr.value.s32 = ingress ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
+        group_attrs.push_back(group_attr);
+
+        group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_ACL_BIND_POINT_TYPE_LIST;
+        group_attr.value.objlist.count = 1;
+        group_attr.value.objlist.list = bp_list;
+        group_attrs.push_back(group_attr);
+
+        group_attr.id = SAI_ACL_TABLE_GROUP_ATTR_TYPE;
+        group_attr.value.s32 = SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
+        group_attrs.push_back(group_attr);
+
+        status = sai_acl_api->create_acl_table_group(&groupOid, gSwitchId, (uint32_t)group_attrs.size(), group_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create ACL table group, rv:%d", status);
+            return false;
+        }
+
+        if (ingress)
+        {
+            port.m_ingress_acl_table_group_id = groupOid;
+        }
+        else
+        {
+            port.m_egress_acl_table_group_id = groupOid;
+        }
+
+        // Bind this ACL group to port OID
+        sai_attribute_t port_attr;
+        port_attr.id = ingress ? SAI_PORT_ATTR_INGRESS_ACL : SAI_PORT_ATTR_EGRESS_ACL;
+        port_attr.value.oid = groupOid;
+
+        status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to bind port %lx(%s) to ACL table group %lx, rv:%d",
+                    port.m_port_id, port.m_alias.c_str(), groupOid, status);
+            return false;
+        }
+
+        SWSS_LOG_NOTICE("Create ACL table group and bind port %s to it", port.m_alias.c_str());
+    }
+
+    // Create an ACL group member with table_oid and groupOid
+    vector<sai_attribute_t> member_attrs;
+
+    sai_attribute_t member_attr;
+    member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID;
+    member_attr.value.oid = groupOid;
+    member_attrs.push_back(member_attr);
+
+    member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID;
+    member_attr.value.oid = table_oid;
+    member_attrs.push_back(member_attr);
+
+    member_attr.id = SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY;
+    member_attr.value.u32 = 100; // TODO: double check!
+    member_attrs.push_back(member_attr);
+
+    status = sai_acl_api->create_acl_table_group_member(&group_member_oid, gSwitchId, (uint32_t)member_attrs.size(), member_attrs.data());
+    if (status != SAI_STATUS_SUCCESS) {
+        SWSS_LOG_ERROR("Failed to create member in ACL table group %lx for ACL table group %lx, rv:%d",
+                table_oid, groupOid, status);
+        return false;
+    }
+
+    return true;
+}
+
 bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
 {
     SWSS_LOG_ENTER();
@@ -437,6 +565,50 @@ bool PortsOrch::getPortPvid(Port &port, sai_uint32_t &pvid)
     }
 
     pvid = port.m_port_vlan_id;
+    return true;
+}
+
+bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
+{
+    SWSS_LOG_ENTER();
+    vector<Port> portv;
+
+    /*
+     * Before SAI_HOSTIF_VLAN_TAG_ORIGINAL is supported by libsai from all asic vendors,
+     * the VLAN tag on hostif is explicitly controlled with SAI_HOSTIF_VLAN_TAG_STRIP &
+     * SAI_HOSTIF_VLAN_TAG_KEEP attributes.
+     */
+    if (port.m_type == Port::PHY)
+    {
+        portv.push_back(port);
+    }
+    else if (port.m_type == Port::LAG)
+    {
+        getLagMember(port, portv);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("port type %d not supported", port.m_type);
+        return false;
+    }
+
+    for (const auto p: portv)
+    {
+        sai_attribute_t attr;
+        attr.id = SAI_HOSTIF_ATTR_VLAN_TAG;
+        attr.value.s32 = strip;
+
+        sai_status_t status = sai_hostif_api->set_hostif_attribute(p.m_hif_id, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set %s to host interface %s",
+                        hostif_vlan_tag[strip], p.m_alias.c_str());
+            return false;
+        }
+        SWSS_LOG_NOTICE("Set %s to host interface: %s",
+                        hostif_vlan_tag[strip], p.m_alias.c_str());
+    }
+
     return true;
 }
 
@@ -521,6 +693,39 @@ bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)
         speed = attr.value.u32;
 
     return status == SAI_STATUS_SUCCESS;
+}
+
+bool PortsOrch::getQueueType(sai_object_id_t queue_id, string &type)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_QUEUE_ATTR_TYPE;
+
+    sai_status_t status = sai_queue_api->get_queue_attribute(queue_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get queue type for queue %lu rv:%d", queue_id, status);
+        return false;
+    }
+
+    switch (attr.value.s32)
+    {
+    case SAI_QUEUE_TYPE_ALL:
+        type = "SAI_QUEUE_TYPE_ALL";
+        break;
+    case SAI_QUEUE_TYPE_UNICAST:
+        type = "SAI_QUEUE_TYPE_UNICAST";
+        break;
+    case SAI_QUEUE_TYPE_MULTICAST:
+        type = "SAI_QUEUE_TYPE_MULTICAST";
+        break;
+    default:
+        SWSS_LOG_ERROR("Got unsupported queue type %d for %lu queue", attr.value.s32, queue_id);
+        throw runtime_error("Got unsupported queue type");
+    }
+
+    return true;
 }
 
 bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
@@ -643,9 +848,25 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 m_portList[alias] = p;
                 /* Add port name map to counter table */
                 FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
-                vector<FieldValueTuple> vector;
-                vector.push_back(tuple);
-                m_counterTable->set("", vector);
+                vector<FieldValueTuple> fields;
+                fields.push_back(tuple);
+                m_counterTable->set("", fields);
+
+                /* Add port to flex_counter for updating stat counters  */
+                string key = sai_serialize_object_id(p.m_port_id) + ":" + FLEX_STAT_COUNTER_POLL_MSECS;
+
+                std::string delimiter = "";
+                std::ostringstream counters_stream;
+                for (int cntr = SAI_PORT_STAT_IF_IN_OCTETS; cntr <= SAI_PORT_STAT_PFC_7_ON2OFF_RX_PKTS; ++cntr)
+                {
+                    counters_stream << delimiter << sai_serialize_port_stat(static_cast<sai_port_stat_t>(cntr));
+                    delimiter = ",";
+                }
+
+                fields.clear();
+                fields.emplace_back(PFC_WD_PORT_COUNTER_ID_LIST, counters_stream.str());
+
+                m_flexCounterTable->set(key, fields);
 
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
@@ -1294,7 +1515,7 @@ void PortsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    string table_name = consumer.m_consumer->getTableName();
+    string table_name = consumer.getTableName();
 
     if (table_name == APP_PORT_TABLE_NAME)
     {
@@ -1362,9 +1583,11 @@ void PortsOrch::initializeQueues(Port &port)
     SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
 
     /* Create the Queue map in the Counter DB */
+    /* Add stat counters to flex_counter */
     vector<FieldValueTuple> queueVector;
     vector<FieldValueTuple> queuePortVector;
     vector<FieldValueTuple> queueIndexVector;
+    vector<FieldValueTuple> queueTypeVector;
 
     for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
     {
@@ -1382,11 +1605,37 @@ void PortsOrch::initializeQueues(Port &port)
                 sai_serialize_object_id(port.m_queue_ids[queueIndex]),
                 to_string(queueIndex));
         queueIndexVector.push_back(queueIndexTuple);
+
+
+        string queueType;
+        if (getQueueType(port.m_queue_ids[queueIndex], queueType))
+        {
+            FieldValueTuple queueTypeTuple(
+                    sai_serialize_object_id(port.m_queue_ids[queueIndex]),
+                    queueType);
+            queueTypeVector.push_back(queueTypeTuple);
+        }
+
+        string key = sai_serialize_object_id(port.m_queue_ids[queueIndex]) + ":" + FLEX_STAT_COUNTER_POLL_MSECS;
+
+        std::string delimiter = "";
+        std::ostringstream counters_stream;
+        for (auto it = queueStatIds.begin(); it != queueStatIds.end(); it++)
+        {
+            counters_stream << delimiter << sai_serialize_queue_stat(*it);
+            delimiter = ",";
+        }
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(PFC_WD_QUEUE_COUNTER_ID_LIST, counters_stream.str());
+
+        m_flexCounterTable->set(key, fieldValues);
     }
 
     m_queueTable->set("", queueVector);
     m_queuePortTable->set("", queuePortVector);
     m_queueIndexTable->set("", queueIndexVector);
+    m_queueTypeTable->set("", queueTypeVector);
 }
 
 void PortsOrch::initializePriorityGroups(Port &port)
@@ -1433,7 +1682,7 @@ bool PortsOrch::initializePort(Port &p)
     initializeQueues(p);
 
     /* Create host interface */
-    addHostIntfs(p.m_port_id, p.m_alias, p.m_hif_id);
+    addHostIntfs(p, p.m_alias, p.m_hif_id);
 
 #if 0
     // TODO: Assure if_nametoindex(p.m_alias.c_str()) != 0
@@ -1461,7 +1710,7 @@ bool PortsOrch::initializePort(Port &p)
     return true;
 }
 
-bool PortsOrch::addHostIntfs(sai_object_id_t id, string alias, sai_object_id_t &host_intfs_id)
+bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id)
 {
     SWSS_LOG_ENTER();
 
@@ -1473,7 +1722,7 @@ bool PortsOrch::addHostIntfs(sai_object_id_t id, string alias, sai_object_id_t &
     attrs.push_back(attr);
 
     attr.id = SAI_HOSTIF_ATTR_OBJ_ID;
-    attr.value.oid = id;
+    attr.value.oid = port.m_port_id;
     attrs.push_back(attr);
 
     attr.id = SAI_HOSTIF_ATTR_NAME;
@@ -1538,6 +1787,12 @@ bool PortsOrch::addBridgePort(Port &port)
         return false;
     }
 
+    if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
+    {
+        SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
+                hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], port.m_alias.c_str());
+        return false;
+    }
     m_portList[port.m_alias] = port;
     SWSS_LOG_NOTICE("Add bridge port %s to default 1Q bridge", port.m_alias.c_str());
 
@@ -1562,6 +1817,13 @@ bool PortsOrch::removeBridgePort(Port &port)
     {
         SWSS_LOG_ERROR("Failed to set bridge port %s admin status to DOWN, rv:%d",
             port.m_alias.c_str(), status);
+        return false;
+    }
+
+    if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
+    {
+        SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
+                hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
         return false;
     }
 
@@ -1847,6 +2109,15 @@ bool PortsOrch::addLagMember(Port &lag, Port &port)
 
     m_portList[lag.m_alias] = lag;
 
+    if (lag.m_bridge_port_id > 0)
+    {
+        if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
+        {
+            SWSS_LOG_ERROR("Failed to set %s for hostif of port %s which is in LAG %s",
+                    hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], port.m_alias.c_str(), lag.m_alias.c_str());
+            return false;
+        }
+    }
     sai_uint32_t pvid;
     if (getPortPvid(lag, pvid))
     {
@@ -1879,6 +2150,15 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     lag.m_members.erase(port.m_alias);
     m_portList[lag.m_alias] = lag;
 
+    if (lag.m_bridge_port_id > 0)
+    {
+        if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
+        {
+            SWSS_LOG_ERROR("Failed to set %s for hostif of port %s which is leaving LAG %s",
+                    hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str(), lag.m_alias.c_str());
+            return false;
+        }
+    }
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 

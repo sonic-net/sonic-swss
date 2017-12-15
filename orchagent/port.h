@@ -60,10 +60,6 @@ public:
         return !(*this == o);
     }
 
-    // Output parameter:
-    //   group_member_oid   - the newly created group member OID for the table in a table group
-    sai_status_t bindAclTable(sai_object_id_t& group_member_oid, sai_object_id_t table_oid);
-
     std::string         m_alias;
     Type                m_type;
     int                 m_index = 0;    // PHY_PORT: index
@@ -77,7 +73,8 @@ public:
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
-    sai_object_id_t     m_acl_table_group_id = 0;
+    sai_object_id_t     m_ingress_acl_table_group_id = 0;
+    sai_object_id_t     m_egress_acl_table_group_id = 0;
     vlan_members_t      m_vlan_members;
     std::set<std::string> m_members;
     std::vector<sai_object_id_t> m_queue_ids;

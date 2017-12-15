@@ -96,10 +96,11 @@ class PfcWdAclHandler: public PfcWdActionHandler
         // class shared dict: ACL table name -> ACL table
         static std::map<std::string, AclTable> m_aclTables;
 
-        string m_strTable;
+        string m_strIngressTable;
+        string m_strEgressTable;
         string m_strRule;
-        void createPfcAclTable(sai_object_id_t port);
-        void createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId);
+        void createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
+        void createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId, string strTable);
 };
 
 // Pfc queue that implements forward action by disabling PFC on queue

@@ -19,7 +19,6 @@ endif
 
 orchagent_SOURCES = \
 		    main.cpp \
-		    port.cpp \
 		    orchdaemon.cpp \
 		    orch.cpp \
 		    notifications.cpp \
@@ -38,6 +37,7 @@ orchagent_SOURCES = \
         switchorch.cpp \
 		    pfcwdorch.cpp \
 		    pfcactionhandler.cpp \
+		    acltable.h \
 		    aclorch.h \
 		    bufferorch.h \
 		    copporch.h \
