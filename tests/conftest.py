@@ -123,7 +123,7 @@ class DockerVirtualSwitch(object):
 
             # get base container
             for ctn in self.client.containers.list():
-                if ctn.id == cnt_sw_id:
+                if ctn.id == cnt_sw_id or cnt.name == cnt_sw_id:
                     cnt_sw_name = ctn.name
            
             (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % cnt_sw_name)
