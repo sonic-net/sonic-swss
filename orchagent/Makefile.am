@@ -37,6 +37,7 @@ orchagent_SOURCES = \
         switchorch.cpp \
 		    pfcwdorch.cpp \
 		    pfcactionhandler.cpp \
+		    acltable.h \
 		    aclorch.h \
 		    bufferorch.h \
 		    copporch.h \

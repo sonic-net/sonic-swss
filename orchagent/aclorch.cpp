@@ -55,6 +55,12 @@ static acl_table_type_lookup_t aclTableTypeLookUp =
     { TABLE_TYPE_MIRROR, ACL_TABLE_MIRROR }
 };
 
+static acl_stage_type_lookup_t aclStageLookUp =
+{
+    {TABLE_INGRESS, ACL_STAGE_INGRESS },
+    {TABLE_EGRESS,  ACL_STAGE_EGRESS }
+};
+
 static acl_ip_type_lookup_t aclIpTypeLookup =
 {
     { IP_TYPE_ANY,         SAI_ACL_IP_TYPE_ANY },
@@ -858,8 +864,15 @@ bool AclTable::create()
 {
     SWSS_LOG_ENTER();
 
+    if (stage == ACL_STAGE_UNKNOWN)
+    {
+        SWSS_LOG_ERROR("Unknown ACL stage for ACL table %s", id.c_str());
+        return false;
+    }
+
     sai_attribute_t attr;
     vector<sai_attribute_t> table_attrs;
+
     int32_t range_types_list[] =
         { SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE,
           SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE
@@ -870,10 +883,6 @@ bool AclTable::create()
     bpoint_list.push_back(SAI_ACL_BIND_POINT_TYPE_PORT);
     attr.value.s32list.count = 1;
     attr.value.s32list.list = bpoint_list.data();
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
-    attr.value.s32 = SAI_ACL_STAGE_INGRESS;
     table_attrs.push_back(attr);
 
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE;
@@ -912,17 +921,24 @@ bool AclTable::create()
     attr.value.booldata = true;
     table_attrs.push_back(attr);
 
+    if(stage == ACL_STAGE_INGRESS)
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE;
+        attr.value.s32list.count = (uint32_t)(sizeof(range_types_list) / sizeof(range_types_list[0]));
+        attr.value.s32list.list = range_types_list;
+        table_attrs.push_back(attr);
+    }
+
+    attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
+    attr.value.s32 = stage == ACL_STAGE_INGRESS ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
+    table_attrs.push_back(attr);
+
     if (type == ACL_TABLE_MIRROR)
     {
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
     }
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE;
-    attr.value.s32list.count = (uint32_t)(sizeof(range_types_list) / sizeof(range_types_list[0]));
-    attr.value.s32list.list = range_types_list;
-    table_attrs.push_back(attr);
 
     sai_status_t status = sai_acl_api->create_acl_table(&m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
     return status == SAI_STATUS_SUCCESS;
@@ -935,7 +951,7 @@ bool AclTable::bind(sai_object_id_t portOid)
     assert(ports.find(portOid) != ports.end());
 
     sai_object_id_t group_member_oid;
-    if (!gPortsOrch->bindAclTable(portOid, m_oid, group_member_oid))
+    if (!gPortsOrch->bindAclTable(portOid, m_oid, group_member_oid, stage))
     {
         return false;
     }
@@ -1424,6 +1440,13 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                         SWSS_LOG_ERROR("Failed to process table ports for table %s", table_id.c_str());
                     }
                 }
+                else if (attr_name == TABLE_STAGE)
+                {
+                   if (!processAclTableStage(attr_value, newTable.stage))
+                   {
+                       SWSS_LOG_ERROR("Failed to process table stage for table %s", table_id.c_str());
+                   }
+                }
                 else
                 {
                     SWSS_LOG_ERROR("Unknown table attribute '%s'", attr_name.c_str());
@@ -1612,6 +1635,25 @@ bool AclOrch::processAclTableType(string type, acl_table_type_t &table_type)
 
     return true;
 }
+
+bool AclOrch::processAclTableStage(string stage, acl_stage_type_t &acl_stage)
+{
+    SWSS_LOG_ENTER();
+
+    auto iter = aclStageLookUp.find(toUpper(stage));
+
+    if (iter == aclStageLookUp.end())
+    {
+        acl_stage = ACL_STAGE_UNKNOWN;
+        return false;
+    }
+
+    acl_stage = iter->second;
+
+    return true;
+}
+
+
 
 sai_object_id_t AclOrch::getTableById(string table_id)
 {
