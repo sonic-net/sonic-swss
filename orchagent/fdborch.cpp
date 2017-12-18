@@ -60,7 +60,7 @@ void FdbOrch::update(SubjectType type, void *cntx)
     switch(type) {
         case SUBJECT_TYPE_VLAN_MEMBER_CHANGE:
         {
-            VlanMemberUpdate *update = static_cast<VlanMemberUpdate *>(cntx);
+            VlanMemberUpdate *update = reinterpret_cast<VlanMemberUpdate *>(cntx);
             updateVlanMember(*update);
             break;
         }
