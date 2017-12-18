@@ -1,4 +1,5 @@
 import os
+import os.path
 import re
 import time
 import docker
@@ -9,6 +10,10 @@ from swsscommon import swsscommon
 def pytest_addoption(parser):
     parser.addoption("--dvsname", action="store", default=None,
                       help="dvs name")
+    parser.addoption("--get_logs", action="store_true",
+                     default=False, help="Get log files from the dvs test container")
+    parser.addoption("--orchagent_loglevel", action="store", default="NOTICE",
+                      help="Log level for orchagent")
 
 class AsicDbValidator(object):
     def __init__(self, dvs):
@@ -206,9 +211,28 @@ class DockerVirtualSwitch(object):
     def runcmd(self, cmd):
         return self.ctn.exec_run(cmd)
 
+    def get_file(self, docker_path, local_filename):
+        output = self.ctn.exec_run("cat %s" % docker_path)
+        with open(local_filename, "w") as fp:
+            fp.write(output)
+
 @pytest.yield_fixture(scope="module")
 def dvs(request):
     name = request.config.getoption("--dvsname")
+    get_logs = request.config.getoption("--get_logs")
+    orch_log_level = request.config.getoption("--orchagent_loglevel")
+
     dvs = DockerVirtualSwitch(name)
+    dvs.ctn.exec_run("swssloglevel -l %s -c orchagent" % orch_log_level)
+
     yield dvs
+
+    if get_logs:
+        path = "logs_%s/" % request.node.name
+        if not os.path.exists(path):
+            os.makedirs(path)
+        dvs.get_file("/var/log/syslog", "%s/syslog" % path)
+        dvs.get_file("/var/log/swss/sairedis.rec", "%s/sairedis.rec" % path)
+        dvs.get_file("/var/log/swss/swss.rec", "%s/swss.rec" % path)
+
     dvs.destroy()
