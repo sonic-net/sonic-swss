@@ -60,9 +60,6 @@ def how_many_entries_exist(db, table):
 def is_fdb_entry_exists(db, table, key_values, attributes):
     tbl =  swsscommon.Table(db, table)
     keys = tbl.getKeys()
-    print
-    print "%s" % table,
-    pprint(keys)
 
     exists = True
     extra_info = []
@@ -76,7 +73,6 @@ def is_fdb_entry_exists(db, table, key_values, attributes):
         key_found = True
 
         status, fvs = tbl.get(key)
-        pprint(fvs)
         assert status, "Error reading from table %s" % table
 
         d_attributes = dict(attributes)
