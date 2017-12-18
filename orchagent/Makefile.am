@@ -7,6 +7,7 @@ swssdir = $(datadir)/swss
 dist_swss_DATA = \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
+		 pfc_detect_barefoot.lua \
 		 pfc_restore.lua
 
 bin_PROGRAMS = orchagent routeresync
