@@ -33,16 +33,7 @@ public:
 
     virtual void detach(Observer *observer)
     {
-        for (auto iter = m_observers.begin(); iter != m_observers.end(); ++iter)
-        {
-            if (observer == *iter)
-            {
-                continue;
-            }
-
-            m_observers.erase(iter);
-            break;
-        }
+        m_observers.remove(observer);
     }
 
     virtual ~Subject() {}

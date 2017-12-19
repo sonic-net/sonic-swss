@@ -482,19 +482,25 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_DROP)
         {
-            entry->second.handler = make_shared<DropHandler>(
-                    entry->second.portId,
-                    entry->first,
-                    entry->second.index,
-                    PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
+            if (entry->second.handler == nullptr)
+            {
+                entry->second.handler = make_shared<DropHandler>(
+                        entry->second.portId,
+                        entry->first,
+                        entry->second.index,
+                        PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
+            }
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_FORWARD)
         {
-            entry->second.handler = make_shared<ForwardHandler>(
-                    entry->second.portId,
-                    entry->first,
-                    entry->second.index,
-                    PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
+            if (entry->second.handler == nullptr)
+            {
+                entry->second.handler = make_shared<ForwardHandler>(
+                        entry->second.portId,
+                        entry->first,
+                        entry->second.index,
+                        PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
+            }
         }
         else
         {
@@ -513,4 +519,4 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
 
 // Trick to keep member functions in a separate file
 template class PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>;
-template class PfcWdSwOrch<PfcWdActionHandler, PfcWdActionHandler>;
+template class PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>;
