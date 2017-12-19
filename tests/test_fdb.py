@@ -4,11 +4,6 @@ import json
 from pprint import pprint
 
 
-APPL_DB = 0
-ASIC_DB = 1
-CONFIG_DB = 4
-
-
 def create_entry(tbl, key, pairs):
     fvs = swsscommon.FieldValuePairs(pairs)
     tbl.set(key, fvs)
@@ -81,9 +76,9 @@ def is_fdb_entry_exists(db, table, key_values, attributes):
 
 
 def test_FDBAddedAfterMemberCreated(dvs):
-    appl_db = swsscommon.DBConnector(APPL_DB, dvs.redis_sock, 0)
-    asic_db = swsscommon.DBConnector(ASIC_DB, dvs.redis_sock, 0)
-    conf_db = swsscommon.DBConnector(CONFIG_DB, dvs.redis_sock, 0)
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     # create a FDB entry in Application DB
     create_entry_pst(
