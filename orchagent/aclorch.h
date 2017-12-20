@@ -129,7 +129,7 @@ public:
     virtual bool validateAddMatch(string attr_name, string attr_value);
     virtual bool validateAddAction(string attr_name, string attr_value) = 0;
     virtual bool validate() = 0;
-    bool processIpType(string type, sai_uint32_t &ip_type);
+    bool processIpType(string type, sai_int32_t &ip_type);
     inline static void setRulePriorities(sai_uint32_t min, sai_uint32_t max)
     {
         m_minPriority = min;
