@@ -506,9 +506,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
         {
             throw runtime_error("Unknown PFC WD action");
         }
+        entry->second.handler->initCounters();
     }
     else if (event == "restore")
     {
+        entry->second.handler->commitCounters();
         entry->second.handler = nullptr;
     }
     else
