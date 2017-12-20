@@ -1,4 +1,5 @@
 #include <limits.h>
+#include <unordered_map>
 #include <algorithm>
 #include "aclorch.h"
 #include "logger.h"
@@ -878,10 +879,39 @@ bool AclTable::create()
           SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE
         };
 
-    attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
+    set<sai_acl_bind_point_type_t> binds;
+    for (const auto& portid_pair : ports)
+    {
+        Port port;
+        if (!gPortsOrch->getPort(portid_pair.first, port))
+        {
+         continue;
+        }
+
+        switch (port.m_type)
+        {
+        case Port::PHY:
+            binds.insert(SAI_ACL_BIND_POINT_TYPE_PORT);
+            break;
+        case Port::VLAN:
+            binds.insert(SAI_ACL_BIND_POINT_TYPE_VLAN);
+            break;
+        case Port::LAG:
+            binds.insert(SAI_ACL_BIND_POINT_TYPE_LAG);
+            break;
+        default:
+            return SAI_STATUS_FAILURE;
+        }
+    }
+
     vector<int32_t> bpoint_list;
-    bpoint_list.push_back(SAI_ACL_BIND_POINT_TYPE_PORT);
-    attr.value.s32list.count = 1;
+    for (auto bind : binds)
+    {
+        bpoint_list.push_back(bind);
+    }
+
+    attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
+    attr.value.s32list.count = static_cast<uint32_t>(bpoint_list.size());
     attr.value.s32list.list = bpoint_list.data();
     table_attrs.push_back(attr);
 
@@ -1608,13 +1638,26 @@ bool AclOrch::processPorts(string portsList, std::function<void (sai_object_id_t
             return false;
         }
 
-        if (port.m_type != Port::PHY)
+        switch (port.m_type)
         {
-            SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", alias.c_str(), port.m_type);
-            return false;
-        }
-
-        inserter(port.m_port_id);
+        case Port::PHY:
+            if (port.m_lag_member_id != SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_ERROR("Failed to process port. Bind table to LAG member %s is not allowed", alias.c_str());
+                return false;
+            }
+            inserter(port.m_port_id);
+            break;
+        case Port::LAG:
+            inserter(port.m_lag_id);
+            break;
+        case Port::VLAN:
+            inserter(port.m_vlan_info.vlan_oid);
+            break;
+        default:
+          SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", alias.c_str(), port.m_type);
+          return false;
+      }
     }
 
     return true;
