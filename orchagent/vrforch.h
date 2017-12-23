@@ -12,8 +12,7 @@ typedef std::unordered_map<std::string, sai_object_id_t> VRFTable;
 class VRFRequest : public Request
 {
     const request_description_t request_description = {
-        1,
-        { "string" },
+        { REQ_T_STRING },
         {
             { "v4",            REQ_T_BOOL },
             { "v6",            REQ_T_BOOL },
@@ -24,7 +23,8 @@ class VRFRequest : public Request
         },
         { } // no mandatory attributes
     };
-    VRFRequest(const KeyOpFieldsValuesTuple& request) : Request(request_description, request, '|') { }
+public:
+    VRFRequest() : Request(request_description, '|') { }
 };
 
 class VRFOrch : public Orch

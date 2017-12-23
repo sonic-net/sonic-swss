@@ -1,7 +1,11 @@
+#include <cassert>
 #include <string>
 #include <vector>
 #include <unordered_map>
 
+#include "sai.h"
+#include "macaddress.h"
+#include "orch.h"
 #include "request_parser.h"
 #include "vrforch.h"
 
@@ -17,8 +21,8 @@ void VRFOrch::doTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        Request request;
-        if (!request.ParseRequest(request))
+        VRFRequest request;
+        if (!request.Parse(it))
         {
             ++it;
         }
@@ -30,11 +34,10 @@ void VRFOrch::doTask(Consumer &consumer)
 
 bool VRFOrch::AddVRF(const VRFRequest& request)
 {
-
+    return true;
 }
 
 bool VRFOrch::DeleteVRF(const VRFRequest& request)
 {
-
+    return true;
 }
-

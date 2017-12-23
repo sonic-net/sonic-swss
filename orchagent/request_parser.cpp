@@ -1,10 +1,14 @@
+#include <cassert>
 #include <string>
 #include <vector>
 #include <unordered_map>
 
+#include "sai.h"
+#include "macaddress.h"
+#include "orch.h"
 #include "request_parser.h"
 
-bool Request::ParseOperation(const KeyOpFieldsValuesTuple& request)
+bool Request::ParseOperation(const SyncMap::iterator& request)
 {
     const auto& operation_ = kfvOp(request->second);
     if (operation_ != SET_COMMAND && operation_ != DEL_COMMAND)
@@ -15,12 +19,12 @@ bool Request::ParseOperation(const KeyOpFieldsValuesTuple& request)
     return true;
 }
 
-bool Request::ParseKey(const KeyOpFieldsValuesTuple& request)
+bool Request::ParseKey(const SyncMap::iterator& request)
 {
     full_key_ = kfvKey(request->second);
 
     // split the key by separator
-    std::vector<std:string> key_items(request_description_.number_of_key_items);
+    std::vector<std::string> key_items(number_of_key_items_);
     size_t i = 0;
     size_t position = full_key_.find(key_separator_);
     while (position != std::string::npos)
@@ -31,18 +35,18 @@ bool Request::ParseKey(const KeyOpFieldsValuesTuple& request)
     }
     key_items.push_back(full_key_.substr(i, full_key_.length()));
 
-    if (key_items.size() != request_description_.number_of_key_items)
+    if (key_items.size() != number_of_key_items_)
     {
-        SWSS_LOG_ERROR("Can't parse request key. Wrong number of key items. Expected %d items: %s",
-            full_key_.c_str(), request_description_.number_of_key_items);
+        SWSS_LOG_ERROR("Can't parse request key. Wrong number of key items. Expected %lu items: %s",
+            number_of_key_items_, full_key_.c_str());
 
         return false;
     }
 
     // check types of the key items
-    for (int i = 0; i < request_description_.number_of_key_items; i++)
+    for (int i = 0; i < static_cast<int>(number_of_key_items_); i++)
     {
-        switch(request_description_.key_items[i].key_item_type)
+        switch(request_description_.key_item_types[i])
         {
             case REQ_T_STRING:
                 key_item_strings_[i] = std::move(key_items[i]);
@@ -56,20 +60,20 @@ bool Request::ParseKey(const KeyOpFieldsValuesTuple& request)
     return true;
 }
 
-bool Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
+bool Request::ParseAttrs(const SyncMap::iterator& request)
 {
-    const auto not_found = std::end(request_description_.attr_items);
+    const auto not_found = std::end(request_description_.attr_item_types);
 
     for (auto i = kfvFieldsValues(request->second).begin();
          i != kfvFieldsValues(request->second).end(); i++)
     {
-        const auto item = request_description_.attr_items.find(fvField(*i));
+        const auto item = request_description_.attr_item_types.find(fvField(*i));
         if (item == not_found)
         {
             SWSS_LOG_INFO("Unknown attribute %s", fvField(*i).c_str());
             return false;
         }
-        switch(item->second.attr_type)
+        switch(item->second)
         {
             case REQ_T_STRING:
                 attr_item_strings_[fvField(*i)] = fvValue(*i);
@@ -84,7 +88,7 @@ bool Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
                 break;
             case REQ_T_MAC_ADDRESS:
                 uint8_t mac[6];
-                if (!MacAddress.ParseMacString(fvValue(*i), mac))
+                if (!MacAddress::parseMacString(fvValue(*i), mac))
                 {
                     return false;
                 }
@@ -140,7 +144,7 @@ bool Request::ParsePacketAction(const std::string& str, sai_packet_action_t& pac
     };
 
     const auto found = m.find(str);
-    if (m == std::end(m))
+    if (found == std::end(m))
     {
         SWSS_LOG_ERROR("Wrong packet action attribute value '%s'", str.c_str());
         return false;
