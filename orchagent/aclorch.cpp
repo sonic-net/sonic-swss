@@ -2093,7 +2093,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
 
     attr.id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
     int32_t acl_action_list[4];
-    acl_action_list[0] = SAI_ACL_ACTION_TYPE_DTEL_FLOW_OP;
+    acl_action_list[0] = SAI_ACL_ACTION_TYPE_ACL_DTEL_FLOW_OP;
     acl_action_list[1] = SAI_ACL_ACTION_TYPE_DTEL_INT_SESSION;
     acl_action_list[2] = SAI_ACL_ACTION_TYPE_DTEL_REPORT_ALL_PACKETS;
     acl_action_list[3] = SAI_ACL_ACTION_TYPE_DTEL_FLOW_SAMPLE_PERCENT;

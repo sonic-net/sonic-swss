@@ -30,7 +30,7 @@ DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOr
 {
     SWSS_LOG_ENTER();
 
-    status = sai_dtel_api->create_dtel(&dtelId, gSwitchId, 0, {});
+    sai_status_t status = sai_dtel_api->create_dtel(&dtelId, gSwitchId, 0, {});
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("DTEL ERROR: Error creating DTel id");
@@ -40,7 +40,7 @@ DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOr
 
 DTelOrch::~DTelOrch()
 {
-    status = sai_dtel_api->remove_dtel(dtelId);
+    sai_status_t status = sai_dtel_api->remove_dtel(dtelId);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("DTEL ERROR: Error deleting DTel id");
@@ -467,16 +467,16 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 {
                     if (fvField(i) == INT_L4_DSCP_VALUE)
                     {
-                        attr.value.ternaryfield.value.u8 = to_uint<uint8_t>(fvValue(i));
+                        attr.value.aclfield.data.u8 = to_uint<uint8_t>(fvValue(i));
                     }
                     else if (fvField(i) == INT_L4_DSCP_MASK)
                     {
-                        attr.value.ternaryfield.mask.u8 = to_uint<uint8_t>(fvValue(i));
+                        attr.value.aclfield.mask.u8 = to_uint<uint8_t>(fvValue(i));
                     }
                 }
 
-                if (attr.value.ternaryfield.value.u8 == 0 ||
-                    attr.value.ternaryfield.mask.u8 == 0)
+                if (attr.value.aclfield.data.u8 == 0 ||
+                    attr.value.aclfield.mask.u8 == 0)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Invalid INT L4 DSCP value/mask");
 		    goto dtel_table_continue;
@@ -495,7 +495,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
         {
             if (table_attr == INT_ENDPOINT)
             {
-                attr.id = SAI_SWITCH_ATTR_DTEL_INT_ENDPOINT_ENABLE;
+                attr.id = SAI_DTEL_ATTR_INT_ENDPOINT_ENABLE;
                 attr.value.booldata = false;
                 status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
@@ -506,7 +506,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == INT_TRANSIT)
             {
-                attr.id = SAI_SWITCH_ATTR_DTEL_INT_TRANSIT_ENABLE;
+                attr.id = SAI_DTEL_ATTR_INT_TRANSIT_ENABLE;
                 attr.value.booldata = false;
                 status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
@@ -517,7 +517,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == POSTCARD)
             {
-                attr.id = SAI_SWITCH_ATTR_DTEL_POSTCARD_ENABLE;
+                attr.id = SAI_DTEL_ATTR_POSTCARD_ENABLE;
                 attr.value.booldata = false;
                 status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
@@ -528,7 +528,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == DROP_REPORT)
             {
-                attr.id = SAI_SWITCH_ATTR_DTEL_DROP_REPORT_ENABLE;
+                attr.id = SAI_DTEL_ATTR_DROP_REPORT_ENABLE;
                 attr.value.booldata = false;
                 status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
@@ -539,7 +539,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == QUEUE_REPORT)
             {
-                attr.id = SAI_SWITCH_ATTR_DTEL_QUEUE_REPORT_ENABLE;
+                attr.id = SAI_DTEL_ATTR_QUEUE_REPORT_ENABLE;
                 attr.value.booldata = false;
                 status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
@@ -552,7 +552,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 auto i = kfvFieldsValues(t);
 
-                attr.id = SAI_SWITCH_ATTR_DTEL_SWITCH_ID;
+                attr.id = SAI_DTEL_ATTR_SWITCH_ID;
                 attr.value.u32 = 0;
                 status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
@@ -565,7 +565,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 auto i = kfvFieldsValues(t);
 
-                attr.id = SAI_SWITCH_ATTR_DTEL_FLOW_STATE_CLEAR_CYCLE;
+                attr.id = SAI_DTEL_ATTR_FLOW_STATE_CLEAR_CYCLE;
                 attr.value.u16 = 0;
                 status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
@@ -578,7 +578,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 auto i = kfvFieldsValues(t);
 
-                attr.id = SAI_SWITCH_ATTR_DTEL_LATENCY_SENSITIVITY;
+                attr.id = SAI_DTEL_ATTR_LATENCY_SENSITIVITY;
                 attr.value.u16 = 0;
                 status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
@@ -589,7 +589,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == SINK_PORT_LIST)
             {
-                attr.id = SAI_SWITCH_ATTR_DTEL_SINK_PORT_LIST;
+                attr.id = SAI_DTEL_ATTR_SINK_PORT_LIST;
 
                 attr.value.objlist.count = 0;
                 attr.value.objlist.list = {};
@@ -602,9 +602,9 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == INT_L4_DSCP)
             {
-                attr.id = SAI_SWITCH_ATTR_DTEL_INT_L4_DSCP;
-                attr.value.ternaryfield.value.u8 = 0;
-                attr.value.ternaryfield.mask.u8 = 0;
+                attr.id = SAI_DTEL_ATTR_INT_L4_DSCP;
+                attr.value.aclfield.data.u8 = 0;
+                attr.value.aclfield.mask.u8 = 0;
                 status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
