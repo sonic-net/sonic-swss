@@ -8,9 +8,9 @@
 #include "orch.h"
 #include "request_parser.h"
 
-bool Request::ParseOperation(const SyncMap::iterator& request)
+bool Request::ParseOperation(const KeyOpFieldsValuesTuple& request)
 {
-    const auto& operation_ = kfvOp(request->second);
+    const auto& operation_ = kfvOp(request);
     if (operation_ != SET_COMMAND && operation_ != DEL_COMMAND)
     {
         return false;
@@ -19,9 +19,9 @@ bool Request::ParseOperation(const SyncMap::iterator& request)
     return true;
 }
 
-bool Request::ParseKey(const SyncMap::iterator& request)
+bool Request::ParseKey(const KeyOpFieldsValuesTuple& request)
 {
-    full_key_ = kfvKey(request->second);
+    full_key_ = kfvKey(request);
 
     // split the key by separator
     std::vector<std::string> key_items(number_of_key_items_);
@@ -60,12 +60,12 @@ bool Request::ParseKey(const SyncMap::iterator& request)
     return true;
 }
 
-bool Request::ParseAttrs(const SyncMap::iterator& request)
+bool Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
 {
     const auto not_found = std::end(request_description_.attr_item_types);
 
-    for (auto i = kfvFieldsValues(request->second).begin();
-         i != kfvFieldsValues(request->second).end(); i++)
+    for (auto i = kfvFieldsValues(request).begin();
+         i != kfvFieldsValues(request).end(); i++)
     {
         const auto item = request_description_.attr_item_types.find(fvField(*i));
         if (item == not_found)

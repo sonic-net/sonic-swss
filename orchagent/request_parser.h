@@ -27,7 +27,7 @@ public:
     {
     }
 
-    bool Parse(const SyncMap::iterator& request)
+    bool Parse(const KeyOpFieldsValuesTuple& request)
     {
         if (!ParseOperation(request)) return false;
         if (!ParseKey(request)) return false;
@@ -82,14 +82,14 @@ public:
 
 
 private:
-    bool ParseOperation(const SyncMap::iterator& request);
-    bool ParseKey(const SyncMap::iterator& request);
-    bool ParseAttrs(const SyncMap::iterator& request);
+    bool ParseOperation(const KeyOpFieldsValuesTuple& request);
+    bool ParseKey(const KeyOpFieldsValuesTuple& request);
+    bool ParseAttrs(const KeyOpFieldsValuesTuple& request);
     bool ParseBool(const std::string& str, bool& value);
     bool ParsePacketAction(const std::string& str, sai_packet_action_t& packet_action);
 
     request_description_t request_description_;
-    SyncMap::iterator request_;
+//    KeyOpFieldsValuesTuple request_;
     char key_separator_;
     bool is_parsed_;
     size_t number_of_key_items_;

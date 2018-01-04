@@ -22,7 +22,7 @@ void VRFOrch::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         VRFRequest request;
-        if (!request.Parse(it))
+        if (!request.Parse(it->second))
         {
             ++it;
         }
