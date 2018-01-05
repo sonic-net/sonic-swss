@@ -1,8 +1,10 @@
+#include <net/ethernet.h>
 #include <cassert>
 #include <string>
 #include <vector>
 #include <unordered_map>
 #include <set>
+#include <exception>
 
 #include "sai.h"
 #include "macaddress.h"
@@ -10,42 +12,52 @@
 #include "request_parser.h"
 
 
-bool Request::Parse(const KeyOpFieldsValuesTuple& request)
+void Request::Parse(const KeyOpFieldsValuesTuple& request)
 {
     if (is_parsed_)
     {
-        // FIXME: can't be parsed twice
-        return false;
+        throw std::runtime_error("The parser already has a parsed request");
     }
-    if (!ParseOperation(request)) return false;
-    if (!ParseKey(request)) return false;
-    if (!ParseAttrs(request)) return false;
+
+
+    ParseOperation(request);
+    ParseKey(request);
+    ParseAttrs(request);
 
     is_parsed_ = true;
-
-    return true;
 }
 
+void Request::Clear()
+{
+    operation_.clear();
+    full_key_.clear();
+    attr_names_.clear();
+    key_item_strings_.clear();
+    key_item_mac_addresses_.clear();
+    attr_item_strings_.clear();
+    attr_item_bools_.clear();
+    attr_item_mac_addresses_.clear();
+    attr_item_packet_actions_.clear();
 
-bool Request::ParseOperation(const KeyOpFieldsValuesTuple& request)
+    is_parsed_ = false;
+}
+
+void Request::ParseOperation(const KeyOpFieldsValuesTuple& request)
 {
     operation_ = kfvOp(request);
     if (operation_ != SET_COMMAND && operation_ != DEL_COMMAND)
     {
-        // FIXME: message
-        return false;
+        throw std::invalid_argument(std::string("Wrong operation: ") + operation_);
     }
-
-    return true;
 }
 
-bool Request::ParseKey(const KeyOpFieldsValuesTuple& request)
+void Request::ParseKey(const KeyOpFieldsValuesTuple& request)
 {
     full_key_ = kfvKey(request);
 
     // split the key by separator
     std::vector<std::string> key_items;
-    size_t i = 0;
+    size_t i = 0;                                     // FIXME: better names
     size_t position = full_key_.find(key_separator_);
     while (position != std::string::npos)
     {
@@ -57,9 +69,11 @@ bool Request::ParseKey(const KeyOpFieldsValuesTuple& request)
 
     if (key_items.size() != number_of_key_items_)
     {
-        SWSS_LOG_ERROR("Can't parse request key. Wrong number of key items. Expected %lu items: %s",
-            number_of_key_items_, full_key_.c_str());
-        return false;
+        throw std::invalid_argument(std::string("Wrong number of key items. Expected ")
+                                  + std::to_string(number_of_key_items_)
+                                  + std::string(" item(s). Key: '")
+                                  + full_key_
+                                  + std::string("'"));
     }
 
     // check types of the key items
@@ -71,24 +85,20 @@ bool Request::ParseKey(const KeyOpFieldsValuesTuple& request)
                 key_item_strings_[i] = std::move(key_items[i]);
                 break;
             case REQ_T_MAC_ADDRESS:
-                uint8_t mac[6]; // FIXME: correct mac address length
+                uint8_t mac[ETHER_ADDR_LEN];
                 if (!MacAddress::parseMacString(key_items[i], mac))
                 {
-                    // FIXME: Error message
-                    return false;
+                    throw std::invalid_argument(std::string("Invalid mac address: ") + key_items[i]);
                 }
                 key_item_mac_addresses_[i] = MacAddress(key_items[i]);
                 break;
             default:
-                SWSS_LOG_ERROR("Not implemented key type parser for key: %s", full_key_.c_str()); // show type
-                return false;
+                throw std::runtime_error(std::string("Not implemented key type parser. Key") + key_items[i]);
         }
     }
-
-    return true;
 }
 
-bool Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
+void Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
 {
     const auto not_found = std::end(request_description_.attr_item_types);
 
@@ -98,8 +108,7 @@ bool Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
         const auto item = request_description_.attr_item_types.find(fvField(*i));
         if (item == not_found)
         {
-            SWSS_LOG_INFO("Unknown attribute %s", fvField(*i).c_str());
-            return false;
+            throw std::invalid_argument(std::string("Unknown attribute name: ") + fvField(*i));
         }
         attr_names_.push_back(fvField(*i));
         switch(item->second)
@@ -108,74 +117,58 @@ bool Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
                 attr_item_strings_[fvField(*i)] = fvValue(*i);
                 break;
             case REQ_T_BOOL:
-                bool value;
-                if (!ParseBool(fvValue(*i), value))
-                {
-                    return false;
-                }
-                attr_item_bools_[fvField(*i)] = value;
+                attr_item_bools_[fvField(*i)] = ParseBool(fvValue(*i));
                 break;
             case REQ_T_MAC_ADDRESS:
                 uint8_t mac[6];
                 if (!MacAddress::parseMacString(fvValue(*i), mac))
                 {
-                    return false;
+                    throw std::invalid_argument(std::string("Invalid mac address: ") + fvValue(*i));
                 }
                 attr_item_mac_addresses_[fvField(*i)] = MacAddress(mac);
                 break;
             case REQ_T_PACKET_ACTION:
-                sai_packet_action_t packet_action;
-                if (!ParsePacketAction(fvValue(*i), packet_action))
-                {
-                    return false;
-                }
-                attr_item_packet_actions_[fvField(*i)] = packet_action;
+                attr_item_packet_actions_[fvField(*i)] = ParsePacketAction(fvValue(*i));
                 break;
             default:
-                SWSS_LOG_ERROR("Not implemented attr type parser for attr: %s", fvField(*i).c_str()); // show type
-                return false;
+                throw std::runtime_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
         }
     }
 
     if (operation_ == DEL_COMMAND && attr_names_.size() > 0)
     {
-        // FIXME: no attributes for delete operations
-        return false;
+        throw std::invalid_argument("Delete operation request contains attributes");
     }
 
-    std::set<std::string> attr_names(std::begin(attr_names_), std::end(attr_names_));
-    for (const auto& attr: request_description_.mandatory_attr_items)
+    if (operation_ == SET_COMMAND)
     {
-        if (attr_names.find(attr) == std::end(attr_names))
+        std::set<std::string> attr_names(std::begin(attr_names_), std::end(attr_names_));
+        for (const auto& attr: request_description_.mandatory_attr_items)
         {
-            // FIXME: mandatory attribute not found
-            return false;
+            if (attr_names.find(attr) == std::end(attr_names))
+            {
+                throw std::invalid_argument(std::string("Mandatory attribute '") + attr + std::string("' not found"));
+            }
         }
     }
-
-    return true;
 }
 
-bool Request::ParseBool(const std::string& str, bool& value)
+bool Request::ParseBool(const std::string& str)
 {
     if (str == "true")
     {
-        value = true;
         return true;
     }
 
     if (str == "false")
     {
-        value = false;
-        return true;
+        return false;
     }
 
-    SWSS_LOG_ERROR("Can't parse boolean value '%s'", str.c_str());
-
-    return false;
+    throw std::invalid_argument(std::string("Can't parse boolean value '") + str + std::string("'"));
 }
 
-bool Request::ParsePacketAction(const std::string& str, sai_packet_action_t& packet_action)
+sai_packet_action_t Request::ParsePacketAction(const std::string& str)
 {
     std::unordered_map<std::string, sai_packet_action_t> m = {
         {"drop", SAI_PACKET_ACTION_DROP},
@@ -191,25 +184,10 @@ bool Request::ParsePacketAction(const std::string& str, sai_packet_action_t& pac
     const auto found = m.find(str);
     if (found == std::end(m))
     {
-        SWSS_LOG_ERROR("Wrong packet action attribute value '%s'", str.c_str());
-        return false;
+        throw std::invalid_argument(std::string("Wrong packet action attribute value '") + str + std::string("'"));
     }
 
-    packet_action = found->second;
-    return true;
+    return found->second;
 }
 
-void Request::Clean()
-{
-    operation_.clear();
-    full_key_.clear();
-    attr_names_.clear();
-    key_item_strings_.clear();
-    key_item_mac_addresses_.clear();
-    attr_item_strings_.clear();
-    attr_item_bools_.clear();
-    attr_item_mac_addresses_.clear();
-    attr_item_packet_actions_.clear();
-
-    is_parsed_ = false;
-}
+// FIXME: store key at the same structures as attributes

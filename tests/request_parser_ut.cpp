@@ -19,7 +19,7 @@ const request_description_t request_description1 = {
         { "ip_opt_action", REQ_T_PACKET_ACTION },
         { "l3_mc_action",  REQ_T_PACKET_ACTION },
     },
-    {} // no mandatory attributes
+    { } // no mandatory attributes
 };
 
 class TestRequest1 : public Request
@@ -48,10 +48,25 @@ public:
     TestRequest2() : Request(request_description2, '|') { }
 };
 
+const request_description_t request_description3 = {
+    { REQ_T_STRING, REQ_T_STRING },
+    {
+        { "v4",            REQ_T_BOOL },
+        { "v6",            REQ_T_BOOL },
+    },
+    { }  // no mandatory attributes
+};
+
+class TestRequest3 : public Request
+{
+public:
+    TestRequest3() : Request(request_description3, ':') { }
+};
+
 TEST(request_parser, simpleKey)
 {
     KeyOpFieldsValuesTuple t {"key1", "SET",
-                                 { 
+                                 {
                                      { "v4", "true" },
                                      { "v6", "true" },
                                      { "src_mac", "02:03:04:05:06:07" },
@@ -63,8 +78,8 @@ TEST(request_parser, simpleKey)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_TRUE(r);
+    EXPECT_NO_THROW(request.Parse(t));
+
     EXPECT_STREQ(request.getOperation().c_str(), "SET");
     EXPECT_STREQ(request.getFullKey().c_str(), "key1");
     EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
@@ -80,7 +95,7 @@ TEST(request_parser, simpleKey)
 TEST(request_parser, complexKey)
 {
     KeyOpFieldsValuesTuple t {"key1|02:03:04:05:06:07|key2", "SET",
-                                 { 
+                                 {
                                      { "v4", "false" },
                                      { "v6", "false" },
                                      { "src_mac", "02:03:04:05:06:07" },
@@ -92,9 +107,8 @@ TEST(request_parser, complexKey)
                              };
 
     TestRequest2 request;
-    
-    bool r = request.Parse(t);
-    EXPECT_TRUE(r);
+
+    EXPECT_NO_THROW(request.Parse(t));
 
     EXPECT_STREQ(request.getOperation().c_str(), "SET");
     EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
@@ -111,7 +125,7 @@ TEST(request_parser, complexKey)
     EXPECT_STREQ(request.getAttrString("just_string").c_str(), "test_string");
 }
 
-TEST(request_parser, deleteOperation)
+TEST(request_parser, deleteOperation1)
 {
     KeyOpFieldsValuesTuple t {"key1", "DEL",
                                  {
@@ -120,11 +134,30 @@ TEST(request_parser, deleteOperation)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_TRUE(r);
+    EXPECT_NO_THROW(request.Parse(t));
+
     EXPECT_STREQ(request.getOperation().c_str(), "DEL");
     EXPECT_STREQ(request.getFullKey().c_str(), "key1");
     EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{ }));
+}
+
+TEST(request_parser, deleteOperation2)
+{
+    KeyOpFieldsValuesTuple t {"key1|02:03:04:05:06:07|key2", "DEL",
+                                 {
+                                 }
+                             };
+
+    TestRequest2 request;
+
+    EXPECT_NO_THROW(request.Parse(t));
+
+    EXPECT_STREQ(request.getOperation().c_str(), "DEL");
+    EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
+    EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+    EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "02:03:04:05:06:07");
+    EXPECT_STREQ(request.getKeyString(2).c_str(), "key2");
     EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{ }));
 }
 
@@ -138,8 +171,23 @@ TEST(request_parser, deleteOperationWithAttr)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_FALSE(r);
+    try
+    {
+        request.Parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Delete operation request contains attributes");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
 }
 
 TEST(request_parser, wrongOperation)
@@ -152,8 +200,23 @@ TEST(request_parser, wrongOperation)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_FALSE(r);
+    try
+    {
+        request.Parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Wrong operation: ABC");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
 }
 
 TEST(request_parser, wrongkey1)
@@ -166,8 +229,23 @@ TEST(request_parser, wrongkey1)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_FALSE(r);
+    try
+    {
+        request.Parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Wrong number of key items. Expected 1 item(s). Key: 'key1|key2'");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
 }
 
 TEST(request_parser, wrongkey2)
@@ -180,8 +258,23 @@ TEST(request_parser, wrongkey2)
 
     TestRequest2 request;
 
-    bool r = request.Parse(t);
-    EXPECT_FALSE(r);
+    try
+    {
+        request.Parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Wrong number of key items. Expected 3 item(s). Key: 'key1'");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
 }
 
 TEST(request_parser, wrongkeyType1)
@@ -194,13 +287,28 @@ TEST(request_parser, wrongkeyType1)
 
     TestRequest2 request;
 
-    bool r = request.Parse(t);
-    EXPECT_FALSE(r);
+    try
+    {
+        request.Parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Invalid mac address: key2");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
 }
 
 TEST(request_parser, wrongAttributeNotFound)
 {
-    KeyOpFieldsValuesTuple t {"key1|key2", "SET",
+    KeyOpFieldsValuesTuple t {"key1", "SET",
                                  {
                                      { "v5", "true" }
                                  }
@@ -208,8 +316,23 @@ TEST(request_parser, wrongAttributeNotFound)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_FALSE(r);
+    try
+    {
+        request.Parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Unknown attribute name: v5");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
 }
 
 TEST(request_parser, wrongRequiredAttribute)
@@ -222,8 +345,23 @@ TEST(request_parser, wrongRequiredAttribute)
 
     TestRequest2 request;
 
-    bool r = request.Parse(t);
-    EXPECT_FALSE(r);
+    try
+    {
+        request.Parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Mandatory attribute 'just_string' not found");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
 }
 
 TEST(request_parser, wrongAttrTypeBoolean)
@@ -236,8 +374,23 @@ TEST(request_parser, wrongAttrTypeBoolean)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_FALSE(r);
+    try
+    {
+        request.Parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Can't parse boolean value 'true1'");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
 }
 
 TEST(request_parser, wrongAttrTypeMac)
@@ -250,8 +403,23 @@ TEST(request_parser, wrongAttrTypeMac)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_FALSE(r);
+    try
+    {
+        request.Parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Invalid mac address: 33456");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
 }
 
 TEST(request_parser, wrongAttrTypePacketAction)
@@ -264,8 +432,23 @@ TEST(request_parser, wrongAttrTypePacketAction)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_FALSE(r);
+    try
+    {
+        request.Parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Wrong packet action attribute value 'something'");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
 }
 
 TEST(request_parser, correctAttrTypePacketAction1)
@@ -280,8 +463,8 @@ TEST(request_parser, correctAttrTypePacketAction1)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_TRUE(r);
+    EXPECT_NO_THROW(request.Parse(t));
+
     EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_DROP);
     EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_FORWARD);
     EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_COPY);
@@ -299,8 +482,8 @@ TEST(request_parser, correctAttrTypePacketAction2)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_TRUE(r);
+    EXPECT_NO_THROW(request.Parse(t));
+
     EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY_CANCEL);
     EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_TRAP);
     EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
@@ -318,12 +501,162 @@ TEST(request_parser, correctAttrTypePacketAction3)
 
     TestRequest1 request;
 
-    bool r = request.Parse(t);
-    EXPECT_TRUE(r);
+    EXPECT_NO_THROW(request.Parse(t));
+
     EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_DENY);
     EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_TRANSIT);
     EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
 }
 
-// FIXME: add a test to test unsupported key type
-// FIXME: add a test to check a parser with different key separator
+TEST(request_parser, correctParseAndClear)
+{
+    KeyOpFieldsValuesTuple t {"key1", "SET",
+                                 {
+                                     { "ttl_action", "deny" },
+                                     { "ip_opt_action", "transit" },
+                                     { "l3_mc_action", "log" },
+                                 }
+                             };
+
+    TestRequest1 request;
+
+    EXPECT_NO_THROW(request.Parse(t));
+
+    EXPECT_NO_THROW(request.Clear());
+
+    EXPECT_NO_THROW(request.Parse(t));
+}
+
+TEST(request_parser, incorrectParseAndClear)
+{
+    KeyOpFieldsValuesTuple t {"key1", "SET",
+                                 {
+                                     { "ttl_action", "deny" },
+                                     { "ip_opt_action", "transit" },
+                                     { "l3_mc_action", "log" },
+                                 }
+                             };
+
+    TestRequest1 request;
+
+    EXPECT_NO_THROW(request.Parse(t));
+
+    try
+    {
+        request.Parse(t);
+        FAIL() << "Expected std::runtime_error";
+    }
+    catch (const std::runtime_error& e)
+    {
+        EXPECT_STREQ(e.what(), "The parser already has a parsed request");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::runtime_error, not other exception";
+    }
+}
+
+TEST(request_parser, correctClear)
+{
+    KeyOpFieldsValuesTuple t1 {"key1|02:03:04:05:06:07|key2", "SET",
+                                 {
+                                     { "v4", "false" },
+                                     { "v6", "false" },
+                                     { "src_mac", "02:03:04:05:06:07" },
+                                     { "ttl_action", "copy" },
+                                     { "ip_opt_action", "drop" },
+                                     { "l3_mc_action", "log" },
+                                     { "just_string", "test_string"},
+                                 }
+                              };
+
+    TestRequest2 request;
+
+    EXPECT_NO_THROW(request.Parse(t1));
+
+    EXPECT_STREQ(request.getOperation().c_str(), "SET");
+    EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
+    EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+    EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "02:03:04:05:06:07");
+    EXPECT_STREQ(request.getKeyString(2).c_str(), "key2");
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
+    EXPECT_FALSE(request.getAttrBool("v4"));
+    EXPECT_FALSE(request.getAttrBool("v6"));
+    EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
+    EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY);
+    EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_DROP);
+    EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+    EXPECT_STREQ(request.getAttrString("just_string").c_str(), "test_string");
+
+    EXPECT_NO_THROW(request.Clear());
+
+    KeyOpFieldsValuesTuple t2 {"key3|f2:f3:f4:f5:f6:f7|key4", "SET",
+                                 {
+                                     { "v4", "true" },
+                                     { "src_mac", "f2:f3:f4:f5:f6:f7" },
+                                     { "ttl_action", "log" },
+                                     { "ip_opt_action", "copy" },
+                                     { "l3_mc_action", "log" },
+                                     { "just_string", "string"},
+                                 }
+                              };
+
+    EXPECT_NO_THROW(request.Parse(t2));
+
+    EXPECT_STREQ(request.getOperation().c_str(), "SET");
+    EXPECT_STREQ(request.getFullKey().c_str(), "key3|f2:f3:f4:f5:f6:f7|key4");
+    EXPECT_STREQ(request.getKeyString(0).c_str(), "key3");
+    EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "f2:f3:f4:f5:f6:f7");
+    EXPECT_STREQ(request.getKeyString(2).c_str(), "key4");
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{"v4", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
+    EXPECT_TRUE(request.getAttrBool("v4"));
+    EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "f2:f3:f4:f5:f6:f7");
+    EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_LOG);
+    EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_COPY);
+    EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+    EXPECT_STREQ(request.getAttrString("just_string").c_str(), "string");
+
+    EXPECT_NO_THROW(request.Clear());
+
+    KeyOpFieldsValuesTuple t3 {"key5|52:53:54:55:56:57|key6", "DEL",
+                                 {
+                                 }
+                             };
+
+    EXPECT_NO_THROW(request.Parse(t3));
+
+    EXPECT_STREQ(request.getOperation().c_str(), "DEL");
+    EXPECT_STREQ(request.getFullKey().c_str(), "key5|52:53:54:55:56:57|key6");
+    EXPECT_STREQ(request.getKeyString(0).c_str(), "key5");
+    EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "52:53:54:55:56:57");
+    EXPECT_STREQ(request.getKeyString(2).c_str(), "key6");
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{ }));
+}
+
+TEST(request_parser, anotherKeySeparator)
+{
+    KeyOpFieldsValuesTuple t {"key1:key2", "SET",
+                                 {
+                                     { "v4", "false" },
+                                     { "v6", "false" },
+                                 }
+                             };
+
+    TestRequest3 request;
+
+    EXPECT_NO_THROW(request.Parse(t));
+
+    EXPECT_STREQ(request.getOperation().c_str(), "SET");
+    EXPECT_STREQ(request.getFullKey().c_str(), "key1:key2");
+    EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+    EXPECT_STREQ(request.getKeyString(1).c_str(), "key2");
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{"v4", "v6"}));
+    EXPECT_FALSE(request.getAttrBool("v4"));
+    EXPECT_FALSE(request.getAttrBool("v6"));
+}
+// FIXME: add a test to test an unsupported key type and attr type REQ_T_NOT_USED
+// FIXME: expect_no_throw for constructors

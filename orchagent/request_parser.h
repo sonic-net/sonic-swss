@@ -7,6 +7,7 @@ typedef enum _request_types_t
     REQ_T_STRING,
     REQ_T_MAC_ADDRESS,
     REQ_T_PACKET_ACTION,
+    REQ_T_NOT_USED,
 } request_types_t;
 
 typedef struct _request_description
@@ -19,8 +20,8 @@ typedef struct _request_description
 class Request
 {
 public:
-    bool Parse(const KeyOpFieldsValuesTuple& request);
-    void Clean();
+    void Parse(const KeyOpFieldsValuesTuple& request);
+    void Clear();
 
     const std::string& getOperation() const
     {
@@ -87,11 +88,11 @@ protected:
 
 
 private:
-    bool ParseOperation(const KeyOpFieldsValuesTuple& request);
-    bool ParseKey(const KeyOpFieldsValuesTuple& request);
-    bool ParseAttrs(const KeyOpFieldsValuesTuple& request);
-    bool ParseBool(const std::string& str, bool& value);
-    bool ParsePacketAction(const std::string& str, sai_packet_action_t& packet_action);
+    void ParseOperation(const KeyOpFieldsValuesTuple& request);
+    void ParseKey(const KeyOpFieldsValuesTuple& request);
+    void ParseAttrs(const KeyOpFieldsValuesTuple& request);
+    bool ParseBool(const std::string& str);
+    sai_packet_action_t ParsePacketAction(const std::string& str);
 
     const request_description_t& request_description_;
     char key_separator_;
