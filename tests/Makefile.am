@@ -10,7 +10,7 @@ DBGFLAGS = -g -DNDEBUG
 endif
 
 CFLAGS_GTEST =
-LDADD_GTEST =
+LDADD_GTEST = -L/usr/src/gtest
 
 tests_SOURCES = swssnet_ut.cpp request_parser_ut.cpp
 
