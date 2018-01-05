@@ -36,48 +36,54 @@ public:
         return true;
     }
 
-    const std::string& getFullKey()
+    const std::string& getOperation() const
+    {
+        assert(is_parsed_);
+        return operation_;
+    }
+
+    const std::string& getFullKey() const
     {
         assert(is_parsed_);
         return full_key_;
     }
 
-    const std::string& getKeyString(int position)
+    const std::string& getKeyString(int position) const
     {
         assert(is_parsed_);
-        return key_item_strings_[position];
+        return key_item_strings_.at(position);
     }
 
-    const MacAddress& getKeyMacAddress(int position)
+    const MacAddress& getKeyMacAddress(int position) const
     {
         assert(is_parsed_);
-        return key_item_mac_addresses_[position];
+        return key_item_mac_addresses_.at(position);
     }
 
-    const std::vector<std::string> getAttrFieldNames()
+    const std::vector<std::string>& getAttrFieldNames() const // FIXME: return set
     {
         assert(is_parsed_);
         return attr_names_;
     }
 
-    const std::string& getAttrString(const std::string& attr_name)
+    const std::string& getAttrString(const std::string& attr_name) const
     {
-        return attr_item_strings_[attr_name];
+        return attr_item_strings_.at(attr_name);
     }
 
-    bool getAttrBool(const std::string& attr_name)
+    bool getAttrBool(const std::string& attr_name) const
     {
-        return attr_item_bools_[attr_name];
+        return attr_item_bools_.at(attr_name);
     }
 
-    const MacAddress& getAttrMacAddress(const std::string& attr_name)
+    const MacAddress& getAttrMacAddress(const std::string& attr_name) const
     {
-        return attr_item_mac_addresses_[attr_name];
+        return attr_item_mac_addresses_.at(attr_name);
     }
 
-    sai_packet_action_t getAttrPacketAction(const std::string& attr_name)
+    sai_packet_action_t getAttrPacketAction(const std::string& attr_name) const
     {
-        return attr_item_packet_actions_[attr_name];
+        return attr_item_packet_actions_.at(attr_name);
     }
 
 
@@ -88,10 +94,11 @@ private:
     bool ParseBool(const std::string& str, bool& value);
     bool ParsePacketAction(const std::string& str, sai_packet_action_t& packet_action);
 
-    request_description_t request_description_;
-//    KeyOpFieldsValuesTuple request_;
+    const request_description_t& request_description_;
     char key_separator_;
     bool is_parsed_;
+
+    std::string operation_;
     size_t number_of_key_items_;
     std::string full_key_;
     std::vector<std::string> attr_names_;
@@ -101,7 +108,6 @@ private:
     std::unordered_map<std::string, bool> attr_item_bools_;
     std::unordered_map<std::string, MacAddress> attr_item_mac_addresses_;
     std::unordered_map<std::string, sai_packet_action_t> attr_item_packet_actions_;
-    std::string operation_;
 };
 
 #endif // __REQUEST_PARSER_H

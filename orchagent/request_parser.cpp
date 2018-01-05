@@ -2,17 +2,20 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <set>
 
 #include "sai.h"
 #include "macaddress.h"
 #include "orch.h"
 #include "request_parser.h"
 
+
 bool Request::ParseOperation(const KeyOpFieldsValuesTuple& request)
 {
-    const auto& operation_ = kfvOp(request);
+    operation_ = kfvOp(request);
     if (operation_ != SET_COMMAND && operation_ != DEL_COMMAND)
     {
+        // FIXME: message
         return false;
     }
 
@@ -24,14 +27,14 @@ bool Request::ParseKey(const KeyOpFieldsValuesTuple& request)
     full_key_ = kfvKey(request);
 
     // split the key by separator
-    std::vector<std::string> key_items(number_of_key_items_);
+    std::vector<std::string> key_items;
     size_t i = 0;
     size_t position = full_key_.find(key_separator_);
     while (position != std::string::npos)
     {
         key_items.push_back(full_key_.substr(i, position - i));
         i = position + 1;
-        position = full_key_.find(key_separator_, position);
+        position = full_key_.find(key_separator_, i);
     }
     key_items.push_back(full_key_.substr(i, full_key_.length()));
 
@@ -39,7 +42,6 @@ bool Request::ParseKey(const KeyOpFieldsValuesTuple& request)
     {
         SWSS_LOG_ERROR("Can't parse request key. Wrong number of key items. Expected %lu items: %s",
             number_of_key_items_, full_key_.c_str());
-
         return false;
     }
 
@@ -50,6 +52,15 @@ bool Request::ParseKey(const KeyOpFieldsValuesTuple& request)
         {
             case REQ_T_STRING:
                 key_item_strings_[i] = std::move(key_items[i]);
+                break;
+            case REQ_T_MAC_ADDRESS:
+                uint8_t mac[6]; // FIXME: correct mac address length
+                if (!MacAddress::parseMacString(key_items[i], mac))
+                {
+                    // FIXME: Error message
+                    return false;
+                }
+                key_item_mac_addresses_[i] = MacAddress(key_items[i]);
                 break;
             default:
                 SWSS_LOG_ERROR("Not implemented key type parser for key: %s", full_key_.c_str()); // show type
@@ -73,6 +84,7 @@ bool Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
             SWSS_LOG_INFO("Unknown attribute %s", fvField(*i).c_str());
             return false;
         }
+        attr_names_.push_back(fvField(*i));
         switch(item->second)
         {
             case REQ_T_STRING:
@@ -105,6 +117,22 @@ bool Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
             default:
                 SWSS_LOG_ERROR("Not implemented attr type parser for attr: %s", fvField(*i).c_str()); // show type
                 return false;
+        }
+    }
+
+    if (operation_ == DEL_COMMAND && attr_names_.size() > 0)
+    {
+        // FIXME: no attributes for delete operations
+        return false;
+    }
+
+    std::set<std::string> attr_names(std::begin(attr_names_), std::end(attr_names_));
+    for (const auto& attr: request_description_.mandatory_attr_items)
+    {
+        if (attr_names.find(attr) == std::end(attr_names))
+        {
+            // FIXME: mandatory attribute not found
+            return false;
         }
     }
 
