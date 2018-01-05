@@ -63,7 +63,7 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
     {
         key_items.push_back(full_key_.substr(f_position, e_position - f_position));
         f_position = e_position + 1;
-        position = full_key_.find(key_separator_, f_position);
+        e_position = full_key_.find(key_separator_, f_position);
     }
     key_items.push_back(full_key_.substr(f_position, full_key_.length()));
 
@@ -112,13 +112,13 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
                 attr_item_strings_[fvField(*i)] = fvValue(*i);
                 break;
             case REQ_T_BOOL:
-                attr_item_bools_[fvField(*i)] = ParseBool(fvValue(*i));
+                attr_item_bools_[fvField(*i)] = parseBool(fvValue(*i));
                 break;
             case REQ_T_MAC_ADDRESS:
                 attr_item_mac_addresses_[fvField(*i)] = parseMacAddress(fvValue(*i));
                 break;
             case REQ_T_PACKET_ACTION:
-                attr_item_packet_actions_[fvField(*i)] = ParsePacketAction(fvValue(*i));
+                attr_item_packet_actions_[fvField(*i)] = parsePacketAction(fvValue(*i));
                 break;
             default:
                 throw std::runtime_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
@@ -164,7 +164,7 @@ MacAddress Request::parseMacAddress(const std::string& str)
 
     if (!MacAddress::parseMacString(str, mac))
     {
-        throw std::invalid_argument(std::string("Invalid mac address: ") + fvValue(*i));
+        throw std::invalid_argument(std::string("Invalid mac address: ") + str);
     }
 
     return MacAddress(mac);

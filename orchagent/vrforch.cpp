@@ -25,7 +25,7 @@ void VRFOrch::doTask(Consumer &consumer)
     {
         try
         {
-            request.Parse(it->second);
+            request.parse(it->second);
             it = consumer.m_toSync.erase(it);
         }
         catch (const std::invalid_argument& e)
@@ -49,7 +49,7 @@ void VRFOrch::doTask(Consumer &consumer)
             ++it;
         }
 
-        request.Clear();
+        request.clear();
     }
 }
 
