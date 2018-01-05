@@ -10,6 +10,23 @@
 #include "request_parser.h"
 
 
+bool Request::Parse(const KeyOpFieldsValuesTuple& request)
+{
+    if (is_parsed_)
+    {
+        // FIXME: can't be parsed twice
+        return false;
+    }
+    if (!ParseOperation(request)) return false;
+    if (!ParseKey(request)) return false;
+    if (!ParseAttrs(request)) return false;
+
+    is_parsed_ = true;
+
+    return true;
+}
+
+
 bool Request::ParseOperation(const KeyOpFieldsValuesTuple& request)
 {
     operation_ = kfvOp(request);
@@ -180,4 +197,19 @@ bool Request::ParsePacketAction(const std::string& str, sai_packet_action_t& pac
 
     packet_action = found->second;
     return true;
+}
+
+void Request::Clean()
+{
+    operation_.clear();
+    full_key_.clear();
+    attr_names_.clear();
+    key_item_strings_.clear();
+    key_item_mac_addresses_.clear();
+    attr_item_strings_.clear();
+    attr_item_bools_.clear();
+    attr_item_mac_addresses_.clear();
+    attr_item_packet_actions_.clear();
+
+    is_parsed_ = false;
 }

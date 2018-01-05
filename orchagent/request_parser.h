@@ -19,22 +19,8 @@ typedef struct _request_description
 class Request
 {
 public:
-    Request(const request_description_t& request_description, const char key_separator)
-        : request_description_(request_description),
-          key_separator_(key_separator),
-          is_parsed_(false),
-          number_of_key_items_(request_description.key_item_types.size())
-    {
-    }
-
-    bool Parse(const KeyOpFieldsValuesTuple& request)
-    {
-        if (!ParseOperation(request)) return false;
-        if (!ParseKey(request)) return false;
-        if (!ParseAttrs(request)) return false;
-
-        return true;
-    }
+    bool Parse(const KeyOpFieldsValuesTuple& request);
+    void Clean();
 
     const std::string& getOperation() const
     {
@@ -68,22 +54,35 @@ public:
 
     const std::string& getAttrString(const std::string& attr_name) const
     {
+        assert(is_parsed_);
         return attr_item_strings_.at(attr_name);
     }
 
     bool getAttrBool(const std::string& attr_name) const
     {
+        assert(is_parsed_);
         return attr_item_bools_.at(attr_name);
     }
 
     const MacAddress& getAttrMacAddress(const std::string& attr_name) const
     {
+        assert(is_parsed_);
         return attr_item_mac_addresses_.at(attr_name);
     }
 
     sai_packet_action_t getAttrPacketAction(const std::string& attr_name) const
     {
+        assert(is_parsed_);
         return attr_item_packet_actions_.at(attr_name);
+    }
+
+protected:
+    Request(const request_description_t& request_description, const char key_separator)
+        : request_description_(request_description),
+          key_separator_(key_separator),
+          is_parsed_(false),
+          number_of_key_items_(request_description.key_item_types.size())
+    {
     }
 
 
