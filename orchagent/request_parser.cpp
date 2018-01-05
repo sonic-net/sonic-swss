@@ -12,7 +12,7 @@
 #include "request_parser.h"
 
 
-void Request::Parse(const KeyOpFieldsValuesTuple& request)
+void Request::parse(const KeyOpFieldsValuesTuple& request)
 {
     if (is_parsed_)
     {
@@ -20,14 +20,14 @@ void Request::Parse(const KeyOpFieldsValuesTuple& request)
     }
 
 
-    ParseOperation(request);
-    ParseKey(request);
-    ParseAttrs(request);
+    parseOperation(request);
+    parseKey(request);
+    parseAttrs(request);
 
     is_parsed_ = true;
 }
 
-void Request::Clear()
+void Request::clear()
 {
     operation_.clear();
     full_key_.clear();
@@ -42,7 +42,7 @@ void Request::Clear()
     is_parsed_ = false;
 }
 
-void Request::ParseOperation(const KeyOpFieldsValuesTuple& request)
+void Request::parseOperation(const KeyOpFieldsValuesTuple& request)
 {
     operation_ = kfvOp(request);
     if (operation_ != SET_COMMAND && operation_ != DEL_COMMAND)
@@ -51,21 +51,21 @@ void Request::ParseOperation(const KeyOpFieldsValuesTuple& request)
     }
 }
 
-void Request::ParseKey(const KeyOpFieldsValuesTuple& request)
+void Request::parseKey(const KeyOpFieldsValuesTuple& request)
 {
     full_key_ = kfvKey(request);
 
     // split the key by separator
     std::vector<std::string> key_items;
-    size_t i = 0;                                     // FIXME: better names
-    size_t position = full_key_.find(key_separator_);
-    while (position != std::string::npos)
+    size_t f_position = 0;
+    size_t e_position = full_key_.find(key_separator_);
+    while (e_position != std::string::npos)
     {
-        key_items.push_back(full_key_.substr(i, position - i));
-        i = position + 1;
-        position = full_key_.find(key_separator_, i);
+        key_items.push_back(full_key_.substr(f_position, e_position - f_position));
+        f_position = e_position + 1;
+        position = full_key_.find(key_separator_, f_position);
     }
-    key_items.push_back(full_key_.substr(i, full_key_.length()));
+    key_items.push_back(full_key_.substr(f_position, full_key_.length()));
 
     if (key_items.size() != number_of_key_items_)
     {
@@ -82,15 +82,10 @@ void Request::ParseKey(const KeyOpFieldsValuesTuple& request)
         switch(request_description_.key_item_types[i])
         {
             case REQ_T_STRING:
-                key_item_strings_[i] = std::move(key_items[i]);
+                key_item_strings_[i] = key_items[i];
                 break;
             case REQ_T_MAC_ADDRESS:
-                uint8_t mac[ETHER_ADDR_LEN];
-                if (!MacAddress::parseMacString(key_items[i], mac))
-                {
-                    throw std::invalid_argument(std::string("Invalid mac address: ") + key_items[i]);
-                }
-                key_item_mac_addresses_[i] = MacAddress(key_items[i]);
+                key_item_mac_addresses_[i] = parseMacAddress(key_items[i]);
                 break;
             default:
                 throw std::runtime_error(std::string("Not implemented key type parser. Key") + key_items[i]);
@@ -98,7 +93,7 @@ void Request::ParseKey(const KeyOpFieldsValuesTuple& request)
     }
 }
 
-void Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
+void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
 {
     const auto not_found = std::end(request_description_.attr_item_types);
 
@@ -120,12 +115,7 @@ void Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
                 attr_item_bools_[fvField(*i)] = ParseBool(fvValue(*i));
                 break;
             case REQ_T_MAC_ADDRESS:
-                uint8_t mac[6];
-                if (!MacAddress::parseMacString(fvValue(*i), mac))
-                {
-                    throw std::invalid_argument(std::string("Invalid mac address: ") + fvValue(*i));
-                }
-                attr_item_mac_addresses_[fvField(*i)] = MacAddress(mac);
+                attr_item_mac_addresses_[fvField(*i)] = parseMacAddress(fvValue(*i));
                 break;
             case REQ_T_PACKET_ACTION:
                 attr_item_packet_actions_[fvField(*i)] = ParsePacketAction(fvValue(*i));
@@ -153,7 +143,7 @@ void Request::ParseAttrs(const KeyOpFieldsValuesTuple& request)
     }
 }
 
-bool Request::ParseBool(const std::string& str)
+bool Request::parseBool(const std::string& str)
 {
     if (str == "true")
     {
@@ -168,7 +158,19 @@ bool Request::ParseBool(const std::string& str)
     throw std::invalid_argument(std::string("Can't parse boolean value '") + str + std::string("'"));
 }
 
-sai_packet_action_t Request::ParsePacketAction(const std::string& str)
+MacAddress Request::parseMacAddress(const std::string& str)
+{
+    uint8_t mac[ETHER_ADDR_LEN];
+
+    if (!MacAddress::parseMacString(str, mac))
+    {
+        throw std::invalid_argument(std::string("Invalid mac address: ") + fvValue(*i));
+    }
+
+    return MacAddress(mac);
+}
+
+sai_packet_action_t Request::parsePacketAction(const std::string& str)
 {
     std::unordered_map<std::string, sai_packet_action_t> m = {
         {"drop", SAI_PACKET_ACTION_DROP},

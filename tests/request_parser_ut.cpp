@@ -78,7 +78,7 @@ TEST(request_parser, simpleKey)
 
     TestRequest1 request;
 
-    EXPECT_NO_THROW(request.Parse(t));
+    EXPECT_NO_THROW(request.parse(t));
 
     EXPECT_STREQ(request.getOperation().c_str(), "SET");
     EXPECT_STREQ(request.getFullKey().c_str(), "key1");
@@ -108,7 +108,7 @@ TEST(request_parser, complexKey)
 
     TestRequest2 request;
 
-    EXPECT_NO_THROW(request.Parse(t));
+    EXPECT_NO_THROW(request.parse(t));
 
     EXPECT_STREQ(request.getOperation().c_str(), "SET");
     EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
@@ -134,7 +134,7 @@ TEST(request_parser, deleteOperation1)
 
     TestRequest1 request;
 
-    EXPECT_NO_THROW(request.Parse(t));
+    EXPECT_NO_THROW(request.parse(t));
 
     EXPECT_STREQ(request.getOperation().c_str(), "DEL");
     EXPECT_STREQ(request.getFullKey().c_str(), "key1");
@@ -151,7 +151,7 @@ TEST(request_parser, deleteOperation2)
 
     TestRequest2 request;
 
-    EXPECT_NO_THROW(request.Parse(t));
+    EXPECT_NO_THROW(request.parse(t));
 
     EXPECT_STREQ(request.getOperation().c_str(), "DEL");
     EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
@@ -173,7 +173,7 @@ TEST(request_parser, deleteOperationWithAttr)
 
     try
     {
-        request.Parse(t);
+        request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
     catch (const std::invalid_argument& e)
@@ -202,7 +202,7 @@ TEST(request_parser, wrongOperation)
 
     try
     {
-        request.Parse(t);
+        request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
     catch (const std::invalid_argument& e)
@@ -231,7 +231,7 @@ TEST(request_parser, wrongkey1)
 
     try
     {
-        request.Parse(t);
+        request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
     catch (const std::invalid_argument& e)
@@ -260,7 +260,7 @@ TEST(request_parser, wrongkey2)
 
     try
     {
-        request.Parse(t);
+        request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
     catch (const std::invalid_argument& e)
@@ -289,7 +289,7 @@ TEST(request_parser, wrongkeyType1)
 
     try
     {
-        request.Parse(t);
+        request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
     catch (const std::invalid_argument& e)
@@ -318,7 +318,7 @@ TEST(request_parser, wrongAttributeNotFound)
 
     try
     {
-        request.Parse(t);
+        request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
     catch (const std::invalid_argument& e)
@@ -347,7 +347,7 @@ TEST(request_parser, wrongRequiredAttribute)
 
     try
     {
-        request.Parse(t);
+        request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
     catch (const std::invalid_argument& e)
@@ -376,7 +376,7 @@ TEST(request_parser, wrongAttrTypeBoolean)
 
     try
     {
-        request.Parse(t);
+        request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
     catch (const std::invalid_argument& e)
@@ -405,7 +405,7 @@ TEST(request_parser, wrongAttrTypeMac)
 
     try
     {
-        request.Parse(t);
+        request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
     catch (const std::invalid_argument& e)
@@ -434,7 +434,7 @@ TEST(request_parser, wrongAttrTypePacketAction)
 
     try
     {
-        request.Parse(t);
+        request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
     catch (const std::invalid_argument& e)
@@ -463,7 +463,7 @@ TEST(request_parser, correctAttrTypePacketAction1)
 
     TestRequest1 request;
 
-    EXPECT_NO_THROW(request.Parse(t));
+    EXPECT_NO_THROW(request.parse(t));
 
     EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_DROP);
     EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_FORWARD);
@@ -482,7 +482,7 @@ TEST(request_parser, correctAttrTypePacketAction2)
 
     TestRequest1 request;
 
-    EXPECT_NO_THROW(request.Parse(t));
+    EXPECT_NO_THROW(request.parse(t));
 
     EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY_CANCEL);
     EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_TRAP);
@@ -501,7 +501,7 @@ TEST(request_parser, correctAttrTypePacketAction3)
 
     TestRequest1 request;
 
-    EXPECT_NO_THROW(request.Parse(t));
+    EXPECT_NO_THROW(request.parse(t));
 
     EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_DENY);
     EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_TRANSIT);
@@ -520,11 +520,11 @@ TEST(request_parser, correctParseAndClear)
 
     TestRequest1 request;
 
-    EXPECT_NO_THROW(request.Parse(t));
+    EXPECT_NO_THROW(request.parse(t));
 
-    EXPECT_NO_THROW(request.Clear());
+    EXPECT_NO_THROW(request.clear());
 
-    EXPECT_NO_THROW(request.Parse(t));
+    EXPECT_NO_THROW(request.parse(t));
 }
 
 TEST(request_parser, incorrectParseAndClear)
@@ -539,11 +539,11 @@ TEST(request_parser, incorrectParseAndClear)
 
     TestRequest1 request;
 
-    EXPECT_NO_THROW(request.Parse(t));
+    EXPECT_NO_THROW(request.parse(t));
 
     try
     {
-        request.Parse(t);
+        request.parse(t);
         FAIL() << "Expected std::runtime_error";
     }
     catch (const std::runtime_error& e)
@@ -576,7 +576,7 @@ TEST(request_parser, correctClear)
 
     TestRequest2 request;
 
-    EXPECT_NO_THROW(request.Parse(t1));
+    EXPECT_NO_THROW(request.parse(t1));
 
     EXPECT_STREQ(request.getOperation().c_str(), "SET");
     EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
@@ -592,7 +592,7 @@ TEST(request_parser, correctClear)
     EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
     EXPECT_STREQ(request.getAttrString("just_string").c_str(), "test_string");
 
-    EXPECT_NO_THROW(request.Clear());
+    EXPECT_NO_THROW(request.clear());
 
     KeyOpFieldsValuesTuple t2 {"key3|f2:f3:f4:f5:f6:f7|key4", "SET",
                                  {
@@ -605,7 +605,7 @@ TEST(request_parser, correctClear)
                                  }
                               };
 
-    EXPECT_NO_THROW(request.Parse(t2));
+    EXPECT_NO_THROW(request.parse(t2));
 
     EXPECT_STREQ(request.getOperation().c_str(), "SET");
     EXPECT_STREQ(request.getFullKey().c_str(), "key3|f2:f3:f4:f5:f6:f7|key4");
@@ -620,14 +620,14 @@ TEST(request_parser, correctClear)
     EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
     EXPECT_STREQ(request.getAttrString("just_string").c_str(), "string");
 
-    EXPECT_NO_THROW(request.Clear());
+    EXPECT_NO_THROW(request.clear());
 
     KeyOpFieldsValuesTuple t3 {"key5|52:53:54:55:56:57|key6", "DEL",
                                  {
                                  }
                              };
 
-    EXPECT_NO_THROW(request.Parse(t3));
+    EXPECT_NO_THROW(request.parse(t3));
 
     EXPECT_STREQ(request.getOperation().c_str(), "DEL");
     EXPECT_STREQ(request.getFullKey().c_str(), "key5|52:53:54:55:56:57|key6");
@@ -648,7 +648,7 @@ TEST(request_parser, anotherKeySeparator)
 
     TestRequest3 request;
 
-    EXPECT_NO_THROW(request.Parse(t));
+    EXPECT_NO_THROW(request.parse(t));
 
     EXPECT_STREQ(request.getOperation().c_str(), "SET");
     EXPECT_STREQ(request.getFullKey().c_str(), "key1:key2");

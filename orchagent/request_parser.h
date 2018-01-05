@@ -20,8 +20,8 @@ typedef struct _request_description
 class Request
 {
 public:
-    void Parse(const KeyOpFieldsValuesTuple& request);
-    void Clear();
+    void parse(const KeyOpFieldsValuesTuple& request);
+    void clear();
 
     const std::string& getOperation() const
     {
@@ -88,11 +88,12 @@ protected:
 
 
 private:
-    void ParseOperation(const KeyOpFieldsValuesTuple& request);
-    void ParseKey(const KeyOpFieldsValuesTuple& request);
-    void ParseAttrs(const KeyOpFieldsValuesTuple& request);
-    bool ParseBool(const std::string& str);
-    sai_packet_action_t ParsePacketAction(const std::string& str);
+    void parseOperation(const KeyOpFieldsValuesTuple& request);
+    void parseKey(const KeyOpFieldsValuesTuple& request);
+    void parseAttrs(const KeyOpFieldsValuesTuple& request);
+    bool parseBool(const std::string& str);
+    MacAddress parseMacAddress(const std::string& str);
+    sai_packet_action_t parsePacketAction(const std::string& str);
 
     const request_description_t& request_description_;
     char key_separator_;
