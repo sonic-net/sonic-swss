@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <set>
 #include <exception>
 
@@ -18,7 +19,6 @@ void Request::parse(const KeyOpFieldsValuesTuple& request)
     {
         throw std::runtime_error("The parser already has a parsed request");
     }
-
 
     parseOperation(request);
     parseKey(request);
@@ -105,7 +105,7 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
         {
             throw std::invalid_argument(std::string("Unknown attribute name: ") + fvField(*i));
         }
-        attr_names_.push_back(fvField(*i));
+        attr_names_.insert(fvField(*i));
         switch(item->second)
         {
             case REQ_T_STRING:
@@ -132,10 +132,9 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
 
     if (operation_ == SET_COMMAND)
     {
-        std::set<std::string> attr_names(std::begin(attr_names_), std::end(attr_names_));
         for (const auto& attr: request_description_.mandatory_attr_items)
         {
-            if (attr_names.find(attr) == std::end(attr_names))
+            if (attr_names_.find(attr) == std::end(attr_names_))
             {
                 throw std::invalid_argument(std::string("Mandatory attribute '") + attr + std::string("' not found"));
             }

@@ -47,7 +47,7 @@ public:
         return key_item_mac_addresses_.at(position);
     }
 
-    const std::vector<std::string>& getAttrFieldNames() const // FIXME: return set
+    const std::unordered_set<std::string>& getAttrFieldNames() const
     {
         assert(is_parsed_);
         return attr_names_;
@@ -102,7 +102,7 @@ private:
     std::string operation_;
     size_t number_of_key_items_;
     std::string full_key_;
-    std::vector<std::string> attr_names_;
+    std::unordered_set<std::string> attr_names_;
     std::unordered_map<int, std::string> key_item_strings_;
     std::unordered_map<int, MacAddress> key_item_mac_addresses_;
     std::unordered_map<std::string, std::string> attr_item_strings_;

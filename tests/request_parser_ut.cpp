@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <vector>
 
@@ -7,7 +8,6 @@
 #include "orch.h"
 #include "request_parser.h"
 #include "request_parser.cpp"
-
 
 const request_description_t request_description1 = {
     { REQ_T_STRING },
@@ -83,7 +83,7 @@ TEST(request_parser, simpleKey)
     EXPECT_STREQ(request.getOperation().c_str(), "SET");
     EXPECT_STREQ(request.getFullKey().c_str(), "key1");
     EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action"}));
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action"}));
     EXPECT_TRUE(request.getAttrBool("v4"));
     EXPECT_TRUE(request.getAttrBool("v6"));
     EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
@@ -115,7 +115,7 @@ TEST(request_parser, complexKey)
     EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
     EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "02:03:04:05:06:07");
     EXPECT_STREQ(request.getKeyString(2).c_str(), "key2");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
     EXPECT_FALSE(request.getAttrBool("v4"));
     EXPECT_FALSE(request.getAttrBool("v6"));
     EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
@@ -139,7 +139,7 @@ TEST(request_parser, deleteOperation1)
     EXPECT_STREQ(request.getOperation().c_str(), "DEL");
     EXPECT_STREQ(request.getFullKey().c_str(), "key1");
     EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{ }));
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{ }));
 }
 
 TEST(request_parser, deleteOperation2)
@@ -158,7 +158,7 @@ TEST(request_parser, deleteOperation2)
     EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
     EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "02:03:04:05:06:07");
     EXPECT_STREQ(request.getKeyString(2).c_str(), "key2");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{ }));
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{ }));
 }
 
 TEST(request_parser, deleteOperationWithAttr)
@@ -583,7 +583,7 @@ TEST(request_parser, correctClear)
     EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
     EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "02:03:04:05:06:07");
     EXPECT_STREQ(request.getKeyString(2).c_str(), "key2");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
     EXPECT_FALSE(request.getAttrBool("v4"));
     EXPECT_FALSE(request.getAttrBool("v6"));
     EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
@@ -612,7 +612,7 @@ TEST(request_parser, correctClear)
     EXPECT_STREQ(request.getKeyString(0).c_str(), "key3");
     EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "f2:f3:f4:f5:f6:f7");
     EXPECT_STREQ(request.getKeyString(2).c_str(), "key4");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{"v4", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
     EXPECT_TRUE(request.getAttrBool("v4"));
     EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "f2:f3:f4:f5:f6:f7");
     EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_LOG);
@@ -634,7 +634,7 @@ TEST(request_parser, correctClear)
     EXPECT_STREQ(request.getKeyString(0).c_str(), "key5");
     EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "52:53:54:55:56:57");
     EXPECT_STREQ(request.getKeyString(2).c_str(), "key6");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{ }));
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{ }));
 }
 
 TEST(request_parser, anotherKeySeparator)
@@ -654,7 +654,7 @@ TEST(request_parser, anotherKeySeparator)
     EXPECT_STREQ(request.getFullKey().c_str(), "key1:key2");
     EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
     EXPECT_STREQ(request.getKeyString(1).c_str(), "key2");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::vector<std::string>{"v4", "v6"}));
+    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6"}));
     EXPECT_FALSE(request.getAttrBool("v4"));
     EXPECT_FALSE(request.getAttrBool("v6"));
 }
