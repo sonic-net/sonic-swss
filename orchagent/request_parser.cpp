@@ -17,7 +17,7 @@ void Request::parse(const KeyOpFieldsValuesTuple& request)
 {
     if (is_parsed_)
     {
-        throw std::runtime_error("The parser already has a parsed request");
+        throw std::logic_error("The parser already has a parsed request");
     }
 
     parseOperation(request);
@@ -88,7 +88,7 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
                 key_item_mac_addresses_[i] = parseMacAddress(key_items[i]);
                 break;
             default:
-                throw std::runtime_error(std::string("Not implemented key type parser. Key") + key_items[i]);
+                throw std::logic_error(std::string("Not implemented key type parser. Key") + key_items[i]);
         }
     }
 }
@@ -121,7 +121,7 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
                 attr_item_packet_actions_[fvField(*i)] = parsePacketAction(fvValue(*i));
                 break;
             default:
-                throw std::runtime_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
+                throw std::logic_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
         }
     }
 
@@ -190,5 +190,3 @@ sai_packet_action_t Request::parsePacketAction(const std::string& str)
 
     return found->second;
 }
-
-// FIXME: store key at the same structures as attributes

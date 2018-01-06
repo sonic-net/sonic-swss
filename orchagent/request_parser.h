@@ -98,13 +98,13 @@ private:
     const request_description_t& request_description_;
     char key_separator_;
     bool is_parsed_;
+    size_t number_of_key_items_;
 
     std::string operation_;
-    size_t number_of_key_items_;
     std::string full_key_;
-    std::unordered_set<std::string> attr_names_;
     std::unordered_map<int, std::string> key_item_strings_;
     std::unordered_map<int, MacAddress> key_item_mac_addresses_;
+    std::unordered_set<std::string> attr_names_;
     std::unordered_map<std::string, std::string> attr_item_strings_;
     std::unordered_map<std::string, bool> attr_item_bools_;
     std::unordered_map<std::string, MacAddress> attr_item_mac_addresses_;

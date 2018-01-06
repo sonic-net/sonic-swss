@@ -544,9 +544,9 @@ TEST(request_parser, incorrectParseAndClear)
     try
     {
         request.parse(t);
-        FAIL() << "Expected std::runtime_error";
+        FAIL() << "Expected std::logic_error";
     }
-    catch (const std::runtime_error& e)
+    catch (const std::logic_error& e)
     {
         EXPECT_STREQ(e.what(), "The parser already has a parsed request");
     }
@@ -556,7 +556,7 @@ TEST(request_parser, incorrectParseAndClear)
     }
     catch (...)
     {
-        FAIL() << "Expected std::runtime_error, not other exception";
+        FAIL() << "Expected std::logic_error, not other exception";
     }
 }
 

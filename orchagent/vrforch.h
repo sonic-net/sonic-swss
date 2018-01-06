@@ -1,6 +1,10 @@
 #ifndef __VRFORCH_H
 #define __VRFORCH_H
 
+
+#define CFG_VRF_TABLE_NAME "VRF" // FIXME: remove me
+#include "request_parser.h"
+
 struct VRFEntry
 {
     sai_object_id_t id;
@@ -32,9 +36,19 @@ class VRFOrch : public Orch
 public:
     VRFOrch(DBConnector *db, const std::string& tableName);
     virtual void doTask(Consumer& consumer);
+
+    bool isVRFexists(const std::string& name) const
+    {
+        return vrf_table_.find(name) != std::end(vrf_table_);
+    }
+
+    sai_object_id_t getVRFid(const std::string& name) const
+    {
+        return vrf_table_.at(name);
+    }
 private:
-    bool AddVRF(const VRFRequest& request);
-    bool DeleteVRF(const VRFRequest& request);
+    bool addOperation(const VRFRequest& request);
+    bool delOperation(const VRFRequest& request);
 
     VRFTable vrf_table_;
 };
