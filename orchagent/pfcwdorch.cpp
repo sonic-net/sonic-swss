@@ -46,7 +46,7 @@ PfcFrameCounters PfcWdOrch<DropHandler, ForwardHandler>::getPfcFrameCounters(sai
 
     vector<FieldValueTuple> fieldValues;
     PfcFrameCounters counters;
-    counters.fill(0);
+    counters.fill(numeric_limits<uint64_t>::max());
 
     static const array<string, PFC_WD_TC_MAX> counterNames =
     {
@@ -116,9 +116,18 @@ void PfcWdOrch<DropHandler, ForwardHandler>::doTask(SelectableTimer &timer)
         for (size_t prio = 0; prio != counters.size(); prio++)
         {
             bool isLossy = ((1 << prio) & pfcMask) == 0;
-            if (isLossy && counters[prio] < newCounters[prio])
+            if (newCounters[prio] == numeric_limits<uint64_t>::max())
             {
-                SWSS_LOG_WARN("Got PFC frame on lossy queue %lu port %s", prio, port.m_alias.c_str());
+                SWSS_LOG_WARN("Could not retreive PFC frame count on queue %lu port %s",
+                        prio,
+                        port.m_alias.c_str());
+            }
+            else if (isLossy && counters[prio] < newCounters[prio])
+            {
+                SWSS_LOG_WARN("Got PFC %lu frame(s) on lossy queue %lu port %s",
+                        newCounters[prio] - counters[prio],
+                        prio,
+                        port.m_alias.c_str());
             }
         }
 
