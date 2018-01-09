@@ -100,6 +100,12 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
     for (auto i = kfvFieldsValues(request).begin();
          i != kfvFieldsValues(request).end(); i++)
     {
+        if (fvField(*i) == "empty")
+        {
+            // if name of the attribute is 'empty', just skip it.
+            // it's using when we don't have any attributes, but we have to provide one for redis
+            continue;
+        }
         const auto item = request_description_.attr_item_types.find(fvField(*i));
         if (item == not_found)
         {
