@@ -13,20 +13,21 @@ struct VRFEntry
 
 typedef std::unordered_map<std::string, sai_object_id_t> VRFTable;
 
+const request_description_t request_description = {
+    { REQ_T_STRING },
+    {
+        { "v4",            REQ_T_BOOL },
+        { "v6",            REQ_T_BOOL },
+        { "src_mac",       REQ_T_MAC_ADDRESS },
+        { "ttl_action",    REQ_T_PACKET_ACTION },
+        { "ip_opt_action", REQ_T_PACKET_ACTION },
+        { "l3_mc_action",  REQ_T_PACKET_ACTION },
+    },
+    { } // no mandatory attributes
+};
+
 class VRFRequest : public Request
 {
-    const request_description_t request_description = {
-        { REQ_T_STRING },
-        {
-            { "v4",            REQ_T_BOOL },
-            { "v6",            REQ_T_BOOL },
-            { "src_mac",       REQ_T_MAC_ADDRESS },
-            { "ttl_action",    REQ_T_PACKET_ACTION },
-            { "ip_opt_action", REQ_T_PACKET_ACTION },
-            { "l3_mc_action",  REQ_T_PACKET_ACTION },
-        },
-        { } // no mandatory attributes
-    };
 public:
     VRFRequest() : Request(request_description, '|') { }
 };
