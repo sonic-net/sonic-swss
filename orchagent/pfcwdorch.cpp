@@ -1,4 +1,5 @@
 #include <limits.h>
+#include <unordered_map>
 #include "pfcwdorch.h"
 #include "saiserialize.h"
 #include "portsorch.h"
@@ -15,8 +16,8 @@
 #define PFC_WD_DETECTION_TIME_MIN       100
 #define PFC_WD_RESTORATION_TIME_MAX     (60 * 1000)
 #define PFC_WD_RESTORATION_TIME_MIN     100
-#define PFC_WD_TC_MAX                   8
 #define PFC_WD_POLL_TIMEOUT             5000
+#define PFC_WD_LOSSY_POLL_TIMEOUT_SEC   (5 * 60)
 
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
@@ -30,6 +31,108 @@ PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE))
 {
     SWSS_LOG_ENTER();
+
+    auto interv = timespec { .tv_sec = PFC_WD_LOSSY_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
+    auto timer = new SelectableTimer(interv);
+    auto executor = new ExecutableTimer(timer, this);
+    Orch::addExecutor("", executor);
+    timer->start();
+}
+
+template <typename DropHandler, typename ForwardHandler>
+PfcFrameCounters PfcWdOrch<DropHandler, ForwardHandler>::getPfcFrameCounters(sai_object_id_t portId)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> fieldValues;
+    PfcFrameCounters counters;
+    counters.fill(numeric_limits<uint64_t>::max());
+
+    static const array<string, PFC_WD_TC_MAX> counterNames =
+    {
+        "SAI_PORT_STAT_PFC_0_RX_PKTS",
+        "SAI_PORT_STAT_PFC_1_RX_PKTS",
+        "SAI_PORT_STAT_PFC_2_RX_PKTS",
+        "SAI_PORT_STAT_PFC_3_RX_PKTS",
+        "SAI_PORT_STAT_PFC_4_RX_PKTS",
+        "SAI_PORT_STAT_PFC_5_RX_PKTS",
+        "SAI_PORT_STAT_PFC_6_RX_PKTS",
+        "SAI_PORT_STAT_PFC_7_RX_PKTS"
+    };
+
+    if (!m_countersTable->get(sai_serialize_object_id(portId), fieldValues))
+    {
+        return move(counters);
+    }
+
+    for (const auto& fv : fieldValues)
+    {
+        const auto field = fvField(fv);
+        const auto value = fvValue(fv);
+
+
+        for (size_t prio = 0; prio != counterNames.size(); prio++)
+        {
+            if (field == counterNames[prio])
+            {
+                counters[prio] = stoul(value);
+            }
+        }
+    }
+
+    return move(counters);
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdOrch<DropHandler, ForwardHandler>::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+
+    for (auto& i : m_pfcFrameCountersMap)
+    {
+        auto oid = i.first;
+        auto counters = i.second;
+        auto newCounters = getPfcFrameCounters(oid);
+
+        Port port;
+        if (!gPortsOrch->getPort(oid, port))
+        {
+            SWSS_LOG_ERROR("Invalid port oid 0x%lx", oid);
+            continue;
+        }
+
+        sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            continue;
+        }
+
+        uint8_t pfcMask = attr.value.u8;
+
+        for (size_t prio = 0; prio != counters.size(); prio++)
+        {
+            bool isLossy = ((1 << prio) & pfcMask) == 0;
+            if (newCounters[prio] == numeric_limits<uint64_t>::max())
+            {
+                SWSS_LOG_WARN("Could not retreive PFC frame count on queue %lu port %s",
+                        prio,
+                        port.m_alias.c_str());
+            }
+            else if (isLossy && counters[prio] < newCounters[prio])
+            {
+                SWSS_LOG_WARN("Got PFC %lu frame(s) on lossy queue %lu port %s",
+                        newCounters[prio] - counters[prio],
+                        prio,
+                        port.m_alias.c_str());
+            }
+        }
+
+        i.second = newCounters;
+    }
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -230,6 +333,8 @@ void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
         SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
         return;
     }
+
+    m_pfcFrameCountersMap.emplace(port.m_port_id, getPfcFrameCounters(port.m_port_id));
 
     SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
 }
@@ -505,9 +610,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
         {
             throw runtime_error("Unknown PFC WD action");
         }
+        entry->second.handler->initCounters();
     }
     else if (event == "restore")
     {
+        entry->second.handler->commitCounters();
         entry->second.handler = nullptr;
     }
     else

@@ -22,8 +22,9 @@
 #define TABLE_TYPE        "TYPE"
 #define TABLE_PORTS       "PORTS"
 
-#define TABLE_TYPE_L3     "L3"
-#define TABLE_TYPE_MIRROR "MIRROR"
+#define TABLE_TYPE_L3        "L3"
+#define TABLE_TYPE_MIRROR    "MIRROR"
+#define TABLE_TYPE_CTRLPLANE "CTRLPLANE"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_SRC_IP            "SRC_IP"
@@ -63,7 +64,8 @@ typedef enum
 {
     ACL_TABLE_UNKNOWN,
     ACL_TABLE_L3,
-    ACL_TABLE_MIRROR
+    ACL_TABLE_MIRROR,
+    ACL_TABLE_CTRLPLANE
 } acl_table_type_t;
 
 typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
