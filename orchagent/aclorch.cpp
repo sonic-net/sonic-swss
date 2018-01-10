@@ -1218,7 +1218,7 @@ bool AclRuleDTelFlowWatchList::validateAddAction(string attr_name, string attr_v
 
     if (attr_name == ACTION_DTEL_REPORT_ALL_PACKETS)
     {
-        value.aclaction.parameter.u8 = (attr_value == DTEL_ENABLED) ? 0x01 : 0x00;
+        value.aclaction.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
         value.aclaction.enable = (attr_value == DTEL_ENABLED) ? true : false;
     }
     
@@ -1327,7 +1327,7 @@ bool AclRuleDTelDropWatchList::validateAddAction(string attr_name, string attr_v
     }
 
 
-    value.aclaction.parameter.u8 = (attr_value == DTEL_ENABLED) ? 0x01: 0x00;
+    value.aclaction.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
     value.aclaction.enable = (attr_value == DTEL_ENABLED) ? true : false;
     
     m_actions[aclDTelActionLookup[attr_name]] = value;

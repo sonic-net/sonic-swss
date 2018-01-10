@@ -29,10 +29,23 @@ DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOr
         m_portOrch(portOrch)
 {
     SWSS_LOG_ENTER();
+
+    status = sai_dtel_api->create_dtel(&dtelId, gSwitchId, 0, {});
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("DTEL ERROR: Error creating DTel id");
+        return;
+    }
 }
 
 DTelOrch::~DTelOrch()
 {
+    status = sai_dtel_api->remove_dtel(dtelId);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("DTEL ERROR: Error deleting DTel id");
+        return;
+    }
 }
 
 bool DTelOrch::intSessionExists(const string& name)
@@ -308,9 +321,9 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
 		FieldValueTuple e = kfvFieldsValues(t)[0];
 
-                attr.id = SAI_SWITCH_ATTR_DTEL_INT_ENDPOINT_ENABLE;
+                attr.id = SAI_DTEL_ATTR_INT_ENDPOINT_ENABLE;
                 attr.value.booldata = (fvValue(e) == ENABLED) ? true : false;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to enable INT endpoint mode");
@@ -321,9 +334,9 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
 		FieldValueTuple e = kfvFieldsValues(t)[0];
 
-                attr.id = SAI_SWITCH_ATTR_DTEL_INT_TRANSIT_ENABLE;
+                attr.id = SAI_DTEL_ATTR_INT_TRANSIT_ENABLE;
                 attr.value.booldata = (fvValue(e) == ENABLED) ? true : false;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to enable INT transit mode");
@@ -334,9 +347,9 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
 		FieldValueTuple e = kfvFieldsValues(t)[0];
 
-                attr.id = SAI_SWITCH_ATTR_DTEL_POSTCARD_ENABLE;
+                attr.id = SAI_DTEL_ATTR_POSTCARD_ENABLE;
                 attr.value.booldata = (fvValue(e) == ENABLED) ? true : false;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to enable DTel postcard");
@@ -347,9 +360,9 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
 		FieldValueTuple e = kfvFieldsValues(t)[0];
 
-                attr.id = SAI_SWITCH_ATTR_DTEL_DROP_REPORT_ENABLE;
+                attr.id = SAI_DTEL_ATTR_DROP_REPORT_ENABLE;
                 attr.value.booldata = (fvValue(e) == ENABLED) ? true : false;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to enable drop report");
@@ -360,9 +373,9 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
 		FieldValueTuple e = kfvFieldsValues(t)[0];
 
-                attr.id = SAI_SWITCH_ATTR_DTEL_QUEUE_REPORT_ENABLE;
+                attr.id = SAI_DTEL_ATTR_QUEUE_REPORT_ENABLE;
                 attr.value.booldata = (fvValue(e) == ENABLED) ? true : false;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to enable queue report");
@@ -373,9 +386,9 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 FieldValueTuple e = kfvFieldsValues(t)[0];
 
-                attr.id = SAI_SWITCH_ATTR_DTEL_SWITCH_ID;
+                attr.id = SAI_DTEL_ATTR_SWITCH_ID;
                 attr.value.u32 = to_uint<uint32_t>(fvValue(e));
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);  
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set switch id");
@@ -386,9 +399,9 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 FieldValueTuple e = kfvFieldsValues(t)[0];
 
-                attr.id = SAI_SWITCH_ATTR_DTEL_FLOW_STATE_CLEAR_CYCLE;
+                attr.id = SAI_DTEL_ATTR_FLOW_STATE_CLEAR_CYCLE;
                 attr.value.u16 = to_uint<uint16_t>(fvValue(e));
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set Dtel flow state clear cycle");
@@ -399,9 +412,9 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 FieldValueTuple e = kfvFieldsValues(t)[0];
 
-                attr.id = SAI_SWITCH_ATTR_DTEL_LATENCY_SENSITIVITY;
+                attr.id = SAI_DTEL_ATTR_LATENCY_SENSITIVITY;
                 attr.value.u16 = to_uint<uint16_t>(fvValue(e));
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set Dtel latency sensitivity");
@@ -412,7 +425,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 vector<sai_object_id_t> port_list;
                 Port port;
-                attr.id = SAI_SWITCH_ATTR_DTEL_SINK_PORT_LIST;
+                attr.id = SAI_DTEL_ATTR_SINK_PORT_LIST;
 
                 for (auto i : kfvFieldsValues(t))
                 {
@@ -433,7 +446,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
 
                 attr.value.objlist.count = (uint32_t)port_list.size();
                 attr.value.objlist.list = port_list.data();
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT sink port list");
@@ -442,7 +455,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == INT_L4_DSCP)
             {
-                attr.id = SAI_SWITCH_ATTR_DTEL_INT_L4_DSCP;
+                attr.id = SAI_DTEL_ATTR_INT_L4_DSCP;
 
                 if ((uint32_t)(kfvFieldsValues(t).size()) != 2)
                 {
@@ -469,7 +482,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
 		    goto dtel_table_continue;
                 }
 
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT L4 DSCP value/mask");
@@ -484,7 +497,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_INT_ENDPOINT_ENABLE;
                 attr.value.booldata = false;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to disable INT endpoint mode");
@@ -495,7 +508,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_INT_TRANSIT_ENABLE;
                 attr.value.booldata = false;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to disable INT transit mode");
@@ -506,7 +519,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_POSTCARD_ENABLE;
                 attr.value.booldata = false;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to disable postcard mode");
@@ -517,7 +530,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_DROP_REPORT_ENABLE;
                 attr.value.booldata = false;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to disable drop report");
@@ -528,7 +541,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             {
                 attr.id = SAI_SWITCH_ATTR_DTEL_QUEUE_REPORT_ENABLE;
                 attr.value.booldata = false;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to disable queue report");
@@ -541,7 +554,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
 
                 attr.id = SAI_SWITCH_ATTR_DTEL_SWITCH_ID;
                 attr.value.u32 = 0;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset switch id");
@@ -554,7 +567,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
 
                 attr.id = SAI_SWITCH_ATTR_DTEL_FLOW_STATE_CLEAR_CYCLE;
                 attr.value.u16 = 0;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset flow state clear cycle");
@@ -567,7 +580,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
 
                 attr.id = SAI_SWITCH_ATTR_DTEL_LATENCY_SENSITIVITY;
                 attr.value.u16 = 0;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset latency sensitivity");
@@ -580,7 +593,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
 
                 attr.value.objlist.count = 0;
                 attr.value.objlist.list = {};
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset sink port list");
@@ -592,7 +605,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 attr.id = SAI_SWITCH_ATTR_DTEL_INT_L4_DSCP;
                 attr.value.ternaryfield.value.u8 = 0;
                 attr.value.ternaryfield.mask.u8 = 0;
-                status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset INT L4 DSCP value/mask");

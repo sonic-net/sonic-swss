@@ -145,7 +145,8 @@ private:
 	dTelINTSessionTable_t m_dTelINTSessionTable;
     dTelReportSessionTable_t m_dTelReportSessionTable;
     dTelPortTable_t m_dTelPortTable;
-    dtelEventTable_t m_dtelEventTable; 
+    dtelEventTable_t m_dtelEventTable;
+    sai_object_id_t dtelId; 
 };
 
 #endif /* SWSS_DTELORCH_H */
