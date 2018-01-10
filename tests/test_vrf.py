@@ -1,6 +1,8 @@
 from swsscommon import swsscommon
 import time
 import json
+import random
+import time
 from pprint import pprint
 
 
@@ -11,22 +13,27 @@ def create_entry(tbl, key, pairs):
     # FIXME: better to wait until DB create them
     time.sleep(1)
 
+
 def create_entry_tbl(db, table, separator, key, pairs):
     tbl = swsscommon.Table(db, table, separator)
     create_entry(tbl, key, pairs)
 
+
 def create_entry_pst(db, table, separator, key, pairs):
     tbl = swsscommon.ProducerStateTable(db, table)
     create_entry(tbl, key, pairs)
+
 
 def delete_entry_tbl(db, table, separator, key):
     tbl = swsscommon.Table(db, table, separator)
     tbl._del(key)
     time.sleep(1)
 
+
 def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
+
 
 def entries(db, table):
     tbl =  swsscommon.Table(db, table)
@@ -40,6 +47,8 @@ def is_vrf_attributes_correct(db, table, key, expected_attributes):
 
     status, fvs = tbl.get(key)
     assert status, "Got an error when get a key"
+    if fvs == (('NULL', 'NULL'),):
+        fvs = []
 
     attr_keys = {entry[0] for entry in fvs}
     assert attr_keys == set(expected_attributes.keys())
@@ -54,6 +63,9 @@ def case(asic_db, conf_db, vrf_name, attributes, expected_attributes):
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 1, "The initial state is incorrect"
 
     initial_entries = entries(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+
+    if len(attributes) == 0:
+        attributes = [('empty', 'empty')]
 
     # create a VRF entry in Config DB
     create_entry_tbl(
@@ -87,18 +99,74 @@ def case(asic_db, conf_db, vrf_name, attributes, expected_attributes):
     assert initial_entries == entries(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"), "The incorrect entry was removed"
 
 
-def test_VRFOrch(dvs):
+def boolean_gen():
+    result = random.choice(['false', 'true'])
+    return result, result
+
+
+def mac_addr_gen():
+    ns = [random.randint(0, 255) for _ in xrange(6)]
+    ns[0] &= 0xfe
+    hex_ns = [ "%02x" % n for n in ns]
+    mac = ':'.join(hex_ns)
+    return mac, mac.upper()
+
+
+def packet_action_gen():
+    values = [
+        ("drop",        "SAI_PACKET_ACTION_DROP"),
+        ("forward",     "SAI_PACKET_ACTION_FORWARD"),
+        ("copy",        "SAI_PACKET_ACTION_COPY"),
+        ("copy_cancel", "SAI_PACKET_ACTION_COPY_CANCEL"),
+        ("trap",        "SAI_PACKET_ACTION_TRAP"),
+        ("log",         "SAI_PACKET_ACTION_LOG"),
+        ("deny",        "SAI_PACKET_ACTION_DENY"),
+        ("transit",     "SAI_PACKET_ACTION_TRANSIT"),
+    ]
+
+    r = random.choice(values)
+    return r[0], r[1]
+
+
+def test_VRFOrch_Comprehensive(dvs):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
-#    case(asic_db, conf_db, "vrf0",
-#        [
-#            ('empty', 'empty'),
-#        ],
-#        {
-#        }
-#    )
+    attributes = [
+        ('v4',            'SAI_VIRTUAL_ROUTER_ATTR_ADMIN_V4_STATE',                     boolean_gen),
+        ('v6',            'SAI_VIRTUAL_ROUTER_ATTR_ADMIN_V6_STATE',                     boolean_gen),
+        ('src_mac',       'SAI_VIRTUAL_ROUTER_ATTR_SRC_MAC_ADDRESS',                    mac_addr_gen),
+        ('ttl_action',    'SAI_VIRTUAL_ROUTER_ATTR_VIOLATION_TTL1_PACKET_ACTION',       packet_action_gen),
+        ('ip_opt_action', 'SAI_VIRTUAL_ROUTER_ATTR_VIOLATION_IP_OPTIONS_PACKET_ACTION', packet_action_gen),
+        ('l3_mc_action',  'SAI_VIRTUAL_ROUTER_ATTR_UNKNOWN_L3_MULTICAST_PACKET_ACTION', packet_action_gen),
+    ]
 
+    random.seed(int(time.clock()))
+
+    for n in xrange(2**len(attributes)):
+        # generate testcases for all combinations of attributes
+        req_attr = []
+        exp_attr = {}
+        vrf_name = "vrf_%d" % n
+        bmask = 0x1
+        for an in xrange(len(attributes)):
+            if (bmask & n) > 0:
+                req_res, exp_res = attributes[an][2]()
+                req_attr.append((attributes[an][0], req_res))
+                exp_attr[attributes[an][1]] = exp_res
+            bmask <<= 1
+        case(asic_db, conf_db, vrf_name, req_attr, exp_attr)
+
+
+def test_VRFOrch(dvs):
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    case(asic_db, conf_db, "vrf0",
+        [
+        ],
+        {
+        }
+    )
 
     case(asic_db, conf_db, "vrf1",
         [
@@ -106,7 +174,7 @@ def test_VRFOrch(dvs):
             ('src_mac', '02:04:06:07:08:09'),
         ],
         {
-            'SAI_VIRTUAL_ROUTER_ATTR_SRC_MAC_ADDRESS': '02:04:06:07:08:09',
             'SAI_VIRTUAL_ROUTER_ATTR_ADMIN_V4_STATE':  'true',
+            'SAI_VIRTUAL_ROUTER_ATTR_SRC_MAC_ADDRESS': '02:04:06:07:08:09',
         }
     )
