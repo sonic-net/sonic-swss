@@ -96,9 +96,19 @@ bool OrchDaemon::init()
         CFG_ACL_TABLE_NAME,
         CFG_ACL_RULE_TABLE_NAME
     };
-    gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
-    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, /*tunnel_decap_orch,*/ qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch};
+    vector<string> dtel_tables = {
+        CFG_DTEL_TABLE_NAME,
+        CFG_DTEL_REPORT_SESSION_TABLE_NAME,
+        CFG_DTEL_INT_SESSION_TABLE_NAME,
+        CFG_DTEL_QUEUE_REPORT_TABLE_NAME,
+        CFG_DTEL_EVENT_TABLE_NAME
+    };
+
+    DTelOrch *dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
+    gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch, dtel_orch);
+
+    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, /*tunnel_decap_orch,*/ qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch, dtel_orch};
     m_select = new Select();
 
     vector<string> pfc_wd_tables = {
