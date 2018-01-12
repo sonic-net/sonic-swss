@@ -16,7 +16,6 @@ using namespace swss;
 extern int gBatchSize;
 
 extern mutex gDbMutex;
-extern PortsOrch *gPortsOrch;
 
 extern bool gSwssRecord;
 extern ofstream gRecordOfs;
@@ -46,9 +45,6 @@ Orch::Orch(const vector<TableConnector>& tables)
 
 Orch::~Orch()
 {
-    for(auto &it : m_consumerMap)
-        delete it.second.m_consumer;
-
     if (gRecordOfs.is_open())
     {
         gRecordOfs.close();
@@ -58,46 +54,30 @@ Orch::~Orch()
 vector<Selectable *> Orch::getSelectables()
 {
     vector<Selectable *> selectables;
-    for(auto it : m_consumerMap) {
-        selectables.push_back(it.second.m_consumer);
+    for(auto& it : m_consumerMap)
+    {
+        selectables.push_back(it.second.get());
     }
     return selectables;
 }
 
-bool Orch::hasSelectable(TableConsumable *selectable) const
-{
-    for(auto it : m_consumerMap) {
-        if (it.second.m_consumer == selectable) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool Orch::execute(string tableName)
+void Consumer::execute()
 {
     SWSS_LOG_ENTER();
 
+    // TODO: remove DbMutex when there is only single thread
     lock_guard<mutex> lock(gDbMutex);
 
-    auto consumer_it = m_consumerMap.find(tableName);
-    if (consumer_it == m_consumerMap.end())
-    {
-        SWSS_LOG_ERROR("Unrecognized tableName:%s\n", tableName.c_str());
-        return false;
-    }
-    Consumer& consumer = consumer_it->second;
-
     std::deque<KeyOpFieldsValuesTuple> entries;
-    consumer.m_consumer->pops(entries);
+    getConsumerTable()->pops(entries);
 
     /* Nothing popped */
     if (entries.empty())
     {
-        return true;
+        return;
     }
 
-    for (auto entry: entries)
+    for (auto& entry: entries)
     {
         string key = kfvKey(entry);
         string op  = kfvOp(entry);
@@ -105,18 +85,18 @@ bool Orch::execute(string tableName)
         /* Record incoming tasks */
         if (gSwssRecord)
         {
-            recordTuple(consumer, entry);
+            Orch::recordTuple(*this, entry);
         }
 
-        /* If a new task comes or if a DEL task comes, we directly put it into consumer.m_toSync map */
-        if (consumer.m_toSync.find(key) == consumer.m_toSync.end() || op == DEL_COMMAND)
+        /* If a new task comes or if a DEL task comes, we directly put it into getConsumerTable().m_toSync map */
+        if (m_toSync.find(key) == m_toSync.end() || op == DEL_COMMAND)
         {
-           consumer.m_toSync[key] = entry;
+           m_toSync[key] = entry;
         }
         /* If an old task is still there, we combine the old task with new task */
         else
         {
-            KeyOpFieldsValuesTuple existing_data = consumer.m_toSync[key];
+            KeyOpFieldsValuesTuple existing_data = m_toSync[key];
 
             auto new_values = kfvFieldsValues(entry);
             auto existing_values = kfvFieldsValues(existing_data);
@@ -138,14 +118,17 @@ bool Orch::execute(string tableName)
                 }
                 existing_values.push_back(FieldValueTuple(field, value));
             }
-            consumer.m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
+            m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
         }
     }
 
-    if (!consumer.m_toSync.empty())
-        doTask(consumer);
+    drain();
+}
 
-    return true;
+void Consumer::drain()
+{
+    if (!m_toSync.empty())
+        m_orch->doTask(*this);
 }
 
 /*
@@ -173,8 +156,12 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name
     tokens = tokenize(ref_content, delimiter);
     if (tokens.size() != 2)
     {
-        SWSS_LOG_ERROR("malformed reference:%s. Must contain 2 tokens\n", ref_content.c_str());
-        return false;
+        tokens = tokenize(ref_content, config_db_key_delimiter);
+        if (tokens.size() != 2)
+        {
+            SWSS_LOG_ERROR("malformed reference:%s. Must contain 2 tokens\n", ref_content.c_str());
+            return false;
+        }
     }
     auto type_it = type_maps.find(tokens[0]);
     if (type_it == type_maps.end())
@@ -234,8 +221,7 @@ void Orch::doTask()
 {
     for(auto &it : m_consumerMap)
     {
-        if (!it.second.m_toSync.empty())
-            doTask(it.second);
+        it.second->drain();
     }
 }
 
@@ -260,7 +246,7 @@ void Orch::logfileReopen()
 
 void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 {
-    string s = consumer.m_consumer->getTableName() + ":" + kfvKey(tuple)
+    string s = consumer.getTableName() + ":" + kfvKey(tuple)
                + "|" + kfvOp(tuple);
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
@@ -279,7 +265,7 @@ void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 
 string Orch::dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 {
-    string s = consumer.m_consumer->getTableName() + ":" + kfvKey(tuple)
+    string s = consumer.getTableName() + ":" + kfvKey(tuple)
                + "|" + kfvOp(tuple);
     for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
     {
@@ -374,10 +360,17 @@ void Orch::addConsumer(DBConnector *db, string tableName)
 {
     if (db->getDB() == CONFIG_DB)
     {
-        Consumer consumer(new SubscriberStateTable(db, tableName));
-        m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
-    } else {
-        Consumer consumer(new ConsumerStateTable(db, tableName, gBatchSize));
-        m_consumerMap.insert(ConsumerMapPair(tableName, consumer));
+        addExecutor(tableName, new Consumer(new SubscriberStateTable(db, tableName), this));
     }
+    else
+    {
+        addExecutor(tableName, new Consumer(new ConsumerStateTable(db, tableName, gBatchSize), this));
+    }
+}
+
+void Orch::addExecutor(string executorName, Executor* executor)
+{
+    m_consumerMap.emplace(std::piecewise_construct,
+            std::forward_as_tuple(executorName),
+            std::forward_as_tuple(executor));
 }

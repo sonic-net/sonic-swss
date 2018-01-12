@@ -5,12 +5,16 @@ extern "C" {
 
 #include <fstream>
 #include <iostream>
+#include <unordered_map>
 #include <map>
 #include <mutex>
 #include <thread>
 #include <chrono>
 #include <getopt.h>
 #include <unistd.h>
+
+#include <sys/time.h>
+#include "timestamp.h"
 
 #include <sairedis.h>
 #include <logger.h>
@@ -170,6 +174,7 @@ int main(int argc, char **argv)
             SWSS_LOG_ERROR("Failed to open SwSS recording file %s", gRecordFile.c_str());
             exit(EXIT_FAILURE);
         }
+        gRecordOfs << getTimestamp() << "|recording started" << endl;
     }
 
     attr.id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;

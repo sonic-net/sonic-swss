@@ -1,3 +1,4 @@
+#include <unordered_map>
 #include "pfcactionhandler.h"
 #include "logger.h"
 #include "saiserialize.h"
@@ -11,8 +12,15 @@
 #define PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED "PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED"
 #define PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED "PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED"
 
-#define SAI_QUEUE_STAT_PACKETS_STR         "SAI_QUEUE_STAT_PACKETS"
-#define SAI_QUEUE_STAT_DROPPED_PACKETS_STR "SAI_QUEUE_STAT_DROPPED_PACKETS"
+#define PFC_WD_QUEUE_STATS_TX_PACKETS "PFC_WD_QUEUE_STATS_TX_PACKETS"
+#define PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS "PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS"
+#define PFC_WD_QUEUE_STATS_RX_PACKETS "PFC_WD_QUEUE_STATS_RX_PACKETS"
+#define PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS "PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS"
+
+#define PFC_WD_QUEUE_STATS_TX_PACKETS_LAST "PFC_WD_QUEUE_STATS_TX_PACKETS_LAST"
+#define PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST "PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST"
+#define PFC_WD_QUEUE_STATS_RX_PACKETS_LAST "PFC_WD_QUEUE_STATS_RX_PACKETS_LAST"
+#define PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST "PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST"
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
@@ -34,29 +42,59 @@ PfcWdActionHandler::PfcWdActionHandler(sai_object_id_t port, sai_object_id_t que
             "PFC Watchdog detected PFC storm on queue 0x%lx port 0x%lx",
             m_queue,
             m_port);
-
-    m_stats = getQueueStats(m_countersTable, sai_serialize_object_id(m_queue));
-    m_stats.detectCount++;
-    m_stats.operational = false;
-
-    updateWdCounters(sai_serialize_object_id(m_queue), m_stats);
 }
 
 PfcWdActionHandler::~PfcWdActionHandler(void)
 {
     SWSS_LOG_ENTER();
 
-    auto finalStats = getQueueStats(m_countersTable, sai_serialize_object_id(m_queue));
-
     SWSS_LOG_NOTICE(
-            "Queue 0x%lx port 0x%lx restored from PFC storm. Tx packets: %lu. Dropped packets: %lu",
+            "Queue 0x%lx port 0x%lx restored from PFC storm.",
             m_queue,
-            m_port,
-            finalStats.txPkt - m_stats.txPkt,
-            finalStats.txDropPkt - m_stats.txDropPkt);
+            m_port);
+}
+
+void PfcWdActionHandler::initCounters(void)
+{
+    SWSS_LOG_ENTER();
+
+    if (!getHwCounters(m_hwStats))
+    {
+        return;
+    }
+
+    auto wdQueueStats = getQueueStats(m_countersTable, sai_serialize_object_id(m_queue));
+    wdQueueStats.detectCount++;
+    wdQueueStats.operational = false;
+
+    updateWdCounters(sai_serialize_object_id(m_queue), wdQueueStats);
+}
+
+void PfcWdActionHandler::commitCounters(void)
+{
+    SWSS_LOG_ENTER();
+
+    PfcWdHwStats hwStats;
+
+    if (!getHwCounters(hwStats))
+    {
+        return;
+    }
+
+    auto finalStats = getQueueStats(m_countersTable, sai_serialize_object_id(m_queue));
 
     finalStats.restoreCount++;
     finalStats.operational = true;
+
+    finalStats.txPktLast = hwStats.txPkt - m_hwStats.txPkt;
+    finalStats.txDropPktLast = hwStats.txDropPkt - m_hwStats.txDropPkt;
+    finalStats.rxPktLast = hwStats.rxPkt - m_hwStats.rxPkt;
+    finalStats.rxDropPktLast = hwStats.rxDropPkt - m_hwStats.rxDropPkt;
+
+    finalStats.txPkt += finalStats.txPktLast;
+    finalStats.txDropPkt += finalStats.txDropPktLast;
+    finalStats.rxPkt += finalStats.rxPktLast;
+    finalStats.rxDropPkt += finalStats.rxDropPktLast;
 
     updateWdCounters(sai_serialize_object_id(m_queue), finalStats);
 }
@@ -66,6 +104,8 @@ PfcWdActionHandler::PfcWdQueueStats PfcWdActionHandler::getQueueStats(shared_ptr
     SWSS_LOG_ENTER();
 
     PfcWdQueueStats stats;
+    memset(&stats, 0, sizeof(PfcWdQueueStats));
+    stats.operational = true;
     vector<FieldValueTuple> fieldValues;
 
     if (!countersTable->get(queueIdStr, fieldValues))
@@ -90,13 +130,21 @@ PfcWdActionHandler::PfcWdQueueStats PfcWdActionHandler::getQueueStats(shared_ptr
         {
             stats.operational = value == PFC_WD_QUEUE_STATUS_OPERATIONAL ? true : false;
         }
-        else if (field == SAI_QUEUE_STAT_PACKETS_STR)
+        else if (field == PFC_WD_QUEUE_STATS_TX_PACKETS)
         {
             stats.txPkt = stoul(value);
         }
-        else if (field == SAI_QUEUE_STAT_DROPPED_PACKETS_STR)
+        else if (field == PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS)
         {
             stats.txDropPkt = stoul(value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_PACKETS)
+        {
+            stats.rxPkt = stoul(value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS)
+        {
+            stats.rxDropPkt = stoul(value);
         }
     }
 
@@ -126,6 +174,17 @@ void PfcWdActionHandler::updateWdCounters(const string& queueIdStr, const PfcWdQ
 
     resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_DETECTED, to_string(stats.detectCount));
     resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_DEADLOCK_RESTORED, to_string(stats.restoreCount));
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_PACKETS, to_string(stats.txPkt));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS, to_string(stats.txDropPkt));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_PACKETS, to_string(stats.rxPkt));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS, to_string(stats.rxDropPkt));
+
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_PACKETS_LAST, to_string(stats.txPktLast));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST, to_string(stats.txDropPktLast));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_PACKETS_LAST, to_string(stats.rxPktLast));
+    resultFvValues.emplace_back(PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST, to_string(stats.rxDropPktLast));
+
     resultFvValues.emplace_back(PFC_WD_QUEUE_STATUS, stats.operational ?
                                                      PFC_WD_QUEUE_STATUS_OPERATIONAL :
                                                      PFC_WD_QUEUE_STATUS_STORMED);
@@ -135,7 +194,7 @@ void PfcWdActionHandler::updateWdCounters(const string& queueIdStr, const PfcWdQ
 
 PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
         uint8_t queueId, shared_ptr<Table> countersTable):
-    PfcWdActionHandler(port, queue, queueId, countersTable)
+    PfcWdLossyHandler(port, queue, queueId, countersTable)
 {
     SWSS_LOG_ENTER();
 
@@ -143,16 +202,31 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
 
     // There is one handler instance per queue ID
     string queuestr = to_string(queueId);
-    m_strTable = "Table_PfcWdAclHandler_" + queuestr;
+    m_strIngressTable = "IngressTable_PfcWdAclHandler_" + queuestr;
+    m_strEgressTable = "EgressTable_PfcWdAclHandler_" + queuestr;
     m_strRule = "Rule_PfcWdAclHandler_" + queuestr;
 
-    auto found = m_aclTables.find(m_strTable);
+    auto found = m_aclTables.find(m_strIngressTable);
     if (found == m_aclTables.end())
     {
         // First time of handling PFC for this queue, create ACL table, and bind
-        createPfcAclTable(port);
-        shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_strRule, m_strTable, table_type);
-        createPfcAclRule(newRule, queueId);
+        createPfcAclTable(port, m_strIngressTable, true);
+        shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_strRule, m_strIngressTable, table_type);
+        createPfcAclRule(newRule, queueId, m_strIngressTable);
+    }
+    else
+    {
+        // Otherwise just bind ACL table with the port
+        found->second.bind(port);
+    }
+
+    found = m_aclTables.find(m_strEgressTable);
+    if (found == m_aclTables.end())
+    {
+        // First time of handling PFC for this queue, create ACL table, and bind
+        createPfcAclTable(port, m_strEgressTable, false);
+        shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_strRule, m_strEgressTable, table_type);
+        createPfcAclRule(newRule, queueId, m_strEgressTable);
     }
     else
     {
@@ -165,7 +239,10 @@ PfcWdAclHandler::~PfcWdAclHandler(void)
 {
     SWSS_LOG_ENTER();
 
-    auto found = m_aclTables.find(m_strTable);
+    auto found = m_aclTables.find(m_strIngressTable);
+    found->second.unbind(getPort());
+
+    found = m_aclTables.find(m_strEgressTable);
     found->second.unbind(getPort());
 }
 
@@ -180,33 +257,35 @@ void PfcWdAclHandler::clear()
     }
 }
 
-void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port)
+void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, bool ingress)
 {
     SWSS_LOG_ENTER();
 
     auto inserted = m_aclTables.emplace(piecewise_construct,
-        std::forward_as_tuple(m_strTable),
+        std::forward_as_tuple(strTable),
         std::forward_as_tuple());
 
     assert(inserted.second);
+
     AclTable& aclTable = inserted.first->second;
     aclTable.type = ACL_TABLE_L3;
     aclTable.link(port);
-    aclTable.id = m_strTable;
-    gAclOrch->addAclTable(aclTable, m_strTable);
+    aclTable.id = strTable;
+    aclTable.stage = ingress ? ACL_STAGE_INGRESS : ACL_STAGE_EGRESS;
+    gAclOrch->addAclTable(aclTable, strTable);
 }
 
-void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId)
+void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId, string strTable)
 {
     SWSS_LOG_ENTER();
 
     string attr_name, attr_value;
 
-    attr_name = "RULE_PRIORITY";
+    attr_name = RULE_PRIORITY;
     attr_value = "999";
     rule->validateAddPriority(attr_name, attr_value);
 
-    attr_name = "MATCH_TC";
+    attr_name = MATCH_TC;
     attr_value = to_string(queueId);
     rule->validateAddMatch(attr_name, attr_value);
 
@@ -214,7 +293,7 @@ void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queue
     attr_value = PACKET_ACTION_DROP;
     rule->validateAddAction(attr_name, attr_value);
 
-    gAclOrch->addAclRule(rule, m_strTable);
+    gAclOrch->addAclRule(rule, strTable);
 }
 
 std::map<std::string, AclTable> PfcWdAclHandler::m_aclTables;
@@ -269,6 +348,69 @@ PfcWdLossyHandler::~PfcWdLossyHandler(void)
         SWSS_LOG_ERROR("Failed to set PFC mask on port 0x%lx: %d", getPort(), status);
         return;
     }
+}
+
+bool PfcWdLossyHandler::getHwCounters(PfcWdHwStats& counters)
+{
+    SWSS_LOG_ENTER();
+
+    static const vector<sai_queue_stat_t> queueStatIds =
+    {
+        SAI_QUEUE_STAT_PACKETS,
+        SAI_QUEUE_STAT_DROPPED_PACKETS,
+    };
+
+    static const vector<sai_ingress_priority_group_stat_t> pgStatIds =
+    {
+        SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS,
+        SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS,
+    };
+
+    vector<uint64_t> queueStats;
+    queueStats.resize(queueStatIds.size());
+
+    sai_status_t status = sai_queue_api->get_queue_stats(
+            getQueue(),
+            static_cast<uint32_t>(queueStatIds.size()),
+            queueStatIds.data(),
+            queueStats.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to fetch queue 0x%lx stats: %d", getQueue(), status);
+        return false;
+    }
+
+    // PG counters not yet supported in Mellanox platform
+    Port portInstance;
+    if (!gPortsOrch->getPort(getPort(), portInstance))
+    {
+        SWSS_LOG_ERROR("Cannot get port by ID 0x%lx", getPort());
+        return false;
+    }
+
+    sai_object_id_t pg = portInstance.m_priority_group_ids[getQueueId()];
+    vector<uint64_t> pgStats;
+    pgStats.resize(pgStatIds.size());
+
+    status = sai_buffer_api->get_ingress_priority_group_stats(
+            pg,
+            static_cast<uint32_t>(pgStatIds.size()),
+            pgStatIds.data(),
+            pgStats.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to fetch pg 0x%lx stats: %d", pg, status);
+        return false;
+    }
+
+    counters.txPkt = queueStats[0];
+    counters.txDropPkt = queueStats[1];
+    counters.rxPkt = pgStats[0];
+    counters.rxDropPkt = pgStats[1];
+
+    return true;
 }
 
 PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,

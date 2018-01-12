@@ -13,8 +13,7 @@
 #include "producerstatetable.h"
 #include "portsyncd/linksync.h"
 #include "subscriberstatetable.h"
-
-#define DEFAULT_PORT_CONFIG_FILE     "port_config.ini"
+#include "exec.h"
 
 using namespace std;
 using namespace swss;
@@ -35,11 +34,12 @@ bool g_init = false;
 void usage()
 {
     cout << "Usage: portsyncd [-p port_config.ini]" << endl;
-    cout << "       -p port_config.ini: MANDATORY import port lane mapping" << endl;
-    cout << "                           default: port_config.ini" << endl;
+    cout << "       -p port_config.ini: import port lane mapping" << endl;
+    cout << "                           use configDB data if not specified" << endl;
 }
 
 void handlePortConfigFile(ProducerStateTable &p, string file);
+void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb);
 void handleVlanIntfFile(string file);
 void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map);
 
@@ -47,7 +47,7 @@ int main(int argc, char **argv)
 {
     Logger::linkToDbNative("portsyncd");
     int opt;
-    string port_config_file = DEFAULT_PORT_CONFIG_FILE;
+    string port_config_file;
     map<string, KeyOpFieldsValuesTuple> port_cfg_map;
 
     while ((opt = getopt(argc, argv, "p:v:h")) != -1 )
@@ -83,9 +83,13 @@ int main(int argc, char **argv)
 
         netlink.registerGroup(RTNLGRP_LINK);
         cout << "Listen to link messages..." << endl;
-        netlink.dumpRequest(RTM_GETLINK);
 
-        handlePortConfigFile(p, port_config_file);
+        if (!port_config_file.empty())
+        {
+            handlePortConfigFile(p, port_config_file);
+        } else {
+            handlePortConfigFromConfigDB(p, cfgDb);
+        }
 
         s.addSelectable(&netlink);
         s.addSelectable(&portCfg);
@@ -151,6 +155,37 @@ int main(int argc, char **argv)
     }
 
     return 1;
+}
+
+static void notifyPortConfigDone(ProducerStateTable &p)
+{
+    /* Notify that all ports added */
+    FieldValueTuple finish_notice("count", to_string(g_portSet.size()));
+    vector<FieldValueTuple> attrs = { finish_notice };
+    p.set("PortConfigDone", attrs);
+}
+
+void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb)
+{
+    cout << "Get port configuration from ConfigDB..." << endl;
+
+    Table table(&cfgDb, CFG_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR);
+    std::vector<FieldValueTuple> ovalues;
+    std::vector<string> keys;
+    table.getKeys(keys);
+    for ( auto &k : keys )
+    {
+        table.get(k, ovalues);
+        vector<FieldValueTuple> attrs;
+        for ( auto &v : ovalues )
+        {
+            FieldValueTuple attr(v.first, v.second);
+            attrs.push_back(attr);
+        }
+        p.set(k, attrs);
+        g_portSet.insert(k);
+    }
+    notifyPortConfigDone(p);
 }
 
 void handlePortConfigFile(ProducerStateTable &p, string file)
@@ -225,11 +260,7 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
     }
 
     infile.close();
-
-    /* Notify that all ports added */
-    FieldValueTuple finish_notice("count", to_string(g_portSet.size()));
-    vector<FieldValueTuple> attrs = { finish_notice };
-    p.set("PortConfigDone", attrs);
+    notifyPortConfigDone(p);
 }
 
 void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map)
@@ -250,6 +281,19 @@ void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple>
             if (op == SET_COMMAND)
             {
                 p.set(key, values);
+                for (auto fv : values)
+                {
+                    string field = fvField(fv);
+                    string value = fvValue(fv);
+
+                    /* Update the mtu field on host interface */
+                    if (field == "mtu")
+                    {
+                        string cmd, res;
+                        cmd = "ip link set " + key + " mtu " + value;
+                        swss::exec(cmd, res);
+                     }
+                }
             }
 
             it = port_cfg_map.erase(it);

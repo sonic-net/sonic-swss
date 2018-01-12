@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <algorithm>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
@@ -46,17 +47,6 @@ int main(int argc, char **argv)
 
     try
     {
-        /*
-         * swss service starts after interfaces-config.service which will have
-         * switch_mac set.
-         * Dynamic switch_mac update is not supported for now.
-         */
-        string switch_mac_str;
-        stringstream cmd;
-        cmd << REDIS_CLI_CMD << " -n " << CONFIG_DB << " hget " << " \"SWITCH|SWITCH_ATTR\" " << " switch_mac";
-        EXEC_WITH_ERROR_THROW(cmd.str(), switch_mac_str);
-        gMacAddress = MacAddress(switch_mac_str);
-
         vector<string> cfg_vlan_tables = {
             CFG_VLAN_TABLE_NAME,
             CFG_VLAN_MEMBER_TABLE_NAME,
@@ -65,6 +55,20 @@ int main(int argc, char **argv)
         DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+
+        /*
+         * swss service starts after interfaces-config.service which will have
+         * switch_mac set.
+         * Dynamic switch_mac update is not supported for now.
+         */
+        Table table(&cfgDb, "DEVICE_METADATA", CONFIGDB_TABLE_NAME_SEPARATOR);
+        std::vector<FieldValueTuple> ovalues;
+        table.get("localhost", ovalues);
+        auto it = std::find_if( ovalues.begin(), ovalues.end(), [](const FieldValueTuple& t){ return t.first == "mac";} );
+        if ( it == ovalues.end() ) {
+            throw runtime_error("couldn't find MAC address of the device from config DB");
+        }
+        gMacAddress = MacAddress(it->second);
 
         VlanMgr vlanmgr(&cfgDb, &appDb, &stateDb, cfg_vlan_tables);
 
@@ -90,18 +94,12 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                ((Orch *)&vlanmgr)->doTask();
+                vlanmgr.doTask();
                 continue;
             }
 
-            for (Orch *o : cfgOrchList)
-            {
-                TableConsumable *c = (TableConsumable *)sel;
-                if (o->hasSelectable(c))
-                {
-                    o->execute(c->getTableName());
-                }
-            }
+            auto *c = (Executor *)sel;
+            c->execute();
         }
     }
     catch(const std::exception &e)

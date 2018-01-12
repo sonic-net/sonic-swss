@@ -75,18 +75,12 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-               ((Orch *)&intfmgr)->doTask();
+                intfmgr.doTask();
                 continue;
             }
 
-            for (Orch *o : cfgOrchList)
-            {
-                TableConsumable *c = (TableConsumable *)sel;
-                if (o->hasSelectable(c))
-                {
-                    o->execute(c->getTableName());
-                }
-            }
+            auto *c = (Executor *)sel;
+            c->execute();
         }
     }
     catch(const std::exception &e)

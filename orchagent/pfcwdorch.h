@@ -1,13 +1,15 @@
 #ifndef PFC_WATCHDOG_H
 #define PFC_WATCHDOG_H
 
-#include <mutex>
-#include <condition_variable>
 #include "orch.h"
 #include "port.h"
 #include "pfcactionhandler.h"
 #include "producerstatetable.h"
 #include "notificationconsumer.h"
+#include "timer.h"
+#include <array>
+
+#define PFC_WD_TC_MAX 8
 
 extern "C" {
 #include "sai.h"
@@ -21,6 +23,8 @@ enum class PfcWdAction
     PFC_WD_ACTION_ALERT,
 };
 
+typedef array<uint64_t, PFC_WD_TC_MAX> PfcFrameCounters;
+
 template <typename DropHandler, typename ForwardHandler>
 class PfcWdOrch: public Orch
 {
@@ -29,6 +33,7 @@ public:
     virtual ~PfcWdOrch(void);
 
     virtual void doTask(Consumer& consumer);
+    virtual void doTask(SelectableTimer &timer);
     virtual bool startWdOnPort(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action) = 0;
     virtual bool stopWdOnPort(const Port& port) = 0;
@@ -45,12 +50,16 @@ public:
 
     static PfcWdAction deserializeAction(const string& key);
     static string serializeAction(const PfcWdAction &action); 
+
 private:
-   void createEntry(const string& key, const vector<FieldValueTuple>& data);
+    void createEntry(const string& key, const vector<FieldValueTuple>& data);
     void deleteEntry(const string& name);
+    PfcFrameCounters getPfcFrameCounters(sai_object_id_t portId);
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<Table> m_countersTable = nullptr;
+
+    map<sai_object_id_t, PfcFrameCounters> m_pfcFrameCountersMap;
 };
 
 template <typename DropHandler, typename ForwardHandler>
@@ -90,13 +99,9 @@ private:
     void registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     void unregisterFromWdDb(const Port& port);
-    void handleWdNotification(swss::NotificationConsumer &wdNotification);
-    void pfcWatchdogThread(void);
-    void startWatchdogThread(void);
-    void endWatchdogThread(void);
+    void doTask(swss::NotificationConsumer &wdNotification);
 
     map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
-    mutex m_pfcWdMutex;
 
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
