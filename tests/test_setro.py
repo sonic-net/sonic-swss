@@ -16,8 +16,6 @@ def test_SetReadOnlyAttribute(dvs):
 
     swVid = keys[0]
  
-    rc = swsscommon.RedisClient(db)
- 
     r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB)
 
     swRid = r.hget("VIDTORID", swVid)
