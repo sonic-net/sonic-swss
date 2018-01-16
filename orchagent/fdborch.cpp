@@ -37,7 +37,7 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         
         for (auto observer: m_observers)
         {
-            observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
+            observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
         }
         
         break;
@@ -51,15 +51,15 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         
         for (auto observer: m_observers)
         {
-            observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
+            observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
         }
       
         break;
         
     case SAI_FDB_EVENT_FLUSHED:
-        if( !bridge_port_id && !(entry->vlan_id))
+        if( !bridge_port_id && !entry->vlan_id)
         {
-            for(set<FdbEntry>::iterator itr = m_entries.begin(); itr != m_entries.end(); ++itr )
+            for(auto itr = m_entries.begin(); itr != m_entries.end(); ++itr )
             {
                 /*This is a flush all case, need to clear up all the fdb entries*/
                 update.entry.mac = itr->mac;
@@ -72,23 +72,23 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
                 
                 for (auto observer: m_observers)
                 {
-                    observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
+                    observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
                 }
             }
         }
-        else if(bridge_port_id && !(entry->vlan_id))
+        else if(bridge_port_id && !entry->vlan_id)
         {
             /*this is a placeholder for flush port fdb case, not supported yet.*/
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush type");
+            SWSS_LOG_ERROR("FdbOrch notification: not supported flush port fdb action, port_id = %lu, vlan_id = %d.", bridge_port_id, entry->vlan_id);
         }
-        else if(!bridge_port_id && (entry->vlan_id))
+        else if(!bridge_port_id && entry->vlan_id)
         {
             /*this is a placeholder for flush vlan fdb case, not supported yet.*/
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush type");
+            SWSS_LOG_ERROR("FdbOrch notification: not supported flush vlan fdb action, port_id = %lu, vlan_id = %d.", bridge_port_id, entry->vlan_id);
         }
         else
         {
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush type");
+            SWSS_LOG_ERROR("FdbOrch notification: not supported flush fdb action, port_id = %lu, vlan_id = %d.", bridge_port_id, entry->vlan_id);
         }
         break;
     }
