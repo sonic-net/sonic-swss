@@ -62,8 +62,10 @@ def case(asic_db, conf_db, vrf_name, attributes, expected_attributes):
     # check that the vrf wasn't exist before
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 1, "The initial state is incorrect"
 
+    # read existing entries in the DB
     initial_entries = entries(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
 
+    # create a fake attribute if we don't have attributes in the request
     if len(attributes) == 0:
         attributes = [('empty', 'empty')]
 
@@ -77,8 +79,10 @@ def case(asic_db, conf_db, vrf_name, attributes, expected_attributes):
     # check that the vrf entry was created
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 2, "The vrf wasn't created"
 
-    added_entry_id = (list(entries(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") - initial_entries))[0]
+    # find the id of the entry which was added
+    added_entry_id = list(entries(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") - initial_entries)[0]
 
+    # check correctness of the created attributes
     is_vrf_attributes_correct(
         asic_db,
         "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER",
@@ -95,7 +99,7 @@ def case(asic_db, conf_db, vrf_name, attributes, expected_attributes):
     # check that the vrf entry was removed
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 1, "The vrf wasn't removed"
 
-    # check that the correct vrv entry was removed
+    # check that the correct vrf entry was removed
     assert initial_entries == entries(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"), "The incorrect entry was removed"
 
 
@@ -107,8 +111,7 @@ def boolean_gen():
 def mac_addr_gen():
     ns = [random.randint(0, 255) for _ in xrange(6)]
     ns[0] &= 0xfe
-    hex_ns = [ "%02x" % n for n in ns]
-    mac = ':'.join(hex_ns)
+    mac = ':'.join("%02x" % n for n in ns)
     return mac, mac.upper()
 
 
