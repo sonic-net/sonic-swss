@@ -3,11 +3,11 @@
 
 typedef enum _request_types_t
 {
+    REQ_T_NOT_USED,
     REQ_T_BOOL,
     REQ_T_STRING,
     REQ_T_MAC_ADDRESS,
     REQ_T_PACKET_ACTION,
-    REQ_T_NOT_USED,
 } request_types_t;
 
 typedef struct _request_description

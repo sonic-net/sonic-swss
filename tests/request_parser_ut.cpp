@@ -76,20 +76,31 @@ TEST(request_parser, simpleKey)
                                  }
                              };
 
-    TestRequest1 request;
+    try
+    {
+        TestRequest1 request;
 
-    EXPECT_NO_THROW(request.parse(t));
+        EXPECT_NO_THROW(request.parse(t));
 
-    EXPECT_STREQ(request.getOperation().c_str(), "SET");
-    EXPECT_STREQ(request.getFullKey().c_str(), "key1");
-    EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action"}));
-    EXPECT_TRUE(request.getAttrBool("v4"));
-    EXPECT_TRUE(request.getAttrBool("v6"));
-    EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
-    EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY);
-    EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_DROP);
-    EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+        EXPECT_STREQ(request.getOperation().c_str(), "SET");
+        EXPECT_STREQ(request.getFullKey().c_str(), "key1");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action"}));
+        EXPECT_TRUE(request.getAttrBool("v4"));
+        EXPECT_TRUE(request.getAttrBool("v6"));
+        EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
+        EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY);
+        EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_DROP);
+        EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
 }
 
 TEST(request_parser, simpleKeyEmptyAttrs)
@@ -100,14 +111,25 @@ TEST(request_parser, simpleKeyEmptyAttrs)
                                  }
                              };
 
-    TestRequest1 request;
+    try
+    {
+        TestRequest1 request;
 
-    EXPECT_NO_THROW(request.parse(t));
+        EXPECT_NO_THROW(request.parse(t));
 
-    EXPECT_STREQ(request.getOperation().c_str(), "SET");
-    EXPECT_STREQ(request.getFullKey().c_str(), "key1");
-    EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-    EXPECT_EQ(request.getAttrFieldNames(), std::unordered_set<std::string>());
+        EXPECT_STREQ(request.getOperation().c_str(), "SET");
+        EXPECT_STREQ(request.getFullKey().c_str(), "key1");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+        EXPECT_EQ(request.getAttrFieldNames(), std::unordered_set<std::string>());
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
 }
 
 TEST(request_parser, complexKey)
@@ -124,23 +146,34 @@ TEST(request_parser, complexKey)
                                  }
                              };
 
-    TestRequest2 request;
+    try
+    {
+        TestRequest2 request;
 
-    EXPECT_NO_THROW(request.parse(t));
+        EXPECT_NO_THROW(request.parse(t));
 
-    EXPECT_STREQ(request.getOperation().c_str(), "SET");
-    EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
-    EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-    EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "02:03:04:05:06:07");
-    EXPECT_STREQ(request.getKeyString(2).c_str(), "key2");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
-    EXPECT_FALSE(request.getAttrBool("v4"));
-    EXPECT_FALSE(request.getAttrBool("v6"));
-    EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
-    EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY);
-    EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_DROP);
-    EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
-    EXPECT_STREQ(request.getAttrString("just_string").c_str(), "test_string");
+        EXPECT_STREQ(request.getOperation().c_str(), "SET");
+        EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+        EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "02:03:04:05:06:07");
+        EXPECT_STREQ(request.getKeyString(2).c_str(), "key2");
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
+        EXPECT_FALSE(request.getAttrBool("v4"));
+        EXPECT_FALSE(request.getAttrBool("v6"));
+        EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
+        EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY);
+        EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_DROP);
+        EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+        EXPECT_STREQ(request.getAttrString("just_string").c_str(), "test_string");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
 }
 
 TEST(request_parser, deleteOperation1)
@@ -150,14 +183,25 @@ TEST(request_parser, deleteOperation1)
                                  }
                              };
 
-    TestRequest1 request;
+    try
+    {
+        TestRequest1 request;
 
-    EXPECT_NO_THROW(request.parse(t));
+        EXPECT_NO_THROW(request.parse(t));
 
-    EXPECT_STREQ(request.getOperation().c_str(), "DEL");
-    EXPECT_STREQ(request.getFullKey().c_str(), "key1");
-    EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{ }));
+        EXPECT_STREQ(request.getOperation().c_str(), "DEL");
+        EXPECT_STREQ(request.getFullKey().c_str(), "key1");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{ }));
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
 }
 
 TEST(request_parser, deleteOperation2)
@@ -167,16 +211,27 @@ TEST(request_parser, deleteOperation2)
                                  }
                              };
 
-    TestRequest2 request;
+    try
+    {
+        TestRequest2 request;
 
-    EXPECT_NO_THROW(request.parse(t));
+        EXPECT_NO_THROW(request.parse(t));
 
-    EXPECT_STREQ(request.getOperation().c_str(), "DEL");
-    EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
-    EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-    EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "02:03:04:05:06:07");
-    EXPECT_STREQ(request.getKeyString(2).c_str(), "key2");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{ }));
+        EXPECT_STREQ(request.getOperation().c_str(), "DEL");
+        EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+        EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "02:03:04:05:06:07");
+        EXPECT_STREQ(request.getKeyString(2).c_str(), "key2");
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{ }));
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
 }
 
 TEST(request_parser, deleteOperationWithAttr)
@@ -187,10 +242,9 @@ TEST(request_parser, deleteOperationWithAttr)
                                  }
                              };
 
-    TestRequest1 request;
-
     try
     {
+        TestRequest1 request;
         request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
@@ -216,10 +270,9 @@ TEST(request_parser, wrongOperation)
                                  }
                              };
 
-    TestRequest1 request;
-
     try
     {
+        TestRequest1 request;
         request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
@@ -245,10 +298,9 @@ TEST(request_parser, wrongkey1)
                                  }
                              };
 
-    TestRequest1 request;
-
     try
     {
+        TestRequest1 request;
         request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
@@ -274,10 +326,9 @@ TEST(request_parser, wrongkey2)
                                  }
                              };
 
-    TestRequest2 request;
-
     try
     {
+        TestRequest2 request;
         request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
@@ -303,10 +354,9 @@ TEST(request_parser, wrongkeyType1)
                                  }
                              };
 
-    TestRequest2 request;
-
     try
     {
+        TestRequest2 request;
         request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
@@ -332,10 +382,9 @@ TEST(request_parser, wrongAttributeNotFound)
                                  }
                              };
 
-    TestRequest1 request;
-
     try
     {
+        TestRequest1 request;
         request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
@@ -361,10 +410,9 @@ TEST(request_parser, wrongRequiredAttribute)
                                  }
                              };
 
-    TestRequest2 request;
-
     try
     {
+        TestRequest2 request;
         request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
@@ -390,10 +438,9 @@ TEST(request_parser, wrongAttrTypeBoolean)
                                  }
                              };
 
-    TestRequest1 request;
-
     try
     {
+        TestRequest1 request;
         request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
@@ -419,10 +466,9 @@ TEST(request_parser, wrongAttrTypeMac)
                                  }
                              };
 
-    TestRequest1 request;
-
     try
     {
+        TestRequest1 request;
         request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
@@ -448,10 +494,9 @@ TEST(request_parser, wrongAttrTypePacketAction)
                                  }
                              };
 
-    TestRequest1 request;
-
     try
     {
+        TestRequest1 request;
         request.parse(t);
         FAIL() << "Expected std::invalid_argument";
     }
@@ -478,14 +523,24 @@ TEST(request_parser, correctAttrTypePacketAction1)
                                      { "l3_mc_action", "copy" },
                                  }
                              };
+    try
+    {
+        TestRequest1 request;
 
-    TestRequest1 request;
+        EXPECT_NO_THROW(request.parse(t));
 
-    EXPECT_NO_THROW(request.parse(t));
-
-    EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_DROP);
-    EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_FORWARD);
-    EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_COPY);
+        EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_DROP);
+        EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_FORWARD);
+        EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_COPY);
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
 }
 
 TEST(request_parser, correctAttrTypePacketAction2)
@@ -498,13 +553,24 @@ TEST(request_parser, correctAttrTypePacketAction2)
                                  }
                              };
 
-    TestRequest1 request;
+    try
+    {
+        TestRequest1 request;
 
-    EXPECT_NO_THROW(request.parse(t));
+        EXPECT_NO_THROW(request.parse(t));
 
-    EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY_CANCEL);
-    EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_TRAP);
-    EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+        EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY_CANCEL);
+        EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_TRAP);
+        EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
 }
 
 TEST(request_parser, correctAttrTypePacketAction3)
@@ -517,13 +583,24 @@ TEST(request_parser, correctAttrTypePacketAction3)
                                  }
                              };
 
-    TestRequest1 request;
+    try
+    {
+        TestRequest1 request;
 
-    EXPECT_NO_THROW(request.parse(t));
+        EXPECT_NO_THROW(request.parse(t));
 
-    EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_DENY);
-    EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_TRANSIT);
-    EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+        EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_DENY);
+        EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_TRANSIT);
+        EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
 }
 
 TEST(request_parser, correctParseAndClear)
@@ -535,14 +612,24 @@ TEST(request_parser, correctParseAndClear)
                                      { "l3_mc_action", "log" },
                                  }
                              };
+    try
+    {
+        TestRequest1 request;
 
-    TestRequest1 request;
+        EXPECT_NO_THROW(request.parse(t));
 
-    EXPECT_NO_THROW(request.parse(t));
+        EXPECT_NO_THROW(request.clear());
 
-    EXPECT_NO_THROW(request.clear());
-
-    EXPECT_NO_THROW(request.parse(t));
+        EXPECT_NO_THROW(request.parse(t));
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
 }
 
 TEST(request_parser, incorrectParseAndClear)
@@ -555,12 +642,12 @@ TEST(request_parser, incorrectParseAndClear)
                                  }
                              };
 
-    TestRequest1 request;
-
-    EXPECT_NO_THROW(request.parse(t));
-
     try
     {
+         TestRequest1 request;
+
+        EXPECT_NO_THROW(request.parse(t));
+
         request.parse(t);
         FAIL() << "Expected std::logic_error";
     }
@@ -592,26 +679,6 @@ TEST(request_parser, correctClear)
                                  }
                               };
 
-    TestRequest2 request;
-
-    EXPECT_NO_THROW(request.parse(t1));
-
-    EXPECT_STREQ(request.getOperation().c_str(), "SET");
-    EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
-    EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-    EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "02:03:04:05:06:07");
-    EXPECT_STREQ(request.getKeyString(2).c_str(), "key2");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
-    EXPECT_FALSE(request.getAttrBool("v4"));
-    EXPECT_FALSE(request.getAttrBool("v6"));
-    EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
-    EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY);
-    EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_DROP);
-    EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
-    EXPECT_STREQ(request.getAttrString("just_string").c_str(), "test_string");
-
-    EXPECT_NO_THROW(request.clear());
-
     KeyOpFieldsValuesTuple t2 {"key3|f2:f3:f4:f5:f6:f7|key4", "SET",
                                  {
                                      { "v4", "true" },
@@ -623,36 +690,73 @@ TEST(request_parser, correctClear)
                                  }
                               };
 
-    EXPECT_NO_THROW(request.parse(t2));
-
-    EXPECT_STREQ(request.getOperation().c_str(), "SET");
-    EXPECT_STREQ(request.getFullKey().c_str(), "key3|f2:f3:f4:f5:f6:f7|key4");
-    EXPECT_STREQ(request.getKeyString(0).c_str(), "key3");
-    EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "f2:f3:f4:f5:f6:f7");
-    EXPECT_STREQ(request.getKeyString(2).c_str(), "key4");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
-    EXPECT_TRUE(request.getAttrBool("v4"));
-    EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "f2:f3:f4:f5:f6:f7");
-    EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_LOG);
-    EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_COPY);
-    EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
-    EXPECT_STREQ(request.getAttrString("just_string").c_str(), "string");
-
-    EXPECT_NO_THROW(request.clear());
-
     KeyOpFieldsValuesTuple t3 {"key5|52:53:54:55:56:57|key6", "DEL",
                                  {
                                  }
                              };
 
-    EXPECT_NO_THROW(request.parse(t3));
+    try
+    {
+        TestRequest2 request;
 
-    EXPECT_STREQ(request.getOperation().c_str(), "DEL");
-    EXPECT_STREQ(request.getFullKey().c_str(), "key5|52:53:54:55:56:57|key6");
-    EXPECT_STREQ(request.getKeyString(0).c_str(), "key5");
-    EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "52:53:54:55:56:57");
-    EXPECT_STREQ(request.getKeyString(2).c_str(), "key6");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{ }));
+        // parse t1
+
+        EXPECT_NO_THROW(request.parse(t1));
+
+        EXPECT_STREQ(request.getOperation().c_str(), "SET");
+        EXPECT_STREQ(request.getFullKey().c_str(), "key1|02:03:04:05:06:07|key2");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+        EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "02:03:04:05:06:07");
+        EXPECT_STREQ(request.getKeyString(2).c_str(), "key2");
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
+        EXPECT_FALSE(request.getAttrBool("v4"));
+        EXPECT_FALSE(request.getAttrBool("v6"));
+        EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
+        EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY);
+        EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_DROP);
+        EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+        EXPECT_STREQ(request.getAttrString("just_string").c_str(), "test_string");
+
+        EXPECT_NO_THROW(request.clear());
+
+        // parse t2
+
+        EXPECT_NO_THROW(request.parse(t2));
+
+        EXPECT_STREQ(request.getOperation().c_str(), "SET");
+        EXPECT_STREQ(request.getFullKey().c_str(), "key3|f2:f3:f4:f5:f6:f7|key4");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "key3");
+        EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "f2:f3:f4:f5:f6:f7");
+        EXPECT_STREQ(request.getKeyString(2).c_str(), "key4");
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "just_string"}));
+        EXPECT_TRUE(request.getAttrBool("v4"));
+        EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "f2:f3:f4:f5:f6:f7");
+        EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_LOG);
+        EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_COPY);
+        EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+        EXPECT_STREQ(request.getAttrString("just_string").c_str(), "string");
+
+        EXPECT_NO_THROW(request.clear());
+
+        // parse t3
+
+        EXPECT_NO_THROW(request.parse(t3));
+
+        EXPECT_STREQ(request.getOperation().c_str(), "DEL");
+        EXPECT_STREQ(request.getFullKey().c_str(), "key5|52:53:54:55:56:57|key6");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "key5");
+        EXPECT_STREQ(request.getKeyMacAddress(1).to_string().c_str(), "52:53:54:55:56:57");
+        EXPECT_STREQ(request.getKeyString(2).c_str(), "key6");
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{ }));
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
 }
 
 TEST(request_parser, anotherKeySeparator)
@@ -664,17 +768,28 @@ TEST(request_parser, anotherKeySeparator)
                                  }
                              };
 
-    TestRequest3 request;
+    try
+    {
+        TestRequest3 request;
 
-    EXPECT_NO_THROW(request.parse(t));
+        EXPECT_NO_THROW(request.parse(t));
 
-    EXPECT_STREQ(request.getOperation().c_str(), "SET");
-    EXPECT_STREQ(request.getFullKey().c_str(), "key1:key2");
-    EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-    EXPECT_STREQ(request.getKeyString(1).c_str(), "key2");
-    EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6"}));
-    EXPECT_FALSE(request.getAttrBool("v4"));
-    EXPECT_FALSE(request.getAttrBool("v6"));
+        EXPECT_STREQ(request.getOperation().c_str(), "SET");
+        EXPECT_STREQ(request.getFullKey().c_str(), "key1:key2");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+        EXPECT_STREQ(request.getKeyString(1).c_str(), "key2");
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6"}));
+        EXPECT_FALSE(request.getAttrBool("v4"));
+        EXPECT_FALSE(request.getAttrBool("v6"));
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
 }
 
 const request_description_t request_description4 = {
@@ -700,11 +815,9 @@ TEST(request_parser, notDefinedAttrType)
                                      { "v5", "abcde" },
                                  }
                              };
-
-    TestRequest4 request;
-
     try
     {
+        TestRequest4 request;
         request.parse(t);
         FAIL() << "Expected std::logic_error";
     }
@@ -744,10 +857,9 @@ TEST(request_parser, notDefinedKeyType)
                                  }
                              };
 
-    TestRequest5 request;
-
     try
     {
+        TestRequest5 request;
         request.parse(t);
         FAIL() << "Expected std::logic_error";
     }
@@ -764,5 +876,3 @@ TEST(request_parser, notDefinedKeyType)
         FAIL() << "Expected std::logic_error, not other exception";
     }
 }
-
-// FIXME: expect_no_throw for constructors
