@@ -5,6 +5,26 @@
 
 typedef std::unordered_map<std::string, sai_object_id_t> VRFTable;
 
+// FIXME: better to put it in orch.h
+class Orch2 : public Orch
+{
+public:
+    Orch2(DBConnector *db, const std::string& tableName, Request& request)
+        : Orch(db, tableName), request_(request)
+    {
+    }
+
+protected:
+    virtual void doTask(Consumer& consumer);
+
+    virtual bool addOperation(const Request& request)=0;
+    virtual bool delOperation(const Request& request)=0;
+
+private:
+    Request& request_;
+};
+
+
 const request_description_t request_description = {
     { REQ_T_STRING },
     {
@@ -24,11 +44,13 @@ public:
     VRFRequest() : Request(request_description, '|') { }
 };
 
-class VRFOrch : public Orch
+
+class VRFOrch : public Orch2
 {
 public:
-    VRFOrch(DBConnector *db, const std::string& tableName);
-    virtual void doTask(Consumer& consumer);
+    VRFOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_)
+    {
+    }
 
     bool isVRFexists(const std::string& name) const
     {
@@ -40,10 +62,11 @@ public:
         return vrf_table_.at(name);
     }
 private:
-    bool addOperation(const VRFRequest& request);
-    bool delOperation(const VRFRequest& request);
+    virtual bool addOperation(const Request& request);
+    virtual bool delOperation(const Request& request);
 
     VRFTable vrf_table_;
+    VRFRequest request_;
 };
 
 #endif // __VRFORCH_H

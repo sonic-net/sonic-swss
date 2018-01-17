@@ -14,17 +14,9 @@
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
 
-VRFOrch::VRFOrch(DBConnector *db, const std::string& tableName) : Orch(db, tableName)
-{
-}
-
-// FIXME:: better to make it part of orch.h
-//         and implement only addOperation and deleteOperation
-void VRFOrch::doTask(Consumer &consumer)
+void Orch2::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-
-    VRFRequest request;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -32,16 +24,16 @@ void VRFOrch::doTask(Consumer &consumer)
         bool erase_from_queue = true;
         try
         {
-            request.parse(it->second);
+            request_.parse(it->second);
 
-            auto op = request.getOperation();
+            auto op = request_.getOperation();
             if (op == SET_COMMAND)
             {
-                erase_from_queue = addOperation(request);
+                erase_from_queue = addOperation(request_);
             }
             else if (op == DEL_COMMAND)
             {
-                erase_from_queue = delOperation(request);
+                erase_from_queue = delOperation(request_);
             }
             else
             {
@@ -64,7 +56,7 @@ void VRFOrch::doTask(Consumer &consumer)
         {
             SWSS_LOG_ERROR("Unknown exception was catched in the request parser");
         }
-        request.clear();
+        request_.clear();
 
         if (erase_from_queue)
         {
@@ -78,7 +70,7 @@ void VRFOrch::doTask(Consumer &consumer)
 }
 
 
-bool VRFOrch::addOperation(const VRFRequest& request)
+bool VRFOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
@@ -167,7 +159,7 @@ bool VRFOrch::addOperation(const VRFRequest& request)
     return true;
 }
 
-bool VRFOrch::delOperation(const VRFRequest& request)
+bool VRFOrch::delOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
