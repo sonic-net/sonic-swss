@@ -88,7 +88,10 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
                 key_item_mac_addresses_[i] = parseMacAddress(key_items[i]);
                 break;
             default:
-                throw std::logic_error(std::string("Not implemented key type parser. Key") + key_items[i]);
+                throw std::logic_error(std::string("Not implemented key type parser. Key '")
+                                     + full_key_
+                                     + std::string("'. Key item:")
+                                     + key_items[i]);
         }
     }
 }
@@ -103,7 +106,7 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
         if (fvField(*i) == "empty")
         {
             // if name of the attribute is 'empty', just skip it.
-            // it's using when we don't have any attributes, but we have to provide one for redis
+            // it's used when we don't have any attributes, but we have to provide one for redis
             continue;
         }
         const auto item = request_description_.attr_item_types.find(fvField(*i));

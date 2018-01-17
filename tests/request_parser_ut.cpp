@@ -92,6 +92,24 @@ TEST(request_parser, simpleKey)
     EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
 }
 
+TEST(request_parser, simpleKeyEmptyAttrs)
+{
+    KeyOpFieldsValuesTuple t {"key1", "SET",
+                                 {
+                                     {"empty", "empty"},
+                                 }
+                             };
+
+    TestRequest1 request;
+
+    EXPECT_NO_THROW(request.parse(t));
+
+    EXPECT_STREQ(request.getOperation().c_str(), "SET");
+    EXPECT_STREQ(request.getFullKey().c_str(), "key1");
+    EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+    EXPECT_EQ(request.getAttrFieldNames(), std::unordered_set<std::string>());
+}
+
 TEST(request_parser, complexKey)
 {
     KeyOpFieldsValuesTuple t {"key1|02:03:04:05:06:07|key2", "SET",
@@ -658,6 +676,93 @@ TEST(request_parser, anotherKeySeparator)
     EXPECT_FALSE(request.getAttrBool("v4"));
     EXPECT_FALSE(request.getAttrBool("v6"));
 }
-// FIXME: add a test to test an unsupported key type and attr type REQ_T_NOT_USED
+
+const request_description_t request_description4 = {
+    { REQ_T_STRING, },
+    {
+        { "v4",            REQ_T_BOOL },
+        { "v5",            REQ_T_NOT_USED },
+    },
+    { } // no mandatory attributes
+};
+
+class TestRequest4 : public Request
+{
+public:
+    TestRequest4() : Request(request_description4, '|') { }
+};
+
+TEST(request_parser, notDefinedAttrType)
+{
+    KeyOpFieldsValuesTuple t {"key1", "SET",
+                                 {
+                                     { "v4", "false" },
+                                     { "v5", "abcde" },
+                                 }
+                             };
+
+    TestRequest4 request;
+
+    try
+    {
+        request.parse(t);
+        FAIL() << "Expected std::logic_error";
+    }
+    catch (const std::logic_error& e)
+    {
+        EXPECT_STREQ(e.what(), "Not implemented attribute type parser for attribute:v5");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::logic_error, not other exception";
+    }
+}
+
+const request_description_t request_description5 = {
+    { REQ_T_STRING, REQ_T_NOT_USED},
+    {
+        { "v4",            REQ_T_BOOL },
+    },
+    { } // no mandatory attributes
+};
+
+class TestRequest5 : public Request
+{
+public:
+    TestRequest5() : Request(request_description5, '|') { }
+};
+
+TEST(request_parser, notDefinedKeyType)
+{
+    KeyOpFieldsValuesTuple t {"key1|abcde", "SET",
+                                 {
+                                     { "v4", "false" },
+                                 }
+                             };
+
+    TestRequest5 request;
+
+    try
+    {
+        request.parse(t);
+        FAIL() << "Expected std::logic_error";
+    }
+    catch (const std::logic_error& e)
+    {
+        EXPECT_STREQ(e.what(), "Not implemented key type parser. Key 'key1|abcde'. Key item:abcde");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::logic_error, not other exception";
+    }
+}
+
 // FIXME: expect_no_throw for constructors
-// FIXME: Add a test to test 'empry' attribute
