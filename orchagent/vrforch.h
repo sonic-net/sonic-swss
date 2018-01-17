@@ -5,26 +5,6 @@
 
 typedef std::unordered_map<std::string, sai_object_id_t> VRFTable;
 
-// FIXME: better to put it in orch.h
-class Orch2 : public Orch
-{
-public:
-    Orch2(DBConnector *db, const std::string& tableName, Request& request)
-        : Orch(db, tableName), request_(request)
-    {
-    }
-
-protected:
-    virtual void doTask(Consumer& consumer);
-
-    virtual bool addOperation(const Request& request)=0;
-    virtual bool delOperation(const Request& request)=0;
-
-private:
-    Request& request_;
-};
-
-
 const request_description_t request_description = {
     { REQ_T_STRING },
     {

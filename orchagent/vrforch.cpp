@@ -14,62 +14,6 @@
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
 
-void Orch2::doTask(Consumer &consumer)
-{
-    SWSS_LOG_ENTER();
-
-    auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
-    {
-        bool erase_from_queue = true;
-        try
-        {
-            request_.parse(it->second);
-
-            auto op = request_.getOperation();
-            if (op == SET_COMMAND)
-            {
-                erase_from_queue = addOperation(request_);
-            }
-            else if (op == DEL_COMMAND)
-            {
-                erase_from_queue = delOperation(request_);
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Wrong operation. Check RequestParser: %s", op.c_str());
-            }
-        }
-        catch (const std::invalid_argument& e)
-        {
-            SWSS_LOG_ERROR("Parse error: %s", e.what());
-        }
-        catch (const std::logic_error& e)
-        {
-            SWSS_LOG_ERROR("Logic error: %s", e.what());
-        }
-        catch (const std::exception& e)
-        {
-            SWSS_LOG_ERROR("Exception was catched in the request parser: %s", e.what());
-        }
-        catch (...)
-        {
-            SWSS_LOG_ERROR("Unknown exception was catched in the request parser");
-        }
-        request_.clear();
-
-        if (erase_from_queue)
-        {
-            it = consumer.m_toSync.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
-    }
-}
-
-
 bool VRFOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
