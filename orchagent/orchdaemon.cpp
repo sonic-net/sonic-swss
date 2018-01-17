@@ -4,8 +4,6 @@
 #include "logger.h"
 #include <sairedis.h>
 
-#define CFG_VRF_TABLE_NAME "VRF" // FIXME: remove me
-
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 

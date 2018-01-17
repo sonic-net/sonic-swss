@@ -48,8 +48,8 @@ def is_vrf_attributes_correct(db, table, key, expected_attributes):
     status, fvs = tbl.get(key)
     assert status, "Got an error when get a key"
 
-    # filter our fake 'NULL' attribute
-    fvs = [entry for entry in fvs if entry[0] != 'NULL']
+    # filter the fake 'NULL' attribute out
+    fvs = filter(lambda x : x != ('NULL', 'NULL'), fvs)
 
     attr_keys = {entry[0] for entry in fvs}
     assert attr_keys == set(expected_attributes.keys())
