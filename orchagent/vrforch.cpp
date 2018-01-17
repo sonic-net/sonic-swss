@@ -85,13 +85,6 @@ bool VRFOrch::addOperation(const VRFRequest& request)
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
-    const std::string& vrf_name = request.getKeyString(0);
-    if (vrf_table_.find(vrf_name) != std::end(vrf_table_))
-    {
-        SWSS_LOG_ERROR("VRF '%s' already exists", vrf_name.c_str());
-        return true;
-    }
-
     for (const auto& name: request.getAttrFieldNames())
     {
         if (name == "v4")
@@ -133,18 +126,43 @@ bool VRFOrch::addOperation(const VRFRequest& request)
         attrs.push_back(attr);
     }
 
-    sai_object_id_t router_id;
-    sai_status_t status = sai_virtual_router_api->create_virtual_router(&router_id,
-                                                                        gSwitchId,
-                                                                        static_cast<uint32_t>(attrs.size()),
-                                                                        attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
+    const std::string& vrf_name = request.getKeyString(0);
+    auto it = vrf_table_.find(vrf_name);
+    if (it == std::end(vrf_table_))
     {
-        SWSS_LOG_ERROR("Failed to create virtual router name: %s, rv:%d", vrf_name.c_str(), status);
-        return false;
-    }
+        // Create a new vrf
+        sai_object_id_t router_id;
+        sai_status_t status = sai_virtual_router_api->create_virtual_router(&router_id,
+                                                                            gSwitchId,
+                                                                            static_cast<uint32_t>(attrs.size()),
+                                                                            attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create virtual router name: %s, rv: %d", vrf_name.c_str(), status);
+            return false;
+        }
 
-    vrf_table_[vrf_name] = router_id;
+        vrf_table_[vrf_name] = router_id;
+        SWSS_LOG_NOTICE("VRF '%s' was added", vrf_name.c_str());
+    }
+    else
+    {
+        // Update an existing vrf
+
+        sai_object_id_t router_id = it->second;
+
+        for (const auto& attr: attrs)
+        {
+            sai_status_t status = sai_virtual_router_api->set_virtual_router_attribute(router_id, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to update virtual router attribute. vrf name: %s, rv: %d", vrf_name.c_str(), status);
+                return false;
+            }
+        }
+
+        SWSS_LOG_NOTICE("VRF '%s' was updated", vrf_name.c_str());
+    }
 
     return true;
 }
@@ -169,6 +187,8 @@ bool VRFOrch::delOperation(const VRFRequest& request)
     }
 
     vrf_table_.erase(vrf_name);
+
+    SWSS_LOG_NOTICE("VRF '%s' was removed", vrf_name.c_str());
 
     return true;
 }

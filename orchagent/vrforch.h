@@ -1,15 +1,7 @@
 #ifndef __VRFORCH_H
 #define __VRFORCH_H
 
-
-#define CFG_VRF_TABLE_NAME "VRF" // FIXME: remove me
 #include "request_parser.h"
-
-struct VRFEntry
-{
-    sai_object_id_t id;
-    std::string name;
-};
 
 typedef std::unordered_map<std::string, sai_object_id_t> VRFTable;
 
