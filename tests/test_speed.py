@@ -64,6 +64,3 @@ class TestSpeedSet(object):
                 for fv in fvs:
                     if fv[0] == "profile":
                         assert fv[1] == "[BUFFER_PROFILE|%s]" % expected_new_profile_name
-
-
-
