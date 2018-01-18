@@ -1,0 +1,194 @@
+[
+    {
+        "PORT_TABLE:Ethernet0": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet4": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet8": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet12": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet16": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet20": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet24": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet28": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet32": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet36": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet40": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet44": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet48": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet52": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet56": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet60": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet64": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet68": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet72": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet76": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet80": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet84": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet88": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet92": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet96": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet100": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet104": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet108": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet112": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet116": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet120": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    },
+    {
+        "PORT_TABLE:Ethernet124": {
+            "speed": "40000"
+        },
+        "OP": "SET"
+    }
+]
