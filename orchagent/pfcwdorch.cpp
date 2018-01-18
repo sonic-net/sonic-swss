@@ -7,6 +7,7 @@
 #include "redisapi.h"
 #include "select.h"
 #include "notifier.h"
+#include "redisclient.h"
 
 #define PFC_WD_ACTION                   "action"
 #define PFC_WD_DETECTION_TIME           "detection_time"
@@ -439,6 +440,9 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
 {
     SWSS_LOG_ENTER();
 
+    string key = sai_serialize_object_id(port.m_port_id) + ":" + std::to_string(m_pollInterval);
+    m_pfcWdTable->del(key);
+
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
         sai_object_id_t queueId = port.m_queue_ids[i];
@@ -447,6 +451,14 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
         // Unregister in syncd
         m_pfcWdTable->del(key);
         m_entryMap.erase(queueId);
+
+        // Clean up
+        RedisClient redisClient(PfcWdOrch<DropHandler, ForwardHandler>::getCountersDb().get());
+        string countersKey = COUNTERS_TABLE ":" + sai_serialize_object_id(queueId);
+        redisClient.hdel(countersKey, "PFC_WD_DETECTION_TIME");
+        redisClient.hdel(countersKey, "PFC_WD_RESTORATION_TIME");
+        redisClient.hdel(countersKey, "PFC_WD_ACTION");
+        redisClient.hdel(countersKey, "PFC_WD_STATUS");
     }
 }
 
