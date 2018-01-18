@@ -187,6 +187,7 @@ void BufferMgr::doTask(Consumer &consumer)
                     // receive and cache cable length table
                     doCableTask(fvField(i), fvValue(i));
                 }
+                // In case of PORT table update, Buffer Manager is interested in speed update only
                 if (table_name == CFG_PORT_TABLE_NAME && fvField(i) == "speed")
                 {
                     // create/update profile for port
