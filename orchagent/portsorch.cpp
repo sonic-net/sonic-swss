@@ -714,7 +714,9 @@ bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
         }
         // TODO: change to macro SAI_STATUS_IS_ATTR_NOT_SUPPORTED once it is fixed in SAI
         // https://github.com/opencomputeproject/SAI/pull/710
-        else if (((status) & (~0xFFFF)) == SAI_STATUS_ATTR_NOT_SUPPORTED_0)
+        else if ((((status) & (~0xFFFF)) == SAI_STATUS_ATTR_NOT_SUPPORTED_0) ||
+                 (((status) & (~0xFFFF)) == SAI_STATUS_ATTR_NOT_IMPLEMENTED_0) ||
+                 (status == SAI_STATUS_NOT_IMPLEMENTED))
         {
             // unable to validate speed if attribute is not supported on platform
             // assuming input value is correct
