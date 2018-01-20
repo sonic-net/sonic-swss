@@ -39,7 +39,7 @@ static map<string, sai_port_fec_mode_t> fec_mode_map =
     { "fc", SAI_PORT_FEC_MODE_FC }
 };
 
-static const vector<sai_port_stat_t> portStatIds =
+const vector<sai_port_stat_t> portStatIds =
 {
     SAI_PORT_STAT_IF_IN_OCTETS,
     SAI_PORT_STAT_IF_IN_UCAST_PKTS,
@@ -68,7 +68,6 @@ static const vector<sai_port_stat_t> portStatIds =
     SAI_PORT_STAT_PFC_6_RX_PKTS,
     SAI_PORT_STAT_PFC_7_RX_PKTS
 };
-
 
 static const vector<sai_queue_stat_t> queueStatIds =
 {
@@ -959,9 +958,9 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
 
                 std::string delimiter = "";
                 std::ostringstream counters_stream;
-                for (auto it = portStatIds.begin(); it !=  portStatIds.end(); it++)
+                for (const auto &id: portStatIds)
                 {
-                    counters_stream << delimiter << sai_serialize_port_stat(*it);
+                    counters_stream << delimiter << sai_serialize_port_stat(id);
                     delimiter = ",";
                 }
 
