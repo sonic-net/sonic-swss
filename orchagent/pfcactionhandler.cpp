@@ -59,7 +59,7 @@ PfcWdActionHandler::~PfcWdActionHandler(void)
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE(
-            "PFC Watchdog strom restored on  port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+            "PFC Watchdog storm restored on  port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
             m_portAlias.c_str(),
             m_queueId,
             m_queue,
