@@ -116,23 +116,23 @@ class DockerVirtualSwitch(object):
                 if ctn.name == name:
                     self.ctn = ctn
                     (status, output) = commands.getstatusoutput("docker inspect --format '{{.HostConfig.NetworkMode}}' %s" % name)
-                    cnt_sw_id = output.split(':')[1]
+                    ctn_sw_id = output.split(':')[1]
                     self.cleanup = False
             if self.ctn == None:
                 raise NameError("cannot find container %s" % name)
 
             # get base container
             for ctn in self.client.containers.list():
-                if ctn.id == cnt_sw_id:
-                    cnt_sw_name = ctn.name
+                if ctn.id == ctn_sw_id or ctn.name == ctn_sw_id:
+                    ctn_sw_name = ctn.name
            
-            (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % cnt_sw_name)
-            self.cnt_sw_pid = int(output)
+            (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % ctn_sw_name)
+            self.ctn_sw_pid = int(output)
 
             # create virtual servers
             self.servers = []
             for i in range(32):
-                server = VirtualServer(cnt_sw_name, self.cnt_sw_pid, i)
+                server = VirtualServer(ctn_sw_name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
             self.restart()
@@ -140,12 +140,12 @@ class DockerVirtualSwitch(object):
             self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
                     command="bash", stdin_open=True)
             (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % self.ctn_sw.name)
-            self.cnt_sw_pid = int(output)
+            self.ctn_sw_pid = int(output)
 
             # create virtual server
             self.servers = []
             for i in range(32):
-                server = VirtualServer(self.ctn_sw.name, self.cnt_sw_pid, i)
+                server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
             # create virtual switch container

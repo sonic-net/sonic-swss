@@ -268,6 +268,10 @@ bool IntfsOrch::addRouterIntfs(Port &port)
     }
     attrs.push_back(attr);
 
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+    attr.value.u32 = port.m_mtu;
+    attrs.push_back(attr);
+
     sai_status_t status = sai_router_intfs_api->create_router_interface(&port.m_rif_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -277,7 +281,7 @@ bool IntfsOrch::addRouterIntfs(Port &port)
 
     gPortsOrch->setPort(port.m_alias, port);
 
-    SWSS_LOG_NOTICE("Create router interface for port %s", port.m_alias.c_str());
+    SWSS_LOG_NOTICE("Create router interface for port %s mtu %u", port.m_alias.c_str(), port.m_mtu);
 
     return true;
 }

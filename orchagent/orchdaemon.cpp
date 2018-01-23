@@ -1,4 +1,5 @@
 #include <unistd.h>
+#include <unordered_map>
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
@@ -11,7 +12,6 @@ using namespace swss;
 
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
-#define FLEX_COUNTER_POLL_MSECS 100
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
@@ -91,6 +91,7 @@ bool OrchDaemon::init()
     TableConnector appDbMirrorSession(m_applDb, APP_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
     MirrorOrch *mirror_orch = new MirrorOrch(appDbMirrorSession, confDbMirrorSession, gPortsOrch, route_orch, neigh_orch, gFdbOrch);
+    VRFOrch *vrf_orch = new VRFOrch(m_configDb, CFG_VRF_TABLE_NAME);
 
     vector<string> acl_tables = {
         CFG_ACL_TABLE_NAME,
@@ -98,7 +99,7 @@ bool OrchDaemon::init()
     };
     gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
-    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch};
+    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch, vrf_orch };
     m_select = new Select();
 
     vector<string> pfc_wd_tables = {
@@ -142,7 +143,7 @@ bool OrchDaemon::init()
                     portStatIds,
                     queueStatIds,
                     queueAttrIds,
-                    FLEX_COUNTER_POLL_MSECS));
+                    PFC_WD_POLL_MSECS));
     }
     else if (platform == BRCM_PLATFORM_SUBSTRING)
     {
@@ -177,13 +178,13 @@ bool OrchDaemon::init()
             SAI_QUEUE_ATTR_PAUSE_STATUS,
         };
 
-        m_orchList.push_back(new PfcWdSwOrch<PfcWdActionHandler, PfcWdActionHandler>(
+        m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
                     m_configDb,
                     pfc_wd_tables,
                     portStatIds,
                     queueStatIds,
                     queueAttrIds,
-                    FLEX_COUNTER_POLL_MSECS));
+                    PFC_WD_POLL_MSECS));
     }
 
     return true;
