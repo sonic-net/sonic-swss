@@ -250,6 +250,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         return;
     }
 
+    sai_status_t status;
     std::string op;
     std::string data;
     std::vector<swss::FieldValueTuple> values;
@@ -262,12 +263,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
          * so far only support flush all the FDB entris
          * flush per port and flush per vlan will be added later.
          */
-        sai_status_t status;
-        sai_attribute_t attr;
-        attr.id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
-        attr.value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
-
-        status = sai_fdb_api->flush_fdb_entries(gSwitchId, 1, &attr);
+        status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
