@@ -39,6 +39,36 @@ static map<string, sai_port_fec_mode_t> fec_mode_map =
     { "fc", SAI_PORT_FEC_MODE_FC }
 };
 
+const vector<sai_port_stat_t> portStatIds =
+{
+    SAI_PORT_STAT_IF_IN_OCTETS,
+    SAI_PORT_STAT_IF_IN_UCAST_PKTS,
+    SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS,
+    SAI_PORT_STAT_IF_IN_DISCARDS,
+    SAI_PORT_STAT_IF_IN_ERRORS,
+    SAI_PORT_STAT_IF_IN_UNKNOWN_PROTOS,
+    SAI_PORT_STAT_IF_OUT_OCTETS,
+    SAI_PORT_STAT_IF_OUT_UCAST_PKTS,
+    SAI_PORT_STAT_IF_OUT_NON_UCAST_PKTS,
+    SAI_PORT_STAT_IF_OUT_DISCARDS,
+    SAI_PORT_STAT_IF_OUT_ERRORS,
+    SAI_PORT_STAT_IF_OUT_QLEN,
+    SAI_PORT_STAT_IF_IN_MULTICAST_PKTS,
+    SAI_PORT_STAT_IF_IN_BROADCAST_PKTS,
+    SAI_PORT_STAT_IF_OUT_MULTICAST_PKTS,
+    SAI_PORT_STAT_IF_OUT_BROADCAST_PKTS,
+    SAI_PORT_STAT_ETHER_RX_OVERSIZE_PKTS,
+    SAI_PORT_STAT_ETHER_TX_OVERSIZE_PKTS,
+    SAI_PORT_STAT_PFC_0_RX_PKTS,
+    SAI_PORT_STAT_PFC_1_RX_PKTS,
+    SAI_PORT_STAT_PFC_2_RX_PKTS,
+    SAI_PORT_STAT_PFC_3_RX_PKTS,
+    SAI_PORT_STAT_PFC_4_RX_PKTS,
+    SAI_PORT_STAT_PFC_5_RX_PKTS,
+    SAI_PORT_STAT_PFC_6_RX_PKTS,
+    SAI_PORT_STAT_PFC_7_RX_PKTS
+};
+
 static const vector<sai_queue_stat_t> queueStatIds =
 {
     SAI_QUEUE_STAT_PACKETS,
@@ -928,9 +958,9 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
 
                 std::string delimiter = "";
                 std::ostringstream counters_stream;
-                for (int cntr = SAI_PORT_STAT_IF_IN_OCTETS; cntr <= SAI_PORT_STAT_PFC_7_ON2OFF_RX_PKTS; ++cntr)
+                for (const auto &id: portStatIds)
                 {
-                    counters_stream << delimiter << sai_serialize_port_stat(static_cast<sai_port_stat_t>(cntr));
+                    counters_stream << delimiter << sai_serialize_port_stat(id);
                     delimiter = ",";
                 }
 
