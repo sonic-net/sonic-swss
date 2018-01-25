@@ -1,3 +1,12 @@
+"""
+    test_speed.py implements list of tests to check speed set on
+    interfaces and correct buffer manager behavior on speed change
+
+    These tests need to be run in prepared environment and with the
+    SONiC version compiled for PLATFORM=vs
+
+    See README.md for details
+"""
 from swsscommon import swsscommon
 import time
 import re
@@ -19,7 +28,17 @@ class TestSpeedSet(object):
 
         buffer_profiles = cfg_buffer_profile_table.getKeys()
         expected_buffer_profiles_num = len(buffer_profiles)
+        # buffers.json used for the test defines 7 static profiles:
+        #    "ingress_lossless_profile"
+        #    "ingress_lossy_profile"
+        #    "egress_lossless_profile"
+        #    "egress_lossy_profile"
+        #    "pg_lossy_profile"
+        #    "q_lossless_profile"
+        #    "q_lossy_profile"
+        # check if they get the DB
         assert expected_buffer_profiles_num == 7
+        # and if they were successfully created on ASIC
         assert len(asic_profile_table.getKeys()) == expected_buffer_profiles_num
 
         for speed in speed_list:
