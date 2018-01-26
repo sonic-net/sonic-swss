@@ -45,6 +45,8 @@ private:
 
     void addIp2MeRoute(const IpPrefix &ip_prefix);
     void removeIp2MeRoute(const IpPrefix &ip_prefix);
+
+    bool validIntfAddress(const IpPrefix &ip_prefix, const string &alias);
 };
 
 #endif /* SWSS_INTFSORCH_H */
