@@ -13,7 +13,7 @@ using namespace swss;
 #define DOT1Q_BRIDGE_NAME   "Bridge"
 #define VLAN_PREFIX         "Vlan"
 #define LAG_PREFIX          "PortChannel"
-#define DEFAULT_VLAN_ID     1
+#define DEFAULT_VLAN_ID     "1"
 #define MAX_MTU             9100
 #define VLAN_HLEN            4
 
@@ -32,144 +32,162 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     SWSS_LOG_ENTER();
 
     // Initialize Linux dot1q bridge and enable vlan filtering
-    stringstream cmd;
-    string res;
+    // The command should be generated as:
+    // /bin/bash -c "/sbin/ip link del Bridge 2>/dev/null ;
+    //               /sbin/ip link add Bridge up type bridge &&
+    //               echo 1 > /sys/class/net/Bridge/bridge/vlan_filtering &&
+    //               /sbin/bridge vlan del vid 1 dev Bridge self"
 
-    cmd << IP_CMD << " link del " << DOT1Q_BRIDGE_NAME;
-    swss::exec(cmd.str(), res);
-
-    cmd.str("");
-    cmd << IP_CMD << " link add " << DOT1Q_BRIDGE_NAME << " up type bridge";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
-    cmd.str("");
-    cmd << ECHO_CMD << " 1 > /sys/class/net/" << DOT1Q_BRIDGE_NAME << "/bridge/vlan_filtering";
-    int ret = swss::exec(cmd.str(), res);
     /* echo will fail in virtual switch since /sys directory is read-only.
      * need to use ip command to setup the vlan_filtering which is not available in debian 8.
-     * Once we move sonic to debian 9, we can use IP command by default */
-    if (ret != 0)
-    {
-        cmd.str("");
-        cmd << IP_CMD << " link set " << DOT1Q_BRIDGE_NAME << " type bridge vlan_filtering 1";
-        EXEC_WITH_ERROR_THROW(cmd.str(), res);
-    }
+     * Once we move sonic to debian 9, we can use IP command by default
+     * ip command to create bridge with filtering:
+     * /sbin/ip link add Bridge up type bridge vlan_filtering 1
+     */
+    const std::string cmds = std::string("")
+      + BASH_CMD + " -c \""
+      + IP_CMD + " link del " + DOT1Q_BRIDGE_NAME + " 2>/dev/null; "
+      + IP_CMD + " link add " + DOT1Q_BRIDGE_NAME + " up type bridge && "
+      + "echo 1 > /sys/class/net/" + DOT1Q_BRIDGE_NAME + "/bridge/vlan_filtering && "
+      + BRIDGE_CMD + " vlan del vid " + DEFAULT_VLAN_ID + " dev " + DOT1Q_BRIDGE_NAME + " self\"";
 
-    cmd.str("");
-    cmd << BRIDGE_CMD << " vlan del vid " << DEFAULT_VLAN_ID << " dev " << DOT1Q_BRIDGE_NAME << " self";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
+
+    std::string res;
+    EXEC_WITH_ERROR_THROW(cmds, res);
 }
 
 bool VlanMgr::addHostVlan(int vlan_id)
 {
-    stringstream cmd;
-    string res;
+    SWSS_LOG_ENTER();
 
-    cmd << BRIDGE_CMD << " vlan add vid " << vlan_id << " dev " << DOT1Q_BRIDGE_NAME << " self";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    // The command should be generated as:
+    // /bin/bash -c "/sbin/bridge vlan add vid {{vlan_id}} dev Bridge self &&
+    //               /sbin/ip link add link Bridge up name Vlan{{vlan_id}} address {{gMacAddress}} type vlan id {{vlan_id}}"
+    const std::string cmds = std::string("")
+      + BASH_CMD + " -c \""
+      + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + DOT1Q_BRIDGE_NAME + " self && "
+      + IP_CMD + " link add link " + DOT1Q_BRIDGE_NAME
+               + " up"
+               + " name " + VLAN_PREFIX + std::to_string(vlan_id)
+               + " address " + gMacAddress.to_string()
+               + " type vlan id " + std::to_string(vlan_id) + "\"";
 
-    cmd.str("");
-    cmd << IP_CMD << " link add link " << DOT1Q_BRIDGE_NAME << " name " << VLAN_PREFIX << vlan_id << " type vlan id " << vlan_id;
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
 
-    cmd.str("");
-    cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " address " << gMacAddress.to_string();
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
-    // Bring up vlan port by default
-    cmd.str("");
-    cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " up";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    std::string res;
+    EXEC_WITH_ERROR_THROW(cmds, res);
 
     return true;
 }
 
 bool VlanMgr::removeHostVlan(int vlan_id)
 {
-    stringstream cmd;
-    string res;
+    SWSS_LOG_ENTER();
 
-    cmd << IP_CMD << " link del " << VLAN_PREFIX << vlan_id;
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    // The command should be generated as:
+    // /bin/bash -c "/sbin/ip link del Vlan{{vlan_id}} &&
+    //               /sbin/bridge vlan del vid {{vlan_id}} dev Bridge self"
+    const std::string cmds = std::string("")
+      + BASH_CMD + " -c \""
+      + IP_CMD + " link add del " + VLAN_PREFIX + std::to_string(vlan_id) + " && "
+      + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + DOT1Q_BRIDGE_NAME + " self\"";
 
-    cmd.str("");
-    cmd << BRIDGE_CMD << " vlan del vid " << vlan_id << " dev " << DOT1Q_BRIDGE_NAME << " self";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
+
+    std::string res;
+    EXEC_WITH_ERROR_THROW(cmds, res);
 
     return true;
 }
 
 bool VlanMgr::setHostVlanAdminState(int vlan_id, const string &admin_status)
 {
-    stringstream cmd;
-    string res;
+    SWSS_LOG_ENTER();
 
-    cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " " << admin_status;
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    // The command should be generated as:
+    // /sbin/ip link set Vlan{{vlan_id}} {{admin_status}}
+    const std::string cmds = std::string("")
+      + IP_CMD + " link set " + VLAN_PREFIX + std::to_string(vlan_id) + " " + admin_status;
+
+    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
+
+    std::string res;
+    EXEC_WITH_ERROR_THROW(cmds, res);
+
     return true;
 }
 
 bool VlanMgr::setHostVlanMtu(int vlan_id, uint32_t mtu)
 {
-    stringstream cmd;
-    string res;
+    SWSS_LOG_ENTER();
 
-    cmd << IP_CMD << " link set " << VLAN_PREFIX << vlan_id << " mtu " << mtu;
-    int ret = swss::exec(cmd.str(), res);
+    // The command should be generated as:
+    // /sbin/ip link set Vlan{{vlan_id}} mtu {{mtu}}
+    const std::string cmds = std::string("")
+      + IP_CMD + " link set " + VLAN_PREFIX + std::to_string(vlan_id) + " mtu " + std::to_string(mtu);
+
+    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
+
+    std::string res;
+    int ret = swss::exec(cmds, res);
     if (ret == 0)
     {
         return true;
     }
+
     /* VLAN mtu should not be larger than member mtu */
     return false;
 }
 
 bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const string& tagging_mode)
 {
-    stringstream cmd;
-    string res;
+    SWSS_LOG_ENTER();
 
-    // Should be ok to run set master command more than one time.
-    cmd << IP_CMD << " link set " << port_alias << " master " << DOT1Q_BRIDGE_NAME;
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
-    cmd.str("");
+    std::string tagging_cmd;
     if (tagging_mode == "untagged" || tagging_mode == "priority_tagged")
     {
-        // We are setting pvid as untagged vlan id.
-        cmd << BRIDGE_CMD << " vlan add vid " << vlan_id << " dev " << port_alias << " pvid untagged";
+        tagging_cmd = "pvid untagged";
     }
-    else
-    {
-        cmd << BRIDGE_CMD << " vlan add vid " << vlan_id << " dev " << port_alias;
-    }
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
-    cmd.str("");
-    // Bring up vlan member port and set MTU to 9100 by default
-    cmd << IP_CMD << " link set " << port_alias << " up mtu " << MAX_MTU;
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    // The command should be generated as:
+    // /bin/bash -c "/sbin/ip link set {{port_alias}} master Bridge &&
+    //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}
+    //               /sbin/ip link set {{port_alias}} up mtu 9100"
+    const std::string cmds = std::string("")
+      + BASH_CMD + " -c \""
+      + IP_CMD + " link set " + port_alias + " master " + DOT1Q_BRIDGE_NAME + " && "
+      + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + " && "
+      + IP_CMD + " link set " + port_alias + " up mtu " + std::to_string(MAX_MTU) + "\"";
+
+    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
+
+    std::string res;
+    EXEC_WITH_ERROR_THROW(cmds, res);
 
     return true;
 }
 
 bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
 {
-    stringstream cmd;
-    string res;
+    SWSS_LOG_ENTER();
 
-    cmd << BRIDGE_CMD << " vlan del vid " << vlan_id << " dev " << port_alias;
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    // The command should be generated as:
+    // /bin/bash -c "/sbin/bridge vlan del vid {{vlan_id}} dev {{port_alias}} &&
+    //               /sbin/bridge vlan show dev {{port_alias}} | /bin/grep -q None &&
+    //               /sbin/ip link set {{port_alias}} nomaster"
+    const std::string cmds = std::string("")
+      + BASH_CMD + " -c \""
+      + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + port_alias + " && "
+      + BRIDGE_CMD + " vlan show dev " + port_alias + " | "
+      + GREP_CMD + " -q None && "
+      + IP_CMD + " link set " + port_alias + " nomaster\"";
 
-    cmd.str("");
     // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
-    cmd << BRIDGE_CMD << " vlan show dev " << port_alias << " | " << GREP_CMD << " None";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
-    if (!res.empty())
-    {
-        cmd.str("");
-        cmd << IP_CMD << " link set " << port_alias << " nomaster";
-        EXEC_WITH_ERROR_THROW(cmd.str(), res);
-    }
+    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
+
+    std::string res;
+    EXEC_WITH_ERROR_THROW(cmds, res);
 
     return true;
 }
