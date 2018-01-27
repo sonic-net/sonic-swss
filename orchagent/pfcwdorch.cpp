@@ -9,6 +9,8 @@
 #include "notifier.h"
 #include "redisclient.h"
 
+#define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
+#define PFC_WD_GLOBAL                   "GLOBAL"
 #define PFC_WD_ACTION                   "action"
 #define PFC_WD_DETECTION_TIME           "detection_time"
 #define PFC_WD_RESTORATION_TIME         "restoration_time"
@@ -358,6 +360,31 @@ void PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const string& name)
 }
 
 template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
+        const vector<FieldValueTuple>& data)
+{
+    if (key == PFC_WD_GLOBAL)
+    {
+        for (auto valuePair: data)
+        {
+            const auto &field = fvField(valuePair);
+            const auto &value = fvValue(valuePair);
+
+            if (field == POLL_INTERVAL_FIELD)
+            {
+                vector<FieldValueTuple> fieldValues;
+                fieldValues.emplace_back(POLL_INTERVAL_FIELD, value);
+                m_flexCounterGroupTable->set(PFC_WD_FLEX_COUNTER_GROUP, fieldValues);
+            }
+        }
+    }
+    else
+    {
+        PfcWdOrch<DropHandler, ForwardHandler>::createEntry(key, data);
+    }
+}
+
+template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
 {
@@ -375,12 +402,12 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
     if (!c_portStatIds.empty())
     {
-        string key = sai_serialize_object_id(port.m_port_id) + ":" + std::to_string(m_pollInterval);
+        string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_port_id));
         vector<FieldValueTuple> fieldValues;
         string str = counterIdsToStr(c_portStatIds, &sai_serialize_port_stat);
-        fieldValues.emplace_back(PFC_WD_PORT_COUNTER_ID_LIST, str);
+        fieldValues.emplace_back(PORT_COUNTER_ID_LIST, str);
 
-        m_pfcWdTable->set(key, fieldValues);
+        m_flexCounterTable->set(key, fieldValues);
     }
 
     uint8_t pfcMask = attr.value.u8;
@@ -412,27 +439,31 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         if (!c_queueStatIds.empty())
         {
             string str = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
-            queueFieldValues.emplace_back(PFC_WD_QUEUE_COUNTER_ID_LIST, str);
+            queueFieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, str);
         }
 
         if (!c_queueAttrIds.empty())
         {
             string str = counterIdsToStr(c_queueAttrIds, sai_serialize_queue_attr);
-            queueFieldValues.emplace_back(PFC_WD_QUEUE_ATTR_ID_LIST, str);
+            queueFieldValues.emplace_back(QUEUE_ATTR_ID_LIST, str);
         }
 
         // Create internal entry
         m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i));
 
-        string key = queueIdStr + ":" + std::to_string(m_pollInterval);
-
-        m_pfcWdTable->set(key, queueFieldValues);
+        string key = getFlexCounterTableKey(queueIdStr);
+        m_flexCounterTable->set(key, queueFieldValues);
 
         // Initialize PFC WD related counters
         PfcWdActionHandler::initWdCounters(
                 PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable(),
                 sai_serialize_object_id(queueId));
     }
+}
+
+string PfcWdSwOrch<DropHandler, ForwardHandler>::getFlexCounterTableKey(string key)
+{
+    return string(PFC_WD_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -446,10 +477,10 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
         sai_object_id_t queueId = port.m_queue_ids[i];
-        string key = sai_serialize_object_id(queueId) + ":" + std::to_string(m_pollInterval);
+        string key = getFlexCounterTableKey(sai_serialize_object_id(queueId));
 
         // Unregister in syncd
-        m_pfcWdTable->del(key);
+        m_flexCounterTable->del(key);
         m_entryMap.erase(queueId);
 
         // Clean up
@@ -471,8 +502,9 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         const vector<sai_queue_attr_t> &queueAttrIds, 
         int pollInterval):
     PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
-    m_pfcWdDb(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
-    m_pfcWdTable(new ProducerStateTable(m_pfcWdDb.get(), PFC_WD_STATE_TABLE)),
+    m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
+    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     c_portStatIds(portStatIds),
     c_queueStatIds(queueStatIds),
     c_queueAttrIds(queueAttrIds),
@@ -504,17 +536,13 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
                 restoreLuaScript);
 
         vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(SAI_OBJECT_TYPE, sai_serialize_object_type(SAI_OBJECT_TYPE_QUEUE));
-
-        auto pluginTable = ProducerStateTable(m_pfcWdDb.get(), PLUGIN_TABLE);
-        string detectShaKey =  detectSha + ":" + std::to_string(m_pollInterval);
-        string restoreShaKey =  restoreSha + ":" + std::to_string(m_pollInterval);
-        pluginTable.set(detectShaKey, fieldValues);
-        pluginTable.set(restoreShaKey, fieldValues);
+        fieldValues.emplace_back(QUEUE_PLUGIN_FIELD, detectSha + "," + restoreSha);
+        fieldValues.emplace_back(POLL_INTERVAL_FIELD, to_string(m_pollInterval));
+        m_flexCounterGroupTable->set(PFC_WD_FLEX_COUNTER_GROUP, fieldValues);
     }
     catch (...)
     {
-        SWSS_LOG_WARN("Lua scripts for PFC watchdog were not loaded");
+        SWSS_LOG_WARN("Lua scripts and polling interval for PFC watchdog were not set successfully");
     }
 
     auto consumer = new swss::NotificationConsumer(
@@ -528,6 +556,7 @@ template <typename DropHandler, typename ForwardHandler>
 PfcWdSwOrch<DropHandler, ForwardHandler>::~PfcWdSwOrch(void)
 {
     SWSS_LOG_ENTER();
+    m_flexCounterGroupTable->del(PFC_WD_FLEX_COUNTER_GROUP);
 }
 
 template <typename DropHandler, typename ForwardHandler>

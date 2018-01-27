@@ -31,6 +31,7 @@ extern sai_object_id_t gSwitchId;
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 #define FLEX_STAT_COUNTER_POLL_MSECS "1000"
+#define STAT_COUNTER_FLEX_COUNTER_GROUP "STAT_COUNTER"
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
 {
@@ -113,8 +114,13 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     m_queueIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_INDEX_MAP));
     m_queueTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_TYPE_MAP));
 
-    m_flex_db = shared_ptr<DBConnector>(new DBConnector(PFC_WD_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
-    m_flexCounterTable = unique_ptr<ProducerStateTable>(new ProducerStateTable(m_flex_db.get(), PFC_WD_STATE_TABLE));
+    m_flex_db = shared_ptr<DBConnector>(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
+    m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
+
+    vector<FieldValueTuple> fields;
+    fields.emplace_back(POLL_INTERVAL_FIELD, FLEX_STAT_COUNTER_POLL_MSECS);
+    m_flexCounterGroupTable->set(STAT_COUNTER_FLEX_COUNTER_GROUP, fields);
 
     uint32_t i, j;
     sai_status_t status;
@@ -923,6 +929,11 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
     return true;
 }
 
+string PortsOrch::getFlexCounterTableKey(string key)
+{
+    return string(STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
+}
+
 bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
 {
     SWSS_LOG_ENTER();
@@ -956,8 +967,7 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 m_counterTable->set("", fields);
 
                 /* Add port to flex_counter for updating stat counters  */
-                string key = sai_serialize_object_id(p.m_port_id) + ":" + FLEX_STAT_COUNTER_POLL_MSECS;
-
+                string key = getFlexCounterTableKey(sai_serialize_object_id(p.m_port_id));
                 std::string delimiter = "";
                 std::ostringstream counters_stream;
                 for (const auto &id: portStatIds)
@@ -967,7 +977,7 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 }
 
                 fields.clear();
-                fields.emplace_back(PFC_WD_PORT_COUNTER_ID_LIST, counters_stream.str());
+                fields.emplace_back(PORT_COUNTER_ID_LIST, counters_stream.str());
 
                 m_flexCounterTable->set(key, fields);
 
@@ -1720,7 +1730,7 @@ void PortsOrch::initializeQueues(Port &port)
             queueTypeVector.push_back(queueTypeTuple);
         }
 
-        string key = sai_serialize_object_id(port.m_queue_ids[queueIndex]) + ":" + FLEX_STAT_COUNTER_POLL_MSECS;
+        string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_queue_ids[queueIndex]));
 
         std::string delimiter = "";
         std::ostringstream counters_stream;
@@ -1731,7 +1741,7 @@ void PortsOrch::initializeQueues(Port &port)
         }
 
         vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(PFC_WD_QUEUE_COUNTER_ID_LIST, counters_stream.str());
+        fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
 
         m_flexCounterTable->set(key, fieldValues);
     }
