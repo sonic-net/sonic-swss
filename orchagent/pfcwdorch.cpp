@@ -471,7 +471,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
 {
     SWSS_LOG_ENTER();
 
-    string key = sai_serialize_object_id(port.m_port_id) + ":" + std::to_string(m_pollInterval);
+    string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_port_id));
     m_pfcWdTable->del(key);
 
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
