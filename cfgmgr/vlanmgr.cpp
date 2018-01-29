@@ -62,8 +62,6 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         const std::string echo_cmd_backup = std::string("")
           + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " type bridge vlan_filtering 1";
 
-        SWSS_LOG_DEBUG("shell backup cmd: %s", echo_cmd_backup.c_str());
-
         EXEC_WITH_ERROR_THROW(echo_cmd_backup, res);
     }
 }
@@ -84,8 +82,6 @@ bool VlanMgr::addHostVlan(int vlan_id)
                + " address " + gMacAddress.to_string()
                + " type vlan id " + std::to_string(vlan_id) + "\"";
 
-    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
-
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
 
@@ -104,8 +100,6 @@ bool VlanMgr::removeHostVlan(int vlan_id)
       + IP_CMD + " link add del " + VLAN_PREFIX + std::to_string(vlan_id) + " && "
       + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + DOT1Q_BRIDGE_NAME + " self\"";
 
-    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
-
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
 
@@ -121,8 +115,6 @@ bool VlanMgr::setHostVlanAdminState(int vlan_id, const string &admin_status)
     const std::string cmds = std::string("")
       + IP_CMD + " link set " + VLAN_PREFIX + std::to_string(vlan_id) + " " + admin_status;
 
-    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
-
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
 
@@ -137,8 +129,6 @@ bool VlanMgr::setHostVlanMtu(int vlan_id, uint32_t mtu)
     // /sbin/ip link set Vlan{{vlan_id}} mtu {{mtu}}
     const std::string cmds = std::string("")
       + IP_CMD + " link set " + VLAN_PREFIX + std::to_string(vlan_id) + " mtu " + std::to_string(mtu);
-
-    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
 
     std::string res;
     int ret = swss::exec(cmds, res);
@@ -171,8 +161,6 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
       + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + " && "
       + IP_CMD + " link set " + port_alias + " up mtu " + std::to_string(MAX_MTU) + "\"";
 
-    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
-
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
 
@@ -187,15 +175,14 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
     // /bin/bash -c "/sbin/bridge vlan del vid {{vlan_id}} dev {{port_alias}} &&
     //               /sbin/bridge vlan show dev {{port_alias}} | /bin/grep -q None &&
     //               /sbin/ip link set {{port_alias}} nomaster"
+
+    // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
       + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + port_alias + " && "
       + BRIDGE_CMD + " vlan show dev " + port_alias + " | "
       + GREP_CMD + " -q None && "
       + IP_CMD + " link set " + port_alias + " nomaster\"";
-
-    // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
-    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
