@@ -39,12 +39,6 @@ def setReadOnlyAttr(dvs, obj, attr, val):
     ntf.send("set_ro", key, fvp)
 
 
-def Entry(db, table, separator, key, pairs):
-    tbl = swsscommon.Table(db, table, separator)
-    fvs = swsscommon.FieldValuePairs(pairs)
-    tbl.set(key, fvs)
-
-
 def test_CrmIpv4Route(dvs):
 
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
@@ -323,7 +317,7 @@ def test_CrmIpv6Neighbor(dvs):
     assert new_avail_counter == avail_counter
 
 
-def test_CrmNexthoGroupObject(dvs):
+def test_CrmNexthopGroupObject(dvs):
 
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
     dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
@@ -485,3 +479,4 @@ def test_CrmFdbEntry(dvs):
     # get counters
     new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_fdb_entry_available')
 
+    assert new_avail_counter == avail_counter
