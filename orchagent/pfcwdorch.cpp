@@ -36,7 +36,7 @@ PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string
     auto interv = timespec { .tv_sec = PFC_WD_LOSSY_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
     auto timer = new SelectableTimer(interv);
     auto executor = new ExecutableTimer(timer, this);
-    Orch::addExecutor("", executor);
+    Orch::addExecutor("COUNTERS_POLL", executor);
     timer->start();
 }
 
@@ -521,7 +521,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
             PfcWdSwOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
             "PFC_WD");
     auto wdNotification = new Notifier(consumer, this);
-    Orch::addExecutor("", wdNotification);
+    Orch::addExecutor("PFC_WD", wdNotification);
 }
 
 template <typename DropHandler, typename ForwardHandler>
