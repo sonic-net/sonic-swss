@@ -7,11 +7,23 @@
 #include "logger.h"
 #include "tokenize.h"
 #include "fdborch.h"
+#include "notifier.h"
 
 extern sai_fdb_api_t    *sai_fdb_api;
 
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
+
+FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
+    Orch(db, tableName),
+    m_portsOrch(port),
+    m_table(Table(db, tableName))
+{
+    m_portsOrch->attach(this);
+    auto consumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
+    auto fdbNotification = new Notifier(consumer, this);
+    Orch::addExecutor("", fdbNotification);
+}
 
 void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_object_id_t bridge_port_id)
 {
@@ -34,21 +46,71 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
 
         (void)m_entries.insert(update.entry);
         SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into vlan %d", update.entry.mac.to_string().c_str(), entry->vlan_id);
+        
+        for (auto observer: m_observers)
+        {
+            observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+        }
+        
         break;
+        
     case SAI_FDB_EVENT_AGED:
-    case SAI_FDB_EVENT_FLUSHED:
     case SAI_FDB_EVENT_MOVE:
         update.add = false;
 
         (void)m_entries.erase(update.entry);
         SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from vlan %d", update.entry.mac.to_string().c_str(), entry->vlan_id);
+        
+        for (auto observer: m_observers)
+        {
+            observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+        }
+      
+        break;
+        
+    case SAI_FDB_EVENT_FLUSHED:
+        if (bridge_port_id == SAI_NULL_OBJECT_ID && !entry->vlan_id)
+        {
+            for (auto itr = m_entries.begin(); itr != m_entries.end();)
+            {
+                /*
+                   TODO: here should only delete the dynamic fdb entries,
+                   but unfortunately in structure FdbEntry currently have
+                   no member to indicate the fdb entry type,
+                   if there is static mac added, here will have issue.
+                */
+                update.entry.mac = itr->mac;
+                update.entry.vlan = itr->vlan;
+                update.add = false;
+
+                itr = m_entries.erase(itr);
+
+                SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed", update.entry.mac.to_string().c_str());
+
+                for (auto observer: m_observers)
+                {
+                    observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+                }
+            }
+        }
+        else if (bridge_port_id && !entry->vlan_id)
+        {
+            /*this is a placeholder for flush port fdb case, not supported yet.*/
+            SWSS_LOG_ERROR("FdbOrch notification: not supported flush port fdb action, port_id = %lu, vlan_id = %d.", bridge_port_id, entry->vlan_id);
+        }
+        else if (bridge_port_id == SAI_NULL_OBJECT_ID && entry->vlan_id)
+        {
+            /*this is a placeholder for flush vlan fdb case, not supported yet.*/
+            SWSS_LOG_ERROR("FdbOrch notification: not supported flush vlan fdb action, port_id = %lu, vlan_id = %d.", bridge_port_id, entry->vlan_id);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("FdbOrch notification: not supported flush fdb action, port_id = %lu, vlan_id = %d.", bridge_port_id, entry->vlan_id);
+        }
         break;
     }
 
-    for (auto observer: m_observers)
-    {
-        observer->update(SUBJECT_TYPE_FDB_CHANGE, static_cast<void *>(&update));
-    }
+    return;
 }
 
 void FdbOrch::update(SubjectType type, void *cntx)
@@ -176,6 +238,55 @@ void FdbOrch::doTask(Consumer& consumer)
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
             it = consumer.m_toSync.erase(it);
         }
+    }
+}
+
+void FdbOrch::doTask(NotificationConsumer& consumer)
+{
+    SWSS_LOG_ENTER();
+
+    if (!gPortsOrch->isInitDone())
+    {
+        return;
+    }
+
+    sai_status_t status;
+    std::string op;
+    std::string data;
+    std::vector<swss::FieldValueTuple> values;
+
+    consumer.pop(op, data, values);
+
+    if (op == "ALL")
+    {
+        /*
+         * so far only support flush all the FDB entris
+         * flush per port and flush per vlan will be added later.
+         */
+        status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
+        }
+
+        return;
+    }
+    else if (op == "PORT")
+    {
+        /*place holder for flush port fdb*/
+        SWSS_LOG_ERROR("Received unsupported flush port fdb request");
+	    return;
+    }
+    else if (op == "VLAN")
+    {
+        /*place holder for flush vlan fdb*/
+        SWSS_LOG_ERROR("Received unsupported flush vlan fdb request");
+	    return;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Received unknown flush fdb request");
+	    return;
     }
 }
 
