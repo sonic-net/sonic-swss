@@ -1159,6 +1159,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 continue;
             }
 
+            if (alias == "PortConfigDone")
+            {
+                // the alias is a fake here, move to the next request
+                continue;
+            }
+
             Port p;
             if (!getPort(alias, p))
             {
