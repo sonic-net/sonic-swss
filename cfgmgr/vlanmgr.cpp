@@ -35,26 +35,37 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     // The command should be generated as:
     // /bin/bash -c "/sbin/ip link del Bridge 2>/dev/null ;
     //               /sbin/ip link add Bridge up type bridge &&
-    //               echo 1 > /sys/class/net/Bridge/bridge/vlan_filtering &&
     //               /sbin/bridge vlan del vid 1 dev Bridge self"
 
-    /* echo will fail in virtual switch since /sys directory is read-only.
-     * need to use ip command to setup the vlan_filtering which is not available in debian 8.
-     * Once we move sonic to debian 9, we can use IP command by default
-     * ip command to create bridge with filtering:
-     * /sbin/ip link add Bridge up type bridge vlan_filtering 1
-     */
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
       + IP_CMD + " link del " + DOT1Q_BRIDGE_NAME + " 2>/dev/null; "
       + IP_CMD + " link add " + DOT1Q_BRIDGE_NAME + " up type bridge && "
-      + "echo 1 > /sys/class/net/" + DOT1Q_BRIDGE_NAME + "/bridge/vlan_filtering && "
       + BRIDGE_CMD + " vlan del vid " + DEFAULT_VLAN_ID + " dev " + DOT1Q_BRIDGE_NAME + " self\"";
-
-    SWSS_LOG_DEBUG("shell cmds: %s", cmds.c_str());
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
+
+    // The generated command is:
+    // /bin/echo 1 > /sys/class/net/Bridge/bridge/vlan_filtering
+    const std::string echo_cmd = std::string("")
+      + ECHO_CMD + " 1 > /sys/class/net/" + DOT1Q_BRIDGE_NAME + "/bridge/vlan_filtering";
+
+    int ret = swss::exec(echo_cmd, res);
+    /* echo will fail in virtual switch since /sys directory is read-only.
+     * need to use ip command to setup the vlan_filtering which is not available in debian 8.
+     * Once we move sonic to debian 9, we can use IP command by default
+     * ip command available in Debian 9 to create a bridge with a vlan filtering:
+     * /sbin/ip link add Bridge up type bridge vlan_filtering 1 */
+    if (ret != 0)
+    {
+        const std::string echo_cmd_backup = std::string("")
+          + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " type bridge vlan_filtering 1";
+
+        SWSS_LOG_DEBUG("shell backup cmd: %s", echo_cmd_backup.c_str());
+
+        EXEC_WITH_ERROR_THROW(echo_cmd_backup, res);
+    }
 }
 
 bool VlanMgr::addHostVlan(int vlan_id)
