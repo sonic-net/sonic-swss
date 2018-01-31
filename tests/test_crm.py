@@ -6,12 +6,12 @@ import json
 import redis
 
 
-def getCrmCounterValue(dvs, counter):
+def getCrmCounterValue(dvs, key, counter):
 
     counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
     crm_stats_table = swsscommon.Table(counters_db, 'CRM')
 
-    for k in crm_stats_table.get('STATS')[1]:
+    for k in crm_stats_table.get(key)[1]:
         if k[0] == counter:
             return int(k[1])
 
@@ -60,8 +60,8 @@ def test_CrmIpv4Route(dvs):
     time.sleep(5*60)
 
     # get counters
-    used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_route_used')
-    avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_route_available')
+    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_used')
+    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_available')
 
     # add route and update available counter
     ps.set("2.2.2.0/24", fvs)
@@ -70,8 +70,8 @@ def test_CrmIpv4Route(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_route_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_route_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_available')
 
     assert new_used_counter - used_counter == 1
     assert avail_counter - new_avail_counter == 1
@@ -83,8 +83,8 @@ def test_CrmIpv4Route(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_route_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_route_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_available')
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
@@ -111,8 +111,8 @@ def test_CrmIpv6Route(dvs):
     time.sleep(5*60)
 
     # get counters
-    used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_route_used')
-    avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_route_available')
+    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_used')
+    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_available')
 
     # add route and update available counter
     ps.set("2001::/64", fvs)
@@ -121,8 +121,8 @@ def test_CrmIpv6Route(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_route_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_route_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_available')
 
     assert new_used_counter - used_counter == 1
     assert avail_counter - new_avail_counter == 1
@@ -134,8 +134,8 @@ def test_CrmIpv6Route(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_route_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_route_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_available')
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
@@ -155,8 +155,8 @@ def test_CrmIpv4Nexthop(dvs):
     time.sleep(5*60)
 
     # get counters
-    used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_nexthop_used')
-    avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_nexthop_available')
+    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_used')
+    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_available')
 
     # add nexthop and update available counter
     dvs.servers[0].runcmd("ping -c 1 10.0.0.0")
@@ -165,8 +165,8 @@ def test_CrmIpv4Nexthop(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_nexthop_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_nexthop_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_available')
 
     assert new_used_counter - used_counter == 1
     assert avail_counter - new_avail_counter == 1
@@ -178,8 +178,8 @@ def test_CrmIpv4Nexthop(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_nexthop_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_nexthop_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_available')
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
@@ -199,8 +199,8 @@ def test_CrmIpv6Nexthop(dvs):
     time.sleep(5*60)
 
     # get counters
-    used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_nexthop_used')
-    avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_nexthop_available')
+    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_used')
+    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_available')
 
     # add nexthop and update available counter
     dvs.servers[0].runcmd("ping6 -c 1 fc00::1")
@@ -209,8 +209,8 @@ def test_CrmIpv6Nexthop(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_nexthop_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_nexthop_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_available')
 
     assert new_used_counter - used_counter == 1
     assert avail_counter - new_avail_counter == 1
@@ -222,8 +222,8 @@ def test_CrmIpv6Nexthop(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_nexthop_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_nexthop_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_available')
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
@@ -243,8 +243,8 @@ def test_CrmIpv4Neighbor(dvs):
     time.sleep(5*60)
 
     # get counters
-    used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_neighbor_used')
-    avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_neighbor_available')
+    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_used')
+    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_available')
 
     # add nexthop and update available counter
     dvs.servers[0].runcmd("ping -c 1 10.0.0.0")
@@ -253,8 +253,8 @@ def test_CrmIpv4Neighbor(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_neighbor_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_neighbor_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_available')
 
     assert new_used_counter - used_counter == 1
     assert avail_counter - new_avail_counter == 1
@@ -266,8 +266,8 @@ def test_CrmIpv4Neighbor(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_neighbor_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv4_neighbor_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_available')
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
@@ -287,8 +287,8 @@ def test_CrmIpv6Neighbor(dvs):
     time.sleep(5*60)
 
     # get counters
-    used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_neighbor_used')
-    avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_neighbor_available')
+    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_used')
+    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_available')
 
     # add nexthop and update available counter
     dvs.servers[0].runcmd("ping6 -c 1 fc00::1")
@@ -297,8 +297,8 @@ def test_CrmIpv6Neighbor(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_neighbor_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_neighbor_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_available')
 
     assert new_used_counter - used_counter == 1
     assert avail_counter - new_avail_counter == 1
@@ -310,8 +310,8 @@ def test_CrmIpv6Neighbor(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_neighbor_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_ipv6_neighbor_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_available')
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
@@ -343,8 +343,8 @@ def test_CrmNexthopGroupObject(dvs):
     time.sleep(5*60)
 
     # get counters
-    used_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_object_used')
-    avail_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_object_available')
+    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_object_used')
+    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_object_available')
 
     # add route and update available counter
     ps.set("2.2.2.0/24", fvs)
@@ -353,8 +353,8 @@ def test_CrmNexthopGroupObject(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_object_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_object_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_object_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_object_available')
 
     assert new_used_counter - used_counter == 1
     assert avail_counter - new_avail_counter == 1
@@ -366,8 +366,8 @@ def test_CrmNexthopGroupObject(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_object_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_object_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_object_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_object_available')
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
@@ -399,8 +399,8 @@ def test_CrmNexthopGroupMember(dvs):
     time.sleep(5*60)
 
     # get counters
-    used_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_member_used')
-    avail_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_member_available')
+    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_used')
+    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_available')
 
     # add route and update available counter
     ps.set("2.2.2.0/24", fvs)
@@ -409,8 +409,8 @@ def test_CrmNexthopGroupMember(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_member_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_member_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_available')
 
     assert new_used_counter - used_counter == 2
     assert avail_counter - new_avail_counter == 2
@@ -422,8 +422,8 @@ def test_CrmNexthopGroupMember(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_member_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_nexthop_group_member_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_available')
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
@@ -438,8 +438,8 @@ def test_CrmFdbEntry(dvs):
     time.sleep(5*60)
 
     # get counters
-    used_counter = getCrmCounterValue(dvs, 'crm_stats_fdb_entry_used')
-    avail_counter = getCrmCounterValue(dvs, 'crm_stats_fdb_entry_available')
+    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_used')
+    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_available')
 
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -465,8 +465,8 @@ def test_CrmFdbEntry(dvs):
     time.sleep(60)
 
     # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'crm_stats_fdb_entry_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_fdb_entry_available')
+    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_used')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_available')
 
     assert new_used_counter - used_counter == 1
     assert avail_counter - new_avail_counter == 1
@@ -477,6 +477,62 @@ def test_CrmFdbEntry(dvs):
     time.sleep(60)
 
     # get counters
-    new_avail_counter = getCrmCounterValue(dvs, 'crm_stats_fdb_entry_available')
+    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_available')
 
     assert new_avail_counter == avail_counter
+
+
+def test_CrmAcl(dvs):
+
+    db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+    dvs.runcmd("crm config polling interval 1")
+
+    bind_ports = ["Ethernet0", "Ethernet4"]
+
+    # create ACL table
+    ttbl = swsscommon.Table(db, "ACL_TABLE", '|')
+    fvs = swsscommon.FieldValuePairs([("policy_desc", "test"), ("type", "L3"), ("ports", ",".join(bind_ports))])
+    ttbl.set("test", fvs)
+
+    # create ACL rule
+    rtbl = swsscommon.Table(db, "ACL_RULE", '|')
+    fvs = swsscommon.FieldValuePairs([("priority", "55"), ("PACKET_ACTION", "FORWARD"), ("L4_SRC_PORT", "65000")])
+    rtbl.set("test|acl_test_rule", fvs)
+
+    time.sleep(5*60)
+
+    table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
+    assert table_used_counter == 1
+
+    # get ACL table key
+    atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
+    acl_tables = [k for k in atbl.getKeys() if k not in dvs.asicdb.default_acl_table]
+    key = "ACL_TABLE_STATS:{0}".format(acl_tables[0].replace('oid:', ''))
+
+    entry_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_entry_used')
+    assert entry_used_counter == 1
+
+    cnt_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_counter_used')
+    assert entry_used_counter == 1
+
+    # remove ACL rule
+    rtbl._del("test|acl_test_rule")
+
+    time.sleep(60)
+
+    entry_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_entry_used')
+    assert entry_used_counter == 0
+
+    cnt_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_counter_used')
+    assert cnt_used_counter == 0
+
+    # remove ACL table
+    ttbl._del("test")
+
+    time.sleep(60)
+
+    table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
+    assert table_used_counter == 0
+
