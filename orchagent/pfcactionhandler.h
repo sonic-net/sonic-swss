@@ -79,11 +79,22 @@ class PfcWdActionHandler
         sai_object_id_t m_port = SAI_NULL_OBJECT_ID;
         sai_object_id_t m_queue = SAI_NULL_OBJECT_ID;
         uint8_t m_queueId = 0;
+        string m_portAlias;
         shared_ptr<Table> m_countersTable = nullptr;
         PfcWdHwStats m_hwStats;
 };
 
-class PfcWdAclHandler: public PfcWdActionHandler
+// Pfc queue that implements forward action by disabling PFC on queue
+class PfcWdLossyHandler: public PfcWdActionHandler
+{
+    public:
+        PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue,
+                uint8_t queueId, shared_ptr<Table> countersTable);
+        virtual ~PfcWdLossyHandler(void);
+        virtual bool getHwCounters(PfcWdHwStats& counters);
+};
+
+class PfcWdAclHandler: public PfcWdLossyHandler
 {
     public:
         PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
@@ -101,16 +112,6 @@ class PfcWdAclHandler: public PfcWdActionHandler
         string m_strRule;
         void createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
         void createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId, string strTable);
-};
-
-// Pfc queue that implements forward action by disabling PFC on queue
-class PfcWdLossyHandler: public PfcWdActionHandler
-{
-    public:
-        PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue,
-                uint8_t queueId, shared_ptr<Table> countersTable);
-        virtual ~PfcWdLossyHandler(void);
-        virtual bool getHwCounters(PfcWdHwStats& counters);
 };
 
 // PFC queue that implements drop action by draining queue with buffer of zero size

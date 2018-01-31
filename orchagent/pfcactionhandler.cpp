@@ -38,10 +38,20 @@ PfcWdActionHandler::PfcWdActionHandler(sai_object_id_t port, sai_object_id_t que
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE(
-            "PFC Watchdog detected PFC storm on queue 0x%lx port 0x%lx",
-            m_queue,
-            m_port);
+    Port p;
+    if (!gPortsOrch->getPort(port, p))
+    {
+        SWSS_LOG_ERROR("Unknown port id 0x%lx", port);
+    }
+    else
+    {
+        SWSS_LOG_NOTICE(
+                "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                m_portAlias.c_str(),
+                m_queueId,
+                m_queue,
+                m_port);
+    }
 }
 
 PfcWdActionHandler::~PfcWdActionHandler(void)
@@ -49,7 +59,9 @@ PfcWdActionHandler::~PfcWdActionHandler(void)
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE(
-            "Queue 0x%lx port 0x%lx restored from PFC storm.",
+            "PFC Watchdog storm restored on  port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+            m_portAlias.c_str(),
+            m_queueId,
             m_queue,
             m_port);
 }
@@ -194,7 +206,7 @@ void PfcWdActionHandler::updateWdCounters(const string& queueIdStr, const PfcWdQ
 
 PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
         uint8_t queueId, shared_ptr<Table> countersTable):
-    PfcWdActionHandler(port, queue, queueId, countersTable)
+    PfcWdLossyHandler(port, queue, queueId, countersTable)
 {
     SWSS_LOG_ENTER();
 

@@ -1,6 +1,8 @@
 #ifndef SWSS_ORCH_H
 #define SWSS_ORCH_H
 
+#include <unordered_map>
+#include <unordered_set>
 #include <map>
 #include <memory>
 
@@ -15,6 +17,7 @@ extern "C" {
 #include "consumerstatetable.h"
 #include "notificationconsumer.h"
 #include "selectabletimer.h"
+#include "macaddress.h"
 
 using namespace std;
 using namespace swss;
@@ -161,6 +164,26 @@ protected:
     void addExecutor(string executorName, Executor* executor);
 private:
     void addConsumer(DBConnector *db, string tableName);
+};
+
+#include "request_parser.h"
+
+class Orch2 : public Orch
+{
+public:
+    Orch2(DBConnector *db, const std::string& tableName, Request& request)
+        : Orch(db, tableName), request_(request)
+    {
+    }
+
+protected:
+    virtual void doTask(Consumer& consumer);
+
+    virtual bool addOperation(const Request& request)=0;
+    virtual bool delOperation(const Request& request)=0;
+
+private:
+    Request& request_;
 };
 
 #endif /* SWSS_ORCH_H */
