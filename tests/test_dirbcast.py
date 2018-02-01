@@ -17,16 +17,16 @@ def test_DirectedBroadcast(dvs):
     tbl = swsscommon.Table(db, "VLAN_MEMBER", '|')
     fvs = swsscommon.FieldValuePairs([("tagging_mode", "tagged")])
     tbl.set("Vlan100|Ethernet24", fvs)
-  
+
     time.sleep(1)
-    
+
     # create vlan interface in config db
     tbl = swsscommon.Table(db, "VLAN_INTERFACE", '|')
     fvs = swsscommon.FieldValuePairs([("family", "IPv4")])
     tbl.set("Vlan100|192.169.0.1/27", fvs)
-    
+
     time.sleep(1)
-    
+
     # check vlan in asic db
     atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
     keys = atbl.getKeys()
@@ -44,12 +44,12 @@ def test_DirectedBroadcast(dvs):
             vlan_oid = key
 
     assert vlan_oid != None
-    
+
     # check router interface in asic db
     atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
     keys = atbl.getKeys()
     rif_oid = None
-    
+
     for key in keys:
         (status, fvs) = atbl.get(key)
         assert status == True
@@ -57,14 +57,14 @@ def test_DirectedBroadcast(dvs):
             if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VLAN_ID":
                 assert vlan_oid == fv[1]
                 rif_oid = key
-    
+
     assert rif_oid != None
-    
+
     # check neighbor entry in asic db
     atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
     keys = atbl.getKeys()
     dir_bcast = False
-    
+
     for key in keys:
         neigh = json.loads(key)
 
@@ -75,6 +75,6 @@ def test_DirectedBroadcast(dvs):
             assert status == True
             if fvs[0][0] == "SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS":
                 assert fvs[0][1] == "FF:FF:FF:FF:FF:FF"
-            
+
     assert dir_bcast
 
