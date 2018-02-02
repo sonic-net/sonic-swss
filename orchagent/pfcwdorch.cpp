@@ -626,8 +626,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
     }
     else if (event == "restore")
     {
-        entry->second.handler->commitCounters();
-        entry->second.handler = nullptr;
+        if (entry->second.handler != nullptr)
+        {
+            entry->second.handler->commitCounters();
+            entry->second.handler = nullptr;
+        }
     }
     else
     {
