@@ -461,6 +461,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
     }
 }
 
+template <typename DropHandler, typename ForwardHandler>
 string PfcWdSwOrch<DropHandler, ForwardHandler>::getFlexCounterTableKey(string key)
 {
     return string(PFC_WD_FLEX_COUNTER_GROUP) + ":" + key;
@@ -472,7 +473,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
     SWSS_LOG_ENTER();
 
     string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_port_id));
-    m_pfcWdTable->del(key);
+    m_flexCounterTable->del(key);
 
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
