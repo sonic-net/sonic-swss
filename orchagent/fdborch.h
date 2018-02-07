@@ -34,13 +34,8 @@ typedef unordered_map<string, vector<SavedFdbEntry>> fdb_entries_by_port_t;
 class FdbOrch: public Orch, public Subject, public Observer
 {
 public:
-    FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
-        Orch(db, tableName),
-        m_portsOrch(port),
-        m_table(Table(db, tableName))
-    {
-        m_portsOrch->attach(this);
-    }
+    
+    FdbOrch(DBConnector *db, string tableName, PortsOrch *port);
 
     ~FdbOrch()
     {
@@ -58,6 +53,7 @@ private:
     Table m_table;
 
     void doTask(Consumer& consumer);
+    void doTask(NotificationConsumer& consumer);
 
     void updateVlanMember(const VlanMemberUpdate&);
     bool addFdbEntry(const FdbEntry&, const string&, const string&);

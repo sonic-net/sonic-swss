@@ -220,6 +220,12 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_TH;
                 attribs.push_back(attr);
             }
+            else if (field == buffer_xon_offset_field_name)
+            {
+                attr.value.u32 = (uint32_t)stoul(value);
+                attr.id = SAI_BUFFER_PROFILE_ATTR_XON_OFFSET_TH;
+                attribs.push_back(attr);
+            }
             else if (field == buffer_xoff_field_name)
             {
                 attr.value.u32 = (uint32_t)stoul(value);
