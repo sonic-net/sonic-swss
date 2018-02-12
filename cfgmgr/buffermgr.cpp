@@ -25,8 +25,8 @@ BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, string pg_lookup_
     readPgProfileLookupFile(pg_lookup_file);
 }
 
-//# speed, cable, size,    xon,  xoff, threshold
-//  40000   5m    34816   18432  16384   1
+//# speed, cable, size,    xon,  xoff, threshold,  xon_offset
+//  40000   5m    34816   18432  16384 1           2496
 void BufferMgr::readPgProfileLookupFile(string file)
 {
     SWSS_LOG_NOTICE("Read lookup configuration file...");
@@ -55,12 +55,17 @@ void BufferMgr::readPgProfileLookupFile(string file)
         iss >> m_pgProfileLookup[speed][cable].xoff;
         iss >> m_pgProfileLookup[speed][cable].threshold;
 
-        SWSS_LOG_NOTICE("PG profile for speed %s and cable %s is: size:%s, xon:%s xoff:%s th:%s",
+        // Not all lookup table contains xon_offset values. Set default to empty
+        m_pgProfileLookup[speed][cable].xon_offset = "";
+        iss >> m_pgProfileLookup[speed][cable].xon_offset;
+
+        SWSS_LOG_NOTICE("PG profile for speed %s and cable %s is: size:%s, xon:%s, xoff:%s, th:%s, xon_offset:%s",
                        speed.c_str(), cable.c_str(),
                        m_pgProfileLookup[speed][cable].size.c_str(),
                        m_pgProfileLookup[speed][cable].xon.c_str(),
                        m_pgProfileLookup[speed][cable].xoff.c_str(),
-                       m_pgProfileLookup[speed][cable].threshold.c_str()
+                       m_pgProfileLookup[speed][cable].threshold.c_str(),
+                       m_pgProfileLookup[speed][cable].xon_offset.c_str()
                        );
     }
 
@@ -91,6 +96,7 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         "pg_lossless_100G_300m_profile": {
             "pool":"[BUFFER_POOL_TABLE:ingress_lossless_pool]",
             "xon":"18432",
+            "xon_offset":"2496",
             "xoff":"165888",
             "size":"184320",
             "dynamic_th":"1"
@@ -146,6 +152,10 @@ void BufferMgr::doSpeedUpdateTask(string port, string speed)
         string pg_pool_reference = string(CFG_BUFFER_POOL_TABLE_NAME) + CONFIGDB_TABLE_NAME_SEPARATOR + INGRESS_LOSSLESS_PG_POOL_NAME;
         fvVector.push_back(make_pair("pool", "[" + pg_pool_reference + "]"));
         fvVector.push_back(make_pair("xon", m_pgProfileLookup[speed][cable].xon));
+        if (m_pgProfileLookup[speed][cable].xon_offset.length() > 0) {
+            fvVector.push_back(make_pair("xon_offset",
+                                         m_pgProfileLookup[speed][cable].xon_offset));
+        }
         fvVector.push_back(make_pair("xoff", m_pgProfileLookup[speed][cable].xoff));
         fvVector.push_back(make_pair("size", m_pgProfileLookup[speed][cable].size));
         fvVector.push_back(make_pair(mode, m_pgProfileLookup[speed][cable].threshold));
