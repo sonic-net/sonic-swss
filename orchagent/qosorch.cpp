@@ -1,6 +1,7 @@
 #include "tokenize.h"
 #include "qosorch.h"
 #include "logger.h"
+#include "crmorch.h"
 
 #include <stdlib.h>
 #include <sstream>
@@ -20,6 +21,7 @@ extern sai_acl_api_t* sai_acl_api;
 
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
+extern CrmOrch *gCrmOrch;
 
 map<string, sai_ecn_mark_mode_t> ecn_map = {
     {"ecn_none", SAI_ECN_MARK_MODE_NONE},
@@ -677,6 +679,8 @@ sai_object_id_t QosOrch::initSystemAclTable()
     }
     SWSS_LOG_NOTICE("Create a system ACL table for ECN coloring");
 
+    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t) attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
+
     for (auto& pair: gPortsOrch->getAllPorts())
     {
         auto& port = pair.second;
@@ -738,6 +742,8 @@ void QosOrch::initAclEntryForEcn(sai_object_id_t acl_table_id, sai_uint32_t prio
         throw runtime_error("Failed to create a system ACL entry for ECN coloring");
     }
     SWSS_LOG_INFO("Create a system ACL entry for ECN coloring");
+
+    gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, acl_table_id);
 }
 
 void QosOrch::initTableHandlers()
