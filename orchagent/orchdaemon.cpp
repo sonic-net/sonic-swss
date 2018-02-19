@@ -12,6 +12,7 @@ using namespace swss;
 
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
+#define PFC_WD_POLL_MSECS 100
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
@@ -103,7 +104,7 @@ bool OrchDaemon::init()
     m_select = new Select();
 
     vector<string> pfc_wd_tables = {
-        APP_PFC_WD_TABLE_NAME
+        CFG_PFC_WD_TABLE_NAME
     };
 
     if (platform == MLNX_PLATFORM_SUBSTRING)

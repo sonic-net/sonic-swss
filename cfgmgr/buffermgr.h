@@ -16,6 +16,7 @@ namespace swss {
 typedef struct{
     string size;
     string xon;
+    string xon_offset;
     string xoff;
     string threshold;
 } pg_profile_t;

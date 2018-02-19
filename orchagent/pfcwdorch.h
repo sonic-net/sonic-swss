@@ -4,7 +4,7 @@
 #include "orch.h"
 #include "port.h"
 #include "pfcactionhandler.h"
-#include "producerstatetable.h"
+#include "producertable.h"
 #include "notificationconsumer.h"
 #include "timer.h"
 #include <array>
@@ -51,9 +51,9 @@ public:
     static PfcWdAction deserializeAction(const string& key);
     static string serializeAction(const PfcWdAction &action); 
 
-private:
-    void createEntry(const string& key, const vector<FieldValueTuple>& data);
+    virtual void createEntry(const string& key, const vector<FieldValueTuple>& data);
     void deleteEntry(const string& name);
+private:
     PfcFrameCounters getPfcFrameCounters(sai_object_id_t portId);
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
@@ -79,6 +79,7 @@ public:
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     virtual bool stopWdOnPort(const Port& port);
 
+    void createEntry(const string& key, const vector<FieldValueTuple>& data);
     //XXX Add port/queue state change event handlers
 private:
     struct PfcWdQueueEntry
@@ -101,14 +102,16 @@ private:
     void unregisterFromWdDb(const Port& port);
     void doTask(swss::NotificationConsumer &wdNotification);
 
+    string getFlexCounterTableKey(string s);
     map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
 
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
     const vector<sai_queue_attr_t> c_queueAttrIds;
 
-    shared_ptr<DBConnector> m_pfcWdDb = nullptr;
-    shared_ptr<ProducerStateTable> m_pfcWdTable = nullptr;
+    shared_ptr<DBConnector> m_flexCounterDb = nullptr;
+    shared_ptr<ProducerTable> m_flexCounterTable = nullptr;
+    shared_ptr<ProducerTable> m_flexCounterGroupTable = nullptr;
 
     atomic_bool m_runPfcWdSwOrchThread = { false };
     shared_ptr<thread> m_pfcWatchdogThread = nullptr;

@@ -8,7 +8,7 @@
 #include "port.h"
 #include "observer.h"
 #include "macaddress.h"
-#include "producerstatetable.h"
+#include "producertable.h"
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
@@ -64,8 +64,10 @@ private:
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
     unique_ptr<Table> m_queueTypeTable;
-    unique_ptr<ProducerStateTable> m_flexCounterTable;
+    unique_ptr<ProducerTable> m_flexCounterTable;
+    unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
+    std:: string getFlexCounterTableKey(std::string s);
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
 
