@@ -77,7 +77,9 @@ for i = n, 1, -1 do
 
         -- Save values for next run
         redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS_last', packets)
-        redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_DETECTION_TIME_LEFT', time_left)
+        if time_left then
+            redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_DETECTION_TIME_LEFT', time_left)
+        end
         redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last', pfc_rx_packets)
         if is_deadlock then
             redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
