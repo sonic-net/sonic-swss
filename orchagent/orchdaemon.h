@@ -20,6 +20,7 @@
 #include "pfcwdorch.h"
 #include "switchorch.h"
 #include "vrforch.h"
+#include "mcwdorch.h"
 
 using namespace swss;
 

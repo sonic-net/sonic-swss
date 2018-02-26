@@ -188,6 +188,8 @@ bool OrchDaemon::init()
                     PFC_WD_POLL_MSECS));
     }
 
+    m_orchList.push_back(&McWdOrch::getInstance(m_configDb));
+
     return true;
 }
 

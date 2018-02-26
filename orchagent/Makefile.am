@@ -39,6 +39,7 @@ orchagent_SOURCES = \
 		    pfcactionhandler.cpp \
 		    request_parser.cpp \
 		    vrforch.cpp \
+		    mcwdorch.cpp \
 		    acltable.h \
 		    aclorch.h \
 		    bufferorch.h \
@@ -62,7 +63,8 @@ orchagent_SOURCES = \
 		    swssnet.h \
 		    tunneldecaporch.h \
 		    request_parser.h \
-		    vrforch.h
+		    vrforch.h \
+		    mcwdorch.h
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

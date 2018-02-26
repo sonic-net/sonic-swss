@@ -1,0 +1,140 @@
+#include "mcwdorch.h"
+#include "portsorch.h"
+#include "select.h"
+#include "notifier.h"
+#include "redisclient.h"
+#include "sai_serialize.h"
+
+#define MC_WD_LOSSY_POLL_TIMEOUT_SEC   (5 * 60)
+
+extern sai_port_api_t *sai_port_api;
+
+extern PortsOrch *gPortsOrch;
+
+McWdOrch& McWdOrch::getInstance(DBConnector *db)
+{
+    SWSS_LOG_ENTER();
+
+    static vector<string> tableNames = {};
+    static McWdOrch *wd = new McWdOrch(db, tableNames);
+
+    return *wd;
+}
+
+McWdOrch::McWdOrch(DBConnector *db, vector<string> &tableNames):
+    Orch(db, tableNames),
+    m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE))
+{
+    SWSS_LOG_ENTER();
+
+    auto interv = timespec { .tv_sec = MC_WD_LOSSY_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
+    auto timer = new SelectableTimer(interv);
+    auto executor = new ExecutableTimer(timer, this);
+    Orch::addExecutor("MC_COUNTERS_POLL", executor);
+    timer->start();
+}
+
+McWdOrch::~McWdOrch(void)
+{
+    SWSS_LOG_ENTER();
+}
+
+QueueMcCounters McWdOrch::getQueueMcCounters(
+        const Port& port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> fieldValues;
+    QueueMcCounters counters;
+    RedisClient redisClient(m_countersDb.get());
+
+    for (uint8_t prio = 0; prio < port.m_queue_ids.size(); prio++)
+    {
+        sai_object_id_t queueId = port.m_queue_ids[prio];
+        auto queueIdStr = sai_serialize_object_id(queueId);
+        auto queueType = redisClient.hget(COUNTERS_QUEUE_TYPE_MAP, queueIdStr);
+
+        if (queueType.get() == nullptr || *queueType != "SAI_QUEUE_TYPE_MULTICAST" || !m_countersTable->get(queueIdStr, fieldValues))
+        {
+            continue;
+        }
+
+        uint64_t pkts = numeric_limits<uint64_t>::max();
+        for (const auto& fv : fieldValues)
+        {
+            const auto field = fvField(fv);
+            const auto value = fvValue(fv);
+
+            if (field == "SAI_QUEUE_STAT_PACKETS")
+            {
+                pkts = stoul(value);
+            }
+        }
+        counters.push_back(pkts);
+    }
+
+    return move(counters);
+}
+
+void McWdOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+
+    for (auto& i : m_CountersMap)
+    {
+        auto oid = i.first;
+        auto mcCounters = i.second;
+
+        Port port;
+        if (!gPortsOrch->getPort(oid, port))
+        {
+            SWSS_LOG_ERROR("Invalid port oid 0x%lx", oid);
+            continue;
+        }
+
+        auto newMcCounters = getQueueMcCounters(port);
+
+        sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            continue;
+        }
+
+        uint8_t pfcMask = attr.value.u8;
+
+        for (size_t prio = 0; prio != mcCounters.size(); prio++)
+        {
+            bool isLossy = ((1 << prio) & pfcMask) == 0;
+            if (newMcCounters[prio] == numeric_limits<uint64_t>::max())
+            {
+                SWSS_LOG_WARN("Could not retreive MC counters on queue %lu port %s",
+                        prio,
+                        port.m_alias.c_str());
+            }
+            else if (!isLossy && mcCounters[prio] < newMcCounters[prio])
+            {
+                SWSS_LOG_WARN("Got Multicast %lu frame(s) on lossless queue %lu port %s",
+                        newMcCounters[prio] - mcCounters[prio],
+                        prio,
+                        port.m_alias.c_str());
+            }
+        }
+
+        i.second= newMcCounters;
+    }
+}
+
+void McWdOrch::addPort(const Port& port)
+{
+    m_CountersMap.emplace(port.m_port_id, getQueueMcCounters(port));
+}
+
+void McWdOrch::removePort(const Port& port)
+{
+    m_CountersMap.erase(port.m_port_id);
+}
