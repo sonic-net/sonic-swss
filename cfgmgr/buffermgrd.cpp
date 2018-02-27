@@ -37,7 +37,7 @@ void usage()
     cout << "Usage: buffermgrd -l pg_lookup.ini" << endl;
     cout << "       -l pg_lookup.ini: PG profile look up table file (mandatory)" << endl;
     cout << "       format: csv" << endl;
-    cout << "       values: 'speed, cable, size, xon,  xoff, dynamic_threshold'" << endl;
+    cout << "       values: 'speed, cable, size, xon,  xoff, dynamic_threshold, xon_offset'" << endl;
 }
 
 int main(int argc, char **argv)
