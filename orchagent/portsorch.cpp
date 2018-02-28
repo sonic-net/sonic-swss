@@ -2212,6 +2212,12 @@ bool PortsOrch::addLagMember(Port &lag, Port &port)
 {
     SWSS_LOG_ENTER();
 
+    sai_uint32_t pvid;
+    if (getPortPvid(lag, pvid))
+    {
+        setPortPvid (port, pvid);
+    }
+
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
@@ -2251,11 +2257,6 @@ bool PortsOrch::addLagMember(Port &lag, Port &port)
                     hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], port.m_alias.c_str(), lag.m_alias.c_str());
             return false;
         }
-    }
-    sai_uint32_t pvid;
-    if (getPortPvid(lag, pvid))
-    {
-        setPortPvid (port, pvid);
     }
 
     LagMemberUpdate update = { lag, port, true };

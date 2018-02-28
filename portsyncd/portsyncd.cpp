@@ -205,17 +205,15 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
     {
         if (line.at(0) == '#')
         {
-            /* Find out what info is specified in the configuration file */
-            for (auto it = header.begin(); it != header.end();)
-            {
-                if (line.find(*it) == string::npos)
-                {
-                    it = header.erase(it);
-                }
-                else
-                {
-                    ++it;
-                }
+            // Take this line as column header line
+            istringstream iss_hdr(line.substr(1));
+            string hdr;
+
+            header.clear();
+            while (! iss_hdr.eof()) {
+                iss_hdr >> hdr;
+                cout << "Adding column header '" << hdr << "'" << endl;
+                header.push_back(hdr);
             }
 
             continue;
