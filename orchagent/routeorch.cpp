@@ -2,6 +2,7 @@
 #include "routeorch.h"
 #include "logger.h"
 #include "swssnet.h"
+#include "crmorch.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
@@ -11,6 +12,7 @@ extern sai_route_api_t*             sai_route_api;
 extern sai_switch_api_t*            sai_switch_api;
 
 extern PortsOrch *gPortsOrch;
+extern CrmOrch *gCrmOrch;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
@@ -73,6 +75,8 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
         throw runtime_error("Failed to create IPv4 default route with packet action drop");
     }
 
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+
     /* Add default IPv4 route into the m_syncdRoutes */
     m_syncdRoutes[default_ip_prefix] = IpAddresses();
 
@@ -89,6 +93,8 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
         SWSS_LOG_ERROR("Failed to create IPv6 default route with packet action drop");
         throw runtime_error("Failed to create IPv6 default route with packet action drop");
     }
+
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
 
     /* Add default IPv6 route into the m_syncdRoutes */
     m_syncdRoutes[v6_default_ip_prefix] = IpAddresses();
@@ -467,6 +473,8 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
     m_nextHopGroupCount ++;
     SWSS_LOG_NOTICE("Create next hop group %s", ipAddresses.to_string().c_str());
 
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+
     NextHopGroupEntry next_hop_group_entry;
     next_hop_group_entry.next_hop_group_id = next_hop_group_id;
 
@@ -495,6 +503,8 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
                            next_hop_group_id, next_hop_group_member_id, status);
             return false;
         }
+
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
 
         // Save the membership into next hop structure
         next_hop_group_entry.next_hop_group_members.insert(next_hop_group_member_id);
@@ -534,6 +544,8 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
                 SWSS_LOG_ERROR("Failed to remove next hop group member %lx, rv:%d", next_hop_group_member_id, status);
                 return false;
             }
+
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
         }
 
         sai_status_t status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
@@ -544,6 +556,8 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
         }
 
         m_nextHopGroupCount --;
+
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
 
         set<IpAddress> ip_address_set = ipAddresses.getIpAddresses();
         for (auto it : ip_address_set)
@@ -677,6 +691,15 @@ bool RouteOrch::addRoute(IpPrefix ipPrefix, IpAddresses nextHops)
             return false;
         }
 
+        if (route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+        }
+        else
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+        }
+
         /* Increase the ref_count for the next hop (group) entry */
         increaseNextHopRefCount(nextHops);
         SWSS_LOG_INFO("Create route %s with next hop(s) %s",
@@ -779,8 +802,17 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
             SWSS_LOG_ERROR("Failed to remove route prefix:%s\n", ipPrefix.to_string().c_str());
             return false;
         }
-    }
 
+        if (route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+        }
+        else
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+        }
+
+    }
     /* Remove next hop group entry if ref_count is zero */
     auto it_route = m_syncdRoutes.find(ipPrefix);
     if (it_route != m_syncdRoutes.end())
