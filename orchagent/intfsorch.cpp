@@ -9,6 +9,7 @@
 #include "logger.h"
 #include "swssnet.h"
 #include "tokenize.h"
+#include "crmorch.h"
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -18,6 +19,7 @@ extern sai_neighbor_api_t*          sai_neighbor_api;
 
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
+extern CrmOrch *gCrmOrch;
 
 IntfsOrch::IntfsOrch(DBConnector *db, string tableName) :
         Orch(db, tableName)
@@ -341,6 +343,15 @@ void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     SWSS_LOG_NOTICE("Create subnet route to %s from %s",
                     ip_prefix.to_string().c_str(), port.m_alias.c_str());
     increaseRouterIntfsRefCount(port.m_alias);
+
+    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
 }
 
 void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
@@ -362,6 +373,15 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     SWSS_LOG_NOTICE("Remove subnet route to %s from %s",
                     ip_prefix.to_string().c_str(), port.m_alias.c_str());
     decreaseRouterIntfsRefCount(port.m_alias);
+
+    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
 }
 
 void IntfsOrch::addIp2MeRoute(const IpPrefix &ip_prefix)
@@ -393,6 +413,15 @@ void IntfsOrch::addIp2MeRoute(const IpPrefix &ip_prefix)
     }
 
     SWSS_LOG_NOTICE("Create IP2me route ip:%s", ip_prefix.getIp().to_string().c_str());
+
+    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
 }
 
 void IntfsOrch::removeIp2MeRoute(const IpPrefix &ip_prefix)
@@ -410,6 +439,15 @@ void IntfsOrch::removeIp2MeRoute(const IpPrefix &ip_prefix)
     }
 
     SWSS_LOG_NOTICE("Remove packet action trap route ip:%s", ip_prefix.getIp().to_string().c_str());
+
+    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
 }
 
 void IntfsOrch::addDirectedBroadcast(const Port &port, const IpAddress &ip_addr)

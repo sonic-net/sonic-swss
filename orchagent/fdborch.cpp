@@ -7,12 +7,14 @@
 #include "logger.h"
 #include "tokenize.h"
 #include "fdborch.h"
+#include "crmorch.h"
 #include "notifier.h"
 
 extern sai_fdb_api_t    *sai_fdb_api;
 
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
+extern CrmOrch *        gCrmOrch;
 
 FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
     Orch(db, tableName),
@@ -46,28 +48,32 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
 
         (void)m_entries.insert(update.entry);
         SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
-        
+
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+
         for (auto observer: m_observers)
         {
             observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
         }
-        
+
         break;
-        
+
     case SAI_FDB_EVENT_AGED:
     case SAI_FDB_EVENT_MOVE:
         update.add = false;
 
         (void)m_entries.erase(update.entry);
         SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
-        
+
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+
         for (auto observer: m_observers)
         {
             observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
         }
-      
+
         break;
-        
+
     case SAI_FDB_EVENT_FLUSHED:
         if (bridge_port_id == SAI_NULL_OBJECT_ID && entry->bv_id == SAI_NULL_OBJECT_ID)
         {
@@ -86,6 +92,8 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
                 itr = m_entries.erase(itr);
 
                 SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed", update.entry.mac.to_string().c_str());
+
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
 
                 for (auto observer: m_observers)
                 {
@@ -382,6 +390,8 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
 
     (void) m_entries.insert(entry);
 
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+
     return true;
 }
 
@@ -409,6 +419,8 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
     }
 
     (void)m_entries.erase(entry);
+
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
 
     return true;
 }
