@@ -15,6 +15,7 @@
 #include "schema.h"
 #include "converter.h"
 #include "sai_serialize.h"
+#include "crmorch.h"
 #include "countercheckorch.h"
 
 extern sai_switch_api_t *sai_switch_api;
@@ -26,6 +27,7 @@ extern sai_hostif_api_t* sai_hostif_api;
 extern sai_acl_api_t* sai_acl_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
+extern CrmOrch *gCrmOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -533,6 +535,8 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
         {
             port.m_egress_acl_table_group_id = groupOid;
         }
+
+        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, (sai_acl_stage_t) group_attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
 
         switch (port.m_type)
         {

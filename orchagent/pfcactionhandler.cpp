@@ -45,6 +45,7 @@ PfcWdActionHandler::PfcWdActionHandler(sai_object_id_t port, sai_object_id_t que
     }
     else
     {
+        m_portAlias = p.m_alias;
         SWSS_LOG_NOTICE(
                 "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
                 m_portAlias.c_str(),
