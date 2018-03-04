@@ -1,5 +1,5 @@
-#ifndef MC_WATCHDOG_H
-#define MC_WATCHDOG_H
+#ifndef COUNTERCHECK_ORCH_H
+#define COUNTERCHECK_ORCH_H
 
 #include "orch.h"
 #include "port.h"
@@ -11,18 +11,18 @@ extern "C" {
 
 typedef vector<uint64_t> QueueMcCounters;
 
-class McWdOrch: public Orch
+class CounterCheckOrch: public Orch
 {
 public:
-    static McWdOrch& getInstance(DBConnector *db = nullptr);
+    static CounterCheckOrch& getInstance(DBConnector *db = nullptr);
     virtual void doTask(SelectableTimer &timer);
     virtual void doTask(Consumer &consumer) {}
     void addPort(const Port& port);
     void removePort(const Port& port);
 
 private:
-    McWdOrch(DBConnector *db, vector<string> &tableNames);
-    virtual ~McWdOrch(void);
+    CounterCheckOrch(DBConnector *db, vector<string> &tableNames);
+    virtual ~CounterCheckOrch(void);
     QueueMcCounters getQueueMcCounters(const Port& port);
     map<sai_object_id_t, QueueMcCounters> m_CountersMap;
 

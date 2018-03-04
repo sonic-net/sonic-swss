@@ -1,4 +1,4 @@
-#include "mcwdorch.h"
+#include "countercheckorch.h"
 #include "portsorch.h"
 #include "select.h"
 #include "notifier.h"
@@ -11,17 +11,17 @@ extern sai_port_api_t *sai_port_api;
 
 extern PortsOrch *gPortsOrch;
 
-McWdOrch& McWdOrch::getInstance(DBConnector *db)
+CounterCheckOrch& CounterCheckOrch::getInstance(DBConnector *db)
 {
     SWSS_LOG_ENTER();
 
     static vector<string> tableNames = {};
-    static McWdOrch *wd = new McWdOrch(db, tableNames);
+    static CounterCheckOrch *wd = new CounterCheckOrch(db, tableNames);
 
     return *wd;
 }
 
-McWdOrch::McWdOrch(DBConnector *db, vector<string> &tableNames):
+CounterCheckOrch::CounterCheckOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE))
@@ -35,12 +35,12 @@ McWdOrch::McWdOrch(DBConnector *db, vector<string> &tableNames):
     timer->start();
 }
 
-McWdOrch::~McWdOrch(void)
+CounterCheckOrch::~CounterCheckOrch(void)
 {
     SWSS_LOG_ENTER();
 }
 
-QueueMcCounters McWdOrch::getQueueMcCounters(
+QueueMcCounters CounterCheckOrch::getQueueMcCounters(
         const Port& port)
 {
     SWSS_LOG_ENTER();
@@ -77,7 +77,7 @@ QueueMcCounters McWdOrch::getQueueMcCounters(
     return move(counters);
 }
 
-void McWdOrch::doTask(SelectableTimer &timer)
+void CounterCheckOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
@@ -129,12 +129,12 @@ void McWdOrch::doTask(SelectableTimer &timer)
     }
 }
 
-void McWdOrch::addPort(const Port& port)
+void CounterCheckOrch::addPort(const Port& port)
 {
     m_CountersMap.emplace(port.m_port_id, getQueueMcCounters(port));
 }
 
-void McWdOrch::removePort(const Port& port)
+void CounterCheckOrch::removePort(const Port& port)
 {
     m_CountersMap.erase(port.m_port_id);
 }
