@@ -757,36 +757,6 @@ bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
     return true;
 }
 
-bool PortsOrch::setPortFecMode(sai_object_id_t id, int fec)
-{
-    SWSS_LOG_ENTER();
-
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_FEC_MODE;
-    switch(fec) {
-      case 0:
-        attr.value.u32 = SAI_PORT_FEC_MODE_NONE;
-        break;
-      case 1:
-        attr.value.u32 = SAI_PORT_FEC_MODE_RS;
-        break;
-      case 2:
-        attr.value.u32 = SAI_PORT_FEC_MODE_FC;
-        break;
-    }
-
-    sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to set FEC %u to port pid:%lx", attr.value.u32, id);
-        return false;
-    }
-    SWSS_LOG_INFO("Set FEC %u to port pid:%lx", attr.value.u32, id);
-
-
-    return true;
-}
-
 bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
 {
     SWSS_LOG_ENTER();
@@ -1037,18 +1007,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (fvField(i) == "speed")
                     speed = (uint32_t)stoul(fvValue(i));
 
-#if 0
                 /* Set port fec */
                 if (fvField(i) == "fec")
                     fec_mode = fvValue(i);
-#endif
+
                 /* Set autoneg */
                 if (fvField(i) == "autoneg")
                     an = (int)stoul(fvValue(i));
-
-                /* Set autoneg */
-                if (fvField(i) == "fec")
-                    fec = (int)stoul(fvValue(i));
             }
 
             /* Collect information about all received ports */
@@ -1229,17 +1194,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if(fec != -1) {
-                    if (setPortFecMode(p.m_port_id, fec))
-                        SWSS_LOG_NOTICE("Set port %s FEC to %u", alias.c_str(), fec);
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set port %s FEC to %u", alias.c_str(), fec);
-                        it++;
-                        continue;
-                    }
-                }
-#if 0
                 if (fec_mode != "")
                 {
                     if (fec_mode_map.find(fec_mode) != fec_mode_map.end())
@@ -1267,7 +1221,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
 
                 }
-#endif
             }
         }
         else
