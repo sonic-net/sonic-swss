@@ -143,6 +143,10 @@ def test_CrmIpv4Route(dvs):
 
 def test_CrmIpv6Route(dvs):
 
+    # Enable IPv6 routing
+    dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
+    time.sleep(2)
+
     dvs.runcmd("ifconfig Ethernet0 inet6 add fc00::1/126 up")
 
     dvs.servers[0].runcmd("ifconfig eth0 inet6 add fc00::2/126")
@@ -153,7 +157,7 @@ def test_CrmIpv6Route(dvs):
     setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_ROUTE_ENTRY', '1000')
 
     # get neighbor and arp entry
-    dvs.servers[0].runcmd("ping6 -c 1 fc00::1")
+    dvs.servers[0].runcmd("ping6 -c 4 fc00::1")
 
     db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
     ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
@@ -236,6 +240,10 @@ def test_CrmIpv4Nexthop(dvs):
 
 def test_CrmIpv6Nexthop(dvs):
 
+    # Enable IPv6 routing
+    dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
+    time.sleep(2)
+
     dvs.runcmd("ifconfig Ethernet0 inet6 add fc00::1/126 up")
 
     dvs.runcmd("crm config polling interval 1")
@@ -317,6 +325,10 @@ def test_CrmIpv4Neighbor(dvs):
 
 
 def test_CrmIpv6Neighbor(dvs):
+
+    # Enable IPv6 routing
+    dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
+    time.sleep(2)
 
     dvs.runcmd("ifconfig Ethernet0 inet6 add fc00::1/126 up")
 
