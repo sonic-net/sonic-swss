@@ -310,26 +310,6 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
     neighbor_entry.switch_id = gSwitchId;
     copy(neighbor_entry.ip_address, ip_address);
 
-    status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        if (status == SAI_STATUS_ITEM_NOT_FOUND)
-        {
-            SWSS_LOG_ERROR("Failed to locate neigbor %s on %s, rv:%d",
-                    m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str(), status);
-            return true;
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
-                    m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str(), status);
-            return false;
-        }
-    }
-
-    SWSS_LOG_NOTICE("Removed neighbor %s on %s",
-            m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str());
-
     sai_object_id_t next_hop_id = m_syncdNextHops[ip_address].next_hop_id;
     status = sai_next_hop_api->remove_next_hop(next_hop_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -351,6 +331,26 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
     SWSS_LOG_NOTICE("Removed next hop %s on %s",
                     ip_address.to_string().c_str(), alias.c_str());
 
+    status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_ERROR("Failed to locate neigbor %s on %s, rv:%d",
+                    m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str(), status);
+            return true;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
+                    m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str(), status);
+            return false;
+        }
+    }
+
+    SWSS_LOG_NOTICE("Removed neighbor %s on %s",
+            m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str());
+
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
@@ -360,3 +360,4 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
 
     return true;
 }
+

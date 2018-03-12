@@ -98,11 +98,7 @@ bool OrchDaemon::init()
     };
     gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
-    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch};
-
-    if (platform != "barefoot")
-        m_orchList.push_back(tunnel_decap_orch);
-
+    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch};
     m_select = new Select();
 
     vector<string> pfc_wd_tables = {

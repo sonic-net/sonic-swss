@@ -661,7 +661,7 @@ bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
     return std::find(supp_speeds.begin(), supp_speeds.end(), speed) != supp_speeds.end();
 }
 
-bool PortsOrch::setPortSpeed(sai_object_id_t id, sai_uint32_t speed)
+bool PortsOrch::setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
 {
     SWSS_LOG_ENTER();
 
@@ -669,13 +669,13 @@ bool PortsOrch::setPortSpeed(sai_object_id_t id, sai_uint32_t speed)
     attr.id = SAI_PORT_ATTR_SPEED;
     attr.value.u32 = speed;
 
-    sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
+    sai_status_t status = sai_port_api->set_port_attribute(port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set speed %u to port pid:%lx", attr.value.u32, id);
+        SWSS_LOG_ERROR("Failed to set speed %u to port pid:%lx", attr.value.u32, port_id);
         return false;
     }
-    SWSS_LOG_INFO("Set speed %u to port pid:%lx", attr.value.u32, id);
+    SWSS_LOG_INFO("Set speed %u to port pid:%lx", attr.value.u32, port_id);
     return true;
 }
 
@@ -800,7 +800,7 @@ void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_
     }
 }
 
-bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, int fec)
+bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string fec_mode)
 {
     SWSS_LOG_ENTER();
 
@@ -818,13 +818,17 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, int fe
     attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
     attrs.push_back(attr);
 
-    attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
-    attr.value.booldata = (an == 0) ? false : true;
-    attrs.push_back(attr);
+    if(an == true) {
+        attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
 
-    attr.id = SAI_PORT_ATTR_FEC_MODE;
-    attr.value.u32 = fec;
-    attrs.push_back(attr);
+    if(fec_mode != "") {
+        attr.id = SAI_PORT_ATTR_FEC_MODE;
+        attr.value.u32 = fec_mode_map[fec_mode];
+        attrs.push_back(attr);
+    }
 
     sai_object_id_t port_id;
     sai_status_t status = sai_port_api->create_port(&port_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
@@ -977,7 +981,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
             uint32_t mtu = 0;
             uint32_t speed = 0;
             int an = -1;
-            int fec = -1;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -1019,7 +1022,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             /* Collect information about all received ports */
             if (lane_set.size())
             {
-                m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed, an, fec);
+                m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed, an, fec_mode);
             }
 
             /* Once all ports received, go through the each port and perform appropriate actions:
@@ -1034,7 +1037,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (m_lanesAliasSpeedMap.find(it->first) == m_lanesAliasSpeedMap.end())
                     {
                         char *platform = getenv("platform");
-                        if (platform && (strstr(platform, "barefoot") || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
+                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
                         {
                             if (!removePort(it->second))
                             {
@@ -1063,7 +1066,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         // work around to avoid syncd termination on SAI error due missing create_port SAI API
                         // can be removed when SAI redis return NotImplemented error
                         char *platform = getenv("platform");
-                        if (platform && (strstr(platform, "barefoot") || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
+                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
                         {
                             if (!addPort(it->first, get<1>(it->second), get<2>(it->second), get<3>(it->second)))
                             {
