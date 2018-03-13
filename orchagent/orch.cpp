@@ -375,6 +375,17 @@ void Orch::addExecutor(string executorName, Executor* executor)
             std::forward_as_tuple(executor));
 }
 
+Executor *Orch::getExecutor(string executorName)
+{
+    auto it = m_consumerMap.find(executorName);
+    if (it != m_consumerMap.end())
+    {
+        return it->second.get();
+    }
+
+    return NULL;
+}
+
 void Orch2::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();

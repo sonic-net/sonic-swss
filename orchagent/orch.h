@@ -162,6 +162,7 @@ protected:
 
     /* Note: consumer will be owned by this class */
     void addExecutor(string executorName, Executor* executor);
+    Executor *getExecutor(string executorName);
 private:
     void addConsumer(DBConnector *db, string tableName);
 };

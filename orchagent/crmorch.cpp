@@ -236,6 +236,10 @@ void CrmOrch::handleSetCommand(const string& key, const vector<FieldValueTuple>&
             if (field == CRM_POLLING_INTERVAL)
             {
                 m_pollingInterval = chrono::seconds(to_uint<uint32_t>(value));
+                auto timer = static_cast<ExecutableTimer *>(Orch::getExecutor("CRM_COUNTERS_POLL"))->getSelectableTimer();
+                auto interv = timespec { .tv_sec = m_pollingInterval.count(), .tv_nsec = 0 };
+                timer->setInterval(interv);
+                timer->reset();
             }
             else if (crmThreshTypeResMap.find(field) != crmThreshTypeResMap.end())
             {
