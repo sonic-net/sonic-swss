@@ -664,19 +664,15 @@ bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
 bool PortsOrch::setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
 {
     SWSS_LOG_ENTER();
-
     sai_attribute_t attr;
+    sai_status_t status;
+
     attr.id = SAI_PORT_ATTR_SPEED;
     attr.value.u32 = speed;
 
-    sai_status_t status = sai_port_api->set_port_attribute(port_id, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to set speed %u to port pid:%lx", attr.value.u32, port_id);
-        return false;
-    }
-    SWSS_LOG_INFO("Set speed %u to port pid:%lx", attr.value.u32, port_id);
-    return true;
+    status = sai_port_api->set_port_attribute(port_id, &attr);
+
+    return status == SAI_STATUS_SUCCESS;
 }
 
 bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)

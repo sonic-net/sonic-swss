@@ -360,4 +360,3 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
 
     return true;
 }
-
