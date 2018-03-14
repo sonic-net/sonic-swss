@@ -149,7 +149,8 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
 CrmOrch::CrmOrch(DBConnector *db, string tableName):
     Orch(db, tableName),
     m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
-    m_countersCrmTable(new Table(m_countersDb.get(), COUNTERS_CRM_TABLE))
+    m_countersCrmTable(new Table(m_countersDb.get(), COUNTERS_CRM_TABLE)),
+    m_timer(new SelectableTimer(timespec { .tv_sec = CRM_POLLING_INTERVAL_DEFAULT, .tv_nsec = 0 }))
 {
     SWSS_LOG_ENTER();
 
@@ -160,11 +161,9 @@ CrmOrch::CrmOrch(DBConnector *db, string tableName):
         m_resourcesMap.emplace(res.first, CrmResourceEntry(res.second, CRM_THRESHOLD_TYPE_DEFAULT, CRM_THRESHOLD_LOW_DEFAULT, CRM_THRESHOLD_HIGH_DEFAULT));
     }
 
-    auto interv = timespec { .tv_sec = CRM_POLLING_INTERVAL_DEFAULT, .tv_nsec = 0 };
-    auto timer = new SelectableTimer(interv);
-    auto executor = new ExecutableTimer(timer, this);
+    auto executor = new ExecutableTimer(m_timer.get(), this);
     Orch::addExecutor("CRM_COUNTERS_POLL", executor);
-    timer->start();
+    m_timer->start();
 }
 
 CrmOrch::CrmResourceEntry::CrmResourceEntry(string name, CrmThresholdType thresholdType, uint32_t lowThreshold, uint32_t highThreshold):
@@ -236,10 +235,9 @@ void CrmOrch::handleSetCommand(const string& key, const vector<FieldValueTuple>&
             if (field == CRM_POLLING_INTERVAL)
             {
                 m_pollingInterval = chrono::seconds(to_uint<uint32_t>(value));
-                auto timer = static_cast<ExecutableTimer *>(Orch::getExecutor("CRM_COUNTERS_POLL"))->getSelectableTimer();
                 auto interv = timespec { .tv_sec = m_pollingInterval.count(), .tv_nsec = 0 };
-                timer->setInterval(interv);
-                timer->reset();
+                m_timer->setInterval(interv);
+                m_timer->reset();
             }
             else if (crmThreshTypeResMap.find(field) != crmThreshTypeResMap.end())
             {

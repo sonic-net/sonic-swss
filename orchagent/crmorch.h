@@ -52,6 +52,7 @@ public:
 private:
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<Table> m_countersCrmTable = nullptr;
+    shared_ptr<SelectableTimer> m_timer = nullptr;
 
     struct CrmResourceCounter
     {
