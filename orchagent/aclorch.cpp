@@ -493,10 +493,10 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
     {
         return make_shared<AclRuleL3>(acl, rule, table, type);
     }
-	/* L3V6 rules can exist only in L3V6 table */
+    /* L3V6 rules can exist only in L3V6 table */
     else if (type == ACL_TABLE_L3V6)
     {
-	    return make_shared<AclRuleL3V6>(acl, rule, table, type);
+        return make_shared<AclRuleL3V6>(acl, rule, table, type);
     }
 
     throw runtime_error("Wrong combination of table type and action in rule " + rule);
@@ -983,7 +983,8 @@ bool AclTable::create()
     attr.value.booldata = true;
     table_attrs.push_back(attr);
 
-    if (type == ACL_TABLE_L3V6) {
+    if (type == ACL_TABLE_L3V6)
+    {
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
