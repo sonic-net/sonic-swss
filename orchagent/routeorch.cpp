@@ -166,6 +166,73 @@ void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr)
     }
 }
 
+bool RouteOrch::validnexthopinNextHopGroup(const IpAddress &ipaddr)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t nexthop_id;
+    sai_status_t status;
+
+    for (auto nhopgroup = m_syncdNextHopGroups.begin();
+         nhopgroup != m_syncdNextHopGroups.end(); ++nhopgroup) {
+
+        if (!(nhopgroup->first.contains(ipaddr))) {
+            continue;
+        }
+
+        vector<sai_attribute_t> nhgm_attrs;
+        sai_attribute_t nhgm_attr;
+
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID;
+        nhgm_attr.value.oid = nhopgroup->second.next_hop_group_id;
+        nhgm_attrs.push_back(nhgm_attr);
+
+        nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
+        nhgm_attr.value.oid = m_neighOrch->getNextHopId(ipaddr);
+        nhgm_attrs.push_back(nhgm_attr);
+
+        status = sai_next_hop_group_api->create_next_hop_group_member(&nexthop_id, gSwitchId,
+                                                                      (uint32_t)nhgm_attrs.size(),
+                                                                      nhgm_attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Failed to add next hop member to group %lx: %d\n",
+                           nhopgroup->second.next_hop_group_id, status);
+            return (false);
+        }
+        nhopgroup->second.nhopgroup_members[ipaddr] = nexthop_id;
+    }
+
+    return (true);
+}
+
+bool RouteOrch::invalidnexthopinNextHopGroup(const IpAddress &ipaddr)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t nexthop_id;
+    sai_status_t status;
+
+    for (auto nhopgroup = m_syncdNextHopGroups.begin();
+         nhopgroup != m_syncdNextHopGroups.end(); ++nhopgroup) {
+
+        if (!(nhopgroup->first.contains(ipaddr))) {
+            continue;
+        }
+
+        nexthop_id = nhopgroup->second.nhopgroup_members[ipaddr];
+        status = sai_next_hop_group_api->remove_next_hop_group_member(nexthop_id);
+
+        if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Failed to remove next hop member %lx from group %lx: %d\n",
+                           nexthop_id, nhopgroup->second.next_hop_group_id, status);
+            return (false);
+        }
+    }
+
+    return (true);
+}
+
 void RouteOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
@@ -436,6 +503,8 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
 
     vector<sai_object_id_t> next_hop_ids;
     set<IpAddress> next_hop_set = ipAddresses.getIpAddresses();
+    sai_object_id_t next_hop_id;
+    std::map<sai_object_id_t, IpAddress> nhopgroup_members_set;
 
     /* Assert each IP address exists in m_syncdNextHops table,
      * and add the corresponding next_hop_id to next_hop_ids. */
@@ -460,8 +529,10 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
     nhg_attrs.push_back(nhg_attr);
 
     sai_object_id_t next_hop_group_id;
-    sai_status_t status = sai_next_hop_group_api->
-            create_next_hop_group(&next_hop_group_id, gSwitchId, (uint32_t)nhg_attrs.size(), nhg_attrs.data());
+    sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
+                                                                        gSwitchId,
+                                                                        (uint32_t)nhg_attrs.size(),
+                                                                        nhg_attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -493,8 +564,10 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
         nhgm_attrs.push_back(nhgm_attr);
 
         sai_object_id_t next_hop_group_member_id;
-        status = sai_next_hop_group_api->
-                create_next_hop_group_member(&next_hop_group_member_id, gSwitchId, (uint32_t)nhgm_attrs.size(), nhgm_attrs.data());
+        status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
+                                                                      gSwitchId,
+                                                                      (uint32_t)nhgm_attrs.size(),
+                                                                      nhgm_attrs.data());
 
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -507,10 +580,11 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
 
         // Save the membership into next hop structure
-        next_hop_group_entry.next_hop_group_members.insert(next_hop_group_member_id);
+        next_hop_group_entry.nhopgroup_members[nhopgroup_members_set.find(nhid)->second] =
+                                                                next_hop_group_member_id;
     }
 
-    /* Increate the ref_count for the next hops used by the next hop group. */
+    /* Increment the ref_count for the next hops used by the next hop group. */
     for (auto it : next_hop_set)
         m_neighOrch->increaseNextHopRefCount(it);
 
@@ -521,6 +595,20 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
     next_hop_group_entry.ref_count = 0;
     m_syncdNextHopGroups[ipAddresses] = next_hop_group_entry;
 
+    for (auto nhop : next_hop_set) {
+        if (!m_neighOrch->isNextHopFlagSet(nhop, NHFLAGS_IFDOWN)) {
+            continue;
+        }
+
+        next_hop_id = next_hop_group_entry.nhopgroup_members[nhop];
+        status = sai_next_hop_group_api->remove_next_hop_group_member(next_hop_id);
+
+        if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Failed to remove next hop group member %lx: %d\n",
+                           next_hop_id, status);
+        }
+    }
+
     return true;
 }
 
@@ -528,43 +616,51 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
 {
     SWSS_LOG_ENTER();
 
+    sai_object_id_t next_hop_group_id;
+    auto next_hop_group_entry = m_syncdNextHopGroups.find(ipAddresses);
     sai_status_t status;
-    assert(hasNextHopGroup(ipAddresses));
 
-    if (m_syncdNextHopGroups[ipAddresses].ref_count == 0)
-    {
-        auto next_hop_group_entry = m_syncdNextHopGroups[ipAddresses];
-        sai_object_id_t next_hop_group_id = next_hop_group_entry.next_hop_group_id;
+    assert(next_hop_group_entry != m_syncdNextHopGroups.end());
 
-        for (auto next_hop_group_member_id: next_hop_group_entry.next_hop_group_members)
-        {
-            status = sai_next_hop_group_api->remove_next_hop_group_member(next_hop_group_member_id);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to remove next hop group member %lx, rv:%d", next_hop_group_member_id, status);
-                return false;
-            }
-
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
-        }
-
-        sai_status_t status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to remove next hop group %lx, rv:%d", next_hop_group_id, status);
-            return false;
-        }
-
-        m_nextHopGroupCount --;
-
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
-
-        set<IpAddress> ip_address_set = ipAddresses.getIpAddresses();
-        for (auto it : ip_address_set)
-            m_neighOrch->decreaseNextHopRefCount(it);
-
-        m_syncdNextHopGroups.erase(ipAddresses);
+    if (next_hop_group_entry->second.ref_count != 0) {
+        return (true);
     }
+
+    next_hop_group_id = next_hop_group_entry->second.next_hop_group_id;
+    SWSS_LOG_NOTICE("Delete next hop group %s", ipAddresses.to_string().c_str());
+
+    for (auto nhop = next_hop_group_entry->second.nhopgroup_members.begin();
+         nhop != next_hop_group_entry->second.nhopgroup_members.end();) {
+
+        if (m_neighOrch->isNextHopFlagSet(nhop->first, NHFLAGS_IFDOWN)) {
+	    nhop = next_hop_group_entry->second.nhopgroup_members.erase(nhop);
+            continue;
+        }
+        status = sai_next_hop_group_api->remove_next_hop_group_member(nhop->second);
+        if (status != SAI_STATUS_SUCCESS) {
+            SWSS_LOG_ERROR("Failed to remove next hop group member %lx, rv:%d",
+                           nhop->second, status);
+        return (false);
+        }
+
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+        nhop = next_hop_group_entry->second.nhopgroup_members.erase(nhop);
+    }
+
+    status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+    if (status != SAI_STATUS_SUCCESS) {
+        SWSS_LOG_ERROR("Failed to remove next hop group %lx, rv:%d", next_hop_group_id, status);
+        return (false);
+    }
+
+    m_nextHopGroupCount --;
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+
+    set<IpAddress> ip_address_set = ipAddresses.getIpAddresses();
+    for (auto it : ip_address_set) {
+        m_neighOrch->decreaseNextHopRefCount(it);
+    }
+    m_syncdNextHopGroups.erase(ipAddresses);
 
     return true;
 }

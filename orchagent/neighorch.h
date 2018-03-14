@@ -8,6 +8,8 @@
 
 #include "ipaddress.h"
 
+#define NHFLAGS_IFDOWN                  0x1 // nexthop's outbound i/f is down
+
 struct NeighborEntry
 {
     IpAddress           ip_address;     // neighbor IP address
@@ -33,6 +35,8 @@ struct NextHopEntry
 {
     sai_object_id_t     next_hop_id;    // next hop id
     int                 ref_count;      // reference count
+    uint32_t            nh_flags;       // flags
+    string              if_alias;       // i/f name alias
 };
 
 /* NeighborTable: NeighborEntry, neighbor MAC address */
@@ -62,6 +66,9 @@ public:
 
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
 
+    bool ifChangeInformNextHop(const string &, bool);
+    bool isNextHopFlagSet(const IpAddress &, const uint32_t);
+
 private:
     IntfsOrch *m_intfsOrch;
 
@@ -73,6 +80,9 @@ private:
 
     bool addNeighbor(NeighborEntry, MacAddress);
     bool removeNeighbor(NeighborEntry);
+
+    bool setNextHopFlag(const IpAddress &, const uint32_t);
+    bool clearNextHopFlag(const IpAddress &, const uint32_t);
 
     void doTask(Consumer &consumer);
 };

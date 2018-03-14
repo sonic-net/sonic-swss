@@ -15,11 +15,13 @@
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
 
+typedef std::map<IpAddress, sai_object_id_t> NextHopGroupMembers;
+
 struct NextHopGroupEntry
 {
     sai_object_id_t         next_hop_group_id;      // next hop group id
-    std::set<sai_object_id_t>    next_hop_group_members; // next hop group member ids
     int                     ref_count;              // reference count
+    NextHopGroupMembers     nhopgroup_members;      // ids of members indexed by ip address
 };
 
 struct NextHopUpdate
@@ -60,6 +62,9 @@ public:
 
     bool addNextHopGroup(IpAddresses);
     bool removeNextHopGroup(IpAddresses);
+
+    bool validnexthopinNextHopGroup(const IpAddress &);
+    bool invalidnexthopinNextHopGroup(const IpAddress &);
 
 private:
     NeighOrch *m_neighOrch;
