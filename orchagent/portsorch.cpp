@@ -733,12 +733,11 @@ bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
     switch(an) {
-      case 0: // leave it as is?
-        return true;
       case 1:
         attr.value.booldata = true;
         break;
-      case 2:
+      case 0:
+      default:
         attr.value.booldata = false;
         break;
     }
@@ -814,13 +813,15 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string
     attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
     attrs.push_back(attr);
 
-    if(an == true) {
+    if(an == true)
+    {
         attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
         attr.value.booldata = true;
         attrs.push_back(attr);
     }
 
-    if(fec_mode != "") {
+    if(fec_mode != "")
+    {
         attr.id = SAI_PORT_ATTR_FEC_MODE;
         attr.value.u32 = fec_mode_map[fec_mode];
         attrs.push_back(attr);
