@@ -523,6 +523,7 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
 
         sai_object_id_t next_hop_id = m_neighOrch->getNextHopId(it);
         next_hop_ids.push_back(next_hop_id);
+        nhopgroup_members_set[next_hop_id] = it;
     }
 
     sai_attribute_t nhg_attr;
