@@ -200,6 +200,8 @@ bool RouteOrch::validnexthopinNextHopGroup(const IpAddress &ipaddr)
                            nhopgroup->second.next_hop_group_id, status);
             return (false);
         }
+
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
         nhopgroup->second.nhopgroup_members[ipaddr] = nexthop_id;
     }
 
@@ -228,6 +230,8 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const IpAddress &ipaddr)
                            nexthop_id, nhopgroup->second.next_hop_group_id, status);
             return (false);
         }
+
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
 
     return (true);
@@ -607,6 +611,8 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
             SWSS_LOG_ERROR("Failed to remove next hop group member %lx: %d\n",
                            next_hop_id, status);
         }
+
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
 
     return true;
@@ -640,7 +646,7 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
         if (status != SAI_STATUS_SUCCESS) {
             SWSS_LOG_ERROR("Failed to remove next hop group member %lx, rv:%d",
                            nhop->second, status);
-        return (false);
+            return (false);
         }
 
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
