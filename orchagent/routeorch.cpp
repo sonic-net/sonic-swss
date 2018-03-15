@@ -640,7 +640,7 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
          nhop != next_hop_group_entry->second.nhopgroup_members.end();) {
 
         if (m_neighOrch->isNextHopFlagSet(nhop->first, NHFLAGS_IFDOWN)) {
-	    nhop = next_hop_group_entry->second.nhopgroup_members.erase(nhop);
+            nhop = next_hop_group_entry->second.nhopgroup_members.erase(nhop);
             continue;
         }
         status = sai_next_hop_group_api->remove_next_hop_group_member(nhop->second);
