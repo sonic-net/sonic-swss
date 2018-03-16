@@ -813,14 +813,14 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string
     attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
     attrs.push_back(attr);
 
-    if(an == true)
+    if (an == true)
     {
         attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
         attr.value.booldata = true;
         attrs.push_back(attr);
     }
 
-    if(fec_mode != "")
+    if (fec_mode != "")
     {
         attr.id = SAI_PORT_ATTR_FEC_MODE;
         attr.value.u32 = fec_mode_map[fec_mode];
@@ -1183,9 +1183,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 }
 
 
-                if(an != -1) {
+                if (an != -1)
+                {
                     if (setPortAutoNeg(p.m_port_id, an))
+                    {
                         SWSS_LOG_NOTICE("Set port %s AN to %u", alias.c_str(), an);
+                    }
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s AN to %u", alias.c_str(), an);
