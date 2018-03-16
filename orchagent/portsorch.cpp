@@ -875,7 +875,6 @@ bool PortsOrch::isSpeedSupported(const std::string& alias, sai_object_id_t port_
 bool PortsOrch::setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
 {
     SWSS_LOG_ENTER();
-
     sai_attribute_t attr;
     sai_status_t status;
 
@@ -938,6 +937,31 @@ bool PortsOrch::getQueueType(sai_object_id_t queue_id, string &type)
     return true;
 }
 
+bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+    switch(an) {
+      case 1:
+        attr.value.booldata = true;
+        break;
+      default:
+        attr.value.booldata = false;
+        break;
+    }
+
+    sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set AutoNeg %u to port pid:%lx", attr.value.booldata, id);
+        return false;
+    }
+    SWSS_LOG_INFO("Set AutoNeg %u to port pid:%lx", attr.value.booldata, id);
+    return true;
+}
+
 bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
 {
     SWSS_LOG_ENTER();
@@ -988,7 +1012,7 @@ void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_
     }
 }
 
-bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed)
+bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string fec_mode)
 {
     SWSS_LOG_ENTER();
 
@@ -1005,6 +1029,20 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed)
     attr.value.u32list.list = lanes.data();
     attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
     attrs.push_back(attr);
+
+    if (an == true)
+    {
+        attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
+
+    if (fec_mode != "")
+    {
+        attr.id = SAI_PORT_ATTR_FEC_MODE;
+        attr.value.u32 = fec_mode_map[fec_mode];
+        attrs.push_back(attr);
+    }
 
     sai_object_id_t port_id;
     sai_status_t status = sai_port_api->create_port(&port_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
@@ -1165,6 +1203,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             string fec_mode;
             uint32_t mtu = 0;
             uint32_t speed = 0;
+            int an = -1;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -1179,6 +1218,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         int lane = stoi(lane_str);
                         lane_set.insert(lane);
                     }
+
                 }
 
                 /* Set port admin status */
@@ -1196,12 +1236,16 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 /* Set port fec */
                 if (fvField(i) == "fec")
                     fec_mode = fvValue(i);
+
+                /* Set autoneg */
+                if (fvField(i) == "autoneg")
+                    an = (int)stoul(fvValue(i));
             }
 
             /* Collect information about all received ports */
             if (lane_set.size())
             {
-                m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed);
+                m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed, an, fec_mode);
             }
 
             /* Once all ports received, go through the each port and perform appropriate actions:
@@ -1247,7 +1291,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         char *platform = getenv("platform");
                         if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
                         {
-                            if (!addPort(it->first, get<1>(it->second)))
+                            if (!addPort(it->first, get<1>(it->second), get<2>(it->second), get<3>(it->second)))
                             {
                                 throw runtime_error("PortsOrch initialization failure.");
                             }
@@ -1366,6 +1410,21 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
+                        it++;
+                        continue;
+                    }
+                }
+
+
+                if (an != -1)
+                {
+                    if (setPortAutoNeg(p.m_port_id, an))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s AN to %u", alias.c_str(), an);
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s AN to %u", alias.c_str(), an);
                         it++;
                         continue;
                     }
