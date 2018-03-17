@@ -81,7 +81,7 @@ const vector<sai_port_stat_t> portStatIds =
     SAI_PORT_STAT_PAUSE_TX_PKTS,
     SAI_PORT_STAT_ETHER_STATS_TX_NO_ERRORS,
     SAI_PORT_STAT_IP_IN_UCAST_PKTS,
-    SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS
+    SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS,
 };
 
 static const vector<sai_queue_stat_t> queueStatIds =
@@ -90,9 +90,8 @@ static const vector<sai_queue_stat_t> queueStatIds =
     SAI_QUEUE_STAT_BYTES,
     SAI_QUEUE_STAT_DROPPED_PACKETS,
     SAI_QUEUE_STAT_DROPPED_BYTES,
-    SAI_QUEUE_STAT_DISCARD_DROPPED_PACKETS,
     SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
-    SAI_QUEUE_STAT_WATERMARK_BYTES
+    SAI_QUEUE_STAT_WATERMARK_BYTES,
 };
 
 static char* hostif_vlan_tag[] = {
