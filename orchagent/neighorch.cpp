@@ -88,13 +88,15 @@ bool NeighOrch::setNextHopFlag(const IpAddress &ipaddr, const uint32_t nh_flag)
 
     assert(nhop != m_syncdNextHops.end());
 
-    if (nhop->second.nh_flags & nh_flag) {
-        return (true);
+    if (nhop->second.nh_flags & nh_flag)
+    {
+        return true;
     }
 
     nhop->second.nh_flags |= nh_flag;
 
-    switch (nh_flag) {
+    switch (nh_flag)
+    {
         case NHFLAGS_IFDOWN:
             rc = gRouteOrch->invalidnexthopinNextHopGroup(ipaddr);
             break;
@@ -103,7 +105,7 @@ bool NeighOrch::setNextHopFlag(const IpAddress &ipaddr, const uint32_t nh_flag)
             break;
     }
 
-    return (rc);
+    return rc;
 }
 
 bool NeighOrch::clearNextHopFlag(const IpAddress &ipaddr, const uint32_t nh_flag)
@@ -115,13 +117,15 @@ bool NeighOrch::clearNextHopFlag(const IpAddress &ipaddr, const uint32_t nh_flag
 
     assert(nhop != m_syncdNextHops.end());
 
-    if (!(nhop->second.nh_flags & nh_flag)) {
-        return (true);
+    if (!(nhop->second.nh_flags & nh_flag))
+    {
+        return true;
     }
 
     nhop->second.nh_flags &= ~nh_flag;
 
-    switch (nh_flag) {
+    switch (nh_flag)
+    {
         case NHFLAGS_IFDOWN:
             rc = gRouteOrch->validnexthopinNextHopGroup(ipaddr);
             break;
@@ -130,7 +134,7 @@ bool NeighOrch::clearNextHopFlag(const IpAddress &ipaddr, const uint32_t nh_flag
             break;
     }
 
-    return (rc);
+    return rc;
 }
 
 bool NeighOrch::isNextHopFlagSet(const IpAddress &ipaddr, const uint32_t nh_flag)
@@ -141,11 +145,12 @@ bool NeighOrch::isNextHopFlagSet(const IpAddress &ipaddr, const uint32_t nh_flag
 
     assert(nhop != m_syncdNextHops.end());
 
-    if (nhop->second.nh_flags & nh_flag) {
-        return (true);
+    if (nhop->second.nh_flags & nh_flag)
+    {
+        return true;
     }
 
-    return (false);
+    return false;
 }
 
 bool NeighOrch::ifChangeInformNextHop(const string &alias, bool if_up)
@@ -153,25 +158,33 @@ bool NeighOrch::ifChangeInformNextHop(const string &alias, bool if_up)
     SWSS_LOG_ENTER();
     bool rc = true;
 
-    for (auto nhop = m_syncdNextHops.begin(); nhop != m_syncdNextHops.end(); ++nhop) {
-        if (nhop->second.if_alias != alias) {
+    for (auto nhop = m_syncdNextHops.begin(); nhop != m_syncdNextHops.end(); ++nhop)
+    {
+        if (nhop->second.if_alias != alias)
+        {
             continue;
         }
 
-        if (if_up) {
+        if (if_up)
+        {
             rc = clearNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
-        } else {
+        }
+        else
+        {
             rc = setNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
         }
 
-        if (rc == true) {
+        if (rc == true)
+        {
             continue;
-        } else {
+        }
+        else
+        {
             break;
         }
     }
 
-    return (rc);
+    return rc;
 }
 
 bool NeighOrch::removeNextHop(IpAddress ipAddress, string alias)

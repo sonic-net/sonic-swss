@@ -852,8 +852,10 @@ bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
 {
     SWSS_LOG_ENTER();
 
-    for (auto it = m_portList.begin(); it != m_portList.end(); it++) {
-        if (it->second.m_port_id != port_id) {
+    for (auto it = m_portList.begin(); it != m_portList.end(); it++)
+    {
+        if (it->second.m_port_id != port_id)
+        {
             continue;
         }
 
@@ -862,20 +864,22 @@ bool PortsOrch::setHostIntfsOperStatus(sai_object_id_t port_id, bool up)
         attr.value.booldata = up;
 
         sai_status_t status = sai_hostif_api->set_hostif_attribute(it->second.m_hif_id, &attr);
-        if (status != SAI_STATUS_SUCCESS) {
+        if (status != SAI_STATUS_SUCCESS)
+        {
             SWSS_LOG_WARN("Failed to set operation status %s to host interface %s",
                           up ? "UP" : "DOWN", it->second.m_alias.c_str());
-            return (false);
+            return false;
         }
         SWSS_LOG_NOTICE("Set operation status %s to host interface %s",
                         up ? "UP" : "DOWN", it->second.m_alias.c_str());
-        if (gNeighOrch->ifChangeInformNextHop(it->second.m_alias, up) == false) {
+        if (gNeighOrch->ifChangeInformNextHop(it->second.m_alias, up) == false)
+        {
             SWSS_LOG_WARN("Inform nexthop operation failed for interface %s",
                           it->second.m_alias.c_str());
         }
-        return (true);
+        return true;
     }
-    return (false);
+    return false;
 }
 
 void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status)
