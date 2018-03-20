@@ -60,12 +60,12 @@ def test_CrmFdbEntry(dvs):
     tbl.set("Vlan2:52-54-00-25-06-E9", fvs)
 
     # create vlan
-    tbl = swsscommon.Table(cfg_db, "VLAN", "|")
+    tbl = swsscommon.Table(cfg_db, "VLAN")
     fvs = swsscommon.FieldValuePairs([("vlanid", "2")])
     tbl.set("Vlan2", fvs)
 
     # create vlan member
-    tbl = swsscommon.Table(cfg_db, "VLAN_MEMBER", "|")
+    tbl = swsscommon.Table(cfg_db, "VLAN_MEMBER")
     fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
     tbl.set("Vlan2|Ethernet8", fvs)
 
@@ -483,12 +483,12 @@ def test_CrmAcl(dvs):
     bind_ports = ["Ethernet0", "Ethernet4"]
 
     # create ACL table
-    ttbl = swsscommon.Table(db, "ACL_TABLE", '|')
+    ttbl = swsscommon.Table(db, "ACL_TABLE")
     fvs = swsscommon.FieldValuePairs([("policy_desc", "test"), ("type", "L3"), ("ports", ",".join(bind_ports))])
     ttbl.set("test", fvs)
 
     # create ACL rule
-    rtbl = swsscommon.Table(db, "ACL_RULE", '|')
+    rtbl = swsscommon.Table(db, "ACL_RULE")
     fvs = swsscommon.FieldValuePairs([("priority", "55"), ("PACKET_ACTION", "FORWARD"), ("L4_SRC_PORT", "65000")])
     rtbl.set("test|acl_test_rule", fvs)
 

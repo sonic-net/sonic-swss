@@ -169,7 +169,7 @@ void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb)
 {
     cout << "Get port configuration from ConfigDB..." << endl;
 
-    Table table(&cfgDb, CFG_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR);
+    Table table(&cfgDb, CFG_PORT_TABLE_NAME);
     std::vector<FieldValueTuple> ovalues;
     std::vector<string> keys;
     table.getKeys(keys);

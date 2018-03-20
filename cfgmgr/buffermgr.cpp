@@ -15,12 +15,12 @@ using namespace swss;
 
 BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, string pg_lookup_file, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
-        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgBufferProfileTable(cfgDb, CFG_BUFFER_PROFILE_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgBufferPgTable(cfgDb, CFG_BUFFER_PG_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgLosslessPgPoolTable(cfgDb, CFG_BUFFER_POOL_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR)
+        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
+        m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
+        m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
+        m_cfgBufferProfileTable(cfgDb, CFG_BUFFER_PROFILE_TABLE_NAME),
+        m_cfgBufferPgTable(cfgDb, CFG_BUFFER_PG_TABLE_NAME),
+        m_cfgLosslessPgPoolTable(cfgDb, CFG_BUFFER_POOL_TABLE_NAME)
 {
     readPgProfileLookupFile(pg_lookup_file);
 }
@@ -130,7 +130,7 @@ void BufferMgr::doSpeedUpdateTask(string port, string speed)
 
     // Crete record in BUFFER_PROFILE table
     // key format is pg_lossless_<speed>_<cable>_profile
-    string buffer_pg_key = port + CONFIGDB_TABLE_NAME_SEPARATOR + LOSSLESS_PGS;
+    string buffer_pg_key = port + NEW_TABLE_NAME_SEPARATOR + LOSSLESS_PGS;
     string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
 
     // check if profile already exists - if yes - skip creation
@@ -149,7 +149,7 @@ void BufferMgr::doSpeedUpdateTask(string port, string speed)
 
         // profile threshold field name
         mode += "_th";
-        string pg_pool_reference = string(CFG_BUFFER_POOL_TABLE_NAME) + CONFIGDB_TABLE_NAME_SEPARATOR + INGRESS_LOSSLESS_PG_POOL_NAME;
+        string pg_pool_reference = string(CFG_BUFFER_POOL_TABLE_NAME) + NEW_TABLE_NAME_SEPARATOR + INGRESS_LOSSLESS_PG_POOL_NAME;
         fvVector.push_back(make_pair("pool", "[" + pg_pool_reference + "]"));
         fvVector.push_back(make_pair("xon", m_pgProfileLookup[speed][cable].xon));
         if (m_pgProfileLookup[speed][cable].xon_offset.length() > 0) {
@@ -167,7 +167,7 @@ void BufferMgr::doSpeedUpdateTask(string port, string speed)
     }
 
     fvVector.clear();
-    string profile_ref = string("[") + CFG_BUFFER_PROFILE_TABLE_NAME + CONFIGDB_TABLE_NAME_SEPARATOR + buffer_profile_key + "]";
+    string profile_ref = string("[") + CFG_BUFFER_PROFILE_TABLE_NAME + NEW_TABLE_NAME_SEPARATOR + buffer_profile_key + "]";
     fvVector.push_back(make_pair("profile", profile_ref));
     m_cfgBufferPgTable.set(buffer_pg_key, fvVector);
 }

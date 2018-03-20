@@ -21,11 +21,11 @@ extern MacAddress gMacAddress;
 
 VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
-        m_cfgVlanTable(cfgDb, CFG_VLAN_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgVlanMemberTable(cfgDb, CFG_VLAN_MEMBER_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
+        m_cfgVlanTable(cfgDb, CFG_VLAN_TABLE_NAME),
+        m_cfgVlanMemberTable(cfgDb, CFG_VLAN_MEMBER_TABLE_NAME),
+        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
+        m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
+        m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_appVlanTableProducer(appDb, APP_VLAN_TABLE_NAME),
         m_appVlanMemberTableProducer(appDb, APP_VLAN_MEMBER_TABLE_NAME)
 {

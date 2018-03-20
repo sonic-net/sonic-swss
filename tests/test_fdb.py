@@ -11,11 +11,11 @@ def create_entry(tbl, key, pairs):
     # FIXME: better to wait until DB create them
     time.sleep(1)
 
-def create_entry_tbl(db, table, separator, key, pairs):
-    tbl = swsscommon.Table(db, table, separator)
+def create_entry_tbl(db, table, key, pairs):
+    tbl = swsscommon.Table(db, table)
     create_entry(tbl, key, pairs)
 
-def create_entry_pst(db, table, separator, key, pairs):
+def create_entry_pst(db, table, key, pairs):
     tbl = swsscommon.ProducerStateTable(db, table)
     create_entry(tbl, key, pairs)
 
@@ -83,7 +83,7 @@ def test_FDBAddedAfterMemberCreated(dvs):
     # create a FDB entry in Application DB
     create_entry_pst(
         appl_db,
-        "FDB_TABLE", ':', "Vlan2:52-54-00-25-06-E9",
+        "FDB_TABLE", "Vlan2:52-54-00-25-06-E9",
         [
             ("port", "Ethernet0"),
             ("type", "dynamic"),
@@ -96,7 +96,7 @@ def test_FDBAddedAfterMemberCreated(dvs):
     # create vlan
     create_entry_tbl(
         conf_db,
-        "VLAN", '|', "Vlan2",
+        "VLAN", "Vlan2",
         [
             ("vlanid", "2"),
         ]
@@ -105,7 +105,7 @@ def test_FDBAddedAfterMemberCreated(dvs):
     # create vlan member entry in application db
     create_entry_tbl(
         conf_db,
-        "VLAN_MEMBER", '|', "Vlan2|Ethernet0",
+        "VLAN_MEMBER", "Vlan2|Ethernet0",
          [
             ("tagging_mode", "untagged"),
          ]
