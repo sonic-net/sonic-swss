@@ -102,6 +102,7 @@ private:
     void unregisterFromWdDb(const Port& port);
     void doTask(swss::NotificationConsumer &wdNotification);
 
+    string getLosslessStr(string str, set<uint8_t>& losslessTc);
     string getFlexCounterTableKey(string s);
     map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
 

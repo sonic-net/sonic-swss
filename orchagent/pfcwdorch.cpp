@@ -21,6 +21,7 @@
 #define PFC_WD_RESTORATION_TIME_MIN     100
 #define PFC_WD_POLL_TIMEOUT             5000
 #define PFC_WD_LOSSY_POLL_TIMEOUT_SEC   (5 * 60)
+#define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
 
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
@@ -400,16 +401,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         return;
     }
 
-    if (!c_portStatIds.empty())
-    {
-        string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_port_id));
-        vector<FieldValueTuple> fieldValues;
-        string str = counterIdsToStr(c_portStatIds, &sai_serialize_port_stat);
-        fieldValues.emplace_back(PORT_COUNTER_ID_LIST, str);
-
-        m_flexCounterTable->set(key, fieldValues);
-    }
-
+    set<uint8_t> losslessTc;
     uint8_t pfcMask = attr.value.u8;
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
@@ -418,6 +410,24 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
             continue;
         }
 
+        losslessTc.insert(i);
+    }
+
+    if (!c_portStatIds.empty())
+    {
+        string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_port_id));
+        vector<FieldValueTuple> fieldValues;
+        // Only register lossless tc counters in database.
+        string str = counterIdsToStr(c_portStatIds, &sai_serialize_port_stat);
+        string losslessStr = getLosslessStr(str,losslessTc);
+        fieldValues.emplace_back(PORT_COUNTER_ID_LIST, losslessStr);
+
+        m_flexCounterTable->set(key, fieldValues);
+    }
+
+    for (auto i : losslessTc)
+    {
+        SWSS_LOG_NOTICE("current tc is %d", i);
         sai_object_id_t queueId = port.m_queue_ids[i];
         string queueIdStr = sai_serialize_object_id(queueId);
 
@@ -462,8 +472,42 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 }
 
 template <typename DropHandler, typename ForwardHandler>
+string PfcWdSwOrch<DropHandler, ForwardHandler>::getLosslessStr(string str, set<uint8_t>& losslessTc)
+{
+    SWSS_LOG_ENTER();
+
+    istringstream is(str);
+    string curStr;
+    string res;
+
+    while (getline(is, curStr, ',' ))
+    {
+        size_t index = 0;
+        index = curStr.find(SAI_PORT_STAT_PFC_PREFIX);
+        if (index == string::npos)
+        {
+            res = res + curStr + ",";
+        }
+        else
+        {
+            uint8_t tc = (uint8_t)atoi(curStr.substr(index+sizeof(SAI_PORT_STAT_PFC_PREFIX)-1, 1).c_str());
+            if (losslessTc.count(tc)) res = res + curStr + ",";
+        }
+    }
+
+    if (!res.empty())
+    {
+        res.pop_back();
+    }
+
+    return res;
+}
+
+template <typename DropHandler, typename ForwardHandler>
 string PfcWdSwOrch<DropHandler, ForwardHandler>::getFlexCounterTableKey(string key)
 {
+    SWSS_LOG_ENTER();
+
     return string(PFC_WD_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
