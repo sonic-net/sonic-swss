@@ -419,7 +419,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         vector<FieldValueTuple> fieldValues;
         // Only register lossless tc counters in database.
         string str = counterIdsToStr(c_portStatIds, &sai_serialize_port_stat);
-        string losslessStr = getLosslessStr(str,losslessTc);
+        string losslessStr = getLosslessStr(str, losslessTc);
         fieldValues.emplace_back(PORT_COUNTER_ID_LIST, losslessStr);
 
         m_flexCounterTable->set(key, fieldValues);
@@ -427,7 +427,6 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 
     for (auto i : losslessTc)
     {
-        SWSS_LOG_NOTICE("current tc is %d", i);
         sai_object_id_t queueId = port.m_queue_ids[i];
         string queueIdStr = sai_serialize_object_id(queueId);
 
@@ -480,7 +479,7 @@ string PfcWdSwOrch<DropHandler, ForwardHandler>::getLosslessStr(string str, set<
     string curStr;
     string res;
 
-    while (getline(is, curStr, ',' ))
+    while (getline(is, curStr, ','))
     {
         size_t index = 0;
         index = curStr.find(SAI_PORT_STAT_PFC_PREFIX);
@@ -491,7 +490,10 @@ string PfcWdSwOrch<DropHandler, ForwardHandler>::getLosslessStr(string str, set<
         else
         {
             uint8_t tc = (uint8_t)atoi(curStr.substr(index+sizeof(SAI_PORT_STAT_PFC_PREFIX)-1, 1).c_str());
-            if (losslessTc.count(tc)) res = res + curStr + ",";
+            if (losslessTc.count(tc))
+            {
+                res = res + curStr + ",";
+            }
         }
     }
 
