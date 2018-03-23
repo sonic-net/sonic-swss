@@ -130,7 +130,6 @@ void BufferMgr::doSpeedUpdateTask(string port, string speed)
 
     // Crete record in BUFFER_PROFILE table
     // key format is pg_lossless_<speed>_<cable>_profile
-    string buffer_pg_key = port + NEW_TABLE_NAME_SEPARATOR + LOSSLESS_PGS;
     string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
 
     // check if profile already exists - if yes - skip creation
@@ -149,7 +148,10 @@ void BufferMgr::doSpeedUpdateTask(string port, string speed)
 
         // profile threshold field name
         mode += "_th";
-        string pg_pool_reference = string(CFG_BUFFER_POOL_TABLE_NAME) + NEW_TABLE_NAME_SEPARATOR + INGRESS_LOSSLESS_PG_POOL_NAME;
+        string pg_pool_reference = string(CFG_BUFFER_POOL_TABLE_NAME) +
+                                   m_cfgBufferProfileTable.getTableNameSeparator() +
+                                   INGRESS_LOSSLESS_PG_POOL_NAME;
+
         fvVector.push_back(make_pair("pool", "[" + pg_pool_reference + "]"));
         fvVector.push_back(make_pair("xon", m_pgProfileLookup[speed][cable].xon));
         if (m_pgProfileLookup[speed][cable].xon_offset.length() > 0) {
@@ -167,7 +169,15 @@ void BufferMgr::doSpeedUpdateTask(string port, string speed)
     }
 
     fvVector.clear();
-    string profile_ref = string("[") + CFG_BUFFER_PROFILE_TABLE_NAME + NEW_TABLE_NAME_SEPARATOR + buffer_profile_key + "]";
+
+    string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + LOSSLESS_PGS;
+
+    string profile_ref = string("[") +
+                         CFG_BUFFER_PROFILE_TABLE_NAME +
+                         m_cfgBufferPgTable.getTableNameSeparator() +
+                         buffer_profile_key +
+                         "]";
+
     fvVector.push_back(make_pair("profile", profile_ref));
     m_cfgBufferPgTable.set(buffer_pg_key, fvVector);
 }
