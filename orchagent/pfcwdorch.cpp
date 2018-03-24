@@ -419,8 +419,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         vector<FieldValueTuple> fieldValues;
         // Only register lossless tc counters in database.
         string str = counterIdsToStr(c_portStatIds, &sai_serialize_port_stat);
-        string losslessStr = getLosslessStr(str, losslessTc);
-        fieldValues.emplace_back(PORT_COUNTER_ID_LIST, losslessStr);
+        string filteredStr = filterPfcCounters(str, losslessTc);
+        fieldValues.emplace_back(PORT_COUNTER_ID_LIST, filteredStr);
 
         m_flexCounterTable->set(key, fieldValues);
     }
@@ -471,38 +471,38 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 }
 
 template <typename DropHandler, typename ForwardHandler>
-string PfcWdSwOrch<DropHandler, ForwardHandler>::getLosslessStr(string str, set<uint8_t>& losslessTc)
+string PfcWdSwOrch<DropHandler, ForwardHandler>::filterPfcCounters(string counters, set<uint8_t>& losslessTc)
 {
     SWSS_LOG_ENTER();
 
-    istringstream is(str);
-    string curStr;
-    string res;
+    istringstream is(counters);
+    string counter;
+    string filterCounters;
 
-    while (getline(is, curStr, ','))
+    while (getline(is, counter, ','))
     {
         size_t index = 0;
         index = curStr.find(SAI_PORT_STAT_PFC_PREFIX);
         if (index == string::npos)
         {
-            res = res + curStr + ",";
+            filterPfcCounters = filterPfcCounters + counter + ",";
         }
         else
         {
-            uint8_t tc = (uint8_t)atoi(curStr.substr(index+sizeof(SAI_PORT_STAT_PFC_PREFIX)-1, 1).c_str());
+            uint8_t tc = (uint8_t)atoi(counter.substr(index+sizeof(SAI_PORT_STAT_PFC_PREFIX)-1, 1).c_str());
             if (losslessTc.count(tc))
             {
-                res = res + curStr + ",";
+                filterPfcCounters = filterPfcCounters + counter + ",";
             }
         }
     }
 
-    if (!res.empty())
+    if (!filterPfcCounters.empty())
     {
-        res.pop_back();
+        filterPfcCounters.pop_back();
     }
 
-    return res;
+    return filterPfcCounters;
 }
 
 template <typename DropHandler, typename ForwardHandler>
