@@ -482,27 +482,27 @@ string PfcWdSwOrch<DropHandler, ForwardHandler>::filterPfcCounters(string counte
     while (getline(is, counter, ','))
     {
         size_t index = 0;
-        index = curStr.find(SAI_PORT_STAT_PFC_PREFIX);
+        index = counter.find(SAI_PORT_STAT_PFC_PREFIX);
         if (index != 0)
         {
-            filterPfcCounters = filterPfcCounters + counter + ",";
+            filterCounters = filterCounters + counter + ",";
         }
         else
         {
-            uint8_t tc = (uint8_t)atoi(counter.substr(index+sizeof(SAI_PORT_STAT_PFC_PREFIX)-1, 1).c_str());
+            uint8_t tc = (uint8_t)atoi(counter.substr(index + sizeof(SAI_PORT_STAT_PFC_PREFIX) - 1, 1).c_str());
             if (losslessTc.count(tc))
             {
-                filterPfcCounters = filterPfcCounters + counter + ",";
+                filterCounters = filterCounters + counter + ",";
             }
         }
     }
 
-    if (!filterPfcCounters.empty())
+    if (!filterCounters.empty())
     {
-        filterPfcCounters.pop_back();
+        filterCounters.pop_back();
     }
 
-    return filterPfcCounters;
+    return filterCounters;
 }
 
 template <typename DropHandler, typename ForwardHandler>
