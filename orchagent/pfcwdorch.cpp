@@ -483,7 +483,7 @@ string PfcWdSwOrch<DropHandler, ForwardHandler>::filterPfcCounters(string counte
     {
         size_t index = 0;
         index = curStr.find(SAI_PORT_STAT_PFC_PREFIX);
-        if (index == string::npos)
+        if (index != 0)
         {
             filterPfcCounters = filterPfcCounters + counter + ",";
         }
