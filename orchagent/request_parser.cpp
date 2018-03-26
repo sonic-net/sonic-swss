@@ -9,6 +9,7 @@
 
 #include "sai.h"
 #include "macaddress.h"
+#include "ipaddress.h"
 #include "orch.h"
 #include "request_parser.h"
 
@@ -87,6 +88,12 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
             case REQ_T_MAC_ADDRESS:
                 key_item_mac_addresses_[i] = parseMacAddress(key_items[i]);
                 break;
+            case REQ_T_IP:
+                key_item_ip_addresses_[i] = parseIpAddress(key_items[i]);
+                break;
+            case REQ_T_UINT:
+                key_item_uint_[i] = parseUINT(key_items[i]);
+                break;
             default:
                 throw std::logic_error(std::string("Not implemented key type parser. Key '")
                                      + full_key_
@@ -128,6 +135,9 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
                 break;
             case REQ_T_PACKET_ACTION:
                 attr_item_packet_actions_[fvField(*i)] = parsePacketAction(fvValue(*i));
+                break;
+            case REQ_T_VLAN:
+                attr_item_vlan_[fvField(*i)] = parseVlan(fvValue(*i));
                 break;
             default:
                 throw std::logic_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
@@ -176,6 +186,51 @@ MacAddress Request::parseMacAddress(const std::string& str)
     }
 
     return MacAddress(mac);
+}
+
+IpAddress Request::parseIpAddress(const std::string& str)
+{
+    try
+    {
+        IpAddress addr(str);
+        return addr;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid ip address: ") + str);
+    }
+}
+
+uint64_t Request::parseUINT(const std::string& str)
+{
+    try
+    {
+        uint64_t ret = std::stoul(str);
+        return ret;
+    }
+    catch(...)
+    {
+        throw std::invalid_argument(std::string("Invalid unsigned integer: ") + str);
+    }
+}
+
+uint16_t Request::parseVlan(const std::string& str)
+{
+    const auto vlan_prefix = std::string("Vlan");
+    const auto prefix_len = vlan_prefix.length();
+    if (str.substr(0, prefix_len) != vlan_prefix) {
+        throw std::invalid_argument(std::string("Invalid vlan interface: ") + str);
+    }
+
+    try
+    {
+        uint16_t ret = static_cast<uint16_t>(std::stoul(str.substr(prefix_len)));
+        return ret;
+    }
+    catch(...)
+    {
+        throw std::invalid_argument(std::string("Invalid vlan interface: ") + str);
+    }
 }
 
 sai_packet_action_t Request::parsePacketAction(const std::string& str)
