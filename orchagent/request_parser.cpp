@@ -216,21 +216,31 @@ uint64_t Request::parseUINT(const std::string& str)
 
 uint16_t Request::parseVlan(const std::string& str)
 {
+    uint16_t ret = 0;
+
     const auto vlan_prefix = std::string("Vlan");
     const auto prefix_len = vlan_prefix.length();
-    if (str.substr(0, prefix_len) != vlan_prefix) {
+
+    if (str.substr(0, prefix_len) != vlan_prefix)
+    {
         throw std::invalid_argument(std::string("Invalid vlan interface: ") + str);
     }
 
     try
     {
-        uint16_t ret = static_cast<uint16_t>(std::stoul(str.substr(prefix_len)));
-        return ret;
+        ret = static_cast<uint16_t>(std::stoul(str.substr(prefix_len)));
     }
     catch(...)
     {
         throw std::invalid_argument(std::string("Invalid vlan interface: ") + str);
     }
+
+    if (ret == 0 || ret >= 4096)
+    {
+        throw std::invalid_argument(std::string("Invalid vlan interface (vlan id is too big): ") + str);
+    }
+
+    return ret;
 }
 
 sai_packet_action_t Request::parsePacketAction(const std::string& str)

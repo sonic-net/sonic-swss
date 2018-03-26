@@ -35,7 +35,10 @@ create_decap_tunnel_map()
                                 static_cast<uint32_t>(tunnel_map_attrs.size()),
                                 tunnel_map_attrs.data()
                           );
-    if (status != SAI_STATUS_SUCCESS) throw std::runtime_error("Can't create tunnel map object");
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't create tunnel map object");
+    }
 
     return tunnel_map_id;
 }
@@ -72,7 +75,10 @@ create_decap_tunnel_map_entry(
                                 static_cast<uint32_t>(tunnel_map_entry_attrs.size()),
                                 tunnel_map_entry_attrs.data()
                           );
-    if (status != SAI_STATUS_SUCCESS) throw std::runtime_error("Can't create a tunnel map entry object");
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't create a tunnel map entry object");
+    }
 
     return tunnel_map_entry_id;
 }
@@ -101,7 +107,10 @@ create_tunnel(sai_object_id_t tunnel_decap_map_id)
                                 static_cast<uint32_t>(tunnel_attrs.size()),
                                 tunnel_attrs.data()
                           );
-    if (status != SAI_STATUS_SUCCESS) throw std::runtime_error("Can't create a tunnel object");
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't create a tunnel object");
+    }
 
     return tunnel_id;
 }
@@ -145,7 +154,10 @@ create_tunnel_termination(
                                 static_cast<uint32_t>(tunnel_attrs.size()),
                                 tunnel_attrs.data()
                           );
-    if (status != SAI_STATUS_SUCCESS) throw std::runtime_error("Can't create a tunnel term table object");
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't create a tunnel term table object");
+    }
 
     return term_table_id;
 }
@@ -154,20 +166,7 @@ bool VxlanTunnelDecapOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
-    uint16_t vlan_id = 0; // initialize for a compiler
-
-    for (const auto& name: request.getAttrFieldNames())
-    {
-        if (name == "vlan")
-        {
-            vlan_id = request.getAttrVlan("vlan");
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Logic error: Unknown attribute: %s", name.c_str());
-            continue;
-        }
-    }
+    uint16_t vlan_id = request.getAttrVlan("vlan");
 
     const auto& termination_ipv4 = request.getKeyIpAddress(0);
     if (!termination_ipv4.isV4())
@@ -176,7 +175,7 @@ bool VxlanTunnelDecapOrch::addOperation(const Request& request)
         return false;
     }
 
-    const auto& termination_vni  = static_cast<uint32_t>(request.getKeyUINT(1));
+    const auto& termination_vni = static_cast<uint32_t>(request.getKeyUINT(1));
 
     const auto vxlan_tunnel_tuple = std::make_tuple(termination_ipv4, termination_vni);
 
