@@ -21,6 +21,7 @@
 #include "switchorch.h"
 #include "crmorch.h"
 #include "vrforch.h"
+#include "vxlan_tunnel_decap_orch.h"
 #include "countercheckorch.h"
 
 using namespace swss;

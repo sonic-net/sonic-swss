@@ -69,6 +69,9 @@ bool OrchDaemon::init()
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
+    const std::string APP_VXLAN_TUNNEL_DECAP_TABLE_NAME = "VXLAN_TUNNEL_DECAP"; // FIXME: put into swss-common
+    VxlanTunnelDecapOrch *vxlan_tunnel_decap_orch = new VxlanTunnelDecapOrch(m_configDb, APP_VXLAN_TUNNEL_DECAP_TABLE_NAME);
+
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
         CFG_SCHEDULER_TABLE_NAME,
@@ -103,7 +106,7 @@ bool OrchDaemon::init()
     };
     gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch);
 
-    m_orchList = { switch_orch, gCrmOrch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch, vrf_orch };
+    m_orchList = { switch_orch, gCrmOrch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch, vrf_orch, vxlan_tunnel_decap_orch };
     m_select = new Select();
 
     vector<string> pfc_wd_tables = {
