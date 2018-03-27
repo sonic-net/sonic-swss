@@ -105,9 +105,6 @@ private:
     shared_ptr<ProducerTable> m_flexCounterTable = nullptr;
     shared_ptr<ProducerTable> m_flexCounterGroupTable = nullptr;
 
-    atomic_bool m_runPfcWdSwOrchThread = { false };
-    shared_ptr<thread> m_pfcWatchdogThread = nullptr;
-
     int m_pollInterval;
 };
 

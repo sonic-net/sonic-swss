@@ -20,7 +20,6 @@
 #define PFC_WD_RESTORATION_TIME_MAX     (60 * 1000)
 #define PFC_WD_RESTORATION_TIME_MIN     100
 #define PFC_WD_POLL_TIMEOUT             5000
-#define PFC_WD_LOSSY_POLL_TIMEOUT_SEC   (5 * 60)
 #define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
 #define PFC_WD_TC_MAX 8
 
@@ -36,12 +35,6 @@ PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE))
 {
     SWSS_LOG_ENTER();
-
-    auto interv = timespec { .tv_sec = PFC_WD_LOSSY_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
-    auto timer = new SelectableTimer(interv);
-    auto executor = new ExecutableTimer(timer, this);
-    Orch::addExecutor("COUNTERS_POLL", executor);
-    timer->start();
 }
 
 
@@ -442,6 +435,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
         redisClient.hdel(countersKey, "PFC_WD_ACTION");
         redisClient.hdel(countersKey, "PFC_WD_STATUS");
     }
+
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -574,6 +568,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
                         entry->first,
                         entry->second.index,
                         PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
+                entry->second.handler->initCounters();
             }
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_DROP)
@@ -585,6 +580,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
                         entry->first,
                         entry->second.index,
                         PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
+                entry->second.handler->initCounters();
             }
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_FORWARD)
@@ -596,13 +592,13 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
                         entry->first,
                         entry->second.index,
                         PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
+                entry->second.handler->initCounters();
             }
         }
         else
         {
             throw runtime_error("Unknown PFC WD action");
         }
-        entry->second.handler->initCounters();
     }
     else if (event == "restore")
     {
