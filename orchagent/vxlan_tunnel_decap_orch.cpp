@@ -127,7 +127,7 @@ create_tunnel_termination(
     std::vector<sai_attribute_t> tunnel_attrs;
 
     attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE;
-    attr.value.oid = SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP;
+    attr.value.s32 = SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP;
     tunnel_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID;
