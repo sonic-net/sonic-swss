@@ -432,6 +432,17 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
 
         // Unregister in syncd
         m_flexCounterTable->del(key);
+
+        auto entry = m_entryMap.find(queueId);
+        if (entry != m_entryMap.end())
+        {
+            if (entry->second.handler != nullptr)
+            {
+                entry->second.handler->commitCounters();
+                entry->second.handler = nullptr;
+            }
+        }
+
         m_entryMap.erase(queueId);
 
         // Clean up
