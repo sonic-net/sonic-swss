@@ -96,8 +96,8 @@ int main(int argc, char **argv)
         while (true)
         {
             Selectable *temps;
-            int tempfd, ret;
-            ret = s.select(&temps, &tempfd, 1);
+            int ret;
+            ret = s.select(&temps, 1);
 
             if (ret == Select::ERROR)
             {

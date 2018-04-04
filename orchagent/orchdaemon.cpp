@@ -223,9 +223,9 @@ void OrchDaemon::start()
     while (true)
     {
         Selectable *s;
-        int fd, ret;
+        int ret;
 
-        ret = m_select->select(&s, &fd, SELECT_TIMEOUT);
+        ret = m_select->select(&s, SELECT_TIMEOUT);
 
         if (ret == Select::ERROR)
         {
