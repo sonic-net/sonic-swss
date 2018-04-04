@@ -70,10 +70,11 @@ public:
     virtual ~Executor() { delete m_selectable; }
 
     // Decorating Selectable
-    virtual void addFd(fd_set *fd) { return m_selectable->addFd(fd); }
-    virtual bool isMe(fd_set *fd) { return m_selectable->isMe(fd); }
-    virtual int readCache() { return m_selectable->readCache(); }
-    virtual void readMe() { return m_selectable->readMe(); }
+    int getFd() override { return m_selectable->getFd(); }
+    void readData() override { m_selectable->readData(); }
+    bool hasCachedData() override { return m_selectable->hasCachedData(); }
+    bool initializedWithData() override { return m_selectable->initializedWithData(); }
+    void updateAfterRead() override { m_selectable->updateAfterRead(); }
 
     // Disable copying
     Executor(const Executor&) = delete;

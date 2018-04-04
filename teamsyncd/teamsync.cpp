@@ -203,22 +203,12 @@ int TeamSync::TeamPortSync::teamdHandler(struct team_handle *team, void *arg,
     return ((TeamSync::TeamPortSync *)arg)->onChange();
 }
 
-void TeamSync::TeamPortSync::addFd(fd_set *fd)
+int TeamSync::TeamPortSync::getFd()
 {
-    FD_SET(team_get_event_fd(m_team), fd);
+    return team_get_event_fd(m_team);
 }
 
-bool TeamSync::TeamPortSync::isMe(fd_set *fd)
-{
-    return FD_ISSET(team_get_event_fd(m_team), fd);
-}
-
-int TeamSync::TeamPortSync::readCache()
-{
-    return NODATA;
-}
-
-void TeamSync::TeamPortSync::readMe()
+void TeamSync::TeamPortSync::readData()
 {
     team_handle_events(m_team);
 }

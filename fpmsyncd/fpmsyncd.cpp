@@ -33,7 +33,7 @@ int main(int argc, char **argv)
             while (true)
             {
                 Selectable *temps;
-                /* Reading FPM messages forever (and calling "readMe" to read them) */
+                /* Reading FPM messages forever (and calling "readData" to read them) */
                 s.select(&temps);
                 pipeline.flush();
                 SWSS_LOG_DEBUG("Pipeline flushed");
