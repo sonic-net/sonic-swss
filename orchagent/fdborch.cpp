@@ -168,6 +168,7 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
     }
 
     sai_fdb_entry_t entry;
+    entry.switch_id = gSwitchId;
     memcpy(entry.mac_address, mac.getMac(), sizeof(sai_mac_t));
     entry.bv_id = port.m_vlan_info.vlan_oid;
 
@@ -423,6 +424,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
 
     sai_status_t status;
     sai_fdb_entry_t fdb_entry;
+    fdb_entry.switch_id = gSwitchId;
     memcpy(fdb_entry.mac_address, entry.mac.getMac(), sizeof(sai_mac_t));
     fdb_entry.bv_id = entry.bv_id;
 
