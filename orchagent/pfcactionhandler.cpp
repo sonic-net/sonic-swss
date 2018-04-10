@@ -37,34 +37,12 @@ PfcWdActionHandler::PfcWdActionHandler(sai_object_id_t port, sai_object_id_t que
     m_countersTable(countersTable)
 {
     SWSS_LOG_ENTER();
-
-    Port p;
-    if (!gPortsOrch->getPort(port, p))
-    {
-        SWSS_LOG_ERROR("Unknown port id 0x%lx", port);
-    }
-    else
-    {
-        m_portAlias = p.m_alias;
-        SWSS_LOG_NOTICE(
-                "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
-                m_portAlias.c_str(),
-                m_queueId,
-                m_queue,
-                m_port);
-    }
 }
 
 PfcWdActionHandler::~PfcWdActionHandler(void)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE(
-            "PFC Watchdog storm restored on  port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
-            m_portAlias.c_str(),
-            m_queueId,
-            m_queue,
-            m_port);
 }
 
 void PfcWdActionHandler::initCounters(void)
