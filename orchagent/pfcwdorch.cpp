@@ -358,11 +358,6 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
     {
         Port port = it.second;
 
-        if (port.m_alias != "Ethernet8")
-        {
-            continue;
-        }
-
         if (port.m_type != Port::PHY)
         {
             SWSS_LOG_INFO("Skip non-phy port %s", port.m_alias.c_str());
@@ -408,18 +403,13 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
     for (auto & it: allPorts)
     {
         Port port = it.second;
-        if (port.m_alias != "Ethernet8")
-        {
-            continue;
-        }
-
         if (port.m_type != Port::PHY)
         {
             SWSS_LOG_INFO("Skip non-phy port %s", port.m_alias.c_str());
             continue;
         }
 
-        // use portorch api to get lossless tc in future.
+        // use portorch api to get lossless tc in future after asym PFC is available.
         sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
