@@ -1294,6 +1294,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             p.m_fec_mode = fec_mode_map[fec_mode];
                             if (setPortFec(p.m_port_id, p.m_fec_mode))
                             {
+                                m_portList[alias] = p;
                                 SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                             }
                             else
@@ -1308,8 +1309,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     {
                         SWSS_LOG_ERROR("Unknown fec mode %s", fec_mode.c_str());
                     }
+
                 }
-                m_portList[alias] = p;
             }
         }
         else
