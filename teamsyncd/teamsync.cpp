@@ -20,7 +20,7 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_select(select),
     m_lagTable(db, APP_LAG_TABLE_NAME),
     m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME),
-    m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR)
+    m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME)
 {
 }
 

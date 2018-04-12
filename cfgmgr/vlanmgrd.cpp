@@ -61,7 +61,7 @@ int main(int argc, char **argv)
          * switch_mac set.
          * Dynamic switch_mac update is not supported for now.
          */
-        Table table(&cfgDb, "DEVICE_METADATA", CONFIGDB_TABLE_NAME_SEPARATOR);
+        Table table(&cfgDb, "DEVICE_METADATA");
         std::vector<FieldValueTuple> ovalues;
         table.get("localhost", ovalues);
         auto it = std::find_if( ovalues.begin(), ovalues.end(), [](const FieldValueTuple& t){ return t.first == "mac";} );

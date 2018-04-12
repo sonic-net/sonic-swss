@@ -31,7 +31,7 @@ extern bool g_init;
 LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_portTableProducer(appl_db, APP_PORT_TABLE_NAME),
     m_portTable(appl_db, APP_PORT_TABLE_NAME),
-    m_statePortTable(state_db, STATE_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR)
+    m_statePortTable(state_db, STATE_PORT_TABLE_NAME)
 {
     /* See the comments for g_portSet in portsyncd.cpp */
     for (string port : g_portSet)

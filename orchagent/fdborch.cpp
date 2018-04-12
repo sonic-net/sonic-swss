@@ -46,10 +46,21 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
 
         update.add = true;
 
-        (void)m_entries.insert(update.entry);
-        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
+        {
+            auto ret = m_entries.insert(update.entry);
 
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+            SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx",
+                            update.entry.mac.to_string().c_str(), entry->bv_id);
+
+            if (ret.second)
+            {
+                gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+            }
+            else
+            {
+                SWSS_LOG_INFO("FdbOrch notification: mac %s is duplicate", update.entry.mac.to_string().c_str());
+            }
+        }
 
         for (auto observer: m_observers)
         {
@@ -62,10 +73,15 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
     case SAI_FDB_EVENT_MOVE:
         update.add = false;
 
-        (void)m_entries.erase(update.entry);
-        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
+        {
+            auto ret = m_entries.erase(update.entry);
+            SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
 
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+            if (ret)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+            }
+        }
 
         for (auto observer: m_observers)
         {
@@ -152,6 +168,7 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
     }
 
     sai_fdb_entry_t entry;
+    entry.switch_id = gSwitchId;
     memcpy(entry.mac_address, mac.getMac(), sizeof(sai_mac_t));
     entry.bv_id = port.m_vlan_info.vlan_oid;
 
@@ -407,6 +424,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
 
     sai_status_t status;
     sai_fdb_entry_t fdb_entry;
+    fdb_entry.switch_id = gSwitchId;
     memcpy(fdb_entry.mac_address, entry.mac.getMac(), sizeof(sai_mac_t));
     fdb_entry.bv_id = entry.bv_id;
 

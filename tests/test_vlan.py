@@ -10,7 +10,7 @@ def test_VlanMemberCreation(dvs):
 
 
     # create vlan in config db
-    tbl = swsscommon.Table(db, "VLAN", '|')
+    tbl = swsscommon.Table(db, "VLAN")
     fvs = swsscommon.FieldValuePairs([("vlanid", "2")])
     tbl.set("Vlan2", fvs)
 
@@ -38,7 +38,7 @@ def test_VlanMemberCreation(dvs):
     assert vlan_oid != None
 
     # create vlan member in config db
-    tbl = swsscommon.Table(db, "VLAN_MEMBER", '|')
+    tbl = swsscommon.Table(db, "VLAN_MEMBER")
     fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
     tbl.set("Vlan2|Ethernet0", fvs)
 
