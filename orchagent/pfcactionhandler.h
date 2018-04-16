@@ -48,7 +48,7 @@ class PfcWdActionHandler
 
         static void initWdCounters(shared_ptr<Table> countersTable, const string &queueIdStr);
         void initCounters(void);
-        void commitCounters(void);
+        void commitCounters(bool periodic = false);
 
         virtual bool getHwCounters(PfcWdHwStats& counters)
         {

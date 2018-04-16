@@ -22,6 +22,7 @@
 #define PFC_WD_POLL_TIMEOUT             5000
 #define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
 #define PFC_WD_TC_MAX 8
+#define COUNTER_CHECK_POLL_TIMEOUT_SEC  5
 
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
@@ -502,6 +503,12 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
             "PFC_WD");
     auto wdNotification = new Notifier(consumer, this);
     Orch::addExecutor("PFC_WD", wdNotification);
+
+    auto interv = timespec { .tv_sec = COUNTER_CHECK_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
+    auto timer = new SelectableTimer(interv);
+    auto executor = new ExecutableTimer(timer, this);
+    Orch::addExecutor("PFC_WD_COUNTERS_POLL", executor);
+    timer->start();
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -619,6 +626,21 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
     {
         SWSS_LOG_ERROR("Received unknown event from plugin, %s", event.c_str());
     }
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto& handlerPair : m_entryMap)
+    {
+        if (handlerPair.second.handler != nullptr)
+        {
+            handlerPair.second.handler->commitCounters(true);
+        }
+    }
+
 }
 
 // Trick to keep member functions in a separate file

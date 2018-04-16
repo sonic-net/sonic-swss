@@ -71,6 +71,7 @@ public:
     virtual bool stopWdOnPort(const Port& port);
 
     void createEntry(const string& key, const vector<FieldValueTuple>& data);
+    virtual void doTask(SelectableTimer &timer);
     //XXX Add port/queue state change event handlers
 private:
     struct PfcWdQueueEntry
