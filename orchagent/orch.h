@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <map>
 #include <memory>
+#include <utility>
 
 extern "C" {
 #include "sai.h"
@@ -36,6 +37,8 @@ const char config_db_key_delimiter = '|';
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
 
+const int default_orch_pri = 0;
+
 typedef enum
 {
     task_success,
@@ -51,6 +54,8 @@ typedef pair<string, sai_object_id_t> object_map_pair;
 typedef map<string, object_map*> type_map;
 typedef pair<string, object_map*> type_map_pair;
 typedef map<string, KeyOpFieldsValuesTuple> SyncMap;
+
+typedef pair<string, int> table_name_with_pri_t;
 
 class Orch;
 
@@ -134,8 +139,9 @@ typedef pair<DBConnector *, vector<string>> TablesConnector;
 class Orch
 {
 public:
-    Orch(DBConnector *db, const string tableName);
+    Orch(DBConnector *db, const string tableName, int pri = default_orch_pri);
     Orch(DBConnector *db, const vector<string> &tableNames);
+    Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNameWithPri);
     Orch(const vector<TableConnector>& tables);
     virtual ~Orch();
 
@@ -165,7 +171,7 @@ protected:
     void addExecutor(string executorName, Executor* executor);
     Executor *getExecutor(string executorName);
 private:
-    void addConsumer(DBConnector *db, string tableName);
+    void addConsumer(DBConnector *db, string tableName, int pri = default_orch_pri);
 };
 
 #include "request_parser.h"
@@ -173,8 +179,8 @@ private:
 class Orch2 : public Orch
 {
 public:
-    Orch2(DBConnector *db, const std::string& tableName, Request& request)
-        : Orch(db, tableName), request_(request)
+    Orch2(DBConnector *db, const std::string& tableName, Request& request, int pri=default_orch_pri)
+        : Orch(db, tableName, pri), request_(request)
     {
     }
 

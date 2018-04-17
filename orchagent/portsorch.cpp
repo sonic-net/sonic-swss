@@ -114,7 +114,7 @@ static char* hostif_vlan_tag[] = {
  *    bridge. By design, SONiC switch starts with all bridge ports removed from
  *    default VLAN and all ports removed from .1Q bridge.
  */
-PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
+PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames) :
         Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();

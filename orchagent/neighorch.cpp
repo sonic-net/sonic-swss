@@ -13,8 +13,10 @@ extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 extern RouteOrch *gRouteOrch;
 
+const int neighorch_pri = 30;
+
 NeighOrch::NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch) :
-        Orch(db, tableName), m_intfsOrch(intfsOrch)
+        Orch(db, tableName, neighorch_pri), m_intfsOrch(intfsOrch)
 {
     SWSS_LOG_ENTER();
 }

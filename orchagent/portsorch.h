@@ -41,7 +41,7 @@ struct VlanMemberUpdate
 class PortsOrch : public Orch, public Subject
 {
 public:
-    PortsOrch(DBConnector *db, vector<string> tableNames);
+    PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames);
 
     bool isInitDone();
 

@@ -52,12 +52,14 @@ bool OrchDaemon::init()
 
     SwitchOrch *switch_orch = new SwitchOrch(m_applDb, APP_SWITCH_TABLE_NAME);
 
-    vector<string> ports_tables = {
-        APP_PORT_TABLE_NAME,
-        APP_VLAN_TABLE_NAME,
-        APP_VLAN_MEMBER_TABLE_NAME,
-        APP_LAG_TABLE_NAME,
-        APP_LAG_MEMBER_TABLE_NAME
+    const int portsorch_base_pri = 40;
+
+    vector<table_name_with_pri_t> ports_tables = {
+        { APP_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
+        { APP_VLAN_TABLE_NAME,        portsorch_base_pri + 2 },
+        { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri     },
+        { APP_LAG_TABLE_NAME,         portsorch_base_pri + 2 },
+        { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri     }
     };
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);

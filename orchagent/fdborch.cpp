@@ -16,8 +16,10 @@ extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
 extern CrmOrch *        gCrmOrch;
 
+const int fdborch_pri = 20;
+
 FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
-    Orch(db, tableName),
+    Orch(db, tableName, fdborch_pri),
     m_portsOrch(port),
     m_table(Table(db, tableName))
 {
