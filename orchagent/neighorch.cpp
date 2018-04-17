@@ -395,16 +395,16 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
             }
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
 
-            return false;
-        }
+            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+            }
+            else
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+            }
 
-        if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-        {
-            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-        }
-        else
-        {
-            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+            return false;
         }
     }
     else
