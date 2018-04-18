@@ -53,7 +53,7 @@ private:
     Table m_table;
 
     void doTask(Consumer& consumer);
-    void doTask(NotificationConsumer& consumer);
+    void doTask(NotificationConsumer& consumer, const std::string &name);
 
     void updateVlanMember(const VlanMemberUpdate&);
     bool addFdbEntry(const FdbEntry&, const string&, const string&);

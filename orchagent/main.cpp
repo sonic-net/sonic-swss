@@ -169,6 +169,10 @@ int main(int argc, char **argv)
     attr.value.booldata = true;
     attrs.push_back(attr);
 
+    attr.id = SAI_SWITCH_ATTR_SHUTDOWN_REQUEST_NOTIFY;
+    attr.value.ptr = (void *)on_switch_shutdown_request;
+    attrs.push_back(attr);
+
     if (gMacAddress)
     {
         attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;

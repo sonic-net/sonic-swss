@@ -92,6 +92,8 @@ private:
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
 
+    void doTask(NotificationConsumer &consumer, const std::string &name);
+
     void removeDefaultVlanMembers();
     void removeDefaultBridgePorts();
 

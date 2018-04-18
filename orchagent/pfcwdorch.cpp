@@ -668,7 +668,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     auto consumer = new swss::NotificationConsumer(
             PfcWdSwOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
             "PFC_WD");
-    auto wdNotification = new Notifier(consumer, this);
+    auto wdNotification = new Notifier(consumer, this, "PFC_WD");
     Orch::addExecutor("PFC_WD", wdNotification);
 }
 
@@ -712,7 +712,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::stopWdOnPort(const Port& port)
 }
 
 template <typename DropHandler, typename ForwardHandler>
-void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer& wdNotification)
+void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer& wdNotification, const std::string& name)
 {
     SWSS_LOG_ENTER();
 
