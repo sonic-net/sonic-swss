@@ -355,10 +355,6 @@ void FdbOrch::doTask(NotificationConsumer& consumer, const std::string &name)
             sai_deserialize_free_fdb_event_ntf(count, fdbevent);
         }
     }
-    else
-    {
-        SWSS_LOG_ERROR("Wrong NotificationConsumer name: '%s'", name.c_str());
-    }
 }
 
 void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)

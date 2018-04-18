@@ -149,6 +149,17 @@ int main(int argc, char **argv)
     initSaiApi();
     initSaiRedis(record_location);
 
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+
+    attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
+    attr.value.ptr = (void *)on_fdb_event;
+    attrs.push_back(attr);
+
     /* Disable/enable SwSS recording */
     if (gSwssRecord)
     {
@@ -162,11 +173,8 @@ int main(int argc, char **argv)
         gRecordOfs << getTimestamp() << "|recording started" << endl;
     }
 
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attrs;
-
-    attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
-    attr.value.booldata = true;
+    attr.id = SAI_SWITCH_ATTR_PORT_STATE_CHANGE_NOTIFY;
+    attr.value.ptr = (void *)on_port_state_change;
     attrs.push_back(attr);
 
     attr.id = SAI_SWITCH_ATTR_SHUTDOWN_REQUEST_NOTIFY;

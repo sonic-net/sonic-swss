@@ -2380,8 +2380,4 @@ void PortsOrch::doTask(NotificationConsumer &consumer, const std::string &name)
 
         sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);
     }
-    else
-    {
-        SWSS_LOG_ERROR("Wrong notification name in notification provider '%s': '%s'", name.c_str(), op.c_str());
-    }
 }
