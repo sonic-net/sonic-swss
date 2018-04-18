@@ -1,6 +1,5 @@
 #include <fstream>
 #include <iostream>
-#include <mutex>
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
@@ -14,8 +13,6 @@
 using namespace swss;
 
 extern int gBatchSize;
-
-extern mutex gDbMutex;
 
 extern bool gSwssRecord;
 extern ofstream gRecordOfs;
@@ -72,9 +69,6 @@ vector<Selectable *> Orch::getSelectables()
 void Consumer::execute()
 {
     SWSS_LOG_ENTER();
-
-    // TODO: remove DbMutex when there is only single thread
-    lock_guard<mutex> lock(gDbMutex);
 
     std::deque<KeyOpFieldsValuesTuple> entries;
     getConsumerTable()->pops(entries);

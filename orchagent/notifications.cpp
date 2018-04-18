@@ -1,5 +1,4 @@
 #include <unordered_map>
-#include <mutex>
 #include <assert.h>
 
 #include "portsorch.h"
@@ -12,15 +11,12 @@ extern "C" {
 #include "logger.h"
 #include "notifications.h"
 
-extern mutex gDbMutex;
 extern PortsOrch *gPortsOrch;
 extern FdbOrch *gFdbOrch;
 
 void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data)
 {
     SWSS_LOG_ENTER();
-
-    lock_guard<mutex> lock(gDbMutex);
 
     if (!gFdbOrch)
     {
@@ -48,8 +44,6 @@ void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data)
 void on_port_state_change(uint32_t count, sai_port_oper_status_notification_t *data)
 {
     SWSS_LOG_ENTER();
-
-    lock_guard<mutex> lock(gDbMutex);
 
     if (!gPortsOrch)
     {
