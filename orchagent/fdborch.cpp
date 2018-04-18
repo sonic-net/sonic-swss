@@ -29,6 +29,7 @@ FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
     auto fdbNotification = new Notifier(consumer, this, "FLUSHFDBREQUEST");
     Orch::addExecutor("", fdbNotification);
 
+    /* Add FDB notification support from ASIC */
     DBConnector *notification_db = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     auto notification_consumer = new swss::NotificationConsumer(notification_db, "NOTIFICATIONS");
     auto fdb_notification = new Notifier(notification_consumer, this, "NOTIFICATIONS");
