@@ -111,7 +111,7 @@ class PfcWdAclHandler: public PfcWdLossyHandler
         string m_strEgressTable;
         string m_strRule;
         void createPfcAclTable(sai_object_id_t port, string strTable, bool ingress);
-        void createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId, string strTable);
+        void createPfcAclRule(shared_ptr<AclRulePfcwd> rule, uint8_t queueId, string strTable);
 };
 
 // PFC queue that implements drop action by draining queue with buffer of zero size
