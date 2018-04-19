@@ -238,10 +238,10 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     removeDefaultBridgePorts();
 
     /* Add port oper status notification support */
-    DBConnector *notification_db = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    auto notification_consumer = new swss::NotificationConsumer(notification_db, "NOTIFICATIONS");
-    auto port_status_notification = new Notifier(notification_consumer, this, "NOTIFICATIONS");
-    Orch::addExecutor("PORT_STATUS_NOTIFICATIONS", port_status_notification);
+    DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this);
+    Orch::addExecutor("PORT_STATUS_NOTIFICATIONS", portStatusNotificatier);
 }
 
 void PortsOrch::removeDefaultVlanMembers()
@@ -2338,7 +2338,7 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     return true;
 }
 
-void PortsOrch::doTask(NotificationConsumer &consumer, const std::string &consumer_name)
+void PortsOrch::doTask(NotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -2354,9 +2354,8 @@ void PortsOrch::doTask(NotificationConsumer &consumer, const std::string &consum
 
     consumer.pop(op, data, values);
 
-    if (consumer_name != "NOTIFICATIONS")
+    if (&consumer != m_portStatusNotificationConsumer)
     {
-        SWSS_LOG_ERROR("Wrong name of notification provider: '%s'", consumer_name.c_str());
         return;
     }
 

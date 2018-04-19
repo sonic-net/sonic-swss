@@ -85,6 +85,8 @@ private:
     map<set<int>, tuple<string, uint32_t>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
 
+    NotificationConsumer* m_portStatusNotificationConsumer;
+
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
@@ -92,7 +94,7 @@ private:
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
 
-    void doTask(NotificationConsumer &consumer, const std::string &consumer_name);
+    void doTask(NotificationConsumer &consumer);
 
     void removeDefaultVlanMembers();
     void removeDefaultBridgePorts();

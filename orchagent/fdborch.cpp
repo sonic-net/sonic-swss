@@ -25,14 +25,14 @@ FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
     m_table(Table(db, tableName))
 {
     m_portsOrch->attach(this);
-    auto flushNotificationsConsumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
-    auto flushNotifier = new Notifier(flushNotificationsConsumer, this, "FLUSHFDBREQUEST");
+    m_flushNotificationsConsumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
+    auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this);
     Orch::addExecutor("", flushNotifier);
 
     /* Add FDB notifications support from ASIC */
     DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    auto fdbNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
-    auto fdbNotifier = new Notifier(fdbNotificationConsumer, this, "NOTIFICATIONS");
+    m_fdbNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this);
     Orch::addExecutor("FDB_NOTIFICATIONS", fdbNotifier);
 }
 
@@ -281,7 +281,7 @@ void FdbOrch::doTask(Consumer& consumer)
     }
 }
 
-void FdbOrch::doTask(NotificationConsumer& consumer, const std::string &consumer_name)
+void FdbOrch::doTask(NotificationConsumer& consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -297,7 +297,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer, const std::string &consumer
 
     consumer.pop(op, data, values);
 
-    if (consumer_name == "FLUSHFDBREQUEST")
+    if (&consumer == m_flushNotificationsConsumer)
     {
         if (op == "ALL")
         {
@@ -317,21 +317,21 @@ void FdbOrch::doTask(NotificationConsumer& consumer, const std::string &consumer
         {
             /*place holder for flush port fdb*/
             SWSS_LOG_ERROR("Received unsupported flush port fdb request");
-    	    return;
+            return;
         }
         else if (op == "VLAN")
         {
             /*place holder for flush vlan fdb*/
             SWSS_LOG_ERROR("Received unsupported flush vlan fdb request");
-    	    return;
+            return;
         }
         else
         {
             SWSS_LOG_ERROR("Received unknown flush fdb request");
-    	    return;
+            return;
         }
     }
-    else if (consumer_name == "NOTIFICATIONS" && op == "fdb_event")
+    else if (&consumer == m_fdbNotificationConsumer && op == "fdb_event")
     {
         uint32_t count;
         sai_fdb_event_notification_data_t *fdbevent = nullptr;

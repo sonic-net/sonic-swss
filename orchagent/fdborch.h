@@ -51,9 +51,11 @@ private:
     set<FdbEntry> m_entries;
     fdb_entries_by_port_t saved_fdb_entries;
     Table m_table;
+    NotificationConsumer* m_flushNotificationsConsumer;
+    NotificationConsumer* m_fdbNotificationConsumer;
 
     void doTask(Consumer& consumer);
-    void doTask(NotificationConsumer& consumer, const std::string &consumer_name);
+    void doTask(NotificationConsumer& consumer);
 
     void updateVlanMember(const VlanMemberUpdate&);
     bool addFdbEntry(const FdbEntry&, const string&, const string&);

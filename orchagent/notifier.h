@@ -2,8 +2,8 @@
 
 class Notifier : public Executor {
 public:
-    Notifier(NotificationConsumer *select, Orch *orch, const std::string& notifier_channel)
-        : Executor(select, orch), m_channel(notifier_channel)
+    Notifier(NotificationConsumer *select, Orch *orch)
+        : Executor(select, orch)
     {
     }
 
@@ -14,9 +14,6 @@ public:
 
     void execute()
     {
-        m_orch->doTask(*getNotificationConsumer(), m_channel);
+        m_orch->doTask(*getNotificationConsumer());
     }
-
-private:
-    std::string m_channel;
 };
