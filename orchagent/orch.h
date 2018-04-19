@@ -152,7 +152,9 @@ public:
 
     /* Run doTask against a specific executor */
     virtual void doTask(Consumer &consumer) = 0;
-    virtual void doTask(NotificationConsumer &consumer, const std::string &name) { }
+    virtual void doTask(NotificationConsumer &consumer, const std::string &consumer_name) { } // consumer_name allows to distinct
+                                                                                              // NotificationConsumer which causes
+                                                                                              // this doTask executions
     virtual void doTask(SelectableTimer &timer) { }
 
     /* TODO: refactor recording */

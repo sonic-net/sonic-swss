@@ -93,7 +93,7 @@ private:
     void registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     void unregisterFromWdDb(const Port& port);
-    void doTask(swss::NotificationConsumer &wdNotification, const std::string &name);
+    void doTask(swss::NotificationConsumer &wdNotification, const std::string &consumer_name);
 
     string filterPfcCounters(string counters, set<uint8_t>& losslessTc);
     string getFlexCounterTableKey(string s);

@@ -2338,7 +2338,7 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     return true;
 }
 
-void PortsOrch::doTask(NotificationConsumer &consumer, const std::string &name)
+void PortsOrch::doTask(NotificationConsumer &consumer, const std::string &consumer_name)
 {
     SWSS_LOG_ENTER();
 
@@ -2354,9 +2354,9 @@ void PortsOrch::doTask(NotificationConsumer &consumer, const std::string &name)
 
     consumer.pop(op, data, values);
 
-    if (name != "NOTIFICATIONS")
+    if (consumer_name != "NOTIFICATIONS")
     {
-        SWSS_LOG_ERROR("Wrong name of notification provider: '%s'", name.c_str());
+        SWSS_LOG_ERROR("Wrong name of notification provider: '%s'", consumer_name.c_str());
         return;
     }
 

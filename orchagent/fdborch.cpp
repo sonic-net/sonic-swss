@@ -25,15 +25,15 @@ FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
     m_table(Table(db, tableName))
 {
     m_portsOrch->attach(this);
-    auto consumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
-    auto fdbNotification = new Notifier(consumer, this, "FLUSHFDBREQUEST");
-    Orch::addExecutor("", fdbNotification);
+    auto flushNotificationsConsumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
+    auto flushNotifier = new Notifier(flushNotificationsConsumer, this, "FLUSHFDBREQUEST");
+    Orch::addExecutor("", flushNotifier);
 
-    /* Add FDB notification support from ASIC */
-    DBConnector *notification_db = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    auto notification_consumer = new swss::NotificationConsumer(notification_db, "NOTIFICATIONS");
-    auto fdb_notification = new Notifier(notification_consumer, this, "NOTIFICATIONS");
-    Orch::addExecutor("FDB_NOTIFICATIONS", fdb_notification);
+    /* Add FDB notifications support from ASIC */
+    DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    auto fdbNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    auto fdbNotifier = new Notifier(fdbNotificationConsumer, this, "NOTIFICATIONS");
+    Orch::addExecutor("FDB_NOTIFICATIONS", fdbNotifier);
 }
 
 void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_object_id_t bridge_port_id)
@@ -281,7 +281,7 @@ void FdbOrch::doTask(Consumer& consumer)
     }
 }
 
-void FdbOrch::doTask(NotificationConsumer& consumer, const std::string &name)
+void FdbOrch::doTask(NotificationConsumer& consumer, const std::string &consumer_name)
 {
     SWSS_LOG_ENTER();
 
@@ -297,7 +297,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer, const std::string &name)
 
     consumer.pop(op, data, values);
 
-    if (name == "FLUSHFDBREQUEST")
+    if (consumer_name == "FLUSHFDBREQUEST")
     {
         if (op == "ALL")
         {
@@ -331,7 +331,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer, const std::string &name)
     	    return;
         }
     }
-    else if (name == "NOTIFICATIONS" && op == "fdb_event")
+    else if (consumer_name == "NOTIFICATIONS" && op == "fdb_event")
     {
         uint32_t count;
         sai_fdb_event_notification_data_t *fdbevent = nullptr;
