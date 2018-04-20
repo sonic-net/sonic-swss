@@ -13,7 +13,7 @@ class TestAcl(object):
         assert len(acl_tables) == 1 
 
         return acl_tables[0]
- 
+
     def test_AclTableCreation(self, dvs):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
@@ -773,6 +773,119 @@ class TestAcl(object):
         tbl = swsscommon.Table(db, "ACL_TABLE")
         tbl._del("test-aclv6")
 
+        time.sleep(1)
+
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
+        keys = atbl.getKeys()
+        # only the default table was left
+        assert len(keys) == 1
+
+    def test_InsertAclRuleBetweenPriorities(self, dvs):
+        db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+        bind_ports = ["Ethernet0", "Ethernet4"]
+        # create ACL_TABLE in config db
+        tbl = swsscommon.Table(db, "ACL_TABLE")
+        fvs = swsscommon.FieldValuePairs([("policy_desc", "test"), ("type", "L3"), ("ports", ",".join(bind_ports))])
+        tbl.set("test_insert", fvs)
+
+        time.sleep(2)
+
+
+        num_rules = 0
+        #create ACL rules
+        tbl = swsscommon.Table(db, "ACL_RULE")
+        fvs1 = swsscommon.FieldValuePairs([("PRIORITY", "10"), ("PACKET_ACTION", "DROP"), ("SRC_IP", "10.0.0.0/32")])
+        tbl.set("test_insert|acl_test_rule1", fvs1)
+        num_rules += 1
+        fvs2 = swsscommon.FieldValuePairs([("PRIORITY", "20"), ("PACKET_ACTION", "DROP"), ("DST_IP", "104.44.94.0/23")])
+        tbl.set("test_insert|acl_test_rule2", fvs2)
+        num_rules += 1
+        fvs3 = swsscommon.FieldValuePairs([("PRIORITY", "30"), ("PACKET_ACTION", "DROP"), ("DST_IP", "192.168.0.16/32")])
+        tbl.set("test_insert|acl_test_rule3", fvs3)
+        num_rules += 1
+        fvs4 = swsscommon.FieldValuePairs([("PRIORITY", "40"), ("PACKET_ACTION", "FORWARD"), ("DST_IP", "100.64.0.0/10")])
+        tbl.set("test_insert|acl_test_rule4", fvs4)
+        num_rules += 1
+
+        time.sleep(1)
+
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+        keys = atbl.getKeys()
+
+        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+        assert len(acl_entry) == num_rules 
+ 
+
+        tbl = swsscommon.Table(db, "ACL_RULE")
+        fvs5 = swsscommon.FieldValuePairs([("PRIORITY", "21"), ("PACKET_ACTION", "DROP"), ("ETHER_TYPE", "4660")])
+        tbl.set("test_insert|acl_test_rule5", fvs5)
+        num_rules += 1
+    
+        time.sleep(1)
+        
+        keys = atbl.getKeys()
+        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+        assert len(acl_entry) == num_rules
+
+        matched_rules = 0
+        for entry in acl_entry:
+           (status, fvs) = atbl.get(entry)
+           assert status == True
+           assert len(fvs) == 6
+           if ('SAI_ACL_ENTRY_ATTR_PRIORITY', '10') in fvs:
+              matched_rules += 1
+              for fv in fvs:
+                 if fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP":
+                    assert fv[1] == "10.0.0.0&mask:255.255.255.255"
+                 elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION":
+                    assert fv[1] == "SAI_PACKET_ACTION_DROP" 
+           if ('SAI_ACL_ENTRY_ATTR_PRIORITY', '20') in fvs:
+              matched_rules += 1
+              for fv in fvs:
+                 if fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP":
+                    assert fv[1] == "104.44.94.0&mask:255.255.254.0"
+                 elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION":
+                    assert fv[1] == "SAI_PACKET_ACTION_DROP" 
+           if ('SAI_ACL_ENTRY_ATTR_PRIORITY', '21') in fvs:
+              matched_rules += 1
+              for fv in fvs:
+                 if fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE":
+                    assert fv[1] == "4660&mask:0xffff"
+                 elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION":
+                    assert fv[1] == "SAI_PACKET_ACTION_DROP" 
+           if ('SAI_ACL_ENTRY_ATTR_PRIORITY', '30') in fvs:
+              matched_rules += 1
+              for fv in fvs:
+                 if fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP":
+                    assert fv[1] == "192.168.0.16&mask:255.255.255.255"
+                 elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION":
+                    assert fv[1] == "SAI_PACKET_ACTION_DROP" 
+           if ('SAI_ACL_ENTRY_ATTR_PRIORITY', '40') in fvs:
+              matched_rules += 1
+              for fv in fvs:
+                 if fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP":
+                    assert fv[1] == "100.64.0.0&mask:255.192.0.0"
+                 elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION":
+                    assert fv[1] == "SAI_PACKET_ACTION_FORWARD" 
+
+        assert num_rules == matched_rules
+
+        tbl._del("test_insert|acl_test_rule1")
+        tbl._del("test_insert|acl_test_rule2")
+        tbl._del("test_insert|acl_test_rule3")
+        tbl._del("test_insert|acl_test_rule4")
+        tbl._del("test_insert|acl_test_rule5")
+
+        time.sleep(1)
+
+        (status, fvs) = atbl.get(acl_entry[0])
+        assert status == False
+       
+        tbl = swsscommon.Table(db, "ACL_TABLE")
+        tbl._del("test_insert")
+        
         time.sleep(1)
 
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
