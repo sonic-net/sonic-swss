@@ -473,7 +473,6 @@ bool PortsOrch::getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask)
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
     Port p;
 
     if (!getPort(portId, p))
@@ -482,22 +481,7 @@ bool PortsOrch::getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask)
         return false;
     }
 
-    if (p.m_pfc_asym == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED)
-    {
-        attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
-    }
-    else
-    {
-        attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_TX;
-    }
-
-    sai_status_t status = sai_port_api->get_port_attribute(portId, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to get PFC value on port id 0x%lx (rc:%d)", portId, status);
-    }
-
-    *pfc_bitmask = attr.value.u8;
+    *pfc_bitmask = p.m_pfc_bitmask;
 
     return true;
 }
@@ -519,9 +503,14 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
     {
         attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
     }
-    else
+    else if (p.m_pfc_asym == SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE)
     {
         attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_TX;
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Incorrect asymmetric PFC mode: %u", p.m_pfc_asym);
+        return false;
     }
 
     attr.value.u8 = pfc_bitmask;
@@ -531,6 +520,12 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
     {
         SWSS_LOG_ERROR("Failed to set PFC 0x%x to port id 0x%lx (rc:%d)", attr.value.u8, portId, status);
         return false;
+    }
+
+    if (p.m_pfc_bitmask != pfc_bitmask)
+    {
+        p.m_pfc_bitmask = pfc_bitmask;
+        m_portList[p.m_alias] = p;
     }
 
     return true;
@@ -548,7 +543,16 @@ bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
         return false;
     }
 
-    port.m_pfc_asym = pfc_asym_map.at(pfc_asym);
+    try
+    {
+        port.m_pfc_asym = pfc_asym_map.at(pfc_asym);
+    }
+    catch (...)
+    {
+        SWSS_LOG_ERROR("Incorrect asymmetric PFC mode: %s", pfc_asym.c_str());
+        return false;
+    }
+
     m_portList[port.m_alias] = port;
 
     attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE;

@@ -288,18 +288,15 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+    uint8_t pfcMask = 0;
 
-    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
     {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+        SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
         return;
     }
 
     set<uint8_t> losslessTc;
-    uint8_t pfcMask = attr.value.u8;
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
         if ((pfcMask & (1 << i)) == 0)

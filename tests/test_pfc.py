@@ -16,7 +16,7 @@ def setPortPfc(dvs, port_name, pfc_queues):
 
     cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
-    port_qos_tbl = swsscommon.Table(cfg_db, 'PORT_QOS_MAP', '|')
+    port_qos_tbl = swsscommon.Table(cfg_db, 'PORT_QOS_MAP')
     fvs = swsscommon.FieldValuePairs([('pfc_enable', ",".join(str(q) for q in pfc_queues))])
     port_qos_tbl.set(port_name, fvs)
 
@@ -27,7 +27,7 @@ def setPortPfcAsym(dvs, port_name, pfc_asym):
 
     cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
-    port_tbl = swsscommon.Table(cfg_db, 'PORT', '|')
+    port_tbl = swsscommon.Table(cfg_db, 'PORT')
     fvs = swsscommon.FieldValuePairs([('pfc_asym', pfc_asym)])
     port_tbl.set(port_name, fvs)
 
