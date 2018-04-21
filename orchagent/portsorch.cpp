@@ -34,8 +34,10 @@ extern CrmOrch *gCrmOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
-#define FLEX_STAT_COUNTER_POLL_MSECS "1000"
-#define STAT_COUNTER_FLEX_COUNTER_GROUP "STAT_COUNTER"
+#define PORT_FLEX_STAT_COUNTER_POLL_MSECS "1000"
+#define QUEUE_FLEX_STAT_COUNTER_POLL_MSECS "10000"
+#define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
+#define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
 {
@@ -138,8 +140,11 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
 
     vector<FieldValueTuple> fields;
-    fields.emplace_back(POLL_INTERVAL_FIELD, FLEX_STAT_COUNTER_POLL_MSECS);
-    m_flexCounterGroupTable->set(STAT_COUNTER_FLEX_COUNTER_GROUP, fields);
+    fields.emplace_back(POLL_INTERVAL_FIELD, PORT_FLEX_STAT_COUNTER_POLL_MSECS);
+    m_flexCounterGroupTable->set(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fields);
+
+    fields.emplace_back(POLL_INTERVAL_FIELD, QUEUE_FLEX_STAT_COUNTER_POLL_MSECS);
+    m_flexCounterGroupTable->set(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, fields);
 
     uint32_t i, j;
     sai_status_t status;
@@ -969,9 +974,14 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
     return true;
 }
 
-string PortsOrch::getFlexCounterTableKey(string key)
+string PortsOrch::getPortFlexCounterTableKey(string key)
 {
-    return string(STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
+    return string(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
+}
+
+string PortsOrch::getQueueFlexCounterTableKey(string key)
+{
+    return string(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
 bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
@@ -1007,7 +1017,7 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 m_counterTable->set("", fields);
 
                 /* Add port to flex_counter for updating stat counters  */
-                string key = getFlexCounterTableKey(sai_serialize_object_id(p.m_port_id));
+                string key = getPortFlexCounterTableKey(sai_serialize_object_id(p.m_port_id));
                 std::string delimiter = "";
                 std::ostringstream counters_stream;
                 for (const auto &id: portStatIds)
@@ -1771,7 +1781,7 @@ void PortsOrch::initializeQueues(Port &port)
             queueTypeVector.push_back(queueTypeTuple);
         }
 
-        string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_queue_ids[queueIndex]));
+        string key = getQueueFlexCounterTableKey(sai_serialize_object_id(port.m_queue_ids[queueIndex]));
 
         std::string delimiter = "";
         std::ostringstream counters_stream;

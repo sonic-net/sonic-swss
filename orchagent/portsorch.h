@@ -67,7 +67,9 @@ private:
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
-    std:: string getFlexCounterTableKey(std::string s);
+    std::string getQueueFlexCounterTableKey(std::string s);
+    std::string getPortFlexCounterTableKey(std::string s);
+
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
 
