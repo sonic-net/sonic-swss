@@ -216,6 +216,10 @@ void BufferMgr::doTask(Consumer &consumer)
                     // create/update profile for port
                     task_status = doSpeedUpdateTask(port, fvValue(i));
                 }
+                if (task_status != task_process_status::task_success)
+                {
+                    break;
+                }
             }
         }
 
