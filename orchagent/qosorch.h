@@ -140,5 +140,6 @@ private:
 
 private:
     qos_table_handler_map m_qos_handler_map;
+    sai_uint32_t m_max_number_of_childs_per_scheduler_group;
 };
 #endif /* SWSS_QOSORCH_H */

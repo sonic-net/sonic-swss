@@ -621,6 +621,16 @@ QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNa
     }
 
     initTableHandlers();
+
+    /* Get max child groups count */
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_QOS_MAX_NUMBER_OF_CHILDS_PER_SCHEDULER_GROUP;
+    sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (SAI_STATUS_SUCCESS != status)
+    {
+        throw runtime_error("Failed to get number of childs per scheduler group");
+    }
+    m_max_number_of_childs_per_scheduler_group = attr.value.u32;
 };
 
 type_map& QosOrch::getTypeMap()
@@ -882,7 +892,7 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
     sai_status_t               sai_status;
     sai_object_id_t            queue_id;
     vector<sai_object_id_t>    groups;
-    vector<sai_object_id_t>    child_groups;
+    vector<sai_object_id_t>    child_groups(m_max_number_of_childs_per_scheduler_group);
     uint32_t                   groups_count     = 0;
 
     if (port.m_queue_ids.size() <= queue_ind)
@@ -891,16 +901,6 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
         return false;
     }
     queue_id = port.m_queue_ids[queue_ind];
-
-    /* Get max child groups count */
-    attr.id = SAI_SWITCH_ATTR_QOS_MAX_NUMBER_OF_CHILDS_PER_SCHEDULER_GROUP;
-    sai_status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-    if (SAI_STATUS_SUCCESS != sai_status)
-    {
-        SWSS_LOG_ERROR("Failed to get number of childs per scheduler group for port:%s", port.m_alias.c_str());
-        return false;
-    }
-    child_groups.resize(attr.value.u32);
 
     /* Get max sched groups count */
     attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_SCHEDULER_GROUPS;
