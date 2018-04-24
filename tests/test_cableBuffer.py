@@ -136,22 +136,4 @@ class TestCableBufferProfile(object):
                        assert fv[1] == "[BUFFER_PROFILE|%s]" % expected_new_profile_name
         #remove the file copied from docker
         os.system(" rm pg_profile_lookup.ini")
-        
-       
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
