@@ -126,7 +126,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
     {
         SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. No PG profile configured for speed %s and cable length %s",
                        port.c_str(), speed.c_str(), cable.c_str());
-        return task_process_status::task_failed;
+        return task_process_status::task_invalid_entry;
     }
 
     // Crete record in BUFFER_PROFILE table
@@ -227,11 +227,14 @@ void BufferMgr::doTask(Consumer &consumer)
         {
             case task_process_status::task_failed:
                 SWSS_LOG_ERROR("Failed to process table update");
-                it = consumer.m_toSync.erase(it);
-                break;
+                return;
             case task_process_status::task_need_retry:
                 SWSS_LOG_INFO("Unable to process table update. Will retry...");
                 ++it;
+                break;
+            case task_process_status::task_invalid_entry:
+                SWSS_LOG_ERROR("Failed to process invalid entry, drop it");
+                it = consumer.m_toSync.erase(it);
                 break;
             default:
                 it = consumer.m_toSync.erase(it);
