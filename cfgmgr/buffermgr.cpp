@@ -227,7 +227,8 @@ void BufferMgr::doTask(Consumer &consumer)
         {
             case task_process_status::task_failed:
                 SWSS_LOG_ERROR("Failed to process table update");
-                return;
+                it = consumer.m_toSync.erase(it);
+                break;
             case task_process_status::task_need_retry:
                 SWSS_LOG_INFO("Unable to process table update. Will retry...");
                 ++it;
