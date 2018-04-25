@@ -879,8 +879,8 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t            attr;
-    sai_status_t               sai_status;
+    sai_attribute_t attr;
+    sai_status_t    sai_status;
 
     const auto it = m_scheduler_group_port_info.find(port.m_port_id);
     if (it == m_scheduler_group_port_info.end())
@@ -915,11 +915,12 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
      }
 
     /* Lookup groups to which queue belongs */
-    for (uint32_t ii = 0; ii < m_scheduler_group_port_info[port.m_port_id].groups.size() ; ii++)
+    const auto& groups = m_scheduler_group_port_info[port.m_port_id].groups;
+    for (uint32_t ii = 0; ii < groups.size() ; ii++)
     {
-        const auto& group_id = m_scheduler_group_port_info[port.m_port_id].groups[ii];
-        const auto& child_groups = m_scheduler_group_port_info[port.m_port_id].child_groups[ii];
-        if (child_groups.empty())
+        const auto& group_id = groups[ii];
+        const auto& child_groups_per_group = m_scheduler_group_port_info[port.m_port_id].child_groups[ii];
+        if (child_groups_per_group.empty())
         {
             attr.id = SAI_SCHEDULER_GROUP_ATTR_CHILD_COUNT;//Number of queues/groups childs added to scheduler group
             sai_status = sai_scheduler_group_api->get_scheduler_group_attribute(group_id, 1, &attr);
@@ -947,12 +948,13 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
                 SWSS_LOG_ERROR("Failed to get child list for scheduler group:0x%lx of port:%s", group_id, port.m_alias.c_str());
                 return SAI_NULL_OBJECT_ID;
             }
+
             m_scheduler_group_port_info[port.m_port_id].child_groups[ii] = std::move(child_groups);
         }
 
-        for (uint32_t jj = 0; jj < m_scheduler_group_port_info[port.m_port_id].child_groups[ii].size(); jj++)
+        for (const auto& child_group_id: child_groups_per_group)
         {
-            if (m_scheduler_group_port_info[port.m_port_id].child_groups[ii][jj] == queue_id)
+            if (child_group_id == queue_id)
             {
                 return group_id;
             }
@@ -977,6 +979,7 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
     const sai_object_id_t group_id = getSchedulerGroup(port, queue_id);
     if(group_id == SAI_NULL_OBJECT_ID)
     {
+        SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %lu", port.m_alias.c_str(), queue_ind);
         return false;
     }
 
