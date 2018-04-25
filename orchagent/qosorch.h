@@ -2,6 +2,8 @@
 #define SWSS_QOSORCH_H
 
 #include <map>
+#include <unordered_map>
+#include <unordered_set>
 #include "orch.h"
 #include "portsorch.h"
 
@@ -132,6 +134,8 @@ private:
     task_process_status handleQueueTable(Consumer& consumer);
     task_process_status handleWredProfileTable(Consumer& consumer);
 
+    sai_object_id_t getSchedulerGroup(const Port &port, const sai_object_id_t queue_id);
+
     bool applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t sai_dscp_to_tc_map);
     bool applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, sai_object_id_t scheduler_profile_id);
     bool applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_id_t sai_wred_profile);
@@ -140,6 +144,13 @@ private:
 
 private:
     qos_table_handler_map m_qos_handler_map;
-    sai_uint32_t m_max_number_of_childs_per_scheduler_group;
+
+    struct SchedulerGroupPortInfo_t
+    {
+        std::vector<sai_object_id_t> groups;
+        std::vector<std::vector<sai_object_id_t>> child_groups;
+    };
+
+    std::unordered_map<sai_object_id_t, SchedulerGroupPortInfo_t> m_scheduler_group_port_info;
 };
 #endif /* SWSS_QOSORCH_H */
