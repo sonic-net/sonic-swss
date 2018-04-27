@@ -22,7 +22,7 @@
 #define PFC_WD_POLL_TIMEOUT             5000
 #define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
 #define PFC_WD_TC_MAX 8
-#define COUNTER_CHECK_POLL_TIMEOUT_SEC  5
+#define COUNTER_CHECK_POLL_TIMEOUT_SEC  1
 
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
