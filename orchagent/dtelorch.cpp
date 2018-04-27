@@ -29,6 +29,7 @@ DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOr
         m_portOrch(portOrch)
 {
     SWSS_LOG_ENTER();
+    sai_attribute_t attr;
 
     sai_status_t status = sai_dtel_api->create_dtel(&dtelId, gSwitchId, 0, {});
     if (status != SAI_STATUS_SUCCESS)
@@ -36,6 +37,18 @@ DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOr
         SWSS_LOG_ERROR("DTEL ERROR: Error creating DTel id");
         return;
     }
+                
+    attr.id = SAI_DTEL_ATTR_INT_L4_DSCP;
+
+	attr.value.aclfield.data.u8 = 0x11;
+	attr.value.aclfield.mask.u8 = 0x3f;
+
+	status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
+	if (status != SAI_STATUS_SUCCESS)
+	{
+		SWSS_LOG_ERROR("DTEL ERROR: Failed to set default INT L4 DSCP value/mask");
+		return;
+	}
 }
 
 DTelOrch::~DTelOrch()

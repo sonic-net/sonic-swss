@@ -108,7 +108,7 @@ bool OrchDaemon::init()
     DTelOrch *dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
     gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, neigh_orch, route_orch, dtel_orch);
 
-    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, /*tunnel_decap_orch,*/ qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch, dtel_orch};
+    m_orchList = { switch_orch, gPortsOrch, intfs_orch, neigh_orch, route_orch, copp_orch, /*tunnel_decap_orch,*/ qos_orch, buffer_orch, mirror_orch, dtel_orch, gAclOrch, gFdbOrch};
     m_select = new Select();
 
     vector<string> pfc_wd_tables = {
