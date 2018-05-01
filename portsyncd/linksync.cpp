@@ -9,6 +9,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "tokenize.h"
+#include "exec.h"
 
 #include "linkcache.h"
 #include "portsyncd/linksync.h"
@@ -27,6 +28,13 @@ const string LAG_PREFIX = "PortChannel";
 
 extern set<string> g_portSet;
 extern bool g_init;
+
+struct if_nameindex
+{
+    unsigned int if_index;
+    char *if_name;
+};
+extern "C" { extern struct if_nameindex *if_nameindex (void) __THROW; }
 
 LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_portTableProducer(appl_db, APP_PORT_TABLE_NAME),
@@ -47,6 +55,37 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
                     break;
                 }
             }
+        }
+    }
+
+    struct if_nameindex *if_ni, *idx_p;
+    if_ni = if_nameindex();
+    if (if_ni == NULL)
+    {
+        return;
+    }
+
+    for (idx_p = if_ni; ! (idx_p->if_index == 0 && idx_p->if_name == NULL); idx_p++)
+    {
+        string key = idx_p->if_name;
+        if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
+        {
+            continue;
+        }
+
+        m_ifindexOldNameMap[idx_p->if_index] = key;
+
+        //Bring down the existing kernel interfaces before notifying ConfigDone
+        string cmd, res;
+        cout << "Executing ip link set " << key << " down - ifindex " << idx_p->if_index << endl;
+        cmd = "ip link set " + key + " down ";
+        try
+        {
+            swss::exec(cmd, res);
+        }
+        catch (...)
+        {
+            // Ignore error in this flow ;
         }
     }
 }
@@ -105,16 +144,9 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
      * Fix to ignore this and any further messages for this ifindex
      */
 
-    static std::map<unsigned int, std::string> m_ifindexOldNameMap;
     if (m_ifindexNameMap.find(ifindex) == m_ifindexNameMap.end())
     {
-        if (master)
-        {
-            m_ifindexOldNameMap[ifindex] = key;
-            SWSS_LOG_INFO("nlmsg type:%d Ignoring for %d, master %d", nlmsg_type, ifindex, master);
-            return;
-        }
-        else if (m_ifindexOldNameMap.find(ifindex) != m_ifindexOldNameMap.end())
+        if (m_ifindexOldNameMap.find(ifindex) != m_ifindexOldNameMap.end())
         {
             if (m_ifindexOldNameMap[ifindex] == key)
             {
