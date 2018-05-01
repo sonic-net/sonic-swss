@@ -179,6 +179,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
             vector<FieldValueTuple> vector;
             vector.push_back(tuple);
             m_statePortTable.set(key, vector);
+            SWSS_LOG_INFO("Publish %s(ok) to state db", key.c_str());
         }
 
         m_portTableProducer.set(key, fvVector);
