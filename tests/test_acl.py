@@ -13,7 +13,7 @@ class TestAcl(object):
         assert len(acl_tables) == 1 
 
         return acl_tables[0]
-
+ 
     def test_AclTableCreation(self, dvs):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
@@ -796,18 +796,14 @@ class TestAcl(object):
         num_rules = 0
         #create ACL rules
         tbl = swsscommon.Table(db, "ACL_RULE")
-        fvs1 = swsscommon.FieldValuePairs([("PRIORITY", "10"), ("PACKET_ACTION", "DROP"), ("SRC_IP", "10.0.0.0/32")])
-        tbl.set("test_insert|acl_test_rule1", fvs1)
-        num_rules += 1
-        fvs2 = swsscommon.FieldValuePairs([("PRIORITY", "20"), ("PACKET_ACTION", "DROP"), ("DST_IP", "104.44.94.0/23")])
-        tbl.set("test_insert|acl_test_rule2", fvs2)
-        num_rules += 1
-        fvs3 = swsscommon.FieldValuePairs([("PRIORITY", "30"), ("PACKET_ACTION", "DROP"), ("DST_IP", "192.168.0.16/32")])
-        tbl.set("test_insert|acl_test_rule3", fvs3)
-        num_rules += 1
-        fvs4 = swsscommon.FieldValuePairs([("PRIORITY", "40"), ("PACKET_ACTION", "FORWARD"), ("DST_IP", "100.64.0.0/10")])
-        tbl.set("test_insert|acl_test_rule4", fvs4)
-        num_rules += 1
+        rules = [ [("PRIORITY", "10"), ("PACKET_ACTION", "DROP"), ("SRC_IP", "10.0.0.0/32")],
+                  [("PRIORITY", "20"), ("PACKET_ACTION", "DROP"), ("DST_IP", "104.44.94.0/23")],
+                  [("PRIORITY", "30"), ("PACKET_ACTION", "DROP"), ("DST_IP", "192.168.0.16/32")],
+                  [("PRIORITY", "40"), ("PACKET_ACTION", "FORWARD"), ("DST_IP", "100.64.0.0/10")] ]
+        for rule in rules:
+           fvs = swsscommon.FieldValuePairs(rule)
+           num_rules += 1
+           tbl.set( "test_insert|acl_test_rule%s" % num_rules, fvs)
 
         time.sleep(1)
 
@@ -817,7 +813,6 @@ class TestAcl(object):
         acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
         assert len(acl_entry) == num_rules 
  
-
         tbl = swsscommon.Table(db, "ACL_RULE")
         fvs5 = swsscommon.FieldValuePairs([("PRIORITY", "21"), ("PACKET_ACTION", "DROP"), ("ETHER_TYPE", "4660")])
         tbl.set("test_insert|acl_test_rule5", fvs5)
@@ -872,11 +867,9 @@ class TestAcl(object):
 
         assert num_rules == matched_rules
 
-        tbl._del("test_insert|acl_test_rule1")
-        tbl._del("test_insert|acl_test_rule2")
-        tbl._del("test_insert|acl_test_rule3")
-        tbl._del("test_insert|acl_test_rule4")
-        tbl._del("test_insert|acl_test_rule5")
+        while num_rules > 0:
+           tbl._del("test_insert|acl_test_rule%s" % num_rules)
+           num_rules -= 1
 
         time.sleep(1)
 
