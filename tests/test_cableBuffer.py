@@ -6,6 +6,8 @@
     SONiC version compiled for PLATFORM=vs
 
     See README.md for details
+    For Running this script , we are using   pg_profile_lookup.ini under ../tests directory.
+    In future  if there is any change in buffer profiles, pg_profile_lookup.ini has to be updated in ../tests directory.
 """
 
 import os
@@ -30,7 +32,7 @@ class TestCableBufferProfile(object):
             profile_details[cable] = {}
             for speed in self.speed_list:
                 profile_details[cable][speed] = {}
-        # get teh profile details for cable and speed combination
+        # get the profile details for cable and speed combination
         for line in profile:
             match = re.search("(\d+)\s+(\w+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", line)
             if match:
@@ -41,16 +43,13 @@ class TestCableBufferProfile(object):
                 profile_details[length][match.group(1)]['threshold'] = match.group(6)
         return profile_details
 
-    def test_CableBufferProfile(self, request, dvs):
-        name = request.config.getoption("--dvsname")
-        # copy the pg profile
-        os.system(" docker cp %s://usr/share/sonic/device/vswitch/pg_profile_lookup.ini . " % name)
+    def test_CableBufferProfile(self, dvs):
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-        cfg_port_table = swsscommon.Table(cdb, "PORT", '|')
-        cfg_cable_length_table = swsscommon.Table(cdb, "CABLE_LENGTH", '|')
-        cfg_buffer_profile_table = swsscommon.Table(cdb, "BUFFER_PROFILE", '|')
-        cfg_buffer_pg_table = swsscommon.Table(cdb, "BUFFER_PG", '|')
+        cfg_port_table = swsscommon.Table(cdb, "PORT")
+        cfg_cable_length_table = swsscommon.Table(cdb, "CABLE_LENGTH")
+        cfg_buffer_profile_table = swsscommon.Table(cdb, "BUFFER_PROFILE")
+        cfg_buffer_pg_table = swsscommon.Table(cdb, "BUFFER_PG")
         asic_port_table = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         asic_profile_table = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE")
 
@@ -132,6 +131,4 @@ class TestCableBufferProfile(object):
                     for fv in fvs:
                         if fv[0] == "profile":
                             assert fv[1] == "[BUFFER_PROFILE|%s]" % expected_new_profile_name
-        # remove the file copied from docker
-        os.system(" rm pg_profile_lookup.ini")
 
