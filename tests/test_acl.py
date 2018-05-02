@@ -13,7 +13,7 @@ class TestAcl(object):
         assert len(acl_tables) == 1 
 
         return acl_tables[0]
-
+ 
     def test_AclTableCreation(self, dvs):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
@@ -795,25 +795,16 @@ class TestAcl(object):
         subnet_mask_rules = 0
         #create ACL rules
         tbl = swsscommon.Table(db, "ACL_RULE")
-        fvs1 = swsscommon.FieldValuePairs([("PRIORITY", "10"), ("PACKET_ACTION", "FORWARD"), ("SRC_IP", "23.103.0.0/18")])
-        tbl.set("test_subnet|acl_test_rule1", fvs1)
-        subnet_mask_rules += 1
-        fvs2 = swsscommon.FieldValuePairs([("PRIORITY", "20"), ("PACKET_ACTION", "FORWARD"), ("SRC_IP", "104.44.94.0/23")])
-        tbl.set("test_subnet|acl_test_rule2", fvs2)
-        subnet_mask_rules += 1
-        fvs3 = swsscommon.FieldValuePairs([("PRIORITY", "30"), ("PACKET_ACTION", "FORWARD"), ("DST_IP", "172.16.0.0/12")])
-        tbl.set("test_subnet|acl_test_rule3", fvs3)
-        subnet_mask_rules += 1
-        fvs4 = swsscommon.FieldValuePairs([("PRIORITY", "40"), ("PACKET_ACTION", "FORWARD"), ("DST_IP", "100.64.0.0/10")])
-        tbl.set("test_subnet|acl_test_rule4", fvs4)
-        subnet_mask_rules += 1
-        fvs5 = swsscommon.FieldValuePairs([("PRIORITY", "50"), ("PACKET_ACTION", "FORWARD"), ("DST_IP", "104.146.32.0/19")])
-        tbl.set("test_subnet|acl_test_rule5", fvs5)
-        subnet_mask_rules += 1
-        fvs6 = swsscommon.FieldValuePairs([("PRIORITY", "60"), ("PACKET_ACTION", "FORWARD"), ("SRC_IP", "21.0.0.0/8")])
-        tbl.set("test_subnet|acl_test_rule6", fvs6)
-        subnet_mask_rules += 1
-
+        rules = [ [("PRIORITY", "10"), ("PACKET_ACTION", "FORWARD"), ("SRC_IP", "23.103.0.0/18")],
+                  [("PRIORITY", "20"), ("PACKET_ACTION", "FORWARD"), ("SRC_IP", "104.44.94.0/23")],
+                  [("PRIORITY", "30"), ("PACKET_ACTION", "FORWARD"), ("DST_IP", "172.16.0.0/12")],
+                  [("PRIORITY", "40"), ("PACKET_ACTION", "FORWARD"), ("DST_IP", "100.64.0.0/10")],
+                  [("PRIORITY", "50"), ("PACKET_ACTION", "FORWARD"), ("DST_IP", "104.146.32.0/19")],
+                  [("PRIORITY", "60"), ("PACKET_ACTION", "FORWARD"), ("SRC_IP", "21.0.0.0/8")] ]
+        for rule in rules:
+           fvs  = swsscommon.FieldValuePairs(rule)
+           subnet_mask_rules += 1
+           tbl.set( "test_subnet|acl_test_rule%s" % subnet_mask_rules, fvs )
 
         time.sleep(1)
 
@@ -873,13 +864,10 @@ class TestAcl(object):
  
         assert matched_masks == subnet_mask_rules 
 
-        tbl._del("test_subnet|acl_test_rule1")
-        tbl._del("test_subnet|acl_test_rule2")
-        tbl._del("test_subnet|acl_test_rule3")
-        tbl._del("test_subnet|acl_test_rule4")
-        tbl._del("test_subnet|acl_test_rule5")
-        tbl._del("test_subnet|acl_test_rule6")
-
+        while subnet_mask_rules > 0:
+           tbl._del("test_subnet|acl_test_rule%s" % subnet_mask_rules)
+           subnet_mask_rules -= 1
+        
         time.sleep(1)
 
         (status, fvs) = atbl.get(acl_entry[0])
