@@ -14,6 +14,7 @@
 #define PFC_WD_ACTION                   "action"
 #define PFC_WD_DETECTION_TIME           "detection_time"
 #define PFC_WD_RESTORATION_TIME         "restoration_time"
+#define BIG_RED_SWITCH_FIELD            "BIG_RED_SWITCH"
 
 #define PFC_WD_DETECTION_TIME_MAX       (5 * 1000)
 #define PFC_WD_DETECTION_TIME_MIN       100
@@ -261,6 +262,8 @@ template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
         const vector<FieldValueTuple>& data)
 {
+    SWSS_LOG_ENTER();
+
     if (key == PFC_WD_GLOBAL)
     {
         for (auto valuePair: data)
@@ -274,11 +277,176 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
                 fieldValues.emplace_back(POLL_INTERVAL_FIELD, value);
                 m_flexCounterGroupTable->set(PFC_WD_FLEX_COUNTER_GROUP, fieldValues);
             }
+            else if (field == BIG_RED_SWITCH_FIELD)
+            {
+                SWSS_LOG_NOTICE("Recieve brs mode set, %s", value.c_str());
+                setBigRedSwitchMode(value);
+            }
         }
     }
     else
     {
         PfcWdOrch<DropHandler, ForwardHandler>::createEntry(key, data);
+    }
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::setBigRedSwitchMode(const string value)
+{
+    SWSS_LOG_ENTER();
+
+    if (value == "enable")
+    {
+        // When BIG_RED_SWITCH mode is enabled, pfcwd is automatically disabled
+        enableBigRedSwitchMode();
+    }
+    else if (value == "disable")
+    {
+        disableBigRedSwitchMode();
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Unsupported BIG_RED_SWITCH mode set input, please use enable or disable");
+    }
+
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
+{
+    SWSS_LOG_ENTER();
+
+    m_bigRedSwitchFlag = false;
+    // Disable pfcwdaction hanlder on each queue if exists.
+    for (auto &entry : m_brsEntryMap)
+    {
+
+        if (entry.second.handler != nullptr)
+        {
+            SWSS_LOG_NOTICE(
+                    "PFC Watchdog BIG_RED_SWITCH mode disabled on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                    entry.second.portAlias.c_str(),
+                    entry.second.index,
+                    entry.first,
+                    entry.second.portId);
+
+            entry.second.handler->commitCounters();
+            entry.second.handler = nullptr;
+        }
+
+        auto queueId = entry.first;
+        RedisClient redisClient(PfcWdOrch<DropHandler, ForwardHandler>::getCountersDb().get());
+        string countersKey = COUNTERS_TABLE ":" + sai_serialize_object_id(queueId);
+        redisClient.hdel(countersKey, "BIG_RED_SWITCH_MODE");
+    }
+
+    m_brsEntryMap.clear();
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
+{
+    SWSS_LOG_ENTER();
+
+    m_bigRedSwitchFlag =  true;
+    // Write to database that each queue enables BIG_RED_SWITCH
+    auto allPorts = gPortsOrch->getAllPorts();
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+
+    for (auto &it: allPorts)
+    {
+        Port port = it.second;
+
+        if (port.m_type != Port::PHY)
+        {
+            SWSS_LOG_INFO("Skip non-phy port %s", port.m_alias.c_str());
+            continue;
+        }
+
+        // use portorch api to get lossless tc in future.
+        sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            return;
+        }
+
+        uint8_t pfcMask = attr.value.u8;
+        for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
+        {
+            sai_object_id_t queueId = port.m_queue_ids[i];
+            if ((pfcMask & (1 << i)) == 0 && m_entryMap.find(queueId) == m_entryMap.end())
+            {
+                continue;
+            }
+
+            string queueIdStr = sai_serialize_object_id(queueId);
+
+            vector<FieldValueTuple> countersFieldValues;
+            countersFieldValues.emplace_back("BIG_RED_SWITCH_MODE", "enable");
+            PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable()->set(queueIdStr, countersFieldValues);
+        }
+    }
+
+    // Disable pfcwdaction handler on each queue if exists.
+    for (auto & entry: m_entryMap)
+    {
+        if (entry.second.handler != nullptr)
+        {
+            entry.second.handler->commitCounters();
+            entry.second.handler = nullptr;
+        }
+    }
+
+    // Create pfcwdaction hanlder on all the ports.
+    for (auto & it: allPorts)
+    {
+        Port port = it.second;
+        if (port.m_type != Port::PHY)
+        {
+            SWSS_LOG_INFO("Skip non-phy port %s", port.m_alias.c_str());
+            continue;
+        }
+
+        // use portorch api to get lossless tc in future after asym PFC is available.
+        sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            return;
+        }
+
+        uint8_t pfcMask = attr.value.u8;
+        for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
+        {
+            if ((pfcMask & (1 << i)) == 0)
+            {
+                continue;
+            }
+
+            sai_object_id_t queueId = port.m_queue_ids[i];
+            string queueIdStr = sai_serialize_object_id(queueId);
+
+            auto entry = m_brsEntryMap.emplace(queueId, PfcWdQueueEntry(PfcWdAction::PFC_WD_ACTION_DROP, port.m_port_id, i, port.m_alias)).first;
+
+            if (entry->second.handler== nullptr)
+            {
+                SWSS_LOG_NOTICE(
+                        "PFC Watchdog BIG_RED_SWITCH mode enabled on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        entry->second.portAlias.c_str(),
+                        entry->second.index,
+                        entry->first,
+                        entry->second.portId);
+
+                entry->second.handler = make_shared<DropHandler>(
+                        entry->second.portId,
+                        entry->first,
+                        entry->second.index,
+                        PfcWdOrch<DropHandler, ForwardHandler>::getCountersTable());
+                entry->second.handler->initCounters();
+            }
+        }
     }
 }
 
@@ -352,7 +520,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         }
 
         // Create internal entry
-        m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i));
+        m_entryMap.emplace(queueId, PfcWdQueueEntry(action, port.m_port_id, i, port.m_alias));
 
         string key = getFlexCounterTableKey(queueIdStr);
         m_flexCounterTable->set(key, queueFieldValues);
@@ -510,10 +678,11 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::~PfcWdSwOrch(void)
 
 template <typename DropHandler, typename ForwardHandler>
 PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdQueueEntry::PfcWdQueueEntry(
-        PfcWdAction action, sai_object_id_t port, uint8_t idx):
+        PfcWdAction action, sai_object_id_t port, uint8_t idx, string alias):
     action(action),
     portId(port),
-    index(idx)
+    index(idx),
+    portAlias(alias)
 {
     SWSS_LOG_ENTER();
 }
@@ -561,12 +730,24 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
     }
 
     SWSS_LOG_NOTICE("Receive notification, %s", event.c_str());
-    if (event == "storm")
+
+    if (m_bigRedSwitchFlag)
+    {
+        SWSS_LOG_NOTICE("Big_RED_SWITCH mode is on, ingore syncd pfc watchdog notification");
+    }
+    else if (event == "storm")
     {
         if (entry->second.action == PfcWdAction::PFC_WD_ACTION_ALERT)
         {
             if (entry->second.handler == nullptr)
             {
+                SWSS_LOG_NOTICE(
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        entry->second.portAlias.c_str(),
+                        entry->second.index,
+                        entry->first,
+                        entry->second.portId);
+
                 entry->second.handler = make_shared<PfcWdActionHandler>(
                         entry->second.portId,
                         entry->first,
@@ -579,6 +760,13 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
         {
             if (entry->second.handler == nullptr)
             {
+                SWSS_LOG_NOTICE(
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        entry->second.portAlias.c_str(),
+                        entry->second.index,
+                        entry->first,
+                        entry->second.portId);
+
                 entry->second.handler = make_shared<DropHandler>(
                         entry->second.portId,
                         entry->first,
@@ -591,6 +779,13 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
         {
             if (entry->second.handler == nullptr)
             {
+                SWSS_LOG_NOTICE(
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        entry->second.portAlias.c_str(),
+                        entry->second.index,
+                        entry->first,
+                        entry->second.portId);
+
                 entry->second.handler = make_shared<ForwardHandler>(
                         entry->second.portId,
                         entry->first,
@@ -601,13 +796,20 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
         }
         else
         {
-            throw runtime_error("Unknown PFC WD action");
+            SWSS_LOG_ERROR("Unknown PFC WD action");
         }
     }
     else if (event == "restore")
     {
         if (entry->second.handler != nullptr)
         {
+            SWSS_LOG_NOTICE(
+                    "PFC Watchdog storm restored on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        entry->second.portAlias.c_str(),
+                        entry->second.index,
+                        entry->first,
+                        entry->second.portId);
+
             entry->second.handler->commitCounters();
             entry->second.handler = nullptr;
         }

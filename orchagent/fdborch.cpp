@@ -9,6 +9,7 @@
 #include "fdborch.h"
 #include "crmorch.h"
 #include "notifier.h"
+#include "sai_serialize.h"
 
 extern sai_fdb_api_t    *sai_fdb_api;
 
@@ -16,15 +17,23 @@ extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
 extern CrmOrch *        gCrmOrch;
 
+const int fdborch_pri = 20;
+
 FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
-    Orch(db, tableName),
+    Orch(db, tableName, fdborch_pri),
     m_portsOrch(port),
     m_table(Table(db, tableName))
 {
     m_portsOrch->attach(this);
-    auto consumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
-    auto fdbNotification = new Notifier(consumer, this);
-    Orch::addExecutor("", fdbNotification);
+    m_flushNotificationsConsumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
+    auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this);
+    Orch::addExecutor("", flushNotifier);
+
+    /* Add FDB notifications support from ASIC */
+    DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    m_fdbNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this);
+    Orch::addExecutor("FDB_NOTIFICATIONS", fdbNotifier);
 }
 
 void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_object_id_t bridge_port_id)
@@ -46,10 +55,21 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
 
         update.add = true;
 
-        (void)m_entries.insert(update.entry);
-        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
+        {
+            auto ret = m_entries.insert(update.entry);
 
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+            SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx",
+                            update.entry.mac.to_string().c_str(), entry->bv_id);
+
+            if (ret.second)
+            {
+                gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+            }
+            else
+            {
+                SWSS_LOG_INFO("FdbOrch notification: mac %s is duplicate", update.entry.mac.to_string().c_str());
+            }
+        }
 
         for (auto observer: m_observers)
         {
@@ -62,10 +82,15 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
     case SAI_FDB_EVENT_MOVE:
         update.add = false;
 
-        (void)m_entries.erase(update.entry);
-        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
+        {
+            auto ret = m_entries.erase(update.entry);
+            SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
 
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+            if (ret)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+            }
+        }
 
         for (auto observer: m_observers)
         {
@@ -152,6 +177,7 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
     }
 
     sai_fdb_entry_t entry;
+    entry.switch_id = gSwitchId;
     memcpy(entry.mac_address, mac.getMac(), sizeof(sai_mac_t));
     entry.bv_id = port.m_vlan_info.vlan_oid;
 
@@ -271,36 +297,64 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
 
     consumer.pop(op, data, values);
 
-    if (op == "ALL")
+    if (&consumer == m_flushNotificationsConsumer)
     {
-        /*
-         * so far only support flush all the FDB entris
-         * flush per port and flush per vlan will be added later.
-         */
-        status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
-        if (status != SAI_STATUS_SUCCESS)
+        if (op == "ALL")
         {
-            SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
-        }
+            /*
+             * so far only support flush all the FDB entris
+             * flush per port and flush per vlan will be added later.
+             */
+            status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
+            }
 
-        return;
+            return;
+        }
+        else if (op == "PORT")
+        {
+            /*place holder for flush port fdb*/
+            SWSS_LOG_ERROR("Received unsupported flush port fdb request");
+            return;
+        }
+        else if (op == "VLAN")
+        {
+            /*place holder for flush vlan fdb*/
+            SWSS_LOG_ERROR("Received unsupported flush vlan fdb request");
+            return;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Received unknown flush fdb request");
+            return;
+        }
     }
-    else if (op == "PORT")
+    else if (&consumer == m_fdbNotificationConsumer && op == "fdb_event")
     {
-        /*place holder for flush port fdb*/
-        SWSS_LOG_ERROR("Received unsupported flush port fdb request");
-	    return;
-    }
-    else if (op == "VLAN")
-    {
-        /*place holder for flush vlan fdb*/
-        SWSS_LOG_ERROR("Received unsupported flush vlan fdb request");
-	    return;
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Received unknown flush fdb request");
-	    return;
+        uint32_t count;
+        sai_fdb_event_notification_data_t *fdbevent = nullptr;
+
+        sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
+
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+
+            for (uint32_t j = 0; j < fdbevent[i].attr_count; ++j)
+            {
+                if (fdbevent[i].attr[j].id == SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID)
+                {
+                    oid = fdbevent[i].attr[j].value.oid;
+                    break;
+                }
+            }
+
+            this->update(fdbevent[i].event_type, &fdbevent[i].fdb_entry, oid);
+
+            sai_deserialize_free_fdb_event_ntf(count, fdbevent);
+        }
     }
 }
 
@@ -407,6 +461,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
 
     sai_status_t status;
     sai_fdb_entry_t fdb_entry;
+    fdb_entry.switch_id = gSwitchId;
     memcpy(fdb_entry.mac_address, entry.mac.getMac(), sizeof(sai_mac_t));
     fdb_entry.bv_id = entry.bv_id;
 

@@ -15,12 +15,12 @@ using namespace swss;
 
 BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, string pg_lookup_file, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
-        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgBufferProfileTable(cfgDb, CFG_BUFFER_PROFILE_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgBufferPgTable(cfgDb, CFG_BUFFER_PG_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgLosslessPgPoolTable(cfgDb, CFG_BUFFER_POOL_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR)
+        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
+        m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
+        m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
+        m_cfgBufferProfileTable(cfgDb, CFG_BUFFER_PROFILE_TABLE_NAME),
+        m_cfgBufferPgTable(cfgDb, CFG_BUFFER_PG_TABLE_NAME),
+        m_cfgLosslessPgPoolTable(cfgDb, CFG_BUFFER_POOL_TABLE_NAME)
 {
     readPgProfileLookupFile(pg_lookup_file);
 }
@@ -72,9 +72,10 @@ void BufferMgr::readPgProfileLookupFile(string file)
     infile.close();
 }
 
-void BufferMgr::doCableTask(string port, string cable_length)
+task_process_status BufferMgr::doCableTask(string port, string cable_length)
 {
     m_cableLenLookup[port] = cable_length;
+    return task_process_status::task_success;
 }
 
 string BufferMgr::getPgPoolMode()
@@ -108,15 +109,15 @@ Create/update two tables: profile (in m_cfgBufferProfileTable) and port buffer (
         }
     }
 */
-void BufferMgr::doSpeedUpdateTask(string port, string speed)
+task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
 {
     vector<FieldValueTuple> fvVector;
     string cable;
 
     if (m_cableLenLookup.count(port) == 0)
     {
-        SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. Cable length is not set", port.c_str());
-        return;
+        SWSS_LOG_WARN("Unable to create/update PG profile for port %s. Cable length is not set", port.c_str());
+        return task_process_status::task_need_retry;
     }
 
     cable = m_cableLenLookup[port];
@@ -125,12 +126,11 @@ void BufferMgr::doSpeedUpdateTask(string port, string speed)
     {
         SWSS_LOG_ERROR("Unable to create/update PG profile for port %s. No PG profile configured for speed %s and cable length %s",
                        port.c_str(), speed.c_str(), cable.c_str());
-        return;
+        return task_process_status::task_invalid_entry;
     }
 
     // Crete record in BUFFER_PROFILE table
     // key format is pg_lossless_<speed>_<cable>_profile
-    string buffer_pg_key = port + CONFIGDB_TABLE_NAME_SEPARATOR + LOSSLESS_PGS;
     string buffer_profile_key = "pg_lossless_" + speed + "_" + cable + "_profile";
 
     // check if profile already exists - if yes - skip creation
@@ -143,13 +143,16 @@ void BufferMgr::doSpeedUpdateTask(string port, string speed)
         if (mode.empty())
         {
             // this should never happen if switch initialized properly
-            SWSS_LOG_ERROR("PG lossless pool is not yet created");
-            return;
+            SWSS_LOG_WARN("PG lossless pool is not yet created");
+            return task_process_status::task_need_retry;
         }
 
         // profile threshold field name
         mode += "_th";
-        string pg_pool_reference = string(CFG_BUFFER_POOL_TABLE_NAME) + CONFIGDB_TABLE_NAME_SEPARATOR + INGRESS_LOSSLESS_PG_POOL_NAME;
+        string pg_pool_reference = string(CFG_BUFFER_POOL_TABLE_NAME) +
+                                   m_cfgBufferProfileTable.getTableNameSeparator() +
+                                   INGRESS_LOSSLESS_PG_POOL_NAME;
+
         fvVector.push_back(make_pair("pool", "[" + pg_pool_reference + "]"));
         fvVector.push_back(make_pair("xon", m_pgProfileLookup[speed][cable].xon));
         if (m_pgProfileLookup[speed][cable].xon_offset.length() > 0) {
@@ -167,9 +170,18 @@ void BufferMgr::doSpeedUpdateTask(string port, string speed)
     }
 
     fvVector.clear();
-    string profile_ref = string("[") + CFG_BUFFER_PROFILE_TABLE_NAME + CONFIGDB_TABLE_NAME_SEPARATOR + buffer_profile_key + "]";
+
+    string buffer_pg_key = port + m_cfgBufferPgTable.getTableNameSeparator() + LOSSLESS_PGS;
+
+    string profile_ref = string("[") +
+                         CFG_BUFFER_PROFILE_TABLE_NAME +
+                         m_cfgBufferPgTable.getTableNameSeparator() +
+                         buffer_profile_key +
+                         "]";
+
     fvVector.push_back(make_pair("profile", profile_ref));
     m_cfgBufferPgTable.set(buffer_pg_key, fvVector);
+    return task_process_status::task_success;
 }
 
 void BufferMgr::doTask(Consumer &consumer)
@@ -188,6 +200,7 @@ void BufferMgr::doTask(Consumer &consumer)
         string port(keys[0]);
 
         string op = kfvOp(t);
+        task_process_status task_status = task_process_status::task_success;
         if (op == SET_COMMAND)
         {
             for (auto i : kfvFieldsValues(t))
@@ -195,18 +208,37 @@ void BufferMgr::doTask(Consumer &consumer)
                 if (table_name == CFG_PORT_CABLE_LEN_TABLE_NAME)
                 {
                     // receive and cache cable length table
-                    doCableTask(fvField(i), fvValue(i));
+                    task_status = doCableTask(fvField(i), fvValue(i));
                 }
                 // In case of PORT table update, Buffer Manager is interested in speed update only
                 if (table_name == CFG_PORT_TABLE_NAME && fvField(i) == "speed")
                 {
                     // create/update profile for port
-                    doSpeedUpdateTask(port, fvValue(i));
+                    task_status = doSpeedUpdateTask(port, fvValue(i));
+                }
+                if (task_status != task_process_status::task_success)
+                {
+                    break;
                 }
             }
         }
 
-        it = consumer.m_toSync.erase(it);
-        continue;
+        switch (task_status)
+        {
+            case task_process_status::task_failed:
+                SWSS_LOG_ERROR("Failed to process table update");
+                return;
+            case task_process_status::task_need_retry:
+                SWSS_LOG_INFO("Unable to process table update. Will retry...");
+                ++it;
+                break;
+            case task_process_status::task_invalid_entry:
+                SWSS_LOG_ERROR("Failed to process invalid entry, drop it");
+                it = consumer.m_toSync.erase(it);
+                break;
+            default:
+                it = consumer.m_toSync.erase(it);
+                break;
+        }
     }
 }

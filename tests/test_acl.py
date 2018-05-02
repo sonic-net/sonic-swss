@@ -21,7 +21,7 @@ class TestAcl(object):
     
         bind_ports = ["Ethernet0", "Ethernet4"]
         # create ACL_TABLE in config db
-        tbl = swsscommon.Table(db, "ACL_TABLE", '|')
+        tbl = swsscommon.Table(db, "ACL_TABLE")
         fvs = swsscommon.FieldValuePairs([("policy_desc", "test"), ("type", "L3"), ("ports", ",".join(bind_ports))])
         tbl.set("test", fvs)
     
@@ -95,7 +95,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # create acl rule  
-        tbl = swsscommon.Table(db, "ACL_RULE", '|')
+        tbl = swsscommon.Table(db, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "55"), ("PACKET_ACTION", "FORWARD"), ("L4_SRC_PORT", "65000")])
         tbl.set("test|acl_test_rule", fvs)
     
@@ -143,7 +143,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # get ACL_TABLE in config db
-        tbl = swsscommon.Table(db, "ACL_TABLE", '|')
+        tbl = swsscommon.Table(db, "ACL_TABLE")
         tbl._del("test")
 
         time.sleep(1)
@@ -160,7 +160,7 @@ class TestAcl(object):
     
         bind_ports = ["Ethernet0", "Ethernet4", "Ethernet8"]
         # create ACL_TABLE in config db
-        tbl = swsscommon.Table(db, "ACL_TABLE", '|')
+        tbl = swsscommon.Table(db, "ACL_TABLE")
         fvs = swsscommon.FieldValuePairs([("policy_desc", "testv6"), ("type", "L3V6"), ("ports", ",".join(bind_ports))])
         tbl.set("test-aclv6", fvs)
     
@@ -235,7 +235,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # create acl rule  
-        tbl = swsscommon.Table(db, "ACL_RULE", '|')
+        tbl = swsscommon.Table(db, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1001"), ("PACKET_ACTION", "FORWARD"), ("IP_TYPE", "IPv6ANY")])
         tbl.set("test-aclv6|test_rule1", fvs)
     
@@ -286,7 +286,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # create acl rule  
-        tbl = swsscommon.Table(db, "ACL_RULE", '|')
+        tbl = swsscommon.Table(db, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1002"), ("PACKET_ACTION", "DROP"), ("IP_TYPE", "IPv6ANY")])
         tbl.set("test-aclv6|test_rule2", fvs)
     
@@ -337,7 +337,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # create acl rule  
-        tbl = swsscommon.Table(db, "ACL_RULE", '|')
+        tbl = swsscommon.Table(db, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1003"), ("PACKET_ACTION", "DROP"), ("IP_PROTOCOL", "6")])
         tbl.set("test-aclv6|test_rule3", fvs)
     
@@ -388,7 +388,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # create acl rule  
-        tbl = swsscommon.Table(db, "ACL_RULE", '|')
+        tbl = swsscommon.Table(db, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1004"), ("PACKET_ACTION", "DROP"), ("SRC_IPV6", "2777::0/64")])
         tbl.set("test-aclv6|test_rule4", fvs)
     
@@ -439,7 +439,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # create acl rule  
-        tbl = swsscommon.Table(db, "ACL_RULE", '|')
+        tbl = swsscommon.Table(db, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1005"), ("PACKET_ACTION", "DROP"), ("DST_IPV6", "2002::2/128")])
         tbl.set("test-aclv6|test_rule5", fvs)
     
@@ -490,7 +490,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # create acl rule  
-        tbl = swsscommon.Table(db, "ACL_RULE", '|')
+        tbl = swsscommon.Table(db, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1006"), ("PACKET_ACTION", "DROP"), ("L4_SRC_PORT", "65000")])
         tbl.set("test-aclv6|test_rule6", fvs)
     
@@ -541,7 +541,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # create acl rule  
-        tbl = swsscommon.Table(db, "ACL_RULE", '|')
+        tbl = swsscommon.Table(db, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1007"), ("PACKET_ACTION", "DROP"), ("L4_DST_PORT", "65001")])
         tbl.set("test-aclv6|test_rule7", fvs)
     
@@ -592,7 +592,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # create acl rule  
-        tbl = swsscommon.Table(db, "ACL_RULE", '|')
+        tbl = swsscommon.Table(db, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1008"), ("PACKET_ACTION", "DROP"), ("TCP_FLAGS", "0x07/0x3f")])
         tbl.set("test-aclv6|test_rule8", fvs)
     
@@ -643,7 +643,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # create acl rule  
-        tbl = swsscommon.Table(db, "ACL_RULE", '|')
+        tbl = swsscommon.Table(db, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1009"), ("PACKET_ACTION", "DROP"), ("L4_SRC_PORT_RANGE", "1-100")])
         tbl.set("test-aclv6|test_rule9", fvs)
     
@@ -708,7 +708,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # create acl rule  
-        tbl = swsscommon.Table(db, "ACL_RULE", '|')
+        tbl = swsscommon.Table(db, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1010"), ("PACKET_ACTION", "DROP"), ("L4_DST_PORT_RANGE", "101-200")])
         tbl.set("test-aclv6|test_rule10", fvs)
     
@@ -770,7 +770,7 @@ class TestAcl(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # get ACL_TABLE in config db
-        tbl = swsscommon.Table(db, "ACL_TABLE", '|')
+        tbl = swsscommon.Table(db, "ACL_TABLE")
         tbl._del("test-aclv6")
 
         time.sleep(1)

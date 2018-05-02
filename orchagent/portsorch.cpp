@@ -18,6 +18,7 @@
 #include "sai_serialize.h"
 #include "crmorch.h"
 #include "countercheckorch.h"
+#include "notifier.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -33,8 +34,10 @@ extern CrmOrch *gCrmOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
-#define FLEX_STAT_COUNTER_POLL_MSECS "1000"
-#define STAT_COUNTER_FLEX_COUNTER_GROUP "STAT_COUNTER"
+#define PORT_FLEX_STAT_COUNTER_POLL_MSECS "1000"
+#define QUEUE_FLEX_STAT_COUNTER_POLL_MSECS "10000"
+#define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
+#define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
 {
@@ -120,7 +123,7 @@ static char* hostif_vlan_tag[] = {
  *    bridge. By design, SONiC switch starts with all bridge ports removed from
  *    default VLAN and all ports removed from .1Q bridge.
  */
-PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
+PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames) :
         Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();
@@ -143,8 +146,11 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
     m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
 
     vector<FieldValueTuple> fields;
-    fields.emplace_back(POLL_INTERVAL_FIELD, FLEX_STAT_COUNTER_POLL_MSECS);
-    m_flexCounterGroupTable->set(STAT_COUNTER_FLEX_COUNTER_GROUP, fields);
+    fields.emplace_back(POLL_INTERVAL_FIELD, PORT_FLEX_STAT_COUNTER_POLL_MSECS);
+    m_flexCounterGroupTable->set(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fields);
+
+    fields.emplace_back(POLL_INTERVAL_FIELD, QUEUE_FLEX_STAT_COUNTER_POLL_MSECS);
+    m_flexCounterGroupTable->set(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, fields);
 
     uint32_t i, j;
     sai_status_t status;
@@ -241,6 +247,12 @@ PortsOrch::PortsOrch(DBConnector *db, vector<string> tableNames) :
 
     removeDefaultVlanMembers();
     removeDefaultBridgePorts();
+
+    /* Add port oper status notification support */
+    DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
+    auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this);
+    Orch::addExecutor("PORT_STATUS_NOTIFICATIONS", portStatusNotificatier);
 }
 
 void PortsOrch::removeDefaultVlanMembers()
@@ -1087,9 +1099,14 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
     return true;
 }
 
-string PortsOrch::getFlexCounterTableKey(string key)
+string PortsOrch::getPortFlexCounterTableKey(string key)
 {
-    return string(STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
+    return string(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
+}
+
+string PortsOrch::getQueueFlexCounterTableKey(string key)
+{
+    return string(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
 bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
@@ -1125,7 +1142,7 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 m_counterTable->set("", fields);
 
                 /* Add port to flex_counter for updating stat counters  */
-                string key = getFlexCounterTableKey(sai_serialize_object_id(p.m_port_id));
+                string key = getPortFlexCounterTableKey(sai_serialize_object_id(p.m_port_id));
                 std::string delimiter = "";
                 std::ostringstream counters_stream;
                 for (const auto &id: portStatIds)
@@ -1404,6 +1421,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (setPortMtu(p.m_port_id, mtu))
                     {
                         p.m_mtu = mtu;
+                        m_portList[alias] = p;
                         SWSS_LOG_NOTICE("Set port %s MTU to %u", alias.c_str(), mtu);
                     }
                     else
@@ -1907,7 +1925,7 @@ void PortsOrch::initializeQueues(Port &port)
             queueTypeVector.push_back(queueTypeTuple);
         }
 
-        string key = getFlexCounterTableKey(sai_serialize_object_id(port.m_queue_ids[queueIndex]));
+        string key = getQueueFlexCounterTableKey(sai_serialize_object_id(port.m_queue_ids[queueIndex]));
 
         std::string delimiter = "";
         std::ostringstream counters_stream;
@@ -2473,4 +2491,47 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
     return true;
+}
+
+void PortsOrch::doTask(NotificationConsumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    /* Wait for all ports to be initialized */
+    if (!isInitDone())
+    {
+        return;
+    }
+
+    std::string op;
+    std::string data;
+    std::vector<swss::FieldValueTuple> values;
+
+    consumer.pop(op, data, values);
+
+    if (&consumer != m_portStatusNotificationConsumer)
+    {
+        return;
+    }
+
+    if (op == "port_state_change")
+    {
+        uint32_t count;
+        sai_port_oper_status_notification_t *portoperstatus = nullptr;
+
+        sai_deserialize_port_oper_status_ntf(data, count, &portoperstatus);
+
+        for (uint32_t i = 0; i < count; i++)
+        {
+            sai_object_id_t id = portoperstatus[i].port_id;
+            sai_port_oper_status_t status = portoperstatus[i].port_state;
+
+            SWSS_LOG_NOTICE("Get port state change notification id:%lx status:%d", id, status);
+
+            this->updateDbPortOperStatus(id, status);
+            this->setHostIntfsOperStatus(id, status == SAI_PORT_OPER_STATUS_UP);
+        }
+
+        sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);
+    }
 }

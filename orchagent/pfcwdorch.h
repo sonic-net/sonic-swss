@@ -78,11 +78,13 @@ private:
         PfcWdQueueEntry(
                 PfcWdAction action,
                 sai_object_id_t port,
-                uint8_t idx);
+                uint8_t idx,
+                string alias);
 
         PfcWdAction action = PfcWdAction::PFC_WD_ACTION_UNKNOWN;
         sai_object_id_t portId = SAI_NULL_OBJECT_ID;
         uint8_t index = 0;
+        string portAlias;
         shared_ptr<PfcWdActionHandler> handler = { nullptr };
     };
 
@@ -95,7 +97,13 @@ private:
 
     string filterPfcCounters(string counters, set<uint8_t>& losslessTc);
     string getFlexCounterTableKey(string s);
+
+    void disableBigRedSwitchMode();
+    void enableBigRedSwitchMode();
+    void setBigRedSwitchMode(string value);
+
     map<sai_object_id_t, PfcWdQueueEntry> m_entryMap;
+    map<sai_object_id_t, PfcWdQueueEntry> m_brsEntryMap;
 
     const vector<sai_port_stat_t> c_portStatIds;
     const vector<sai_queue_stat_t> c_queueStatIds;
@@ -105,6 +113,7 @@ private:
     shared_ptr<ProducerTable> m_flexCounterTable = nullptr;
     shared_ptr<ProducerTable> m_flexCounterGroupTable = nullptr;
 
+    bool m_bigRedSwitchFlag = false;
     int m_pollInterval;
 };
 

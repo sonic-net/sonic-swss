@@ -41,7 +41,7 @@ struct VlanMemberUpdate
 class PortsOrch : public Orch, public Subject
 {
 public:
-    PortsOrch(DBConnector *db, vector<string> tableNames);
+    PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames);
 
     bool isInitDone();
 
@@ -70,7 +70,9 @@ private:
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
-    std:: string getFlexCounterTableKey(std::string s);
+    std::string getQueueFlexCounterTableKey(std::string s);
+    std::string getPortFlexCounterTableKey(std::string s);
+
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
 
@@ -88,12 +90,16 @@ private:
     map<set<int>, tuple<string, uint32_t>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
 
+    NotificationConsumer* m_portStatusNotificationConsumer;
+
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
     void doVlanMemberTask(Consumer &consumer);
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
+
+    void doTask(NotificationConsumer &consumer);
 
     void removeDefaultVlanMembers();
     void removeDefaultBridgePorts();

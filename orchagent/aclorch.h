@@ -25,6 +25,7 @@
 #define TABLE_TYPE_L3        "L3"
 #define TABLE_TYPE_L3V6      "L3V6"
 #define TABLE_TYPE_MIRROR    "MIRROR"
+#define TABLE_TYPE_PFCWD     "PFCWD"
 #define TABLE_TYPE_CTRLPLANE "CTRLPLANE"
 
 #define RULE_PRIORITY           "PRIORITY"
@@ -69,6 +70,7 @@ typedef enum
     ACL_TABLE_L3,
     ACL_TABLE_L3V6,
     ACL_TABLE_MIRROR,
+    ACL_TABLE_PFCWD,
     ACL_TABLE_CTRLPLANE
 } acl_table_type_t;
 
@@ -206,6 +208,14 @@ public:
     AclRuleL3V6(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type);
     bool validateAddMatch(string attr_name, string attr_value);
 };
+
+class AclRulePfcwd: public AclRuleL3
+{
+public:
+    AclRulePfcwd(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type);
+    bool validateAddMatch(string attr_name, string attr_value);
+};
+
 
 class AclRuleMirror: public AclRule
 {
