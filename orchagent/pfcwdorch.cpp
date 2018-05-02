@@ -351,12 +351,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
     m_bigRedSwitchFlag =  true;
     // Write to database that each queue enables BIG_RED_SWITCH
     auto allPorts = gPortsOrch->getAllPorts();
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
 
     for (auto &it: allPorts)
     {
         Port port = it.second;
+        uint8_t pfcMask = 0;
 
         if (port.m_type != Port::PHY)
         {
@@ -364,15 +363,12 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             continue;
         }
 
-        // use portorch api to get lossless tc in future.
-        sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
             return;
         }
 
-        uint8_t pfcMask = attr.value.u8;
         for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
         {
             sai_object_id_t queueId = port.m_queue_ids[i];
@@ -403,21 +399,20 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
     for (auto & it: allPorts)
     {
         Port port = it.second;
+        uint8_t pfcMask = 0;
+
         if (port.m_type != Port::PHY)
         {
             SWSS_LOG_INFO("Skip non-phy port %s", port.m_alias.c_str());
             continue;
         }
 
-        // use portorch api to get lossless tc in future after asym PFC is available.
-        sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
             return;
         }
 
-        uint8_t pfcMask = attr.value.u8;
         for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
         {
             if ((pfcMask & (1 << i)) == 0)
