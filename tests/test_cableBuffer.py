@@ -21,14 +21,14 @@ import pytest
 
 
 class TestCableBufferProfile(object):
-    cable_list = ['5m', '40m', '300m']
+    cable_length_list = ['5m', '40m', '300m']
     speed_list = ['50000' , '25000', '40000', '10000', '100000']
     num_ports = 32
 
     def getProfileDetails(self):
         profile = open("pg_profile_lookup.ini", 'r')
         profile_details = {}
-        for cable in self.cable_list:
+        for cable in self.cable_length_list:
             profile_details[cable] = {}
             for speed in self.speed_list:
                 profile_details[cable][speed] = {}
@@ -68,7 +68,7 @@ class TestCableBufferProfile(object):
         assert expected_buffer_profiles_num == 7
         assert len(asic_profile_table.getKeys()) == expected_buffer_profiles_num
 
-        for cable in self.cable_list:
+        for cable in self.cable_length_list:
             for i in range(0, self.num_ports):
                 fvc = swsscommon.FieldValuePairs([("Ethernet%d" % (i*4), cable)])
                 cfg_cable_length_table.set("AZURE", fvc)
