@@ -936,7 +936,7 @@ bool AclTable::validate()
 {
     // Control plane ACLs are handled by a separate process
     if (type == ACL_TABLE_UNKNOWN || type == ACL_TABLE_CTRLPLANE) return false;
-    if (ports.empty()) return false;
+    if (portListsSet.empty()) return false;
     return true;
 }
 
@@ -1365,8 +1365,8 @@ bool AclRange::remove()
     return true;
 }
 
-AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch) :
-        Orch(db, tableNames),
+AclOrch::AclOrch(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch) :
+        Orch(connectors),
         m_mirrorOrch(mirrorOrch),
         m_neighOrch(neighOrch),
         m_routeOrch(routeOrch)
@@ -1448,6 +1448,11 @@ void AclOrch::doTask(Consumer &consumer)
     {
         unique_lock<mutex> lock(m_countersMutex);
         doAclRuleTask(consumer);
+    }
+    else if (table_name == STATE_LAG_TABLE_NAME)
+    {
+        unique_lock<mutex> lock(m_countersMutex);
+        doAclTablePortUpdateTask(consumer);
     }
     else
     {
@@ -1584,7 +1589,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                 }
                 else if (attr_name == TABLE_PORTS)
                 {
-                    bool suc = processPorts(attr_value, [&](sai_object_id_t portOid) {
+                    bool suc = processPorts(newTable, attr_value, [&](sai_object_id_t portOid) {
                         newTable.link(portOid);
                     });
 
@@ -1729,7 +1734,74 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
     }
 }
 
-bool AclOrch::processPorts(string portsList, std::function<void (sai_object_id_t)> inserter)
+void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple t = it->second;
+        string key = kfvKey(t);
+        size_t found = key.find('|');
+        string port_alias = key.substr(0, found);
+        string op = kfvOp(t);
+        
+        SWSS_LOG_INFO("doAclTablePortUpdateTask: OP: %s, port_alias: %s", op.c_str(), port_alias.c_str());
+
+        if (op == SET_COMMAND)
+        {
+            for (auto itmap : m_AclTables)
+            {
+                auto table = itmap.second;
+                
+                if (table.pendingPortListSet.find(port_alias) != table.pendingPortListSet.end())
+                {
+                    SWSS_LOG_NOTICE("found the port: %s in ACL table: %s pending port list, bind it to ACL table.", port_alias.c_str(), table.description.c_str());
+                    
+                    bool suc = processSinglePort(table, port_alias, [&](sai_object_id_t portOid) {
+                        table.link(portOid);
+                    });
+                    
+                    if (!suc)
+                    {
+                        SWSS_LOG_ERROR("Failed to bind the ACL table: %s to port: %s", table.description.c_str(), port_alias.c_str());
+                    }
+                    else
+                    {
+                        table.pendingPortListSet.erase(port_alias);
+                        SWSS_LOG_NOTICE("port: %s bound to ACL table table: %s, remove it from pending list", port_alias.c_str(), table.description.c_str());
+                    }
+                    
+                }
+            }
+
+            it = consumer.m_toSync.erase(it);
+        }
+        else if (op == DEL_COMMAND)
+        {
+            for (auto itmap : m_AclTables)
+            {
+                auto table = itmap.second;
+                
+                if (table.portListsSet.find(port_alias) != table.portListsSet.end())
+                {
+                    table.pendingPortListSet.emplace(port_alias);
+                    SWSS_LOG_WARN("Add deleted port: %s to the pending list of ACL table: %s", port_alias.c_str(), table.description.c_str());
+                }
+            }
+            
+            it = consumer.m_toSync.erase(it);
+        }
+        else
+        {
+            it = consumer.m_toSync.erase(it);
+            SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        }
+    }
+}
+
+bool AclOrch::processPorts(AclTable &aclTable, string portsList, std::function<void (sai_object_id_t)> inserter)
 {
     SWSS_LOG_ENTER();
 
@@ -1740,6 +1812,7 @@ bool AclOrch::processPorts(string portsList, std::function<void (sai_object_id_t
     split(portsList, strList, ',');
 
     set<string> strSet(strList.begin(), strList.end());
+    aclTable.portListsSet = strSet;
 
     if (strList.size() != strSet.size())
     {
@@ -1758,8 +1831,9 @@ bool AclOrch::processPorts(string portsList, std::function<void (sai_object_id_t
         Port port;
         if (!gPortsOrch->getPort(alias, port))
         {
-            SWSS_LOG_ERROR("Failed to process port. Port %s doesn't exist", alias.c_str());
-            return false;
+            SWSS_LOG_WARN("Port %s not configured yet, add it to ACL table %s pending list", alias.c_str(), aclTable.description.c_str());
+            aclTable.pendingPortListSet.emplace(alias);
+            continue;
         }
 
         switch (port.m_type)
@@ -1782,6 +1856,47 @@ bool AclOrch::processPorts(string portsList, std::function<void (sai_object_id_t
           SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", alias.c_str(), port.m_type);
           return false;
       }
+    }
+
+    return true;
+}
+
+bool AclOrch::processSinglePort(AclTable &aclTable, string portAlias, std::function<void (sai_object_id_t)> inserter)
+{
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_INFO("Processing ACL table port %s", portAlias.c_str());
+
+    Port port;
+    if (!gPortsOrch->getPort(portAlias, port))
+    {
+        SWSS_LOG_WARN("Port %s not configured yet, add it to ACL table %s pending list", portAlias.c_str(), aclTable.description.c_str());
+        aclTable.pendingPortListSet.insert(portAlias);
+        return true;
+    }
+
+    switch (port.m_type)
+    {
+        case Port::PHY:
+            if (port.m_lag_member_id != SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_ERROR("Failed to process port. Bind table to LAG member %s is not allowed", portAlias.c_str());
+                return false;
+            }
+            inserter(port.m_port_id);
+            aclTable.bind(port.m_port_id);
+            break;
+        case Port::LAG:
+            inserter(port.m_lag_id);
+            aclTable.bind(port.m_lag_id);
+            break;
+        case Port::VLAN:
+            inserter(port.m_vlan_info.vlan_oid);
+            aclTable.bind(port.m_vlan_info.vlan_oid);
+            break;
+        default:
+            SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", portAlias.c_str(), port.m_type);
+            return false;
     }
 
     return true;
@@ -1898,18 +2013,17 @@ sai_status_t AclOrch::bindAclTable(sai_object_id_t table_oid, AclTable &aclTable
     sai_status_t status = SAI_STATUS_SUCCESS;
 
     SWSS_LOG_INFO("%s table %s to ports", bind ? "Bind" : "Unbind", aclTable.id.c_str());
+    
+    if (aclTable.portListsSet.empty())
+    {
+        SWSS_LOG_ERROR("Port list is not configured for %s table", aclTable.id.c_str());
+        return SAI_STATUS_FAILURE;
+    }
 
     if (aclTable.ports.empty())
     {
-        if (bind)
-        {
-            SWSS_LOG_ERROR("Port list is not configured for %s table", aclTable.id.c_str());
-            return SAI_STATUS_FAILURE;
-        }
-        else
-        {
-            return SAI_STATUS_SUCCESS;
-        }
+        SWSS_LOG_WARN("Binding port list is empty for %s table", aclTable.id.c_str());
+        return SAI_STATUS_SUCCESS;
     }
 
     if (bind)
