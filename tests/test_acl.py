@@ -780,6 +780,21 @@ class TestAcl(object):
         # only the default table was left
         assert len(keys) == 1
 
+    #helper function to verify if rule exists
+    def check_rule_existence(self, entry, rules, verifs):
+        for rule in rules:
+           ruleD = dict(rule)
+           #find the rule to match with based on priority
+           if ruleD["PRIORITY"] == entry['SAI_ACL_ENTRY_ATTR_PRIORITY']:
+              ruleIndex = rules.index(rule)
+              #use verification dictionary to match entry to rule
+              for key in verifs[ruleIndex]:
+                 assert verifs[ruleIndex][key] == entry[key]
+              #found the rule
+              return True
+        #did not find the rule
+        return False
+
     def test_InsertAclRuleBetweenPriorities(self, dvs):
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -792,14 +807,27 @@ class TestAcl(object):
 
         time.sleep(2)
 
-
         num_rules = 0
         #create ACL rules
         tbl = swsscommon.Table(db, "ACL_RULE")
-        rules = [ [("PRIORITY", "10"), ("PACKET_ACTION", "DROP"), ("SRC_IP", "10.0.0.0/32")],
+        rules = [ [("PRIORITY", "10"), ("PACKET_ACTION", "DROP"), ("SRC_IP", "10.0.0.0/32")],  
                   [("PRIORITY", "20"), ("PACKET_ACTION", "DROP"), ("DST_IP", "104.44.94.0/23")],
                   [("PRIORITY", "30"), ("PACKET_ACTION", "DROP"), ("DST_IP", "192.168.0.16/32")],
                   [("PRIORITY", "40"), ("PACKET_ACTION", "FORWARD"), ("DST_IP", "100.64.0.0/10")] ]
+        #used to verify how ACL rules are programmed in ASICDB
+        verifs = [ {'SAI_ACL_ENTRY_ATTR_PRIORITY': '10', 
+                    'SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP': '10.0.0.0&mask:255.255.255.255', 
+                    'SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION': 'SAI_PACKET_ACTION_DROP'},
+                   {'SAI_ACL_ENTRY_ATTR_PRIORITY': '20',
+                    'SAI_ACL_ENTRY_ATTR_FIELD_DST_IP': '104.44.94.0&mask:255.255.254.0',
+                    'SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION': 'SAI_PACKET_ACTION_DROP'},
+                   {'SAI_ACL_ENTRY_ATTR_PRIORITY': '30',
+                    'SAI_ACL_ENTRY_ATTR_FIELD_DST_IP': '192.168.0.16&mask:255.255.255.255',
+                    'SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION': 'SAI_PACKET_ACTION_DROP'},
+                   {'SAI_ACL_ENTRY_ATTR_PRIORITY': '40',
+                    'SAI_ACL_ENTRY_ATTR_FIELD_DST_IP': '100.64.0.0&mask:255.192.0.0',
+                    'SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION': 'SAI_PACKET_ACTION_FORWARD'} ]
+        #insert rules
         for rule in rules:
            fvs = swsscommon.FieldValuePairs(rule)
            num_rules += 1
@@ -810,63 +838,42 @@ class TestAcl(object):
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
         keys = atbl.getKeys()
 
+        #assert that first set of rules are programmed
         acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
         assert len(acl_entry) == num_rules 
  
+        #insert new rule with odd priority
         tbl = swsscommon.Table(db, "ACL_RULE")
-        fvs5 = swsscommon.FieldValuePairs([("PRIORITY", "21"), ("PACKET_ACTION", "DROP"), ("ETHER_TYPE", "4660")])
-        tbl.set("test_insert|acl_test_rule5", fvs5)
+        insertrule = [("PRIORITY", "21"), ("PACKET_ACTION", "DROP"), ("ETHER_TYPE", "4660")]
+        #create verification for that rule
+        verifs.append({'SAI_ACL_ENTRY_ATTR_PRIORITY': '21',
+                       'SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE': '4660&mask:0xffff', 
+                       'SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION': 'SAI_PACKET_ACTION_DROP'})
+        rules.append(insertrule)
+        fvs = swsscommon.FieldValuePairs(insertrule)
         num_rules += 1
+        tbl.set("test_insert|acl_test_rule%s" % num_rules, fvs)
     
         time.sleep(1)
         
+        #assert all rules are programmed
         keys = atbl.getKeys()
         acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
         assert len(acl_entry) == num_rules
 
+        #match each entry to its corresponding verification
         matched_rules = 0
         for entry in acl_entry:
            (status, fvs) = atbl.get(entry)
            assert status == True
            assert len(fvs) == 6
-           if ('SAI_ACL_ENTRY_ATTR_PRIORITY', '10') in fvs:
+           #helper function
+           if self.check_rule_existence(dict(fvs), rules, verifs):
               matched_rules += 1
-              for fv in fvs:
-                 if fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP":
-                    assert fv[1] == "10.0.0.0&mask:255.255.255.255"
-                 elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION":
-                    assert fv[1] == "SAI_PACKET_ACTION_DROP" 
-           if ('SAI_ACL_ENTRY_ATTR_PRIORITY', '20') in fvs:
-              matched_rules += 1
-              for fv in fvs:
-                 if fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP":
-                    assert fv[1] == "104.44.94.0&mask:255.255.254.0"
-                 elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION":
-                    assert fv[1] == "SAI_PACKET_ACTION_DROP" 
-           if ('SAI_ACL_ENTRY_ATTR_PRIORITY', '21') in fvs:
-              matched_rules += 1
-              for fv in fvs:
-                 if fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE":
-                    assert fv[1] == "4660&mask:0xffff"
-                 elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION":
-                    assert fv[1] == "SAI_PACKET_ACTION_DROP" 
-           if ('SAI_ACL_ENTRY_ATTR_PRIORITY', '30') in fvs:
-              matched_rules += 1
-              for fv in fvs:
-                 if fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP":
-                    assert fv[1] == "192.168.0.16&mask:255.255.255.255"
-                 elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION":
-                    assert fv[1] == "SAI_PACKET_ACTION_DROP" 
-           if ('SAI_ACL_ENTRY_ATTR_PRIORITY', '40') in fvs:
-              matched_rules += 1
-              for fv in fvs:
-                 if fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_DST_IP":
-                    assert fv[1] == "100.64.0.0&mask:255.192.0.0"
-                 elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION":
-                    assert fv[1] == "SAI_PACKET_ACTION_FORWARD" 
 
         assert num_rules == matched_rules
 
+        #cleanup
         while num_rules > 0:
            tbl._del("test_insert|acl_test_rule%s" % num_rules)
            num_rules -= 1
