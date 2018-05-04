@@ -1,5 +1,5 @@
 """
-    test_Cablebuffer.py implements list of tests to check  whether the approprotae buffer profile
+    test_Cablebuffer.py implements list of tests to check  whether the appropriate buffer profile
     is selected for an interface depending upon cable and Speed values .
 
     These tests need to be run in prepared environment and with the
