@@ -419,7 +419,7 @@ Stores information about ACL tables on the switch.  Port names are defined in [p
     key           = ACL_TABLE:name          ; acl_table_name must be unique
     ;field        = value
     policy_desc   = 1*255VCHAR              ; name of the ACL policy table description
-    type          = "mirror"/"l3"           ; type of acl table, every type of
+    type          = "mirror"/"l3"/"l3v6"    ; type of acl table, every type of
                                             ; table defines the match/action a
                                             ; specific set of match and actions.
     ports         = [0-max_ports]*port_name ; the ports to which this ACL
@@ -459,8 +459,7 @@ Stores rules associated with a specific ACL table on the switch.
     ether_type    = h16                        ; Ethernet type field
 
     ip_type       = ip_types                   ; options of the l2_protocol_type
-                                               ; field. Only v4 is support for
-                                               ; this stage.
+                                               ; field.
 
     ip_protocol   = h8                         ; options of the l3_protocol_type field
 
@@ -468,6 +467,12 @@ Stores rules associated with a specific ACL table on the switch.
                                                ; address (and mask) field
 
     dst_ip        = ipv4_prefix                ; options of the destination ipv4
+                                               ; address (and mask) field
+
+    src_ipv6      = ipv6_prefix                ; options of the source ipv6
+                                               ; address (and mask) field
+
+    dst_ipv6      = ipv6_prefix                ; options of the destination ipv6
                                                ; address (and mask) field
 
     l4_src_port   = port_num                   ; source L4 port or the

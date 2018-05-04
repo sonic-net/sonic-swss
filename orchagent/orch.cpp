@@ -1,6 +1,5 @@
 #include <fstream>
 #include <iostream>
-#include <mutex>
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
@@ -15,23 +14,29 @@ using namespace swss;
 
 extern int gBatchSize;
 
-extern mutex gDbMutex;
-
 extern bool gSwssRecord;
 extern ofstream gRecordOfs;
 extern bool gLogRotate;
 extern string gRecordFile;
 
-Orch::Orch(DBConnector *db, const string tableName)
+Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
-    addConsumer(db, tableName);
+    addConsumer(db, tableName, pri);
 }
 
 Orch::Orch(DBConnector *db, const vector<string> &tableNames)
 {
     for(auto it : tableNames)
     {
-        addConsumer(db, it);
+        addConsumer(db, it, default_orch_pri);
+    }
+}
+
+Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri)
+{
+    for(const auto& it : tableNames_with_pri)
+    {
+        addConsumer(db, it.first, it.second);
     }
 }
 
@@ -64,9 +69,6 @@ vector<Selectable *> Orch::getSelectables()
 void Consumer::execute()
 {
     SWSS_LOG_ENTER();
-
-    // TODO: remove DbMutex when there is only single thread
-    lock_guard<mutex> lock(gDbMutex);
 
     std::deque<KeyOpFieldsValuesTuple> entries;
     getConsumerTable()->pops(entries);
@@ -356,15 +358,15 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
     return true;
 }
 
-void Orch::addConsumer(DBConnector *db, string tableName)
+void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
-    if (db->getDB() == CONFIG_DB)
+    if (db->getDbId() == CONFIG_DB)
     {
-        addExecutor(tableName, new Consumer(new SubscriberStateTable(db, tableName), this));
+        addExecutor(tableName, new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this));
     }
     else
     {
-        addExecutor(tableName, new Consumer(new ConsumerStateTable(db, tableName, gBatchSize), this));
+        addExecutor(tableName, new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this));
     }
 }
 
@@ -374,3 +376,70 @@ void Orch::addExecutor(string executorName, Executor* executor)
             std::forward_as_tuple(executorName),
             std::forward_as_tuple(executor));
 }
+
+Executor *Orch::getExecutor(string executorName)
+{
+    auto it = m_consumerMap.find(executorName);
+    if (it != m_consumerMap.end())
+    {
+        return it->second.get();
+    }
+
+    return NULL;
+}
+
+void Orch2::doTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        bool erase_from_queue = true;
+        try
+        {
+            request_.parse(it->second);
+
+            auto op = request_.getOperation();
+            if (op == SET_COMMAND)
+            {
+                erase_from_queue = addOperation(request_);
+            }
+            else if (op == DEL_COMMAND)
+            {
+                erase_from_queue = delOperation(request_);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Wrong operation. Check RequestParser: %s", op.c_str());
+            }
+        }
+        catch (const std::invalid_argument& e)
+        {
+            SWSS_LOG_ERROR("Parse error: %s", e.what());
+        }
+        catch (const std::logic_error& e)
+        {
+            SWSS_LOG_ERROR("Logic error: %s", e.what());
+        }
+        catch (const std::exception& e)
+        {
+            SWSS_LOG_ERROR("Exception was catched in the request parser: %s", e.what());
+        }
+        catch (...)
+        {
+            SWSS_LOG_ERROR("Unknown exception was catched in the request parser");
+        }
+        request_.clear();
+
+        if (erase_from_queue)
+        {
+            it = consumer.m_toSync.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+

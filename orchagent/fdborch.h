@@ -8,11 +8,11 @@
 struct FdbEntry
 {
     MacAddress mac;
-    sai_vlan_id_t vlan;
+    sai_object_id_t bv_id;
 
     bool operator<(const FdbEntry& other) const
     {
-        return tie(mac, vlan) < tie(other.mac, other.vlan);
+        return tie(mac, bv_id) < tie(other.mac, other.bv_id);
     }
 };
 
@@ -34,13 +34,8 @@ typedef unordered_map<string, vector<SavedFdbEntry>> fdb_entries_by_port_t;
 class FdbOrch: public Orch, public Subject, public Observer
 {
 public:
-    FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
-        Orch(db, tableName),
-        m_portsOrch(port),
-        m_table(Table(db, tableName))
-    {
-        m_portsOrch->attach(this);
-    }
+    
+    FdbOrch(DBConnector *db, string tableName, PortsOrch *port);
 
     ~FdbOrch()
     {
@@ -56,8 +51,11 @@ private:
     set<FdbEntry> m_entries;
     fdb_entries_by_port_t saved_fdb_entries;
     Table m_table;
+    NotificationConsumer* m_flushNotificationsConsumer;
+    NotificationConsumer* m_fdbNotificationConsumer;
 
     void doTask(Consumer& consumer);
+    void doTask(NotificationConsumer& consumer);
 
     void updateVlanMember(const VlanMemberUpdate&);
     bool addFdbEntry(const FdbEntry&, const string&, const string&);

@@ -25,6 +25,7 @@ debian/tmp/
 aclocal.m4
 config.h
 config.h.in
+config.h.in~
 config.log
 config.status
 configure
@@ -46,11 +47,11 @@ fpmsyncd/fpmsyncd
 intfsyncd/intfsyncd
 cfgmgr/intfmgrd
 cfgmgr/vlanmgrd
+cfgmgr/buffermanager
 neighsyncd/neighsyncd
 portsyncd/portsyncd
 orchagent/orchagent
 orchagent/routeresync
 swssconfig/swssconfig
 swssconfig/swssplayer
-
-
+tests/tests

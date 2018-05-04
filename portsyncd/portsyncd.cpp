@@ -96,8 +96,8 @@ int main(int argc, char **argv)
         while (true)
         {
             Selectable *temps;
-            int tempfd, ret;
-            ret = s.select(&temps, &tempfd, 1);
+            int ret;
+            ret = s.select(&temps, 1);
 
             if (ret == Select::ERROR)
             {
@@ -169,7 +169,7 @@ void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb)
 {
     cout << "Get port configuration from ConfigDB..." << endl;
 
-    Table table(&cfgDb, CFG_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR);
+    Table table(&cfgDb, CFG_PORT_TABLE_NAME);
     std::vector<FieldValueTuple> ovalues;
     std::vector<string> keys;
     table.getKeys(keys);
@@ -205,17 +205,15 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
     {
         if (line.at(0) == '#')
         {
-            /* Find out what info is specified in the configuration file */
-            for (auto it = header.begin(); it != header.end();)
-            {
-                if (line.find(*it) == string::npos)
-                {
-                    it = header.erase(it);
-                }
-                else
-                {
-                    ++it;
-                }
+            // Take this line as column header line
+            istringstream iss_hdr(line.substr(1));
+            string hdr;
+
+            header.clear();
+            while (! iss_hdr.eof()) {
+                iss_hdr >> hdr;
+                cout << "Adding column header '" << hdr << "'" << endl;
+                header.push_back(hdr);
             }
 
             continue;
