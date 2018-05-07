@@ -245,7 +245,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
                 attribs.push_back(attr);
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.s8 = (sai_int8_t)stol(value);
                 attribs.push_back(attr);
             }
             else if (field == buffer_static_th_field_name)
