@@ -248,10 +248,10 @@ public:
     std::map<sai_object_id_t, sai_object_id_t> ports;
     // Map rule name to rule data
     map<string, shared_ptr<AclRule>> rules;
-    // Set to store the ACL table port alias 
-	set<string> portListsSet;
-	// Set tje store the not cofigured ACL table port alias
-	set<string> pendingPortListSet;
+    // Set to store the ACL table port alias
+    set<string> portSet;
+    // Set to store the not cofigured ACL table port alias
+    set<string> pendingPortSet;
 
     AclTable()
         : type(ACL_TABLE_UNKNOWN)
@@ -323,7 +323,7 @@ private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
     void doAclRuleTask(Consumer &consumer);
-	void doAclTablePortUpdateTask(Consumer &consumer);
+    void doAclTablePortUpdateTask(Consumer &consumer);
     void doTask(SelectableTimer &timer);
 
     static void collectCountersThread(AclOrch *pAclOrch);
@@ -335,8 +335,9 @@ private:
     bool processAclTableType(string type, acl_table_type_t &table_type);
     bool processAclTableStage(string stage, acl_stage_type_t &acl_stage);
     bool processPorts(AclTable &aclTable, string portsList, std::function<void (sai_object_id_t)> inserter);
-    bool processSinglePort(AclTable &aclTable, string portAlias, std::function<void (sai_object_id_t)> inserter);
+    bool processPendingPort(AclTable &aclTable, string portAlias, std::function<void (sai_object_id_t)> inserter);
     bool validateAclTable(AclTable &aclTable);
+    sai_object_id_t getValidPortId(string alias, Port port);
 
     //vector <AclTable> m_AclTables;
     map <sai_object_id_t, AclTable> m_AclTables;

@@ -247,12 +247,12 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("Created underlay router interface ID %lx", gUnderlayIfId);
 
     /* Initialize orchestration components */
-    DBConnector *appl_db = new DBConnector(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector *config_db = new DBConnector(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector *state_db = new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector config_db(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-    OrchDaemon *orchDaemon = new OrchDaemon(appl_db, config_db, state_db);
-    if (!orchDaemon->init())
+    OrchDaemon orchDaemon(&appl_db, &config_db, &state_db);
+    if (!orchDaemon.init())
     {
         SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
         exit(EXIT_FAILURE);
@@ -272,7 +272,7 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
 
-        orchDaemon->start();
+        orchDaemon.start();
     }
     catch (char const *e)
     {

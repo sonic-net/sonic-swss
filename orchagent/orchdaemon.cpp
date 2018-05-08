@@ -40,10 +40,6 @@ OrchDaemon::~OrchDaemon()
     SWSS_LOG_ENTER();
     for (Orch *o : m_orchList)
         delete(o);
-
-    delete(m_configDb);
-    delete(m_applDb);
-    delete(m_stateDb);
 }
 
 bool OrchDaemon::init()
@@ -104,13 +100,13 @@ bool OrchDaemon::init()
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
     TableConnector stateDbLagTable(m_stateDb, STATE_LAG_TABLE_NAME);
-    
+
     vector<TableConnector> acl_table_connectors = {
         confDbAclTable,
         confDbAclRuleTable,
         stateDbLagTable
     };
-    
+
     gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
 
     m_orchList = { switch_orch, gCrmOrch, gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch, vrf_orch };
