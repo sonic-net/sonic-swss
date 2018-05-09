@@ -1754,7 +1754,6 @@ void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
             for (auto itmap : m_AclTables)
             {
                 auto table = itmap.second;
-
                 if (table.pendingPortSet.find(port_alias) != table.pendingPortSet.end())
                 {
                     SWSS_LOG_INFO("found the port: %s in ACL table: %s pending port list, bind it to ACL table.", port_alias.c_str(), table.description.c_str());
