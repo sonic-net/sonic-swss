@@ -1757,7 +1757,7 @@ void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
 
                 if (table.pendingPortSet.find(port_alias) != table.pendingPortSet.end())
                 {
-                    SWSS_LOG_NOTICE("found the port: %s in ACL table: %s pending port list, bind it to ACL table.", port_alias.c_str(), table.description.c_str());
+                    SWSS_LOG_INFO("found the port: %s in ACL table: %s pending port list, bind it to ACL table.", port_alias.c_str(), table.description.c_str());
 
                     bool suc = processPendingPort(table, port_alias, [&](sai_object_id_t portOid) {
                         table.link(portOid);
@@ -1780,7 +1780,6 @@ void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
             for (auto itmap : m_AclTables)
             {
                 auto table = itmap.second;
-
                 if (table.portSet.find(port_alias) != table.portSet.end())
                 {
                     table.pendingPortSet.emplace(port_alias);
@@ -1792,7 +1791,6 @@ void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
         }
-
         it = consumer.m_toSync.erase(it);
     }
 }
@@ -1899,7 +1897,6 @@ bool AclOrch::processPendingPort(AclTable &aclTable, string portAlias, std::func
     }
 
     port_id = getValidPortId(portAlias, port);
-
     if (port_id != SAI_NULL_OBJECT_ID)
     {
         inserter(port_id);
@@ -2025,15 +2022,12 @@ sai_status_t AclOrch::bindAclTable(sai_object_id_t table_oid, AclTable &aclTable
 
     SWSS_LOG_INFO("%s table %s to ports", bind ? "Bind" : "Unbind", aclTable.id.c_str());
     
-    if (aclTable.portSet.empty())
-    {
-        SWSS_LOG_ERROR("Port list is not configured for %s table", aclTable.id.c_str());
-        return SAI_STATUS_FAILURE;
-    }
-
     if (aclTable.ports.empty())
     {
-        SWSS_LOG_WARN("Binding port list is empty for %s table", aclTable.id.c_str());
+        if (bind)
+        {
+            SWSS_LOG_WARN("Binding port list is empty for %s table", aclTable.id.c_str());
+        }
         return SAI_STATUS_SUCCESS;
     }
 
