@@ -679,7 +679,7 @@ sai_object_id_t QosOrch::initSystemAclTable()
     }
     SWSS_LOG_NOTICE("Create a system ACL table for ECN coloring");
 
-    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t) attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
+    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_PORT);
 
     for (auto& pair: gPortsOrch->getAllPorts())
     {
