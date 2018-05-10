@@ -1,6 +1,5 @@
 #include <fstream>
 #include <iostream>
-#include <mutex>
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
@@ -15,23 +14,29 @@ using namespace swss;
 
 extern int gBatchSize;
 
-extern mutex gDbMutex;
-
 extern bool gSwssRecord;
 extern ofstream gRecordOfs;
 extern bool gLogRotate;
 extern string gRecordFile;
 
-Orch::Orch(DBConnector *db, const string tableName)
+Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
-    addConsumer(db, tableName);
+    addConsumer(db, tableName, pri);
 }
 
 Orch::Orch(DBConnector *db, const vector<string> &tableNames)
 {
     for(auto it : tableNames)
     {
-        addConsumer(db, it);
+        addConsumer(db, it, default_orch_pri);
+    }
+}
+
+Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri)
+{
+    for(const auto& it : tableNames_with_pri)
+    {
+        addConsumer(db, it.first, it.second);
     }
 }
 
@@ -64,9 +69,6 @@ vector<Selectable *> Orch::getSelectables()
 void Consumer::execute()
 {
     SWSS_LOG_ENTER();
-
-    // TODO: remove DbMutex when there is only single thread
-    lock_guard<mutex> lock(gDbMutex);
 
     std::deque<KeyOpFieldsValuesTuple> entries;
     getConsumerTable()->pops(entries);
@@ -356,15 +358,15 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
     return true;
 }
 
-void Orch::addConsumer(DBConnector *db, string tableName)
+void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
     if (db->getDbId() == CONFIG_DB)
     {
-        addExecutor(tableName, new Consumer(new SubscriberStateTable(db, tableName), this));
+        addExecutor(tableName, new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this));
     }
     else
     {
-        addExecutor(tableName, new Consumer(new ConsumerStateTable(db, tableName, gBatchSize), this));
+        addExecutor(tableName, new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this));
     }
 }
 

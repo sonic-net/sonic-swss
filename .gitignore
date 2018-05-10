@@ -47,6 +47,7 @@ fpmsyncd/fpmsyncd
 intfsyncd/intfsyncd
 cfgmgr/intfmgrd
 cfgmgr/vlanmgrd
+cfgmgr/buffermanager
 neighsyncd/neighsyncd
 portsyncd/portsyncd
 orchagent/orchagent
@@ -54,4 +55,3 @@ orchagent/routeresync
 swssconfig/swssconfig
 swssconfig/swssplayer
 tests/tests
-

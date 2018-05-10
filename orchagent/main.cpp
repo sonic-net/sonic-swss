@@ -7,7 +7,6 @@ extern "C" {
 #include <iostream>
 #include <unordered_map>
 #include <map>
-#include <mutex>
 #include <thread>
 #include <chrono>
 #include <getopt.h>
@@ -46,9 +45,6 @@ bool gSwssRecord = true;
 bool gLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
-
-/* Global database mutex */
-mutex gDbMutex;
 
 void usage()
 {

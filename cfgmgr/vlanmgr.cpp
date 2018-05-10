@@ -97,7 +97,7 @@ bool VlanMgr::removeHostVlan(int vlan_id)
     //               /sbin/bridge vlan del vid {{vlan_id}} dev Bridge self"
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
-      + IP_CMD + " link add del " + VLAN_PREFIX + std::to_string(vlan_id) + " && "
+      + IP_CMD + " link del " + VLAN_PREFIX + std::to_string(vlan_id) + " && "
       + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + DOT1Q_BRIDGE_NAME + " self\"";
 
     std::string res;

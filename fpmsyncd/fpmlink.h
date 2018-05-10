@@ -25,11 +25,8 @@ public:
     /* Wait for connection (blocking) */
     void accept();
 
-    virtual void addFd(fd_set *fd);
-    virtual bool isMe(fd_set *fd);
-    virtual int readCache();
-    virtual void readMe();
-
+    int getFd() override;
+    void readData() override;
     /* readMe throws FpmConnectionClosedException when connection is lost */
     class FpmConnectionClosedException : public std::exception
     {

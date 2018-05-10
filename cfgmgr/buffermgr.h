@@ -44,8 +44,8 @@ private:
     port_cable_length_t m_cableLenLookup;
     std::string getPgPoolMode();
     void readPgProfileLookupFile(std::string);
-    void doCableTask(string port, string cable_length);
-    void doSpeedUpdateTask(string port, string speed);
+    task_process_status doCableTask(string port, string cable_length);
+    task_process_status doSpeedUpdateTask(string port, string speed);
 
     void doTask(Consumer &consumer);
 };

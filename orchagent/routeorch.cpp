@@ -18,8 +18,10 @@ extern CrmOrch *gCrmOrch;
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
+const int routeorch_pri = 5;
+
 RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
-        Orch(db, tableName),
+        Orch(db, tableName, routeorch_pri),
         m_neighOrch(neighOrch),
         m_nextHopGroupCount(0),
         m_resync(false)

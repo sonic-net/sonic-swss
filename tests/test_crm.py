@@ -307,7 +307,7 @@ def test_CrmIpv4Neighbor(dvs):
     new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_used')
     new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_available')
 
-    assert new_used_counter - used_counter >= 1
+    assert new_used_counter - used_counter == 1
     assert avail_counter - new_avail_counter == 1
 
     # remove neighbor and update available counter
@@ -320,7 +320,7 @@ def test_CrmIpv4Neighbor(dvs):
     new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_used')
     new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_available')
 
-    assert new_used_counter >= used_counter
+    assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
 
@@ -352,7 +352,7 @@ def test_CrmIpv6Neighbor(dvs):
     new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_used')
     new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_available')
 
-    assert new_used_counter - used_counter >= 1
+    assert new_used_counter - used_counter == 1
     assert avail_counter - new_avail_counter == 1
 
     # remove neighbor and update available counter
@@ -365,7 +365,7 @@ def test_CrmIpv6Neighbor(dvs):
     new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_used')
     new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_available')
 
-    assert new_used_counter >= used_counter
+    assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
 

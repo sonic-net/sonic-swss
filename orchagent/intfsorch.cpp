@@ -21,8 +21,10 @@ extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 
+const int intfsorch_pri = 35;
+
 IntfsOrch::IntfsOrch(DBConnector *db, string tableName) :
-        Orch(db, tableName)
+        Orch(db, tableName, intfsorch_pri)
 {
     SWSS_LOG_ENTER();
 }

@@ -81,23 +81,12 @@ void FpmLink::accept()
     SWSS_LOG_INFO("New connection accepted from: %s\n", inet_ntoa(client_addr.sin_addr));
 }
 
-void FpmLink::addFd(fd_set *fd)
+int FpmLink::getFd()
 {
-    FD_SET(m_connection_socket, fd);
+    return m_connection_socket;
 }
 
-bool FpmLink::isMe(fd_set *fd)
-{
-    return FD_ISSET(m_connection_socket, fd);
-}
-
-int FpmLink::readCache()
-{
-    /* FPM doesn't have any caching */
-    return NODATA;
-}
-
-void FpmLink::readMe()
+void FpmLink::readData()
 {
     fpm_msg_hdr_t *hdr;
     size_t msg_len;
