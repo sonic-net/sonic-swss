@@ -12,6 +12,9 @@
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
+#define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
+#define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
+
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
 
