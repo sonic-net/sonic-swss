@@ -9,17 +9,22 @@
 #include "logger.h"
 #include "swssnet.h"
 #include "tokenize.h"
+#include "crmorch.h"
 
 extern sai_object_id_t gVirtualRouterId;
 
 extern sai_router_interface_api_t*  sai_router_intfs_api;
 extern sai_route_api_t*             sai_route_api;
+extern sai_neighbor_api_t*          sai_neighbor_api;
 
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
+extern CrmOrch *gCrmOrch;
+
+const int intfsorch_pri = 35;
 
 IntfsOrch::IntfsOrch(DBConnector *db, string tableName) :
-        Orch(db, tableName)
+        Orch(db, tableName, intfsorch_pri)
 {
     SWSS_LOG_ENTER();
 }
@@ -145,6 +150,10 @@ void IntfsOrch::doTask(Consumer &consumer)
 
             addSubnetRoute(port, ip_prefix);
             addIp2MeRoute(ip_prefix);
+            if(port.m_type == Port::VLAN && ip_prefix.isV4())
+            {
+                addDirectedBroadcast(port, ip_prefix.getBroadcastIp());
+            }
 
             m_syncdIntfses[alias].ip_addresses.insert(ip_prefix);
             it = consumer.m_toSync.erase(it);
@@ -172,6 +181,10 @@ void IntfsOrch::doTask(Consumer &consumer)
                 {
                     removeSubnetRoute(port, ip_prefix);
                     removeIp2MeRoute(ip_prefix);
+                    if(port.m_type == Port::VLAN && ip_prefix.isV4())
+                    {
+                        removeDirectedBroadcast(port, ip_prefix.getBroadcastIp());
+                    }
 
                     m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
                 }
@@ -332,6 +345,15 @@ void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     SWSS_LOG_NOTICE("Create subnet route to %s from %s",
                     ip_prefix.to_string().c_str(), port.m_alias.c_str());
     increaseRouterIntfsRefCount(port.m_alias);
+
+    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
 }
 
 void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
@@ -353,6 +375,15 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     SWSS_LOG_NOTICE("Remove subnet route to %s from %s",
                     ip_prefix.to_string().c_str(), port.m_alias.c_str());
     decreaseRouterIntfsRefCount(port.m_alias);
+
+    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
 }
 
 void IntfsOrch::addIp2MeRoute(const IpPrefix &ip_prefix)
@@ -384,6 +415,15 @@ void IntfsOrch::addIp2MeRoute(const IpPrefix &ip_prefix)
     }
 
     SWSS_LOG_NOTICE("Create IP2me route ip:%s", ip_prefix.getIp().to_string().c_str());
+
+    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
 }
 
 void IntfsOrch::removeIp2MeRoute(const IpPrefix &ip_prefix)
@@ -401,4 +441,62 @@ void IntfsOrch::removeIp2MeRoute(const IpPrefix &ip_prefix)
     }
 
     SWSS_LOG_NOTICE("Remove packet action trap route ip:%s", ip_prefix.getIp().to_string().c_str());
+
+    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
+}
+
+void IntfsOrch::addDirectedBroadcast(const Port &port, const IpAddress &ip_addr)
+{
+    sai_status_t status;
+    sai_neighbor_entry_t neighbor_entry;
+    neighbor_entry.rif_id = port.m_rif_id;
+    neighbor_entry.switch_id = gSwitchId;
+    copy(neighbor_entry.ip_address, ip_addr);
+
+    sai_attribute_t neighbor_attr;
+    neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+    memcpy(neighbor_attr.value.mac, MacAddress("ff:ff:ff:ff:ff:ff").getMac(), 6);
+
+    status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry, 1, &neighbor_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create broadcast entry %s rv:%d",
+                       ip_addr.to_string().c_str(), status);
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Add broadcast route for ip:%s", ip_addr.to_string().c_str());
+}
+
+void IntfsOrch::removeDirectedBroadcast(const Port &port, const IpAddress &ip_addr)
+{
+    sai_status_t status;
+    sai_neighbor_entry_t neighbor_entry;
+    neighbor_entry.rif_id = port.m_rif_id;
+    neighbor_entry.switch_id = gSwitchId;
+    copy(neighbor_entry.ip_address, ip_addr);
+
+    status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_ERROR("No broadcast entry found for %s", ip_addr.to_string().c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove broadcast entry %s rv:%d",
+                           ip_addr.to_string().c_str(), status);
+        }
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Remove broadcast route ip:%s", ip_addr.to_string().c_str());
 }

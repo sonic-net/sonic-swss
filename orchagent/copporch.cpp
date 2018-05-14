@@ -67,7 +67,8 @@ map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"snmp", SAI_HOSTIF_TRAP_TYPE_SNMP},
     {"router_custom_range", SAI_HOSTIF_TRAP_TYPE_ROUTER_CUSTOM_RANGE_BASE},
     {"l3_mtu_error", SAI_HOSTIF_TRAP_TYPE_L3_MTU_ERROR},
-    {"ttl_error", SAI_HOSTIF_TRAP_TYPE_TTL_ERROR}
+    {"ttl_error", SAI_HOSTIF_TRAP_TYPE_TTL_ERROR},
+    {"udld", SAI_HOSTIF_TRAP_TYPE_UDLD}
 };
 
 map<string, sai_packet_action_t> packet_action_map = {

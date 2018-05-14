@@ -10,9 +10,9 @@ DBGFLAGS = -g -DNDEBUG
 endif
 
 CFLAGS_GTEST =
-LDADD_GTEST =
+LDADD_GTEST = -L/usr/src/gtest
 
-tests_SOURCES = swssnet_ut.cpp
+tests_SOURCES = swssnet_ut.cpp request_parser_ut.cpp
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)

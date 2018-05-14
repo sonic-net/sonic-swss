@@ -32,10 +32,8 @@ public:
                      ProducerStateTable *lagMemberTable);
         ~TeamPortSync();
 
-        virtual void addFd(fd_set *fd);
-        virtual bool isMe(fd_set *fd);
-        virtual int readCache();
-        virtual void readMe();
+        int getFd() override;
+        void readData() override;
 
     protected:
         int onChange();

@@ -2,15 +2,21 @@
 #include "neighorch.h"
 #include "logger.h"
 #include "swssnet.h"
+#include "crmorch.h"
+#include "routeorch.h"
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
 
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
+extern CrmOrch *gCrmOrch;
+extern RouteOrch *gRouteOrch;
+
+const int neighorch_pri = 30;
 
 NeighOrch::NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch) :
-        Orch(db, tableName), m_intfsOrch(intfsOrch)
+        Orch(db, tableName, neighorch_pri), m_intfsOrch(intfsOrch)
 {
     SWSS_LOG_ENTER();
 }
@@ -57,11 +63,130 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, string alias)
     NextHopEntry next_hop_entry;
     next_hop_entry.next_hop_id = next_hop_id;
     next_hop_entry.ref_count = 0;
+    next_hop_entry.nh_flags = 0;
+    next_hop_entry.if_alias = alias;
     m_syncdNextHops[ipAddress] = next_hop_entry;
 
     m_intfsOrch->increaseRouterIntfsRefCount(alias);
 
+    if (ipAddress.isV4())
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+    }
+
     return true;
+}
+
+bool NeighOrch::setNextHopFlag(const IpAddress &ipaddr, const uint32_t nh_flag)
+{
+    SWSS_LOG_ENTER();
+
+    auto nhop = m_syncdNextHops.find(ipaddr);
+    bool rc = false;
+
+    assert(nhop != m_syncdNextHops.end());
+
+    if (nhop->second.nh_flags & nh_flag)
+    {
+        return true;
+    }
+
+    nhop->second.nh_flags |= nh_flag;
+
+    switch (nh_flag)
+    {
+        case NHFLAGS_IFDOWN:
+            rc = gRouteOrch->invalidnexthopinNextHopGroup(ipaddr);
+            break;
+        default:
+            assert(0);
+            break;
+    }
+
+    return rc;
+}
+
+bool NeighOrch::clearNextHopFlag(const IpAddress &ipaddr, const uint32_t nh_flag)
+{
+    SWSS_LOG_ENTER();
+
+    auto nhop = m_syncdNextHops.find(ipaddr);
+    bool rc = false;
+
+    assert(nhop != m_syncdNextHops.end());
+
+    if (!(nhop->second.nh_flags & nh_flag))
+    {
+        return true;
+    }
+
+    nhop->second.nh_flags &= ~nh_flag;
+
+    switch (nh_flag)
+    {
+        case NHFLAGS_IFDOWN:
+            rc = gRouteOrch->validnexthopinNextHopGroup(ipaddr);
+            break;
+        default:
+            assert(0);
+            break;
+    }
+
+    return rc;
+}
+
+bool NeighOrch::isNextHopFlagSet(const IpAddress &ipaddr, const uint32_t nh_flag)
+{
+    SWSS_LOG_ENTER();
+
+    auto nhop = m_syncdNextHops.find(ipaddr);
+
+    assert(nhop != m_syncdNextHops.end());
+
+    if (nhop->second.nh_flags & nh_flag)
+    {
+        return true;
+    }
+
+    return false;
+}
+
+bool NeighOrch::ifChangeInformNextHop(const string &alias, bool if_up)
+{
+    SWSS_LOG_ENTER();
+    bool rc = true;
+
+    for (auto nhop = m_syncdNextHops.begin(); nhop != m_syncdNextHops.end(); ++nhop)
+    {
+        if (nhop->second.if_alias != alias)
+        {
+            continue;
+        }
+
+        if (if_up)
+        {
+            rc = clearNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
+        }
+        else
+        {
+            rc = setNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
+        }
+
+        if (rc == true)
+        {
+            continue;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    return rc;
 }
 
 bool NeighOrch::removeNextHop(IpAddress ipAddress, string alias)
@@ -252,6 +377,15 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
         SWSS_LOG_NOTICE("Created neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
         m_intfsOrch->increaseRouterIntfsRefCount(alias);
 
+        if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+        }
+        else
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+        }
+
         if (!addNextHop(ip_address, alias))
         {
             status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
@@ -262,6 +396,16 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
                 return false;
             }
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+
+            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+            }
+            else
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+            }
+
             return false;
         }
     }
@@ -331,6 +475,18 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
     SWSS_LOG_NOTICE("Removed next hop %s on %s",
                     ip_address.to_string().c_str(), alias.c_str());
 
+    if (status != SAI_STATUS_ITEM_NOT_FOUND)
+    {
+        if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+        }
+        else
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+        }
+    }
+
     status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -350,6 +506,15 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
 
     SWSS_LOG_NOTICE("Removed neighbor %s on %s",
             m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str());
+
+    if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
+    }
+    else
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+    }
 
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));

@@ -11,7 +11,7 @@ SWSS Integration tests runs on docker-sonic-vs which runs on top of SAI virtual 
     sudo pip install --system docker==2.6.1
     sudo pip install --system pytest==3.3.0
     ```
-- Compile and install swss common library
+- Compile and install swss common library. Follow instructions [here](https://github.com/Azure/sonic-swss-common/blob/master/README.md) to first install prerequisites to build swss common library. 
     ```
     cd sonic-swss-common
     ./autogen.sh
