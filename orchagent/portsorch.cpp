@@ -1220,7 +1220,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
 
             Port p;
-            if (!getPort(alias, p))
+            if (!getPort(alias, p) && alias != "PortConfigDone")
             {
                 SWSS_LOG_ERROR("Failed to get port id by alias:%s", alias.c_str());
             }
@@ -1332,7 +1332,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
         }
         else
+        {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        }
 
         it = consumer.m_toSync.erase(it);
     }
