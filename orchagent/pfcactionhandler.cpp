@@ -593,7 +593,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createZeroBufferProfile(bool ing
     attribs.push_back(attr);
 
     attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
-    attr.value.u32 = -8; // ALPHA_0
+    attr.value.s8 = -8; // ALPHA_0
     attribs.push_back(attr);
 
     status = sai_buffer_api->create_buffer_profile(
