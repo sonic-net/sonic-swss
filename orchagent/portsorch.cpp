@@ -757,8 +757,12 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
     return true;
 }
 
-bool PortsOrch::validatePortSpeed(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed)
+bool PortsOrch::isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed)
 {
+    // This method will return false iff we get a list of supported speeds and the requested speed
+    // is not supported
+    // Otherwise the method will return true (even if we received errors)
+
     sai_attribute_t attr;
     sai_status_t status;
 
@@ -787,39 +791,46 @@ bool PortsOrch::validatePortSpeed(const std::string& alias, sai_object_id_t port
                                                      // retry with the correct value
         }
 
-        if (status == SAI_STATUS_BUFFER_OVERFLOW)
-        {
-            // something went wrong in SAI implementation
-            SWSS_LOG_ERROR("Failed to get supported speed list for port %s id=%lx. Not enough container size",
-                           alias.c_str(), port_id);
-            return false;
-        }
-        else if (status == SAI_STATUS_SUCCESS)
+        if (status == SAI_STATUS_SUCCESS)
         {
                 speeds.resize(attr.value.u32list.count);
                 m_portSupportedSpeeds[port_id] = speeds;
         }
-        else if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
-                 SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
-                 status == SAI_STATUS_NOT_IMPLEMENTED)
-        {
-            // unable to validate speed if attribute is not supported on platform
-            // assuming input value is correct
-            SWSS_LOG_WARN("Unable to validate speed for port %s id=%lx. Not supported by platform",
-                          alias.c_str(), port_id);
-
-            m_portSupportedSpeeds[port_id] = {}; // use an empty list,
-                                                 // we don't want to get the port speed for this port again
-        }
         else
         {
-            SWSS_LOG_ERROR("Failed to get number of supported speeds for port %s id=%lx. Error=%d",
-                           alias.c_str(), port_id, status);
-            return false;
+            if (status == SAI_STATUS_BUFFER_OVERFLOW)
+            {
+                // something went wrong in SAI implementation
+                SWSS_LOG_ERROR("Failed to get supported speed list for port %s id=%lx. Not enough container size",
+                               alias.c_str(), port_id);
+            }
+            else if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                     SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+                     status == SAI_STATUS_NOT_IMPLEMENTED)
+            {
+                // unable to validate speed if attribute is not supported on platform
+                // assuming input value is correct
+                SWSS_LOG_WARN("Unable to validate speed for port %s id=%lx. Not supported by platform",
+                              alias.c_str(), port_id);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to get a list of supported speeds for port %s id=%lx. Error=%d",
+                               alias.c_str(), port_id, status);
+            }
+            m_portSupportedSpeeds[port_id] = {}; // use an empty list,
+                                                 // we don't want to get the port speed for this port again
+            return true; // we can't check if the speed is valid, so return true to change the speed
         }
+
     }
 
-    PortSupportedSpeeds &supp_speeds = m_portSupportedSpeeds[port_id];
+    const PortSupportedSpeeds &supp_speeds = m_portSupportedSpeeds[port_id];
+    if (supp_speeds.size() == 0)
+    {
+        // we don't have the list for this port, so return true to change speed anyway
+        return true;
+    }
 
     return std::find(supp_speeds.begin(), supp_speeds.end(), speed) != supp_speeds.end();
 }
@@ -1251,7 +1262,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     sai_uint32_t current_speed;
 
-                    if (!validatePortSpeed(alias, p.m_port_id, speed))
+                    if (!isSpeedSupported(alias, p.m_port_id, speed))
                     {
                         it++;
                         continue;

@@ -134,7 +134,7 @@ private:
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
-    bool validatePortSpeed(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
+    bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     bool setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 
