@@ -138,7 +138,7 @@ private:
     bool setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 
-    bool getQueueType(sai_object_id_t queue_id, string &type);
+    bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 };
 #endif /* SWSS_PORTSORCH_H */
 
