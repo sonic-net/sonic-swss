@@ -1238,7 +1238,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     if (!validatePortSpeed(p.m_port_id, speed))
                     {
-                        SWSS_LOG_ERROR("Failed to set speed %u for port %s. The value is not supported", speed, alias.c_str());
                         it++;
                         continue;
                     }
