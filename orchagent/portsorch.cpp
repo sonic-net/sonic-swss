@@ -771,10 +771,11 @@ bool PortsOrch::validatePortSpeed(const std::string& alias, sai_object_id_t port
         std::vector<sai_uint32_t> speeds(size_guess);
 
         for (int attempt = 0; attempt < 2; ++attempt) // two attempts to get our value
-        {                                             // first with the guess, 
+        {                                             // first with the guess,
                                                       // other with the returned value
+            attr.id = SAI_PORT_ATTR_SUPPORTED_SPEED;
             attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
-            attr.value.u32list.list  = speeds.data();
+            attr.value.u32list.list = speeds.data();
 
             status = sai_port_api->get_port_attribute(port_id, 1, &attr);
             if (status != SAI_STATUS_BUFFER_OVERFLOW)
