@@ -757,7 +757,7 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
     return true;
 }
 
-bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
+bool PortsOrch::validatePortSpeed(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed)
 {
     sai_attribute_t attr;
     sai_status_t status;
@@ -766,40 +766,54 @@ bool PortsOrch::validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
     // Once received the list will be stored in m_portSupportedSpeeds
     if (!m_portSupportedSpeeds.count(port_id))
     {
-        attr.id = SAI_PORT_ATTR_SUPPORTED_SPEED;
-        attr.value.u32list.count = 0;
-        attr.value.u32list.list = NULL;
+        const auto size_guess = 25; // Guess the size which could be enough
 
-        status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+        std::vector<sai_uint32_t> speeds(size_guess);
+
+        for (int attempt = 0; attempt < 2; ++attempt) // two attempts to get our value
+        {                                             // first with the guess, 
+                                                      // other with the returned value
+            attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
+            attr.value.u32list.list  = speeds.data();
+
+            status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+            if (status != SAI_STATUS_BUFFER_OVERFLOW)
+            {
+                break;
+            }
+
+            speeds.resize(attr.value.u32list.count); // if our guess was wrong
+                                                     // retry with the correct value
+        }
+
         if (status == SAI_STATUS_BUFFER_OVERFLOW)
         {
-            std::vector<sai_uint32_t> speeds(attr.value.u32list.count);
-            attr.value.u32list.list = speeds.data();
-            status = sai_port_api->get_port_attribute(port_id, 1, &attr);
-            if (status == SAI_STATUS_SUCCESS)
-            {
-                m_portSupportedSpeeds[port_id] = speeds;
-            }
-            else
-            {
-                SWSS_LOG_ERROR("Failed to get supported speed list for port %lx", port_id);
-                return false;
-            }
+            // something went wrong in SAI implementation
+            SWSS_LOG_ERROR("Failed to get supported speed list for port %s id=%lx. Not enough container size",
+                           alias.c_str(), port_id);
+            return false;
         }
-        // TODO: change to macro SAI_STATUS_IS_ATTR_NOT_SUPPORTED once it is fixed in SAI
-        // https://github.com/opencomputeproject/SAI/pull/710
-        else if ((((status) & (~0xFFFF)) == SAI_STATUS_ATTR_NOT_SUPPORTED_0) ||
-                 (((status) & (~0xFFFF)) == SAI_STATUS_ATTR_NOT_IMPLEMENTED_0) ||
-                 (status == SAI_STATUS_NOT_IMPLEMENTED))
+        else if (status == SAI_STATUS_SUCCESS)
+        {
+                speeds.resize(attr.value.u32list.count);
+                m_portSupportedSpeeds[port_id] = speeds;
+        }
+        else if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                 SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+                 status == SAI_STATUS_NOT_IMPLEMENTED)
         {
             // unable to validate speed if attribute is not supported on platform
             // assuming input value is correct
-            SWSS_LOG_WARN("Unable to validate speed for port %lx. Not supported by platform", port_id);
-            return true;
+            SWSS_LOG_WARN("Unable to validate speed for port %s id=%lx. Not supported by platform",
+                          alias.c_str(), port_id);
+
+            m_portSupportedSpeeds[port_id] = {}; // use an empty list,
+                                                 // we don't want to get the port speed for this port again
         }
         else
         {
-            SWSS_LOG_ERROR("Failed to get number of supported speeds for port %lx", port_id);
+            SWSS_LOG_ERROR("Failed to get number of supported speeds for port %s id=%lx. Error=%d",
+                           alias.c_str(), port_id, status);
             return false;
         }
     }
@@ -1236,7 +1250,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     sai_uint32_t current_speed;
 
-                    if (!validatePortSpeed(p.m_port_id, speed))
+                    if (!validatePortSpeed(alias, p.m_port_id, speed))
                     {
                         it++;
                         continue;
