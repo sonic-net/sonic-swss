@@ -93,8 +93,6 @@ static const vector<sai_queue_stat_t> queueStatIds =
     SAI_QUEUE_STAT_BYTES,
     SAI_QUEUE_STAT_DROPPED_PACKETS,
     SAI_QUEUE_STAT_DROPPED_BYTES,
-    SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
-    SAI_QUEUE_STAT_WATERMARK_BYTES,
 };
 
 static char* hostif_vlan_tag[] = {
