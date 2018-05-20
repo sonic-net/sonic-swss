@@ -112,6 +112,13 @@ bool OrchDaemon::init()
     m_orchList = { switch_orch, gCrmOrch, gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch, vrf_orch };
     m_select = new Select();
 
+
+    vector<string> flex_counter_tables = {
+        CFG_FLEX_COUNTER_TABLE_NAME
+    };
+
+    m_orchList.push_back(new FlexCounterOrch(m_configDb, flex_counter_tables));
+
     vector<string> pfc_wd_tables = {
         CFG_PFC_WD_TABLE_NAME
     };

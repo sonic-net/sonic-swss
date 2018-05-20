@@ -1058,10 +1058,6 @@ bool AclTable::create()
     attr.value.booldata = true;
     table_attrs.push_back(attr);
 
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_TC;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
     if(stage == ACL_STAGE_INGRESS)
     {
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE;

@@ -22,6 +22,7 @@
 #include "crmorch.h"
 #include "vrforch.h"
 #include "countercheckorch.h"
+#include "flexcounterorch.h"
 
 using namespace swss;
 
