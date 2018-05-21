@@ -873,7 +873,7 @@ bool PortsOrch::getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uin
         throw runtime_error("Got unsupported queue type");
     }
 
-    index = attr[1].value.s8;
+    index = attr[1].value.u8;
 
     return true;
 }
