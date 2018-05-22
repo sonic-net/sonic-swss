@@ -12,6 +12,9 @@
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
+#define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
+#define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
+
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
 
@@ -67,7 +70,9 @@ private:
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
-    std:: string getFlexCounterTableKey(std::string s);
+    std::string getQueueFlexCounterTableKey(std::string s);
+    std::string getPortFlexCounterTableKey(std::string s);
+
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
 
@@ -132,7 +137,7 @@ private:
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
-    bool validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
+    bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     bool setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 

@@ -9,6 +9,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "tokenize.h"
+#include "exec.h"
 
 #include "linkcache.h"
 #include "portsyncd/linksync.h"
@@ -27,6 +28,13 @@ const string LAG_PREFIX = "PortChannel";
 
 extern set<string> g_portSet;
 extern bool g_init;
+
+struct if_nameindex
+{
+    unsigned int if_index;
+    char *if_name;
+};
+extern "C" { extern struct if_nameindex *if_nameindex (void) __THROW; }
 
 LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_portTableProducer(appl_db, APP_PORT_TABLE_NAME),
@@ -47,6 +55,38 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
                     break;
                 }
             }
+        }
+    }
+
+    struct if_nameindex *if_ni, *idx_p;
+    if_ni = if_nameindex();
+    if (if_ni == NULL)
+    {
+        return;
+    }
+
+    for (idx_p = if_ni; ! (idx_p->if_index == 0 && idx_p->if_name == NULL); idx_p++)
+    {
+        string key = idx_p->if_name;
+        if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
+        {
+            continue;
+        }
+
+        m_ifindexOldNameMap[idx_p->if_index] = key;
+
+        /* Bring down the existing kernel interfaces */
+        string cmd, res;
+        SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+        cmd = "ip link set " + key + " down";
+        try
+        {
+            swss::exec(cmd, res);
+        }
+        catch (...)
+        {
+            /* Ignore error in this flow ; */
+            SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
         }
     }
 }
@@ -99,29 +139,15 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     /* In the event of swss restart, it is possible to get netlink messages during bridge
      * delete, interface delete etc which are part of cleanup. These netlink messages for
      * the front-panel interface must not be published or it will update the statedb with
-     * old interface info and result in subsequent failures. A new interface creation shall
-     * not have master or admin status iff_up. So if the first netlink message comes with these
-     * values set, it is considered to be happening during a cleanup process.
-     * Fix to ignore this and any further messages for this ifindex
+     * old interface info and result in subsequent failures. Ingore all netlink messages
+     * coming from old interfaces.
      */
 
-    static std::map<unsigned int, std::string> m_ifindexOldNameMap;
-    if (m_ifindexNameMap.find(ifindex) == m_ifindexNameMap.end())
+    if (m_ifindexOldNameMap.find(ifindex) != m_ifindexOldNameMap.end())
     {
-        if (master)
-        {
-            m_ifindexOldNameMap[ifindex] = key;
-            SWSS_LOG_INFO("nlmsg type:%d Ignoring for %d, master %d", nlmsg_type, ifindex, master);
-            return;
-        }
-        else if (m_ifindexOldNameMap.find(ifindex) != m_ifindexOldNameMap.end())
-        {
-            if (m_ifindexOldNameMap[ifindex] == key)
-            {
-                SWSS_LOG_INFO("nlmsg type:%d Ignoring message for old interface %d", nlmsg_type, ifindex);
-                return;
-            }
-        }
+        SWSS_LOG_INFO("nlmsg type:%d Ignoring message for old interface %s(%d)",
+                nlmsg_type, key.c_str(), ifindex);
+        return;
     }
 
     /* Insert or update the ifindex to key map */
@@ -153,6 +179,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
             vector<FieldValueTuple> vector;
             vector.push_back(tuple);
             m_statePortTable.set(key, vector);
+            SWSS_LOG_INFO("Publish %s(ok) to state db", key.c_str());
         }
 
         m_portTableProducer.set(key, fvVector);
