@@ -2232,6 +2232,12 @@ bool PortsOrch::addLag(string lag_alias)
     lag.m_members = set<string>();
     m_portList[lag_alias] = lag;
 
+    /* Add lag name map to counter table */
+    FieldValueTuple tuple(lag_alias, sai_serialize_object_id(lag_id));
+    vector<FieldValueTuple> fields;
+    fields.push_back(tuple);
+    m_counterTable->set("", fields);
+
     return true;
 }
 
