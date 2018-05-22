@@ -23,6 +23,7 @@ private:
     Table m_portTable, m_statePortTable;
 
     std::map<unsigned int, std::string> m_ifindexNameMap;
+    std::map<unsigned int, std::string> m_ifindexOldNameMap;
 };
 
 }

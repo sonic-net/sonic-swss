@@ -37,34 +37,12 @@ PfcWdActionHandler::PfcWdActionHandler(sai_object_id_t port, sai_object_id_t que
     m_countersTable(countersTable)
 {
     SWSS_LOG_ENTER();
-
-    Port p;
-    if (!gPortsOrch->getPort(port, p))
-    {
-        SWSS_LOG_ERROR("Unknown port id 0x%lx", port);
-    }
-    else
-    {
-        m_portAlias = p.m_alias;
-        SWSS_LOG_NOTICE(
-                "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
-                m_portAlias.c_str(),
-                m_queueId,
-                m_queue,
-                m_port);
-    }
 }
 
 PfcWdActionHandler::~PfcWdActionHandler(void)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE(
-            "PFC Watchdog storm restored on  port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
-            m_portAlias.c_str(),
-            m_queueId,
-            m_queue,
-            m_port);
 }
 
 void PfcWdActionHandler::initCounters(void)
@@ -80,10 +58,15 @@ void PfcWdActionHandler::initCounters(void)
     wdQueueStats.detectCount++;
     wdQueueStats.operational = false;
 
+    wdQueueStats.txPktLast = 0;
+    wdQueueStats.txDropPktLast = 0;
+    wdQueueStats.rxPktLast = 0;
+    wdQueueStats.rxDropPktLast = 0;
+
     updateWdCounters(sai_serialize_object_id(m_queue), wdQueueStats);
 }
 
-void PfcWdActionHandler::commitCounters(void)
+void PfcWdActionHandler::commitCounters(bool periodic /* = false */)
 {
     SWSS_LOG_ENTER();
 
@@ -96,18 +79,23 @@ void PfcWdActionHandler::commitCounters(void)
 
     auto finalStats = getQueueStats(m_countersTable, sai_serialize_object_id(m_queue));
 
-    finalStats.restoreCount++;
-    finalStats.operational = true;
+    if (!periodic)
+    {
+        finalStats.restoreCount++;
+    }
+    finalStats.operational = !periodic;
 
-    finalStats.txPktLast = hwStats.txPkt - m_hwStats.txPkt;
-    finalStats.txDropPktLast = hwStats.txDropPkt - m_hwStats.txDropPkt;
-    finalStats.rxPktLast = hwStats.rxPkt - m_hwStats.rxPkt;
-    finalStats.rxDropPktLast = hwStats.rxDropPkt - m_hwStats.rxDropPkt;
+    finalStats.txPktLast += hwStats.txPkt - m_hwStats.txPkt;
+    finalStats.txDropPktLast += hwStats.txDropPkt - m_hwStats.txDropPkt;
+    finalStats.rxPktLast += hwStats.rxPkt - m_hwStats.rxPkt;
+    finalStats.rxDropPktLast += hwStats.rxDropPkt - m_hwStats.rxDropPkt;
 
-    finalStats.txPkt += finalStats.txPktLast;
-    finalStats.txDropPkt += finalStats.txDropPktLast;
-    finalStats.rxPkt += finalStats.rxPktLast;
-    finalStats.rxDropPkt += finalStats.rxDropPktLast;
+    finalStats.txPkt += hwStats.txPkt - m_hwStats.txPkt;
+    finalStats.txDropPkt += hwStats.txDropPkt - m_hwStats.txDropPkt;
+    finalStats.rxPkt += hwStats.rxPkt - m_hwStats.rxPkt;
+    finalStats.rxDropPkt += hwStats.rxDropPkt - m_hwStats.rxDropPkt;
+
+    m_hwStats = hwStats;
 
     updateWdCounters(sai_serialize_object_id(m_queue), finalStats);
 }
@@ -158,6 +146,22 @@ PfcWdActionHandler::PfcWdQueueStats PfcWdActionHandler::getQueueStats(shared_ptr
         else if (field == PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS)
         {
             stats.rxDropPkt = stoul(value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_TX_PACKETS_LAST)
+        {
+            stats.txPktLast = stoul(value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_TX_DROPPED_PACKETS_LAST)
+        {
+            stats.txDropPktLast = stoul(value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_PACKETS_LAST)
+        {
+            stats.rxPktLast = stoul(value);
+        }
+        else if (field == PFC_WD_QUEUE_STATS_RX_DROPPED_PACKETS_LAST)
+        {
+            stats.rxDropPktLast = stoul(value);
         }
     }
 
@@ -211,7 +215,7 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
 {
     SWSS_LOG_ENTER();
 
-    acl_table_type_t table_type = ACL_TABLE_L3;
+    acl_table_type_t table_type = ACL_TABLE_PFCWD;
 
     // There is one handler instance per queue ID
     string queuestr = to_string(queueId);
@@ -224,7 +228,7 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
     {
         // First time of handling PFC for this queue, create ACL table, and bind
         createPfcAclTable(port, m_strIngressTable, true);
-        shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_strRule, m_strIngressTable, table_type);
+        shared_ptr<AclRulePfcwd> newRule = make_shared<AclRulePfcwd>(gAclOrch, m_strRule, m_strIngressTable, table_type);
         createPfcAclRule(newRule, queueId, m_strIngressTable);
     }
     else
@@ -238,7 +242,7 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
     {
         // First time of handling PFC for this queue, create ACL table, and bind
         createPfcAclTable(port, m_strEgressTable, false);
-        shared_ptr<AclRuleL3> newRule = make_shared<AclRuleL3>(gAclOrch, m_strRule, m_strEgressTable, table_type);
+        shared_ptr<AclRulePfcwd> newRule = make_shared<AclRulePfcwd>(gAclOrch, m_strRule, m_strEgressTable, table_type);
         createPfcAclRule(newRule, queueId, m_strEgressTable);
     }
     else
@@ -281,14 +285,14 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, b
     assert(inserted.second);
 
     AclTable& aclTable = inserted.first->second;
-    aclTable.type = ACL_TABLE_L3;
+    aclTable.type = ACL_TABLE_PFCWD;
     aclTable.link(port);
     aclTable.id = strTable;
     aclTable.stage = ingress ? ACL_STAGE_INGRESS : ACL_STAGE_EGRESS;
     gAclOrch->addAclTable(aclTable, strTable);
 }
 
-void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRuleL3> rule, uint8_t queueId, string strTable)
+void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePfcwd> rule, uint8_t queueId, string strTable)
 {
     SWSS_LOG_ENTER();
 
@@ -615,7 +619,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createZeroBufferProfile(bool ing
     attribs.push_back(attr);
 
     attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
-    attr.value.u32 = 1;
+    attr.value.s8 = -8; // ALPHA_0
     attribs.push_back(attr);
 
     status = sai_buffer_api->create_buffer_profile(

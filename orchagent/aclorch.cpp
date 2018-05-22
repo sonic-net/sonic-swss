@@ -498,6 +498,11 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
     {
         return make_shared<AclRuleL3V6>(acl, rule, table, type);
     }
+    /* Pfcwd rules can exist only in PFCWD table */
+    else if (type == ACL_TABLE_PFCWD)
+    {
+        return make_shared<AclRulePfcwd>(acl, rule, table, type);
+    }
 
     throw runtime_error("Wrong combination of table type and action in rule " + rule);
 }
@@ -739,6 +744,23 @@ void AclRuleL3::update(SubjectType, void *)
     // Do nothing
 }
 
+
+AclRulePfcwd::AclRulePfcwd(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
+        AclRuleL3(aclOrch, rule, table, type)
+{
+}
+
+bool AclRulePfcwd::validateAddMatch(string attr_name, string attr_value)
+{
+    if (attr_name != MATCH_TC)
+    {
+        SWSS_LOG_ERROR("%s is not supported for the tables of type Pfcwd", attr_name.c_str());
+        return false;
+    }
+
+    return AclRule::validateAddMatch(attr_name, attr_value);
+}
+
 AclRuleL3V6::AclRuleL3V6(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
         AclRuleL3(aclOrch, rule, table, type)
 {
@@ -760,6 +782,7 @@ bool AclRuleL3V6::validateAddMatch(string attr_name, string attr_value)
 
     return AclRule::validateAddMatch(attr_name, attr_value);
 }
+
 
 AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table, acl_table_type_t type) :
         AclRule(aclOrch, rule, table, type),
@@ -971,6 +994,26 @@ bool AclTable::create()
     attr.value.s32list.list = bpoint_list.data();
     table_attrs.push_back(attr);
 
+    if (type == ACL_TABLE_PFCWD)
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_TC;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
+        attr.value.s32 = stage == ACL_STAGE_INGRESS ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
+        table_attrs.push_back(attr);
+
+        sai_status_t status = sai_acl_api->create_acl_table(&m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
+
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t) attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
+        }
+
+        return status == SAI_STATUS_SUCCESS;
+    }
+
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE;
     attr.value.booldata = true;
     table_attrs.push_back(attr);
@@ -1012,10 +1055,6 @@ bool AclTable::create()
     table_attrs.push_back(attr);
 
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_TC;
     attr.value.booldata = true;
     table_attrs.push_back(attr);
 

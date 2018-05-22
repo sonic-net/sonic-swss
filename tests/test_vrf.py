@@ -14,18 +14,18 @@ def create_entry(tbl, key, pairs):
     time.sleep(1)
 
 
-def create_entry_tbl(db, table, separator, key, pairs):
-    tbl = swsscommon.Table(db, table, separator)
+def create_entry_tbl(db, table, key, pairs):
+    tbl = swsscommon.Table(db, table)
     create_entry(tbl, key, pairs)
 
 
-def create_entry_pst(db, table, separator, key, pairs):
+def create_entry_pst(db, table, key, pairs):
     tbl = swsscommon.ProducerStateTable(db, table)
     create_entry(tbl, key, pairs)
 
 
-def delete_entry_tbl(db, table, separator, key):
-    tbl = swsscommon.Table(db, table, separator)
+def delete_entry_tbl(db, table, key):
+    tbl = swsscommon.Table(db, table)
     tbl._del(key)
     time.sleep(1)
 
@@ -71,11 +71,7 @@ def vrf_create(asic_db, conf_db, vrf_name, attributes, expected_attributes):
         attributes = [('empty', 'empty')]
 
     # create the VRF entry in Config DB
-    create_entry_tbl(
-        conf_db,
-        "VRF", '|', vrf_name,
-        attributes,
-    )
+    create_entry_tbl(conf_db, "VRF", vrf_name, attributes)
 
     # check that the vrf entry was created
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 2, "The vrf wasn't created"
@@ -101,10 +97,7 @@ def vrf_create(asic_db, conf_db, vrf_name, attributes, expected_attributes):
 
 def vrf_remove(asic_db, conf_db, vrf_name, state):
     # delete the created vrf entry
-    delete_entry_tbl(
-        conf_db,
-        "VRF", '|', vrf_name,
-    )
+    delete_entry_tbl(conf_db, "VRF", vrf_name)
 
     # check that the vrf entry was removed
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 1, "The vrf wasn't removed"
@@ -115,11 +108,7 @@ def vrf_remove(asic_db, conf_db, vrf_name, state):
 
 def vrf_update(asic_db, conf_db, vrf_name, attributes, expected_attributes, state):
     # update the VRF entry in Config DB
-    create_entry_tbl(
-        conf_db,
-        "VRF", '|', vrf_name,
-        attributes,
-    )
+    create_entry_tbl(conf_db, "VRF", vrf_name, attributes)
 
     # check correctness of the created attributes
     is_vrf_attributes_correct(
