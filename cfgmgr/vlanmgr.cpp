@@ -172,17 +172,22 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
     SWSS_LOG_ENTER();
 
     // The command should be generated as:
-    // /bin/bash -c "/sbin/bridge vlan del vid {{vlan_id}} dev {{port_alias}} &&
-    //               /sbin/bridge vlan show dev {{port_alias}} | /bin/grep -q None &&
-    //               /sbin/ip link set {{port_alias}} nomaster"
+    // /bin/bash -c '/sbin/bridge vlan del vid {{vlan_id}} dev {{port_alias}} &&
+    //               ( /sbin/bridge vlan show dev {{port_alias}} | /bin/grep -q None;
+    //               ret=$?; if [ $ret -eq 0 ]; then
+    //               /sbin/ip link set {{port_alias}} nomaster;
+    //               elif [ $ret -eq 1 ]; then exit 0;
+    //               else exit $ret; fi )'
 
     // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
     const std::string cmds = std::string("")
-      + BASH_CMD + " -c \""
-      + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + port_alias + " && "
+      + BASH_CMD + " -c \'"
+      + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + port_alias + " && ( "
       + BRIDGE_CMD + " vlan show dev " + port_alias + " | "
-      + GREP_CMD + " -q None && "
-      + IP_CMD + " link set " + port_alias + " nomaster\"";
+      + GREP_CMD + " -q None; ret=$?; if [ $ret -eq 0 ]; then "
+      + IP_CMD + " link set " + port_alias + " nomaster; "
+      + "elif [ $ret -eq 1 ]; then exit 0; "
+      + "else exit $ret; fi )\'";
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
