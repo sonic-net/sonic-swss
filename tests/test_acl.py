@@ -54,7 +54,7 @@ class TestAcl(object):
         keys = atbl.getKeys()
         assert len(keys) == 0
 
-    def verify_acl_group(self, adb, expt):
+    def verify_acl_group_num(self, adb, expt):
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
         acl_table_groups = atbl.getKeys()
         assert len(acl_table_groups) == expt
@@ -72,14 +72,9 @@ class TestAcl(object):
                 else:
                     assert False
 
-    def verify_acl_group_member(self, adb, expt, test_acl_table_id):
-        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
-        acl_table_groups = atbl.getKeys()
-        assert len(acl_table_groups) == expt
-
+    def verify_acl_group_member(self, adb, acl_group_ids, acl_table_id):
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER")
         keys = atbl.getKeys()
-        assert len(keys) == expt
 
         member_groups = []
         for k in keys:
@@ -88,21 +83,21 @@ class TestAcl(object):
             assert len(fvs) == 3
             for fv in fvs:
                 if fv[0] == "SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID":
-                    assert fv[1] in acl_table_groups
+                    assert fv[1] in acl_group_ids
                     member_groups.append(fv[1])
                 elif fv[0] == "SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID":
-                    assert fv[1] == test_acl_table_id
+                    assert fv[1] == acl_table_id
                 elif fv[0] == "SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY":
                     assert True
                 else:
                     assert False
 
-        assert set(member_groups) == set(acl_table_groups)
+        assert set(member_groups) == set(acl_group_ids)
 
-    def verify_acl_port_binding(self, dvs, adb, expt, bind_ports):
+    def verify_acl_port_binding(self, dvs, adb, bind_ports):
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
         acl_table_groups = atbl.getKeys()
-        assert len(acl_table_groups) == expt
+        assert len(acl_table_groups) == len(bind_ports)
 
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         port_groups = []
@@ -113,7 +108,7 @@ class TestAcl(object):
                     assert fv[1] in acl_table_groups
                     port_groups.append(fv[1])
 
-        assert len(port_groups) == expt
+        assert len(port_groups) == len(bind_ports)
         assert set(port_groups) == set(acl_table_groups)
 
     def verify_acl_lag_binding(self, adb, expt):
@@ -152,13 +147,18 @@ class TestAcl(object):
         test_acl_table_id = self.get_acl_table_id(dvs, adb)
 
         # check acl table group in asic db
-        self.verify_acl_group(adb, 2)
+        self.verify_acl_group_num(adb, 2)
+
+        # get acl table group ids and verify the id numbers
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
+        acl_group_ids = atbl.getKeys()
+        assert len(acl_group_ids) == 2
 
         # check acl table group member
-        self.verify_acl_group_member(adb, 2, test_acl_table_id)
+        self.verify_acl_group_member(adb, acl_group_ids, test_acl_table_id)
 
         # check port binding
-        self.verify_acl_port_binding(dvs, adb, 2, bind_ports)
+        self.verify_acl_port_binding(dvs, adb, bind_ports)
 
     def test_AclRuleL4SrcPort(self, dvs):
         """
@@ -1024,10 +1024,15 @@ class TestAcl(object):
         test_acl_table_id = self.get_acl_table_id(dvs, adb)
 
         # check acl table group in asic db
-        self.verify_acl_group(adb, 1)
+        self.verify_acl_group_num(adb, 1)
+
+        # get acl table group ids and verify the id numbers
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
+        acl_group_ids = atbl.getKeys()
+        assert len(acl_group_ids) == 1
 
         # check acl table group member
-        self.verify_acl_group_member(adb, 1, test_acl_table_id)
+        self.verify_acl_group_member(adb, acl_group_ids, test_acl_table_id)
 
         # check port binding
         self.verify_acl_lag_binding(adb, 1)
@@ -1053,13 +1058,15 @@ class TestAcl(object):
         test_acl_table_id = self.get_acl_table_id(dvs, adb)
 
         # check acl table group in asic db
-        self.verify_acl_group(adb, 0)
+        self.verify_acl_group_num(adb, 0)
+
+        # get acl table group ids and verify the id numbers
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
+        acl_group_ids = atbl.getKeys()
+        assert len(acl_group_ids) == 0
 
         # check acl table group member
-        self.verify_acl_group_member(adb, 0, test_acl_table_id)
-
-        # check port binding
-        self.verify_acl_lag_binding(adb, 0)
+        self.verify_acl_group_member(adb, acl_group_ids, test_acl_table_id)
 
         # create port channel
         ps = swsscommon.ProducerStateTable(apldb, "LAG_TABLE")
@@ -1072,6 +1079,9 @@ class TestAcl(object):
         ps.set("PortChannel0003:Ethernet20", fvs)
         time.sleep(1)
 
+        # check port binding
+        self.verify_acl_lag_binding(adb, 0)
+
         # notify aclorch that port channel configured
         stdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
         ps = swsscommon.ProducerStateTable(stdb, "LAG_TABLE")
@@ -1083,10 +1093,15 @@ class TestAcl(object):
         test_acl_table_id = self.get_acl_table_id(dvs, adb)
 
         # check acl table group in asic db
-        self.verify_acl_group(adb, 1)
+        self.verify_acl_group_num(adb, 1)
+
+        # get acl table group ids and verify the id numbers
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
+        acl_group_ids = atbl.getKeys()
+        assert len(acl_group_ids) == 1
 
         # check acl table group member
-        self.verify_acl_group_member(adb, 1, test_acl_table_id)
+        self.verify_acl_group_member(adb, acl_group_ids, test_acl_table_id)
 
         # check port binding
         self.verify_acl_lag_binding(adb, 1)

@@ -1550,7 +1550,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t found = key.find('|');
+        size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
         string table_id = key.substr(0, found);
         string op = kfvOp(t);
 
@@ -1650,7 +1650,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t found = key.find('|');
+        size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
         string table_id = key.substr(0, found);
         string rule_id = key.substr(found + 1);
         string op = kfvOp(t);
@@ -1739,7 +1739,7 @@ void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t found = key.find('|');
+        size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
         string port_alias = key.substr(0, found);
         string op = kfvOp(t);
 
@@ -1765,7 +1765,7 @@ void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
                     else
                     {
                         table.pendingPortSet.erase(port_alias);
-                        SWSS_LOG_NOTICE("port: %s bound to ACL table table: %s, remove it from pending list", port_alias.c_str(), table.description.c_str());
+                        SWSS_LOG_DEBUG("port: %s bound to ACL table table: %s, remove it from pending list", port_alias.c_str(), table.description.c_str());
                     }
                 }
             }
@@ -1778,7 +1778,7 @@ void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
                 if (table.portSet.find(port_alias) != table.portSet.end())
                 {
                     table.pendingPortSet.emplace(port_alias);
-                    SWSS_LOG_WARN("Add deleted port: %s to the pending list of ACL table: %s", port_alias.c_str(), table.description.c_str());
+                    SWSS_LOG_INFO("Add deleted port: %s to the pending list of ACL table: %s", port_alias.c_str(), table.description.c_str());
                 }
             }
         }
@@ -1794,15 +1794,14 @@ sai_object_id_t AclOrch::getValidPortId(string alias, Port port)
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t port_id;
+    sai_object_id_t port_id = SAI_NULL_OBJECT_ID;
 
     switch (port.m_type)
     {
     case Port::PHY:
         if (port.m_lag_member_id != SAI_NULL_OBJECT_ID)
         {
-            SWSS_LOG_ERROR("Failed to process port. Bind table to LAG member %s is not allowed", alias.c_str());
-            port_id = SAI_NULL_OBJECT_ID;
+            SWSS_LOG_WARN("Invalid configuration. Bind table to LAG member %s is not allowed", alias.c_str());
         }
         else
         {
@@ -1817,7 +1816,6 @@ sai_object_id_t AclOrch::getValidPortId(string alias, Port port)
         break;
     default:
       SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", alias.c_str(), port.m_type);
-      port_id = SAI_NULL_OBJECT_ID;
       break;
     }
 
@@ -1828,11 +1826,9 @@ bool AclOrch::processPorts(AclTable &aclTable, string portsList, std::function<v
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t port_id;
-
     vector<string> strList;
 
-    SWSS_LOG_INFO("Processing ACL table port list %s", portsList.c_str());
+    SWSS_LOG_DEBUG("Processing ACL table port list %s", portsList.c_str());
 
     split(portsList, strList, ',');
 
@@ -1853,10 +1849,11 @@ bool AclOrch::processPorts(AclTable &aclTable, string portsList, std::function<v
 
     for (const auto& alias : strList)
     {
+        sai_object_id_t port_id;
         Port port;
         if (!gPortsOrch->getPort(alias, port))
         {
-            SWSS_LOG_WARN("Port %s not configured yet, add it to ACL table %s pending list", alias.c_str(), aclTable.description.c_str());
+            SWSS_LOG_INFO("Port %s not configured yet, add it to ACL table %s pending list", alias.c_str(), aclTable.description.c_str());
             aclTable.pendingPortSet.emplace(alias);
             continue;
         }
@@ -1879,14 +1876,14 @@ bool AclOrch::processPendingPort(AclTable &aclTable, string portAlias, std::func
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_INFO("Processing ACL table port %s", portAlias.c_str());
+    SWSS_LOG_DEBUG("Processing ACL table port %s", portAlias.c_str());
 
     sai_object_id_t port_id;
 
     Port port;
     if (!gPortsOrch->getPort(portAlias, port))
     {
-        SWSS_LOG_WARN("Port %s not configured yet, add it to ACL table %s pending list", portAlias.c_str(), aclTable.description.c_str());
+        SWSS_LOG_INFO("Port %s not configured yet, add it to ACL table %s pending list", portAlias.c_str(), aclTable.description.c_str());
         aclTable.pendingPortSet.insert(portAlias);
         return true;
     }
