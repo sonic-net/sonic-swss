@@ -39,7 +39,7 @@ private:
     Table m_cfgBufferProfileTable;
     Table m_cfgBufferPgTable;
     Table m_cfgLosslessPgPoolTable;
-    bool m_pgfile_readable = true;
+    bool m_pgfile_processed;
 
     pg_profile_lookup_t m_pgProfileLookup;
     port_cable_length_t m_cableLenLookup;
