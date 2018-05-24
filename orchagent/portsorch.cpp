@@ -2266,6 +2266,8 @@ bool PortsOrch::removeLag(Port lag)
 
     SWSS_LOG_NOTICE("Remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
 
+    m_counterTable->del(lag.m_alias);
+
     m_portList.erase(lag.m_alias);
 
     return true;
