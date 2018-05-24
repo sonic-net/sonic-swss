@@ -16,6 +16,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
 };
 
+
 FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
     m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
@@ -61,13 +62,22 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                 const auto &field = fvField(valuePair);
                 const auto &value = fvValue(valuePair);
 
-                if (field ==  POLL_INTERVAL_FIELD)
+                if (field == POLL_INTERVAL_FIELD)
                 {
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(POLL_INTERVAL_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
                 }
-                /* In future add the support to disable/enable counter query here.*/
+                else if(field == FLEX_COUNTER_STATUS_FIELD)
+                {
+                    vector<FieldValueTuple> fieldValues;
+                    fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
+                    m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
+                }
+                else
+                {
+                    SWSS_LOG_NOTICE("Unsupported field %s", field.c_str());
+                }
             }
         }
 
