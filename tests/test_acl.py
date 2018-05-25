@@ -111,25 +111,21 @@ class TestAcl(object):
         assert len(port_groups) == len(bind_ports)
         assert set(port_groups) == set(acl_table_groups)
 
-    def verify_acl_lag_binding(self, adb, expt):
+    def verify_acl_lag_binding(self, adb, lag_ids):
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
         acl_table_groups = atbl.getKeys()
-        assert len(acl_table_groups) == expt
+        assert len(acl_table_groups) == len(lag_ids)
 
-        if expt == 0:
-            return
-
-        port_groups = []
         atbl_lag = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
-        lag_keys = atbl_lag.getKeys();
-        for lag_key in lag_keys:
-            (status, lagfvs) = atbl_lag.get(lag_key)
+        port_groups = []
+        for lag_id in lag_ids:
+            (status, lagfvs) = atbl_lag.get(lag_id)
             for lagfv in lagfvs:
                 if lagfv[0] == "SAI_LAG_ATTR_INGRESS_ACL":
                     assert lagfv[1] in acl_table_groups
                     port_groups.append(lagfv[1])
 
-        assert len(port_groups) == expt
+        assert len(port_groups) == len(lag_ids)
         assert set(port_groups) == set(acl_table_groups)
 
     def test_AclTableCreation(self, dvs):
@@ -1034,8 +1030,13 @@ class TestAcl(object):
         # check acl table group member
         self.verify_acl_group_member(adb, acl_group_ids, test_acl_table_id)
 
-        # check port binding
-        self.verify_acl_lag_binding(adb, 1)
+        # get lad ids
+        atbl_lag = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+        lag_ids = atbl_lag.getKeys();
+        assert len(lag_ids) == 1
+
+        # check lag binding
+        self.verify_acl_lag_binding(adb, lag_ids)
 
         tbl = swsscommon.Table(db, "ACL_TABLE")
         tbl._del("test_LAG")
@@ -1068,6 +1069,14 @@ class TestAcl(object):
         # check acl table group member
         self.verify_acl_group_member(adb, acl_group_ids, test_acl_table_id)
 
+        # get lad ids
+        atbl_lag = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+        lag_ids = atbl_lag.getKeys()
+        assert len(lag_ids) == 0
+
+        # check port binding
+        self.verify_acl_lag_binding(adb, lag_ids)
+
         # create port channel
         ps = swsscommon.ProducerStateTable(apldb, "LAG_TABLE")
         fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "1500")])
@@ -1078,9 +1087,6 @@ class TestAcl(object):
         fvs = swsscommon.FieldValuePairs([("status", "enabled")])
         ps.set("PortChannel0003:Ethernet20", fvs)
         time.sleep(1)
-
-        # check port binding
-        self.verify_acl_lag_binding(adb, 0)
 
         # notify aclorch that port channel configured
         stdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
@@ -1103,8 +1109,13 @@ class TestAcl(object):
         # check acl table group member
         self.verify_acl_group_member(adb, acl_group_ids, test_acl_table_id)
 
+        # get lad ids
+        atbl_lag = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+        lag_ids = atbl_lag.getKeys()
+        assert len(lag_ids) == 1
+
         # check port binding
-        self.verify_acl_lag_binding(adb, 1)
+        self.verify_acl_lag_binding(adb, lag_ids)
 
         tbl = swsscommon.Table(db, "ACL_TABLE")
         tbl._del("test_LAG_2")
