@@ -337,7 +337,6 @@ private:
     bool processPorts(AclTable &aclTable, string portsList, std::function<void (sai_object_id_t)> inserter);
     bool processPendingPort(AclTable &aclTable, string portAlias, std::function<void (sai_object_id_t)> inserter);
     bool validateAclTable(AclTable &aclTable);
-    sai_object_id_t getValidPortId(string alias, Port port);
 
     //vector <AclTable> m_AclTables;
     map <sai_object_id_t, AclTable> m_AclTables;

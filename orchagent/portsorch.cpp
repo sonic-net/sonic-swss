@@ -402,6 +402,45 @@ bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port
     return false;
 }
 
+bool PortsOrch::getAclBindPortId(string alias, sai_object_id_t &port_id)
+{
+    SWSS_LOG_ENTER();
+
+    Port port;
+    if (getPort(alias, port))
+    {
+        switch (port.m_type)
+        {
+        case Port::PHY:
+            if (port.m_lag_member_id != SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_WARN("Invalid configuration. Bind table to LAG member %s is not allowed", alias.c_str());
+                return false;
+            }
+            else
+            {
+                port_id = port.m_port_id;
+            }
+            break;
+        case Port::LAG:
+            port_id = port.m_lag_id;
+            break;
+        case Port::VLAN:
+            port_id = port.m_vlan_info.vlan_oid;
+            break;
+        default:
+          SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", alias.c_str(), port.m_type);
+          return false;
+        }
+
+        return true;
+    }
+    else
+    {
+        return false;
+    }
+}
+
 void PortsOrch::setPort(string alias, Port p)
 {
     m_portList[alias] = p;

@@ -1777,6 +1777,7 @@ void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
                 auto table = itmap.second;
                 if (table.portSet.find(port_alias) != table.portSet.end())
                 {
+                    /*TODO: update the ACL table after port/lag deleted*/
                     table.pendingPortSet.emplace(port_alias);
                     SWSS_LOG_INFO("Add deleted port: %s to the pending list of ACL table: %s", port_alias.c_str(), table.description.c_str());
                 }
@@ -1788,38 +1789,6 @@ void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
         }
         it = consumer.m_toSync.erase(it);
     }
-}
-
-sai_object_id_t AclOrch::getValidPortId(string alias, Port port)
-{
-    SWSS_LOG_ENTER();
-
-    sai_object_id_t port_id = SAI_NULL_OBJECT_ID;
-
-    switch (port.m_type)
-    {
-    case Port::PHY:
-        if (port.m_lag_member_id != SAI_NULL_OBJECT_ID)
-        {
-            SWSS_LOG_WARN("Invalid configuration. Bind table to LAG member %s is not allowed", alias.c_str());
-        }
-        else
-        {
-            port_id = port.m_port_id;
-        }
-        break;
-    case Port::LAG:
-        port_id = port.m_lag_id;
-        break;
-    case Port::VLAN:
-        port_id = port.m_vlan_info.vlan_oid;
-        break;
-    default:
-      SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", alias.c_str(), port.m_type);
-      break;
-    }
-
-    return port_id;
 }
 
 bool AclOrch::processPorts(AclTable &aclTable, string portsList, std::function<void (sai_object_id_t)> inserter)
@@ -1858,8 +1827,7 @@ bool AclOrch::processPorts(AclTable &aclTable, string portsList, std::function<v
             continue;
         }
 
-        port_id = getValidPortId(alias, port);
-        if (port_id != SAI_NULL_OBJECT_ID)
+        if (gPortsOrch->getAclBindPortId(alias, port_id))
         {
             inserter(port_id);
         }
@@ -1888,8 +1856,7 @@ bool AclOrch::processPendingPort(AclTable &aclTable, string portAlias, std::func
         return true;
     }
 
-    port_id = getValidPortId(portAlias, port);
-    if (port_id != SAI_NULL_OBJECT_ID)
+    if (gPortsOrch->getAclBindPortId(portAlias, port_id))
     {
         inserter(port_id);
         aclTable.bind(port_id);
