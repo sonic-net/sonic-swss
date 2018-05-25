@@ -429,8 +429,8 @@ bool PortsOrch::getAclBindPortId(string alias, sai_object_id_t &port_id)
             port_id = port.m_vlan_info.vlan_oid;
             break;
         default:
-          SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", alias.c_str(), port.m_type);
-          return false;
+            SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", alias.c_str(), port.m_type);
+            return false;
         }
 
         return true;
