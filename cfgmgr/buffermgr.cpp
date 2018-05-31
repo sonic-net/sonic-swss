@@ -31,9 +31,12 @@ void BufferMgr::readPgProfileLookupFile(string file)
 {
     SWSS_LOG_NOTICE("Read lookup configuration file...");
 
+    m_pgfile_processed = false;
+
     ifstream infile(file);
     if (!infile.is_open())
     {
+        SWSS_LOG_WARN("PG profile lookup file: %s is not readable", file.c_str());
         return;
     }
 
@@ -69,6 +72,7 @@ void BufferMgr::readPgProfileLookupFile(string file)
                        );
     }
 
+    m_pgfile_processed = true;
     infile.close();
 }
 
@@ -211,7 +215,7 @@ void BufferMgr::doTask(Consumer &consumer)
                     task_status = doCableTask(fvField(i), fvValue(i));
                 }
                 // In case of PORT table update, Buffer Manager is interested in speed update only
-                if (table_name == CFG_PORT_TABLE_NAME && fvField(i) == "speed")
+                if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME && fvField(i) == "speed")
                 {
                     // create/update profile for port
                     task_status = doSpeedUpdateTask(port, fvValue(i));
