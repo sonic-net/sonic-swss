@@ -54,7 +54,7 @@ struct DTelINTSessionEntry
 
     DTelINTSessionEntry() :
         intSessionOid(0),
-        refCount(0)
+        refCount(1)
     {
     }
 };
@@ -66,12 +66,23 @@ struct DTelReportSessionEntry
 
     DTelReportSessionEntry() :
         reportSessionOid(0),
-        refCount(0)
+        refCount(1)
     {
     }
 };
 
-typedef map<string, sai_object_id_t> dTelPortQueueTable_t;
+struct DTelQueueReportEntry
+{
+    sai_object_id_t queueReportOid;
+    vector<sai_attribute_t> queue_report_attr;
+
+    DTelQueueReportEntry() :
+        queueReportOid(0)
+    {
+    }
+};
+
+typedef map<string, DTelQueueReportEntry> dTelPortQueueTable_t;
 
 struct DTelPortEntry
 {
@@ -89,6 +100,7 @@ struct DTelEventEntry
     {
     }
 };
+
 
 typedef map<string, DTelINTSessionEntry> dTelINTSessionTable_t;
 typedef map<string, DTelReportSessionEntry> dTelReportSessionTable_t;
@@ -146,7 +158,8 @@ private:
     dTelReportSessionTable_t m_dTelReportSessionTable;
     dTelPortTable_t m_dTelPortTable;
     dtelEventTable_t m_dtelEventTable;
-    sai_object_id_t dtelId; 
+    sai_object_id_t dtelId;
+    vector<sai_object_id_t> sinkPortList;
 };
 
 #endif /* SWSS_DTELORCH_H */

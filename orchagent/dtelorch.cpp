@@ -107,13 +107,18 @@ bool DTelOrch::decreaseINTSessionRefCount(const string& name)
         return false;
     }
 
-    if (m_dTelINTSessionTable[name].refCount <= 0)
+    if (m_dTelINTSessionTable[name].refCount < 0)
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Session reference counter could not be less or equal than 0");
+        SWSS_LOG_ERROR("DTEL ERROR: Session reference counter could not be less than 0");
         return false;
     }
 
     --m_dTelINTSessionTable[name].refCount;
+
+    if(m_dTelINTSessionTable[name].refCount == 0)
+    {
+        deleteINTSession(name);
+    }
 
     return true;
 }
@@ -176,13 +181,18 @@ bool DTelOrch::decreaseReportSessionRefCount(const string& name)
         return false;
     }
 
-    if (m_dTelReportSessionTable[name].refCount <= 0)
+    if (m_dTelReportSessionTable[name].refCount < 0)
     {
-        SWSS_LOG_ERROR("DTEL ERROR: Session reference counter could not be less or equal than 0");
+        SWSS_LOG_ERROR("DTEL ERROR: Session reference counter could not be less than 0");
         return false;
     }
 
     --m_dTelReportSessionTable[name].refCount;
+
+    if (m_dTelReportSessionTable[name].refCount == 0) 
+    {
+        deleteReportSession(name);
+    }
 
     return true;
 }
@@ -312,6 +322,47 @@ void DTelOrch::removeEvent(const string& event)
     decreaseReportSessionRefCount(report_session_id);
 
     m_dtelEventTable.erase(event);
+}
+
+sai_status_t DTelOrch::updateSinkPortList()
+{
+    sai_attribute_t attr;
+    attr.id = SAI_DTEL_ATTR_SINK_PORT_LIST;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+
+    attr.value.objlist.count = (uint32_t)sinkPortList.size();
+    attr.value.objlist.list = sinkPortList.data();
+    status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT sink port list");
+        return status;
+    }
+
+    return status;
+}
+
+bool DTelOrch::addSinkPortToList(sai_object_id_t port_id)
+{
+    sinkPortList.push_back(port_id);
+}
+
+bool DTelOrch::removeSinkPortFromList(sai_object_id_t port_id)
+{
+    for (unsigned i=0; i < sinkPortList.size(); i++)
+    {
+        if (sinkPortList[i] == port_id) {
+            break;
+        }
+    }
+
+    if (i < sinkPortList.size())
+    {
+        sinkPortList.erase(sinkPortList.begin() + i);
+        return true;
+    }
+    
+    return false;
 }
 
 void DTelOrch::doDtelTableTask(Consumer &consumer)
@@ -445,7 +496,13 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     if (!m_portOrch->getPort(fvField(i), port))
                     {
                         SWSS_LOG_ERROR("DTEL ERROR: Failed to process port for INT sink port list. Port %s doesn't exist", fvField(i).c_str());
-		        goto dtel_table_continue;
+		                goto dtel_table_continue;
+                    }
+
+                    if (port.m_type != Port::PHY)
+                    {
+                        SWSS_LOG_ERROR("DTEL ERROR: Only physical ports supported as INT sink. %s is not a physical port", fvField(i).c_str());
+                        goto dtel_table_continue;   
                     }
 
                     port_list.push_back(port.m_port_id);
@@ -454,16 +511,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (port_list.size() == 0)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Invalid INT sink port list");
-		    goto dtel_table_continue;
-                }
-
-                attr.value.objlist.count = (uint32_t)port_list.size();
-                attr.value.objlist.list = port_list.data();
-                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT sink port list");
-		    goto dtel_table_continue;
+		            goto dtel_table_continue;
                 }
             }
             else if (table_attr == INT_L4_DSCP)
@@ -473,7 +521,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if ((uint32_t)(kfvFieldsValues(t).size()) != 2)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: INT L4 DSCP attribute requires value and mask");
-		    goto dtel_table_continue;
+		            goto dtel_table_continue;
                 }
 
                 for (auto i : kfvFieldsValues(t))
@@ -492,14 +540,14 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     attr.value.aclfield.mask.u8 == 0)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Invalid INT L4 DSCP value/mask");
-		    goto dtel_table_continue;
+		            goto dtel_table_continue;
                 }
 
                 status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT L4 DSCP value/mask");
-		    goto dtel_table_continue;
+		            goto dtel_table_continue;
                 }
             }
 
@@ -760,7 +808,12 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if(getReportSessionRefCount(report_session_id) != 0)
+            if (!reportSessionExists(report_session_id))
+            {
+                goto report_session_table_continue;
+            }
+
+            if(getReportSessionRefCount(report_session_id) > 1)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: References still exist on report session %s", report_session_id.c_str());
                 goto report_session_table_continue;
@@ -897,7 +950,12 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if(getINTSessionRefCount(int_session_id) != 0)
+            if (!intSessionExists(int_session_id))
+            {
+                goto int_session_table_continue;
+            }
+
+            if(getINTSessionRefCount(int_session_id) > 1)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: References still exist on INT session %s", int_session_id.c_str());
                 goto int_session_table_continue;
@@ -964,8 +1022,14 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
 
         if (!m_portOrch->getPort(port, port_obj))
         {
-            SWSS_LOG_ERROR("DTEL ERROR: Failed to process port for INT sink port list. Port %s doesn't exist", port.c_str());
+            SWSS_LOG_ERROR("DTEL ERROR: Failed to process port for queue reporting. Port %s doesn't exist", port.c_str());
             goto queue_report_table_continue;
+        }
+
+        if (port.m_type != Port::PHY)
+        {
+            SWSS_LOG_ERROR("DTEL ERROR: Queue reporting applies only to physical ports. %s is not a physical port", fvField(i).c_str());
+    goto dtel_table_continue;   
         }
 
         if (op == SET_COMMAND)
@@ -1105,11 +1169,11 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
                 {
                     if (!reportSessionExists(fvValue(i)))
                     {
-                        SWSS_LOG_ERROR("DTEL ERROR: Report session %s used by event %s does not exist", fvValue(i).c_str(), event.c_str());
-		        goto event_table_continue;
+                        goto event_table_skip;
                     }
 
                     e_attr.id = SAI_DTEL_EVENT_ATTR_REPORT_SESSION;
+
                     if (!getReportSessionOid(fvValue(i), e_attr.value.oid))
                     {
                         SWSS_LOG_ERROR("DTEL ERROR: Could not get report session oid for event %s, session %s", fvValue(i).c_str(), event.c_str());
@@ -1146,6 +1210,10 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
 
 event_table_continue:
         it = consumer.m_toSync.erase(it);
+        continue;
+
+event_table_skip:
+        it++;
     }
 }
 

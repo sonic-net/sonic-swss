@@ -25,6 +25,12 @@ static const map<sai_port_oper_status_t, string> oper_status_strings =
     { SAI_PORT_OPER_STATUS_NOT_PRESENT, "not present" }
 };
 
+struct PortUpdate
+{
+    Port port;
+    bool add;
+};
+
 struct LagMemberUpdate
 {
     Port lag;

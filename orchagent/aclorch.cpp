@@ -518,11 +518,21 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
     }
     else if (type == ACL_TABLE_DTEL_FLOW_WATCHLIST)
     {
-        return make_shared<AclRuleDTelFlowWatchList>(acl, dtel, rule, table, type);
+        if (dtel)
+        {
+            return make_shared<AclRuleDTelFlowWatchList>(acl, dtel, rule, table, type);
+        } else {
+            throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
+        }
     }
     else if (type == ACL_TABLE_DTEL_DROP_WATCHLIST)
     {
-        return make_shared<AclRuleDTelDropWatchList>(acl, dtel, rule, table, type);
+        if (dtel)
+        {
+            return make_shared<AclRuleDTelDropWatchList>(acl, dtel, rule, table, type);
+        } else {
+            throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
+        }
     }
 
     throw runtime_error("Wrong combination of table type and action in rule " + rule);
@@ -1157,10 +1167,11 @@ bool AclRuleDTelFlowWatchList::validateAddAction(string attr_name, string attr_v
     string attr_value = toUpper(attr_val);
     sai_object_id_t session_oid;
 
-    if (attr_name != ACTION_DTEL_FLOW_OP && 
+    if (!m_pDTelOrch ||
+        (attr_name != ACTION_DTEL_FLOW_OP && 
         attr_name != ACTION_DTEL_INT_SESSION &&
         attr_name != ACTION_DTEL_FLOW_SAMPLE_PERCENT &&
-        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS)
+        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS))
     {
         return false;
     }
@@ -1231,6 +1242,11 @@ bool AclRuleDTelFlowWatchList::validate()
 {
     SWSS_LOG_ENTER();
 
+    if(!m_pDTelOrch)
+    {
+        return false;
+    }
+
     if (m_matches.size() == 0 || m_actions.size() == 0)
     {
         return false;
@@ -1242,6 +1258,11 @@ bool AclRuleDTelFlowWatchList::validate()
 
 bool AclRuleDTelFlowWatchList::remove()
 {
+    if (!m_pDTelOrch)
+    {
+        return false;
+    }
+
     if (!AclRule::remove())
     {
         return false;
@@ -1263,6 +1284,11 @@ void AclRuleDTelFlowWatchList::update(SubjectType type, void *cntx)
 {
     sai_attribute_value_t value;
     sai_object_id_t session_oid = SAI_NULL_OBJECT_ID;
+
+    if (!m_pDTelOrch)
+    {
+        return false;
+    }
 
     if (type != SUBJECT_TYPE_INT_SESSION_CHANGE || !INT_enabled)
     {
@@ -1318,6 +1344,11 @@ bool AclRuleDTelDropWatchList::validateAddAction(string attr_name, string attr_v
 {
     SWSS_LOG_ENTER();
 
+    if (!m_pDTelOrch)
+    {
+        return false;
+    }
+
     sai_attribute_value_t value;
     string attr_value = toUpper(attr_val);
 
@@ -1338,6 +1369,11 @@ bool AclRuleDTelDropWatchList::validateAddAction(string attr_name, string attr_v
 bool AclRuleDTelDropWatchList::validate()
 {
     SWSS_LOG_ENTER();
+
+    if (!m_pDTelOrch)
+    {
+        return false;
+    }
 
     if (m_matches.size() == 0 || m_actions.size() == 0)
     {
@@ -1503,7 +1539,10 @@ AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch
     }
 
     m_mirrorOrch->attach(this);
-    m_dTelOrch->attach(this);
+    if (m_dTelOrch)
+    {
+        m_dTelOrch->attach(this);
+    }
 
     // Should be initialized last to guaranty that object is
     // initialized before thread start.
@@ -1519,7 +1558,11 @@ AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch
 AclOrch::~AclOrch()
 {
     m_mirrorOrch->detach(this);
-    m_dTelOrch->detach(this);
+
+    if(m_dTelOrch)
+    {
+        m_dTelOrch->detach(this);
+    }
 
     m_bCollectCounters = false;
     m_sleepGuard.notify_all();
