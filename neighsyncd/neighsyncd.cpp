@@ -1,3 +1,4 @@
+#include <time.h>
 #include <iostream>
 #include "logger.h"
 #include "select.h"
@@ -11,8 +12,11 @@ using namespace swss;
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("neighsyncd");
-    DBConnector db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    NeighSync sync(&db);
+
+    DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    RedisPipeline pipelineAppDB(&appDb);
+
+    NeighSync sync(&pipelineAppDB);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &sync);
@@ -29,10 +33,22 @@ int main(int argc, char **argv)
             netlink.dumpRequest(RTM_GETNEIGH);
 
             s.addSelectable(&netlink);
+            if (sync.getRestartAssist()->isWarmStartInProgress())
+            {
+                sync.getRestartAssist()->readTableToMap();
+                sync.getRestartAssist()->startReconcileTimer();
+            }
             while (true)
             {
                 Selectable *temps;
-                s.select(&temps);
+                s.select(&temps, SELECT_TIMEOUT);
+                if (sync.getRestartAssist()->isWarmStartInProgress())
+                {
+                    if (sync.getRestartAssist()->checkReconcileTimer())
+                    {
+                        sync.getRestartAssist()->reconcile();
+                    }
+                }
             }
         }
         catch (const std::exception& e)
