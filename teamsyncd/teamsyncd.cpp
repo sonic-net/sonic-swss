@@ -34,8 +34,7 @@ int main(int argc, char **argv)
             while (true)
             {
                 Selectable *temps;
-                int tempfd;
-                s.select(&temps, &tempfd);
+                s.select(&temps);
             }
         }
         catch (const std::exception& e)

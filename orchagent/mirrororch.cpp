@@ -1,5 +1,6 @@
 #include <linux/if_ether.h>
 
+#include <unordered_map>
 #include <utility>
 #include <exception>
 
@@ -353,6 +354,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session, const
     if (session.neighborInfo.port.m_type == Port::VLAN)
     {
         session.neighborInfo.vlanId = session.neighborInfo.port.m_vlan_info.vlan_id;
+        session.neighborInfo.vlanOid = session.neighborInfo.port.m_vlan_info.vlan_oid;
 
         Port member;
         if (!m_fdbOrch->getPort(session.neighborInfo.mac, session.neighborInfo.vlanId, member))
@@ -715,7 +717,7 @@ void MirrorOrch::updateFdb(const FdbUpdate& update)
 
         // It is possible to have few session that points to one FDB entry
         if (sessionIter->second.neighborInfo.mac != update.entry.mac ||
-                sessionIter->second.neighborInfo.vlanId != update.entry.vlan)
+                sessionIter->second.neighborInfo.vlanOid != update.entry.bv_id)
         {
             continue;
         }
@@ -849,7 +851,8 @@ void MirrorOrch::updateVlanMember(const VlanMemberUpdate& update)
         }
 
         // It is possible to have few session that points to one VLAN member
-        if (sessionIter->second.neighborInfo.port != update.vlan || sessionIter->second.neighborInfo.portId != update.member.m_port_id)
+        if (sessionIter->second.neighborInfo.port != update.vlan || 
+                sessionIter->second.neighborInfo.portId != update.member.m_port_id)
         {
             continue;
         }
