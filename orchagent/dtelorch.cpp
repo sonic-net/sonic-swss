@@ -233,7 +233,7 @@ bool DTelOrch::getQueueReportOid(const string& port, const string& queue, sai_ob
         return false;
     }
 
-    oid = m_dTelPortTable[port].queueTable[queue];
+    oid = m_dTelPortTable[port].queueTable[queue].queueReportOid;
 
     return true;
 }
@@ -254,16 +254,18 @@ void DTelOrch::removePortQueue(const string& port, const string& queue)
     }
 }
 
-void DTelOrch::addPortQueue(const string& port, const string& queue, const sai_object_id_t& queue_report_oid)
+bool DTelOrch::addPortQueue(const string& port, const string& queue, DTelQueueReportEntry& qreport)
 {
     if (isQueueReportEnabled(port, queue))
     {
         SWSS_LOG_ERROR("DTEL ERROR: Queue report already enabled on port %s, queue %s", port.c_str(), queue.c_str());
-        return;
+        return false;
     }
 
     m_dTelPortTable[port] = DTelPortEntry();
-    m_dTelPortTable[port].queueTable[queue] = queue_report_oid;
+    m_dTelPortTable[port].queueTable[queue] = DTelQueueReportEntry();
+    qreport = m_dTelPortTable[port].queueTable[queue];
+    return true;
 }
 
 bool DTelOrch::isEventConfigured(const string& event)
@@ -330,8 +332,24 @@ sai_status_t DTelOrch::updateSinkPortList()
     attr.id = SAI_DTEL_ATTR_SINK_PORT_LIST;
     sai_status_t status = SAI_STATUS_SUCCESS;
 
-    attr.value.objlist.count = (uint32_t)sinkPortList.size();
-    attr.value.objlist.list = sinkPortList.data();
+    vector<sai_object_id_t> port_list;
+
+    for (auto it = sinkPortList.begin(); it != sinkPortList.end(); it++)
+    {
+        if (it->second != 0)
+        {
+            port_list.push_back(it->second);
+        }
+    }
+
+    attr.value.objlist.count = (uint32_t)port_list.size();
+    if (port_list.size() == 0)
+    {
+        attr.value.objlist.list = {};   
+    } else {
+        attr.value.objlist.list = port_list.data();
+    }
+    
     status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -342,27 +360,103 @@ sai_status_t DTelOrch::updateSinkPortList()
     return status;
 }
 
-bool DTelOrch::addSinkPortToList(sai_object_id_t port_id)
+bool DTelOrch::addSinkPortToCache(string port_alias, sai_object_id_t port_id)
 {
-    sinkPortList.push_back(port_id);
+    if (sinkPortList.find(port_alias) == sinkPortList.end())
+    {
+        return false;
+    }
+
+    sinkPortList[port_alias] = port_id;
+    return true;
 }
 
-bool DTelOrch::removeSinkPortFromList(sai_object_id_t port_id)
+bool DTelOrch::removeSinkPortFromCache(string port_alias)
 {
-    for (unsigned i=0; i < sinkPortList.size(); i++)
+    if (sinkPortList.find(port_alias) == sinkPortList.end())
     {
-        if (sinkPortList[i] == port_id) {
-            break;
+        return false;
+    }
+
+    sinkPortList[port_alias] = 0;
+    return true;
+}
+
+void DTelOrch::update(SubjectType type, void *cntx)
+{
+    if (type != SUBJECT_TYPE_PORT_CHANGE)
+    {
+        return;
+    }
+
+    PortUpdate *update = static_cast<PortUpdate *>(cntx);
+
+    /* Check if sink ports need to be updated */
+    if (update->add)
+    {
+        if (addSinkPortToCache(update->port.m_alias, update->port.m_port_id))
+        {
+            status = updateSinkPortList();
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("DTEL ERROR: Failed to update sink port list on port add");
+                return;
+            }
+        }
+    } else {
+        if (removeSinkPortFromCache(update->port.m_alias))
+        {
+            status = updateSinkPortList();
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("DTEL ERROR: Failed to update sink port list on port remove");
+                return;
+            }
         }
     }
 
-    if (i < sinkPortList.size())
+    /* Check if queue reports need to be updated */
+    auto port_entry_iter = m_dTelPortTable.find(update->port.m_alias);
+
+    if (port_entry_iter == m_dTelPortTable.end())
     {
-        sinkPortList.erase(sinkPortList.begin() + i);
-        return true;
+        return;
     }
-    
-    return false;
+
+    dTelPortQueueTable_t qTable = port_entry_iter->second.queueTable;
+
+    for (auto it = qTable.begin(); it != qTable.end(); it++ )
+    {
+        DTelQueueReportEntry qreport = it->second;
+        if (update->add)
+        {
+            if (qreport.queueReportOid != 0)
+            {
+                SWSS_LOG_ERROR("DTEL ERROR: Queue report already enabled for port %s, queue %d", port.c_str(), qreport.q_ind);
+                return;
+            }
+
+            status = enableQueueReport(update->port, qreport);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("DTEL ERROR: Failed to update queue report for queue %d on port add %s", qreport.q_ind, port.c_str());
+                return;
+            }
+        } else {
+            if (qreport.queueReportOid == 0)
+            {
+                SWSS_LOG_ERROR("DTEL ERROR: Queue report already disabled for port %s, queue %d", port.c_str(), qreport.q_ind);
+                return;
+            }
+
+            status = disableQueueReport(update->port.m_alias, it->first);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("DTEL ERROR: Failed to update queue report for queue %d on port remove %s", qreport.q_ind, port.c_str());
+                return;
+            }
+        }
+    }
 }
 
 void DTelOrch::doDtelTableTask(Consumer &consumer)
@@ -487,9 +581,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == SINK_PORT_LIST)
             {
-                vector<sai_object_id_t> port_list;
                 Port port;
-                attr.id = SAI_DTEL_ATTR_SINK_PORT_LIST;
 
                 for (auto i : kfvFieldsValues(t))
                 {
@@ -505,13 +597,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                         goto dtel_table_continue;   
                     }
 
-                    port_list.push_back(port.m_port_id);
+                    sinkPortList[fvField(i)] = port.m_port_id;
                 }
 
-                if (port_list.size() == 0)
+                if (sinkPortList.size() == 0)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Invalid INT sink port list");
 		            goto dtel_table_continue;
+                }
+
+                status = updateSinkPortList();
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == INT_L4_DSCP)
@@ -650,15 +748,12 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
             }
             else if (table_attr == SINK_PORT_LIST)
             {
-                attr.id = SAI_DTEL_ATTR_SINK_PORT_LIST;
-
-                attr.value.objlist.count = 0;
-                attr.value.objlist.list = {};
-                status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
+                sinkPortList.clear();
+                status = updateSinkPortList();
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset sink port list");
-		    goto dtel_table_continue;
+		            goto dtel_table_continue;
                 }
             }
             else if (table_attr == INT_L4_DSCP)
@@ -989,6 +1084,11 @@ bool DTelOrch::disableQueueReport(string &port, string &queue)
         return false;
     }
 
+    if (queue_report_oid == 0)
+    {
+        return true;
+    }
+
     status = sai_dtel_api->remove_dtel_queue_report(queue_report_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -996,8 +1096,29 @@ bool DTelOrch::disableQueueReport(string &port, string &queue)
         return false;
     }
 
-    removePortQueue(port, queue);
+    m_dTelPortTable[port].queueTable[queue].queueReportOid = 0;
+
     return true;
+}
+
+sai_status_t DTelOrch::enableQueueReport(Port port, DTelQueueReportEntry& qreport)
+{
+    sai_attribute_t qr_attr;
+    sai_status_t status = SAI_STATUS_SUCCESS;
+
+    qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_QUEUE_ID;
+    qr_attr.value.oid = port.m_queue_ids[qreport.q_ind];
+    qreport.queue_report_attr.push_back(qr_attr);
+
+    status = sai_dtel_api->create_dtel_queue_report(&qreport.queueReportOid, 
+                gSwitchId, (uint32_t)qreport.queue_report_attr.size(), qreport.queue_report_attr.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("DTEL ERROR: Failed to enable queue report on port %s, queue %d", port.m_alias.c_str(), qreport.q_ind);
+        return status;
+    }
+
+    return status;
 }
 
 void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
@@ -1036,6 +1157,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
         {
             vector<sai_attribute_t> queue_report_attr;
             sai_attribute_t qr_attr;
+            DTelQueueReportEntry qreport;
 
             /* If queue report is already enabled in port/queue, disable it first */
             if (isQueueReportEnabled(port, queue_id))
@@ -1044,11 +1166,19 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
                 {
                     goto queue_report_table_continue;
                 }
+
+                if (!removePortQueue(port, queue_id))
+                {
+                    goto queue_report_table_continue;
+                }
             }
 
-            qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_QUEUE_ID;
-            qr_attr.value.oid = port_obj.m_queue_ids[q_ind];
-            queue_report_attr.push_back(qr_attr);
+            if (!addPortQueue(port, queue_id, &qreport))
+            {
+                goto queue_report_table_continue;
+            }
+            
+            qreport.q_ind = q_ind;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -1056,41 +1186,43 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
                 {
                     qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_TAIL_DROP;
                     qr_attr.value.booldata = (fvValue(i) == ENABLED) ? true : false;
-                    queue_report_attr.push_back(qr_attr);
+                    qreport.queue_report_attr.push_back(qr_attr);
                 }
                 else if (fvField(i) == QUEUE_DEPTH_THRESHOLD)
                 {
                     qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_DEPTH_THRESHOLD;
                     qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
-                    queue_report_attr.push_back(qr_attr);
+                    qreport.queue_report_attr.push_back(qr_attr);
                 }
                 else if (fvField(i) == QUEUE_LATENCY_THRESHOLD)
                 {
                     qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_LATENCY_THRESHOLD;
                     qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
-                    queue_report_attr.push_back(qr_attr);
+                    qreport.queue_report_attr.push_back(qr_attr);
                 }
                 else if (fvField(i) == THRESHOLD_BREACH_QUOTA)
                 {
                     qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_BREACH_QUOTA;
                     qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
-                    queue_report_attr.push_back(qr_attr);
+                    qreport.queue_report_attr.push_back(qr_attr);
                 }
             }
 
-            status = sai_dtel_api->create_dtel_queue_report(&queue_report_oid, 
-                gSwitchId, (uint32_t)queue_report_attr.size(), queue_report_attr.data());
+            status = enableQueueReport(port_obj, qreport);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: Failed to enable queue report on port %s, queue %s", port.c_str(), queue_id.c_str());
                 goto queue_report_table_continue;
             }
-
-            addPortQueue(port, queue_id, queue_report_oid);
+            
         }
         else if (op == DEL_COMMAND)
         {   
             if (!disableQueueReport(port, queue_id))
+            {
+                goto queue_report_table_continue;
+            }
+
+            if (!removePortQueue(port, queue_id))
             {
                 goto queue_report_table_continue;
             }

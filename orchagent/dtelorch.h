@@ -75,9 +75,11 @@ struct DTelQueueReportEntry
 {
     sai_object_id_t queueReportOid;
     vector<sai_attribute_t> queue_report_attr;
+    uint32_t q_ind;
 
     DTelQueueReportEntry() :
-        queueReportOid(0)
+        queueReportOid(0),
+        q_ind(0)
     {
     }
 };
@@ -107,6 +109,7 @@ typedef map<string, DTelReportSessionEntry> dTelReportSessionTable_t;
 typedef map<string, DTelPortEntry> dTelPortTable_t;
 typedef map<string, DTelEventEntry> dtelEventTable_t;
 typedef map<string, sai_dtel_event_type_t> dtelEventLookup_t;
+typedef map<string, sai_object_id_t> dtelSinkPortList_t;
 
 struct DTelINTSessionUpdate
 {
@@ -123,6 +126,7 @@ public:
     bool increaseINTSessionRefCount(const string&);
     bool decreaseINTSessionRefCount(const string&);
     bool getINTSessionOid(const string& name, sai_object_id_t& oid);
+    void update(SubjectType, void *);
 
 private:
 
@@ -152,6 +156,10 @@ private:
     bool deleteINTSession(string &int_session_id);
     bool disableQueueReport(string &port, string &queue);
     bool unConfigureEvent(string &event);
+    sai_status_t DTelOrch::updateSinkPortList();
+    bool DTelOrch::addSinkPortToCache(string port_alias, sai_object_id_t port_id);
+    bool DTelOrch::removeSinkPortFromCache(string port_alias);
+    sai_status_t DTelOrch::enableQueueReport(Port port, DTelQueueReportEntry& qreport);
 
 	PortsOrch *m_portOrch;
 	dTelINTSessionTable_t m_dTelINTSessionTable;
@@ -159,7 +167,7 @@ private:
     dTelPortTable_t m_dTelPortTable;
     dtelEventTable_t m_dtelEventTable;
     sai_object_id_t dtelId;
-    vector<sai_object_id_t> sinkPortList;
+    dtelSinkPortList_t sinkPortList;
 };
 
 #endif /* SWSS_DTELORCH_H */
