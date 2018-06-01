@@ -103,9 +103,48 @@ bool OrchDaemon::init()
         CFG_ACL_TABLE_NAME,
         CFG_ACL_RULE_TABLE_NAME
     };
-    gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
 
-    m_orchList = { switch_orch, /*gCrmOrch,*/ gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch, vrf_orch };
+    vector<string> dtel_tables = {
+        CFG_DTEL_TABLE_NAME,
+        CFG_DTEL_REPORT_SESSION_TABLE_NAME,
+        CFG_DTEL_INT_SESSION_TABLE_NAME,
+        CFG_DTEL_QUEUE_REPORT_TABLE_NAME,
+        CFG_DTEL_EVENT_TABLE_NAME
+    };
+
+    m_orchList = { switch_orch, /*gCrmOrch,*/ gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch };
+
+    bool initialize_dtel = false;
+    if (strstr(platform, "barefoot"))
+    {
+        sai_attr_capability_t capability;
+        capability.create_implemented = false;
+
+        status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_DTEL, SAI_DTEL_ATTR_SWITCH_ID, &capability);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Could not query Dataplane telemetry capability %d", status);
+            exit(EXIT_FAILURE);
+        }
+
+        if (capability.create_implemented)
+        {
+            initialize_dtel = true;
+        }
+    }
+
+    DTelOrch *dtel_orch = NULL;
+    if (initialize_dtel)
+    {
+        DTelOrch *dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
+        m_orchList.push_back(dtel_orch);
+    }
+
+    gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
+    m_orchList.push_back(gAclOrch);
+    m_orchList.push_back(gFdbOrch);
+    m_orchList.push_back(vrf_orch);
+    
     m_select = new Select();
 
     vector<string> pfc_wd_tables = {

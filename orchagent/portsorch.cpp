@@ -1001,6 +1001,16 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
+    Port p;
+    if (!getPort(port_id, p))
+    {
+        SWSS_LOG_ERROR("Failed to get port object while removing port %lx", port_id);
+        return false;
+    }
+
+    PortUpdate update = {p, false };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -1085,6 +1095,8 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
         return false;
     }
 
+    PortUpdate update = {p, true };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
     return true;
 }
 
