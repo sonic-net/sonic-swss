@@ -115,10 +115,13 @@ bool OrchDaemon::init()
     m_orchList = { switch_orch, /*gCrmOrch,*/ gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch };
 
     bool initialize_dtel = false;
-    if (strstr(platform, "barefoot"))
+    if (platform == BFN_PLATFORM_SUBSTRING)
     {
         sai_attr_capability_t capability;
-        capability.create_implemented = false;
+        capability.create_implemented = true;
+
+	/*
+	sai_status_t status;
 
         status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_DTEL, SAI_DTEL_ATTR_SWITCH_ID, &capability);
         if (status != SAI_STATUS_SUCCESS)
@@ -126,6 +129,7 @@ bool OrchDaemon::init()
             SWSS_LOG_ERROR("Could not query Dataplane telemetry capability %d", status);
             exit(EXIT_FAILURE);
         }
+	*/
 
         if (capability.create_implemented)
         {

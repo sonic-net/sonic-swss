@@ -1434,7 +1434,7 @@ void AclRuleDTelFlowWatchList::update(SubjectType type, void *cntx)
 
     if (!m_pDTelOrch)
     {
-        return false;
+        return;
     }
 
     if (type != SUBJECT_TYPE_INT_SESSION_CHANGE || !INT_enabled)
@@ -1980,7 +1980,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 continue;
             }
 
-            newRule = AclRule::makeShared(m_AclTables[table_oid].type, this, m_mirrorOrch, m_dtelOrch, rule_id, table_id, t);
+            newRule = AclRule::makeShared(m_AclTables[table_oid].type, this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t);
 
             for (const auto& itr : kfvFieldsValues(t))
             {

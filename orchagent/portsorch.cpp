@@ -1080,6 +1080,9 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
 
                 m_flexCounterTable->set(key, fields);
 
+    		PortUpdate update = {p, true };
+    		notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
             else
@@ -1095,8 +1098,6 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
         return false;
     }
 
-    PortUpdate update = {p, true };
-    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
     return true;
 }
 

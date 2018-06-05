@@ -238,12 +238,12 @@ bool DTelOrch::getQueueReportOid(const string& port, const string& queue, sai_ob
     return true;
 }
 
-void DTelOrch::removePortQueue(const string& port, const string& queue)
+bool DTelOrch::removePortQueue(const string& port, const string& queue)
 {
     if (!isQueueReportEnabled(port, queue))
     {
         SWSS_LOG_ERROR("DTEL ERROR: Queue report not enabled on port %s, queue %s", port.c_str(), queue.c_str());
-        return;
+        return false;
     }
 
     m_dTelPortTable[port].queueTable.erase(queue);
@@ -252,6 +252,8 @@ void DTelOrch::removePortQueue(const string& port, const string& queue)
     {
         m_dTelPortTable.erase(port);
     }
+
+    return true;
 }
 
 bool DTelOrch::addPortQueue(const string& port, const string& queue, DTelQueueReportEntry& qreport)
@@ -360,7 +362,7 @@ sai_status_t DTelOrch::updateSinkPortList()
     return status;
 }
 
-bool DTelOrch::addSinkPortToCache(string port_alias, sai_object_id_t port_id)
+bool DTelOrch::addSinkPortToCache(const string &port_alias, const sai_object_id_t port_id)
 {
     if (sinkPortList.find(port_alias) == sinkPortList.end())
     {
@@ -371,7 +373,7 @@ bool DTelOrch::addSinkPortToCache(string port_alias, sai_object_id_t port_id)
     return true;
 }
 
-bool DTelOrch::removeSinkPortFromCache(string port_alias)
+bool DTelOrch::removeSinkPortFromCache(const string &port_alias)
 {
     if (sinkPortList.find(port_alias) == sinkPortList.end())
     {
@@ -384,6 +386,8 @@ bool DTelOrch::removeSinkPortFromCache(string port_alias)
 
 void DTelOrch::update(SubjectType type, void *cntx)
 {
+    sai_status_t status;
+
     if (type != SUBJECT_TYPE_PORT_CHANGE)
     {
         return;
@@ -432,27 +436,27 @@ void DTelOrch::update(SubjectType type, void *cntx)
         {
             if (qreport.queueReportOid != 0)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: Queue report already enabled for port %s, queue %d", port.c_str(), qreport.q_ind);
+                SWSS_LOG_ERROR("DTEL ERROR: Queue report already enabled for port %s, queue %d", update->port.m_alias.c_str(), qreport.q_ind);
                 return;
             }
 
             status = enableQueueReport(update->port, qreport);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: Failed to update queue report for queue %d on port add %s", qreport.q_ind, port.c_str());
+                SWSS_LOG_ERROR("DTEL ERROR: Failed to update queue report for queue %d on port add %s", qreport.q_ind, update->port.m_alias.c_str());
                 return;
             }
         } else {
             if (qreport.queueReportOid == 0)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: Queue report already disabled for port %s, queue %d", port.c_str(), qreport.q_ind);
+                SWSS_LOG_ERROR("DTEL ERROR: Queue report already disabled for port %s, queue %d", update->port.m_alias.c_str(), qreport.q_ind);
                 return;
             }
 
             status = disableQueueReport(update->port.m_alias, it->first);
             if (status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: Failed to update queue report for queue %d on port remove %s", qreport.q_ind, port.c_str());
+                SWSS_LOG_ERROR("DTEL ERROR: Failed to update queue report for queue %d on port remove %s", qreport.q_ind, update->port.m_alias.c_str());
                 return;
             }
         }
@@ -775,7 +779,7 @@ dtel_table_continue:
     }
 }
 
-bool DTelOrch::deleteReportSession(string &report_session_id)
+bool DTelOrch::deleteReportSession(const string &report_session_id)
 {
     sai_object_id_t report_session_oid;
     sai_status_t status;
@@ -925,7 +929,7 @@ report_session_table_continue:
     }
 }
 
-bool DTelOrch::deleteINTSession(string &int_session_id)
+bool DTelOrch::deleteINTSession(const string &int_session_id)
 {
     sai_object_id_t int_session_oid;
     sai_status_t status;
@@ -1067,7 +1071,7 @@ int_session_table_continue:
     }
 }
 
-bool DTelOrch::disableQueueReport(string &port, string &queue)
+bool DTelOrch::disableQueueReport(const string &port, const string &queue)
 {
     sai_object_id_t queue_report_oid;
     sai_status_t status;
@@ -1130,8 +1134,6 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        sai_object_id_t queue_report_oid;
-
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
         size_t found = key.find('|');
@@ -1147,10 +1149,10 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
             goto queue_report_table_continue;
         }
 
-        if (port.m_type != Port::PHY)
+        if (port_obj.m_type != Port::PHY)
         {
-            SWSS_LOG_ERROR("DTEL ERROR: Queue reporting applies only to physical ports. %s is not a physical port", fvField(i).c_str());
-    goto dtel_table_continue;   
+            SWSS_LOG_ERROR("DTEL ERROR: Queue reporting applies only to physical ports. %s is not a physical port", port.c_str());
+   	     goto queue_report_table_continue;   
         }
 
         if (op == SET_COMMAND)
@@ -1173,7 +1175,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
                 }
             }
 
-            if (!addPortQueue(port, queue_id, &qreport))
+            if (!addPortQueue(port, queue_id, qreport))
             {
                 goto queue_report_table_continue;
             }
