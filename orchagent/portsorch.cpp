@@ -18,6 +18,7 @@
 #include "sai_serialize.h"
 #include "crmorch.h"
 #include "countercheckorch.h"
+#include "bufferorch.h"
 #include "notifier.h"
 
 extern sai_switch_api_t *sai_switch_api;
@@ -31,6 +32,7 @@ extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
+extern BufferOrch *gBufferOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -1277,6 +1279,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
             if (!m_portConfigDone)
             {
                 it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            if (alias != "PortConfigDone" && !gBufferOrch->isPortReady(alias))
+            {
+                // buffer configuration hasn't been applied yet. save it for future retry
+                it++;
                 continue;
             }
 

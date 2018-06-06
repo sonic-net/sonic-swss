@@ -26,6 +26,7 @@ NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
 AclOrch *gAclOrch;
 CrmOrch *gCrmOrch;
+BufferOrch *gBufferOrch;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
         m_applDb(applDb),
@@ -90,7 +91,7 @@ bool OrchDaemon::init()
         CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
         CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
     };
-    BufferOrch *buffer_orch = new BufferOrch(m_configDb, buffer_tables);
+    gBufferOrch = new BufferOrch(m_configDb, buffer_tables);
 
     TableConnector appDbMirrorSession(m_applDb, APP_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
@@ -109,7 +110,7 @@ bool OrchDaemon::init()
 
     gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
 
-    m_orchList = { switch_orch, gCrmOrch, gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch, gAclOrch, gFdbOrch, vrf_orch };
+    m_orchList = { switch_orch, gCrmOrch, gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, gBufferOrch, mirror_orch, gAclOrch, gFdbOrch, vrf_orch };
     m_select = new Select();
 
 
