@@ -42,6 +42,7 @@ orchagent_SOURCES = \
 		    request_parser.cpp \
 		    vrforch.cpp \
 		    countercheckorch.cpp \
+		    dtelorch.cpp \
 		    acltable.h \
 		    aclorch.h \
 		    bufferorch.h \
@@ -67,6 +68,7 @@ orchagent_SOURCES = \
 		    crmorch.h
 		    request_parser.h \
 		    vrforch.h \
+		    dtelorch.h \
 		    countercheckorch.h
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

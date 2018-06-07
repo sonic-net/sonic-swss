@@ -1001,6 +1001,13 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
+    Port p;
+    if (getPort(port_id, p))
+    {
+    	PortUpdate update = {p, false };
+    	notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+    }
+
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -1069,6 +1076,9 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 fields.emplace_back(PORT_COUNTER_ID_LIST, counters_stream.str());
 
                 m_flexCounterTable->set(key, fields);
+
+    		PortUpdate update = {p, true };
+    		notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
