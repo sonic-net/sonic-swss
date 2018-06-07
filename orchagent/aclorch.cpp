@@ -12,6 +12,8 @@
 using namespace std;
 using namespace swss;
 
+#define DB_TABLE_NAME_SEPARATOR_VBAR '|'
+
 mutex AclOrch::m_countersMutex;
 map<acl_range_properties_t, AclRange*> AclRange::m_ranges;
 condition_variable AclOrch::m_sleepGuard;
@@ -1550,7 +1552,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
+        size_t found = key.find(DB_TABLE_NAME_SEPARATOR_VBAR);
         string table_id = key.substr(0, found);
         string op = kfvOp(t);
 
@@ -1650,7 +1652,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
+        size_t found = key.find(DB_TABLE_NAME_SEPARATOR_VBAR);
         string table_id = key.substr(0, found);
         string rule_id = key.substr(found + 1);
         string op = kfvOp(t);
@@ -1739,7 +1741,7 @@ void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
-        size_t found = key.find(consumer.getConsumerTable()->getTableNameSeparator().c_str());
+        size_t found = key.find(DB_TABLE_NAME_SEPARATOR_VBAR);
         string port_alias = key.substr(0, found);
         string op = kfvOp(t);
 
