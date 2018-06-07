@@ -256,7 +256,7 @@ bool DTelOrch::removePortQueue(const string& port, const string& queue)
     return true;
 }
 
-bool DTelOrch::addPortQueue(const string& port, const string& queue, DTelQueueReportEntry& qreport)
+bool DTelOrch::addPortQueue(const string& port, const string& queue, DTelQueueReportEntry **qreport)
 {
     if (isQueueReportEnabled(port, queue))
     {
@@ -266,7 +266,7 @@ bool DTelOrch::addPortQueue(const string& port, const string& queue, DTelQueueRe
 
     m_dTelPortTable[port] = DTelPortEntry();
     m_dTelPortTable[port].queueTable[queue] = DTelQueueReportEntry();
-    qreport = m_dTelPortTable[port].queueTable[queue];
+    *qreport = &m_dTelPortTable[port].queueTable[queue];
     return true;
 }
 
@@ -1159,7 +1159,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
         {
             vector<sai_attribute_t> queue_report_attr;
             sai_attribute_t qr_attr;
-            DTelQueueReportEntry qreport;
+            DTelQueueReportEntry *qreport;
 
             /* If queue report is already enabled in port/queue, disable it first */
             if (isQueueReportEnabled(port, queue_id))
@@ -1175,12 +1175,12 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
                 }
             }
 
-            if (!addPortQueue(port, queue_id, qreport))
+            if (!addPortQueue(port, queue_id, &qreport))
             {
                 goto queue_report_table_continue;
             }
             
-            qreport.q_ind = q_ind;
+            qreport->q_ind = q_ind;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -1188,29 +1188,29 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
                 {
                     qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_TAIL_DROP;
                     qr_attr.value.booldata = (fvValue(i) == ENABLED) ? true : false;
-                    qreport.queue_report_attr.push_back(qr_attr);
+                    qreport->queue_report_attr.push_back(qr_attr);
                 }
                 else if (fvField(i) == QUEUE_DEPTH_THRESHOLD)
                 {
                     qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_DEPTH_THRESHOLD;
                     qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
-                    qreport.queue_report_attr.push_back(qr_attr);
+                    qreport->queue_report_attr.push_back(qr_attr);
                 }
                 else if (fvField(i) == QUEUE_LATENCY_THRESHOLD)
                 {
                     qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_LATENCY_THRESHOLD;
                     qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
-                    qreport.queue_report_attr.push_back(qr_attr);
+                    qreport->queue_report_attr.push_back(qr_attr);
                 }
                 else if (fvField(i) == THRESHOLD_BREACH_QUOTA)
                 {
                     qr_attr.id = SAI_DTEL_QUEUE_REPORT_ATTR_BREACH_QUOTA;
                     qr_attr.value.u32 = to_uint<uint32_t>(fvValue(i));
-                    qreport.queue_report_attr.push_back(qr_attr);
+                    qreport->queue_report_attr.push_back(qr_attr);
                 }
             }
 
-            status = enableQueueReport(port_obj, qreport);
+            status = enableQueueReport(port_obj, *qreport);
             if (status != SAI_STATUS_SUCCESS)
             {
                 goto queue_report_table_continue;

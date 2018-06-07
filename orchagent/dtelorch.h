@@ -146,7 +146,7 @@ private:
     int64_t getReportSessionRefCount(const string& name);
     bool isQueueReportEnabled(const string& port, const string& queue);
     bool getQueueReportOid(const string& port, const string& queue, sai_object_id_t& oid);
-    bool addPortQueue(const string& port, const string& queue, DTelQueueReportEntry& qreport);
+    bool addPortQueue(const string& port, const string& queue, DTelQueueReportEntry **qreport);
     bool removePortQueue(const string& port, const string& queue);
     bool isEventConfigured(const string& event);
     bool getEventOid(const string& event, sai_object_id_t& oid);
