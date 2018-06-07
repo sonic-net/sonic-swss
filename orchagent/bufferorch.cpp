@@ -90,7 +90,7 @@ bool BufferOrch::isPortReady(const std::string& port_name) const
     bool result = true;
     for (const auto& key: list_of_keys)
     {
-        result &= m_ready_list.at(key);
+        result = result && m_ready_list.at(key);
     }
 
     return result;
