@@ -120,6 +120,7 @@ bool OrchDaemon::init()
         sai_attr_capability_t capability;
         capability.create_implemented = true;
 
+	/* Will uncomment this when saiobject.h support is added to SONiC */
 	/*
 	sai_status_t status;
 
@@ -140,7 +141,7 @@ bool OrchDaemon::init()
     DTelOrch *dtel_orch = NULL;
     if (initialize_dtel)
     {
-        DTelOrch *dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
+        dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
     }
 

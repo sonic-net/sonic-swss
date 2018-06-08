@@ -914,7 +914,7 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
 
             if(getReportSessionRefCount(report_session_id) > 1)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: References still exist on report session %s", report_session_id.c_str());
+                decreaseReportSessionRefCount(report_session_id);
                 goto report_session_table_continue;
             }
 
@@ -1056,7 +1056,7 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
 
             if(getINTSessionRefCount(int_session_id) > 1)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: References still exist on INT session %s", int_session_id.c_str());
+                decreaseINTSessionRefCount(int_session_id);
                 goto int_session_table_continue;
             }
             
