@@ -436,20 +436,19 @@ void CrmOrch::getResAvailableCounters()
             case SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE:
             case SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE_GROUP:
             {
-                attr.value.aclresource.count = 0;
-                attr.value.aclresource.list = NULL;
+                const int aclResourceCount = 256;
+                vector<sai_acl_resource_t> resources(aclResourceCount);
 
+                attr.value.aclresource.count = aclResourceCount;
+                attr.value.aclresource.list = resources.data();
                 sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-                if ((status != SAI_STATUS_SUCCESS) && (status != SAI_STATUS_BUFFER_OVERFLOW))
+                if (status == SAI_STATUS_BUFFER_OVERFLOW)
                 {
-                    SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
-                    break;
+                    resources.resize(attr.value.aclresource.count);
+                    attr.value.aclresource.list = resources.data();
+                    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
                 }
 
-                vector<sai_acl_resource_t> resources(attr.value.aclresource.count);
-                attr.value.aclresource.list = resources.data();
-
-                status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
