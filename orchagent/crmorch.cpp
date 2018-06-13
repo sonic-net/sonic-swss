@@ -12,6 +12,7 @@
 #define CRM_THRESHOLD_LOW_DEFAULT 70
 #define CRM_THRESHOLD_HIGH_DEFAULT 85
 #define CRM_EXCEEDED_MSG_MAX 10
+#define CRM_ACL_RESOURCE_COUNT 256
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
@@ -436,10 +437,9 @@ void CrmOrch::getResAvailableCounters()
             case SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE:
             case SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE_GROUP:
             {
-                const int aclResourceCount = 256;
-                vector<sai_acl_resource_t> resources(aclResourceCount);
+                vector<sai_acl_resource_t> resources(CRM_ACL_RESOURCE_COUNT);
 
-                attr.value.aclresource.count = aclResourceCount;
+                attr.value.aclresource.count = CRM_ACL_RESOURCE_COUNT;
                 attr.value.aclresource.list = resources.data();
                 sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
                 if (status == SAI_STATUS_BUFFER_OVERFLOW)
