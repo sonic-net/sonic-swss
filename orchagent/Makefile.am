@@ -34,7 +34,7 @@ orchagent_SOURCES = \
 		    fdborch.cpp \
 		    aclorch.cpp \
 		    saihelper.cpp \
-            switchorch.cpp \
+        switchorch.cpp \
 		    pfcwdorch.cpp \
 		    pfcactionhandler.cpp \
 		    crmorch.cpp \
@@ -42,6 +42,7 @@ orchagent_SOURCES = \
 		    vrforch.cpp \
 		    countercheckorch.cpp \
 		    vxlan_tunnel_decap_orch.cpp \
+		    flexcounterorch.cpp \
 		    acltable.h \
 		    aclorch.h \
 		    bufferorch.h \
@@ -61,14 +62,15 @@ orchagent_SOURCES = \
 		    qosorch.h \
 		    routeorch.h \
 		    saihelper.h \
-            switchorch.h \
+        switchorch.h \
 		    swssnet.h \
 		    tunneldecaporch.h \
 		    crmorch.h \
 		    request_parser.h \
 		    vrforch.h \
 		    countercheckorch.h \
-		    vxlan_tunnel_decap_orch.h
+		    vxlan_tunnel_decap_orch.h \
+		    flexcounterorch.h
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

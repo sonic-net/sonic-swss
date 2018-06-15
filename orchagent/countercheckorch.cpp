@@ -5,7 +5,7 @@
 #include "redisclient.h"
 #include "sai_serialize.h"
 
-#define MC_WD_LOSSY_POLL_TIMEOUT_SEC   (5 * 60)
+#define COUNTER_CHECK_POLL_TIMEOUT_SEC   (5 * 60)
 
 extern sai_port_api_t *sai_port_api;
 
@@ -28,7 +28,7 @@ CounterCheckOrch::CounterCheckOrch(DBConnector *db, vector<string> &tableNames):
 {
     SWSS_LOG_ENTER();
 
-    auto interv = timespec { .tv_sec = MC_WD_LOSSY_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
+    auto interv = timespec { .tv_sec = COUNTER_CHECK_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
     auto timer = new SelectableTimer(interv);
     auto executor = new ExecutableTimer(timer, this);
     Orch::addExecutor("MC_COUNTERS_POLL", executor);
@@ -40,51 +40,22 @@ CounterCheckOrch::~CounterCheckOrch(void)
     SWSS_LOG_ENTER();
 }
 
-QueueMcCounters CounterCheckOrch::getQueueMcCounters(
-        const Port& port)
+void CounterCheckOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    vector<FieldValueTuple> fieldValues;
-    QueueMcCounters counters;
-    RedisClient redisClient(m_countersDb.get());
-
-    for (uint8_t prio = 0; prio < port.m_queue_ids.size(); prio++)
-    {
-        sai_object_id_t queueId = port.m_queue_ids[prio];
-        auto queueIdStr = sai_serialize_object_id(queueId);
-        auto queueType = redisClient.hget(COUNTERS_QUEUE_TYPE_MAP, queueIdStr);
-
-        if (queueType.get() == nullptr || *queueType != "SAI_QUEUE_TYPE_MULTICAST" || !m_countersTable->get(queueIdStr, fieldValues))
-        {
-            continue;
-        }
-
-        uint64_t pkts = numeric_limits<uint64_t>::max();
-        for (const auto& fv : fieldValues)
-        {
-            const auto field = fvField(fv);
-            const auto value = fvValue(fv);
-
-            if (field == "SAI_QUEUE_STAT_PACKETS")
-            {
-                pkts = stoul(value);
-            }
-        }
-        counters.push_back(pkts);
-    }
-
-    return move(counters);
+    mcCounterCheck();
+    pfcFrameCounterCheck();
 }
 
-void CounterCheckOrch::doTask(SelectableTimer &timer)
+void CounterCheckOrch::mcCounterCheck()
 {
     SWSS_LOG_ENTER();
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
 
-    for (auto& i : m_CountersMap)
+    for (auto& i : m_mcCountersMap)
     {
         auto oid = i.first;
         auto mcCounters = i.second;
@@ -129,12 +100,147 @@ void CounterCheckOrch::doTask(SelectableTimer &timer)
     }
 }
 
+void CounterCheckOrch::pfcFrameCounterCheck()
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+
+    for (auto& i : m_pfcFrameCountersMap)
+    {
+        auto oid = i.first;
+        auto counters = i.second;
+        auto newCounters = getPfcFrameCounters(oid);
+
+        Port port;
+        if (!gPortsOrch->getPort(oid, port))
+        {
+            SWSS_LOG_ERROR("Invalid port oid 0x%lx", oid);
+            continue;
+        }
+
+        sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            continue;
+        }
+
+        uint8_t pfcMask = attr.value.u8;
+
+        for (size_t prio = 0; prio != counters.size(); prio++)
+        {
+            bool isLossy = ((1 << prio) & pfcMask) == 0;
+            if (newCounters[prio] == numeric_limits<uint64_t>::max())
+            {
+                SWSS_LOG_WARN("Could not retreive PFC frame count on queue %lu port %s",
+                        prio,
+                        port.m_alias.c_str());
+            }
+            else if (isLossy && counters[prio] < newCounters[prio])
+            {
+                SWSS_LOG_WARN("Got PFC %lu frame(s) on lossy queue %lu port %s",
+                        newCounters[prio] - counters[prio],
+                        prio,
+                        port.m_alias.c_str());
+            }
+        }
+
+        i.second = newCounters;
+    }
+}
+
+
+PfcFrameCounters CounterCheckOrch::getPfcFrameCounters(sai_object_id_t portId)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> fieldValues;
+    PfcFrameCounters counters;
+    counters.fill(numeric_limits<uint64_t>::max());
+
+    static const array<string, PFC_WD_TC_MAX> counterNames =
+    {
+        "SAI_PORT_STAT_PFC_0_RX_PKTS",
+        "SAI_PORT_STAT_PFC_1_RX_PKTS",
+        "SAI_PORT_STAT_PFC_2_RX_PKTS",
+        "SAI_PORT_STAT_PFC_3_RX_PKTS",
+        "SAI_PORT_STAT_PFC_4_RX_PKTS",
+        "SAI_PORT_STAT_PFC_5_RX_PKTS",
+        "SAI_PORT_STAT_PFC_6_RX_PKTS",
+        "SAI_PORT_STAT_PFC_7_RX_PKTS"
+    };
+
+    if (!m_countersTable->get(sai_serialize_object_id(portId), fieldValues))
+    {
+        return move(counters);
+    }
+
+    for (const auto& fv : fieldValues)
+    {
+        const auto field = fvField(fv);
+        const auto value = fvValue(fv);
+
+
+        for (size_t prio = 0; prio != counterNames.size(); prio++)
+        {
+            if (field == counterNames[prio])
+            {
+                counters[prio] = stoul(value);
+            }
+        }
+    }
+
+    return move(counters);
+}
+
+QueueMcCounters CounterCheckOrch::getQueueMcCounters(
+        const Port& port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<FieldValueTuple> fieldValues;
+    QueueMcCounters counters;
+    RedisClient redisClient(m_countersDb.get());
+
+    for (uint8_t prio = 0; prio < port.m_queue_ids.size(); prio++)
+    {
+        sai_object_id_t queueId = port.m_queue_ids[prio];
+        auto queueIdStr = sai_serialize_object_id(queueId);
+        auto queueType = redisClient.hget(COUNTERS_QUEUE_TYPE_MAP, queueIdStr);
+
+        if (queueType.get() == nullptr || *queueType != "SAI_QUEUE_TYPE_MULTICAST" || !m_countersTable->get(queueIdStr, fieldValues))
+        {
+            continue;
+        }
+
+        uint64_t pkts = numeric_limits<uint64_t>::max();
+        for (const auto& fv : fieldValues)
+        {
+            const auto field = fvField(fv);
+            const auto value = fvValue(fv);
+
+            if (field == "SAI_QUEUE_STAT_PACKETS")
+            {
+                pkts = stoul(value);
+            }
+        }
+        counters.push_back(pkts);
+    }
+
+    return move(counters);
+}
+
+
 void CounterCheckOrch::addPort(const Port& port)
 {
-    m_CountersMap.emplace(port.m_port_id, getQueueMcCounters(port));
+    m_mcCountersMap.emplace(port.m_port_id, getQueueMcCounters(port));
+    m_pfcFrameCountersMap.emplace(port.m_port_id, getPfcFrameCounters(port.m_port_id));
 }
 
 void CounterCheckOrch::removePort(const Port& port)
 {
-    m_CountersMap.erase(port.m_port_id);
+    m_mcCountersMap.erase(port.m_port_id);
+    m_pfcFrameCountersMap.erase(port.m_port_id);
 }

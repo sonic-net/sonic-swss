@@ -21,11 +21,11 @@ extern MacAddress gMacAddress;
 
 VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
-        m_cfgVlanTable(cfgDb, CFG_VLAN_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgVlanMemberTable(cfgDb, CFG_VLAN_MEMBER_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
+        m_cfgVlanTable(cfgDb, CFG_VLAN_TABLE_NAME),
+        m_cfgVlanMemberTable(cfgDb, CFG_VLAN_MEMBER_TABLE_NAME),
+        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
+        m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
+        m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_appVlanTableProducer(appDb, APP_VLAN_TABLE_NAME),
         m_appVlanMemberTableProducer(appDb, APP_VLAN_MEMBER_TABLE_NAME)
 {
@@ -97,7 +97,7 @@ bool VlanMgr::removeHostVlan(int vlan_id)
     //               /sbin/bridge vlan del vid {{vlan_id}} dev Bridge self"
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
-      + IP_CMD + " link add del " + VLAN_PREFIX + std::to_string(vlan_id) + " && "
+      + IP_CMD + " link del " + VLAN_PREFIX + std::to_string(vlan_id) + " && "
       + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + DOT1Q_BRIDGE_NAME + " self\"";
 
     std::string res;

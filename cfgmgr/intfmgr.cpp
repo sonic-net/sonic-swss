@@ -16,11 +16,11 @@ using namespace swss;
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
-        m_cfgIntfTable(cfgDb, CFG_INTF_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_cfgVlanIntfTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
-        m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME, CONFIGDB_TABLE_NAME_SEPARATOR),
+        m_cfgIntfTable(cfgDb, CFG_INTF_TABLE_NAME),
+        m_cfgVlanIntfTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
+        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
+        m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
+        m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME)
 {
 }

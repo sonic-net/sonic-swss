@@ -25,6 +25,7 @@
 #define TABLE_TYPE_L3        "L3"
 #define TABLE_TYPE_L3V6      "L3V6"
 #define TABLE_TYPE_MIRROR    "MIRROR"
+#define TABLE_TYPE_PFCWD     "PFCWD"
 #define TABLE_TYPE_CTRLPLANE "CTRLPLANE"
 
 #define RULE_PRIORITY           "PRIORITY"
@@ -69,6 +70,7 @@ typedef enum
     ACL_TABLE_L3,
     ACL_TABLE_L3V6,
     ACL_TABLE_MIRROR,
+    ACL_TABLE_PFCWD,
     ACL_TABLE_CTRLPLANE
 } acl_table_type_t;
 
@@ -207,6 +209,14 @@ public:
     bool validateAddMatch(string attr_name, string attr_value);
 };
 
+class AclRulePfcwd: public AclRuleL3
+{
+public:
+    AclRulePfcwd(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type);
+    bool validateAddMatch(string attr_name, string attr_value);
+};
+
+
 class AclRuleMirror: public AclRule
 {
 public:
@@ -238,6 +248,10 @@ public:
     std::map<sai_object_id_t, sai_object_id_t> ports;
     // Map rule name to rule data
     map<string, shared_ptr<AclRule>> rules;
+    // Set to store the ACL table port alias
+    set<string> portSet;
+    // Set to store the not cofigured ACL table port alias
+    set<string> pendingPortSet;
 
     AclTable()
         : type(ACL_TABLE_UNKNOWN)
@@ -284,7 +298,7 @@ inline void split(string str, Iterable& out, char delim = ' ')
 class AclOrch : public Orch, public Observer
 {
 public:
-    AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
+    AclOrch(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
     ~AclOrch();
     void update(SubjectType, void *);
 
@@ -309,6 +323,7 @@ private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
     void doAclRuleTask(Consumer &consumer);
+    void doAclTablePortUpdateTask(Consumer &consumer);
     void doTask(SelectableTimer &timer);
 
     static void collectCountersThread(AclOrch *pAclOrch);
@@ -319,7 +334,8 @@ private:
 
     bool processAclTableType(string type, acl_table_type_t &table_type);
     bool processAclTableStage(string stage, acl_stage_type_t &acl_stage);
-    bool processPorts(string portsList, std::function<void (sai_object_id_t)> inserter);
+    bool processPorts(AclTable &aclTable, string portsList, std::function<void (sai_object_id_t)> inserter);
+    bool processPendingPort(AclTable &aclTable, string portAlias, std::function<void (sai_object_id_t)> inserter);
     bool validateAclTable(AclTable &aclTable);
 
     //vector <AclTable> m_AclTables;
