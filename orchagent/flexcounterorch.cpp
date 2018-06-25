@@ -5,6 +5,7 @@
 #include "notifier.h"
 #include "redisclient.h"
 #include "sai_serialize.h"
+#include "pfcwdorch.h"
 
 extern sai_port_api_t *sai_port_api;
 
@@ -14,6 +15,7 @@ unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
 };
 
 
