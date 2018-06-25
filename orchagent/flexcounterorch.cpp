@@ -70,6 +70,10 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                 }
                 else if(field == FLEX_COUNTER_STATUS_FIELD)
                 {
+                    // Currently the counters are disabled by default
+                    // The queue maps will be generated as soon as counters are enabled
+                    gPortsOrch->generateQueueMap();
+
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);

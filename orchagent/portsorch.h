@@ -61,6 +61,8 @@ public:
     bool setHostIntfsOperStatus(sai_object_id_t id, bool up);
     void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
     bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage = ACL_STAGE_INGRESS);
+
+    void generateQueueMap();
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
@@ -143,6 +145,9 @@ private:
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 
     bool getQueueType(sai_object_id_t queue_id, string &type);
+
+    bool m_isQueueMapGenerated = false;
+    void generateQueueMapPerPort(const Port& port);
 };
 #endif /* SWSS_PORTSORCH_H */
 

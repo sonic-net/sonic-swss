@@ -1817,61 +1817,6 @@ void PortsOrch::initializeQueues(Port &port)
     }
 
     SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
-
-    /* Create the Queue map in the Counter DB */
-    /* Add stat counters to flex_counter */
-    vector<FieldValueTuple> queueVector;
-    vector<FieldValueTuple> queuePortVector;
-    vector<FieldValueTuple> queueIndexVector;
-    vector<FieldValueTuple> queueTypeVector;
-
-    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
-    {
-        std::ostringstream name;
-        name << port.m_alias << ":" << queueIndex;
-        FieldValueTuple tuple(name.str(), sai_serialize_object_id(port.m_queue_ids[queueIndex]));
-        queueVector.push_back(tuple);
-
-        FieldValueTuple queuePortTuple(
-                sai_serialize_object_id(port.m_queue_ids[queueIndex]),
-                sai_serialize_object_id(port.m_port_id));
-        queuePortVector.push_back(queuePortTuple);
-
-        FieldValueTuple queueIndexTuple(
-                sai_serialize_object_id(port.m_queue_ids[queueIndex]),
-                to_string(queueIndex));
-        queueIndexVector.push_back(queueIndexTuple);
-
-
-        string queueType;
-        if (getQueueType(port.m_queue_ids[queueIndex], queueType))
-        {
-            FieldValueTuple queueTypeTuple(
-                    sai_serialize_object_id(port.m_queue_ids[queueIndex]),
-                    queueType);
-            queueTypeVector.push_back(queueTypeTuple);
-        }
-
-        string key = getQueueFlexCounterTableKey(sai_serialize_object_id(port.m_queue_ids[queueIndex]));
-
-        std::string delimiter = "";
-        std::ostringstream counters_stream;
-        for (auto it = queueStatIds.begin(); it != queueStatIds.end(); it++)
-        {
-            counters_stream << delimiter << sai_serialize_queue_stat(*it);
-            delimiter = ",";
-        }
-
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
-
-        m_flexCounterTable->set(key, fieldValues);
-    }
-
-    m_queueTable->set("", queueVector);
-    m_queuePortTable->set("", queuePortVector);
-    m_queueIndexTable->set("", queueIndexVector);
-    m_queueTypeTable->set("", queueTypeVector);
 }
 
 void PortsOrch::initializePriorityGroups(Port &port)
@@ -2418,6 +2363,69 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
     return true;
+}
+
+void PortsOrch::generateQueueMap()
+{
+    if (m_isQueueMapGenerated)
+    {
+        return;
+    }
+
+    for (const auto& it: m_portList)
+    {
+        generateQueueMapPerPort(it.second);
+    }
+
+    m_isQueueMapGenerated = true;
+}
+
+void PortsOrch::generateQueueMapPerPort(const Port& port)
+{
+    /* Create the Queue map in the Counter DB */
+    /* Add stat counters to flex_counter */
+    vector<FieldValueTuple> queueVector;
+    vector<FieldValueTuple> queuePortVector;
+    vector<FieldValueTuple> queueIndexVector;
+    vector<FieldValueTuple> queueTypeVector;
+
+    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << queueIndex;
+
+        const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
+
+        queueVector.emplace_back(name.str(), id);
+        queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
+        queueIndexVector.emplace_back(id, to_string(queueIndex));
+
+        string queueType;
+        if (getQueueType(port.m_queue_ids[queueIndex], queueType))
+        {
+            queueTypeVector.emplace_back(id, queueType);
+        }
+
+        string key = getQueueFlexCounterTableKey(id);
+
+        std::string delimiter = "";
+        std::ostringstream counters_stream;
+        for (const auto& it: queueStatIds)
+        {
+            counters_stream << delimiter << sai_serialize_queue_stat(it);
+            delimiter = ",";
+        }
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
+
+        m_flexCounterTable->set(key, fieldValues);
+    }
+
+    m_queueTable->set("", queueVector);
+    m_queuePortTable->set("", queuePortVector);
+    m_queueIndexTable->set("", queueIndexVector);
+    m_queueTypeTable->set("", queueTypeVector);
 }
 
 void PortsOrch::doTask(NotificationConsumer &consumer)
