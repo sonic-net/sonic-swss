@@ -18,6 +18,7 @@
 #include "sai_serialize.h"
 #include "crmorch.h"
 #include "countercheckorch.h"
+#include "bufferorch.h"
 #include "notifier.h"
 
 extern sai_switch_api_t *sai_switch_api;
@@ -31,6 +32,7 @@ extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
+extern BufferOrch *gBufferOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -1280,6 +1282,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 continue;
             }
 
+            if (alias != "PortConfigDone" && !gBufferOrch->isPortReady(alias))
+            {
+                // buffer configuration hasn't been applied yet. save it for future retry
+                it++;
+                continue;
+            }
+
             Port p;
             if (!getPort(alias, p) && alias != "PortConfigDone")
             {
@@ -1332,20 +1341,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (admin_status != "")
-                {
-                    if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
-                    {
-                        SWSS_LOG_NOTICE("Set port %s admin status to %s", alias.c_str(), admin_status.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
-                        it++;
-                        continue;
-                    }
-                }
-
                 if (mtu != 0)
                 {
                     if (setPortMtu(p.m_port_id, mtu))
@@ -1357,6 +1352,20 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s MTU to %u", alias.c_str(), mtu);
+                        it++;
+                        continue;
+                    }
+                }
+
+                if (admin_status != "")
+                {
+                    if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s admin status to %s", alias.c_str(), admin_status.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
                         it++;
                         continue;
                     }

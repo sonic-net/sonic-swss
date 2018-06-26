@@ -352,9 +352,9 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
             }
 
             this->update(fdbevent[i].event_type, &fdbevent[i].fdb_entry, oid);
-
-            sai_deserialize_free_fdb_event_ntf(count, fdbevent);
         }
+
+        sai_deserialize_free_fdb_event_ntf(count, fdbevent);
     }
 }
 
