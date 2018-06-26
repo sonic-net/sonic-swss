@@ -54,11 +54,12 @@
 
 #define ACTION_PACKET_ACTION    "PACKET_ACTION"
 #define ACTION_MIRROR_ACTION    "MIRROR_ACTION"
-#define ACTION_DTEL_FLOW_OP             "FLOW_OP"
-#define ACTION_DTEL_INT_SESSION         "INT_SESSION"
-#define ACTION_DTEL_DROP_REPORT_ENABLE  "DROP_REPORT_ENABLE"
-#define ACTION_DTEL_FLOW_SAMPLE_PERCENT "FLOW_SAMPLE_PERCENT"
-#define ACTION_DTEL_REPORT_ALL_PACKETS  "REPORT_ALL_PACKETS"
+#define ACTION_DTEL_FLOW_OP                 "FLOW_OP"
+#define ACTION_DTEL_INT_SESSION             "INT_SESSION"
+#define ACTION_DTEL_DROP_REPORT_ENABLE      "DROP_REPORT_ENABLE"
+#define ACTION_DTEL_TAIL_DROP_REPORT_ENABLE "TAIL_DROP_REPORT_ENABLE"
+#define ACTION_DTEL_FLOW_SAMPLE_PERCENT     "FLOW_SAMPLE_PERCENT"
+#define ACTION_DTEL_REPORT_ALL_PACKETS      "REPORT_ALL_PACKETS"
 
 #define PACKET_ACTION_FORWARD   "FORWARD"
 #define PACKET_ACTION_DROP      "DROP"
@@ -345,6 +346,7 @@ inline void split(string str, Iterable& out, char delim = ' ')
 class AclOrch : public Orch, public Observer
 {
 public:
+    AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
     AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *m_dTelOrch);
     ~AclOrch();
     void update(SubjectType, void *);
@@ -372,6 +374,7 @@ private:
     void doAclTableTask(Consumer &consumer);
     void doAclRuleTask(Consumer &consumer);
     void doTask(SelectableTimer &timer);
+    void init(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
 
     static void collectCountersThread(AclOrch *pAclOrch);
 
