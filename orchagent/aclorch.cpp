@@ -61,11 +61,12 @@ acl_rule_attr_lookup_t aclL3ActionLookup =
 
 acl_rule_attr_lookup_t aclDTelActionLookup =
 {
-    { ACTION_DTEL_FLOW_OP,                SAI_ACL_ENTRY_ATTR_ACTION_ACL_DTEL_FLOW_OP },
-    { ACTION_DTEL_INT_SESSION,            SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION },
-    { ACTION_DTEL_DROP_REPORT_ENABLE,     SAI_ACL_ENTRY_ATTR_ACTION_DTEL_DROP_REPORT_ENABLE },
-    { ACTION_DTEL_FLOW_SAMPLE_PERCENT,    SAI_ACL_ENTRY_ATTR_ACTION_DTEL_FLOW_SAMPLE_PERCENT },
-    { ACTION_DTEL_REPORT_ALL_PACKETS,     SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS }
+    { ACTION_DTEL_FLOW_OP,                  SAI_ACL_ENTRY_ATTR_ACTION_ACL_DTEL_FLOW_OP },
+    { ACTION_DTEL_INT_SESSION,              SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION },
+    { ACTION_DTEL_DROP_REPORT_ENABLE,       SAI_ACL_ENTRY_ATTR_ACTION_DTEL_DROP_REPORT_ENABLE },
+    { ACTION_DTEL_TAIL_DROP_REPORT_ENABLE,  SAI_ACL_ENTRY_ATTR_ACTION_DTEL_TAIL_DROP_REPORT_ENABLE },
+    { ACTION_DTEL_FLOW_SAMPLE_PERCENT,      SAI_ACL_ENTRY_ATTR_ACTION_DTEL_FLOW_SAMPLE_PERCENT },
+    { ACTION_DTEL_REPORT_ALL_PACKETS,       SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS }
 };
 
 acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
@@ -506,7 +507,9 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
         string attr_value = fvValue(itr);
         if (attr_name == ACTION_PACKET_ACTION || attr_name == ACTION_MIRROR_ACTION ||
             attr_name == ACTION_DTEL_FLOW_OP || attr_name == ACTION_DTEL_INT_SESSION ||
-            attr_name == ACTION_DTEL_DROP_REPORT_ENABLE || attr_name == ACTION_DTEL_FLOW_SAMPLE_PERCENT ||
+            attr_name == ACTION_DTEL_DROP_REPORT_ENABLE || 
+            attr_name == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE || 
+            attr_name == ACTION_DTEL_FLOW_SAMPLE_PERCENT ||
             attr_name == ACTION_DTEL_REPORT_ALL_PACKETS)
         {
             action_found = true;
@@ -1499,7 +1502,8 @@ bool AclRuleDTelDropWatchList::validateAddAction(string attr_name, string attr_v
     sai_attribute_value_t value;
     string attr_value = toUpper(attr_val);
 
-    if (attr_name != ACTION_DTEL_DROP_REPORT_ENABLE)
+    if (attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
+        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE)
     {
         return false;
     }
@@ -1660,12 +1664,7 @@ bool AclRange::remove()
     return true;
 }
 
-AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *dtelOrch) :
-        Orch(db, tableNames),
-        m_mirrorOrch(mirrorOrch),
-        m_neighOrch(neighOrch),
-        m_routeOrch(routeOrch),
-        m_dTelOrch(dtelOrch)
+void AclOrch::init(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch)
 {
     SWSS_LOG_ENTER();
 
@@ -1686,10 +1685,6 @@ AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch
     }
 
     m_mirrorOrch->attach(this);
-    if (m_dTelOrch)
-    {
-        m_dTelOrch->attach(this);
-    }
 
     // Should be initialized last to guaranty that object is
     // initialized before thread start.
@@ -1698,6 +1693,35 @@ AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch
     auto executor = new ExecutableTimer(timer, this);
     Orch::addExecutor("", executor);
     timer->start();
+}
+
+AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch) :
+        Orch(db, tableNames),
+        m_mirrorOrch(mirrorOrch),
+        m_neighOrch(neighOrch),
+        m_routeOrch(routeOrch),
+        m_dTelOrch(NULL)
+{
+    SWSS_LOG_ENTER();
+
+    init(db, tableNames, portOrch, mirrorOrch, neighOrch, routeOrch);
+}
+
+AclOrch::AclOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *dtelOrch) :
+        Orch(db, tableNames),
+        m_mirrorOrch(mirrorOrch),
+        m_neighOrch(neighOrch),
+        m_routeOrch(routeOrch),
+        m_dTelOrch(dtelOrch)
+{
+    SWSS_LOG_ENTER();
+
+    init(db, tableNames, portOrch, mirrorOrch, neighOrch, routeOrch);
+
+    if (m_dTelOrch)
+    {
+        m_dTelOrch->attach(this);
+    }
 
     createDTelWatchListTables();
 }
@@ -2366,7 +2390,8 @@ sai_status_t AclOrch::createDTelWatchListTables()
 
     attr.id = SAI_ACL_TABLE_ATTR_ACL_ACTION_TYPE_LIST;
     acl_action_list[0] = SAI_ACL_ACTION_TYPE_DTEL_DROP_REPORT_ENABLE;
-    attr.value.s32list.count = 1;
+    acl_action_list[1] = SAI_ACL_ACTION_TYPE_DTEL_TAIL_DROP_REPORT_ENABLE;
+    attr.value.s32list.count = 2;
     attr.value.s32list.list = acl_action_list;
     table_attrs.push_back(attr);
 

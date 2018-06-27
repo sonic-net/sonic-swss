@@ -143,9 +143,11 @@ bool OrchDaemon::init()
     {
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
+        gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
+    } else {
+        gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
     }
 
-    gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
     m_orchList.push_back(gAclOrch);
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(vrf_orch);
