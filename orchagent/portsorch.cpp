@@ -1888,8 +1888,6 @@ bool PortsOrch::initializePort(Port &p)
     vector.push_back(tuple);
     m_portTable->set(p.m_alias, vector);
 
-    CounterCheckOrch::getInstance().addPort(p);
-
     return true;
 }
 
@@ -2426,6 +2424,8 @@ void PortsOrch::generateQueueMapPerPort(const Port& port)
     m_queuePortTable->set("", queuePortVector);
     m_queueIndexTable->set("", queueIndexVector);
     m_queueTypeTable->set("", queueTypeVector);
+
+    CounterCheckOrch::getInstance().addPort(port);
 }
 
 void PortsOrch::doTask(NotificationConsumer &consumer)
