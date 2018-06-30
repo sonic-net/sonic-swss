@@ -5,7 +5,10 @@ SWSS Integration Tests
 SWSS Integration tests runs on docker-sonic-vs which runs on top of SAI virtual switch. The tests can be run on any Linux machine without real switch ASIC. It is used to test SwSS (Switch State Service) by setting AppDB or ConfigDB and checking corresponding AsicDB entries.
 
 # How to run the tests
-
+- Install ethtool on your dev machine
+    ```
+    sudo apt-get install ethtool
+    ```
 - Install docker and pytest on your dev machine
     ```
     sudo pip install --system docker==2.6.1
