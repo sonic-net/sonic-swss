@@ -2372,7 +2372,10 @@ void PortsOrch::generateQueueMap()
 
     for (const auto& it: m_portList)
     {
-        generateQueueMapPerPort(it.second);
+        if (it.second.m_type == Port::PHY)
+        {
+            generateQueueMapPerPort(it.second);
+        }
     }
 
     m_isQueueMapGenerated = true;
