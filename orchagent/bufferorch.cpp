@@ -85,7 +85,13 @@ bool BufferOrch::isPortReady(const std::string& port_name) const
 {
     SWSS_LOG_ENTER();
 
-    const auto& list_of_keys = m_port_ready_list_ref.at(port_name);
+    const auto it = m_port_ready_list_ref.find(port_name);
+    if (it == m_port_ready_list_ref.cend())
+    {
+        return false;
+    }
+
+    const auto& list_of_keys = it->second;
 
     bool result = true;
     for (const auto& key: list_of_keys)
