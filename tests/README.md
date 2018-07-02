@@ -43,7 +43,7 @@ persists.
 - Create virtual switch container (name:vs). ```create_vnet.sh``` can be found at [here](https://github.com/Azure/sonic-buildimage/blob/master/platform/vs/create_vnet.sh).
 
     ```
-    docker run -id --name sw debian bash
+    docker run --privileged -id --name sw debian bash
     sudo ./create_vnet.sh sw
     docker run --privileged -v /var/run/redis-vs:/var/run/redis --network container:sw -d --name vs docker-sonic-vs
     ```
