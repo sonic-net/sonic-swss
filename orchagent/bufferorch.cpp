@@ -58,9 +58,20 @@ void BufferOrch::initBufferReadyList(Table& table)
 {
     SWSS_LOG_ENTER();
 
+    // init all ports with an empty list
+    for (const auto& it: gPortsOrch->getAllPorts())
+    {
+        if (it.second.m_type == Port::PHY)
+        {
+            const auto& port_name = it.first;
+            m_port_ready_list_ref[port_name] = {};
+        }
+    }
+
     std::vector<std::string> keys;
     table.getKeys(keys);
 
+    // populate the lists with buffer configuration information
     for (const auto& key: keys)
     {
         m_ready_list[key] = false;
@@ -88,7 +99,9 @@ bool BufferOrch::isPortReady(const std::string& port_name) const
     const auto it = m_port_ready_list_ref.find(port_name);
     if (it == m_port_ready_list_ref.cend())
     {
-        return false;
+        // we got a port name which wasn't in our gPortsOrch->getAllPorts() list
+        // so make the port ready, because we don't have any buffer configuration for it
+        return true;
     }
 
     const auto& list_of_keys = it->second;
