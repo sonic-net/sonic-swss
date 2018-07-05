@@ -1229,17 +1229,22 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (fvField(i) == "mtu")
                     mtu = (uint32_t)stoul(fvValue(i));
 
-                /* Set port speed */
-                if (fvField(i) == "speed")
+                /* Only set port speed if autoneg is disabled */
+                if (fvField(i) == "speed" && an != 1)
+                {
                     speed = (uint32_t)stoul(fvValue(i));
+                }
 
                 /* Set port fec */
                 if (fvField(i) == "fec")
                     fec_mode = fvValue(i);
 
-                /* Set autoneg */
+                /* Set autoneg and ignore the port speed setting */
                 if (fvField(i) == "autoneg")
+                {
                     an = (int)stoul(fvValue(i));
+                    speed = 0;
+                }
             }
 
             /* Collect information about all received ports */
@@ -1416,11 +1421,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 }
 
 
-                if (an != -1)
+                if (an != -1 && an != p.m_autoneg)
                 {
                     if (setPortAutoNeg(p.m_port_id, an))
                     {
-                        SWSS_LOG_NOTICE("Set port %s AN to %u", alias.c_str(), an);
+                        SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
+                        p.m_autoneg = an;
+                        m_portList[alias] = p;
                     }
                     else
                     {

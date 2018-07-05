@@ -66,6 +66,7 @@ public:
     int                 m_index = 0;    // PHY_PORT: index
     int                 m_ifindex = 0;
     uint32_t            m_mtu = DEFAULT_MTU;
+    bool                m_autoneg = 0;
     sai_object_id_t     m_port_id = 0;
     sai_port_fec_mode_t m_fec_mode = SAI_PORT_FEC_MODE_NONE;
     VlanInfo            m_vlan_info;
