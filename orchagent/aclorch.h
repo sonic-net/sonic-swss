@@ -261,12 +261,13 @@ protected:
     MirrorOrch *m_pMirrorOrch;
 };
 
-class AclRuleDTelFlowWatchList: public AclRule
+class AclRuleDTelFlowWatchListEntry: public AclRule
 {
 public:
-    AclRuleDTelFlowWatchList(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table, acl_table_type_t type);
+    AclRuleDTelFlowWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table, acl_table_type_t type);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
+    bool create();
     bool remove();
     void update(SubjectType, void *);
 
@@ -274,12 +275,13 @@ protected:
     DTelOrch *m_pDTelOrch;
     string m_intSessionId;
     bool INT_enabled;
+    bool INT_session_valid;
 };
 
-class AclRuleDTelDropWatchList: public AclRule
+class AclRuleDTelDropWatchListEntry: public AclRule
 {
 public:
-    AclRuleDTelDropWatchList(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table, acl_table_type_t type);
+    AclRuleDTelDropWatchListEntry(AclOrch *m_pAclOrch, DTelOrch *m_pDTelOrch, string rule, string table, acl_table_type_t type);
     bool validateAddAction(string attr_name, string attr_value);
     bool validate();
     void update(SubjectType, void *);

@@ -72,6 +72,16 @@ class TestDtel(object):
 			assert fv[1] == "128&mask:0xff"
 		    elif fv[0] == "SAI_DTEL_ATTR_SINK_PORT_LIST":
 			assert True
+
+        tbl._del("SWITCH_ID")
+        tbl._del("FLOW_STATE_CLEAR_CYCLE")
+        tbl._del("LATENCY_SENSITIVITY")
+        tbl._del("INT_ENDPOINT")
+        tbl._del("INT_TRANSIT")
+        tbl._del("POSTCARD")
+        tbl._del("DROP_REPORT")
+        tbl._del("QUEUE_REPORT")
+        tbl._del("SINK_PORT_LIST")
     
     def test_DtelReportSessionAttribs(self, dvs):
     
@@ -110,6 +120,8 @@ class TestDtel(object):
 			assert fv[1] == "2000"
 		    else:
 			assert False
+
+        tbl._del("RS-1")
 
     def test_DtelINTSessionAttribs(self, dvs):
     
@@ -152,6 +164,8 @@ class TestDtel(object):
 		    else:
 			assert False
 
+        tbl._del("INT-1")
+
     def test_DtelQueueReportAttribs(self, dvs):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
@@ -188,6 +202,8 @@ class TestDtel(object):
 			assert True
 		    else:
 			assert False
+
+        tbl._del("Ethernet0|0")
     
 
     def test_DtelEventAttribs(self, dvs):
@@ -196,14 +212,14 @@ class TestDtel(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
     
         # first create DTel report session in config db
-        tbl = swsscommon.Table(db, "DTEL_REPORT_SESSION")
+        rtbl = swsscommon.Table(db, "DTEL_REPORT_SESSION")
 
         fvs = swsscommon.FieldValuePairs([("SRC_IP", "10.10.10.1"), 
                                           ("DST_IP_LIST", "20.20.20.1;20.20.20.2;20.20.20.3"), 
                                           ("VRF", "default"), 
                                           ("TRUNCATE_SIZE", "256"), 
                                           ("UDP_DEST_PORT", "2000")])  
-        tbl.set("RS-1", fvs)
+        rtbl.set("RS-1", fvs)
 
         # create DTel event attributes in config db
         tbl = swsscommon.Table(db, "DTEL_EVENT")
@@ -263,3 +279,11 @@ class TestDtel(object):
 			actual_dscp = fv[1]
 
 	    assert actual_dscp == expected_dscp
+
+        rtbl._del("RS-1")
+        tbl._del("EVENT_TYPE_FLOW_STATE")  
+        tbl._del("EVENT_TYPE_FLOW_REPORT_ALL_PACKETS")
+        tbl._del("EVENT_TYPE_FLOW_TCPFLAG")
+        tbl._del("EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH")
+        tbl._del("EVENT_TYPE_QUEUE_REPORT_TAIL_DROP")
+        tbl._del("EVENT_TYPE_DROP_REPORT")

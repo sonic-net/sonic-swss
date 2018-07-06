@@ -552,7 +552,7 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
     {
         if (dtel)
         {
-            return make_shared<AclRuleDTelFlowWatchList>(acl, dtel, rule, table, type);
+            return make_shared<AclRuleDTelFlowWatchListEntry>(acl, dtel, rule, table, type);
         } else {
             throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
         }
@@ -561,7 +561,7 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
     {
         if (dtel)
         {
-            return make_shared<AclRuleDTelDropWatchList>(acl, dtel, rule, table, type);
+            return make_shared<AclRuleDTelDropWatchListEntry>(acl, dtel, rule, table, type);
         } else {
             throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
         }
@@ -1303,13 +1303,13 @@ AclRuleCounters AclRuleMirror::getCounters()
     return cnt;
 }
 
-AclRuleDTelFlowWatchList::AclRuleDTelFlowWatchList(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table, acl_table_type_t type) :
+AclRuleDTelFlowWatchListEntry::AclRuleDTelFlowWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table, acl_table_type_t type) :
         AclRule(aclOrch, rule, table, type),
         m_pDTelOrch(dtel)
 {
 }
 
-bool AclRuleDTelFlowWatchList::validateAddAction(string attr_name, string attr_val)
+bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string attr_val)
 {
     SWSS_LOG_ENTER();
 
@@ -1325,7 +1325,6 @@ bool AclRuleDTelFlowWatchList::validateAddAction(string attr_name, string attr_v
     {
         return false;
     }
-
 
     if (attr_name == ACTION_DTEL_FLOW_OP)
     {
@@ -1353,20 +1352,22 @@ bool AclRuleDTelFlowWatchList::validateAddAction(string attr_name, string attr_v
         m_intSessionId = attr_value;
 
         bool ret = m_pDTelOrch->getINTSessionOid(attr_value, session_oid);
-        if (!ret)
+        if (ret)
         {
+            value.aclaction.parameter.oid = session_oid;
+
+            // Increase session reference count regardless of state to deny
+            // attempt to remove INT session with attached ACL rules.
+            if (!m_pDTelOrch->increaseINTSessionRefCount(m_intSessionId))
+            {
+                SWSS_LOG_ERROR("Failed to increase INT session %s reference count", m_intSessionId.c_str());
+                return false;
+            }
+
+            INT_session_valid = true;
+        } else {
             SWSS_LOG_ERROR("Invalid INT session id %s used for ACL action", m_intSessionId.c_str());
-            return false;
-        }
-
-        value.aclaction.parameter.oid = session_oid;
-
-        // Increase session reference count regardless of state to deny
-        // attempt to remove INT session with attached ACL rules.
-        if (!m_pDTelOrch->increaseINTSessionRefCount(m_intSessionId))
-        {
-            SWSS_LOG_ERROR("Failed to increase INT session %s reference count", m_intSessionId.c_str());
-            return false;
+            INT_session_valid = false;
         }
     }
 
@@ -1388,7 +1389,7 @@ bool AclRuleDTelFlowWatchList::validateAddAction(string attr_name, string attr_v
     return true;
 }
 
-bool AclRuleDTelFlowWatchList::validate()
+bool AclRuleDTelFlowWatchListEntry::validate()
 {
     SWSS_LOG_ENTER();
 
@@ -1405,12 +1406,40 @@ bool AclRuleDTelFlowWatchList::validate()
     return true;
 }
 
+bool AclRuleDTelFlowWatchListEntry::create()
+{
+    SWSS_LOG_ENTER();
 
-bool AclRuleDTelFlowWatchList::remove()
+    if (!m_pDTelOrch)
+    {
+        return false;
+    }
+
+    if (INT_enabled && !INT_session_valid)
+    {
+        return true;
+    }
+
+    if (!AclRule::create())
+    {
+        return false;
+    }
+
+    m_state = true;
+
+    return true;
+}
+
+bool AclRuleDTelFlowWatchListEntry::remove()
 {
     if (!m_pDTelOrch)
     {
         return false;
+    }
+
+    if (INT_enabled && !INT_session_valid)
+    {
+        return true;
     }
 
     if (!AclRule::remove())
@@ -1418,7 +1447,7 @@ bool AclRuleDTelFlowWatchList::remove()
         return false;
     }
 
-    if (INT_enabled)
+    if (INT_enabled && INT_session_valid)
     {
         if (!m_pDTelOrch->decreaseINTSessionRefCount(m_intSessionId))
         {
@@ -1430,7 +1459,7 @@ bool AclRuleDTelFlowWatchList::remove()
     return true;
 }
 
-void AclRuleDTelFlowWatchList::update(SubjectType type, void *cntx)
+void AclRuleDTelFlowWatchListEntry::update(SubjectType type, void *cntx)
 {
     sai_attribute_value_t value;
     sai_object_id_t session_oid = SAI_NULL_OBJECT_ID;
@@ -1475,22 +1504,25 @@ void AclRuleDTelFlowWatchList::update(SubjectType type, void *cntx)
 
         m_actions[SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION] = value;
 
+        INT_session_valid = true;
+
         create();
     }
     else
     {
         SWSS_LOG_INFO("Deactivating INT watchlist %s for session %s", m_id.c_str(), m_intSessionId.c_str());
         remove();
+        INT_session_valid = false;
     }
 }
 
-AclRuleDTelDropWatchList::AclRuleDTelDropWatchList(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table, acl_table_type_t type) :
+AclRuleDTelDropWatchListEntry::AclRuleDTelDropWatchListEntry(AclOrch *aclOrch, DTelOrch *dtel, string rule, string table, acl_table_type_t type) :
         AclRule(aclOrch, rule, table, type),
         m_pDTelOrch(dtel)
 {
 }
 
-bool AclRuleDTelDropWatchList::validateAddAction(string attr_name, string attr_val)
+bool AclRuleDTelDropWatchListEntry::validateAddAction(string attr_name, string attr_val)
 {
     SWSS_LOG_ENTER();
 
@@ -1517,7 +1549,7 @@ bool AclRuleDTelDropWatchList::validateAddAction(string attr_name, string attr_v
     return true;
 }
 
-bool AclRuleDTelDropWatchList::validate()
+bool AclRuleDTelDropWatchListEntry::validate()
 {
     SWSS_LOG_ENTER();
 
@@ -1534,7 +1566,7 @@ bool AclRuleDTelDropWatchList::validate()
     return true;
 }
 
-void AclRuleDTelDropWatchList::update(SubjectType, void *)
+void AclRuleDTelDropWatchListEntry::update(SubjectType, void *)
 {
     // Do nothing
 }
