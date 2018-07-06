@@ -446,13 +446,13 @@ void DTelOrch::update(SubjectType type, void *cntx)
                 return;
             }
 
-            if (port.m_type != Port::PHY)
+            if (update->port.m_type != Port::PHY)
             {
-                SWSS_LOG_ERROR("DTEL ERROR: Queue reporting applies only to physical ports. %s is not a physical port", port.m_alias.c_str());
+                SWSS_LOG_ERROR("DTEL ERROR: Queue reporting applies only to physical ports. %s is not a physical port", update->port.m_alias.c_str());
                 return;   
             }
 
-            qreport.queueOid = port.m_queue_ids[qreport.q_ind];
+            qreport.queueOid = update->port.m_queue_ids[qreport.q_ind];
 
             status = enableQueueReport(update->port.m_alias, qreport);
             if (status != SAI_STATUS_SUCCESS)
@@ -1228,7 +1228,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
                     goto queue_report_table_continue;   
                 }
 
-                qreport->queueOid = port.m_queue_ids[qreport.q_ind];
+                qreport->queueOid = port_obj.m_queue_ids[qreport->q_ind];
             } else {
                 SWSS_LOG_ERROR("DTEL ERROR: Port for queue reporting %s doesn't exist", port.c_str());
                 qreport->queueOid = 0;
@@ -1239,10 +1239,6 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
             {
                 goto queue_report_table_continue;
             }
-
-                goto queue_report_table_continue;
-            }
-            
         }
         else if (op == DEL_COMMAND)
         {   

@@ -1425,8 +1425,6 @@ bool AclRuleDTelFlowWatchListEntry::create()
         return false;
     }
 
-    m_state = true;
-
     return true;
 }
 
