@@ -76,6 +76,7 @@ struct DTelQueueReportEntry
     sai_object_id_t queueReportOid;
     vector<sai_attribute_t> queue_report_attr;
     uint32_t q_ind;
+    sai_object_id_t queueOid;
 
     DTelQueueReportEntry() :
         queueReportOid(0),
@@ -157,9 +158,9 @@ private:
     bool disableQueueReport(const string& port, const string& queue);
     bool unConfigureEvent(string& event);
     sai_status_t updateSinkPortList();
-    bool addSinkPortToCache(const string& port_alias, const sai_object_id_t port_id);
+    bool addSinkPortToCache(const Port& port);
     bool removeSinkPortFromCache(const string& port_alias);
-    sai_status_t enableQueueReport(Port port, DTelQueueReportEntry& qreport);
+    sai_status_t enableQueueReport(const string& port, DTelQueueReportEntry& qreport);
 
 	PortsOrch *m_portOrch;
 	dTelINTSessionTable_t m_dTelINTSessionTable;
