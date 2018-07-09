@@ -247,13 +247,15 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("Created underlay router interface ID %lx", gUnderlayIfId);
 
     /* Initialize orchestration components */
-    DBConnector *appl_db = new DBConnector(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector *config_db = new DBConnector(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector config_db(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-    OrchDaemon *orchDaemon = new OrchDaemon(appl_db, config_db);
+    OrchDaemon *orchDaemon = new OrchDaemon(&appl_db, &config_db, &state_db);
     if (!orchDaemon->init())
     {
         SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
+        delete orchDaemon;
         exit(EXIT_FAILURE);
     }
 
@@ -268,6 +270,7 @@ int main(int argc, char **argv)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to notify syncd APPLY_VIEW %d", status);
+            delete orchDaemon;
             exit(EXIT_FAILURE);
         }
 
@@ -282,5 +285,6 @@ int main(int argc, char **argv)
         SWSS_LOG_ERROR("Failed due to exception: %s", e.what());
     }
 
+    delete orchDaemon;
     return 0;
 }

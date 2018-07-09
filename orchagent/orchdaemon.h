@@ -22,13 +22,14 @@
 #include "crmorch.h"
 #include "vrforch.h"
 #include "countercheckorch.h"
+#include "flexcounterorch.h"
 
 using namespace swss;
 
 class OrchDaemon
 {
 public:
-    OrchDaemon(DBConnector *, DBConnector *);
+    OrchDaemon(DBConnector *, DBConnector *, DBConnector *);
     ~OrchDaemon();
 
     bool init();
@@ -36,6 +37,7 @@ public:
 private:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
+    DBConnector *m_stateDb;
 
     std::vector<Orch *> m_orchList;
     Select *m_select;

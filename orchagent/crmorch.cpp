@@ -12,6 +12,7 @@
 #define CRM_THRESHOLD_LOW_DEFAULT 70
 #define CRM_THRESHOLD_HIGH_DEFAULT 85
 #define CRM_EXCEEDED_MSG_MAX 10
+#define CRM_ACL_RESOURCE_COUNT 256
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
@@ -436,20 +437,18 @@ void CrmOrch::getResAvailableCounters()
             case SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE:
             case SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE_GROUP:
             {
-                attr.value.aclresource.count = 0;
-                attr.value.aclresource.list = NULL;
+                vector<sai_acl_resource_t> resources(CRM_ACL_RESOURCE_COUNT);
 
+                attr.value.aclresource.count = CRM_ACL_RESOURCE_COUNT;
+                attr.value.aclresource.list = resources.data();
                 sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-                if ((status != SAI_STATUS_SUCCESS) && (status != SAI_STATUS_BUFFER_OVERFLOW))
+                if (status == SAI_STATUS_BUFFER_OVERFLOW)
                 {
-                    SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
-                    break;
+                    resources.resize(attr.value.aclresource.count);
+                    attr.value.aclresource.list = resources.data();
+                    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
                 }
 
-                vector<sai_acl_resource_t> resources(attr.value.aclresource.count);
-                attr.value.aclresource.list = resources.data();
-
-                status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);

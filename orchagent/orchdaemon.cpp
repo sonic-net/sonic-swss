@@ -26,10 +26,12 @@ NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
 AclOrch *gAclOrch;
 CrmOrch *gCrmOrch;
+BufferOrch *gBufferOrch;
 
-OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb) :
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
         m_applDb(applDb),
-        m_configDb(configDb)
+        m_configDb(configDb),
+        m_stateDb(stateDb)
 {
     SWSS_LOG_ENTER();
 }
@@ -39,9 +41,6 @@ OrchDaemon::~OrchDaemon()
     SWSS_LOG_ENTER();
     for (Orch *o : m_orchList)
         delete(o);
-
-    delete(m_configDb);
-    delete(m_applDb);
 }
 
 bool OrchDaemon::init()
@@ -58,7 +57,7 @@ bool OrchDaemon::init()
         { APP_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
         { APP_VLAN_TABLE_NAME,        portsorch_base_pri + 2 },
         { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri     },
-        { APP_LAG_TABLE_NAME,         portsorch_base_pri + 2 },
+        { APP_LAG_TABLE_NAME,         portsorch_base_pri + 4 },
         { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri     }
     };
 
@@ -92,16 +91,21 @@ bool OrchDaemon::init()
         CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
         CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
     };
-    BufferOrch *buffer_orch = new BufferOrch(m_configDb, buffer_tables);
+    gBufferOrch = new BufferOrch(m_configDb, buffer_tables);
 
     TableConnector appDbMirrorSession(m_applDb, APP_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
     MirrorOrch *mirror_orch = new MirrorOrch(appDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch);
     VRFOrch *vrf_orch = new VRFOrch(m_configDb, CFG_VRF_TABLE_NAME);
 
-    vector<string> acl_tables = {
-        CFG_ACL_TABLE_NAME,
-        CFG_ACL_RULE_TABLE_NAME
+    TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_NAME);
+    TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
+    TableConnector stateDbLagTable(m_stateDb, STATE_LAG_TABLE_NAME);
+
+    vector<TableConnector> acl_table_connectors = {
+        confDbAclTable,
+        confDbAclRuleTable,
+        stateDbLagTable
     };
 
     vector<string> dtel_tables = {
@@ -112,7 +116,7 @@ bool OrchDaemon::init()
         CFG_DTEL_EVENT_TABLE_NAME
     };
 
-    m_orchList = { switch_orch, gCrmOrch, gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, buffer_orch, mirror_orch };
+    m_orchList = { switch_orch, gCrmOrch, gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, gBufferOrch, mirror_orch };
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING)
@@ -143,9 +147,9 @@ bool OrchDaemon::init()
     {
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
-        gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
+        gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
     } else {
-        gAclOrch = new AclOrch(m_configDb, acl_tables, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
+        gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
     }
 
     m_orchList.push_back(gAclOrch);
@@ -153,6 +157,13 @@ bool OrchDaemon::init()
     m_orchList.push_back(vrf_orch);
     
     m_select = new Select();
+
+
+    vector<string> flex_counter_tables = {
+        CFG_FLEX_COUNTER_TABLE_NAME
+    };
+
+    m_orchList.push_back(new FlexCounterOrch(m_configDb, flex_counter_tables));
 
     vector<string> pfc_wd_tables = {
         CFG_PFC_WD_TABLE_NAME

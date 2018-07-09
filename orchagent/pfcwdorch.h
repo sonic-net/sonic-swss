@@ -12,6 +12,8 @@ extern "C" {
 #include "sai.h"
 }
 
+#define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
+
 enum class PfcWdAction
 {
     PFC_WD_ACTION_UNKNOWN,
