@@ -10,9 +10,9 @@ def test_route_nhg(dvs):
     dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
     dvs.runcmd("ifconfig Ethernet8 10.0.0.4/31 up")
 
-    dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01") 
-    dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02") 
-    dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03") 
+    dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
+    dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
+    dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03")
 
     dvs.servers[0].runcmd("ip link set down dev eth0") == 0
     dvs.servers[1].runcmd("ip link set down dev eth0") == 0
@@ -67,7 +67,7 @@ def test_route_nhg(dvs):
 
     for k in keys:
         (status, fvs) = nhg_member_tbl.get(k)
-        
+
         for v in fvs:
             if v[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID":
                 assert v[1] == nhgid
@@ -103,7 +103,7 @@ def test_route_nhg(dvs):
         time.sleep(1)
 
         tbl = swsscommon.Table(db, "PORT_TABLE")
-        (status, fvs) = tbl.get("Ethernet0")
+        (status, fvs) = tbl.get("Ethernet%d" % (i * 4))
 
         assert status == True
 

@@ -12,6 +12,9 @@
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
+#define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
+#define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
+
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
 
@@ -60,10 +63,13 @@ public:
     void setPort(string alias, Port port);
     void getCpuPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
+    bool getAclBindPortId(string alias, sai_object_id_t &port_id);
 
     bool setHostIntfsOperStatus(sai_object_id_t id, bool up);
     void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
     bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage = ACL_STAGE_INGRESS);
+
+    void generateQueueMap();
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
@@ -141,7 +147,7 @@ private:
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
-    bool validatePortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
+    bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     bool setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 
@@ -149,6 +155,8 @@ private:
 
     bool setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
+    bool m_isQueueMapGenerated = false;
+    void generateQueueMapPerPort(const Port& port);
 };
 #endif /* SWSS_PORTSORCH_H */
 

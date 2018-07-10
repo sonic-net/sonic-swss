@@ -360,7 +360,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
 
 void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
-    if (db->getDbId() == CONFIG_DB)
+    if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB)
     {
         addExecutor(tableName, new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this));
     }
