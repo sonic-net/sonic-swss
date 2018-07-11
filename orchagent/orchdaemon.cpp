@@ -124,9 +124,9 @@ bool OrchDaemon::init()
         sai_attr_capability_t capability;
         capability.create_implemented = true;
 
-	/* Will uncomment this when saiobject.h support is added to SONiC */
-	/*
-	sai_status_t status;
+    /* Will uncomment this when saiobject.h support is added to SONiC */
+    /*
+    sai_status_t status;
 
         status = sai_query_attribute_capability(gSwitchId, SAI_OBJECT_TYPE_DTEL, SAI_DTEL_ATTR_SWITCH_ID, &capability);
         if (status != SAI_STATUS_SUCCESS)
@@ -134,7 +134,7 @@ bool OrchDaemon::init()
             SWSS_LOG_ERROR("Could not query Dataplane telemetry capability %d", status);
             exit(EXIT_FAILURE);
         }
-	*/
+    */
 
         if (capability.create_implemented)
         {

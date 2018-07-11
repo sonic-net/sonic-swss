@@ -61,7 +61,7 @@ struct DTelINTSessionEntry
 
 struct DTelReportSessionEntry
 {
-	sai_object_id_t reportSessionOid;
+    sai_object_id_t reportSessionOid;
     int64_t refCount;
 
     DTelReportSessionEntry() :
@@ -121,7 +121,7 @@ struct DTelINTSessionUpdate
 class DTelOrch : public Orch, public Subject
 {
 public:
-	DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch);
+    DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOrch);
     ~DTelOrch();
 
     bool increaseINTSessionRefCount(const string&);
@@ -131,8 +131,8 @@ public:
 
 private:
 
-	bool intSessionExists(const string& name);
-	void doTask(Consumer &consumer);
+    bool intSessionExists(const string& name);
+    void doTask(Consumer &consumer);
     void doDtelTableTask(Consumer &consumer);
     void doDtelReportSessionTableTask(Consumer &consumer);
     void doDtelINTSessionTableTask(Consumer &consumer);
@@ -162,8 +162,8 @@ private:
     bool removeSinkPortFromCache(const string& port_alias);
     sai_status_t enableQueueReport(const string& port, DTelQueueReportEntry& qreport);
 
-	PortsOrch *m_portOrch;
-	dTelINTSessionTable_t m_dTelINTSessionTable;
+    PortsOrch *m_portOrch;
+    dTelINTSessionTable_t m_dTelINTSessionTable;
     dTelReportSessionTable_t m_dTelReportSessionTable;
     dTelPortTable_t m_dTelPortTable;
     dtelEventTable_t m_dtelEventTable;
