@@ -516,7 +516,7 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
             action = attr_name;
             break;
         }
-    } 
+    }
 
     if (!action_found)
     {
@@ -1586,7 +1586,7 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
 
         // work around to avoid syncd termination on SAI error due to max count of ranges reached
         // can be removed when syncd start passing errors to the SAI callers
-        char *platform = getenv("onie_platform");
+        char *platform = getenv("platform");
         if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
         {
             if (m_ranges.size() >= MLNX_MAX_RANGES_COUNT)

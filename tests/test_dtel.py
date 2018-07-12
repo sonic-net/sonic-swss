@@ -52,26 +52,26 @@ class TestDtel(object):
             assert status == True
             
             for fv in fvs:
-            if fv[0] == "SAI_DTEL_ATTR_SWITCH_ID":
-            assert fv[1] == "1"
-            elif fv[0] == "SAI_DTEL_ATTR_FLOW_STATE_CLEAR_CYCLE":
-            assert fv[1] == "10"
-            elif fv[0] == "SAI_DTEL_ATTR_LATENCY_SENSITIVITY":
-            assert fv[1] == "100"
-            elif fv[0] == "SAI_DTEL_ATTR_INT_ENDPOINT_ENABLE":
-            assert fv[1] == "true"
-            elif fv[0] == "SAI_DTEL_ATTR_INT_TRANSIT_ENABLE":
-            assert fv[1] == "true"
-            elif fv[0] == "SAI_DTEL_ATTR_POSTCARD_ENABLE":
-            assert fv[1] == "true"
-            elif fv[0] == "SAI_DTEL_ATTR_DROP_REPORT_ENABLE":
-            assert fv[1] == "true"
-            elif fv[0] == "SAI_DTEL_ATTR_QUEUE_REPORT_ENABLE":
-            assert fv[1] == "true"
-            elif fv[0] == "SAI_DTEL_ATTR_INT_L4_DSCP":
-            assert fv[1] == "128&mask:0xff"
-            elif fv[0] == "SAI_DTEL_ATTR_SINK_PORT_LIST":
-            assert True
+                if fv[0] == "SAI_DTEL_ATTR_SWITCH_ID":
+                    assert fv[1] == "1"
+                elif fv[0] == "SAI_DTEL_ATTR_FLOW_STATE_CLEAR_CYCLE":
+                    assert fv[1] == "10"
+                elif fv[0] == "SAI_DTEL_ATTR_LATENCY_SENSITIVITY":
+                    assert fv[1] == "100"
+                elif fv[0] == "SAI_DTEL_ATTR_INT_ENDPOINT_ENABLE":
+                    assert fv[1] == "true"
+                elif fv[0] == "SAI_DTEL_ATTR_INT_TRANSIT_ENABLE":
+                    assert fv[1] == "true"
+                elif fv[0] == "SAI_DTEL_ATTR_POSTCARD_ENABLE":
+                    assert fv[1] == "true"
+                elif fv[0] == "SAI_DTEL_ATTR_DROP_REPORT_ENABLE":
+                    assert fv[1] == "true"
+                elif fv[0] == "SAI_DTEL_ATTR_QUEUE_REPORT_ENABLE":
+                    assert fv[1] == "true"
+                elif fv[0] == "SAI_DTEL_ATTR_INT_L4_DSCP":
+                    assert fv[1] == "128&mask:0xff"
+                elif fv[0] == "SAI_DTEL_ATTR_SINK_PORT_LIST":
+                    assert True
 
         tbl._del("SWITCH_ID")
         tbl._del("FLOW_STATE_CLEAR_CYCLE")
@@ -108,18 +108,18 @@ class TestDtel(object):
             assert status == True
             
             for fv in fvs:
-            if fv[0] == "SAI_DTEL_REPORT_SESSION_ATTR_SRC_IP":
-            assert fv[1] == "10.10.10.1"
-            elif fv[0] == "SAI_DTEL_REPORT_SESSION_ATTR_DST_IP_LIST":
-            assert fv[1] == "3:20.20.20.1,20.20.20.2,20.20.20.3"
-            elif fv[0] == "SAI_DTEL_REPORT_SESSION_ATTR_VIRTUAL_ROUTER_ID":
-            assert True
-            elif fv[0] == "SAI_DTEL_REPORT_SESSION_ATTR_TRUNCATE_SIZE":
-            assert fv[1] == "256"
-            elif fv[0] == "SAI_DTEL_REPORT_SESSION_ATTR_UDP_DST_PORT":
-            assert fv[1] == "2000"
-            else:
-            assert False
+                if fv[0] == "SAI_DTEL_REPORT_SESSION_ATTR_SRC_IP":
+                    assert fv[1] == "10.10.10.1"
+                elif fv[0] == "SAI_DTEL_REPORT_SESSION_ATTR_DST_IP_LIST":
+                    assert fv[1] == "3:20.20.20.1,20.20.20.2,20.20.20.3"
+                elif fv[0] == "SAI_DTEL_REPORT_SESSION_ATTR_VIRTUAL_ROUTER_ID":
+                    assert True
+                elif fv[0] == "SAI_DTEL_REPORT_SESSION_ATTR_TRUNCATE_SIZE":
+                    assert fv[1] == "256"
+                elif fv[0] == "SAI_DTEL_REPORT_SESSION_ATTR_UDP_DST_PORT":
+                    assert fv[1] == "2000"
+                else:
+                    assert False
 
         tbl._del("RS-1")
 
@@ -149,20 +149,20 @@ class TestDtel(object):
             assert status == True
             
             for fv in fvs:
-            if fv[0] == "SAI_DTEL_INT_SESSION_ATTR_MAX_HOP_COUNT":
-            assert fv[1] == "50"
-            elif fv[0] == "SAI_DTEL_INT_SESSION_ATTR_COLLECT_SWITCH_ID":
-            assert fv[1] == "true"
-            elif fv[0] == "SAI_DTEL_INT_SESSION_ATTR_COLLECT_INGRESS_TIMESTAMP":
-            assert fv[1] == "true"
-            elif fv[0] == "SAI_DTEL_INT_SESSION_ATTR_COLLECT_EGRESS_TIMESTAMP":
-            assert fv[1] == "true"
-            elif fv[0] == "SAI_DTEL_INT_SESSION_ATTR_COLLECT_SWITCH_PORTS":
-            assert fv[1] == "true"
-            elif fv[0] == "SAI_DTEL_INT_SESSION_ATTR_COLLECT_QUEUE_INFO":
-            assert fv[1] == "true"
-            else:
-            assert False
+                if fv[0] == "SAI_DTEL_INT_SESSION_ATTR_MAX_HOP_COUNT":
+                    assert fv[1] == "50"
+                elif fv[0] == "SAI_DTEL_INT_SESSION_ATTR_COLLECT_SWITCH_ID":
+                    assert fv[1] == "true"
+                elif fv[0] == "SAI_DTEL_INT_SESSION_ATTR_COLLECT_INGRESS_TIMESTAMP":
+                    assert fv[1] == "true"
+                elif fv[0] == "SAI_DTEL_INT_SESSION_ATTR_COLLECT_EGRESS_TIMESTAMP":
+                    assert fv[1] == "true"
+                elif fv[0] == "SAI_DTEL_INT_SESSION_ATTR_COLLECT_SWITCH_PORTS":
+                    assert fv[1] == "true"
+                elif fv[0] == "SAI_DTEL_INT_SESSION_ATTR_COLLECT_QUEUE_INFO":
+                    assert fv[1] == "true"
+                else:
+                    assert False
 
         tbl._del("INT-1")
 
@@ -190,18 +190,18 @@ class TestDtel(object):
             assert status == True
             
             for fv in fvs:
-            if fv[0] == "SAI_DTEL_QUEUE_REPORT_ATTR_DEPTH_THRESHOLD":
-            assert fv[1] == "1000"
-            elif fv[0] == "SAI_DTEL_QUEUE_REPORT_ATTR_LATENCY_THRESHOLD":
-            assert fv[1] == "2000"
-            elif fv[0] == "SAI_DTEL_QUEUE_REPORT_ATTR_BREACH_QUOTA":
-            assert fv[1] == "3000"
-            elif fv[0] == "SAI_DTEL_QUEUE_REPORT_ATTR_TAIL_DROP":
-            assert fv[1] == "true"
-            elif fv[0] == "SAI_DTEL_QUEUE_REPORT_ATTR_QUEUE_ID":
-            assert True
-            else:
-            assert False
+                if fv[0] == "SAI_DTEL_QUEUE_REPORT_ATTR_DEPTH_THRESHOLD":
+                    assert fv[1] == "1000"
+                elif fv[0] == "SAI_DTEL_QUEUE_REPORT_ATTR_LATENCY_THRESHOLD":
+                    assert fv[1] == "2000"
+                elif fv[0] == "SAI_DTEL_QUEUE_REPORT_ATTR_BREACH_QUOTA":
+                    assert fv[1] == "3000"
+                elif fv[0] == "SAI_DTEL_QUEUE_REPORT_ATTR_TAIL_DROP":
+                    assert fv[1] == "true"
+                elif fv[0] == "SAI_DTEL_QUEUE_REPORT_ATTR_QUEUE_ID":
+                    assert True
+                else:
+                    assert False
 
         tbl._del("Ethernet0|0")
     
@@ -260,23 +260,23 @@ class TestDtel(object):
         expected_dscp = None 
         actual_dscp = None 
             for fv in fvs:
-            if fv[0] == "SAI_DTEL_EVENT_ATTR_TYPE":
-            if fv[1] == "SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_TAIL_DROP":
-                expected_dscp = "61"
-            elif fv[1] == "SAI_DTEL_EVENT_TYPE_DROP_REPORT":
-                expected_dscp = "60"
-            elif fv[1] == "SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH":
-                expected_dscp = "62"
-            elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_TCPFLAG":
-                expected_dscp = "63"
-            elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_REPORT_ALL_PACKETS":
-                expected_dscp = "64"
-            elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_STATE":
-                expected_dscp = "65"
-            elif fv[0] == "SAI_DTEL_EVENT_ATTR_REPORT_SESSION":
-            assert True 
-            elif fv[0] == "SAI_DTEL_EVENT_ATTR_DSCP_VALUE":
-            actual_dscp = fv[1]
+                if fv[0] == "SAI_DTEL_EVENT_ATTR_TYPE":
+                    if fv[1] == "SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_TAIL_DROP":
+                        expected_dscp = "61"
+                    elif fv[1] == "SAI_DTEL_EVENT_TYPE_DROP_REPORT":
+                        expected_dscp = "60"
+                    elif fv[1] == "SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH":
+                        expected_dscp = "62"
+                    elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_TCPFLAG":
+                        expected_dscp = "63"
+                    elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_REPORT_ALL_PACKETS":
+                        expected_dscp = "64"
+                    elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_STATE":
+                        expected_dscp = "65"
+                elif fv[0] == "SAI_DTEL_EVENT_ATTR_REPORT_SESSION":
+                    assert True
+                elif fv[0] == "SAI_DTEL_EVENT_ATTR_DSCP_VALUE":
+                    actual_dscp = fv[1]
 
         assert actual_dscp == expected_dscp
 

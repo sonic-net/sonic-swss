@@ -1352,7 +1352,7 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to create event %s", event.c_str());
-        goto event_table_continue;
+                goto event_table_continue;
             }
 
             addEvent(event, event_oid, report_session_id);

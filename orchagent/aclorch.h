@@ -290,7 +290,7 @@ protected:
     DTelOrch *m_pDTelOrch;
 };
 
-struct AclTable {
+class AclTable {
     sai_object_id_t m_oid;
 public:
     string id;
