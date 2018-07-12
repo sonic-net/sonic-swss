@@ -37,7 +37,7 @@ DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOr
         SWSS_LOG_ERROR("DTEL ERROR: Error creating DTel id");
         return;
     }
-                
+
     attr.id = SAI_DTEL_ATTR_INT_L4_DSCP;
 
     attr.value.aclfield.data.u8 = 0x11;
@@ -189,7 +189,7 @@ bool DTelOrch::decreaseReportSessionRefCount(const string& name)
 
     --m_dTelReportSessionTable[name].refCount;
 
-    if (m_dTelReportSessionTable[name].refCount == 0) 
+    if (m_dTelReportSessionTable[name].refCount == 0)
     {
         deleteReportSession(name);
     }
@@ -214,7 +214,7 @@ bool DTelOrch::isQueueReportEnabled(const string& port, const string& queue)
 
     auto port_entry_iter = m_dTelPortTable.find(port);
 
-    if (port_entry_iter == m_dTelPortTable.end() || 
+    if (port_entry_iter == m_dTelPortTable.end() ||
         (port_entry_iter->second.queueTable).find(queue) == (port_entry_iter->second.queueTable).end())
     {
         return false;
@@ -347,11 +347,11 @@ sai_status_t DTelOrch::updateSinkPortList()
     attr.value.objlist.count = (uint32_t)port_list.size();
     if (port_list.size() == 0)
     {
-        attr.value.objlist.list = {};   
+        attr.value.objlist.list = {};
     } else {
         attr.value.objlist.list = port_list.data();
     }
-    
+
     status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -372,7 +372,7 @@ bool DTelOrch::addSinkPortToCache(const Port& port)
     if (port.m_type != Port::PHY)
     {
         SWSS_LOG_ERROR("DTEL ERROR: Only physical ports supported as INT sink. %s is not a physical port", port.m_alias.c_str());
-        return false;   
+        return false;
     }
 
     sinkPortList[port.m_alias] = port.m_port_id;
@@ -449,7 +449,7 @@ void DTelOrch::update(SubjectType type, void *cntx)
             if (update->port.m_type != Port::PHY)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Queue reporting applies only to physical ports. %s is not a physical port", update->port.m_alias.c_str());
-                return;   
+                return;
             }
 
             qreport.queueOid = update->port.m_queue_ids[qreport.q_ind];
@@ -571,7 +571,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set switch id");
                     goto dtel_table_continue;
-                } 
+                }
             }
             else if (table_attr == FLOW_STATE_CLEAR_CYCLE)
             {
@@ -584,7 +584,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set Dtel flow state clear cycle");
                     goto dtel_table_continue;
-                }   
+                }
             }
             else if (table_attr == LATENCY_SENSITIVITY)
             {
@@ -610,7 +610,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                         if (port.m_type != Port::PHY)
                         {
                             SWSS_LOG_ERROR("DTEL ERROR: Only physical ports supported as INT sink. %s is not a physical port", fvField(i).c_str());
-                            goto dtel_table_continue;   
+                            goto dtel_table_continue;
                         }
 
                         sinkPortList[fvField(i)] = port.m_port_id;
@@ -738,7 +738,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset switch id");
                     goto dtel_table_continue;
-                }  
+                }
             }
             else if (table_attr == FLOW_STATE_CLEAR_CYCLE)
             {
@@ -751,7 +751,7 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset flow state clear cycle");
                     goto dtel_table_continue;
-                } 
+                }
             }
             else if (table_attr == LATENCY_SENSITIVITY)
             {
@@ -909,7 +909,7 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
                 }
             }
 
-            status = sai_dtel_api->create_dtel_report_session(&report_session_oid, 
+            status = sai_dtel_api->create_dtel_report_session(&report_session_oid,
                 gSwitchId, (uint32_t)report_session_attr.size(), report_session_attr.data());
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -937,7 +937,7 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
             if (!deleteReportSession(report_session_id))
             {
                 goto report_session_table_continue;
-            } 
+            }
         }
 
 report_session_table_continue:
@@ -1047,7 +1047,7 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
                 }
             }
 
-            status = sai_dtel_api->create_dtel_int_session(&int_session_oid, 
+            status = sai_dtel_api->create_dtel_int_session(&int_session_oid,
                 gSwitchId, (uint32_t)int_session_attr.size(), int_session_attr.data());
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -1075,7 +1075,7 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
                 decreaseINTSessionRefCount(int_session_id);
                 goto int_session_table_continue;
             }
-            
+
             if (!deleteINTSession(int_session_id))
             {
                 goto int_session_table_continue;
@@ -1136,7 +1136,7 @@ sai_status_t DTelOrch::enableQueueReport(const string& port, DTelQueueReportEntr
     qr_attr.value.oid = qreport.queueOid;
     qreport.queue_report_attr.push_back(qr_attr);
 
-    status = sai_dtel_api->create_dtel_queue_report(&qreport.queueReportOid, 
+    status = sai_dtel_api->create_dtel_queue_report(&qreport.queueReportOid,
                 gSwitchId, (uint32_t)qreport.queue_report_attr.size(), qreport.queue_report_attr.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -1189,7 +1189,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
             {
                 goto queue_report_table_continue;
             }
-            
+
             qreport->q_ind = q_ind;
 
             for (auto i : kfvFieldsValues(t))
@@ -1225,7 +1225,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
                 if (port_obj.m_type != Port::PHY)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Queue reporting applies only to physical ports. %s is not a physical port", port.c_str());
-                    goto queue_report_table_continue;   
+                    goto queue_report_table_continue;
                 }
 
                 qreport->queueOid = port_obj.m_queue_ids[qreport->q_ind];
@@ -1241,7 +1241,7 @@ void DTelOrch::doDtelQueueReportTableTask(Consumer &consumer)
             }
         }
         else if (op == DEL_COMMAND)
-        {   
+        {
             if (!disableQueueReport(port, queue_id))
             {
                 goto queue_report_table_continue;
@@ -1347,7 +1347,7 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
                 }
             }
 
-            status = sai_dtel_api->create_dtel_event(&event_oid, 
+            status = sai_dtel_api->create_dtel_event(&event_oid,
                 gSwitchId, (uint32_t)event_attr.size(), event_attr.data());
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -1358,7 +1358,7 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
             addEvent(event, event_oid, report_session_id);
         }
         else if (op == DEL_COMMAND)
-        {   
+        {
             if (!unConfigureEvent(event))
             {
                 goto event_table_continue;

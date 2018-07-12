@@ -507,8 +507,8 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
         string attr_value = fvValue(itr);
         if (attr_name == ACTION_PACKET_ACTION || attr_name == ACTION_MIRROR_ACTION ||
             attr_name == ACTION_DTEL_FLOW_OP || attr_name == ACTION_DTEL_INT_SESSION ||
-            attr_name == ACTION_DTEL_DROP_REPORT_ENABLE || 
-            attr_name == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE || 
+            attr_name == ACTION_DTEL_DROP_REPORT_ENABLE ||
+            attr_name == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE ||
             attr_name == ACTION_DTEL_FLOW_SAMPLE_PERCENT ||
             attr_name == ACTION_DTEL_REPORT_ALL_PACKETS)
         {
