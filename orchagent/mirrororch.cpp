@@ -194,7 +194,8 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
 {
     SWSS_LOG_ENTER();
 
-    MirrorEntry entry(getenv("platform"));
+    string platform = getenv("platform") ? getenv("platform") : "";
+    MirrorEntry entry(platform);
 
     for (auto i : data)
     {
