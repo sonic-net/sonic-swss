@@ -46,6 +46,7 @@ class TestDtel(object):
 
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_DTEL")
         keys = atbl.getKeys()
+        assert len(keys) >= 1
         
         for k in keys:
             (status, fvs) = atbl.get(k)
@@ -102,6 +103,7 @@ class TestDtel(object):
 
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_DTEL_REPORT_SESSION")
         keys = atbl.getKeys()
+        assert len(keys) >= 1
         
         for k in keys:
             (status, fvs) = atbl.get(k)
@@ -143,6 +145,7 @@ class TestDtel(object):
 
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_DTEL_INT_SESSION")
         keys = atbl.getKeys()
+        assert len(keys) >= 1
         
         for k in keys:
             (status, fvs) = atbl.get(k)
@@ -184,6 +187,7 @@ class TestDtel(object):
 
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_DTEL_QUEUE_REPORT")
         keys = atbl.getKeys()
+        assert len(keys) >= 1
         
         for k in keys:
             (status, fvs) = atbl.get(k)
@@ -252,6 +256,7 @@ class TestDtel(object):
 
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_DTEL_EVENT")
         keys = atbl.getKeys()
+        assert len(keys) >= 1
         
         for k in keys:
             (status, fvs) = atbl.get(k)
