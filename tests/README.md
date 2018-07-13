@@ -35,6 +35,8 @@ SWSS Integration tests runs on docker-sonic-vs which runs on top of SAI virtual 
     sudo pytest -v
     ```
 
+\* If you meet the error: client is newer than server, please edit the file `/usr/local/lib/python2.7/dist-packages/docker/constants.py` to update the `DEFAULT_DOCKER_API_VERSION` to mitigate this issue.
+
 # How to setup test development env
 
 To develop new swss features or swss integration tests, you need to setup a virtual switch docker container which 
