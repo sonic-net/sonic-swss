@@ -904,6 +904,23 @@ bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)
     return status == SAI_STATUS_SUCCESS;
 }
 
+bool PortsOrch::setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status;
+    vector<sai_uint32_t> speeds;
+    speeds.push_back(speed);
+
+    attr.id = SAI_PORT_ATTR_ADVERTISED_SPEED;
+    attr.value.u32list.list  = speeds.data();
+    attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
+
+    status = sai_port_api->set_port_attribute(port_id, &attr);
+
+    return status == SAI_STATUS_SUCCESS;
+}
+
 bool PortsOrch::getQueueType(sai_object_id_t queue_id, string &type)
 {
     SWSS_LOG_ENTER();
@@ -947,7 +964,6 @@ bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
       case 1:
         attr.value.booldata = true;
         break;
-      case 0:
       default:
         attr.value.booldata = false;
         break;
@@ -956,10 +972,10 @@ bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
     sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set AN %u to port pid:%lx", attr.value.u32, id);
+        SWSS_LOG_ERROR("Failed to set AutoNeg %u to port pid:%lx", attr.value.booldata, id);
         return false;
     }
-    SWSS_LOG_INFO("Set AN %u to port pid:%lx", attr.value.u32, id);
+    SWSS_LOG_INFO("Set AutoNeg %u to port pid:%lx", attr.value.booldata, id);
     return true;
 }
 
@@ -1038,7 +1054,7 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string
         attrs.push_back(attr);
     }
 
-    if (fec_mode != "")
+    if (!fec_mode.empty())
     {
         attr.id = SAI_PORT_ATTR_FEC_MODE;
         attr.value.u32 = fec_mode_map[fec_mode];
@@ -1242,15 +1258,19 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 /* Set port speed */
                 if (fvField(i) == "speed")
+                {
                     speed = (uint32_t)stoul(fvValue(i));
+                }
 
                 /* Set port fec */
                 if (fvField(i) == "fec")
                     fec_mode = fvValue(i);
 
-                /* Set autoneg */
+                /* Set autoneg and ignore the port speed setting */
                 if (fvField(i) == "autoneg")
+                {
                     an = (int)stoul(fvValue(i));
+                }
             }
 
             /* Collect information about all received ports */
@@ -1351,7 +1371,32 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
-                /* Set port speed
+                if (an != -1 && an != p.m_autoneg)
+                {
+                    if (setPortAutoNeg(p.m_port_id, an))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
+                        p.m_autoneg = an;
+                        m_portList[alias] = p;
+
+                        /* Once AN is changed, need to reset the port speed or
+                           port adv speed accordingly */
+                        if (speed == 0 && p.m_speed != 0)
+                        {
+                            speed = p.m_speed;
+                        }
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s AN to %u", alias.c_str(), an);
+                        it++;
+                        continue;
+                    }
+                }
+
+                /*
+                 * When AN is enabled, set the port adv speed, otherwise change the port speed.
+                 *
                  * 1. Get supported speed list and validate if the target speed is within the list
                  * 2. Get the current port speed and check if it is the same as the target speed
                  * 3. Set port admin status to DOWN before changing the speed
@@ -1359,40 +1404,59 @@ void PortsOrch::doPortTask(Consumer &consumer)
                  */
                 if (speed != 0)
                 {
-                    sai_uint32_t current_speed;
+                    p.m_speed = speed;
+                    m_portList[alias] = p;
 
-                    if (!isSpeedSupported(alias, p.m_port_id, speed))
+                    if (p.m_autoneg)
                     {
-                        it++;
-                        continue;
-                    }
-
-                    if (getPortSpeed(p.m_port_id, current_speed))
-                    {
-                        if (speed != current_speed)
+                        if (setPortAdvSpeed(p.m_port_id, speed))
                         {
-                            if (setPortAdminStatus(p.m_port_id, false))
-                            {
-                                if (setPortSpeed(p.m_port_id, speed))
-                                {
-                                    SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
-                                }
-                                else
-                                {
-                                    SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
-                                    it++;
-                                    continue;
-                                }
-                            }
-                            else
-                            {
-                                SWSS_LOG_ERROR("Failed to set port admin status DOWN to set speed");
-                            }
+                            SWSS_LOG_NOTICE("Set port %s advertised speed to %u", alias.c_str(), speed);
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s advertised speed to %u", alias.c_str(), speed);
+                            it++;
+                            continue;
                         }
                     }
                     else
                     {
-                        SWSS_LOG_ERROR("Failed to get current speed for port %s", alias.c_str());
+                        sai_uint32_t current_speed;
+
+                        if (!isSpeedSupported(alias, p.m_port_id, speed))
+                        {
+                            it++;
+                            continue;
+                        }
+
+                        if (getPortSpeed(p.m_port_id, current_speed))
+                        {
+                            if (speed != current_speed)
+                            {
+                                if (setPortAdminStatus(p.m_port_id, false))
+                                {
+                                    if (setPortSpeed(p.m_port_id, speed))
+                                    {
+                                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
+                                    }
+                                    else
+                                    {
+                                        SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                                        it++;
+                                        continue;
+                                    }
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port admin status DOWN to set speed");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to get current speed for port %s", alias.c_str());
+                        }
                     }
                 }
 
@@ -1412,7 +1476,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (admin_status != "")
+                if (!admin_status.empty())
                 {
                     if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
                     {
@@ -1427,21 +1491,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 }
 
 
-                if (an != -1)
-                {
-                    if (setPortAutoNeg(p.m_port_id, an))
-                    {
-                        SWSS_LOG_NOTICE("Set port %s AN to %u", alias.c_str(), an);
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set port %s AN to %u", alias.c_str(), an);
-                        it++;
-                        continue;
-                    }
-                }
-
-                if (fec_mode != "")
+                if (!fec_mode.empty())
                 {
                     if (fec_mode_map.find(fec_mode) != fec_mode_map.end())
                     {
