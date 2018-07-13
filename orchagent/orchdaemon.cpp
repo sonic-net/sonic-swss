@@ -119,7 +119,7 @@ bool OrchDaemon::init()
     m_orchList = { switch_orch, gCrmOrch, gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, gBufferOrch, mirror_orch };
 
     bool initialize_dtel = false;
-    if (platform == BFN_PLATFORM_SUBSTRING)
+    if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
     {
         sai_attr_capability_t capability;
         capability.create_implemented = true;
