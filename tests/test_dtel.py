@@ -264,24 +264,24 @@ class TestDtel(object):
            
         expected_dscp = None 
         actual_dscp = None 
-            for fv in fvs:
-                if fv[0] == "SAI_DTEL_EVENT_ATTR_TYPE":
-                    if fv[1] == "SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_TAIL_DROP":
-                        expected_dscp = "61"
-                    elif fv[1] == "SAI_DTEL_EVENT_TYPE_DROP_REPORT":
-                        expected_dscp = "60"
-                    elif fv[1] == "SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH":
-                        expected_dscp = "62"
-                    elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_TCPFLAG":
-                        expected_dscp = "63"
-                    elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_REPORT_ALL_PACKETS":
-                        expected_dscp = "64"
-                    elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_STATE":
-                        expected_dscp = "65"
-                elif fv[0] == "SAI_DTEL_EVENT_ATTR_REPORT_SESSION":
-                    assert True
-                elif fv[0] == "SAI_DTEL_EVENT_ATTR_DSCP_VALUE":
-                    actual_dscp = fv[1]
+        for fv in fvs:
+            if fv[0] == "SAI_DTEL_EVENT_ATTR_TYPE":
+                if fv[1] == "SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_TAIL_DROP":
+                    expected_dscp = "61"
+                elif fv[1] == "SAI_DTEL_EVENT_TYPE_DROP_REPORT":
+                    expected_dscp = "60"
+                elif fv[1] == "SAI_DTEL_EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH":
+                    expected_dscp = "62"
+                elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_TCPFLAG":
+                    expected_dscp = "63"
+                elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_REPORT_ALL_PACKETS":
+                    expected_dscp = "64"
+                elif fv[1] == "SAI_DTEL_EVENT_TYPE_FLOW_STATE":
+                    expected_dscp = "65"
+            elif fv[0] == "SAI_DTEL_EVENT_ATTR_REPORT_SESSION":
+                assert True
+            elif fv[0] == "SAI_DTEL_EVENT_ATTR_DSCP_VALUE":
+                actual_dscp = fv[1]
 
         assert actual_dscp == expected_dscp
 
