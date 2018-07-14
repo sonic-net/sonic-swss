@@ -10,9 +10,19 @@ class TestAcl(object):
         assert dvs.asicdb.default_acl_table in keys
         acl_tables = [k for k in keys if k not in dvs.asicdb.default_acl_table]
 
-        assert len(acl_tables) == 1 
+        assert len(acl_tables) >= 1
 
-        return acl_tables[0]
+	# Filter out DTel Acl tables
+	for k in acl_tables:
+	    (status, fvs) = atbl.get(k)
+	    for item in fvs:
+	        if item[0] == "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST":
+	            if 'SAI_ACL_BIND_POINT_TYPE_PORT' in item[1] or 'SAI_ACL_BIND_POINT_TYPE_LAG' in item[1]:
+	                return k
+	            else:
+	                break
+
+        return None
 
     def verify_if_any_acl_table_created(self, dvs, adb):
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
@@ -20,10 +30,17 @@ class TestAcl(object):
         assert dvs.asicdb.default_acl_table in keys
         acl_tables = [k for k in keys if k not in dvs.asicdb.default_acl_table]
 
-        if (len(acl_tables) != 0):
-            return True
-        else:
-            return False
+	# Filter out DTel Acl tables
+	for k in acl_tables:
+	    (status, fvs) = atbl.get(k)
+	    for item in fvs:
+	        if item[0] == "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST":
+	            if 'SAI_ACL_BIND_POINT_TYPE_PORT' in item[1] or 'SAI_ACL_BIND_POINT_TYPE_LAG' in item[1]:
+	                return True
+	            else:
+	                break
+
+        return False
 
     def clean_up_left_over(self, dvs):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -220,8 +237,8 @@ class TestAcl(object):
 
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
-        # only the default table was left
-        assert len(keys) == 1
+        # only the default table was left along with DTel tables
+        assert len(keys) >= 1
 
     def test_V6AclTableCreation(self, dvs):
     
@@ -848,7 +865,7 @@ class TestAcl(object):
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
         # only the default table was left
-        assert len(keys) == 1
+        assert len(keys) >= 1
 
     #helper function to verify if rule exists
     def check_rule_existence(self, entry, rules, verifs):
@@ -961,7 +978,7 @@ class TestAcl(object):
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
         # only the default table was left
-        assert len(keys) == 1
+        assert len(keys) >= 1
 
     def test_RulesWithDiffMaskLengths(self, dvs):
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
@@ -1046,7 +1063,7 @@ class TestAcl(object):
 
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
-        assert len(keys) == 1
+        assert len(keys) >= 1
         
     def test_AclTableCreationOnLAGMember(self, dvs):
         # prepare db and tables
