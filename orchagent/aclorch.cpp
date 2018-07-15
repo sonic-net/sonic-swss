@@ -6,6 +6,7 @@
 #include "schema.h"
 #include "ipprefix.h"
 #include "converter.h"
+#include "tokenize.h"
 #include "timer.h"
 #include "crmorch.h"
 
@@ -226,8 +227,19 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if(attr_name == MATCH_DSCP)
         {
-            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value, 0, 0x3F);
-            value.aclfield.mask.u8 = 0x3F;
+            /* Support both exact value match and value/mask match */
+            auto dscp_data = tokenize(attr_value, '/');
+
+            value.aclfield.data.u8 = to_uint<uint8_t>(dscp_data[0], 0, 0x3F);
+
+            if (dscp_data.size() == 2)
+            {
+                value.aclfield.mask.u8 = to_uint<uint8_t>(dscp_data[1], 0, 0x3F);
+            }
+            else
+            {
+                value.aclfield.mask.u8 = 0x3F;
+            }
         }
         else if(attr_name == MATCH_IP_PROTOCOL)
         {
