@@ -82,13 +82,6 @@ void IntfsOrch::doTask(Consumer &consumer)
         string op = kfvOp(t);
         if (op == SET_COMMAND)
         {
-            if (alias == "lo")
-            {
-                addIp2MeRoute(ip_prefix);
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
@@ -100,7 +93,8 @@ void IntfsOrch::doTask(Consumer &consumer)
             auto it_intfs = m_syncdIntfses.find(alias);
             if (it_intfs == m_syncdIntfses.end())
             {
-                if (addRouterIntfs(port))
+                /* Do not create router interface when it is a loopback interface */
+                if (port.m_type == Port::LOOPBACK || addRouterIntfs(port))
                 {
                     IntfsEntry intfs_entry;
                     intfs_entry.ref_count = 0;
@@ -148,9 +142,16 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
-            addSubnetRoute(port, ip_prefix);
             addIp2MeRoute(ip_prefix);
-            if(port.m_type == Port::VLAN && ip_prefix.isV4())
+
+            /* Add subnet route for non-loopback interfaces */
+            if (port.m_type != Port::LOOPBACK)
+            {
+                addSubnetRoute(port, ip_prefix);
+            }
+
+            /* Add directed broadcast route for VLAN IPv4 interfaces */
+            if (port.m_type == Port::VLAN && ip_prefix.isV4())
             {
                 addDirectedBroadcast(port, ip_prefix.getBroadcastIp());
             }

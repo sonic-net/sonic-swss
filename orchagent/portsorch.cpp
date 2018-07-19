@@ -162,6 +162,10 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_cpuPort.m_port_id = attr.value.oid;
     m_portList[m_cpuPort.m_alias] = m_cpuPort;
 
+    /* Create loopback port */
+    m_loopbackPort = Port("lo", Port::LOOPBACK);
+    m_portList[m_loopbackPort.m_alias] = m_loopbackPort;
+
     /* Get port number */
     attr.id = SAI_SWITCH_ATTR_PORT_NUMBER;
 

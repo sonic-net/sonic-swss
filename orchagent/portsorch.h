@@ -90,6 +90,7 @@ private:
 
     bool m_initDone = false;
     Port m_cpuPort;
+    Port m_loopbackPort;
     // TODO: Add Bridge/Vlan class
     sai_object_id_t m_default1QBridge;
     sai_object_id_t m_defaultVlan;
