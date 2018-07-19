@@ -10,6 +10,7 @@
 #include "swssnet.h"
 #include "tokenize.h"
 #include "crmorch.h"
+#include "bufferorch.h"
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -20,6 +21,7 @@ extern sai_neighbor_api_t*          sai_neighbor_api;
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
+extern BufferOrch *gBufferOrch;
 
 const int intfsorch_pri = 35;
 
@@ -93,6 +95,13 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (!gPortsOrch->getPort(alias, port))
             {
                 /* TODO: Resolve the dependency relationship and add ref_count to port */
+                it++;
+                continue;
+            }
+
+            // buffer configuration hasn't been applied yet, hold from intf config.
+            if (!gBufferOrch->isPortReady(alias))
+            {
                 it++;
                 continue;
             }
