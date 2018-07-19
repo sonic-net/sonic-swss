@@ -1643,8 +1643,8 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
 
         if (!getPort(port_alias, port))
         {
-            SWSS_LOG_ERROR("Failed to locate port %s", port_alias.c_str());
-            it = consumer.m_toSync.erase(it);
+            SWSS_LOG_DEBUG("%s is not not yet created, delaying", port_alias.c_str());
+            it++;
             continue;
         }
 
