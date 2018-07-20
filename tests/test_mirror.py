@@ -40,7 +40,7 @@ class TestMirror(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
-        bind_ports = ["Ethernet0", "Ethernet4"]
+        bind_ports = ["Ethernet0", "Ethernet4", "Ethernet8"]
         tbl = swsscommon.Table(cdb, "ACL_TABLE")
 
         fvs = swsscommon.FieldValuePairs([("POLICY_DESC", "MIRROR_TEST"),
@@ -51,9 +51,13 @@ class TestMirror(object):
         time.sleep(1)
 
         # assert the table is created
-        tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
+        tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         acl_table_ids = tbl.getKeys()
         assert len(acl_table_ids) == 2
+
+        tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
+        acl_table_group_ids = tbl.getKeys()
+        assert len(acl_table_group_ids) == 3
 
         tbl = swsscommon.Table(cdb, "MIRROR_SESSION")
         fvs = swsscommon.FieldValuePairs([("src_ip", "10.1.0.32"),
@@ -227,7 +231,7 @@ class TestMirror(object):
         # assert the ACL table is removed
         tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         acl_table_ids = tbl.getKeys()
-        assert len(acl_table_ids) == 3
+        assert len(acl_table_ids) == 1
 
         tbl = swsscommon.Table(cdb, "MIRROR_SESSION")
         # remove the mirror session
