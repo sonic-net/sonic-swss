@@ -1011,6 +1011,7 @@ bool AclTable::validate()
 {
     // Control plane ACLs are handled by a separate process
     if (type == ACL_TABLE_UNKNOWN || type == ACL_TABLE_CTRLPLANE) return false;
+    if (stage == ACL_STAGE_UNKNOWN) return false;
     if (portSet.empty()) return false;
     return true;
 }
@@ -1018,12 +1019,6 @@ bool AclTable::validate()
 bool AclTable::create()
 {
     SWSS_LOG_ENTER();
-
-    if (stage == ACL_STAGE_UNKNOWN)
-    {
-        SWSS_LOG_ERROR("Unknown ACL stage for ACL table %s", id.c_str());
-        return false;
-    }
 
     sai_attribute_t attr;
     vector<sai_attribute_t> table_attrs;
