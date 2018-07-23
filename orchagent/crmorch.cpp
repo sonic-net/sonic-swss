@@ -600,7 +600,7 @@ string CrmOrch::getCrmAclKey(sai_acl_stage_t stage, sai_acl_bind_point_type_t bi
         case SAI_ACL_BIND_POINT_TYPE_VLAN:
             key += ":VLAN";
             break;
-        case SAI_ACL_BIND_POINT_TYPE_ROUTER_INTFERFACE:
+        case SAI_ACL_BIND_POINT_TYPE_ROUTER_INTERFACE:
             key += ":RIF";
             break;
         case SAI_ACL_BIND_POINT_TYPE_SWITCH:

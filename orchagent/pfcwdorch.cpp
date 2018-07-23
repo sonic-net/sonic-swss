@@ -9,7 +9,6 @@
 #include "notifier.h"
 #include "redisclient.h"
 
-#define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
 #define PFC_WD_GLOBAL                   "GLOBAL"
 #define PFC_WD_ACTION                   "action"
 #define PFC_WD_DETECTION_TIME           "detection_time"

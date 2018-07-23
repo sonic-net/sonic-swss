@@ -199,7 +199,7 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
         throw "Port configuration file not found!";
     }
 
-    list<string> header = {"name", "lanes", "alias", "speed"};
+    list<string> header = {"name", "lanes", "alias", "speed", "autoneg", "fec"};
     string line;
     while (getline(infile, line))
     {
@@ -250,6 +250,18 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
         {
             FieldValueTuple speed_attr("speed", entry["speed"]);
             attrs.push_back(speed_attr);
+        }
+
+        if ((entry.find("autoneg") != entry.end()) && (entry["autoneg"] != ""))
+        {
+            FieldValueTuple autoneg_attr("autoneg", entry["autoneg"]);
+            attrs.push_back(autoneg_attr);
+        }
+
+        if ((entry.find("fec") != entry.end()) && (entry["fec"] != ""))
+        {
+            FieldValueTuple fec_attr("fec", entry["fec"]);
+            attrs.push_back(fec_attr);
         }
 
         p.set(entry["name"], attrs);

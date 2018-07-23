@@ -33,6 +33,8 @@ const char config_db_key_delimiter = '|';
 
 #define MLNX_PLATFORM_SUBSTRING "mellanox"
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
+#define BFN_PLATFORM_SUBSTRING  "barefoot"
+#define VS_PLATFORM_SUBSTRING   "vs"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"

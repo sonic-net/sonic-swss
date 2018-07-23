@@ -875,7 +875,6 @@ bool PortsOrch::isSpeedSupported(const std::string& alias, sai_object_id_t port_
 bool PortsOrch::setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed)
 {
     SWSS_LOG_ENTER();
-
     sai_attribute_t attr;
     sai_status_t status;
 
@@ -901,6 +900,23 @@ bool PortsOrch::getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed)
 
     if (status == SAI_STATUS_SUCCESS)
         speed = attr.value.u32;
+
+    return status == SAI_STATUS_SUCCESS;
+}
+
+bool PortsOrch::setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status;
+    vector<sai_uint32_t> speeds;
+    speeds.push_back(speed);
+
+    attr.id = SAI_PORT_ATTR_ADVERTISED_SPEED;
+    attr.value.u32list.list  = speeds.data();
+    attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
+
+    status = sai_port_api->set_port_attribute(port_id, &attr);
 
     return status == SAI_STATUS_SUCCESS;
 }
@@ -935,6 +951,31 @@ bool PortsOrch::getQueueType(sai_object_id_t queue_id, string &type)
         throw runtime_error("Got unsupported queue type");
     }
 
+    return true;
+}
+
+bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+    switch(an) {
+      case 1:
+        attr.value.booldata = true;
+        break;
+      default:
+        attr.value.booldata = false;
+        break;
+    }
+
+    sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set AutoNeg %u to port pid:%lx", attr.value.booldata, id);
+        return false;
+    }
+    SWSS_LOG_INFO("Set AutoNeg %u to port pid:%lx", attr.value.booldata, id);
     return true;
 }
 
@@ -988,7 +1029,7 @@ void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_
     }
 }
 
-bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed)
+bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string fec_mode)
 {
     SWSS_LOG_ENTER();
 
@@ -1005,6 +1046,20 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed)
     attr.value.u32list.list = lanes.data();
     attr.value.u32list.count = static_cast<uint32_t>(lanes.size());
     attrs.push_back(attr);
+
+    if (an == true)
+    {
+        attr.id = SAI_PORT_ATTR_AUTO_NEG_MODE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
+
+    if (!fec_mode.empty())
+    {
+        attr.id = SAI_PORT_ATTR_FEC_MODE;
+        attr.value.u32 = fec_mode_map[fec_mode];
+        attrs.push_back(attr);
+    }
 
     sai_object_id_t port_id;
     sai_status_t status = sai_port_api->create_port(&port_id, gSwitchId, static_cast<uint32_t>(attrs.size()), attrs.data());
@@ -1024,6 +1079,13 @@ bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed)
 bool PortsOrch::removePort(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
+
+    Port p;
+    if (getPort(port_id, p))
+    {
+    	PortUpdate update = {p, false };
+    	notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+    }
 
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -1093,6 +1155,9 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 fields.emplace_back(PORT_COUNTER_ID_LIST, counters_stream.str());
 
                 m_flexCounterTable->set(key, fields);
+
+    		PortUpdate update = {p, true };
+    		notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
@@ -1165,6 +1230,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             string fec_mode;
             uint32_t mtu = 0;
             uint32_t speed = 0;
+            int an = -1;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -1179,6 +1245,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         int lane = stoi(lane_str);
                         lane_set.insert(lane);
                     }
+
                 }
 
                 /* Set port admin status */
@@ -1191,17 +1258,25 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 /* Set port speed */
                 if (fvField(i) == "speed")
+                {
                     speed = (uint32_t)stoul(fvValue(i));
+                }
 
                 /* Set port fec */
                 if (fvField(i) == "fec")
                     fec_mode = fvValue(i);
+
+                /* Set autoneg and ignore the port speed setting */
+                if (fvField(i) == "autoneg")
+                {
+                    an = (int)stoul(fvValue(i));
+                }
             }
 
             /* Collect information about all received ports */
             if (lane_set.size())
             {
-                m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed);
+                m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed, an, fec_mode);
             }
 
             /* Once all ports received, go through the each port and perform appropriate actions:
@@ -1216,7 +1291,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (m_lanesAliasSpeedMap.find(it->first) == m_lanesAliasSpeedMap.end())
                     {
                         char *platform = getenv("platform");
-                        if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
                         {
                             if (!removePort(it->second))
                             {
@@ -1245,9 +1320,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         // work around to avoid syncd termination on SAI error due missing create_port SAI API
                         // can be removed when SAI redis return NotImplemented error
                         char *platform = getenv("platform");
-                        if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
                         {
-                            if (!addPort(it->first, get<1>(it->second)))
+                            if (!addPort(it->first, get<1>(it->second), get<2>(it->second), get<3>(it->second)))
                             {
                                 throw runtime_error("PortsOrch initialization failure.");
                             }
@@ -1296,7 +1371,32 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
-                /* Set port speed
+                if (an != -1 && an != p.m_autoneg)
+                {
+                    if (setPortAutoNeg(p.m_port_id, an))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
+                        p.m_autoneg = an;
+                        m_portList[alias] = p;
+
+                        /* Once AN is changed, need to reset the port speed or
+                           port adv speed accordingly */
+                        if (speed == 0 && p.m_speed != 0)
+                        {
+                            speed = p.m_speed;
+                        }
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s AN to %u", alias.c_str(), an);
+                        it++;
+                        continue;
+                    }
+                }
+
+                /*
+                 * When AN is enabled, set the port adv speed, otherwise change the port speed.
+                 *
                  * 1. Get supported speed list and validate if the target speed is within the list
                  * 2. Get the current port speed and check if it is the same as the target speed
                  * 3. Set port admin status to DOWN before changing the speed
@@ -1304,40 +1404,59 @@ void PortsOrch::doPortTask(Consumer &consumer)
                  */
                 if (speed != 0)
                 {
-                    sai_uint32_t current_speed;
+                    p.m_speed = speed;
+                    m_portList[alias] = p;
 
-                    if (!isSpeedSupported(alias, p.m_port_id, speed))
+                    if (p.m_autoneg)
                     {
-                        it++;
-                        continue;
-                    }
-
-                    if (getPortSpeed(p.m_port_id, current_speed))
-                    {
-                        if (speed != current_speed)
+                        if (setPortAdvSpeed(p.m_port_id, speed))
                         {
-                            if (setPortAdminStatus(p.m_port_id, false))
-                            {
-                                if (setPortSpeed(p.m_port_id, speed))
-                                {
-                                    SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
-                                }
-                                else
-                                {
-                                    SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
-                                    it++;
-                                    continue;
-                                }
-                            }
-                            else
-                            {
-                                SWSS_LOG_ERROR("Failed to set port admin status DOWN to set speed");
-                            }
+                            SWSS_LOG_NOTICE("Set port %s advertised speed to %u", alias.c_str(), speed);
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s advertised speed to %u", alias.c_str(), speed);
+                            it++;
+                            continue;
                         }
                     }
                     else
                     {
-                        SWSS_LOG_ERROR("Failed to get current speed for port %s", alias.c_str());
+                        sai_uint32_t current_speed;
+
+                        if (!isSpeedSupported(alias, p.m_port_id, speed))
+                        {
+                            it++;
+                            continue;
+                        }
+
+                        if (getPortSpeed(p.m_port_id, current_speed))
+                        {
+                            if (speed != current_speed)
+                            {
+                                if (setPortAdminStatus(p.m_port_id, false))
+                                {
+                                    if (setPortSpeed(p.m_port_id, speed))
+                                    {
+                                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
+                                    }
+                                    else
+                                    {
+                                        SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                                        it++;
+                                        continue;
+                                    }
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port admin status DOWN to set speed");
+                                }
+                            }
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to get current speed for port %s", alias.c_str());
+                        }
                     }
                 }
 
@@ -1357,7 +1476,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (admin_status != "")
+                if (!admin_status.empty())
                 {
                     if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
                     {
@@ -1371,7 +1490,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (fec_mode != "")
+
+                if (!fec_mode.empty())
                 {
                     if (fec_mode_map.find(fec_mode) != fec_mode_map.end())
                     {
@@ -1817,61 +1937,6 @@ void PortsOrch::initializeQueues(Port &port)
     }
 
     SWSS_LOG_INFO("Get queues for port %s", port.m_alias.c_str());
-
-    /* Create the Queue map in the Counter DB */
-    /* Add stat counters to flex_counter */
-    vector<FieldValueTuple> queueVector;
-    vector<FieldValueTuple> queuePortVector;
-    vector<FieldValueTuple> queueIndexVector;
-    vector<FieldValueTuple> queueTypeVector;
-
-    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
-    {
-        std::ostringstream name;
-        name << port.m_alias << ":" << queueIndex;
-        FieldValueTuple tuple(name.str(), sai_serialize_object_id(port.m_queue_ids[queueIndex]));
-        queueVector.push_back(tuple);
-
-        FieldValueTuple queuePortTuple(
-                sai_serialize_object_id(port.m_queue_ids[queueIndex]),
-                sai_serialize_object_id(port.m_port_id));
-        queuePortVector.push_back(queuePortTuple);
-
-        FieldValueTuple queueIndexTuple(
-                sai_serialize_object_id(port.m_queue_ids[queueIndex]),
-                to_string(queueIndex));
-        queueIndexVector.push_back(queueIndexTuple);
-
-
-        string queueType;
-        if (getQueueType(port.m_queue_ids[queueIndex], queueType))
-        {
-            FieldValueTuple queueTypeTuple(
-                    sai_serialize_object_id(port.m_queue_ids[queueIndex]),
-                    queueType);
-            queueTypeVector.push_back(queueTypeTuple);
-        }
-
-        string key = getQueueFlexCounterTableKey(sai_serialize_object_id(port.m_queue_ids[queueIndex]));
-
-        std::string delimiter = "";
-        std::ostringstream counters_stream;
-        for (auto it = queueStatIds.begin(); it != queueStatIds.end(); it++)
-        {
-            counters_stream << delimiter << sai_serialize_queue_stat(*it);
-            delimiter = ",";
-        }
-
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
-
-        m_flexCounterTable->set(key, fieldValues);
-    }
-
-    m_queueTable->set("", queueVector);
-    m_queuePortTable->set("", queuePortVector);
-    m_queueIndexTable->set("", queueIndexVector);
-    m_queueTypeTable->set("", queueTypeVector);
 }
 
 void PortsOrch::initializePriorityGroups(Port &port)
@@ -1942,8 +2007,6 @@ bool PortsOrch::initializePort(Port &p)
     FieldValueTuple tuple("oper_status", "down");
     vector.push_back(tuple);
     m_portTable->set(p.m_alias, vector);
-
-    CounterCheckOrch::getInstance().addPort(p);
 
     return true;
 }
@@ -2418,6 +2481,74 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
     return true;
+}
+
+void PortsOrch::generateQueueMap()
+{
+    if (m_isQueueMapGenerated)
+    {
+        return;
+    }
+
+    for (const auto& it: m_portList)
+    {
+        if (it.second.m_type == Port::PHY)
+        {
+            generateQueueMapPerPort(it.second);
+        }
+    }
+
+    m_isQueueMapGenerated = true;
+}
+
+void PortsOrch::generateQueueMapPerPort(const Port& port)
+{
+    /* Create the Queue map in the Counter DB */
+    /* Add stat counters to flex_counter */
+    vector<FieldValueTuple> queueVector;
+    vector<FieldValueTuple> queuePortVector;
+    vector<FieldValueTuple> queueIndexVector;
+    vector<FieldValueTuple> queueTypeVector;
+
+    for (size_t queueIndex = 0; queueIndex < port.m_queue_ids.size(); ++queueIndex)
+    {
+        std::ostringstream name;
+        name << port.m_alias << ":" << queueIndex;
+
+        const auto id = sai_serialize_object_id(port.m_queue_ids[queueIndex]);
+
+        queueVector.emplace_back(name.str(), id);
+        queuePortVector.emplace_back(id, sai_serialize_object_id(port.m_port_id));
+        queueIndexVector.emplace_back(id, to_string(queueIndex));
+
+        string queueType;
+        if (getQueueType(port.m_queue_ids[queueIndex], queueType))
+        {
+            queueTypeVector.emplace_back(id, queueType);
+        }
+
+        string key = getQueueFlexCounterTableKey(id);
+
+        std::string delimiter = "";
+        std::ostringstream counters_stream;
+        for (const auto& it: queueStatIds)
+        {
+            counters_stream << delimiter << sai_serialize_queue_stat(it);
+            delimiter = ",";
+        }
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
+
+        m_flexCounterTable->set(key, fieldValues);
+    }
+
+    m_queueTable->set("", queueVector);
+    m_queuePortTable->set("", queuePortVector);
+    m_queueIndexTable->set("", queueIndexVector);
+    m_queueTypeTable->set("", queueTypeVector);
+
+    CounterCheckOrch::getInstance().addPort(port);
 }
 
 void PortsOrch::doTask(NotificationConsumer &consumer)
