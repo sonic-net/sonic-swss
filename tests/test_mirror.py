@@ -73,7 +73,9 @@ class TestMirror(object):
         assert len(fvs) == 1
         for fv in fvs:
             if fv[0] == "status":
-                fv[1] == "inactive"
+                assert fv[1] == "inactive"
+            else:
+                assert False
 
     def test_MirrorSessionActivation(self, dvs):
         # assign the IP address to Ethernet0
