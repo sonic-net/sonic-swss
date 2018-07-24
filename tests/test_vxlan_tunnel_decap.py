@@ -15,7 +15,7 @@ def create_entry(tbl, key, pairs):
 
 
 def create_entry_tbl(db, table, separator, key, pairs):
-    tbl = swsscommon.Table(db, table, separator)
+    tbl = swsscommon.Table(db, table)
     create_entry(tbl, key, pairs)
 
 
