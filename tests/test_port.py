@@ -1,6 +1,27 @@
 from swsscommon import swsscommon
+
 import time
 import os
+
+class TestPort(object):
+    def test_PortMtu(self, dvs):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # set MTU to port
+        tbl = swsscommon.Table(cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("MTU", "9100")])
+        tbl.set("Ethernet8", fvs)
+        time.sleep(1)
+
+        # check application database
+        tbl = swsscommon.Table(pdb, "PORT_TABLE")
+        (status, fvs) = tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "mtu":
+                assert fv[1] == "9100"
 
 def test_PortNotification(dvs):
 
