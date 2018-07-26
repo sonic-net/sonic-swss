@@ -1357,7 +1357,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 continue;
             }
 
-            if (alias != "PortConfigDone" && !gBufferOrch->isPortReady(alias))
+            if (alias == "PortConfigDone")
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            if (!gBufferOrch->isPortReady(alias))
             {
                 // buffer configuration hasn't been applied yet. save it for future retry
                 it++;
@@ -1365,7 +1371,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
 
             Port p;
-            if (!getPort(alias, p) && alias != "PortConfigDone")
+            if (!getPort(alias, p))
             {
                 SWSS_LOG_ERROR("Failed to get port id by alias:%s", alias.c_str());
             }
@@ -1516,7 +1522,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     {
                         SWSS_LOG_ERROR("Unknown fec mode %s", fec_mode.c_str());
                     }
-
                 }
             }
         }
