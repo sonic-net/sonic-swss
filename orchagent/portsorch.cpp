@@ -629,7 +629,7 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
         {
             // Bind this ACL group to LAG
             sai_attribute_t lag_attr;
-	        lag_attr.id = ingress ? SAI_LAG_ATTR_INGRESS_ACL : SAI_LAG_ATTR_EGRESS_ACL;
+            lag_attr.id = ingress ? SAI_LAG_ATTR_INGRESS_ACL : SAI_LAG_ATTR_EGRESS_ACL;
             lag_attr.value.oid = groupOid;
 
             status = sai_lag_api->set_lag_attribute(port.m_lag_id, &lag_attr);
@@ -1086,8 +1086,8 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
     Port p;
     if (getPort(port_id, p))
     {
-    	PortUpdate update = {p, false };
-    	notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+        PortUpdate update = {p, false };
+        notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
     }
 
     sai_status_t status = sai_port_api->remove_port(port_id);
@@ -1159,8 +1159,8 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
 
                 m_flexCounterTable->set(key, fields);
 
-    		PortUpdate update = {p, true };
-    		notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+                PortUpdate update = {p, true };
+                notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
