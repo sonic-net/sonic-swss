@@ -151,7 +151,7 @@ public:
     vector<Selectable*> getSelectables();
 
     // add the existing table data (left by warm reboot) to the consumer todo task list.
-    void addExistingData(Table *table);
+    bool addExistingData(Table *table);
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     void doTask();

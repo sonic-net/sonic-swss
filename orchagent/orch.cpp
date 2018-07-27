@@ -141,25 +141,21 @@ void Consumer::drain()
 }
 
 // TODO: Table should be const
-void Orch::addExistingData(Table *table)
+bool Orch::addExistingData(Table *table)
 {
     string tableName = table->getTableName();
-    Consumer* consumer;
-    auto it = m_consumerMap.begin();
-
-    while (it != m_consumerMap.end())
+    auto found = m_consumerMap.find(tableName);
+    if (found == m_consumerMap.end())
     {
-        consumer = (Consumer*)(it->second.get());
-        if (tableName == consumer->getTableName())
-        {
-            break;
-        }
-        it++;
+        SWSS_LOG_ERROR("No table %s in Orch", tableName.c_str());
+        return false;
     }
 
-    if (it == m_consumerMap.end())
+    Consumer* consumer = dynamic_cast<Consumer *>(found->second.get());
+    if (consumer == NULL)
     {
-        return;
+        SWSS_LOG_ERROR("Executor is not a Consumer: %s", tableName.c_str());
+        return false;
     }
 
     std::deque<KeyOpFieldsValuesTuple> entries;
@@ -180,6 +176,7 @@ void Orch::addExistingData(Table *table)
     }
 
     consumer->addToSync(entries);
+    return true;
 }
 
 /*
