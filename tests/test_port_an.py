@@ -6,7 +6,7 @@ def test_PortAutoNeg(dvs):
 
     db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
 
-    tbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
+    tbl = swsscommon.ProducerTable(db, "PORT_TABLE")
 
     # set autoneg = false and speed = 1000
     fvs = swsscommon.FieldValuePairs([("autoneg","1"), ("speed", "1000")])
@@ -31,7 +31,7 @@ def test_PortAutoNeg(dvs):
 
     # set speed = 100
     fvs = swsscommon.FieldValuePairs([("speed", "100")])
- 
+
     tbl.set("Ethernet0", fvs)
 
     time.sleep(1)
