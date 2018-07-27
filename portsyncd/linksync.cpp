@@ -13,6 +13,7 @@
 
 #include "linkcache.h"
 #include "portsyncd/linksync.h"
+#include "warm_restart.h"
 
 #include <iostream>
 #include <set>
@@ -29,6 +30,7 @@ const string LAG_PREFIX = "PortChannel";
 extern set<string> g_portSet;
 extern bool g_init;
 
+
 struct if_nameindex
 {
     unsigned int if_index;
@@ -41,52 +43,55 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_portTable(appl_db, APP_PORT_TABLE_NAME),
     m_statePortTable(state_db, STATE_PORT_TABLE_NAME)
 {
-    /* See the comments for g_portSet in portsyncd.cpp */
-    for (string port : g_portSet)
+    if (!isWarmStart())
     {
-        vector<FieldValueTuple> temp;
-        if (m_portTable.get(port, temp))
+        /* See the comments for g_portSet in portsyncd.cpp */
+        for (string port : g_portSet)
         {
-            for (auto it : temp)
+            vector<FieldValueTuple> temp;
+            if (m_portTable.get(port, temp))
             {
-                if (fvField(it) == "admin_status")
+                for (auto it : temp)
                 {
-                    g_portSet.erase(port);
-                    break;
+                    if (fvField(it) == "admin_status")
+                    {
+                        g_portSet.erase(port);
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    struct if_nameindex *if_ni, *idx_p;
-    if_ni = if_nameindex();
-    if (if_ni == NULL)
-    {
-        return;
-    }
-
-    for (idx_p = if_ni; ! (idx_p->if_index == 0 && idx_p->if_name == NULL); idx_p++)
-    {
-        string key = idx_p->if_name;
-        if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
+        struct if_nameindex *if_ni, *idx_p;
+        if_ni = if_nameindex();
+        if (if_ni == NULL)
         {
-            continue;
+            return;
         }
 
-        m_ifindexOldNameMap[idx_p->if_index] = key;
+        for (idx_p = if_ni; ! (idx_p->if_index == 0 && idx_p->if_name == NULL); idx_p++)
+        {
+            string key = idx_p->if_name;
+            if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
+            {
+                continue;
+            }
 
-        /* Bring down the existing kernel interfaces */
-        string cmd, res;
-        SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
-        cmd = "ip link set " + key + " down";
-        try
-        {
-            swss::exec(cmd, res);
-        }
-        catch (...)
-        {
-            /* Ignore error in this flow ; */
-            SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+            m_ifindexOldNameMap[idx_p->if_index] = key;
+
+            /* Bring down the existing kernel interfaces */
+            string cmd, res;
+            SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+            cmd = "ip link set " + key + " down";
+            try
+            {
+                swss::exec(cmd, res);
+            }
+            catch (...)
+            {
+                /* Ignore error in this flow ; */
+                SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+            }
         }
     }
 }
