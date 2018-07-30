@@ -171,6 +171,23 @@ void Consumer::drain()
         m_orch->doTask(*this);
 }
 
+void Consumer::dumpTasks(vector<string> &ts)
+{
+    for (auto &tm :m_toSync)
+    {
+        KeyOpFieldsValuesTuple& tuple = tm.second;
+
+        string s = getTableName() + ":" + kfvKey(tuple)
+               + "|" + kfvOp(tuple);
+        for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
+        {
+            s += "|" + fvField(*i) + ":" + fvValue(*i);
+        }
+
+        ts.push_back(s);
+    }
+}
+
 bool Orch::addExistingData(const string& tableName)
 {
     Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
@@ -290,6 +307,21 @@ void Orch::doTask()
     for(auto &it : m_consumerMap)
     {
         it.second->drain();
+    }
+}
+
+void Orch::dumpTasks(vector<string> &ts)
+{
+    for(auto &it : m_consumerMap)
+    {
+        Consumer* consumer = dynamic_cast<Consumer *>(it.second.get());
+        if (consumer == NULL)
+        {
+            SWSS_LOG_DEBUG("Executor is not a Consumer");
+            continue;
+        }
+
+        consumer->dumpTasks(ts);
     }
 }
 

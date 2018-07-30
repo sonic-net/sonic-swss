@@ -102,6 +102,11 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
     m_syncdRoutes[v6_default_ip_prefix] = IpAddresses();
 
     SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
+
+
+    // Read the pre-existing data for route in appDB.
+    addExistingData(tableName);
+
 }
 
 bool RouteOrch::hasNextHopGroup(const IpAddresses& ipAddresses) const

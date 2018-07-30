@@ -91,9 +91,21 @@ public:
     virtual void execute() { }
     virtual void drain() { }
 
+    virtual string getName() const
+    {
+        return m_name;
+    }
+    virtual void setName(string name)
+    {
+        m_name = name;
+    }
+
 protected:
     Selectable *m_selectable;
     Orch *m_orch;
+
+    // Name for Executor
+    string m_name;
 
     // Get the underlying selectable
     Selectable *getSelectable() const { return m_selectable; }
@@ -116,10 +128,24 @@ public:
         return getConsumerTable()->getTableName();
     }
 
+
+    string getName() const
+    {
+        return getConsumerTable()->getTableName();
+    }
+
+    int getDbId() const
+    {
+        return getConsumerTable()->getDbId();
+    }
+
+    void dumpTasks(vector<string> &ts);
+
     void addToSync(std::deque<KeyOpFieldsValuesTuple> &entries);
     void refillToSync();
     void refillToSync(Table* table);
     void execute();
+
     void drain();
 
     /* Store the latest 'golden' status */
@@ -166,6 +192,8 @@ public:
 
     /* TODO: refactor recording */
     static void recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
+
+    void dumpTasks(vector<string> &ts);
 protected:
     ConsumerMap m_consumerMap;
 

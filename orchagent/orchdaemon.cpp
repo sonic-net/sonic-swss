@@ -3,6 +3,7 @@
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
+#include "warm_restart.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -16,7 +17,7 @@ using namespace swss;
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
-
+extern void syncd_apply_view();
 /*
  * Global orch daemon variables
  */
@@ -27,6 +28,7 @@ RouteOrch *gRouteOrch;
 AclOrch *gAclOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
+SwitchOrch *gSwitchOrch;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
         m_applDb(applDb),
@@ -49,7 +51,7 @@ bool OrchDaemon::init()
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
-    SwitchOrch *switch_orch = new SwitchOrch(m_applDb, APP_SWITCH_TABLE_NAME);
+    gSwitchOrch = new SwitchOrch(m_applDb, APP_SWITCH_TABLE_NAME);
 
     const int portsorch_base_pri = 40;
 
@@ -116,7 +118,15 @@ bool OrchDaemon::init()
         CFG_DTEL_EVENT_TABLE_NAME
     };
 
-    m_orchList = { switch_orch, gCrmOrch, gBufferOrch, gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, mirror_orch };
+    /*
+     * The order of the orch list is important for state restore of warm start and
+     * the queued processing in m_toSync map after gPortsOrch->isInitDone() is set.
+     *
+     * For the multiple consumers in ports_tables, tasks for LAG_TABLE is processed before VLAN_TABLE
+     * when iterating ConsumerMap.
+     * That is ensured implicitly by the order of map key, "LAG_TABLE" is smaller than "VLAN_TABLE" in lexicographic order.
+     */
+    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -152,12 +162,12 @@ bool OrchDaemon::init()
         gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
     }
 
-    m_orchList.push_back(gAclOrch);
     m_orchList.push_back(gFdbOrch);
+    m_orchList.push_back(mirror_orch);
+    m_orchList.push_back(gAclOrch);
     m_orchList.push_back(vrf_orch);
 
     m_select = new Select();
-
 
     vector<string> flex_counter_tables = {
         CFG_FLEX_COUNTER_TABLE_NAME
@@ -279,6 +289,16 @@ void OrchDaemon::start()
         m_select->addSelectables(o->getSelectables());
     }
 
+    bool restored = true;
+    // executorSet stores all Executors which have data/task to be processed
+    // after state restore phase of warm start.
+    set<Executor *> executorSet;
+    if (WarmStart::isWarmStart())
+    {
+        restored = false;
+        WarmStart::setWarmStartState("orchagent", WarmStart::INIT);
+    }
+
     while (true)
     {
         Selectable *s;
@@ -304,7 +324,32 @@ void OrchDaemon::start()
         }
 
         auto *c = (Executor *)s;
-        c->execute();
+
+        if (restored)
+        {
+            c->execute();
+        }
+        else
+        {
+            /*
+             * Don't process any new data other than those from ConfigDB
+             * before state restore is finished.
+             * stateDbLagTable is a special case, create/delete of LAG is controlled
+             * from configDB. It is assumed that no configDB change during warm restart.
+             */
+
+            Consumer* consumer = dynamic_cast<Consumer *>(c);
+            if (consumer != NULL && (consumer->getDbId() == CONFIG_DB || consumer->getDbId() == STATE_DB))
+            {
+                c->execute();
+            }
+            else if (executorSet.find(c) == executorSet.end())
+            {
+                executorSet.insert(c);
+                SWSS_LOG_NOTICE("Task for executor %s is being postponed after state restore",
+                        c->getName().c_str());
+            }
+        }
 
         /* After each iteration, periodically check all m_toSync map to
          * execute all the remaining tasks that need to be retried. */
@@ -313,5 +358,78 @@ void OrchDaemon::start()
         for (Orch *o : m_orchList)
             o->doTask();
 
+        /*
+         * All data to be restored have been added to m_toSync of each orch
+         * at contructor phase.  And the order of m_orchList guranteed the
+         * dependency of tasks had been met, restore is done.
+         */
+        if (!restored && m_select->isQueueEmpty() && gPortsOrch->isInitDone())
+        {
+            /*
+             * drain remaining data that are out of order like LAG_MEMBER_TABLE and VLAN_MEMBER_TABLE
+             * since they were checked before LAG_TABLE and VLAN_TABLE.
+             */
+            for (Orch *o : m_orchList)
+            {
+                o->doTask();
+            }
+
+            warmRestoreValidation();
+            SWSS_LOG_NOTICE("Orchagent state restore done");
+            restored = true;
+            syncd_apply_view();
+
+            /* Pick up those tasks postponed by restore processing */
+            if(!executorSet.empty())
+            {
+                for (Executor *c : executorSet)
+                {
+                    c->execute();
+                }
+                for (Orch *o : m_orchList)
+                {
+                    o->doTask();
+                }
+            }
+        }
+    }
+}
+
+/*
+ * Get tasks to sync for consumers of each orch being managed by this orch daemon
+ */
+void OrchDaemon::getTaskToSync(vector<string> &ts)
+{
+    for (Orch *o : m_orchList)
+    {
+        o->dumpTasks(ts);
+    }
+}
+
+
+/* Perform basic validation after start restore for warm start */
+bool OrchDaemon::warmRestoreValidation()
+{
+    /*
+     * No pending task should exist for any of the consumer at this point.
+     * All the prexisting data in appDB and configDb have been read and processed.
+     */
+    vector<string> ts;
+    getTaskToSync(ts);
+    if (ts.size() != 0)
+    {
+        // TODO: change it to fatal once staged ProducerStateTable/ConsumerStateTable change and
+        // pre-warmStart consistency validation are ready.
+        SWSS_LOG_ERROR("There are pending consumer tasks after restore: ");
+        for(auto &s : ts)
+        {
+            SWSS_LOG_ERROR("%s", s.c_str());
+        }
+        return false;
+    }
+    else
+    {
+        WarmStart::setWarmStartState("orchagent", WarmStart::RESTORED);
+        return true;
     }
 }

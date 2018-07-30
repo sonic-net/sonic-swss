@@ -1694,6 +1694,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     auto interv = timespec { .tv_sec = COUNTERS_READ_INTERVAL, .tv_nsec = 0 };
     auto timer = new SelectableTimer(interv);
     auto executor = new ExecutableTimer(timer, this);
+    executor->setName("ACL_POLL_TIMER");
     Orch::addExecutor("", executor);
     timer->start();
 }

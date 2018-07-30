@@ -244,6 +244,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this);
+    portStatusNotificatier->setName("PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor("PORT_STATUS_NOTIFICATIONS", portStatusNotificatier);
 
     // Try warm start
@@ -696,7 +697,7 @@ bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
 
     if (port.m_rif_id)
     {
-        SWSS_LOG_ERROR("pvid setting for router interface is not allowed");
+        SWSS_LOG_ERROR("pvid setting for router interface %s is not allowed", port.m_alias.c_str());
         return false;
     }
 
@@ -1206,7 +1207,9 @@ bool PortsOrch::bake()
     if (m_portCount != keys.size() - 2)
     {
         // Invalid port table
-        SWSS_LOG_ERROR("Invalid port table: m_portCount");
+        SWSS_LOG_ERROR("Invalid port table: m_portCount, expecting %u, got %lu",
+                m_portCount, keys.size() - 2);
+
         cleanPortTable(keys);
         return false;
     }
