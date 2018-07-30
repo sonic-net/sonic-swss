@@ -1213,6 +1213,11 @@ bool PortsOrch::bake()
     }
 
     addExistingData(m_portTable.get());
+    addExistingData(APP_LAG_TABLE_NAME);
+    addExistingData(APP_LAG_MEMBER_TABLE_NAME);
+    addExistingData(APP_VLAN_TABLE_NAME);
+    addExistingData(APP_VLAN_MEMBER_TABLE_NAME);
+
     return true;
 }
 

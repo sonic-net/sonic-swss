@@ -101,14 +101,14 @@ protected:
 
 class Consumer : public Executor {
 public:
-    Consumer(TableConsumable *select, Orch *orch)
+    Consumer(ConsumerTableBase *select, Orch *orch)
         : Executor(select, orch)
     {
     }
 
-    TableConsumable *getConsumerTable() const
+    ConsumerTableBase *getConsumerTable() const
     {
-        return static_cast<TableConsumable *>(getSelectable());
+        return static_cast<ConsumerTableBase *>(getSelectable());
     }
 
     string getTableName() const
@@ -117,6 +117,8 @@ public:
     }
 
     void addToSync(std::deque<KeyOpFieldsValuesTuple> &entries);
+    void refillToSync();
+    void refillToSync(Table* table);
     void execute();
     void drain();
 
@@ -152,6 +154,7 @@ public:
 
     // add the existing table data (left by warm reboot) to the consumer todo task list.
     bool addExistingData(Table *table);
+    bool addExistingData(const string& tableName);
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     void doTask();
