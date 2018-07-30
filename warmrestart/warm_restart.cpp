@@ -4,6 +4,7 @@
 #include "logger.h"
 #include "table.h"
 #include "schema.h"
+#include "warm_restart.h"
 
 using namespace swss;
 
@@ -53,18 +54,12 @@ void checkWarmStart(DBConnector *db, const std::string &app_name)
 }
 
 // Set the state restored flag
-void setWarmStartRestoreState(DBConnector *db, const std::string &app_name, bool restored)
+void setWarmStartRestoreState(DBConnector *appl_db, const std::string &app_name, WarmStartStateType state)
 {
-    std::unique_ptr<Table>  warmStartTable = std::unique_ptr<Table>(new Table(db, APP_WARM_RESTART_TABLE_NAME));
-    // Set the state_restored flag
+    std::unique_ptr<Table>  warmStartTable = std::unique_ptr<Table>(new Table(appl_db, APP_WARM_RESTART_TABLE_NAME));
+    // Set the state flag
     std::vector<FieldValueTuple> tmp;
-    std::string state = "false";
-
-    if (restored)
-    {
-        state = "true";
-    }
-    FieldValueTuple tuple("state_restored", state);
+    FieldValueTuple tuple("state", warm_start_state_name_map.at(state).c_str());
     tmp.push_back(tuple);
     warmStartTable->set(app_name, tmp);
 }
