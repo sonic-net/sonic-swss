@@ -45,6 +45,7 @@ public:
     void update(sai_fdb_event_t, const sai_fdb_entry_t *, sai_object_id_t);
     void update(SubjectType type, void *cntx);
     bool getPort(const MacAddress&, uint16_t, Port&);
+    void syncUpFdb();
 
 private:
     PortsOrch *m_portsOrch;
