@@ -116,6 +116,7 @@ public:
         return getConsumerTable()->getTableName();
     }
 
+    void addToSync(std::deque<KeyOpFieldsValuesTuple> &entries);
     void execute();
     void drain();
 
@@ -148,6 +149,9 @@ public:
     virtual ~Orch();
 
     vector<Selectable*> getSelectables();
+
+    // add the existing data to the consumer todo task list.
+    void addExistingData(Table *table);
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     void doTask();

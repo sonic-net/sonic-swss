@@ -66,12 +66,9 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-void Consumer::execute()
+void Consumer::addToSync(std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     SWSS_LOG_ENTER();
-
-    std::deque<KeyOpFieldsValuesTuple> entries;
-    getConsumerTable()->pops(entries);
 
     /* Nothing popped */
     if (entries.empty())
@@ -123,6 +120,16 @@ void Consumer::execute()
             m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
         }
     }
+}
+
+void Consumer::execute()
+{
+    SWSS_LOG_ENTER();
+
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    getConsumerTable()->pops(entries);
+
+    addToSync(entries);
 
     drain();
 }
@@ -131,6 +138,48 @@ void Consumer::drain()
 {
     if (!m_toSync.empty())
         m_orch->doTask(*this);
+}
+
+// TODO: Table should be const
+void Orch::addExistingData(Table *table)
+{
+    string tableName = table->getTableName();
+    Consumer* consumer;
+    auto it = m_consumerMap.begin();
+
+    while (it != m_consumerMap.end())
+    {
+        consumer = (Consumer*)(it->second.get());
+        if (tableName == consumer->getTableName())
+        {
+            break;
+        }
+        it++;
+    }
+
+    if (it == m_consumerMap.end())
+    {
+        return;
+    }
+
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    vector<string> keys;
+    table->getKeys(keys);
+    for (const auto &key: keys)
+    {
+        KeyOpFieldsValuesTuple kco;
+
+        kfvKey(kco) = key;
+        kfvOp(kco) = SET_COMMAND;
+
+        if (!table->get(key, kfvFieldsValues(kco)))
+        {
+            continue;
+        }
+        entries.push_back(kco);
+    }
+
+    consumer->addToSync(entries);
 }
 
 /*

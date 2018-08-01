@@ -245,6 +245,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this);
     Orch::addExecutor("PORT_STATUS_NOTIFICATIONS", portStatusNotificatier);
+
+    // Try warm start
+    bake();
 }
 
 void PortsOrch::removeDefaultVlanMembers()
@@ -1177,6 +1180,64 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
     return true;
 }
 
+bool PortsOrch::bake()
+{
+    SWSS_LOG_ENTER();
+
+    // Check the APP_DB port table for warm reboot
+    vector<FieldValueTuple> tuples;
+    bool foundPortConfigDone = m_portTable->get("PortConfigDone", tuples);
+    SWSS_LOG_NOTICE("foundPortConfigDone = %d", foundPortConfigDone);
+
+    bool foundPortInitDone = m_portTable->get("PortInitDone", tuples);
+    SWSS_LOG_NOTICE("foundPortInitDone = %d", foundPortInitDone);
+
+    vector<string> keys;
+    m_portTable->getKeys(keys);
+    SWSS_LOG_NOTICE("m_portTable->getKeys %zd", keys.size());
+
+    if (!foundPortConfigDone || !foundPortInitDone)
+    {
+        SWSS_LOG_NOTICE("No port table, fallback to cold start");
+        cleanPortTable(keys);
+        return false;
+    }
+
+    doPortConfigDoneTask(tuples);
+    if (m_portCount != keys.size() - 2)
+    {
+        // Invalid port table
+        SWSS_LOG_ERROR("Invalid port table: m_portCount");
+        cleanPortTable(keys);
+        return false;
+    }
+
+    addExistingData(m_portTable.get());
+    return true;
+}
+
+// Clean up port table
+void PortsOrch::cleanPortTable(const vector<string>& keys)
+{
+    for (auto& key : keys)
+    {
+        m_portTable->del(key);
+    }
+}
+
+void PortsOrch::doPortConfigDoneTask(const vector<FieldValueTuple>& tuples)
+{
+    m_portConfigDone = true;
+
+    for (auto i : tuples)
+    {
+        if (fvField(i) == "count")
+        {
+            m_portCount = to_uint<uint32_t>(fvValue(i));
+        }
+    }
+}
+
 void PortsOrch::doPortTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -1191,15 +1252,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (alias == "PortConfigDone")
         {
-            m_portConfigDone = true;
-
-            for (auto i : kfvFieldsValues(t))
-            {
-                if (fvField(i) == "count")
-                {
-                    m_portCount = to_uint<uint32_t>(fvValue(i));
-                }
-            }
+            doPortConfigDoneTask(kfvFieldsValues(t));
         }
 
         /* Get notification from application */

@@ -56,6 +56,9 @@ public:
     bool isInitDone();
 
     map<string, Port>& getAllPorts();
+    bool bake();
+    void cleanPortTable(const vector<string>& keys);
+    void doPortConfigDoneTask(const vector<FieldValueTuple>& tuples);
     bool getBridgePort(sai_object_id_t id, Port &port);
     bool getPort(string alias, Port &port);
     bool getPort(sai_object_id_t id, Port &port);
