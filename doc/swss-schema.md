@@ -622,15 +622,6 @@ Equivalent RedisDB entry:
     12) "0"
     127.0.0.1:6379>
 
----------------------------------------------
-### WARM\_RESTART\_TABLE
-    ;Stores application and orchdameon warm start status
-    ;Status: work in progress
-    key             = WARM_RESTART_TABLE:process_name         ; process_name is unique process identifier
-    restart_count   = 1*10DIGIT                               ; a number between 0 and 2147483647,
-                                                              ; count of warm start times.
-    state           = "init" / "restored" / "synced"
-
 
 ## Configuration DB schema
 
@@ -641,6 +632,23 @@ Equivalent RedisDB entry:
     key             = WARM_RESTART:name         ; name is the name of SONiC docker or "system" for global configuration
     enable          = "true" / "false"          ; default value as false
 
+
+## State DB schema
+
+### WARM\_RESTART\_TABLE
+    ;Stores application and orchdameon warm start status
+    ;Status: work in progress
+
+    key             = WARM_RESTART_TABLE:process_name         ; process_name is a unique process identifier.
+    restart_count   = 1*10DIGIT                               ; a number between 0 and 2147483647,
+                                                              ; count of warm start times.
+
+    state           = "init" / "restored" / "reconciled"      ; init: process init with warm start enabled.
+                                                              ; restored: process restored to the previous
+                                                              ; state using saved data.
+                                                              ; reconciled: process reconciled with up to date
+                                                              ; dynanic data like port state, neighbor, routes
+                                                              ; and so on.
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?
