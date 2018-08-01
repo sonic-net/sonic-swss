@@ -1158,6 +1158,39 @@ void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_
     }
 }
 
+sai_port_oper_status_t PortsOrch::getDbPortOperStatus(sai_object_id_t id)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto it = m_portList.begin(); it != m_portList.end(); it++)
+    {
+        if (it->second.m_port_id == id)
+        {
+            vector<FieldValueTuple> fieldValues;
+            m_portTable->get(it->first, fieldValues);
+
+            for (const auto& fv : fieldValues)
+            {
+                if (fvField(fv) !=  "oper_status")
+                {
+                    continue;
+                }
+
+                for (const auto& ops : oper_status_strings)
+                {
+                    if (ops.second == fvValue(fv))
+                    {
+                        return ops.first;
+                    }
+                }
+                break;
+            }
+            break;
+        }
+    }
+    return SAI_PORT_OPER_STATUS_NOT_PRESENT;
+}
+
 bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string fec_mode)
 {
     SWSS_LOG_ENTER();
@@ -2871,5 +2904,44 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
         }
 
         sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);
+    }
+}
+
+/*
+ * sync up orchagent with libsai/ASIC for port state.
+ */
+void PortsOrch::syncUpPortState()
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &it: m_portList)
+    {
+        auto &p = it.second;
+        if (p.m_type == Port::PHY)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_PORT_ATTR_OPER_STATUS;
+
+            sai_status_t ret = sai_port_api->get_port_attribute(p.m_port_id, 1, &attr);
+            if (ret != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to get oper status for %s", p.m_alias.c_str());
+                continue;
+            }
+            sai_port_oper_status_t status = (sai_port_oper_status_t)attr.value.u32;
+            SWSS_LOG_INFO("%s oper status is %s", p.m_alias.c_str(), oper_status_strings.at(status).c_str());
+
+            sai_port_oper_status_t status_db = getDbPortOperStatus(p.m_port_id);
+            if (status != status_db)
+            {
+                SWSS_LOG_NOTICE("Port state changed for %s from %s to %s", p.m_alias.c_str(),
+                        oper_status_strings.at(status_db).c_str(), oper_status_strings.at(status).c_str());
+                this->updateDbPortOperStatus(p.m_port_id, status);
+                if(status == SAI_PORT_OPER_STATUS_UP || status_db == SAI_PORT_OPER_STATUS_UP)
+                {
+                    this->setHostIntfsOperStatus(p.m_port_id, status == SAI_PORT_OPER_STATUS_UP);
+                }
+            }
+        }
     }
 }
