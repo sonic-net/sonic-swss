@@ -2000,18 +2000,44 @@ bool PortsOrch::initializePort(Port &p)
     }
 #endif
 
-    /* Set default port admin status to DOWN */
-    /* FIXME: Do we need this? The default port admin status is false */
-    setPortAdminStatus(p.m_port_id, false);
+    /* Check warm start states */
+    vector<FieldValueTuple> tuples;
+    bool exist = m_portTable->get(p.m_alias, tuples);
+    string adminStatus, operStatus;
+    if (exist)
+    {
+        for (auto i : tuples)
+        {
+            if (fvField(i) == "admin_status")
+            {
+                adminStatus = fvValue(i);
+            }
+            else if (fvField(i) == "oper_status")
+            {
+                operStatus = fvValue(i);
+            }
+        }
+    }
+    SWSS_LOG_INFO("Warm admin_status of %s is %s", p.m_alias.c_str(), adminStatus.c_str());
+    SWSS_LOG_INFO("Warm oper_status of %s is %s", p.m_alias.c_str(), operStatus.c_str());
+
+    /* Set port admin status to DOWN if attr missing */
+    if (adminStatus != "up")
+    {
+        setPortAdminStatus(p.m_port_id, false);
+    }
 
     /**
-     * Create default database port oper status as DOWN
+     * Create database port oper status as DOWN if attr missing
      * This status will be updated when receiving port_oper_status_notification.
      */
-    vector<FieldValueTuple> vector;
-    FieldValueTuple tuple("oper_status", "down");
-    vector.push_back(tuple);
-    m_portTable->set(p.m_alias, vector);
+    if (operStatus != "up")
+    {
+        vector<FieldValueTuple> vector;
+        FieldValueTuple tuple("oper_status", "down");
+        vector.push_back(tuple);
+        m_portTable->set(p.m_alias, vector);
+    }
 
     return true;
 }
