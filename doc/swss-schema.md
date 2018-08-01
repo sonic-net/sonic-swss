@@ -631,6 +631,7 @@ Equivalent RedisDB entry:
 
     key             = WARM_RESTART:name         ; name is the name of SONiC docker or "system" for global configuration
     enable          = "true" / "false"          ; default value as false
+    timer           = 1*4DIGIT                  ; timer to determine when reconciliation is done, in seconds.
 
 
 ## State DB schema
