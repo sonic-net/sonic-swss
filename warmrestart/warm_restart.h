@@ -2,25 +2,37 @@
 #define SWSS_WARM_RESTART_H
 
 #include <string>
+#include "dbconnector.h"
+#include "redisclient.h"
 
-using namespace swss;
+namespace swss {
 
-enum class WarmStartStateType
+class WarmStart
 {
-    INIT,
-    RESTORED,
-    SYNCED,
-} ;
+public:
+	enum WarmStartState
+	{
+	    INIT,
+	    RESTORED,
+	    RECONCILED,
+	};
 
-const std::map<WarmStartStateType, std::string> warm_start_state_name_map =
-{
-    {WarmStartStateType::INIT,    "init"},
-    {WarmStartStateType::RESTORED, "restored"},
-    {WarmStartStateType::SYNCED,    "synced"}
+    typedef std::map<WarmStartState, std::string>  WarmStartStateNameMap;
+    static const WarmStartStateNameMap warmStartStateNameMap;
+
+    static WarmStart &getInstance();
+
+    static bool checkWarmStart(const std::string &app_name, const std::string &docker_name = "swss");
+    static bool isWarmStart();
+    static void setWarmStartState(const std::string &app_name, WarmStartState state);
+private:
+	std::shared_ptr<swss::DBConnector>          m_stateDb;
+	std::shared_ptr<swss::DBConnector>          m_cfgDb;
+	std::shared_ptr<swss::RedisClient>          m_stateRedisClient;
+	std::shared_ptr<swss::RedisClient>          m_cfgRedisClient;
+	bool enabled;
 };
 
-bool isWarmStart();
-void checkWarmStart(DBConnector *appl_db, const std::string &app_name);
-void setWarmStartRestoreState(DBConnector *appl_db, const std::string &app_name, WarmStartStateType state);
+}
 
 #endif
