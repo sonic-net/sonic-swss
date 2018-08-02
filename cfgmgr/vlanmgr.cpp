@@ -33,7 +33,7 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 {
     SWSS_LOG_ENTER();
 
-    if (isWarmStart())
+    if (WarmStart::isWarmStart())
     {
         const std::string cmds = std::string("")
           + IP_CMD + " link show " + DOT1Q_BRIDGE_NAME + " 2>/dev/null";

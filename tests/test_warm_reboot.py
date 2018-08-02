@@ -5,9 +5,9 @@ import time
 import json
 
 # Get restart count of all processes supporting warm restart
-def swss_get_RestartCount(appl_db):
+def swss_get_RestartCount(state_db):
     restart_count = {}
-    warmtbl = swsscommon.Table(appl_db, swsscommon.APP_WARM_RESTART_TABLE_NAME)
+    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
     keys = warmtbl.getKeys()
     assert  len(keys) !=  0
     for key in keys:
@@ -20,8 +20,8 @@ def swss_get_RestartCount(appl_db):
     return restart_count
 
 # function to check the restart count incremented by 1 for all processes supporting warm restart
-def swss_check_RestartCount(appl_db, restart_count):
-    warmtbl = swsscommon.Table(appl_db, swsscommon.APP_WARM_RESTART_TABLE_NAME)
+def swss_check_RestartCount(state_db, restart_count):
+    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
     keys = warmtbl.getKeys()
     print(keys)
     assert  len(keys) > 0
@@ -32,29 +32,23 @@ def swss_check_RestartCount(appl_db, restart_count):
             if fv[0] == "restart_count":
                 assert int(fv[1]) == restart_count[key] + 1
             elif fv[0] == "state":
-                assert fv[1] == "synced"
+                assert fv[1] == "reconciled"
 
-def create_entry(tbl, key, pairs):
-    fvs = swsscommon.FieldValuePairs(pairs)
-    tbl.set(key, fvs)
-     # FIXME: better to wait until DB create them
-    time.sleep(1)
-def create_entry_tbl(db, table, key, pairs):
-    tbl = swsscommon.Table(db, table)
-    create_entry(tbl, key, pairs)
-def del_entry_tbl(db, table, key):
-    tbl = swsscommon.Table(db, table)
-    tbl._del(key)
-def create_entry_pst(db, table, key, pairs):
-    tbl = swsscommon.ProducerStateTable(db, table)
-    create_entry(tbl, key, pairs)
-def how_many_entries_exist(db, table):
-    tbl =  swsscommon.Table(db, table)
-    return len(tbl.getKeys())
+def check_port_oper_status(appl_db, port_name, state):
+    portTbl = swsscommon.Table(appl_db, "PORT_TABLE")
+    (status, fvs) = portTbl.get(port_name)
+    assert status == True
+
+    oper_status = "unknown"
+    for v in fvs:
+        if v[0] == "oper_status":
+            oper_status = v[1]
+            break
+    assert oper_status == state
 
 # function to check the restart count incremented by 1 for a single process
-def swss_app_check_RestartCount_single(appl_db, restart_count, name):
-    warmtbl = swsscommon.Table(appl_db, swsscommon.APP_WARM_RESTART_TABLE_NAME)
+def swss_app_check_RestartCount_single(state_db, restart_count, name):
+    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
     keys = warmtbl.getKeys()
     print(keys)
     print(restart_count)
@@ -68,16 +62,54 @@ def swss_app_check_RestartCount_single(appl_db, restart_count, name):
             if fv[0] == "restart_count":
                 assert int(fv[1]) == restart_count[key] + 1
             elif fv[0] == "state":
-                assert fv[1] == "synced"
+                assert fv[1] == "reconciled"
+def create_entry(tbl, key, pairs):
+    fvs = swsscommon.FieldValuePairs(pairs)
+    tbl.set(key, fvs)
+
+    # FIXME: better to wait until DB create them
+    time.sleep(1)
+
+def create_entry_tbl(db, table, key, pairs):
+    tbl = swsscommon.Table(db, table)
+    create_entry(tbl, key, pairs)
+
+def del_entry_tbl(db, table, key):
+    tbl = swsscommon.Table(db, table)
+    tbl._del(key)
+
+def create_entry_pst(db, table, key, pairs):
+    tbl = swsscommon.ProducerStateTable(db, table)
+    create_entry(tbl, key, pairs)
+
+def how_many_entries_exist(db, table):
+    tbl =  swsscommon.Table(db, table)
+    return len(tbl.getKeys())
 
 
 def test_VlanMgrdWarmRestart(dvs):
 
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+    dvs.runcmd("ifconfig Ethernet16  0")
+    dvs.runcmd("ifconfig Ethernet20  0")
 
     dvs.runcmd("ifconfig Ethernet16  up")
     dvs.runcmd("ifconfig Ethernet20  up")
+
+    time.sleep(1)
+
+    # enable warm restart
+    # TODO: use cfg command to config it
+    create_entry_tbl(
+        conf_db,
+        swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
+        [
+            ("enable", "true"),
+        ]
+    )
 
     # create vlan
     create_entry_tbl(
@@ -140,7 +172,7 @@ def test_VlanMgrdWarmRestart(dvs):
     bv_before = dvs.runcmd("bridge vlan")
     print(bv_before)
 
-    restart_count = swss_get_RestartCount(appl_db)
+    restart_count = swss_get_RestartCount(state_db)
 
     dvs.runcmd(['sh', '-c', 'pkill -x vlanmgrd; cp /var/log/swss/sairedis.rec /var/log/swss/sairedis.rec.b; echo > /var/log/swss/sairedis.rec'])
     dvs.runcmd(['sh', '-c', 'supervisorctl start vlanmgrd'])
@@ -167,4 +199,4 @@ def test_VlanMgrdWarmRestart(dvs):
     (status, fvs) = tbl.get("Vlan20:11.0.0.11")
     assert status == True
 
-    swss_app_check_RestartCount_single(appl_db, restart_count, "vlanmgrd")
+    swss_app_check_RestartCount_single(state_db, restart_count, "vlanmgrd")

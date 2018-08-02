@@ -57,7 +57,7 @@ int main(int argc, char **argv)
         DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-        checkWarmStart(&appDb, "vlanmgrd");
+        WarmStart::checkWarmStart("vlanmgrd");
 
         /*
          * swss service starts after interfaces-config.service which will have
