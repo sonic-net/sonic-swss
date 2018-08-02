@@ -2018,8 +2018,7 @@ bool PortsOrch::initializePort(Port &p)
             }
         }
     }
-    SWSS_LOG_INFO("Warm admin_status of %s is %s", p.m_alias.c_str(), adminStatus.c_str());
-    SWSS_LOG_INFO("Warm oper_status of %s is %s", p.m_alias.c_str(), operStatus.c_str());
+    SWSS_LOG_DEBUG("initializePort %s with admin %s and oper %s", p.m_alias.c_str(), adminStatus.c_str(), operStatus.c_str());
 
     /* Set port admin status to DOWN if attr missing */
     if (adminStatus != "up")
