@@ -75,8 +75,8 @@ int main(int argc, char **argv)
     ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
     SubscriberStateTable portCfg(&cfgDb, CFG_PORT_TABLE_NAME);
 
-    checkWarmStart(&appl_db, "portsyncd");
-    if (isWarmStart())
+    WarmStart::checkWarmStart("portsyncd");
+    if (WarmStart::isWarmStart())
     {
         checkPortInitDone(&appl_db);
         /* If PortInitDone already set, clear the init port config buffer */
@@ -114,7 +114,7 @@ int main(int argc, char **argv)
         s.addSelectable(&netlink);
         s.addSelectable(&portCfg);
 
-        if (isWarmStart() && !g_init)
+        if (WarmStart::isWarmStart() && !g_init)
         {
             // Dump existing Links
             cout << "Warm start: send netlink RTM_GETLINK request" << endl;

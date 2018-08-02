@@ -5,9 +5,9 @@ import time
 import json
 
 # Get restart count of all processes supporting warm restart
-def swss_get_RestartCount(appl_db):
+def swss_get_RestartCount(state_db):
     restart_count = {}
-    warmtbl = swsscommon.Table(appl_db, swsscommon.APP_WARM_RESTART_TABLE_NAME)
+    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
     keys = warmtbl.getKeys()
     assert  len(keys) !=  0
     for key in keys:
@@ -20,8 +20,8 @@ def swss_get_RestartCount(appl_db):
     return restart_count
 
 # function to check the restart count incremented by 1 for all processes supporting warm restart
-def swss_check_RestartCount(appl_db, restart_count):
-    warmtbl = swsscommon.Table(appl_db, swsscommon.APP_WARM_RESTART_TABLE_NAME)
+def swss_check_RestartCount(state_db, restart_count):
+    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
     keys = warmtbl.getKeys()
     print(keys)
     assert  len(keys) > 0
@@ -32,7 +32,37 @@ def swss_check_RestartCount(appl_db, restart_count):
             if fv[0] == "restart_count":
                 assert int(fv[1]) == restart_count[key] + 1
             elif fv[0] == "state":
-                assert fv[1] == "synced"
+                assert fv[1] == "reconciled"
+
+# function to check the restart count incremented by 1 for a single process
+def swss_app_check_RestartCount_single(state_db, restart_count, name):
+    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
+    keys = warmtbl.getKeys()
+    print(keys)
+    print(restart_count)
+    assert  len(keys) > 0
+    for key in keys:
+        if key != name:
+            continue
+        (status, fvs) = warmtbl.get(key)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "restart_count":
+                assert int(fv[1]) == restart_count[key] + 1
+            elif fv[0] == "state":
+                assert fv[1] == "reconciled"
+
+def check_port_oper_status(appl_db, port_name, state):
+    portTbl = swsscommon.Table(appl_db, "PORT_TABLE")
+    (status, fvs) = portTbl.get(port_name)
+    assert status == True
+
+    oper_status = "unknown"
+    for v in fvs:
+        if v[0] == "oper_status":
+            oper_status = v[1]
+            break
+    assert oper_status == state
 
 def create_entry(tbl, key, pairs):
     fvs = swsscommon.FieldValuePairs(pairs)
@@ -52,41 +82,22 @@ def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
 
-# function to check the restart count incremented by 1 for a single process
-def swss_app_check_RestartCount_single(appl_db, restart_count, name):
-    warmtbl = swsscommon.Table(appl_db, swsscommon.APP_WARM_RESTART_TABLE_NAME)
-    keys = warmtbl.getKeys()
-    print(keys)
-    print(restart_count)
-    assert  len(keys) > 0
-    for key in keys:
-        if key != name:
-            continue
-        (status, fvs) = warmtbl.get(key)
-        assert status == True
-        for fv in fvs:
-            if fv[0] == "restart_count":
-                assert int(fv[1]) == restart_count[key] + 1
-            elif fv[0] == "state":
-                assert fv[1] == "synced"
-
-def check_port_oper_status(appl_db, port_name, state):
-    portTbl = swsscommon.Table(appl_db, "PORT_TABLE")
-    (status, fvs) = portTbl.get(port_name)
-    assert status == True
-
-    oper_status = "unknown"
-    for v in fvs:
-        if v[0] == "oper_status":
-            oper_status = v[1]
-            break
-    assert oper_status == state
-
 
 def test_PortSyncdWarmRestart(dvs):
 
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+    # enable warm restart
+    # TODO: use cfg command to config it
+    create_entry_tbl(
+        conf_db,
+        swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
+        [
+            ("enable", "true"),
+        ]
+    )
 
     dvs.runcmd("ifconfig Ethernet16  up")
     dvs.runcmd("ifconfig Ethernet20  up")
@@ -123,7 +134,7 @@ def test_PortSyncdWarmRestart(dvs):
     (status, fvs) = neighTbl.get("Ethernet20:11.0.0.10")
     assert status == True
 
-    restart_count = swss_get_RestartCount(appl_db)
+    restart_count = swss_get_RestartCount(state_db)
 
     # restart portsyncd
     dvs.runcmd(['sh', '-c', 'pkill -x portsyncd; cp /var/log/swss/sairedis.rec /var/log/swss/sairedis.rec.b; echo > /var/log/swss/sairedis.rec'])
@@ -158,4 +169,4 @@ def test_PortSyncdWarmRestart(dvs):
     check_port_oper_status(appl_db, "Ethernet24", "up")
 
 
-    swss_app_check_RestartCount_single(appl_db, restart_count, "portsyncd")
+    swss_app_check_RestartCount_single(state_db, restart_count, "portsyncd")

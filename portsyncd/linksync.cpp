@@ -43,7 +43,7 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_portTable(appl_db, APP_PORT_TABLE_NAME),
     m_statePortTable(state_db, STATE_PORT_TABLE_NAME)
 {
-    if (!isWarmStart())
+    if (!WarmStart::isWarmStart())
     {
         /* See the comments for g_portSet in portsyncd.cpp */
         for (string port : g_portSet)
