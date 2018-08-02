@@ -379,6 +379,9 @@ void OrchDaemon::start()
             restored = true;
             syncd_apply_view();
 
+            // TODO: should be set after port/fdb/arp sync up
+            WarmStart::setWarmStartState("orchagent", WarmStart::RECONCILED);
+
             /* Pick up those tasks postponed by restore processing */
             if(!executorSet.empty())
             {
