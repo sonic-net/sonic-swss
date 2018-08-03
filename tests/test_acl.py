@@ -7,38 +7,23 @@ class TestAcl(object):
     def get_acl_table_id(self, dvs, adb):
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
-        assert dvs.asicdb.default_acl_table in keys
-        acl_tables = [k for k in keys if k not in dvs.asicdb.default_acl_table]
+        for k in  dvs.asicdb.default_acl_tables:
+            assert k in keys
+        acl_tables = [k for k in keys if k not in dvs.asicdb.default_acl_tables]
 
-        assert len(acl_tables) >= 1
+        assert len(acl_tables) == 1
 
-	# Filter out DTel Acl tables
-	for k in acl_tables:
-	    (status, fvs) = atbl.get(k)
-	    for item in fvs:
-	        if item[0] == "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST":
-	            if 'SAI_ACL_BIND_POINT_TYPE_PORT' in item[1] or 'SAI_ACL_BIND_POINT_TYPE_LAG' in item[1]:
-	                return k
-	            else:
-	                break
-
-        return None
+        return acl_tables[0]
 
     def verify_if_any_acl_table_created(self, dvs, adb):
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
-        assert dvs.asicdb.default_acl_table in keys
-        acl_tables = [k for k in keys if k not in dvs.asicdb.default_acl_table]
+        for k in  dvs.asicdb.default_acl_tables:
+            assert k in keys
+        acl_tables = [k for k in keys if k not in dvs.asicdb.default_acl_tables]
 
-	# Filter out DTel Acl tables
-	for k in acl_tables:
-	    (status, fvs) = atbl.get(k)
-	    for item in fvs:
-	        if item[0] == "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST":
-	            if 'SAI_ACL_BIND_POINT_TYPE_PORT' in item[1] or 'SAI_ACL_BIND_POINT_TYPE_LAG' in item[1]:
-	                return True
-	            else:
-	                break
+        if len(acl_tables) != 0:
+            return True
 
         return False
 
@@ -158,6 +143,7 @@ class TestAcl(object):
 
         # check acl table in asic db
         test_acl_table_id = self.get_acl_table_id(dvs, adb)
+        assert test_acl_table_id
 
         # check acl table group in asic db
         self.verify_acl_group_num(adb, 2)

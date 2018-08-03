@@ -51,21 +51,7 @@ class AsicDbValidator(object):
         keys = atbl.getKeys()
 
         assert len(keys) >= 1
-
-	# Filter out DTel Acl tables
-	default_table_found = False
-	for k in keys:
-	    if default_table_found:
-	        break
-	    (status, fvs) = atbl.get(k)
-	    for item in fvs:
-	        if item[0] == "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST":
-	            if 'SAI_ACL_BIND_POINT_TYPE_PORT' in item[1]:
-	                self.default_acl_table = k
-	                default_table_found = True
-	                break
-	            else:
-	                break
+        self.default_acl_tables = keys
 
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
         keys = atbl.getKeys()
