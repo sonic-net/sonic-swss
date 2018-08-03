@@ -91,9 +91,20 @@ public:
     virtual void execute() { }
     virtual void drain() { }
 
+    virtual string getName() const
+    {
+        return m_name;
+    }
+    virtual void setName(string name)
+    {
+        m_name = name;
+    }
 protected:
     Selectable *m_selectable;
     Orch *m_orch;
+
+    // Name for Executor
+    string m_name;
 
     // Get the underlying selectable
     Selectable *getSelectable() const { return m_selectable; }
@@ -116,8 +127,14 @@ public:
         return getConsumerTable()->getTableName();
     }
 
+    string getName() const
+    {
+        return getConsumerTable()->getTableName();
+    }
+
     void execute();
     void drain();
+    void addToSync(std::deque<KeyOpFieldsValuesTuple> &entries);
 
     /* Store the latest 'golden' status */
     // TODO: hide?
@@ -148,6 +165,9 @@ public:
     virtual ~Orch();
 
     vector<Selectable*> getSelectables();
+
+    // add the existing data to the consumer todo task list.
+    void addExistingData(DBConnector *db, string tableName);
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     void doTask();
