@@ -4,6 +4,7 @@ import re
 import time
 import json
 
+<<<<<<< e03d6e9b5c886360cb245dbee69e417cad6996c8
 # Get restart count of all processes supporting warm restart
 def swss_get_RestartCount(state_db):
     restart_count = {}
@@ -285,3 +286,42 @@ def test_VlanMgrdWarmRestart(dvs):
     assert status == True
 
     swss_app_check_RestartCount_single(state_db, restart_count, "vlanmgrd")
+
+# TODO: The condition of warm restart readiness check is still under discussion.
+def test_OrchagentWarmRestartReadyCheck(dvs):
+
+    # do a pre-cleanup
+    dvs.runcmd("ip -s -s neigh flush all")
+    time.sleep(1)
+
+    dvs.runcmd("config warm_restart enable swss")
+    # hostcfgd not running in VS, create the folder explicitly
+    dvs.runcmd("mkdir -p /etc/sonic/warm_restart/swss")
+
+    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
+    dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
+
+    dvs.servers[0].runcmd("ifconfig eth0 10.0.0.1/31")
+    dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
+
+    dvs.servers[1].runcmd("ifconfig eth0 10.0.0.3/31")
+    dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
+
+
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    ps = swsscommon.ProducerStateTable(appl_db, "ROUTE_TABLE")
+    fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
+
+    ps.set("2.2.2.0/24", fvs)
+
+    time.sleep(1)
+    # Should fail, since neighbor for next 10.0.0.1 has not been not resolved yet
+    result =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+    assert result == "RESTARTCHECK failed\n"
+
+    # get neighbor and arp entry
+    dvs.servers[1].runcmd("ping -c 1 10.0.0.1")
+
+    time.sleep(1)
+    result =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+    assert result == "RESTARTCHECK succeeded\n"

@@ -4,6 +4,7 @@
 #include "logger.h"
 #include <sairedis.h>
 #include "warm_restart.h"
+#include <limits.h>
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -329,6 +330,26 @@ void OrchDaemon::start()
          * is a good chance to flush the pipeline before next select happened.
          */
         flush();
+
+        /*
+         * Asked to check warm restart readiness.
+         * Not doing this under Select::TIMEOUT condition because of
+         * the existence of finer granularity ExecutableTimer with select
+         */
+        if (gSwitchOrch->checkRestartReady())
+        {
+            bool ret = warmRestartCheck();
+            if (ret)
+            {
+                // Orchagent is ready to perform warm restart, stop processing any new db data.
+                // Should sleep here or continue handling timers and etc.??
+                if (!gSwitchOrch->checkRestartNoFreeze())
+                {
+                    SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
+                    sleep(UINT_MAX);
+                }
+            }
+        }
     }
 }
 
@@ -412,3 +433,44 @@ bool OrchDaemon::warmRestoreValidation()
     WarmStart::setWarmStartState("orchagent", WarmStart::RESTORED);
     return true;
 }
+
+/*
+ * Reply with "READY" notification if no pending tasks, and return true.
+ * Ortherwise reply with "NOT_READY" notification and return false.
+ * Further consideration is needed as to when orchagent is treated as warm restart ready.
+ * For now, no pending task should exist in any orch agent.
+ */
+bool OrchDaemon::warmRestartCheck()
+{
+    std::vector<swss::FieldValueTuple> values;
+    std::string op = "orchagent";
+    std::string data = "READY";
+    bool ret = true;
+
+    vector<string> ts;
+    getTaskToSync(ts);
+
+    if (ts.size() != 0)
+    {
+        SWSS_LOG_NOTICE("WarmRestart check found pending tasks: ");
+        for(auto &s : ts)
+        {
+            SWSS_LOG_NOTICE("    %s", s.c_str());
+        }
+        if (!gSwitchOrch->skipPendingTaskCheck())
+        {
+            data = "NOT_READY";
+            ret = false;
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Orchagent objects dependency check skipped");
+        }
+    }
+
+    SWSS_LOG_NOTICE("Restart check result: %s", data.c_str());
+    gSwitchOrch->restartCheckReply(op,  data, values);
+    return ret;
+}
+
+>>>>>>> Add orchagent pre-warm-restart check mechanism

@@ -10,7 +10,7 @@ dist_swss_DATA = \
 		 pfc_detect_barefoot.lua \
 		 pfc_restore.lua
 
-bin_PROGRAMS = orchagent routeresync
+bin_PROGRAMS = orchagent routeresync orchagent_restart_check
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
@@ -83,3 +83,7 @@ routeresync_SOURCES = routeresync.cpp
 routeresync_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 routeresync_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 routeresync_LDADD = -lswsscommon
+
+orchagent_restart_check_SOURCES = orchagent_restart_check.cpp
+orchagent_restart_check_CPPFLAGS = $(DBGFLAGS) $(AM_CPPFLAGS) $(CFLAGS_COMMON)
+orchagent_restart_check_LDADD = -lhiredis -lswsscommon -lpthread

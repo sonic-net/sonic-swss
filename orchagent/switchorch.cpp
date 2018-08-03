@@ -2,6 +2,7 @@
 
 #include "switchorch.h"
 #include "converter.h"
+#include "notifier.h"
 
 using namespace std;
 using namespace swss;
@@ -27,8 +28,13 @@ const map<string, sai_packet_action_t> packet_action_map =
 };
 
 SwitchOrch::SwitchOrch(DBConnector *db, string tableName) :
-        Orch(db, tableName)
+        Orch(db, tableName),
+        m_db(db)
 {
+    m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
+    auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this);
+    // restartCheckNotifier->setName("RESTARTCHECK");
+    Orch::addExecutor("RESTARTCHECK", restartCheckNotifier);
 }
 
 void SwitchOrch::doTask(Consumer &consumer)
@@ -119,6 +125,28 @@ void SwitchOrch::doTask(Consumer &consumer)
             SWSS_LOG_WARN("Unsupported operation");
             it = consumer.m_toSync.erase(it);
         }
+    }
+}
+
+void SwitchOrch::doTask(NotificationConsumer& consumer)
+{
+    SWSS_LOG_ENTER();
+
+    std::string op;
+    std::string data;
+    std::vector<swss::FieldValueTuple> values;
+
+    consumer.pop(op, data, values);
+
+    if (&consumer != m_restartCheckNotificationConsumer)
+    {
+        return;
+    }
+
+    SWSS_LOG_NOTICE("RESTARTCHECK notification for %s ", op.c_str());
+    if (op == "orchagent")
+    {
+        checkRestartReadyState = true;
     }
 }
 
