@@ -629,10 +629,16 @@ Equivalent RedisDB entry:
     ;Stores system warm start configuration
     ;Status: work in progress
 
-    key             = WARM_RESTART:name         ; name is the name of SONiC docker or "system" for global configuration
-    enable          = "true" / "false"          ; default value as false
-    timer           = 1*4DIGIT                  ; timer to determine when reconciliation is done, in seconds.
+    key             = WARM_RESTART:name         ; name is the name of SONiC docker or "system" for global configuration.
 
+    enable          = "true" / "false"          ; Default value as false.
+                                                ; If "system" warm start knob is true, docker level knob will be ignored.
+                                                ; If "system" warm start knob is false, docker level knob takes effect.
+
+    timer_name      = 1*255VCHAR                ; timer_name is the name of warm start timer for the whole system or the specific docker,
+                                                ; Ex. "neighbor_timer", "bgp_timer".
+                                                ; There could be more than one timer in a docker and the system.
+    timer_duration  = 1*4DIGIT                  ; timer duration, in seconds.
 
 ## State DB schema
 
