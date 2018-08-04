@@ -11,7 +11,6 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "producerstatetable.h"
-#include "producertable.h"
 #include "portsyncd/linksync.h"
 #include "subscriberstatetable.h"
 #include "exec.h"
@@ -39,11 +38,10 @@ void usage()
     cout << "                           use configDB data if not specified" << endl;
 }
 
-// TODO: find a common base class for ProducerTable and ProducerStateTable
-void handlePortConfigFile(ProducerTable &p, string file);
-void handlePortConfigFromConfigDB(ProducerTable &p, DBConnector &cfgDb);
+void handlePortConfigFile(ProducerStateTable &p, string file);
+void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb);
 void handleVlanIntfFile(string file);
-void handlePortConfig(ProducerTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map);
+void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map);
 
 int main(int argc, char **argv)
 {
@@ -71,7 +69,7 @@ int main(int argc, char **argv)
     DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    ProducerTable p(&appl_db, APP_PORT_TABLE_NAME);
+    ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
     SubscriberStateTable portCfg(&cfgDb, CFG_PORT_TABLE_NAME);
 
     LinkSync sync(&appl_db, &state_db);
@@ -159,7 +157,7 @@ int main(int argc, char **argv)
     return 1;
 }
 
-static void notifyPortConfigDone(ProducerTable &p)
+static void notifyPortConfigDone(ProducerStateTable &p)
 {
     /* Notify that all ports added */
     FieldValueTuple finish_notice("count", to_string(g_portSet.size()));
@@ -167,7 +165,7 @@ static void notifyPortConfigDone(ProducerTable &p)
     p.set("PortConfigDone", attrs);
 }
 
-void handlePortConfigFromConfigDB(ProducerTable &p, DBConnector &cfgDb)
+void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb)
 {
     cout << "Get port configuration from ConfigDB..." << endl;
 
@@ -190,7 +188,7 @@ void handlePortConfigFromConfigDB(ProducerTable &p, DBConnector &cfgDb)
     notifyPortConfigDone(p);
 }
 
-void handlePortConfigFile(ProducerTable &p, string file)
+void handlePortConfigFile(ProducerStateTable &p, string file)
 {
     cout << "Read port configuration file..." << endl;
 
@@ -275,7 +273,7 @@ void handlePortConfigFile(ProducerTable &p, string file)
     notifyPortConfigDone(p);
 }
 
-void handlePortConfig(ProducerTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map)
+void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map)
 {
 
     auto it = port_cfg_map.begin();

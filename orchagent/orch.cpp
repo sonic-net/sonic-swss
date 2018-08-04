@@ -364,10 +364,6 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
     {
         addExecutor(tableName, new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this));
     }
-    else if (tableName == APP_PORT_TABLE_NAME)
-    {
-        addExecutor(tableName, new Consumer(new ConsumerTable(db, tableName, gBatchSize, pri), this));
-    }
     else
     {
         addExecutor(tableName, new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this));

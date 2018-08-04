@@ -2,7 +2,7 @@
 #define __LINKSYNC__
 
 #include "dbconnector.h"
-#include "producertable.h"
+#include "producerstatetable.h"
 #include "netmsg.h"
 
 #include <map>
@@ -19,7 +19,7 @@ public:
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
 private:
-    ProducerTable m_portTableProducer;
+    ProducerStateTable m_portTableProducer;
     Table m_portTable, m_statePortTable;
 
     std::map<unsigned int, std::string> m_ifindexNameMap;
