@@ -1203,7 +1203,6 @@ bool PortsOrch::bake()
         return false;
     }
 
-    doPortConfigDoneTask(tuples);
     if (m_portCount != keys.size() - 2)
     {
         // Invalid port table
@@ -1230,19 +1229,6 @@ void PortsOrch::cleanPortTable(const vector<string>& keys)
     }
 }
 
-void PortsOrch::doPortConfigDoneTask(const vector<FieldValueTuple>& tuples)
-{
-    m_portConfigDone = true;
-
-    for (auto i : tuples)
-    {
-        if (fvField(i) == "count")
-        {
-            m_portCount = to_uint<uint32_t>(fvValue(i));
-        }
-    }
-}
-
 void PortsOrch::doPortTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -1257,7 +1243,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (alias == "PortConfigDone")
         {
-            doPortConfigDoneTask(kfvFieldsValues(t));
+            m_portConfigDone = true;
+
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "count")
+                {
+                    m_portCount = to_uint<uint32_t>(fvValue(i));
+                }
+            }
         }
 
         /* Get notification from application */
