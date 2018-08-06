@@ -18,6 +18,21 @@ WarmStart &WarmStart::getInstance()
     return m_warmStart;
 }
 
+/*
+ * <1> Upon system reboot, the system enable knob will be checked.
+ * If enabled, database data will be preserved, if not, database will be flushed.
+ * No need to check docker level knobs in this case since the whole system is being rebooted .
+
+ * <2> Upon docker service start, first to check system knob.
+ * if enabled, docker warm start should be performed, otherwise system warm reboot will be ruined.
+ * If system knob disabled, while docker knob enabled, this is likely an individual docker warm restart request.
+
+ * Within each application which should take care warm start case,
+ * when the system knob or docker knob enabled, we do further check on the
+ * actual warm start state ( restart_count), if no warm start state data available,
+ * the database has been flushed, do cold start. Otherwise warm start.
+ */
+
 // Check warm start flag at the very begining of application, do it once for each process.
 bool WarmStart::checkWarmStart(const std::string &app_name, const std::string &docker_name)
 {
