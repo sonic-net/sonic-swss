@@ -205,6 +205,11 @@ void handlePortConfigFile(ProducerTable &p, string file)
     string line;
     while (getline(infile, line))
     {
+        if (line.size() == 0)
+        {
+            continue;
+        }
+
         if (line.at(0) == '#')
         {
             // Take this line as column header line
