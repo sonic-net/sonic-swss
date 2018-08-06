@@ -38,14 +38,14 @@ bool WarmStart::checkWarmStart(const std::string &app_name, const std::string &d
 
     std::string value;
     // Check system level warm restart config first
-    warmStart.m_cfgWarmRestartTable->getEntry("system", "enable", value);
+    warmStart.m_cfgWarmRestartTable->hget("system", "enable", value);
     if (value == "true")
     {
         warmStart.enabled = true;
     }
 
     // docker level warm restart configuration
-    warmStart.m_cfgWarmRestartTable->getEntry(docker_name, "enable", value);
+    warmStart.m_cfgWarmRestartTable->hget(docker_name, "enable", value);
     if (value == "true")
     {
         warmStart.enabled = true;
@@ -55,18 +55,18 @@ bool WarmStart::checkWarmStart(const std::string &app_name, const std::string &d
     // Create the entry for this app here.
     if (!warmStart.enabled)
     {
-        warmStart.m_stateWarmRestartTable->setEntry(app_name, "restart_count", "0");
+        warmStart.m_stateWarmRestartTable->hset(app_name, "restart_count", "0");
         return true;
     }
 
     uint32_t restart_count = 0;
-    warmStart.m_stateWarmRestartTable->getEntry(app_name, "restart_count", value);
+    warmStart.m_stateWarmRestartTable->hget(app_name, "restart_count", value);
     if (value == "")
     {
         SWSS_LOG_WARN("%s doing warm start, but restart_count not found in stateDB %s table, fall back to cold start",
                 app_name.c_str(), STATE_WARM_RESTART_TABLE_NAME);
         warmStart.enabled = false;
-        warmStart.m_stateWarmRestartTable->setEntry(app_name, "restart_count", "0");
+        warmStart.m_stateWarmRestartTable->hset(app_name, "restart_count", "0");
         return true;
     }
     else
@@ -75,7 +75,7 @@ bool WarmStart::checkWarmStart(const std::string &app_name, const std::string &d
     }
 
     restart_count++;
-    warmStart.m_stateWarmRestartTable->setEntry(app_name, "restart_count", std::to_string(restart_count));
+    warmStart.m_stateWarmRestartTable->hset(app_name, "restart_count", std::to_string(restart_count));
     SWSS_LOG_NOTICE("%s doing warm start, restart count %d", app_name.c_str(), restart_count);
 
     return true;
@@ -93,7 +93,7 @@ void WarmStart::setWarmStartState(const std::string &app_name, WarmStartState st
 {
     auto& warmStart = getInstance();
 
-    warmStart.m_stateWarmRestartTable->setEntry(app_name, "state", warmStartStateNameMap.at(state).c_str());
+    warmStart.m_stateWarmRestartTable->hset(app_name, "state", warmStartStateNameMap.at(state).c_str());
     SWSS_LOG_NOTICE("%s warm start state changed to %s", app_name.c_str(), warmStartStateNameMap.at(state).c_str());
 }
 
