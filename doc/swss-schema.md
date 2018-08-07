@@ -635,10 +635,12 @@ Equivalent RedisDB entry:
                                                 ; If "system" warm start knob is true, docker level knob will be ignored.
                                                 ; If "system" warm start knob is false, docker level knob takes effect.
 
-    timer_name      = 1*255VCHAR                ; timer_name is the name of warm start timer for the whole system or the specific docker,
-                                                ; Ex. "neighbor_timer", "bgp_timer".
-                                                ; There could be more than one timer in a docker and the system.
-    timer_duration  = 1*4DIGIT                  ; timer duration, in seconds.
+    timer_name      = 1*255VCHAR,               ; timer_name is the name of warm start timer for the whole system or the specific docker,
+                                                ; Ex. "neighbor_timer", "bgp_timer". The name should not contain "," character.
+                                                ; There could be more than one timer in a docker or the system, separated by ",".
+
+    timer_duration  = 1*4DIGIT,                 ; timer duration, in seconds. Separated by "," if there are more than on timer.
+
 
 ## State DB schema
 
