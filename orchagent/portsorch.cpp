@@ -1177,6 +1177,96 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
     return true;
 }
 
+void PortsOrch::doPortConfigDoneTask(const vector<FieldValueTuple>& tuples)
+{
+    SWSS_LOG_ENTER();
+
+    m_portConfigDone = true;
+
+    for (auto i : tuples)
+    {
+        if (fvField(i) == "count")
+        {
+            m_portCount = to_uint<uint32_t>(fvValue(i));
+        }
+    }
+
+    if (m_lanesAliasSpeedMap.size() != m_portCount)
+    {
+        SWSS_LOG_ERROR("Unexpected number of PORTs received before PortConfigDone: %zu != %u", m_lanesAliasSpeedMap.size(), m_portCount);
+        return;
+    }
+
+    /* Once all ports received, go through the each port and perform appropriate actions:
+     * 1. Remove ports which don't exist anymore
+     * 2. Create new ports
+     * 3. Initialize all ports
+     */
+    for (auto it = m_portListLaneMap.begin(); it != m_portListLaneMap.end();)
+    {
+        if (m_lanesAliasSpeedMap.find(it->first) == m_lanesAliasSpeedMap.end())
+        {
+            char *platform = getenv("platform");
+            if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
+            {
+                if (!removePort(it->second))
+                {
+                    throw runtime_error("PortsOrch initialization failure.");
+                }
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("Failed to remove Port %lx due to missing SAI remove_port API.", it->second);
+            }
+
+            it = m_portListLaneMap.erase(it);
+        }
+        else
+        {
+            it++;
+        }
+    }
+
+    for (auto it = m_lanesAliasSpeedMap.begin(); it != m_lanesAliasSpeedMap.end();)
+    {
+        bool port_created = false;
+
+        if (m_portListLaneMap.find(it->first) == m_portListLaneMap.end())
+        {
+            // work around to avoid syncd termination on SAI error due missing create_port SAI API
+            // can be removed when SAI redis return NotImplemented error
+            char *platform = getenv("platform");
+            if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
+            {
+                if (!addPort(it->first, get<1>(it->second), get<2>(it->second), get<3>(it->second)))
+                {
+                    throw runtime_error("PortsOrch initialization failure.");
+                }
+
+                port_created = true;
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("Failed to create Port %s due to missing SAI create_port API.", get<0>(it->second).c_str());
+            }
+        }
+        else
+        {
+            port_created = true;
+        }
+
+        if (port_created)
+        {
+            if (!initPort(get<0>(it->second), it->first))
+            {
+                throw runtime_error("PortsOrch initialization failure.");
+            }
+        }
+
+        it = m_lanesAliasSpeedMap.erase(it);
+    }
+}
+
 void PortsOrch::doPortTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -1191,15 +1281,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (alias == "PortConfigDone")
         {
-            m_portConfigDone = true;
+            doPortConfigDoneTask(kfvFieldsValues(t));
 
-            for (auto i : kfvFieldsValues(t))
-            {
-                if (fvField(i) == "count")
-                {
-                    m_portCount = to_uint<uint32_t>(fvValue(i));
-                }
-            }
+            it = consumer.m_toSync.erase(it);
+            continue;
         }
 
         /* Get notification from application */
@@ -1277,90 +1362,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
             if (lane_set.size())
             {
                 m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed, an, fec_mode);
-            }
-
-            /* Once all ports received, go through the each port and perform appropriate actions:
-             * 1. Remove ports which don't exist anymore
-             * 2. Create new ports
-             * 3. Initialize all ports
-             */
-            if (m_portConfigDone && (m_lanesAliasSpeedMap.size() == m_portCount))
-            {
-                for (auto it = m_portListLaneMap.begin(); it != m_portListLaneMap.end();)
-                {
-                    if (m_lanesAliasSpeedMap.find(it->first) == m_lanesAliasSpeedMap.end())
-                    {
-                        char *platform = getenv("platform");
-                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
-                        {
-                            if (!removePort(it->second))
-                            {
-                                throw runtime_error("PortsOrch initialization failure.");
-                            }
-                        }
-                        else
-                        {
-                            SWSS_LOG_NOTICE("Failed to remove Port %lx due to missing SAI remove_port API.", it->second);
-                        }
-
-                        it = m_portListLaneMap.erase(it);
-                    }
-                    else
-                    {
-                        it++;
-                    }
-                }
-
-                for (auto it = m_lanesAliasSpeedMap.begin(); it != m_lanesAliasSpeedMap.end();)
-                {
-                    bool port_created = false;
-
-                    if (m_portListLaneMap.find(it->first) == m_portListLaneMap.end())
-                    {
-                        // work around to avoid syncd termination on SAI error due missing create_port SAI API
-                        // can be removed when SAI redis return NotImplemented error
-                        char *platform = getenv("platform");
-                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
-                        {
-                            if (!addPort(it->first, get<1>(it->second), get<2>(it->second), get<3>(it->second)))
-                            {
-                                throw runtime_error("PortsOrch initialization failure.");
-                            }
-
-                            port_created = true;
-                        }
-                        else
-                        {
-                            SWSS_LOG_NOTICE("Failed to create Port %s due to missing SAI create_port API.", get<0>(it->second).c_str());
-                        }
-                    }
-                    else
-                    {
-                        port_created = true;
-                    }
-
-                    if (port_created)
-                    {
-                        if (!initPort(get<0>(it->second), it->first))
-                        {
-                            throw runtime_error("PortsOrch initialization failure.");
-                        }
-                    }
-
-                    it = m_lanesAliasSpeedMap.erase(it);
-                }
-            }
-
-            if (!m_portConfigDone)
-            {
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-
-            if (alias == "PortConfigDone")
-            {
-                it = consumer.m_toSync.erase(it);
-                continue;
             }
 
             if (!gBufferOrch->isPortReady(alias))
@@ -1495,7 +1496,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
                 }
-
 
                 if (!fec_mode.empty())
                 {
