@@ -1353,7 +1353,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
             if (!m_portConfigDone)
             {
-                it = consumer.m_toSync.erase(it);
+                // Not yet receive PortConfigDone. Save it for future retry
+                it++;
                 continue;
             }
 
