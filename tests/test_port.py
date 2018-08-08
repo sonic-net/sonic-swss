@@ -58,7 +58,7 @@ def test_PortFec(dvs):
     adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
     tbl = swsscommon.Table(db, "PORT_TABLE")
-    ptbl = swsscommon.ProducerTable(db, "PORT_TABLE")
+    ptbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
     atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
 
     (status, fvs) = tbl.get("Ethernet0")
