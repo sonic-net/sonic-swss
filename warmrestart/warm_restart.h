@@ -3,7 +3,7 @@
 
 #include <string>
 #include "dbconnector.h"
-#include "redisclient.h"
+#include "table.h"
 
 namespace swss {
 
@@ -28,8 +28,8 @@ public:
 private:
 	std::shared_ptr<swss::DBConnector>          m_stateDb;
 	std::shared_ptr<swss::DBConnector>          m_cfgDb;
-	std::shared_ptr<swss::RedisClient>          m_stateRedisClient;
-	std::shared_ptr<swss::RedisClient>          m_cfgRedisClient;
+	std::unique_ptr<Table>         m_stateWarmRestartTable;
+	std::unique_ptr<Table>         m_cfgWarmRestartTable;
 	bool enabled;
 };
 
