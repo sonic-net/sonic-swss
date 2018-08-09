@@ -147,10 +147,23 @@ void Consumer::refillToSync(Table* table)
 
 void Consumer::refillToSync()
 {
-    auto db = getConsumerTable()->getDbConnector();
-    string tableName = getConsumerTable()->getTableName();
-    auto table = Table(db, tableName);
-    refillToSync(&table);
+    ConsumerTableBase *consumerTable = getConsumerTable();
+
+    auto subTable = dynamic_cast<SubscriberStateTable *>(consumerTable);
+    if (subTable != NULL)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        subTable->pops(entries);
+        addToSync(entries);
+    }
+    else
+    {
+        // consumerTable is either ConsumerStateTable or ConsumerTable
+        auto db = consumerTable->getDbConnector();
+        string tableName = consumerTable->getTableName();
+        auto table = Table(db, tableName);
+        refillToSync(&table);
+    }
 }
 
 void Consumer::execute()
@@ -173,7 +186,7 @@ void Consumer::drain()
 
 bool Orch::addExistingData(const string& tableName)
 {
-    Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
+    auto consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
