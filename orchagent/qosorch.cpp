@@ -329,6 +329,24 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             attr.value.s32 = stoi(fvValue(*i));
             attribs.push_back(attr);
         }
+        else if (fvField(*i) == green_drop_probability_field_name)
+        {
+            attr.id = SAI_WRED_ATTR_GREEN_DROP_PROBABILITY;
+            attr.value.s32 = stoi(fvValue(*i));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == yellow_drop_probability_field_name)
+        {
+            attr.id = SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY;
+            attr.value.s32 = stoi(fvValue(*i));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == red_drop_probability_field_name)
+        {
+            attr.id = SAI_WRED_ATTR_RED_DROP_PROBABILITY;
+            attr.value.s32 = stoi(fvValue(*i));
+            attribs.push_back(attr);
+        }
         else if (fvField(*i) == wred_green_enable_field_name)
         {
             attr.id = SAI_WRED_ATTR_GREEN_ENABLE;
@@ -394,14 +412,6 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     sai_object_id_t sai_object;
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
-
-    attr.id = SAI_WRED_ATTR_GREEN_DROP_PROBABILITY;
-    attr.value.s32 = 100;
-    attrs.push_back(attr);
-
-    attr.id = SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY;
-    attr.value.s32 = 100;
-    attrs.push_back(attr);
 
     attr.id = SAI_WRED_ATTR_WEIGHT;
     attr.value.s32 = 0;
