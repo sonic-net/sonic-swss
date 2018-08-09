@@ -130,7 +130,8 @@ public:
         return getConsumerTable()->getDbId();
     }
 
-    void dumpTasks(vector<string> &ts);
+    string dumpTuple(KeyOpFieldsValuesTuple &tuple);
+    void dumpToSyncTasks(vector<string> &ts);
 
     void addToSync(std::deque<KeyOpFieldsValuesTuple> &entries);
     void refillToSync();
@@ -184,7 +185,7 @@ public:
     /* TODO: refactor recording */
     static void recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
 
-    void dumpTasks(vector<string> &ts);
+    void dumpToSyncTasks(vector<string> &ts);
 protected:
     ConsumerMap m_consumerMap;
 

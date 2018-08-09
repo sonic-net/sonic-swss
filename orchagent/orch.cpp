@@ -171,18 +171,25 @@ void Consumer::drain()
         m_orch->doTask(*this);
 }
 
-void Consumer::dumpTasks(vector<string> &ts)
+string Consumer::dumpTuple(KeyOpFieldsValuesTuple &tuple)
+{
+    string s = getTableName() + getConsumerTable()->getTableNameSeparator() + kfvKey(tuple)
+               + "|" + kfvOp(tuple);
+    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
+    {
+        s += "|" + fvField(*i) + ":" + fvValue(*i);
+    }
+
+    return s;
+}
+
+void Consumer::dumpToSyncTasks(vector<string> &ts)
 {
     for (auto &tm :m_toSync)
     {
         KeyOpFieldsValuesTuple& tuple = tm.second;
 
-        string s = getTableName() + ":" + kfvKey(tuple)
-               + "|" + kfvOp(tuple);
-        for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
-        {
-            s += "|" + fvField(*i) + ":" + fvValue(*i);
-        }
+        string s = dumpTuple(tuple);
 
         ts.push_back(s);
     }
@@ -310,7 +317,7 @@ void Orch::doTask()
     }
 }
 
-void Orch::dumpTasks(vector<string> &ts)
+void Orch::dumpToSyncTasks(vector<string> &ts)
 {
     for(auto &it : m_consumerMap)
     {
@@ -321,7 +328,7 @@ void Orch::dumpTasks(vector<string> &ts)
             continue;
         }
 
-        consumer->dumpTasks(ts);
+        consumer->dumpToSyncTasks(ts);
     }
 }
 
@@ -346,12 +353,7 @@ void Orch::logfileReopen()
 
 void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 {
-    string s = consumer.getTableName() + ":" + kfvKey(tuple)
-               + "|" + kfvOp(tuple);
-    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
-    {
-        s += "|" + fvField(*i) + ":" + fvValue(*i);
-    }
+    string s = consumer.dumpTuple(tuple);
 
     gRecordOfs << getTimestamp() << "|" << s << endl;
 
@@ -365,13 +367,7 @@ void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 
 string Orch::dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 {
-    string s = consumer.getTableName() + ":" + kfvKey(tuple)
-               + "|" + kfvOp(tuple);
-    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
-    {
-        s += "|" + fvField(*i) + ":" + fvValue(*i);
-    }
-
+    string s = consumer.dumpTuple(tuple);
     return s;
 }
 
