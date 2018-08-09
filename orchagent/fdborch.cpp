@@ -26,16 +26,14 @@ FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
 {
     m_portsOrch->attach(this);
     m_flushNotificationsConsumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
-    auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this);
-    flushNotifier->setName("FLUSHFDBREQUEST");
-    Orch::addExecutor("", flushNotifier);
+    auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this, "FLUSHFDBREQUEST");
+    Orch::addExecutor(flushNotifier);
 
     /* Add FDB notifications support from ASIC */
     DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     m_fdbNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
-    auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this);
-    fdbNotifier->setName("FDB_NOTIFICATIONS");
-    Orch::addExecutor("FDB_NOTIFICATIONS", fdbNotifier);
+    auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
+    Orch::addExecutor(fdbNotifier);
 
     addExistingData(tableName);
 }

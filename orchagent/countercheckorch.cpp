@@ -30,9 +30,8 @@ CounterCheckOrch::CounterCheckOrch(DBConnector *db, vector<string> &tableNames):
 
     auto interv = timespec { .tv_sec = COUNTER_CHECK_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
     auto timer = new SelectableTimer(interv);
-    auto executor = new ExecutableTimer(timer, this);
-    executor->setName("MC_COUNTERS_POLL");
-    Orch::addExecutor("MC_COUNTERS_POLL", executor);
+    auto executor = new ExecutableTimer(timer, this, "MC_COUNTERS_POLL");
+    Orch::addExecutor(executor);
     timer->start();
 }
 

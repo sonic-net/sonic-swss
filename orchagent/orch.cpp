@@ -460,18 +460,18 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
     if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB)
     {
-        addExecutor(tableName, new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this));
+        addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
     }
     else
     {
-        addExecutor(tableName, new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this));
+        addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
     }
 }
 
-void Orch::addExecutor(string executorName, Executor* executor)
+void Orch::addExecutor(Executor* executor)
 {
     m_consumerMap.emplace(std::piecewise_construct,
-            std::forward_as_tuple(executorName),
+            std::forward_as_tuple(executor->getName()),
             std::forward_as_tuple(executor));
 }
 

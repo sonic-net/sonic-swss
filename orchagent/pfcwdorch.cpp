@@ -668,15 +668,13 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     auto consumer = new swss::NotificationConsumer(
             PfcWdSwOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
             "PFC_WD");
-    auto wdNotification = new Notifier(consumer, this);
-    wdNotification->setName("PFC_WD");
-    Orch::addExecutor("PFC_WD", wdNotification);
+    auto wdNotification = new Notifier(consumer, this, "PFC_WD");
+    Orch::addExecutor(wdNotification);
 
     auto interv = timespec { .tv_sec = COUNTER_CHECK_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
     auto timer = new SelectableTimer(interv);
-    auto executor = new ExecutableTimer(timer, this);
-    executor->setName("PFC_WD_COUNTERS_POLL");
-    Orch::addExecutor("PFC_WD_COUNTERS_POLL", executor);
+    auto executor = new ExecutableTimer(timer, this, "PFC_WD_COUNTERS_POLL");
+    Orch::addExecutor(executor);
     timer->start();
 }
 

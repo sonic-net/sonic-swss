@@ -243,9 +243,8 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     /* Add port oper status notification support */
     DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
-    auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this);
-    portStatusNotificatier->setName("PORT_STATUS_NOTIFICATIONS");
-    Orch::addExecutor("PORT_STATUS_NOTIFICATIONS", portStatusNotificatier);
+    auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
+    Orch::addExecutor(portStatusNotificatier);
 
     // Try warm start
     bake();

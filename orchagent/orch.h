@@ -68,9 +68,10 @@ class Orch;
 class Executor : public Selectable
 {
 public:
-    Executor(Selectable *selectable, Orch *orch)
+    Executor(Selectable *selectable, Orch *orch, const string &name)
         : m_selectable(selectable)
         , m_orch(orch)
+        , m_name(name)
     {
     }
 
@@ -95,10 +96,6 @@ public:
     {
         return m_name;
     }
-    virtual void setName(string name)
-    {
-        m_name = name;
-    }
 
 protected:
     Selectable *m_selectable;
@@ -113,8 +110,8 @@ protected:
 
 class Consumer : public Executor {
 public:
-    Consumer(ConsumerTableBase *select, Orch *orch)
-        : Executor(select, orch)
+    Consumer(ConsumerTableBase *select, Orch *orch, const string &name)
+        : Executor(select, orch, name)
     {
     }
 
@@ -124,12 +121,6 @@ public:
     }
 
     string getTableName() const
-    {
-        return getConsumerTable()->getTableName();
-    }
-
-
-    string getName() const
     {
         return getConsumerTable()->getTableName();
     }
@@ -205,7 +196,7 @@ protected:
     ref_resolve_status resolveFieldRefArray(type_map&, const string&, KeyOpFieldsValuesTuple&, vector<sai_object_id_t>&);
 
     /* Note: consumer will be owned by this class */
-    void addExecutor(string executorName, Executor* executor);
+    void addExecutor(Executor* executor);
     Executor *getExecutor(string executorName);
 private:
     void addConsumer(DBConnector *db, string tableName, int pri = default_orch_pri);

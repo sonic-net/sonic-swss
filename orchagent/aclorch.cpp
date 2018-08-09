@@ -1291,7 +1291,7 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
     sai_object_id_t session_oid;
 
     if (!m_pDTelOrch ||
-        (attr_name != ACTION_DTEL_FLOW_OP && 
+        (attr_name != ACTION_DTEL_FLOW_OP &&
         attr_name != ACTION_DTEL_INT_SESSION &&
         attr_name != ACTION_DTEL_FLOW_SAMPLE_PERCENT &&
         attr_name != ACTION_DTEL_REPORT_ALL_PACKETS))
@@ -1356,7 +1356,7 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
         value.aclaction.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
         value.aclaction.enable = (attr_value == DTEL_ENABLED) ? true : false;
     }
-    
+
     m_actions[aclDTelActionLookup[attr_name]] = value;
 
     return true;
@@ -1514,7 +1514,7 @@ bool AclRuleDTelDropWatchListEntry::validateAddAction(string attr_name, string a
 
     value.aclaction.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
     value.aclaction.enable = (attr_value == DTEL_ENABLED) ? true : false;
-    
+
     m_actions[aclDTelActionLookup[attr_name]] = value;
 
     return true;
@@ -1693,9 +1693,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     // initialized before thread start.
     auto interv = timespec { .tv_sec = COUNTERS_READ_INTERVAL, .tv_nsec = 0 };
     auto timer = new SelectableTimer(interv);
-    auto executor = new ExecutableTimer(timer, this);
-    executor->setName("ACL_POLL_TIMER");
-    Orch::addExecutor("", executor);
+    auto executor = new ExecutableTimer(timer, this, "ACL_POLL_TIMER");
+    Orch::addExecutor(executor);
     timer->start();
 }
 
@@ -2321,7 +2320,7 @@ sai_status_t AclOrch::bindAclTable(sai_object_id_t table_oid, AclTable &aclTable
     sai_status_t status = SAI_STATUS_SUCCESS;
 
     SWSS_LOG_INFO("%s table %s to ports", bind ? "Bind" : "Unbind", aclTable.id.c_str());
-    
+
     if (aclTable.ports.empty())
     {
         if (bind)
@@ -2432,7 +2431,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
     SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", flowWLTable.description.c_str(), table_oid);
 
     /* Create Drop watchlist ACL table */
-    
+
     table_attrs.clear();
 
     dropWLTable.id = TABLE_TYPE_DTEL_DROP_WATCHLIST;
