@@ -31,6 +31,8 @@ public:
 
     void increaseRouterIntfsRefCount(const string&);
     void decreaseRouterIntfsRefCount(const string&);
+
+    bool setRouterIntfsMtu(Port &port);
 private:
     IntfsTable m_syncdIntfses;
     void doTask(Consumer &consumer);

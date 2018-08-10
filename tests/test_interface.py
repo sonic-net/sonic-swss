@@ -32,7 +32,24 @@ class TestInterfaceIpv4Addresses(object):
             else:
                 assert False
 
-        # check asic database
+        # check ASIC router interface database
+        tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one port based router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            # a port based router interface has five field/value tuples
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_PORT"
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                        assert fv[1] == "1500"
+
+        # check ASIC route database
         tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
         for key in tbl.getKeys():
             route = json.loads(key)
@@ -43,12 +60,40 @@ class TestInterfaceIpv4Addresses(object):
 
         assert subnet_found and ip2me_found
 
+    def test_InterfaceChangeMtu(self, dvs):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        tbl = swsscommon.ProducerStateTable(pdb, "PORT_TABLE")
+        fvs = swsscommon.FieldValuePairs([("mtu", "8888")])
+        tbl.set("Ethernet8", fvs)
+
+        time.sleep(1)
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one port based router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            # a port based router interface has five field/value tuples
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_PORT"
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                        assert fv[1] == "8888"
+
     def test_InterfaceRemoveIpv4Address(self, dvs):
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
-        # assign IP to interface
+        # remove IP from interface
         tbl = swsscommon.Table(cdb, "INTERFACE")
         tbl._del("Ethernet8|10.0.0.4/31")
         time.sleep(1)
@@ -58,7 +103,7 @@ class TestInterfaceIpv4Addresses(object):
         intf_entries = tbl.getKeys()
         assert len(intf_entries) == 0
 
-        # check asic database
+        # check ASIC database
         tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
         for key in tbl.getKeys():
             route = json.loads(key)
