@@ -10,9 +10,6 @@
 #include "crmorch.h"
 #include "notifier.h"
 #include "sai_serialize.h"
-#include "json.hpp"
-
-using json = nlohmann::json;
 
 extern sai_fdb_api_t    *sai_fdb_api;
 
