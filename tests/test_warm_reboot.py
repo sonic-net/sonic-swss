@@ -7,7 +7,7 @@ import json
 # Get restart count of all processes supporting warm restart
 def swss_get_RestartCount(state_db):
     restart_count = {}
-    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
+    warmtbl = swsscommon.Table(state_db, "WARM_RESTART_TABLE")
     keys = warmtbl.getKeys()
     assert  len(keys) !=  0
     for key in keys:
@@ -21,7 +21,7 @@ def swss_get_RestartCount(state_db):
 
 # function to check the restart count incremented by 1 for all processes supporting warm restart
 def swss_check_RestartCount(state_db, restart_count):
-    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
+    warmtbl = swsscommon.Table(state_db, "WARM_RESTART_TABLE")
     keys = warmtbl.getKeys()
     print(keys)
     assert  len(keys) > 0
@@ -48,7 +48,7 @@ def check_port_oper_status(appl_db, port_name, state):
 
 # function to check the restart count incremented by 1 for a single process
 def swss_app_check_RestartCount_single(state_db, restart_count, name):
-    warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
+    warmtbl = swsscommon.Table(state_db, "WARM_RESTART_TABLE")
     keys = warmtbl.getKeys()
     print(keys)
     print(restart_count)
@@ -105,7 +105,7 @@ def test_VlanMgrdWarmRestart(dvs):
     # TODO: use cfg command to config it
     create_entry_tbl(
         conf_db,
-        swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
+        "WARM_RESTART", "swss",
         [
             ("enable", "true"),
         ]
