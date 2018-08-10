@@ -313,6 +313,7 @@ void OrchDaemon::start()
         for (Orch *o : m_orchList)
             o->doTask();
 
-        flush(); //flush after each event is handled, don't wait
+        //flush after each event is handled, don't wait timeout
+        flush();
     }
 }
