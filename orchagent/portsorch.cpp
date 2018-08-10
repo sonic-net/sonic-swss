@@ -2900,6 +2900,14 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
 
 /*
  * sync up orchagent with libsai/ASIC for port state.
+ *
+ * Currently NotificationProducer is used by syncd to inform port state change,
+ * which means orchagent will miss the signal if it happens between orchagent shutdown and startup.
+ * Syncd doesn't know whether the signal has been lost or not.
+ * Also the source of notification event is from libsai/SDK.
+ *
+ * Latest oper status for each port is retrieved via SAI_PORT_ATTR_OPER_STATUS sai API,
+ * the hostif and db are updated accordingly.
  */
 void PortsOrch::syncUpPortState()
 {
