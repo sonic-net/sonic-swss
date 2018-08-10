@@ -116,15 +116,18 @@ public:
         return getConsumerTable()->getTableName();
     }
 
-    void addToSync(std::deque<KeyOpFieldsValuesTuple> &entries);
-    void refillToSync();
-    void refillToSync(Table* table);
+    size_t refillToSync();
+    size_t refillToSync(Table* table);
     void execute();
     void drain();
 
     /* Store the latest 'golden' status */
     // TODO: hide?
     SyncMap m_toSync;
+    
+protected:
+    // Returns: the number of entries added to m_toSync
+    size_t addToSync(std::deque<KeyOpFieldsValuesTuple> &entries);
 };
 
 typedef map<string, std::shared_ptr<Executor>> ConsumerMap;
@@ -153,8 +156,8 @@ public:
     vector<Selectable*> getSelectables();
 
     // add the existing table data (left by warm reboot) to the consumer todo task list.
-    bool addExistingData(Table *table);
-    bool addExistingData(const string& tableName);
+    size_t addExistingData(Table *table);
+    size_t addExistingData(const string& tableName);
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     void doTask();

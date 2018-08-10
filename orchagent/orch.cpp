@@ -66,14 +66,14 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-void Consumer::addToSync(std::deque<KeyOpFieldsValuesTuple> &entries)
+size_t Consumer::addToSync(std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     SWSS_LOG_ENTER();
 
     /* Nothing popped */
     if (entries.empty())
     {
-        return;
+        return 0;
     }
 
     for (auto& entry: entries)
@@ -120,10 +120,11 @@ void Consumer::addToSync(std::deque<KeyOpFieldsValuesTuple> &entries)
             m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
         }
     }
+    return entries.size();
 }
 
 // TODO: Table should be const
-void Consumer::refillToSync(Table* table)
+size_t Consumer::refillToSync(Table* table)
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
@@ -142,10 +143,10 @@ void Consumer::refillToSync(Table* table)
         entries.push_back(kco);
     }
 
-    addToSync(entries);
+    return addToSync(entries);
 }
 
-void Consumer::refillToSync()
+size_t Consumer::refillToSync()
 {
     ConsumerTableBase *consumerTable = getConsumerTable();
 
@@ -154,7 +155,7 @@ void Consumer::refillToSync()
     {
         std::deque<KeyOpFieldsValuesTuple> entries;
         subTable->pops(entries);
-        addToSync(entries);
+        return addToSync(entries);
     }
     else
     {
@@ -162,7 +163,7 @@ void Consumer::refillToSync()
         auto db = consumerTable->getDbConnector();
         string tableName = consumerTable->getTableName();
         auto table = Table(db, tableName);
-        refillToSync(&table);
+        return refillToSync(&table);
     }
 }
 
@@ -184,32 +185,30 @@ void Consumer::drain()
         m_orch->doTask(*this);
 }
 
-bool Orch::addExistingData(const string& tableName)
+size_t Orch::addExistingData(const string& tableName)
 {
     auto consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
-        return false;
+        return 0;
     }
 
-    consumer->refillToSync();
-    return true;
+    return consumer->refillToSync();
 }
 
 // TODO: Table should be const
-bool Orch::addExistingData(Table *table)
+size_t Orch::addExistingData(Table *table)
 {
     string tableName = table->getTableName();
     Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
     if (consumer == NULL)
     {
         SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
-        return false;
+        return 0;
     }
 
-    consumer->refillToSync(table);
-    return true;
+    return consumer->refillToSync(table);
 }
 
 /*
