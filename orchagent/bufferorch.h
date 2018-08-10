@@ -28,7 +28,6 @@ class BufferOrch : public Orch
 {
 public:
     BufferOrch(DBConnector *db, vector<string> &tableNames);
-    bool bake();
     bool isPortReady(const std::string& port_name) const;
     static type_map m_buffer_type_maps;
 private:

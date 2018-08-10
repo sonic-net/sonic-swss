@@ -211,6 +211,27 @@ size_t Orch::addExistingData(Table *table)
     return consumer->refillToSync(table);
 }
 
+bool Orch::bake()
+{
+    SWSS_LOG_ENTER();
+
+    for(auto &it : m_consumerMap)
+    {
+        string executorName = it.first;
+        auto executor = it.second;
+        auto consumer = dynamic_cast<Consumer *>(executor.get());
+        if (consumer == NULL)
+        {
+            continue;
+        }
+        
+        size_t refilled = consumer->refillToSync();
+        SWSS_LOG_NOTICE("Add warm input: %s, %zd", executorName.c_str(), refilled);
+    }
+
+    return true;
+}
+
 /*
 - Validates reference has proper format which is [table_name:object_name]
 - validates table_name exists

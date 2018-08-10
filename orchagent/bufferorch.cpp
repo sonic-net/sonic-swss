@@ -30,34 +30,7 @@ BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, t
     SWSS_LOG_ENTER();
     initTableHandlers();
     initBufferReadyLists(db);
-
-    // Try warm start
-    bake();
 };
-
-bool BufferOrch::bake()
-{
-    SWSS_LOG_ENTER();
-
-    size_t init_cfg_numbers[] = {
-        addExistingData(CFG_BUFFER_POOL_TABLE_NAME),
-        addExistingData(CFG_BUFFER_PROFILE_TABLE_NAME),
-        addExistingData(CFG_BUFFER_QUEUE_TABLE_NAME),
-        addExistingData(CFG_BUFFER_PG_TABLE_NAME),
-        addExistingData(CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME),
-        addExistingData(CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME),
-    };
-
-    SWSS_LOG_NOTICE("addExistingData: %zd %zd %zd %zd %zd %zd", 
-        init_cfg_numbers[0],
-        init_cfg_numbers[1],
-        init_cfg_numbers[2],
-        init_cfg_numbers[3],
-        init_cfg_numbers[4],
-        init_cfg_numbers[5]
-    );
-    return true;
-}
 
 void BufferOrch::initTableHandlers()
 {

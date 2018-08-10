@@ -159,6 +159,10 @@ public:
     size_t addExistingData(Table *table);
     size_t addExistingData(const string& tableName);
 
+    // Prepare for warm start if Redis contains valid input data
+    // otherwise fallback to cold start
+    virtual bool bake();
+    
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     void doTask();
 
