@@ -1166,24 +1166,15 @@ sai_port_oper_status_t PortsOrch::getDbPortOperStatus(sai_object_id_t id)
     {
         if (it->second.m_port_id == id)
         {
-            vector<FieldValueTuple> fieldValues;
-            m_portTable->get(it->first, fieldValues);
+            string status;
 
-            for (const auto& fv : fieldValues)
+            m_portTable->hget(it->first, "oper_status", status);
+            for (const auto& ops : oper_status_strings)
             {
-                if (fvField(fv) !=  "oper_status")
+                if (ops.second == status)
                 {
-                    continue;
+                    return ops.first;
                 }
-
-                for (const auto& ops : oper_status_strings)
-                {
-                    if (ops.second == fvValue(fv))
-                    {
-                        return ops.first;
-                    }
-                }
-                break;
             }
             break;
         }
