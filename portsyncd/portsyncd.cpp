@@ -82,6 +82,7 @@ int main(int argc, char **argv)
         /* If PortInitDone already set, clear the init port config buffer */
         if(g_init)
         {
+            cout << "portsyncd warm start" << endl;
             deque<KeyOpFieldsValuesTuple> vkco;
             portCfg.pops(vkco);
         }
@@ -114,12 +115,6 @@ int main(int argc, char **argv)
         s.addSelectable(&netlink);
         s.addSelectable(&portCfg);
 
-        if (WarmStart::isWarmStart() && !g_init)
-        {
-            // Dump existing Links
-            cout << "Warm start: send netlink RTM_GETLINK request" << endl;
-            netlink.dumpRequest(RTM_GETLINK);
-        }
         while (true)
         {
             Selectable *temps;

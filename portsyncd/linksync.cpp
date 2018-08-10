@@ -30,7 +30,6 @@ const string LAG_PREFIX = "PortChannel";
 extern set<string> g_portSet;
 extern bool g_init;
 
-
 struct if_nameindex
 {
     unsigned int if_index;
