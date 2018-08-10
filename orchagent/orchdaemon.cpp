@@ -274,6 +274,12 @@ void OrchDaemon::start()
 {
     SWSS_LOG_ENTER();
 
+    // Try warm start
+    for (Orch *o : m_orchList)
+    {
+        o->bake();
+    }
+
     for (Orch *o : m_orchList)
     {
         m_select->addSelectables(o->getSelectables());
