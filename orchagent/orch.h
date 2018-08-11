@@ -132,17 +132,19 @@ public:
 
     string dumpTuple(KeyOpFieldsValuesTuple &tuple);
     void dumpToSyncTasks(vector<string> &ts);
-
-    void addToSync(std::deque<KeyOpFieldsValuesTuple> &entries);
-    void refillToSync();
-    void refillToSync(Table* table);
     void execute();
 
+    size_t refillToSync();
+    size_t refillToSync(Table* table);
     void drain();
 
     /* Store the latest 'golden' status */
     // TODO: hide?
     SyncMap m_toSync;
+
+protected:
+    // Returns: the number of entries added to m_toSync
+    size_t addToSync(std::deque<KeyOpFieldsValuesTuple> &entries);
 };
 
 typedef map<string, std::shared_ptr<Executor>> ConsumerMap;
@@ -171,8 +173,12 @@ public:
     vector<Selectable*> getSelectables();
 
     // add the existing table data (left by warm reboot) to the consumer todo task list.
-    bool addExistingData(Table *table);
-    bool addExistingData(const string& tableName);
+    size_t addExistingData(Table *table);
+    size_t addExistingData(const string& tableName);
+
+    // Prepare for warm start if Redis contains valid input data
+    // otherwise fallback to cold start
+    virtual bool bake();
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     void doTask();

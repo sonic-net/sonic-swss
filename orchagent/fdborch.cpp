@@ -34,8 +34,6 @@ FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
     m_fdbNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
-
-    addExistingData(tableName);
 }
 
 void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_object_id_t bridge_port_id)
