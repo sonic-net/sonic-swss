@@ -421,18 +421,13 @@ bool OrchDaemon::warmRestoreValidation()
     getTaskToSync(ts);
     if (ts.size() != 0)
     {
-        // TODO: change it to fatal once staged ProducerStateTable/ConsumerStateTable change and
-        // pre-warmStart consistency validation are ready.
-        SWSS_LOG_ERROR("There are pending consumer tasks after restore: ");
+        // TODO: Update this section accordingly once pre-warmStart consistency validation is ready.
+        SWSS_LOG_NOTICE("There are pending consumer tasks after restore: ");
         for(auto &s : ts)
         {
-            SWSS_LOG_ERROR("%s", s.c_str());
+            SWSS_LOG_NOTICE("%s", s.c_str());
         }
-        return false;
     }
-    else
-    {
-        WarmStart::setWarmStartState("orchagent", WarmStart::RESTORED);
-        return true;
-    }
+    WarmStart::setWarmStartState("orchagent", WarmStart::RESTORED);
+    return true;
 }
