@@ -53,7 +53,8 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
             return;
         }
 
-        if (m_entries.count(update.entry) != 0) // we already have such entries
+        // we already have such entries
+        if (m_entries.count(update.entry) != 0)
         {
              SWSS_LOG_INFO("FdbOrch notification: mac %s is already in bv_id 0x%lx",
                     update.entry.mac.to_string().c_str(), entry->bv_id);
