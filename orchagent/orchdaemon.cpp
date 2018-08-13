@@ -363,14 +363,8 @@ void OrchDaemon::warmRestoreAndSyncUp()
         o->doTask();
     }
 
-    // One more iteration due to the VLAN lag empty member restrictioin temporary fix, to be removed.
-    for (Orch *o : m_orchList)
-    {
-        o->doTask();
-    }
-
     /*
-     * At this point, all the pre-existing data should be have been processed properly, and
+     * At this point, all the pre-existing data should have been processed properly, and
      * orchagent should be in exact same state of pre-shutdown.
      * Perform restore validation as needed.
      */
