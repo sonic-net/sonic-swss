@@ -36,6 +36,17 @@ FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
     Orch::addExecutor("FDB_NOTIFICATIONS", fdbNotifier);
 }
 
+/*
+ * sync up orchagent with libsai/ASIC for FDB entries.
+ *
+ * Currently NotificationProducer is used by syncd to inform FDB change,
+ * which means orchagent will miss the signal if it happens between orchagent shutdown and startup.
+ * Syncd doesn't know whether the signal has been lost or not.
+ * Also the source of notification event is from libsai/SDK.
+ *
+ * Syncd puts a copy of FDB into ASIC DB the moment it generates FDB notification.
+ * Here orchagent reads the data directly from ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY
+ */
 void FdbOrch::syncUpFdb()
 {
     SWSS_LOG_ENTER();
@@ -92,7 +103,8 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
             return;
         }
 
-        if (m_entries.count(update.entry) != 0) // we already have such entries
+        // we already have such entries
+        if (m_entries.count(update.entry) != 0)
         {
              SWSS_LOG_INFO("FdbOrch notification: mac %s is already in bv_id 0x%lx",
                     update.entry.mac.to_string().c_str(), entry->bv_id);
