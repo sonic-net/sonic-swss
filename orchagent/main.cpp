@@ -100,6 +100,7 @@ int main(int argc, char **argv)
     swss::Logger::linkToDbNative("orchagent");
 
     SWSS_LOG_ENTER();
+    WarmStart::checkWarmStart("orchagent");
 
     if (signal(SIGHUP, sighup_handler) == SIG_ERR)
     {
@@ -268,8 +269,6 @@ int main(int argc, char **argv)
     DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     DBConnector config_db(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-
-    WarmStart::checkWarmStart("orchagent");
 
     OrchDaemon *orchDaemon = new OrchDaemon(&appl_db, &config_db, &state_db);
     if (!orchDaemon->init())
