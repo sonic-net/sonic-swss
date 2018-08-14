@@ -22,7 +22,7 @@ extern "C" {
 #include "saihelper.h"
 #include "notifications.h"
 #include <signal.h>
-#include <warm_restart.h>
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;

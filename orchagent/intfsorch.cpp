@@ -86,16 +86,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         {
             if (alias == "lo")
             {
-                // set request for lo may come after warm start restore
-                auto it_intfs = m_syncdIntfses.find(alias);
-                if (it_intfs == m_syncdIntfses.end())
-                {
-                    IntfsEntry intfs_entry;
-                    intfs_entry.ref_count = 0;
-                    m_syncdIntfses[alias] = intfs_entry;
-                    addIp2MeRoute(ip_prefix);
-                }
-
+                addIp2MeRoute(ip_prefix);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -180,7 +171,6 @@ void IntfsOrch::doTask(Consumer &consumer)
         {
             if (alias == "lo")
             {
-                m_syncdIntfses.erase(alias);
                 removeIp2MeRoute(ip_prefix);
                 it = consumer.m_toSync.erase(it);
                 continue;

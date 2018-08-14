@@ -197,7 +197,7 @@ string Consumer::dumpTuple(KeyOpFieldsValuesTuple &tuple)
     return s;
 }
 
-void Consumer::dumpToSyncTasks(vector<string> &ts)
+void Consumer::dumpPendingTasks(vector<string> &ts)
 {
     for (auto &tm :m_toSync)
     {
@@ -350,7 +350,7 @@ void Orch::doTask()
     }
 }
 
-void Orch::dumpToSyncTasks(vector<string> &ts)
+void Orch::dumpPendingTasks(vector<string> &ts)
 {
     for(auto &it : m_consumerMap)
     {
@@ -361,7 +361,7 @@ void Orch::dumpToSyncTasks(vector<string> &ts)
             continue;
         }
 
-        consumer->dumpToSyncTasks(ts);
+        consumer->dumpPendingTasks(ts);
     }
 }
 
