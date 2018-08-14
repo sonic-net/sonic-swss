@@ -36,6 +36,56 @@ FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
     Orch::addExecutor("FDB_NOTIFICATIONS", fdbNotifier);
 }
 
+/*
+ * sync up orchagent with libsai/ASIC for FDB entries.
+ *
+ * Currently NotificationProducer is used by syncd to inform FDB change,
+ * which means orchagent will miss the signal if it happens between orchagent shutdown and startup.
+ * Syncd doesn't know whether the signal has been lost or not.
+ * Also the source of notification event is from libsai/SDK.
+ *
+ * Syncd puts a copy of FDB into ASIC DB the moment it generates FDB notification.
+ * Here orchagent reads the data directly from ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY
+ */
+void FdbOrch::syncUpFdb()
+{
+    SWSS_LOG_ENTER();
+
+    string tableName = "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY";
+    DBConnector *db = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    swss::Table table(db, tableName);
+    vector<string> keys;
+
+    table.getKeys(keys);
+    for (const auto &key: keys)
+    {
+        sai_object_id_t bridge_port_id = SAI_NULL_OBJECT_ID;
+        sai_fdb_entry_type_t entryType = SAI_FDB_ENTRY_TYPE_STATIC;
+        std::string value;
+
+        table.hget(key, "SAI_FDB_ENTRY_ATTR_TYPE", value);
+        if (value ==  "SAI_FDB_ENTRY_TYPE_DYNAMIC")
+        {
+            entryType = SAI_FDB_ENTRY_TYPE_DYNAMIC;
+        }
+        value.clear();
+        table.hget(key, "SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", value);
+        if (!value.empty())
+        {
+            sai_deserialize_object_id(value, bridge_port_id);
+        }
+
+        // Only process dynamic FDB.
+        if(bridge_port_id != SAI_NULL_OBJECT_ID && entryType == SAI_FDB_ENTRY_TYPE_DYNAMIC)
+        {
+            sai_fdb_entry_t entry;
+            sai_deserialize_fdb_entry(key, entry);
+            this->update(SAI_FDB_EVENT_LEARNED, &entry, bridge_port_id);
+            SWSS_LOG_INFO("FDB from ASICDB %s", key.c_str());
+        }
+    }
+}
+
 void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_object_id_t bridge_port_id)
 {
     SWSS_LOG_ENTER();
@@ -51,6 +101,14 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         {
             SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%lx", bridge_port_id);
             return;
+        }
+
+        // we already have such entries
+        if (m_entries.count(update.entry) != 0)
+        {
+             SWSS_LOG_INFO("FdbOrch notification: mac %s is already in bv_id 0x%lx",
+                    update.entry.mac.to_string().c_str(), entry->bv_id);
+             break;
         }
 
         update.add = true;
