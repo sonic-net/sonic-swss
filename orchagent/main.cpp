@@ -7,6 +7,7 @@ extern "C" {
 #include <iostream>
 #include <unordered_map>
 #include <map>
+#include <memory>
 #include <thread>
 #include <chrono>
 #include <getopt.h>
@@ -270,16 +271,16 @@ int main(int argc, char **argv)
     DBConnector config_db(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-    OrchDaemon *orchDaemon = new OrchDaemon(&appl_db, &config_db, &state_db);
-    if (!orchDaemon->init())
-    {
-        SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
-        delete orchDaemon;
-        exit(EXIT_FAILURE);
-    }
+    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
 
     try
     {
+        if (!orchDaemon->init())
+        {
+            SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
+            exit(EXIT_FAILURE);
+        }
+
         if (!WarmStart::isWarmStart())
         {
             syncd_apply_view();
@@ -296,6 +297,5 @@ int main(int argc, char **argv)
         SWSS_LOG_ERROR("Failed due to exception: %s", e.what());
     }
 
-    delete orchDaemon;
     return 0;
 }

@@ -1,7 +1,72 @@
 from swsscommon import swsscommon
+
 import time
-import re
 import json
+
+class TestInterfaceIpv4Addresses(object):
+    def test_InterfaceAddIpv4Address(self, dvs):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # assign IP to interface
+        tbl = swsscommon.Table(cdb, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set("Ethernet8|10.0.0.4/31", fvs)
+        time.sleep(1)
+
+        # check application database
+        tbl = swsscommon.Table(pdb, "INTF_TABLE:Ethernet8")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "10.0.0.4/31"
+
+        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv4"
+            else:
+                assert False
+
+        # check asic database
+        tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.0.0.4/31":
+                subnet_found = True
+            if route["dest"] == "10.0.0.4/32":
+                ip2me_found = True
+
+        assert subnet_found and ip2me_found
+
+    def test_InterfaceRemoveIpv4Address(self, dvs):
+        pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+        # assign IP to interface
+        tbl = swsscommon.Table(cdb, "INTERFACE")
+        tbl._del("Ethernet8|10.0.0.4/31")
+        time.sleep(1)
+
+        # check application database
+        tbl = swsscommon.Table(pdb, "INTF_TABLE:Ethernet8")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # check asic database
+        tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.0.0.4/31":
+                assert False
+            if route["dest"] == "10.0.0.4/32":
+                assert False
+
 
 def test_InterfaceIpChange(dvs):
 
