@@ -319,9 +319,17 @@ def test_OrchagentWarmRestartReadyCheck(dvs):
     result =  dvs.runcmd("/usr/bin/orchagent_restart_check")
     assert result == "RESTARTCHECK failed\n"
 
+    # Should succeed, the option for pendingTaskCheck -s and noFreeze -n have been provided.
+    result =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s")
+    assert result == "RESTARTCHECK succeeded\n"
+
     # get neighbor and arp entry
     dvs.servers[1].runcmd("ping -c 1 10.0.0.1")
 
     time.sleep(1)
     result =  dvs.runcmd("/usr/bin/orchagent_restart_check")
     assert result == "RESTARTCHECK succeeded\n"
+
+    # Should fail since orchagent has been frozen at last step.
+    result =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s")
+    assert result == "RESTARTCHECK failed\n"

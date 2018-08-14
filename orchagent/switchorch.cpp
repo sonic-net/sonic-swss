@@ -3,6 +3,7 @@
 #include "switchorch.h"
 #include "converter.h"
 #include "notifier.h"
+#include "notificationproducer.h"
 
 using namespace std;
 using namespace swss;
@@ -143,10 +144,36 @@ void SwitchOrch::doTask(NotificationConsumer& consumer)
         return;
     }
 
+    m_warmRestartCheck.checkRestartReadyState = false;
+    m_warmRestartCheck.noFreeze = false;
+    m_warmRestartCheck.pendingTaskCheck = false;
+
     SWSS_LOG_NOTICE("RESTARTCHECK notification for %s ", op.c_str());
     if (op == "orchagent")
     {
-        checkRestartReadyState = true;
+        string s  =  op;
+
+        m_warmRestartCheck.checkRestartReadyState = true;
+        for (auto &i : values)
+        {
+            s += "|" + fvField(i) + ":" + fvValue(i);
+
+            if (fvField(i) == "NoFreeze" && fvValue(i) == "true")
+            {
+                m_warmRestartCheck.noFreeze = true;
+            }
+            if (fvField(i) == "SkipPendingTaskCheck" && fvValue(i) == "true")
+            {
+                m_warmRestartCheck.pendingTaskCheck = true;
+            }
+        }
+        SWSS_LOG_NOTICE("%s", s.c_str());
     }
 }
 
+void SwitchOrch::restartCheckReply(const string &op, const string &data, std::vector<FieldValueTuple> &values)
+{
+    NotificationProducer restartRequestReply(m_db, "RESTARTCHECKREPLY");
+    restartRequestReply.send(op, data, values);
+    checkRestartReadyDone();
+}
