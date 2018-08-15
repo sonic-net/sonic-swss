@@ -1,4 +1,6 @@
 #include "portsorch.h"
+#include "intfsorch.h"
+#include "bufferorch.h"
 #include "neighorch.h"
 
 #include <cassert>
@@ -18,7 +20,6 @@
 #include "sai_serialize.h"
 #include "crmorch.h"
 #include "countercheckorch.h"
-#include "bufferorch.h"
 #include "notifier.h"
 
 extern sai_switch_api_t *sai_switch_api;
@@ -30,6 +31,7 @@ extern sai_hostif_api_t* sai_hostif_api;
 extern sai_acl_api_t* sai_acl_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
+extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
@@ -1531,6 +1533,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         p.m_mtu = mtu;
                         m_portList[alias] = p;
                         SWSS_LOG_NOTICE("Set port %s MTU to %u", alias.c_str(), mtu);
+                        if (p.m_rif_id)
+                        {
+                            gIntfsOrch->setRouterIntfsMtu(p);
+                        }
                     }
                     else
                     {
