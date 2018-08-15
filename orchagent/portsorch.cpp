@@ -1027,6 +1027,7 @@ void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_
             FieldValueTuple tuple("oper_status", oper_status_strings.at(status));
             tuples.push_back(tuple);
             m_portTable->set(it->first, tuples);
+            it->second.m_oper_status = status;
         }
     }
 }
@@ -2098,6 +2099,11 @@ bool PortsOrch::initializePort(Port &p)
         FieldValueTuple tuple("oper_status", "down");
         vector.push_back(tuple);
         m_portTable->set(p.m_alias, vector);
+        p.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+    }
+    else
+    {
+        p.m_oper_status = SAI_PORT_OPER_STATUS_UP;
     }
 
     return true;
