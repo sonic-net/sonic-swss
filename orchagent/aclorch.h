@@ -32,6 +32,8 @@
 #define TABLE_TYPE_DTEL_DROP_WATCHLIST "DTEL_DROP_WATCHLIST"
 
 #define RULE_PRIORITY           "PRIORITY"
+#define MATCH_IN_PORTS          "IN_PORTS"
+#define MATCH_OUT_PORTS         "OUT_PORTS"
 #define MATCH_SRC_IP            "SRC_IP"
 #define MATCH_DST_IP            "DST_IP"
 #define MATCH_SRC_IPV6          "SRC_IPV6"
@@ -212,6 +214,9 @@ protected:
     map <sai_acl_entry_attr_t, sai_attribute_value_t> m_actions;
     string m_redirect_target_next_hop;
     string m_redirect_target_next_hop_group;
+
+    vector<sai_object_id_t> m_inPorts;
+    vector<sai_object_id_t> m_outPorts;
 };
 
 class AclRuleL3: public AclRule

@@ -32,6 +32,8 @@ extern CrmOrch *gCrmOrch;
 
 acl_rule_attr_lookup_t aclMatchLookup =
 {
+    { MATCH_IN_PORTS,          SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS },
+    { MATCH_OUT_PORTS,         SAI_ACL_ENTRY_ATTR_FIELD_OUT_PORTS },
     { MATCH_SRC_IP,            SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP },
     { MATCH_DST_IP,            SAI_ACL_ENTRY_ATTR_FIELD_DST_IP },
     { MATCH_SRC_IPV6,          SAI_ACL_ENTRY_ATTR_FIELD_SRC_IPV6 },
@@ -108,15 +110,6 @@ static acl_ip_type_lookup_t aclIpTypeLookup =
     { IP_TYPE_ARP_REPLY,   SAI_ACL_IP_TYPE_ARP_REPLY }
 };
 
-inline string toUpper(const string& str)
-{
-    string uppercase = str;
-
-    transform(uppercase.begin(), uppercase.end(), uppercase.begin(), ::toupper);
-
-    return uppercase;
-}
-
 inline string trim(const std::string& str, const std::string& whitespace = " \t")
 {
     const auto strBegin = str.find_first_not_of(whitespace);
@@ -171,9 +164,59 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
     {
         if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
         {
+            SWSS_LOG_ERROR("Failed to locate match criterion %s",
+                    attr_name.c_str());
             return false;
         }
-        else if(attr_name == MATCH_IP_TYPE)
+        else if (attr_name == MATCH_IN_PORTS)
+        {
+            auto ports = tokenize(attr_value, ',');
+
+            if (ports.size() == 0)
+            {
+                return false;
+            }
+
+            m_inPorts.clear();
+            for (auto alias : ports)
+            {
+                Port port;
+                if (!gPortsOrch->getPort(alias, port))
+                {
+                    SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
+                    return false;
+                }
+                m_inPorts.push_back(port.m_port_id);
+            }
+
+            value.aclfield.data.objlist.count = static_cast<uint32_t>(m_inPorts.size());
+            value.aclfield.data.objlist.list = m_inPorts.data();
+        }
+        else if (attr_name == MATCH_OUT_PORTS)
+        {
+            auto ports = tokenize(attr_value, ',');
+
+            if (ports.size() == 0)
+            {
+                return false;
+            }
+
+            m_outPorts.clear();
+            for (auto alias : ports)
+            {
+                Port port;
+                if (!gPortsOrch->getPort(alias, port))
+                {
+                    SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
+                    return false;
+                }
+                m_outPorts.push_back(port.m_port_id);
+            }
+
+            value.aclfield.data.objlist.count = static_cast<uint32_t>(m_outPorts.size());
+            value.aclfield.data.objlist.list = m_outPorts.data();
+        }
+        else if (attr_name == MATCH_IP_TYPE)
         {
             if (!processIpType(attr_value, value.aclfield.data.u32))
             {
@@ -183,7 +226,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
             value.aclfield.mask.u32 = 0xFFFFFFFF;
         }
-        else if(attr_name == MATCH_TCP_FLAGS)
+        else if (attr_name == MATCH_TCP_FLAGS)
         {
             vector<string> flagsData;
             string flags, mask;
@@ -220,12 +263,12 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             }
             value.aclfield.mask.u8 = (uint8_t)val;
         }
-        else if(attr_name == MATCH_ETHER_TYPE || attr_name == MATCH_L4_SRC_PORT || attr_name == MATCH_L4_DST_PORT)
+        else if (attr_name == MATCH_ETHER_TYPE || attr_name == MATCH_L4_SRC_PORT || attr_name == MATCH_L4_DST_PORT)
         {
             value.aclfield.data.u16 = to_uint<uint16_t>(attr_value);
             value.aclfield.mask.u16 = 0xFFFF;
         }
-        else if(attr_name == MATCH_DSCP)
+        else if (attr_name == MATCH_DSCP)
         {
             /* Support both exact value match and value/mask match */
             auto dscp_data = tokenize(attr_value, '/');
@@ -241,7 +284,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 value.aclfield.mask.u8 = 0x3F;
             }
         }
-        else if(attr_name == MATCH_IP_PROTOCOL)
+        else if (attr_name == MATCH_IP_PROTOCOL)
         {
             value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
             value.aclfield.mask.u8 = 0xFF;
@@ -286,7 +329,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 return false;
             }
         }
-        else if(attr_name == MATCH_TC)
+        else if (attr_name == MATCH_TC)
         {
             value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
             value.aclfield.mask.u8 = 0xFF;
@@ -328,7 +371,7 @@ bool AclRule::processIpType(string type, sai_uint32_t &ip_type)
 {
     SWSS_LOG_ENTER();
 
-    auto it = aclIpTypeLookup.find(toUpper(type));
+    auto it = aclIpTypeLookup.find(to_upper(type));
 
     if (it == aclIpTypeLookup.end())
     {
@@ -428,7 +471,8 @@ bool AclRule::create()
     status = sai_acl_api->create_acl_entry(&m_ruleOid, gSwitchId, (uint32_t)rule_attrs.size(), rule_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create ACL rule");
+        SWSS_LOG_ERROR("Failed to create ACL rule %s, rv:%d",
+                m_id.c_str(), status);
         AclRange::remove(range_objects, range_object_list.count);
         decreaseNextHopRefCount();
     }
@@ -515,7 +559,7 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
     /* Find action configured by user. Based on action type create rule. */
     for (const auto& itr : kfvFieldsValues(data))
     {
-        string attr_name = toUpper(fvField(itr));
+        string attr_name = to_upper(fvField(itr));
         string attr_value = fvValue(itr);
         if (attr_name == ACTION_PACKET_ACTION || attr_name == ACTION_MIRROR_ACTION ||
             attr_name == ACTION_DTEL_FLOW_OP || attr_name == ACTION_DTEL_INT_SESSION ||
@@ -660,7 +704,7 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
 {
     SWSS_LOG_ENTER();
 
-    string attr_value = toUpper(_attr_value);
+    string attr_value = to_upper(_attr_value);
     sai_attribute_value_t value;
 
     if (attr_name != ACTION_PACKET_ACTION)
@@ -764,7 +808,7 @@ sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
         {
             SWSS_LOG_INFO("ACL Redirect action target next hop group: '%s' doesn't exist on the switch. Creating it.", ips.to_string().c_str());
 
-            if(!m_pAclOrch->m_routeOrch->addNextHopGroup(ips))
+            if (!m_pAclOrch->m_routeOrch->addNextHopGroup(ips))
             {
                 SWSS_LOG_ERROR("Can't create required target next hop group '%s'", ips.to_string().c_str());
                 return SAI_NULL_OBJECT_ID;
@@ -1013,6 +1057,7 @@ bool AclTable::validate()
     if (type == ACL_TABLE_UNKNOWN || type == ACL_TABLE_CTRLPLANE) return false;
     if (stage == ACL_STAGE_UNKNOWN) return false;
     if (portSet.empty()) return false;
+
     return true;
 }
 
@@ -1022,10 +1067,16 @@ bool AclTable::create()
 
     sai_attribute_t attr;
     vector<sai_attribute_t> table_attrs;
-    vector<int32_t> bpoint_list = { SAI_ACL_BIND_POINT_TYPE_PORT, SAI_ACL_BIND_POINT_TYPE_LAG };
+    vector<int32_t> bpoint_list;
+
+    // PFC watch dog ACLs are only applied to port
     if (type == ACL_TABLE_PFCWD)
     {
         bpoint_list = { SAI_ACL_BIND_POINT_TYPE_PORT };
+    }
+    else
+    {
+        bpoint_list = { SAI_ACL_BIND_POINT_TYPE_PORT, SAI_ACL_BIND_POINT_TYPE_LAG };
     }
 
     attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
@@ -1085,6 +1136,7 @@ bool AclTable::create()
         attr.value.booldata = true;
         table_attrs.push_back(attr);
     }
+
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT;
     attr.value.booldata = true;
     table_attrs.push_back(attr);
@@ -1097,7 +1149,7 @@ bool AclTable::create()
     attr.value.booldata = true;
     table_attrs.push_back(attr);
 
-    if(stage == ACL_STAGE_INGRESS)
+    if (stage == ACL_STAGE_INGRESS)
     {
         int32_t range_types_list[] = { SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE };
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE;
@@ -1287,7 +1339,7 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
     SWSS_LOG_ENTER();
 
     sai_attribute_value_t value;
-    string attr_value = toUpper(attr_val);
+    string attr_value = to_upper(attr_val);
     sai_object_id_t session_oid;
 
     if (!m_pDTelOrch ||
@@ -1366,7 +1418,7 @@ bool AclRuleDTelFlowWatchListEntry::validate()
 {
     SWSS_LOG_ENTER();
 
-    if(!m_pDTelOrch)
+    if (!m_pDTelOrch)
     {
         return false;
     }
@@ -1503,7 +1555,7 @@ bool AclRuleDTelDropWatchListEntry::validateAddAction(string attr_name, string a
     }
 
     sai_attribute_value_t value;
-    string attr_value = toUpper(attr_val);
+    string attr_value = to_upper(attr_val);
 
     if (attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
         attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE)
@@ -1556,7 +1608,7 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
 
     acl_range_properties_t rangeProperties = make_tuple(type, min, max);
     auto range_it = m_ranges.find(rangeProperties);
-    if(range_it == m_ranges.end())
+    if (range_it == m_ranges.end())
     {
         sai_attribute_t attr;
         vector<sai_attribute_t> range_attrs;
@@ -1611,7 +1663,7 @@ bool AclRange::remove(sai_acl_range_type_t type, int min, int max)
 
     auto range_it = m_ranges.find(make_tuple(type, min, max));
 
-    if(range_it == m_ranges.end())
+    if (range_it == m_ranges.end())
     {
         return false;
     }
@@ -1733,7 +1785,7 @@ AclOrch::~AclOrch()
 {
     m_mirrorOrch->detach(this);
 
-    if(m_dTelOrch)
+    if (m_dTelOrch)
     {
         m_dTelOrch->detach(this);
     }
@@ -1905,7 +1957,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
             {
                 newTable.id = table_id;
 
-                string attr_name = toUpper(fvField(itp));
+                string attr_name = to_upper(fvField(itp));
                 string attr_value = fvValue(itp);
 
                 SWSS_LOG_DEBUG("TABLE ATTRIBUTE: %s : %s", attr_name.c_str(), attr_value.c_str());
@@ -2016,7 +2068,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
 
             for (const auto& itr : kfvFieldsValues(t))
             {
-                string attr_name = toUpper(fvField(itr));
+                string attr_name = to_upper(fvField(itr));
                 string attr_value = fvValue(itr);
 
                 SWSS_LOG_INFO("ATTRIBUTE: %s %s", attr_name.c_str(), attr_value.c_str());
@@ -2044,7 +2096,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             // validate and create ACL rule
             if (bAllAttributesOk && newRule->validate())
             {
-                if(addAclRule(newRule, table_id))
+                if (addAclRule(newRule, table_id))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;
@@ -2057,7 +2109,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if(removeAclRule(table_id, rule_id))
+            if (removeAclRule(table_id, rule_id))
                 it = consumer.m_toSync.erase(it);
             else
                 it++;
@@ -2213,7 +2265,7 @@ bool AclOrch::processAclTableType(string type, acl_table_type_t &table_type)
 {
     SWSS_LOG_ENTER();
 
-    auto tt = aclTableTypeLookUp.find(toUpper(type));
+    auto tt = aclTableTypeLookUp.find(to_upper(type));
 
     if (tt == aclTableTypeLookUp.end())
     {
@@ -2229,7 +2281,7 @@ bool AclOrch::processAclTableStage(string stage, acl_stage_type_t &acl_stage)
 {
     SWSS_LOG_ENTER();
 
-    auto iter = aclStageLookUp.find(toUpper(stage));
+    auto iter = aclStageLookUp.find(to_upper(stage));
 
     if (iter == aclStageLookUp.end())
     {
