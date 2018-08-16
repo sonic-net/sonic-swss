@@ -619,7 +619,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         vector<string> &tableNames,
         const vector<sai_port_stat_t> &portStatIds,
         const vector<sai_queue_stat_t> &queueStatIds,
-        const vector<sai_queue_attr_t> &queueAttrIds, 
+        const vector<sai_queue_attr_t> &queueAttrIds,
         int pollInterval):
     PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
     m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
@@ -668,13 +668,13 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     auto consumer = new swss::NotificationConsumer(
             PfcWdSwOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
             "PFC_WD");
-    auto wdNotification = new Notifier(consumer, this);
-    Orch::addExecutor("PFC_WD", wdNotification);
+    auto wdNotification = new Notifier(consumer, this, "PFC_WD");
+    Orch::addExecutor(wdNotification);
 
     auto interv = timespec { .tv_sec = COUNTER_CHECK_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
     auto timer = new SelectableTimer(interv);
-    auto executor = new ExecutableTimer(timer, this);
-    Orch::addExecutor("PFC_WD_COUNTERS_POLL", executor);
+    auto executor = new ExecutableTimer(timer, this, "PFC_WD_COUNTERS_POLL");
+    Orch::addExecutor(executor);
     timer->start();
 }
 

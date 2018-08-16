@@ -308,19 +308,6 @@ void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple>
             if (op == SET_COMMAND)
             {
                 p.set(key, values);
-                for (auto fv : values)
-                {
-                    string field = fvField(fv);
-                    string value = fvValue(fv);
-
-                    /* Update the mtu field on host interface */
-                    if (field == "mtu")
-                    {
-                        string cmd, res;
-                        cmd = "ip link set " + key + " mtu " + value;
-                        swss::exec(cmd, res);
-                     }
-                }
             }
 
             it = port_cfg_map.erase(it);

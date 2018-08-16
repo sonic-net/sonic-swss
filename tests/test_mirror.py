@@ -10,22 +10,13 @@ class TestMirror(object):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = tbl.getKeys()
-        assert dvs.asicdb.default_acl_table in keys
+        for k in dvs.asicdb.default_acl_tables:
+            assert k in keys
 
-        acl_tables = [k for k in keys if k not in dvs.asicdb.default_acl_table]
-        assert len(acl_tables) >= 1
+        acl_tables = [k for k in keys if k not in dvs.asicdb.default_acl_tables]
+        assert len(acl_tables) == 1
 
-        # Filter out DTel Acl tables
-        for k in acl_tables:
-            (status, fvs) = tbl.get(k)
-            for item in fvs:
-                if item[0] == "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST":
-                    if 'SAI_ACL_BIND_POINT_TYPE_PORT' in item[1] or 'SAI_ACL_BIND_POINT_TYPE_LAG' in item[1]:
-                        return k
-                    else:
-                        break
-
-        return None
+        return acl_tables[0]
 
     def get_mirror_session_id(self, dvs):
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)

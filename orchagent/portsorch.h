@@ -56,6 +56,8 @@ public:
     bool isInitDone();
 
     map<string, Port>& getAllPorts();
+    bool bake() override;
+    void cleanPortTable(const vector<string>& keys);
     bool getBridgePort(sai_object_id_t id, Port &port);
     bool getPort(string alias, Port &port);
     bool getPort(sai_object_id_t id, Port &port);

@@ -26,14 +26,14 @@ FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
 {
     m_portsOrch->attach(this);
     m_flushNotificationsConsumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
-    auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this);
-    Orch::addExecutor("", flushNotifier);
+    auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this, "FLUSHFDBREQUEST");
+    Orch::addExecutor(flushNotifier);
 
     /* Add FDB notifications support from ASIC */
     DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     m_fdbNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
-    auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this);
-    Orch::addExecutor("FDB_NOTIFICATIONS", fdbNotifier);
+    auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
+    Orch::addExecutor(fdbNotifier);
 }
 
 void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_object_id_t bridge_port_id)
@@ -51,6 +51,14 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         {
             SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%lx", bridge_port_id);
             return;
+        }
+
+        // we already have such entries
+        if (m_entries.find(update.entry) != m_entries.end())
+        {
+             SWSS_LOG_INFO("FdbOrch notification: mac %s is already in bv_id 0x%lx",
+                    update.entry.mac.to_string().c_str(), entry->bv_id);
+             break;
         }
 
         update.add = true;

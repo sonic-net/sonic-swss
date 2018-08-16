@@ -1,10 +1,12 @@
 Schema data is defined in ABNF [RFC5234](https://tools.ietf.org/html/rfc5234) syntax.
 
-### Definitions of common tokens
+## Definitions of common tokens
     name                    = 1*DIGIT/1*ALPHA
     ref_hash_key_reference  = "[" hash_key "]" ;The token is a refernce to another valid DB key.
     hash_key                = name ; a valid key name (i.e. exists in DB)
 
+
+## Application DB schema
 
 ### PORT_TABLE
 Stores information for physical switch ports managed by the switch chip.  device_names are defined in [port_config.ini](../portsyncd/port_config.ini).  Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE.   See INTF_TABLE.
@@ -620,7 +622,44 @@ Equivalent RedisDB entry:
     12) "0"
     127.0.0.1:6379>
 
-### Configuration files
+
+## Configuration DB schema
+
+### WARM\_RESTART
+    ;Stores system warm start configuration
+    ;Status: work in progress
+
+    key             = WARM_RESTART:name         ; name is the name of SONiC docker or "system" for global configuration.
+
+    enable          = "true" / "false"          ; Default value as false.
+                                                ; If "system" warm start knob is true, docker level knob will be ignored.
+                                                ; If "system" warm start knob is false, docker level knob takes effect.
+
+    timer_name      = 1*255VCHAR,               ; timer_name is the name of warm start timer for the whole system or the specific docker,
+                                                ; Ex. "neighbor_timer", "bgp_timer". The name should not contain "," character.
+                                                ; There could be more than one timer in a docker or the system, separated by ",".
+
+    timer_duration  = 1*4DIGIT,                 ; timer duration, in seconds. Separated by "," if there are more than on timer.
+
+
+## State DB schema
+
+### WARM\_RESTART\_TABLE
+    ;Stores application and orchdameon warm start status
+    ;Status: work in progress
+
+    key             = WARM_RESTART_TABLE:process_name         ; process_name is a unique process identifier.
+    restart_count   = 1*10DIGIT                               ; a number between 0 and 2147483647,
+                                                              ; count of warm start times.
+
+    state           = "init" / "restored" / "reconciled"      ; init: process init with warm start enabled.
+                                                              ; restored: process restored to the previous
+                                                              ; state using saved data.
+                                                              ; reconciled: process reconciled with up to date
+                                                              ; dynanic data like port state, neighbor, routes
+                                                              ; and so on.
+
+## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?
 
 [port_config.ini](https://github.com/stcheng/swss/blob/mock/portsyncd/port_config.ini) - defines physical port information
