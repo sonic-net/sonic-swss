@@ -78,15 +78,10 @@ int main(int argc, char **argv)
     WarmStart::checkWarmStart("portsyncd");
     if (WarmStart::isWarmStart())
     {
-        checkPortInitDone(&appl_db);
-        /* If PortInitDone already set, clear the init port config buffer */
-        if(g_init)
-        {
-            cout << "portsyncd warm start" << endl;
-            deque<KeyOpFieldsValuesTuple> vkco;
-            portCfg.pops(vkco);
-        }
-
+        /* clear the init port config buffer */
+        cout << "portsyncd warm start" << endl;
+        deque<KeyOpFieldsValuesTuple> vkco;
+        portCfg.pops(vkco);
     }
 
     LinkSync sync(&appl_db, &state_db);
@@ -101,8 +96,8 @@ int main(int argc, char **argv)
         netlink.registerGroup(RTNLGRP_LINK);
         cout << "Listen to link messages..." << endl;
 
-        /* For portsyncd warm start, don't process init port config again if PortInitDone set */
-        if (!g_init)
+        /* For portsyncd warm start, don't process init port config again */
+        if (!WarmStart::isWarmStart())
         {
             if (!port_config_file.empty())
             {
@@ -333,20 +328,6 @@ void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple>
         else
         {
             it++;
-        }
-    }
-}
-
-void checkPortInitDone(DBConnector *appl_db)
-{
-    std::unique_ptr<Table>  portTable = std::unique_ptr<Table>(new Table(appl_db, APP_PORT_TABLE_NAME));
-    std::vector<FieldValueTuple> vfv;
-
-    if (portTable->get("PortInitDone", vfv))
-    {
-        if (!vfv.empty())
-        {
-            g_init = true;
         }
     }
 }
