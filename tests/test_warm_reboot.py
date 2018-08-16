@@ -87,6 +87,95 @@ def how_many_entries_exist(db, table):
     return len(tbl.getKeys())
 
 
+def test_PortSyncdWarmRestart(dvs):
+
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+    # enable warm restart
+    # TODO: use cfg command to config it
+    create_entry_tbl(
+        conf_db,
+        swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
+        [
+            ("enable", "true"),
+        ]
+    )
+
+    dvs.runcmd("ifconfig Ethernet16  up")
+    dvs.runcmd("ifconfig Ethernet20  up")
+
+    time.sleep(1)
+
+    dvs.runcmd("ifconfig Ethernet16 11.0.0.1/29 up")
+    dvs.runcmd("ifconfig Ethernet20 11.0.0.9/29 up")
+
+    dvs.servers[4].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[4].runcmd("ip link set up dev eth0") == 0
+    dvs.servers[4].runcmd("ifconfig eth0 11.0.0.2/29")
+    dvs.servers[4].runcmd("ip route add default via 11.0.0.1")
+
+    dvs.servers[5].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[5].runcmd("ip link set up dev eth0") == 0
+    dvs.servers[5].runcmd("ifconfig eth0 11.0.0.10/29")
+    dvs.servers[5].runcmd("ip route add default via 11.0.0.9")
+
+    time.sleep(1)
+
+    # Ethernet port oper status should be up
+    check_port_oper_status(appl_db, "Ethernet16", "up")
+    check_port_oper_status(appl_db, "Ethernet20", "up")
+
+    # Ping should work between servers via vs vlan interfaces
+    ping_stats = dvs.servers[4].runcmd("ping -c 1 11.0.0.10")
+    time.sleep(1)
+
+    neighTbl = swsscommon.Table(appl_db, "NEIGH_TABLE")
+    (status, fvs) = neighTbl.get("Ethernet16:11.0.0.2")
+    assert status == True
+
+    (status, fvs) = neighTbl.get("Ethernet20:11.0.0.10")
+    assert status == True
+
+    restart_count = swss_get_RestartCount(state_db)
+
+    # restart portsyncd
+    dvs.runcmd(['sh', '-c', 'pkill -x portsyncd; cp /var/log/swss/sairedis.rec /var/log/swss/sairedis.rec.b; echo > /var/log/swss/sairedis.rec'])
+    dvs.runcmd(['sh', '-c', 'supervisorctl start portsyncd'])
+    time.sleep(2)
+
+     # No create/set/remove operations should be passed down to syncd for portsyncd warm restart
+    num = dvs.runcmd(['sh', '-c', 'grep \|c\| /var/log/swss/sairedis.rec | wc -l'])
+    assert num == '0\n'
+    num = dvs.runcmd(['sh', '-c', 'grep \|s\| /var/log/swss/sairedis.rec | wc -l'])
+    assert num == '0\n'
+    num = dvs.runcmd(['sh', '-c', 'grep \|r\| /var/log/swss/sairedis.rec | wc -l'])
+    assert num == '0\n'
+
+    #new ip on server 5
+    dvs.servers[5].runcmd("ifconfig eth0 11.0.0.11/29")
+
+    # Ping should work between servers via vs Ethernet interfaces
+    ping_stats = dvs.servers[4].runcmd("ping -c 1 11.0.0.11")
+
+    # new neighbor learn on VS
+    (status, fvs) = neighTbl.get("Ethernet20:11.0.0.11")
+    assert status == True
+
+    # Port state change reflected in appDB correctly
+    dvs.servers[6].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[6].runcmd("ip link set up dev eth0") == 0
+    time.sleep(1)
+
+    check_port_oper_status(appl_db, "Ethernet16", "up")
+    check_port_oper_status(appl_db, "Ethernet20", "up")
+    check_port_oper_status(appl_db, "Ethernet24", "up")
+
+
+    swss_app_check_RestartCount_single(state_db, restart_count, "portsyncd")
+
+
 def test_VlanMgrdWarmRestart(dvs):
 
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
