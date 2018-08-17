@@ -1158,30 +1158,6 @@ void PortsOrch::updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_
     }
 }
 
-sai_port_oper_status_t PortsOrch::getDbPortOperStatus(sai_object_id_t id)
-{
-    SWSS_LOG_ENTER();
-
-    for (auto it = m_portList.begin(); it != m_portList.end(); it++)
-    {
-        if (it->second.m_port_id == id)
-        {
-            string status;
-
-            m_portTable->hget(it->first, "oper_status", status);
-            for (const auto& ops : oper_status_strings)
-            {
-                if (ops.second == status)
-                {
-                    return ops.first;
-                }
-            }
-            break;
-        }
-    }
-    return SAI_PORT_OPER_STATUS_NOT_PRESENT;
-}
-
 bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string fec_mode)
 {
     SWSS_LOG_ENTER();
@@ -2930,13 +2906,12 @@ void PortsOrch::syncUpPortState()
             sai_port_oper_status_t status = (sai_port_oper_status_t)attr.value.u32;
             SWSS_LOG_INFO("%s oper status is %s", p.m_alias.c_str(), oper_status_strings.at(status).c_str());
 
-            sai_port_oper_status_t status_db = getDbPortOperStatus(p.m_port_id);
-            if (status != status_db)
+            if (status != p.m_oper_status)
             {
                 SWSS_LOG_NOTICE("Port state changed for %s from %s to %s", p.m_alias.c_str(),
-                        oper_status_strings.at(status_db).c_str(), oper_status_strings.at(status).c_str());
+                        oper_status_strings.at(p.m_oper_status).c_str(), oper_status_strings.at(status).c_str());
                 this->updateDbPortOperStatus(p.m_port_id, status);
-                if(status == SAI_PORT_OPER_STATUS_UP || status_db == SAI_PORT_OPER_STATUS_UP)
+                if(status == SAI_PORT_OPER_STATUS_UP || p.m_oper_status == SAI_PORT_OPER_STATUS_UP)
                 {
                     this->setHostIntfsOperStatus(p.m_port_id, status == SAI_PORT_OPER_STATUS_UP);
                 }
