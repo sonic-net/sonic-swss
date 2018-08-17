@@ -487,7 +487,8 @@ bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
     sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set MTU %u to port pid:%lx", attr.value.u32, id);
+        SWSS_LOG_ERROR("Failed to set MTU %u to port pid:%lx, rv:%d",
+                attr.value.u32, id, status);
         return false;
     }
     SWSS_LOG_INFO("Set MTU %u to port pid:%lx", attr.value.u32, id);
@@ -1276,7 +1277,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             return;
         }
 
-        if (op == "SET")
+        if (op == SET_COMMAND)
         {
             set<int> lane_set;
             string admin_status;
@@ -1303,11 +1304,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 /* Set port admin status */
                 if (fvField(i) == "admin_status")
+                {
                     admin_status = fvValue(i);
+                }
 
                 /* Set port MTU */
                 if (fvField(i) == "mtu")
+                {
                     mtu = (uint32_t)stoul(fvValue(i));
+                }
 
                 /* Set port speed */
                 if (fvField(i) == "speed")
@@ -1317,7 +1322,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                 /* Set port fec */
                 if (fvField(i) == "fec")
+                {
                     fec_mode = fvValue(i);
+                }
 
                 /* Set autoneg and ignore the port speed setting */
                 if (fvField(i) == "autoneg")
@@ -1786,28 +1793,57 @@ void PortsOrch::doLagTask(Consumer &consumer)
     {
         auto &t = it->second;
 
-        string lag_alias = kfvKey(t);
+        string alias = kfvKey(t);
         string op = kfvOp(t);
 
         if (op == SET_COMMAND)
         {
-            /* Duplicate entry */
-            if (m_portList.find(lag_alias) != m_portList.end())
+            // Retrieve attributes
+            uint32_t mtu = 0;
+            for (auto i : kfvFieldsValues(t))
             {
-                it = consumer.m_toSync.erase(it);
-                continue;
+                if (fvField(i) == "mtu")
+                {
+                    mtu = (uint32_t)stoul(fvValue(i));
+                }
             }
 
-            if (addLag(lag_alias))
-                it = consumer.m_toSync.erase(it);
+            // Create a new LAG when the new alias comes
+            if (m_portList.find(alias) == m_portList.end())
+            {
+                if (!addLag(alias))
+                {
+                    it++;
+                    continue;
+                }
+            }
+
+            // Process attributes
+            Port l;
+            if (!getPort(alias, l))
+            {
+                SWSS_LOG_ERROR("Failed to get LAG %s", alias.c_str());
+            }
             else
-                it++;
+            {
+                if (mtu != 0 && l.m_rif_id)
+                {
+                    l.m_mtu = mtu;
+                    m_portList[alias] = l;
+                    if (l.m_rif_id)
+                    {
+                        gIntfsOrch->setRouterIntfsMtu(l);
+                    }
+                }
+            }
+
+            it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
         {
             Port lag;
             /* Cannot locate LAG */
-            if (!getPort(lag_alias, lag))
+            if (!getPort(alias, lag))
             {
                 it = consumer.m_toSync.erase(it);
                 continue;

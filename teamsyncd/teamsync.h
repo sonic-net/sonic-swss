@@ -50,7 +50,7 @@ public:
 
 protected:
     void addLag(const std::string &lagName, int ifindex, bool admin_state,
-                bool oper_state, unsigned int mtu);
+                bool oper_state);
     void removeLag(const std::string &lagName);
 
 private:

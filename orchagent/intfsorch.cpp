@@ -310,13 +310,14 @@ bool IntfsOrch::addRouterIntfs(Port &port)
     sai_status_t status = sai_router_intfs_api->create_router_interface(&port.m_rif_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create router interface for port %s, rv:%d", port.m_alias.c_str(), status);
+        SWSS_LOG_ERROR("Failed to create router interface %s, rv:%d",
+                port.m_alias.c_str(), status);
         throw runtime_error("Failed to create router interface.");
     }
 
     gPortsOrch->setPort(port.m_alias, port);
 
-    SWSS_LOG_NOTICE("Create router interface for port %s mtu %u", port.m_alias.c_str(), port.m_mtu);
+    SWSS_LOG_NOTICE("Create router interface %s MTU %u", port.m_alias.c_str(), port.m_mtu);
 
     return true;
 }

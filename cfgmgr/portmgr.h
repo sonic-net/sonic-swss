@@ -21,9 +21,11 @@ private:
     Table m_cfgLagTable;
     Table m_statePortTable;
     Table m_stateLagTable;
+    ProducerStateTable m_appPortTable;
+    ProducerStateTable m_appLagTable;
 
     void doTask(Consumer &consumer);
-    bool setPortMtu(const string &alias, const string &mtu);
+    bool setPortMtu(const string &table, const string &alias, const string &mtu);
     bool setPortAdminStatus(const string &alias, const bool up);
     bool isPortStateOk(const string &table, const string &alias);
 };
