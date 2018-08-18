@@ -172,7 +172,11 @@ class DockerVirtualSwitch(object):
         started = 0
         while True:
             # get process status
-            out = self.ctn.exec_run("supervisorctl status")
+            res = self.ctn.exec_run("supervisorctl status")
+            try:
+                out = res.output
+            except:
+                out = res
             for l in out.split('\n'):
                 fds = re_space.split(l)
                 if len(fds) < 2:
