@@ -175,7 +175,7 @@ class DockerVirtualSwitch(object):
             res = self.ctn.exec_run("supervisorctl status")
             try:
                 out = res.output
-            except:
+            except AttributeError:
                 out = res
             for l in out.split('\n'):
                 fds = re_space.split(l)
