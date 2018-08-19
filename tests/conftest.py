@@ -1,9 +1,13 @@
 import os
+import os.path
 import re
 import time
 import docker
 import pytest
 import commands
+import tarfile
+import StringIO
+import subprocess
 from swsscommon import swsscommon
 
 def pytest_addoption(parser):
@@ -79,16 +83,25 @@ class VirtualServer(object):
             # bring up link in the virtual server
             os.system("ip netns exec %s ip link set dev %s name eth0" % (self.nsname, self.nsname[0:12]))
             os.system("ip netns exec %s ip link set dev eth0 up" % (self.nsname))
+            os.system("ip netns exec %s ethtool -K eth0 tx off" % (self.nsname))
 
             # bring up link in the virtual switch
             os.system("nsenter -t %d -n ip link set dev %s up" % (pid, self.vifname))
 
     def __del__(self):
         if self.cleanup:
+            pids = subprocess.check_output("ip netns pids %s" % (self.nsname), shell=True)
+            if pids:
+                for pid in pids.split('\n'):
+                    if len(pid) > 0:
+                        os.system("kill %s" % int(pid))
             os.system("ip netns delete %s" % self.nsname)
 
     def runcmd(self, cmd):
         os.system("ip netns exec %s %s" % (self.nsname, cmd))
+
+    def runcmd_async(self, cmd):
+        return subprocess.Popen("ip netns exec %s %s" % (self.nsname, cmd), shell=True)
 
 class DockerVirtualSwitch(object):
     def __init__(self, name=None):
@@ -153,8 +166,13 @@ class DockerVirtualSwitch(object):
                     network_mode="container:%s" % self.ctn_sw.name,
                     volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
 
-        self.check_ready()
-        self.init_asicdb_validator()
+        try:
+            self.ctn.exec_run("sysctl -w net.ipv6.conf.all.disable_ipv6=0")
+            self.check_ready()
+            self.init_asicdb_validator()
+        except:
+            self.destroy()
+            raise
 
     def destroy(self):
         if self.cleanup:
@@ -216,6 +234,15 @@ class DockerVirtualSwitch(object):
             exitcode = 0
             out = res
         return (exitcode, out)
+
+    def copy_file(self, path, filename):
+        tarstr = StringIO.StringIO()
+        tar = tarfile.open(fileobj=tarstr, mode="w")
+        tar.add(filename, os.path.basename(filename))
+        tar.close()
+        self.ctn.exec_run("mkdir -p %s" % path)
+        self.ctn.put_archive(path, tarstr.getvalue())
+        tarstr.close()
 
 @pytest.yield_fixture(scope="module")
 def dvs(request):
