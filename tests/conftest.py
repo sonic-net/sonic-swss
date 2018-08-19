@@ -208,7 +208,14 @@ class DockerVirtualSwitch(object):
         self.asicdb = AsicDbValidator(self)
 
     def runcmd(self, cmd):
-        return self.ctn.exec_run(cmd)
+        res = self.ctn.exec_run(cmd)
+        try:
+            exitcode = res.exit_code
+            out = res.output
+        except AttributeError:
+            exitcode = 0
+            out = res
+        return (exitcode, out)
 
 @pytest.yield_fixture(scope="module")
 def dvs(request):

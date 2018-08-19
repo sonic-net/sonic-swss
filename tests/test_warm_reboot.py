@@ -169,7 +169,7 @@ def test_VlanMgrdWarmRestart(dvs):
     assert status == True
 
 
-    bv_before = dvs.runcmd("bridge vlan")
+    (exitcode, bv_before) = dvs.runcmd("bridge vlan")
     print(bv_before)
 
     restart_count = swss_get_RestartCount(state_db)
@@ -178,15 +178,15 @@ def test_VlanMgrdWarmRestart(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start vlanmgrd'])
     time.sleep(2)
 
-    bv_after = dvs.runcmd("bridge vlan")
+    (exitcode, bv_after) = dvs.runcmd("bridge vlan")
     assert bv_after == bv_before
 
      # No create/set/remove operations should be passed down to syncd for vlanmgr warm restart
-    num = dvs.runcmd(['sh', '-c', 'grep \|c\| /var/log/swss/sairedis.rec | wc -l'])
+    (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep \|c\| /var/log/swss/sairedis.rec | wc -l'])
     assert num == '0\n'
-    num = dvs.runcmd(['sh', '-c', 'grep \|s\| /var/log/swss/sairedis.rec | wc -l'])
+    (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep \|s\| /var/log/swss/sairedis.rec | wc -l'])
     assert num == '0\n'
-    num = dvs.runcmd(['sh', '-c', 'grep \|r\| /var/log/swss/sairedis.rec | wc -l'])
+    (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep \|r\| /var/log/swss/sairedis.rec | wc -l'])
     assert num == '0\n'
 
     #new ip on server 5
