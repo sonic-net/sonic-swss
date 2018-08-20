@@ -19,6 +19,8 @@ void printUsage()
     std::cout << "        Don't freeze orchagent even if check succeeded" << std::endl;
     std::cout << "    -s --skipPendingTaskCheck" << std::endl;
     std::cout << "        Skip pending task dependency check for orchagent" << std::endl;
+    std::cout << "    -w --waitTime" << std::endl;
+    std::cout << "        Wait time for response from orchagent, in milliseconds. Default value: 1000" << std::endl;
     std::cout << "    -h --help:" << std::endl;
     std::cout << "        Print out this message" << std::endl;
 }
@@ -44,14 +46,17 @@ int main(int argc, char **argv)
 
     std::string skipPendingTaskCheck = "fasle";
     std::string noFreeze            = "fasle";
+    /* Default wait time is 1000 millisecond */
+    int waitTime = 1000;
 
-    const char* const optstring = "ns";
+    const char* const optstring = "nsw:";
     while(true)
     {
         static struct option long_options[] =
         {
             { "noFreeze",                no_argument,       0, 'n' },
-            { "skipPendingTaskCheck",     no_argument,       0, 's' }
+            { "skipPendingTaskCheck",    no_argument,       0, 's' },
+            { "waitTime",                required_argument, 0, 'w' }
         };
 
         int option_index = 0;
@@ -73,7 +78,10 @@ int main(int argc, char **argv)
                 SWSS_LOG_NOTICE("Skipping pending task check for orchagent");
                 skipPendingTaskCheck = "true";
                 break;
-
+            case 'w':
+                SWSS_LOG_NOTICE("Wait time for response from orchagent set to %s milliseconds", optarg);
+                waitTime = atoi(optarg);
+                break;
             case 'h':
                 printUsage();
                 exit(EXIT_SUCCESS);
@@ -108,7 +116,7 @@ int main(int argc, char **argv)
     swss::Selectable *sel;
     std::string op_ret, data;
     values.clear();
-    int result = s.select(&sel, 3000);
+    int result = s.select(&sel, waitTime);
     if (result == swss::Select::OBJECT)
     {
         restartQueryReply.pop(op_ret, data, values);

@@ -307,7 +307,6 @@ def test_OrchagentWarmRestartReadyCheck(dvs):
     dvs.servers[1].runcmd("ifconfig eth0 10.0.0.3/31")
     dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
 
-
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     ps = swsscommon.ProducerStateTable(appl_db, "ROUTE_TABLE")
     fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
@@ -319,8 +318,9 @@ def test_OrchagentWarmRestartReadyCheck(dvs):
     result =  dvs.runcmd("/usr/bin/orchagent_restart_check")
     assert result == "RESTARTCHECK failed\n"
 
-    # Should succeed, the option for pendingTaskCheck -s and noFreeze -n have been provided.
-    result =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s")
+    # Should succeed, the option for skipPendingTaskCheck -s and noFreeze -n have been provided.
+    # Wait up to 500 milliseconds for response from orchagent. Default wait time is 1000 milliseconds.
+    result =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
     assert result == "RESTARTCHECK succeeded\n"
 
     # get neighbor and arp entry
@@ -331,5 +331,5 @@ def test_OrchagentWarmRestartReadyCheck(dvs):
     assert result == "RESTARTCHECK succeeded\n"
 
     # Should fail since orchagent has been frozen at last step.
-    result =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s")
+    result =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
     assert result == "RESTARTCHECK failed\n"
