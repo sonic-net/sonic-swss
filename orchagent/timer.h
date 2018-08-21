@@ -8,8 +8,8 @@ namespace swss {
 class ExecutableTimer : public Executor
 {
 public:
-    ExecutableTimer(SelectableTimer *timer, Orch *orch)
-        : Executor(timer, orch)
+    ExecutableTimer(SelectableTimer *timer, Orch *orch, const string &name)
+        : Executor(timer, orch, name)
     {
     }
 

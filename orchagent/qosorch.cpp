@@ -34,6 +34,12 @@ map<string, sai_ecn_mark_mode_t> ecn_map = {
     {"ecn_all", SAI_ECN_MARK_MODE_ALL}
 };
 
+enum {
+    GREEN_DROP_PROBABILITY_SET  = (1U << 0),
+    YELLOW_DROP_PROBABILITY_SET = (1U << 1),
+    RED_DROP_PROBABILITY_SET    = (1U << 2)
+};
+
 map<string, sai_port_attr_t> qos_to_attr_map = {
     {dscp_to_tc_field_name, SAI_PORT_ATTR_QOS_DSCP_TO_TC_MAP},
     {tc_to_queue_field_name, SAI_PORT_ATTR_QOS_TC_TO_QUEUE_MAP},
@@ -329,6 +335,24 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             attr.value.s32 = stoi(fvValue(*i));
             attribs.push_back(attr);
         }
+        else if (fvField(*i) == green_drop_probability_field_name)
+        {
+            attr.id = SAI_WRED_ATTR_GREEN_DROP_PROBABILITY;
+            attr.value.s32 = stoi(fvValue(*i));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == yellow_drop_probability_field_name)
+        {
+            attr.id = SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY;
+            attr.value.s32 = stoi(fvValue(*i));
+            attribs.push_back(attr);
+        }
+        else if (fvField(*i) == red_drop_probability_field_name)
+        {
+            attr.id = SAI_WRED_ATTR_RED_DROP_PROBABILITY;
+            attr.value.s32 = stoi(fvValue(*i));
+            attribs.push_back(attr);
+        }
         else if (fvField(*i) == wred_green_enable_field_name)
         {
             attr.id = SAI_WRED_ATTR_GREEN_ENABLE;
@@ -394,14 +418,7 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     sai_object_id_t sai_object;
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
-
-    attr.id = SAI_WRED_ATTR_GREEN_DROP_PROBABILITY;
-    attr.value.s32 = 100;
-    attrs.push_back(attr);
-
-    attr.id = SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY;
-    attr.value.s32 = 100;
-    attrs.push_back(attr);
+    uint8_t drop_prob_set = 0;
 
     attr.id = SAI_WRED_ATTR_WEIGHT;
     attr.value.s32 = 0;
@@ -410,7 +427,39 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     for(auto attrib : attribs)
     {
         attrs.push_back(attrib);
+
+        if (attrib.id == SAI_WRED_ATTR_GREEN_DROP_PROBABILITY)
+        {
+            drop_prob_set |= GREEN_DROP_PROBABILITY_SET;
+        }
+        else if (attrib.id == SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY)
+        {
+            drop_prob_set |= YELLOW_DROP_PROBABILITY_SET;
+        }
+        else if (attrib.id == SAI_WRED_ATTR_RED_DROP_PROBABILITY)
+        {
+            drop_prob_set |= RED_DROP_PROBABILITY_SET;
+        }
     }
+    if (!(drop_prob_set & GREEN_DROP_PROBABILITY_SET))
+    {
+        attr.id = SAI_WRED_ATTR_GREEN_DROP_PROBABILITY;
+        attr.value.s32 = 100;
+        attrs.push_back(attr);
+    }
+    if (!(drop_prob_set & YELLOW_DROP_PROBABILITY_SET))
+    {
+        attr.id = SAI_WRED_ATTR_YELLOW_DROP_PROBABILITY;
+        attr.value.s32 = 100;
+        attrs.push_back(attr);
+    }
+    if (!(drop_prob_set & RED_DROP_PROBABILITY_SET))
+    {
+        attr.id = SAI_WRED_ATTR_RED_DROP_PROBABILITY;
+        attr.value.s32 = 100;
+        attrs.push_back(attr);
+    }
+
     sai_status = sai_wred_api->create_wred(&sai_object, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (sai_status != SAI_STATUS_SUCCESS)
     {
@@ -1133,13 +1182,28 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
             }
             else if (resolve_result != ref_resolve_status::field_not_found)
             {
-                if(ref_resolve_status::not_resolved == resolve_result)
+                if (ref_resolve_status::empty == resolve_result)
                 {
-                    SWSS_LOG_INFO("Missing or invalid wred reference");
+                    SWSS_LOG_INFO("Missing wred reference. Unbind wred profile from queue");
+                    // NOTE: The wred profile is un-bound from the port. But the wred profile itself still exists
+                    // and stays untouched.
+                    result = applyWredProfileToQueue(port, queue_ind, SAI_NULL_OBJECT_ID);
+                    if (!result)
+                    {
+                        SWSS_LOG_ERROR("Failed unbinding field:%s from port:%s, queue:%zd, line:%d", wred_profile_field_name.c_str(), port.m_alias.c_str(), queue_ind, __LINE__);
+                        return task_process_status::task_failed;
+                    }
+                }
+                else if (ref_resolve_status::not_resolved == resolve_result)
+                {
+                    SWSS_LOG_INFO("Invalid wred reference");
                     return task_process_status::task_need_retry;
                 }
-                SWSS_LOG_ERROR("Resolving wred reference failed");
-                return task_process_status::task_failed;
+                else
+                {
+                    SWSS_LOG_ERROR("Resolving wred reference failed");
+                    return task_process_status::task_failed;
+                }
             }
         }
     }

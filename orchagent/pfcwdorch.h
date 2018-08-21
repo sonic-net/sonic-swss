@@ -12,6 +12,8 @@ extern "C" {
 #include "sai.h"
 }
 
+#define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
+
 enum class PfcWdAction
 {
     PFC_WD_ACTION_UNKNOWN,
@@ -71,6 +73,7 @@ public:
     virtual bool stopWdOnPort(const Port& port);
 
     void createEntry(const string& key, const vector<FieldValueTuple>& data);
+    virtual void doTask(SelectableTimer &timer);
     //XXX Add port/queue state change event handlers
 private:
     struct PfcWdQueueEntry

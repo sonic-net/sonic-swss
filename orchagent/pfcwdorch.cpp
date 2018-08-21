@@ -9,7 +9,6 @@
 #include "notifier.h"
 #include "redisclient.h"
 
-#define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
 #define PFC_WD_GLOBAL                   "GLOBAL"
 #define PFC_WD_ACTION                   "action"
 #define PFC_WD_DETECTION_TIME           "detection_time"
@@ -23,6 +22,7 @@
 #define PFC_WD_POLL_TIMEOUT             5000
 #define SAI_PORT_STAT_PFC_PREFIX        "SAI_PORT_STAT_PFC_"
 #define PFC_WD_TC_MAX 8
+#define COUNTER_CHECK_POLL_TIMEOUT_SEC  1
 
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
@@ -611,7 +611,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         vector<string> &tableNames,
         const vector<sai_port_stat_t> &portStatIds,
         const vector<sai_queue_stat_t> &queueStatIds,
-        const vector<sai_queue_attr_t> &queueAttrIds, 
+        const vector<sai_queue_attr_t> &queueAttrIds,
         int pollInterval):
     PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
     m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
@@ -660,8 +660,14 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     auto consumer = new swss::NotificationConsumer(
             PfcWdSwOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
             "PFC_WD");
-    auto wdNotification = new Notifier(consumer, this);
-    Orch::addExecutor("PFC_WD", wdNotification);
+    auto wdNotification = new Notifier(consumer, this, "PFC_WD");
+    Orch::addExecutor(wdNotification);
+
+    auto interv = timespec { .tv_sec = COUNTER_CHECK_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
+    auto timer = new SelectableTimer(interv);
+    auto executor = new ExecutableTimer(timer, this, "PFC_WD_COUNTERS_POLL");
+    Orch::addExecutor(executor);
+    timer->start();
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -813,6 +819,21 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer
     {
         SWSS_LOG_ERROR("Received unknown event from plugin, %s", event.c_str());
     }
+}
+
+template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto& handlerPair : m_entryMap)
+    {
+        if (handlerPair.second.handler != nullptr)
+        {
+            handlerPair.second.handler->commitCounters(true);
+        }
+    }
+
 }
 
 // Trick to keep member functions in a separate file

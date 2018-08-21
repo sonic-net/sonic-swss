@@ -10,6 +10,7 @@
 #include "swssnet.h"
 #include "tokenize.h"
 #include "crmorch.h"
+#include "bufferorch.h"
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -17,9 +18,10 @@ extern sai_router_interface_api_t*  sai_router_intfs_api;
 extern sai_route_api_t*             sai_route_api;
 extern sai_neighbor_api_t*          sai_neighbor_api;
 
-extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
+extern PortsOrch *gPortsOrch;
 extern CrmOrch *gCrmOrch;
+extern BufferOrch *gBufferOrch;
 
 const int intfsorch_pri = 35;
 
@@ -53,6 +55,27 @@ void IntfsOrch::decreaseRouterIntfsRefCount(const string &alias)
     m_syncdIntfses[alias].ref_count--;
     SWSS_LOG_DEBUG("Router interface %s ref count is decreased to %d",
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
+}
+
+bool IntfsOrch::setRouterIntfsMtu(Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+    attr.value.u32 = port.m_mtu;
+
+    sai_status_t status = sai_router_intfs_api->
+            set_router_interface_attribute(port.m_rif_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set router interface %s MTU to %u, rv:%d",
+                port.m_alias.c_str(), port.m_mtu, status);
+        return false;
+    }
+    SWSS_LOG_NOTICE("Set router interface %s MTU to %u",
+            port.m_alias.c_str(), port.m_mtu);
+    return true;
 }
 
 void IntfsOrch::doTask(Consumer &consumer)
@@ -93,6 +116,13 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (!gPortsOrch->getPort(alias, port))
             {
                 /* TODO: Resolve the dependency relationship and add ref_count to port */
+                it++;
+                continue;
+            }
+
+            // buffer configuration hasn't been applied yet, hold from intf config.
+            if (!gBufferOrch->isPortReady(alias))
+            {
                 it++;
                 continue;
             }
@@ -150,7 +180,8 @@ void IntfsOrch::doTask(Consumer &consumer)
 
             addSubnetRoute(port, ip_prefix);
             addIp2MeRoute(ip_prefix);
-            if(port.m_type == Port::VLAN && ip_prefix.isV4())
+
+            if (port.m_type == Port::VLAN && ip_prefix.isV4())
             {
                 addDirectedBroadcast(port, ip_prefix.getBroadcastIp());
             }
