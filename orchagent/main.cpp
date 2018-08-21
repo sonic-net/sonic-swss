@@ -281,10 +281,7 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
 
-        if (!WarmStart::isWarmStart())
-        {
-            syncd_apply_view();
-        }
+        syncd_apply_view();
 
         orchDaemon->start();
     }
