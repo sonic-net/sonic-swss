@@ -1,10 +1,12 @@
 Schema data is defined in ABNF [RFC5234](https://tools.ietf.org/html/rfc5234) syntax.
 
-### Definitions of common tokens
+## Definitions of common tokens
     name                    = 1*DIGIT/1*ALPHA
     ref_hash_key_reference  = "[" hash_key "]" ;The token is a refernce to another valid DB key.
     hash_key                = name ; a valid key name (i.e. exists in DB)
 
+
+## Application DB schema
 
 ### PORT_TABLE
 Stores information for physical switch ports managed by the switch chip.  device_names are defined in [port_config.ini](../portsyncd/port_config.ini).  Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE.   See INTF_TABLE.
@@ -313,6 +315,7 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
     key                     = TUNNEL_DECAP_TABLE:name
     ;field                      value
     tunnel_type             = "IPINIP"
+    src_ip                  = IP
     dst_ip                  = IP1,IP2 ;IP addresses separated by ","
     dscp_mode               = "uniform" / "pipe"
     ecn_mode                = "copy_from_outer" / "standard" ;standard: Behavior defined in RFC 6040 section 4.2
@@ -320,18 +323,22 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 
     IP = dec-octet "." dec-octet "." dec-octet "." dec-octet
 
+    "src_ip" field is optional
+
     Example:
     127.0.0.1:6379> hgetall TUNNEL_DECAP_TABLE:NETBOUNCER
     1) "dscp_mode"
     2) "uniform"
-    3) "dst_ip"
+    3) "src_ip"
     4) "127.0.0.1"
-    5) "ecn_mode"
-    6) "copy_from_outer"
-    7) "ttl_mode"
-    8) "uniform"
-    9) "tunnel_type"
-    10) "IPINIP"
+    5) "dst_ip"
+    6) "127.0.0.1"
+    7) "ecn_mode"
+    8) "copy_from_outer"
+    9) "ttl_mode"
+    10) "uniform"
+    11) "tunnel_type"
+    12) "IPINIP"
 
 ---------------------------------------------
 
@@ -620,7 +627,44 @@ Equivalent RedisDB entry:
     12) "0"
     127.0.0.1:6379>
 
-### Configuration files
+
+## Configuration DB schema
+
+### WARM\_RESTART
+    ;Stores system warm start configuration
+    ;Status: work in progress
+
+    key             = WARM_RESTART:name         ; name is the name of SONiC docker or "system" for global configuration.
+
+    enable          = "true" / "false"          ; Default value as false.
+                                                ; If "system" warm start knob is true, docker level knob will be ignored.
+                                                ; If "system" warm start knob is false, docker level knob takes effect.
+
+    timer_name      = 1*255VCHAR,               ; timer_name is the name of warm start timer for the whole system or the specific docker,
+                                                ; Ex. "neighbor_timer", "bgp_timer". The name should not contain "," character.
+                                                ; There could be more than one timer in a docker or the system, separated by ",".
+
+    timer_duration  = 1*4DIGIT,                 ; timer duration, in seconds. Separated by "," if there are more than on timer.
+
+
+## State DB schema
+
+### WARM\_RESTART\_TABLE
+    ;Stores application and orchdameon warm start status
+    ;Status: work in progress
+
+    key             = WARM_RESTART_TABLE:process_name         ; process_name is a unique process identifier.
+    restart_count   = 1*10DIGIT                               ; a number between 0 and 2147483647,
+                                                              ; count of warm start times.
+
+    state           = "init" / "restored" / "reconciled"      ; init: process init with warm start enabled.
+                                                              ; restored: process restored to the previous
+                                                              ; state using saved data.
+                                                              ; reconciled: process reconciled with up to date
+                                                              ; dynanic data like port state, neighbor, routes
+                                                              ; and so on.
+
+## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?
 
 [port_config.ini](https://github.com/stcheng/swss/blob/mock/portsyncd/port_config.ini) - defines physical port information

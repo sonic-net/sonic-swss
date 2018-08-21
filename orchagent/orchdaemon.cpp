@@ -3,6 +3,7 @@
 #include "orchdaemon.h"
 #include "logger.h"
 #include <sairedis.h>
+#include "warm_restart.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -16,17 +17,19 @@ using namespace swss;
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
-
+extern void syncd_apply_view();
 /*
  * Global orch daemon variables
  */
 PortsOrch *gPortsOrch;
 FdbOrch *gFdbOrch;
+IntfsOrch *gIntfsOrch;
 NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
 AclOrch *gAclOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
+SwitchOrch *gSwitchOrch;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
         m_applDb(applDb),
@@ -49,7 +52,7 @@ bool OrchDaemon::init()
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
-    SwitchOrch *switch_orch = new SwitchOrch(m_applDb, APP_SWITCH_TABLE_NAME);
+    gSwitchOrch = new SwitchOrch(m_applDb, APP_SWITCH_TABLE_NAME);
 
     const int portsorch_base_pri = 40;
 
@@ -64,8 +67,8 @@ bool OrchDaemon::init()
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
     gPortsOrch = new PortsOrch(m_applDb, ports_tables);
     gFdbOrch = new FdbOrch(m_applDb, APP_FDB_TABLE_NAME, gPortsOrch);
-    IntfsOrch *intfs_orch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME);
-    gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, intfs_orch);
+    gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME);
+    gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch);
     gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gNeighOrch);
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
@@ -117,7 +120,15 @@ bool OrchDaemon::init()
         CFG_DTEL_EVENT_TABLE_NAME
     };
 
-    m_orchList = { switch_orch, gCrmOrch, gPortsOrch, intfs_orch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, gBufferOrch, mirror_orch };
+    /*
+     * The order of the orch list is important for state restore of warm start and
+     * the queued processing in m_toSync map after gPortsOrch->isInitDone() is set.
+     *
+     * For the multiple consumers in ports_tables, tasks for LAG_TABLE is processed before VLAN_TABLE
+     * when iterating ConsumerMap.
+     * That is ensured implicitly by the order of map key, "LAG_TABLE" is smaller than "VLAN_TABLE" in lexicographic order.
+     */
+    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -153,8 +164,9 @@ bool OrchDaemon::init()
         gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
     }
 
-    m_orchList.push_back(gAclOrch);
     m_orchList.push_back(gFdbOrch);
+    m_orchList.push_back(mirror_orch);
+    m_orchList.push_back(gAclOrch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_decap_orch);
 
@@ -275,6 +287,8 @@ void OrchDaemon::start()
 {
     SWSS_LOG_ENTER();
 
+    warmRestoreAndSyncUp();
+
     for (Orch *o : m_orchList)
     {
         m_select->addSelectables(o->getSelectables());
@@ -295,12 +309,6 @@ void OrchDaemon::start()
 
         if (ret == Select::TIMEOUT)
         {
-            /* Let sairedis to flush all SAI function call to ASIC DB.
-             * Normally the redis pipeline will flush when enough request
-             * accumulated. Still it is possible that small amount of
-             * requests live in it. When the daemon has nothing to do, it
-             * is a good chance to flush the pipeline  */
-            flush();
             continue;
         }
 
@@ -314,5 +322,99 @@ void OrchDaemon::start()
         for (Orch *o : m_orchList)
             o->doTask();
 
+        /* Let sairedis to flush all SAI function call to ASIC DB.
+         * Normally the redis pipeline will flush when enough request
+         * accumulated. Still it is possible that small amount of
+         * requests live in it. When the daemon has finished events/tasks, it
+         * is a good chance to flush the pipeline before next select happened.
+         */
+        flush();
     }
+}
+
+/*
+ * Try to perform orchagent state restore and dynamic states sync up if
+ * warm start reqeust is detected.
+ */
+void OrchDaemon::warmRestoreAndSyncUp()
+{
+    if (!WarmStart::isWarmStart())
+    {
+        return;
+    }
+
+    WarmStart::setWarmStartState("orchagent", WarmStart::INIT);
+
+    for (Orch *o : m_orchList)
+    {
+        o->bake();
+    }
+
+    /*
+     * First iteration is to handle all the existing data in predefined order.
+     */
+    for (Orch *o : m_orchList)
+    {
+        o->doTask();
+    }
+    /*
+     * Drain remaining data that are out of order like LAG_MEMBER_TABLE and VLAN_MEMBER_TABLE
+     * since they were checked before LAG_TABLE and VLAN_TABLE.
+     */
+    for (Orch *o : m_orchList)
+    {
+        o->doTask();
+    }
+
+    /*
+     * At this point, all the pre-existing data should have been processed properly, and
+     * orchagent should be in exact same state of pre-shutdown.
+     * Perform restore validation as needed.
+     */
+    warmRestoreValidation();
+
+    SWSS_LOG_NOTICE("Orchagent state restore done");
+    syncd_apply_view();
+
+    /* TODO: perform port and fdb state sync up*/
+
+    /*
+     * Note. Arp sync up is handled in neighsyncd.
+     * The "RECONCILED" state of orchagent doesn't mean the state related to neighbor is up to date.
+     */
+    WarmStart::setWarmStartState("orchagent", WarmStart::RECONCILED);
+}
+
+/*
+ * Get tasks to sync for consumers of each orch being managed by this orch daemon
+ */
+void OrchDaemon::getTaskToSync(vector<string> &ts)
+{
+    for (Orch *o : m_orchList)
+    {
+        o->dumpPendingTasks(ts);
+    }
+}
+
+
+/* Perform basic validation after start restore for warm start */
+bool OrchDaemon::warmRestoreValidation()
+{
+    /*
+     * No pending task should exist for any of the consumer at this point.
+     * All the prexisting data in appDB and configDb have been read and processed.
+     */
+    vector<string> ts;
+    getTaskToSync(ts);
+    if (ts.size() != 0)
+    {
+        // TODO: Update this section accordingly once pre-warmStart consistency validation is ready.
+        SWSS_LOG_NOTICE("There are pending consumer tasks after restore: ");
+        for(auto &s : ts)
+        {
+            SWSS_LOG_NOTICE("%s", s.c_str());
+        }
+    }
+    WarmStart::setWarmStartState("orchagent", WarmStart::RESTORED);
+    return true;
 }

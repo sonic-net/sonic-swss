@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir)
+INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -67,13 +67,15 @@ orchagent_SOURCES = \
         switchorch.h \
 		    swssnet.h \
 		    tunneldecaporch.h \
-		    crmorch.h \
+		    crmorch.h        \
 		    request_parser.h \
 		    vrforch.h \
 		    dtelorch.h \
 		    countercheckorch.h \
 		    vxlan_tunnel_decap_orch.h \
-		    flexcounterorch.h
+		    flexcounterorch.h   \
+		    $(top_srcdir)/warmrestart/warm_restart.cpp \
+		    $(top_srcdir)/warmrestart/warm_restart.h
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

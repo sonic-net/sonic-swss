@@ -45,25 +45,22 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     addLag(lagName, rtnl_link_get_ifindex(link),
            rtnl_link_get_flags(link) & IFF_UP,
-           rtnl_link_get_flags(link) & IFF_LOWER_UP,
-           rtnl_link_get_mtu(link));
+           rtnl_link_get_flags(link) & IFF_LOWER_UP);
 }
 
 void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
-                      bool oper_state, unsigned int mtu)
+                      bool oper_state)
 {
     /* Set the LAG */
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin_state ? "up" : "down");
     FieldValueTuple o("oper_status", oper_state ? "up" : "down");
-    FieldValueTuple m("mtu", to_string(mtu));
     fvVector.push_back(a);
     fvVector.push_back(o);
-    fvVector.push_back(m);
     m_lagTable.set(lagName, fvVector);
 
-    SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s mtu:%d",
-                   lagName.c_str(), admin_state ? "up" : "down", oper_state ? "up" : "down", mtu);
+    SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s",
+                   lagName.c_str(), admin_state ? "up" : "down", oper_state ? "up" : "down");
 
     /* Return when the team instance has already been tracked */
     if (m_teamPorts.find(lagName) != m_teamPorts.end())
