@@ -194,7 +194,8 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
 {
     SWSS_LOG_ENTER();
 
-    MirrorEntry entry(getenv("platform"));
+    string platform = getenv("platform") ? getenv("platform") : "";
+    MirrorEntry entry(platform);
 
     for (auto i : data)
     {
@@ -251,7 +252,7 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
         }
     }
 
-    SWSS_LOG_INFO("Creating mirroring sessions %s\n", key.c_str());
+    SWSS_LOG_NOTICE("Create mirror sessions %s", key.c_str());
 
     auto session = m_syncdMirrors.find(key);
     if (session != m_syncdMirrors.end())

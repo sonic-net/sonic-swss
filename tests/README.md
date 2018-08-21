@@ -8,7 +8,7 @@ SWSS Integration tests runs on docker-sonic-vs which runs on top of SAI virtual 
 
 - Install docker and pytest on your dev machine
     ```
-    sudo pip install --system docker==2.6.1
+    sudo pip install --system docker==3.5.0
     sudo pip install --system pytest==3.3.0
     ```
 - Compile and install swss common library. Follow instructions [here](https://github.com/Azure/sonic-swss-common/blob/master/README.md) to first install prerequisites to build swss common library. 
@@ -35,6 +35,8 @@ SWSS Integration tests runs on docker-sonic-vs which runs on top of SAI virtual 
     sudo pytest -v
     ```
 
+\* If you meet the error: client is newer than server, please edit the file `/usr/local/lib/python2.7/dist-packages/docker/constants.py` to update the `DEFAULT_DOCKER_API_VERSION` to mitigate this issue.
+
 # How to setup test development env
 
 To develop new swss features or swss integration tests, you need to setup a virtual switch docker container which 
@@ -43,7 +45,7 @@ persists.
 - Create virtual switch container (name:vs). ```create_vnet.sh``` can be found at [here](https://github.com/Azure/sonic-buildimage/blob/master/platform/vs/create_vnet.sh).
 
     ```
-    docker run -id --name sw debian bash
+    docker run --privileged -id --name sw debian bash
     sudo ./create_vnet.sh sw
     docker run --privileged -v /var/run/redis-vs:/var/run/redis --network container:sw -d --name vs docker-sonic-vs
     ```

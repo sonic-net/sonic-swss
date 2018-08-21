@@ -199,7 +199,7 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
         throw "Port configuration file not found!";
     }
 
-    list<string> header = {"name", "lanes", "alias", "speed"};
+    list<string> header = {"name", "lanes", "alias", "speed", "autoneg", "fec"};
     string line;
     while (getline(infile, line))
     {
@@ -252,6 +252,18 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
             attrs.push_back(speed_attr);
         }
 
+        if ((entry.find("autoneg") != entry.end()) && (entry["autoneg"] != ""))
+        {
+            FieldValueTuple autoneg_attr("autoneg", entry["autoneg"]);
+            attrs.push_back(autoneg_attr);
+        }
+
+        if ((entry.find("fec") != entry.end()) && (entry["fec"] != ""))
+        {
+            FieldValueTuple fec_attr("fec", entry["fec"]);
+            attrs.push_back(fec_attr);
+        }
+
         p.set(entry["name"], attrs);
 
         g_portSet.insert(entry["name"]);
@@ -279,19 +291,6 @@ void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple>
             if (op == SET_COMMAND)
             {
                 p.set(key, values);
-                for (auto fv : values)
-                {
-                    string field = fvField(fv);
-                    string value = fvValue(fv);
-
-                    /* Update the mtu field on host interface */
-                    if (field == "mtu")
-                    {
-                        string cmd, res;
-                        cmd = "ip link set " + key + " mtu " + value;
-                        swss::exec(cmd, res);
-                     }
-                }
             }
 
             it = port_cfg_map.erase(it);

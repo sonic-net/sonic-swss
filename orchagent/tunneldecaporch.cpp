@@ -36,6 +36,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
 
         IpAddresses ip_addresses;
         IpAddress src_ip;
+        IpAddress* p_src_ip = nullptr;
         string tunnel_type;
         string dscp_mode;
         string ecn_mode;
@@ -82,6 +83,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                     try
                     {
                         src_ip = IpAddress(fvValue(i));
+                        p_src_ip = &src_ip;
                     }
                     catch (const std::invalid_argument &e)
                     {
@@ -141,7 +143,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
             // create new tunnel if it doesn't exists already
             if (valid && !exists)
             {
-                if (addDecapTunnel(key, tunnel_type, ip_addresses, src_ip, dscp_mode, ecn_mode, ttl_mode))
+                if (addDecapTunnel(key, tunnel_type, ip_addresses, p_src_ip, dscp_mode, ecn_mode, ttl_mode))
                 {
                     SWSS_LOG_NOTICE("Tunnel(s) added to ASIC_DB.");
                 }
@@ -175,7 +177,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
  * Arguments:
  *    @param[in] type - type of tunnel
  *    @param[in] dst_ip - destination ip address to decap
- *    @param[in] src_ip - source ip address to decap
+ *    @param[in] p_src_ip - source ip address for encap (nullptr to skip this)
  *    @param[in] dscp - dscp mode (uniform/pipe)
  *    @param[in] ecn - ecn mode (copy_from_outer/standard)
  *    @param[in] ttl - ttl mode (uniform/pipe)
@@ -183,7 +185,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
  * Return Values:
  *    @return true on success and false if there's an error
  */
-bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip, IpAddress src_ip, string dscp, string ecn, string ttl)
+bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip, IpAddress* p_src_ip, string dscp, string ecn, string ttl)
 {
 
     SWSS_LOG_ENTER();
@@ -228,9 +230,12 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
     tunnel_attrs.push_back(attr);
 
     // tunnel src ip
-    attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
-    copy(attr.value.ipaddr, src_ip.to_string());
-    tunnel_attrs.push_back(attr);
+    if (p_src_ip != nullptr)
+    {
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
+        copy(attr.value.ipaddr, p_src_ip->to_string());
+        tunnel_attrs.push_back(attr);
+    }
 
     // decap ecn mode (copy from outer/standard)
     attr.id = SAI_TUNNEL_ATTR_DECAP_ECN_MODE;
@@ -277,7 +282,7 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
         return false;
     }
 
-    tunnelTable[key] = { tunnel_id, {} };
+    tunnelTable[key] = { tunnel_id, overlayIfId, {} };
 
     // TODO:
     // there should also be "business logic" for netbouncer in the "tunnel application" code, which is a different source file and daemon process
@@ -523,6 +528,15 @@ bool TunnelDecapOrch::removeDecapTunnel(string key)
         SWSS_LOG_ERROR("Failed to remove tunnel: %lu", tunnel_info->tunnel_id);
         return false;
     }
+
+    // delete overlay loopback interface
+    status = sai_router_intfs_api->remove_router_interface(tunnel_info->overlay_intf_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove tunnel overlay interface: %lu", tunnel_info->overlay_intf_id);
+        return false;
+    }
+
     tunnelTable.erase(key);
     return true;
 }

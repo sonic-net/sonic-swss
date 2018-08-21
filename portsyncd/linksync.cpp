@@ -110,7 +110,6 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     unsigned int flags = rtnl_link_get_flags(link);
     bool admin = flags & IFF_UP;
     bool oper = flags & IFF_LOWER_UP;
-    unsigned int mtu = rtnl_link_get_mtu(link);
 
     char addrStr[MAX_ADDR_SIZE+1] = {0};
     nl_addr2str(rtnl_link_get_addr(link), addrStr, MAX_ADDR_SIZE);
@@ -155,9 +154,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin ? "up" : "down");
-    FieldValueTuple m("mtu", to_string(mtu));
     fvVector.push_back(a);
-    fvVector.push_back(m);
 
     /* front panel interfaces: Check if the port is in the PORT_TABLE
      * non-front panel interfaces such as eth0, lo which are not in the

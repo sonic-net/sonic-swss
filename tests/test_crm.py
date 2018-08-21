@@ -499,7 +499,7 @@ def test_CrmAcl(dvs):
 
     # get ACL table key
     atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
-    acl_tables = [k for k in atbl.getKeys() if k not in dvs.asicdb.default_acl_table]
+    acl_tables = [k for k in atbl.getKeys() if k not in dvs.asicdb.default_acl_tables]
     key = "ACL_TABLE_STATS:{0}".format(acl_tables[0].replace('oid:', ''))
 
     entry_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_entry_used')

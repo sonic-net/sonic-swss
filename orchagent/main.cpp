@@ -7,6 +7,7 @@ extern "C" {
 #include <iostream>
 #include <unordered_map>
 #include <map>
+#include <memory>
 #include <thread>
 #include <chrono>
 #include <getopt.h>
@@ -22,6 +23,7 @@ extern "C" {
 #include "saihelper.h"
 #include "notifications.h"
 #include <signal.h>
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -77,11 +79,29 @@ void sighup_handler(int signo)
     }
 }
 
+void syncd_apply_view()
+{
+    SWSS_LOG_NOTICE("Notify syncd APPLY_VIEW");
+
+    sai_status_t status;
+    sai_attribute_t attr;
+    attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
+    attr.value.s32 = SAI_REDIS_NOTIFY_SYNCD_APPLY_VIEW;
+    status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to notify syncd APPLY_VIEW %d", status);
+        exit(EXIT_FAILURE);
+    }
+}
+
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("orchagent");
 
     SWSS_LOG_ENTER();
+    WarmStart::checkWarmStart("orchagent");
 
     if (signal(SIGHUP, sighup_handler) == SIG_ERR)
     {
@@ -247,28 +267,23 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("Created underlay router interface ID %lx", gUnderlayIfId);
 
     /* Initialize orchestration components */
-    DBConnector *appl_db = new DBConnector(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector *config_db = new DBConnector(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector config_db(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-    OrchDaemon *orchDaemon = new OrchDaemon(appl_db, config_db);
-    if (!orchDaemon->init())
-    {
-        SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
-        exit(EXIT_FAILURE);
-    }
+    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
 
     try
     {
-        SWSS_LOG_NOTICE("Notify syncd APPLY_VIEW");
-
-        attr.id = SAI_REDIS_SWITCH_ATTR_NOTIFY_SYNCD;
-        attr.value.s32 = SAI_REDIS_NOTIFY_SYNCD_APPLY_VIEW;
-        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-
-        if (status != SAI_STATUS_SUCCESS)
+        if (!orchDaemon->init())
         {
-            SWSS_LOG_ERROR("Failed to notify syncd APPLY_VIEW %d", status);
+            SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
             exit(EXIT_FAILURE);
+        }
+
+        if (!WarmStart::isWarmStart())
+        {
+            syncd_apply_view();
         }
 
         orchDaemon->start();
