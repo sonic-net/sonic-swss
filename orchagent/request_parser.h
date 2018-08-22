@@ -117,7 +117,7 @@ private:
     bool parseBool(const std::string& str);
     MacAddress parseMacAddress(const std::string& str);
     IpAddress parseIpAddress(const std::string& str);
-    uint64_t parseUINT(const std::string& str);
+    uint64_t parseUint(const std::string& str);
     uint16_t parseVlan(const std::string& str);
 
     sai_packet_action_t parsePacketAction(const std::string& str);
