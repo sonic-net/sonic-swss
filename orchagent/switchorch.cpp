@@ -33,9 +33,8 @@ SwitchOrch::SwitchOrch(DBConnector *db, string tableName) :
         m_db(db)
 {
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
-    auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this);
-    // restartCheckNotifier->setName("RESTARTCHECK");
-    Orch::addExecutor("RESTARTCHECK", restartCheckNotifier);
+    auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
+    Orch::addExecutor(restartCheckNotifier);
 }
 
 void SwitchOrch::doTask(Consumer &consumer)

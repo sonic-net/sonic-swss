@@ -472,5 +472,3 @@ bool OrchDaemon::warmRestartCheck()
     gSwitchOrch->restartCheckReply(op,  data, values);
     return ret;
 }
-
->>>>>>> Add orchagent pre-warm-restart check mechanism
