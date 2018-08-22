@@ -86,6 +86,14 @@ def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
 
+# No create/set/remove operations should be passed down to syncd for vlanmgr/portsyncd warm restart
+def checkCleanSaiRedisCSR(dvs):
+    (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep \|c\| /var/log/swss/sairedis.rec | wc -l'])
+    assert num == '0\n'
+    (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep \|s\| /var/log/swss/sairedis.rec | wc -l'])
+    assert num == '0\n'
+    (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep \|r\| /var/log/swss/sairedis.rec | wc -l'])
+    assert num == '0\n'
 
 def test_PortSyncdWarmRestart(dvs):
 
@@ -145,13 +153,7 @@ def test_PortSyncdWarmRestart(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start portsyncd'])
     time.sleep(2)
 
-     # No create/set/remove operations should be passed down to syncd for portsyncd warm restart
-    num = dvs.runcmd(['sh', '-c', 'grep \|c\| /var/log/swss/sairedis.rec | wc -l'])
-    assert num == '0\n'
-    num = dvs.runcmd(['sh', '-c', 'grep \|s\| /var/log/swss/sairedis.rec | wc -l'])
-    assert num == '0\n'
-    num = dvs.runcmd(['sh', '-c', 'grep \|r\| /var/log/swss/sairedis.rec | wc -l'])
-    assert num == '0\n'
+    checkCleanSaiRedisCSR(dvs)
 
     #new ip on server 5
     dvs.servers[5].runcmd("ifconfig eth0 11.0.0.11/29")
@@ -270,13 +272,7 @@ def test_VlanMgrdWarmRestart(dvs):
     (exitcode, bv_after) = dvs.runcmd("bridge vlan")
     assert bv_after == bv_before
 
-     # No create/set/remove operations should be passed down to syncd for vlanmgr warm restart
-    (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep \|c\| /var/log/swss/sairedis.rec | wc -l'])
-    assert num == '0\n'
-    (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep \|s\| /var/log/swss/sairedis.rec | wc -l'])
-    assert num == '0\n'
-    (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep \|r\| /var/log/swss/sairedis.rec | wc -l'])
-    assert num == '0\n'
+    checkCleanSaiRedisCSR(dvs)
 
     #new ip on server 5
     dvs.servers[5].runcmd("ifconfig eth0 11.0.0.11/29")
