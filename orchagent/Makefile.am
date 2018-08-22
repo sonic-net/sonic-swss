@@ -35,14 +35,14 @@ orchagent_SOURCES = \
 		    fdborch.cpp \
 		    aclorch.cpp \
 		    saihelper.cpp \
-        switchorch.cpp \
+                    switchorch.cpp \
 		    pfcwdorch.cpp \
 		    pfcactionhandler.cpp \
 		    crmorch.cpp \
 		    request_parser.cpp \
 		    vrforch.cpp \
 		    countercheckorch.cpp \
-        vxlan_tunnel_decap_orch.cpp \
+                    vxlan_tunnel_decap_orch.cpp \
 		    dtelorch.cpp \
 		    flexcounterorch.cpp \
 		    acltable.h \
@@ -64,7 +64,7 @@ orchagent_SOURCES = \
 		    qosorch.h \
 		    routeorch.h \
 		    saihelper.h \
-        switchorch.h \
+                    switchorch.h \
 		    swssnet.h \
 		    tunneldecaporch.h \
 		    crmorch.h        \
