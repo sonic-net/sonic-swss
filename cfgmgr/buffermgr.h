@@ -33,7 +33,6 @@ public:
     using Orch::doTask;
 
 private:
-    Table m_statePortTable;
     Table m_cfgPortTable;
     Table m_cfgCableLenTable;
     Table m_cfgBufferProfileTable;

@@ -13,6 +13,7 @@
 
 #include "linkcache.h"
 #include "portsyncd/linksync.h"
+#include "warm_restart.h"
 
 #include <iostream>
 #include <set>
@@ -41,52 +42,55 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_portTable(appl_db, APP_PORT_TABLE_NAME),
     m_statePortTable(state_db, STATE_PORT_TABLE_NAME)
 {
-    /* See the comments for g_portSet in portsyncd.cpp */
-    for (string port : g_portSet)
+    if (!WarmStart::isWarmStart())
     {
-        vector<FieldValueTuple> temp;
-        if (m_portTable.get(port, temp))
+        /* See the comments for g_portSet in portsyncd.cpp */
+        for (string port : g_portSet)
         {
-            for (auto it : temp)
+            vector<FieldValueTuple> temp;
+            if (m_portTable.get(port, temp))
             {
-                if (fvField(it) == "admin_status")
+                for (auto it : temp)
                 {
-                    g_portSet.erase(port);
-                    break;
+                    if (fvField(it) == "admin_status")
+                    {
+                        g_portSet.erase(port);
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    struct if_nameindex *if_ni, *idx_p;
-    if_ni = if_nameindex();
-    if (if_ni == NULL)
-    {
-        return;
-    }
-
-    for (idx_p = if_ni; ! (idx_p->if_index == 0 && idx_p->if_name == NULL); idx_p++)
-    {
-        string key = idx_p->if_name;
-        if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
+        struct if_nameindex *if_ni, *idx_p;
+        if_ni = if_nameindex();
+        if (if_ni == NULL)
         {
-            continue;
+            return;
         }
 
-        m_ifindexOldNameMap[idx_p->if_index] = key;
+        for (idx_p = if_ni; ! (idx_p->if_index == 0 && idx_p->if_name == NULL); idx_p++)
+        {
+            string key = idx_p->if_name;
+            if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
+            {
+                continue;
+            }
 
-        /* Bring down the existing kernel interfaces */
-        string cmd, res;
-        SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
-        cmd = "ip link set " + key + " down";
-        try
-        {
-            swss::exec(cmd, res);
-        }
-        catch (...)
-        {
-            /* Ignore error in this flow ; */
-            SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+            m_ifindexOldNameMap[idx_p->if_index] = key;
+
+            /* Bring down the existing kernel interfaces */
+            string cmd, res;
+            SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+            cmd = "ip link set " + key + " down";
+            try
+            {
+                swss::exec(cmd, res);
+            }
+            catch (...)
+            {
+                /* Ignore error in this flow ; */
+                SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+            }
         }
     }
 }
@@ -110,7 +114,6 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     unsigned int flags = rtnl_link_get_flags(link);
     bool admin = flags & IFF_UP;
     bool oper = flags & IFF_LOWER_UP;
-    unsigned int mtu = rtnl_link_get_mtu(link);
 
     char addrStr[MAX_ADDR_SIZE+1] = {0};
     nl_addr2str(rtnl_link_get_addr(link), addrStr, MAX_ADDR_SIZE);
@@ -155,9 +158,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin ? "up" : "down");
-    FieldValueTuple m("mtu", to_string(mtu));
     fvVector.push_back(a);
-    fvVector.push_back(m);
 
     /* front panel interfaces: Check if the port is in the PORT_TABLE
      * non-front panel interfaces such as eth0, lo which are not in the

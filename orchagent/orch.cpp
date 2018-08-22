@@ -66,17 +66,14 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-void Consumer::execute()
+size_t Consumer::addToSync(std::deque<KeyOpFieldsValuesTuple> &entries)
 {
     SWSS_LOG_ENTER();
-
-    std::deque<KeyOpFieldsValuesTuple> entries;
-    getConsumerTable()->pops(entries);
 
     /* Nothing popped */
     if (entries.empty())
     {
-        return;
+        return 0;
     }
 
     for (auto& entry: entries)
@@ -123,6 +120,61 @@ void Consumer::execute()
             m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
         }
     }
+    return entries.size();
+}
+
+// TODO: Table should be const
+size_t Consumer::refillToSync(Table* table)
+{
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    vector<string> keys;
+    table->getKeys(keys);
+    for (const auto &key: keys)
+    {
+        KeyOpFieldsValuesTuple kco;
+
+        kfvKey(kco) = key;
+        kfvOp(kco) = SET_COMMAND;
+
+        if (!table->get(key, kfvFieldsValues(kco)))
+        {
+            continue;
+        }
+        entries.push_back(kco);
+    }
+
+    return addToSync(entries);
+}
+
+size_t Consumer::refillToSync()
+{
+    ConsumerTableBase *consumerTable = getConsumerTable();
+
+    auto subTable = dynamic_cast<SubscriberStateTable *>(consumerTable);
+    if (subTable != NULL)
+    {
+        std::deque<KeyOpFieldsValuesTuple> entries;
+        subTable->pops(entries);
+        return addToSync(entries);
+    }
+    else
+    {
+        // consumerTable is either ConsumerStateTable or ConsumerTable
+        auto db = consumerTable->getDbConnector();
+        string tableName = consumerTable->getTableName();
+        auto table = Table(db, tableName);
+        return refillToSync(&table);
+    }
+}
+
+void Consumer::execute()
+{
+    SWSS_LOG_ENTER();
+
+    std::deque<KeyOpFieldsValuesTuple> entries;
+    getConsumerTable()->pops(entries);
+
+    addToSync(entries);
 
     drain();
 }
@@ -133,17 +185,93 @@ void Consumer::drain()
         m_orch->doTask(*this);
 }
 
+string Consumer::dumpTuple(KeyOpFieldsValuesTuple &tuple)
+{
+    string s = getTableName() + getConsumerTable()->getTableNameSeparator() + kfvKey(tuple)
+               + "|" + kfvOp(tuple);
+    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
+    {
+        s += "|" + fvField(*i) + ":" + fvValue(*i);
+    }
+
+    return s;
+}
+
+void Consumer::dumpPendingTasks(vector<string> &ts)
+{
+    for (auto &tm : m_toSync)
+    {
+        KeyOpFieldsValuesTuple& tuple = tm.second;
+
+        string s = dumpTuple(tuple);
+
+        ts.push_back(s);
+    }
+}
+
+size_t Orch::addExistingData(const string& tableName)
+{
+    auto consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
+    if (consumer == NULL)
+    {
+        SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
+        return 0;
+    }
+
+    return consumer->refillToSync();
+}
+
+// TODO: Table should be const
+size_t Orch::addExistingData(Table *table)
+{
+    string tableName = table->getTableName();
+    Consumer* consumer = dynamic_cast<Consumer *>(getExecutor(tableName));
+    if (consumer == NULL)
+    {
+        SWSS_LOG_ERROR("No consumer %s in Orch", tableName.c_str());
+        return 0;
+    }
+
+    return consumer->refillToSync(table);
+}
+
+bool Orch::bake()
+{
+    SWSS_LOG_ENTER();
+
+    for(auto &it : m_consumerMap)
+    {
+        string executorName = it.first;
+        auto executor = it.second;
+        auto consumer = dynamic_cast<Consumer *>(executor.get());
+        if (consumer == NULL)
+        {
+            continue;
+        }
+
+        size_t refilled = consumer->refillToSync();
+        SWSS_LOG_NOTICE("Add warm input: %s, %zd", executorName.c_str(), refilled);
+    }
+
+    return true;
+}
+
 /*
 - Validates reference has proper format which is [table_name:object_name]
 - validates table_name exists
 - validates object with object_name exists
+
+- Special case:
+- Deem reference format [] as valid, and return true. But in such a case,
+- both type_name and object_name are cleared to empty strings as an
+- indication to the caller of the special case
 */
 bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name, string &object_name)
 {
     SWSS_LOG_ENTER();
 
     SWSS_LOG_DEBUG("input:%s", ref_in.c_str());
-    if (ref_in.size() < 3)
+    if (ref_in.size() < 2)
     {
         SWSS_LOG_ERROR("invalid reference received:%s\n", ref_in.c_str());
         return false;
@@ -152,6 +280,17 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name
     {
         SWSS_LOG_ERROR("malformed reference:%s. Must be surrounded by [ ]\n", ref_in.c_str());
         return false;
+    }
+    if (ref_in.size() == 2)
+    {
+        // value set by user is "[]"
+        // Deem it as a valid format
+        // clear both type_name and object_name
+        // as an indication to the caller that
+        // such a case has been encountered
+        type_name.clear();
+        object_name.clear();
+        return true;
     }
     string ref_content = ref_in.substr(1, ref_in.size() - 2);
     vector<string> tokens;
@@ -208,6 +347,10 @@ ref_resolve_status Orch::resolveFieldRefValue(
             {
                 return ref_resolve_status::not_resolved;
             }
+            else if (ref_type_name.empty() && object_name.empty())
+            {
+                return ref_resolve_status::empty;
+            }
             sai_object = (*(type_maps[ref_type_name]))[object_name];
             hit = true;
         }
@@ -224,6 +367,21 @@ void Orch::doTask()
     for(auto &it : m_consumerMap)
     {
         it.second->drain();
+    }
+}
+
+void Orch::dumpPendingTasks(vector<string> &ts)
+{
+    for(auto &it : m_consumerMap)
+    {
+        Consumer* consumer = dynamic_cast<Consumer *>(it.second.get());
+        if (consumer == NULL)
+        {
+            SWSS_LOG_DEBUG("Executor is not a Consumer");
+            continue;
+        }
+
+        consumer->dumpPendingTasks(ts);
     }
 }
 
@@ -248,12 +406,7 @@ void Orch::logfileReopen()
 
 void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 {
-    string s = consumer.getTableName() + ":" + kfvKey(tuple)
-               + "|" + kfvOp(tuple);
-    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
-    {
-        s += "|" + fvField(*i) + ":" + fvValue(*i);
-    }
+    string s = consumer.dumpTuple(tuple);
 
     gRecordOfs << getTimestamp() << "|" << s << endl;
 
@@ -267,13 +420,7 @@ void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 
 string Orch::dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
 {
-    string s = consumer.getTableName() + ":" + kfvKey(tuple)
-               + "|" + kfvOp(tuple);
-    for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
-    {
-        s += "|" + fvField(*i) + ":" + fvValue(*i);
-    }
-
+    string s = consumer.dumpTuple(tuple);
     return s;
 }
 
@@ -362,19 +509,25 @@ void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
     if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB)
     {
-        addExecutor(tableName, new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this));
+        addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
     }
     else
     {
-        addExecutor(tableName, new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this));
+        addExecutor(new Consumer(new ConsumerStateTable(db, tableName, gBatchSize, pri), this, tableName));
     }
 }
 
-void Orch::addExecutor(string executorName, Executor* executor)
+void Orch::addExecutor(Executor* executor)
 {
-    m_consumerMap.emplace(std::piecewise_construct,
-            std::forward_as_tuple(executorName),
+    auto inserted = m_consumerMap.emplace(std::piecewise_construct,
+            std::forward_as_tuple(executor->getName()),
             std::forward_as_tuple(executor));
+
+    // If there is duplication of executorName in m_consumerMap, logic error
+    if (!inserted.second)
+    {
+        SWSS_LOG_THROW("Duplicated executorName in m_consumerMap: %s", executor->getName().c_str());
+    }
 }
 
 Executor *Orch::getExecutor(string executorName)
