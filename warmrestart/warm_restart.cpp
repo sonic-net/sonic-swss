@@ -99,8 +99,8 @@ bool WarmStart::checkWarmStart(const std::string &app_name, const std::string &d
 
 /*
  * Get warmStartTimer for an application in a docker (default to be swss)
- * return value 0 = OK,  -1 = failure 
- * timer value is saved to timer_value if succeed
+ * return value 0 = OK,  -1 = failure
+ * timer value is saved to timer_value if succeed. timer value 0 is invalid.
  */
 int WarmStart::getWarmStartTimer(uint32_t &timer_value, const std::string &app_name,
     const std::string &docker_name)
@@ -116,7 +116,7 @@ int WarmStart::getWarmStartTimer(uint32_t &timer_value, const std::string &app_n
     {
         timer_value = (uint32_t)temp_value;
         return 0;
-    } 
+    }
     else
     {
         SWSS_LOG_WARN("Error in getting warmStartTimer for docker: %s, app: %s",
