@@ -1,6 +1,7 @@
 #include <string>
 #include "logger.h"
 #include "schema.h"
+#include <climits>
 #include "warm_restart.h"
 
 namespace swss {
@@ -94,6 +95,34 @@ bool WarmStart::checkWarmStart(const std::string &app_name, const std::string &d
     SWSS_LOG_NOTICE("%s doing warm start, restart count %d", app_name.c_str(), restart_count);
 
     return true;
+}
+
+/*
+ * Get warmStartTimer for an application in a docker (default to be swss)
+ * return value 0 = OK,  -1 = failure 
+ * timer value is saved to timer_value if succeed
+ */
+int WarmStart::getWarmStartTimer(uint32_t &timer_value, const std::string &app_name,
+    const std::string &docker_name)
+{
+    auto& warmStart = getInstance();
+    std::string timer_name = app_name + "_timer";
+    std::string timer_value_str;
+
+    warmStart.m_cfgWarmRestartTable->hget(docker_name, timer_name, timer_value_str);
+
+    unsigned long int temp_value = strtoul(timer_value_str.c_str(), NULL, 0);
+    if (temp_value != 0 && temp_value != LONG_MAX)
+    {
+        timer_value = (uint32_t)temp_value;
+        return 0;
+    } 
+    else
+    {
+        SWSS_LOG_WARN("Error in getting warmStartTimer for docker: %s, app: %s",
+                docker_name.c_str(), app_name.c_str());
+        return -1;
+    }
 }
 
 bool WarmStart::isWarmStart()
