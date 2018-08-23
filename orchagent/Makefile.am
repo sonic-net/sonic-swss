@@ -42,13 +42,14 @@ orchagent_SOURCES = \
             request_parser.cpp \
             vrforch.cpp \
             countercheckorch.cpp \
-            vxlan_tunnel_decap_orch.cpp \
+            vxlan_tunnel_orch.cpp \
             dtelorch.cpp \
             flexcounterorch.cpp \
             acltable.h \
             aclorch.h \
             bufferorch.h \
             copporch.h \
+            directory.h \
             fdborch.h \
             intfsorch.h \
             mirrororch.h \
@@ -72,7 +73,7 @@ orchagent_SOURCES = \
             vrforch.h \
             dtelorch.h \
             countercheckorch.h \
-            vxlan_tunnel_decap_orch.h \
+            vxlan_tunnel_orch.h \
             flexcounterorch.h   \
             $(top_srcdir)/warmrestart/warm_restart.cpp \
             $(top_srcdir)/warmrestart/warm_restart.h

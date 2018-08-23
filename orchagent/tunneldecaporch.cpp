@@ -3,6 +3,7 @@
 #include "portsorch.h"
 #include "logger.h"
 #include "swssnet.h"
+#include "directory.h"
 
 extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;

@@ -58,7 +58,7 @@ public:
         return key_item_ip_addresses_.at(position);
     }
 
-    const uint64_t& getKeyUINT(int position) const
+    const uint64_t& getKeyUint(int position) const
     {
         assert(is_parsed_);
         return key_item_uint_.at(position);
@@ -100,6 +100,18 @@ public:
         return attr_item_vlan_.at(attr_name);
     }
 
+    IpAddress getAttrIP(const std::string& attr_name) const
+    {
+        assert(is_parsed_);
+        return attr_item_ip_.at(attr_name);
+    }
+
+    const uint64_t& getAttrUint(const std::string& attr_name) const
+    {
+        assert(is_parsed_);
+        return attr_item_uint_.at(attr_name);
+    }
+
 protected:
     Request(const request_description_t& request_description, const char key_separator)
         : request_description_(request_description),
@@ -134,11 +146,14 @@ private:
     std::unordered_map<int, IpAddress> key_item_ip_addresses_;
     std::unordered_map<int, uint64_t> key_item_uint_;
     std::unordered_set<std::string> attr_names_;
+    // FIXME: Make one union with all the values, except string
     std::unordered_map<std::string, std::string> attr_item_strings_;
     std::unordered_map<std::string, bool> attr_item_bools_;
     std::unordered_map<std::string, MacAddress> attr_item_mac_addresses_;
     std::unordered_map<std::string, sai_packet_action_t> attr_item_packet_actions_;
     std::unordered_map<std::string, uint16_t> attr_item_vlan_;
+    std::unordered_map<std::string, IpAddress> attr_item_ip_;
+    std::unordered_map<std::string, uint64_t> attr_item_uint_;
 };
 
 #endif // __REQUEST_PARSER_H

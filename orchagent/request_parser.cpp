@@ -139,6 +139,12 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
             case REQ_T_VLAN:
                 attr_item_vlan_[fvField(*i)] = parseVlan(fvValue(*i));
                 break;
+            case REQ_T_IP:
+                attr_item_ip_[fvField(*i)] = parseIpAddress(fvValue(*i));
+                break;
+            case REQ_T_UINT:
+                attr_item_uint_[fvField(*i)] = parseUint(fvValue(*i));
+                break;
             default:
                 throw std::logic_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
         }
