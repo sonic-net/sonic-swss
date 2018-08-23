@@ -58,16 +58,6 @@ void BufferOrch::initBufferReadyList(Table& table)
 {
     SWSS_LOG_ENTER();
 
-    // init all ports with an empty list
-    for (const auto& it: gPortsOrch->getAllPorts())
-    {
-        if (it.second.m_type == Port::PHY)
-        {
-            const auto& port_name = it.first;
-            m_port_ready_list_ref[port_name] = {};
-        }
-    }
-
     std::vector<std::string> keys;
     table.getKeys(keys);
 
