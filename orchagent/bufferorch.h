@@ -38,8 +38,8 @@ private:
     virtual void doTask() override;
     virtual void doTask(Consumer& consumer);
     void initTableHandlers();
-    void initBufferReadyLists();
-    void initBufferReadyList(std::deque<KeyOpFieldsValuesTuple>& entries);
+    void initBufferReadyLists(DBConnector *db);
+    void initBufferReadyList(Table& table);
     task_process_status processBufferPool(Consumer &consumer);
     task_process_status processBufferProfile(Consumer &consumer);
     task_process_status processQueue(Consumer &consumer);

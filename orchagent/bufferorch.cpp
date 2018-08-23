@@ -29,7 +29,7 @@ BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, t
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
-    initBufferReadyLists();
+    initBufferReadyLists(db);
 };
 
 void BufferOrch::initTableHandlers()
@@ -43,14 +43,23 @@ void BufferOrch::initTableHandlers()
     m_bufferHandlerMap.insert(buffer_handler_pair(CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, &BufferOrch::processEgressBufferProfileList));
 }
 
-void BufferOrch::initBufferReadyLists()
+void BufferOrch::initBufferReadyLists(DBConnector *db)
+{
+    SWSS_LOG_ENTER();
+
+    Table pg_table(db, CFG_BUFFER_PG_TABLE_NAME);
+    initBufferReadyList(pg_table);
+
+    Table queue_table(db, CFG_BUFFER_QUEUE_TABLE_NAME);
+    initBufferReadyList(queue_table);
+}
+
+void BufferOrch::initBufferReadyList(Table& table)
 {
     SWSS_LOG_ENTER();
 
     // init all ports with an empty list
-    auto allPorts = gPortsOrch->getAllPorts();
-    SWSS_LOG_NOTICE("init all %zu ports with an empty list", allPorts.size());
-    for (const auto& it: allPorts)
+    for (const auto& it: gPortsOrch->getAllPorts())
     {
         if (it.second.m_type == Port::PHY)
         {
@@ -59,32 +68,18 @@ void BufferOrch::initBufferReadyLists()
         }
     }
 
-    // pop all init data from config DB tables, so warm boot will skip them
-    auto pg_consumer = static_cast<Consumer *>(getExecutor(CFG_BUFFER_PG_TABLE_NAME));
-    std::deque<KeyOpFieldsValuesTuple> pg_entries;
-    pg_consumer->getConsumerTable()->pops(pg_entries);
-    initBufferReadyList(pg_entries);
-
-    auto queue_consumer = static_cast<Consumer *>(getExecutor(CFG_BUFFER_QUEUE_TABLE_NAME));
-    std::deque<KeyOpFieldsValuesTuple> queue_entries;
-    queue_consumer->getConsumerTable()->pops(queue_entries);
-    initBufferReadyList(queue_entries);
-}
-
-void BufferOrch::initBufferReadyList(std::deque<KeyOpFieldsValuesTuple>& entries)
-{
-    SWSS_LOG_ENTER();
+    std::vector<std::string> keys;
+    table.getKeys(keys);
 
     // populate the lists with buffer configuration information
-    for (const auto& kco : entries)
+    for (const auto& key: keys)
     {
-        string key = kfvKey(kco);
         m_ready_list[key] = false;
 
         auto tokens = tokenize(key, config_db_key_delimiter);
         if (tokens.size() != 2)
         {
-            SWSS_LOG_ERROR("Wrong format of a key '%s'. Skip it", key.c_str());
+            SWSS_LOG_ERROR("Wrong format of a table '%s' key '%s'. Skip it", table.getTableName().c_str(), key.c_str());
             continue;
         }
 
