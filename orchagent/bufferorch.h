@@ -35,10 +35,11 @@ private:
     typedef map<string, buffer_table_handler> buffer_table_handler_map;
     typedef pair<string, buffer_table_handler> buffer_handler_pair;
 
+    virtual void doTask() override;
     virtual void doTask(Consumer& consumer);
     void initTableHandlers();
-    void initBufferReadyLists(DBConnector *db);
-    void initBufferReadyList(Table& table);
+    void initBufferReadyLists();
+    void initBufferReadyList(std::deque<KeyOpFieldsValuesTuple>& entries);
     task_process_status processBufferPool(Consumer &consumer);
     task_process_status processBufferProfile(Consumer &consumer);
     task_process_status processQueue(Consumer &consumer);

@@ -264,7 +264,11 @@ bool OrchDaemon::init()
 
     if (WarmStart::isWarmStart())
     {
-        warmRestoreAndSyncUp();
+        bool suc = warmRestoreAndSyncUp();
+        if (!suc)
+        {
+            return false;
+        }
     }
 
     return true;
@@ -336,7 +340,7 @@ void OrchDaemon::start()
  * Try to perform orchagent state restore and dynamic states sync up if
  * warm start reqeust is detected.
  */
-void OrchDaemon::warmRestoreAndSyncUp()
+bool OrchDaemon::warmRestoreAndSyncUp()
 {
     WarmStart::setWarmStartState("orchagent", WarmStart::INIT);
 
@@ -366,7 +370,12 @@ void OrchDaemon::warmRestoreAndSyncUp()
      * orchagent should be in exact same state of pre-shutdown.
      * Perform restore validation as needed.
      */
-    warmRestoreValidation();
+    bool suc = warmRestoreValidation();
+    if (!suc)
+    {
+        SWSS_LOG_ERROR("Orchagent state restore failed");
+        return false;
+    }
 
     SWSS_LOG_NOTICE("Orchagent state restore done");
 
@@ -377,6 +386,7 @@ void OrchDaemon::warmRestoreAndSyncUp()
      * The "RECONCILED" state of orchagent doesn't mean the state related to neighbor is up to date.
      */
     WarmStart::setWarmStartState("orchagent", WarmStart::RECONCILED);
+    return true;
 }
 
 /*
