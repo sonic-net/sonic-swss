@@ -2,6 +2,10 @@ from swsscommon import swsscommon
 import time
 import re
 import json
+import pytest
+import platform
+from distutils.version import StrictVersion
+
 
 class TestVlan(object):
     def setup_db(self, dvs):
@@ -104,6 +108,9 @@ class TestVlan(object):
         # remvoe vlan
         self.remove_vlan("2")
 
+    # Ignore testcase in Debian Jessie
+    # TODO: remove this skip if we have fix
+    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     def test_MultipleVlan(self, dvs):
         self.setup_db(dvs)
 
