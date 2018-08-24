@@ -99,10 +99,9 @@ bool WarmStart::checkWarmStart(const std::string &app_name, const std::string &d
 
 /*
  * Get warmStartTimer for an application in a docker (default to be swss)
- * return value 0 = OK,  -1 = failure
- * timer value is saved to timer_value if succeed. timer value 0 is invalid.
+ * return timer value. Value 0 means invalid.
  */
-int WarmStart::getWarmStartTimer(uint32_t &timer_value, const std::string &app_name,
+uint32_t WarmStart::getWarmStartTimer(const std::string &app_name,
     const std::string &docker_name)
 {
     auto& warmStart = getInstance();
@@ -112,16 +111,17 @@ int WarmStart::getWarmStartTimer(uint32_t &timer_value, const std::string &app_n
     warmStart.m_cfgWarmRestartTable->hget(docker_name, timer_name, timer_value_str);
 
     unsigned long int temp_value = strtoul(timer_value_str.c_str(), NULL, 0);
-    if (temp_value != 0 && temp_value != LONG_MAX)
+    if (temp_value != 0 && temp_value != ULONG_MAX && temp_value <= MAXIMUN_WARMRESTART_TIMER_VALUE)
     {
-        timer_value = (uint32_t)temp_value;
-        return 0;
+        SWSS_LOG_NOTICE("Getting warmStartTimer for docker: %s, app: %s, value: %lu",
+                docker_name.c_str(), app_name.c_str(), temp_value);
+        return (uint32_t)temp_value;
     }
     else
     {
-        SWSS_LOG_WARN("Error in getting warmStartTimer for docker: %s, app: %s",
+        SWSS_LOG_NOTICE("warmStartTimer is not configured or invalid for docker: %s, app: %s",
                 docker_name.c_str(), app_name.c_str());
-        return -1;
+        return 0;
     }
 }
 

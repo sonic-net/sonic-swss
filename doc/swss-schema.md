@@ -634,17 +634,18 @@ Equivalent RedisDB entry:
     ;Stores system warm start configuration
     ;Status: work in progress
 
-    key             = WARM_RESTART:name         ; name is the name of SONiC docker or "system" for global configuration.
+    key                 = WARM_RESTART:name ; name is the name of SONiC docker or "system" for global configuration.
 
-    enable          = "true" / "false"          ; Default value as false.
-                                                ; If "system" warm start knob is true, docker level knob will be ignored.
-                                                ; If "system" warm start knob is false, docker level knob takes effect.
+    enable              = "true" / "false"  ; Default value as false.
+                                            ; If "system" warm start knob is true, docker level knob will be ignored.
+                                            ; If "system" warm start knob is false, docker level knob takes effect.
 
-    app_timer       = 1*10DIGIT,                ; app_timer is the abstract name of warm start
-                                                ; timer for the whole system or the specific docker.
-                                                ; Real name is "neighsyncd_timer", "bgp_timer" etc.
-                                                ; There could be more than one timer in a docker or the system.
-                                                ; Multiple app_timer fields are created for multiple timers.
+    neighsyncd_timer    = 1*4DIGIT          ; neighsyncd_timer is the timer used for neighsyncd during the warm restart.
+                                            ; Timer is started after we restored the neighborTable to internal data structures.
+                                            ; neighborsyncd then starts to read all linux kernel entries and mark the entries in
+                                            ; the data structures accordingly. Once the timer is expired, we will do reconciliation
+                                            ; and push the delta to appDB
+                                            ; Valid value is 1-9999. 0 is invalid.
 
 
 ## State DB schema
