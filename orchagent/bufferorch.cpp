@@ -643,7 +643,7 @@ void BufferOrch::doTask()
     //      3.1	    Ingress priority group (PG) configuration
     //      3.2.1	Buffer profile configuration
     //
-    // buffer poll
+    // buffer pool
     // └── buffer profile
     //     ├── buffer port ingress profile list
     //     ├── buffer port egress profile list
