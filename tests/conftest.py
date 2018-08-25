@@ -68,6 +68,17 @@ class AsicDbValidator(object):
         assert len(keys) == 2
         self.default_acl_entries = keys
 
+class ApplDbValidator(object):
+    def __init__(self, dvs):
+        appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        self.neighTbl = swsscommon.Table(appl_db, "NEIGH_TABLE")
+
+    def __del__(self):
+        # Make sure no neighbors on vEthernet
+        keys = self.neighTbl.getKeys();
+        for key in keys:
+            assert not key.startswith("vEthernet")
+
 class VirtualServer(object):
     def __init__(self, ctn_name, pid, i):
         self.nsname = "%s-srv%d" % (ctn_name, i)
@@ -179,6 +190,7 @@ class DockerVirtualSwitch(object):
             self.ctn.exec_run("sysctl -w net.ipv6.conf.all.disable_ipv6=0")
             self.check_ready()
             self.init_asicdb_validator()
+            self.appldb = ApplDbValidator(self)
         except:
             self.destroy()
             raise
