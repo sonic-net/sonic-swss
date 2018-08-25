@@ -146,6 +146,11 @@ def test_PortSyncdWarmRestart(dvs):
     (status, fvs) = neighTbl.get("Ethernet20:11.0.0.10")
     assert status == True
 
+    # Make sure no neighbors on vEthernet
+    keys = neighTbl.getKeys();
+    for key in keys:
+        assert not key.startswith("vEthernet")
+
     restart_count = swss_get_RestartCount(state_db)
 
     # restart portsyncd
