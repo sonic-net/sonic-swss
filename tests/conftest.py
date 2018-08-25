@@ -83,7 +83,7 @@ class VirtualServer(object):
             # create vpeer link
             ensure_system("ip link add %s type veth peer name %s" % (self.nsname[0:12], self.vifname))
             ensure_system("ip link set %s netns %s" % (self.nsname[0:12], self.nsname))
-            ensure_system("ip link set %s netns %s" % (self.vifname, self.nsname))
+            ensure_system("ip link set %s netns %d" % (self.vifname, pid))
 
             # bring up link in the virtual server
             ensure_system("ip netns exec %s ip link set dev %s name eth0" % (self.nsname, self.nsname[0:12]))
