@@ -10,6 +10,11 @@ import StringIO
 import subprocess
 from swsscommon import swsscommon
 
+def ensure_system(cmd):
+    rc = os.WEXITSTATUS(os.system(cmd))
+    if rc:
+        raise RuntimeError('Failed to run command: %s' % cmd)
+
 def pytest_addoption(parser):
     parser.addoption("--dvsname", action="store", default=None,
                       help="dvs name")
@@ -69,26 +74,28 @@ class VirtualServer(object):
         self.vifname = "vEthernet%d" % (i * 4)
         self.cleanup = True
 
-        os.system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.vifname))
-
         # create netns
         if os.path.exists("/var/run/netns/%s" % self.nsname):
             self.cleanup = False
         else:
-            os.system("ip netns add %s" % self.nsname)
+            ensure_system("ip netns add %s" % self.nsname)
 
             # create vpeer link
-            os.system("ip link add %s type veth peer name %s" % (self.nsname[0:12], self.vifname))
-            os.system("ip link set %s netns %s" % (self.nsname[0:12], self.nsname))
-            os.system("ip link set %s netns %s" % (self.vifname, self.nsname))
+            ensure_system("ip link add %s type veth peer name %s" % (self.nsname[0:12], self.vifname))
+            ensure_system("ip link set %s netns %s" % (self.nsname[0:12], self.nsname))
+            ensure_system("ip link set %s netns %s" % (self.vifname, self.nsname))
 
             # bring up link in the virtual server
-            os.system("ip netns exec %s ip link set dev %s name eth0" % (self.nsname, self.nsname[0:12]))
-            os.system("ip netns exec %s ip link set dev eth0 up" % (self.nsname))
-            os.system("ip netns exec %s ethtool -K eth0 tx off" % (self.nsname))
+            ensure_system("ip netns exec %s ip link set dev %s name eth0" % (self.nsname, self.nsname[0:12]))
+            ensure_system("ip netns exec %s ip link set dev eth0 up" % (self.nsname))
+            ensure_system("ip netns exec %s ethtool -K eth0 tx off" % (self.nsname))
 
             # bring up link in the virtual switch
-            os.system("nsenter -t %d -n ip link set dev %s up" % (pid, self.vifname))
+            ensure_system("nsenter -t %d -n ip link set dev %s up" % (pid, self.vifname))
+
+        # disable arp, so no neigh on vEthernet(s)
+        # Note: outside the if-else, so existing VS container could be fixed
+        ensure_system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.vifname))
 
     def __del__(self):
         if self.cleanup:
