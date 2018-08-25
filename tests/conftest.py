@@ -69,6 +69,8 @@ class VirtualServer(object):
         self.vifname = "vEthernet%d" % (i * 4)
         self.cleanup = True
 
+        os.system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.vifname))
+
         # create netns
         if os.path.exists("/var/run/netns/%s" % self.nsname):
             self.cleanup = False
@@ -78,7 +80,7 @@ class VirtualServer(object):
             # create vpeer link
             os.system("ip link add %s type veth peer name %s" % (self.nsname[0:12], self.vifname))
             os.system("ip link set %s netns %s" % (self.nsname[0:12], self.nsname))
-            os.system("ip link set %s netns %d" % (self.vifname, pid))
+            os.system("ip link set %s netns %s" % (self.vifname, self.nsname))
 
             # bring up link in the virtual server
             os.system("ip netns exec %s ip link set dev %s name eth0" % (self.nsname, self.nsname[0:12]))
@@ -138,7 +140,7 @@ class DockerVirtualSwitch(object):
             for ctn in self.client.containers.list():
                 if ctn.id == ctn_sw_id or ctn.name == ctn_sw_id:
                     ctn_sw_name = ctn.name
-           
+
             (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % ctn_sw_name)
             self.ctn_sw_pid = int(output)
 
