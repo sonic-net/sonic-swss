@@ -196,6 +196,7 @@ class DockerVirtualSwitch(object):
             raise
 
     def destroy(self):
+        del self.appldb
         if self.cleanup:
             self.ctn.remove(force=True)
             self.ctn_sw.remove(force=True)
