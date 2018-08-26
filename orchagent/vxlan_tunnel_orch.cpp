@@ -135,7 +135,7 @@ create_tunnel_termination(
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_attrs;
 
-    if(srcip == 0x0) // It's P2MP tunnel
+    if(dstip == 0x0) // It's P2MP tunnel
     {
         attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE;
         attr.value.s32 = SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP;
@@ -149,7 +149,7 @@ create_tunnel_termination(
 
         attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP;
         attr.value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-        attr.value.ipaddr.addr.ip4 = srcip;
+        attr.value.ipaddr.addr.ip4 = dstip;
         tunnel_attrs.push_back(attr);
     }
 
@@ -159,7 +159,7 @@ create_tunnel_termination(
 
     attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_DST_IP;
     attr.value.ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
-    attr.value.ipaddr.addr.ip4 = dstip;
+    attr.value.ipaddr.addr.ip4 = srcip;
     tunnel_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE;
@@ -196,11 +196,20 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
         return false;
     }
 
-    auto dst_ip = request.getAttrIP("dst_ip");
-    if (!src_ip.isV4())
+    IpAddress dst_ip;
+    auto attr_names = request.getAttrFieldNames();
+    if (attr_names.count("dst_ip") == 0)
     {
-        SWSS_LOG_ERROR("Wrong attribute: 'dst_ip'. Currently only IPv4 address is supported");
-        return false;
+        dst_ip = IpAddress("0.0.0.0");
+    }
+    else
+    {
+        dst_ip = request.getAttrIP("dst_ip");
+        if (!dst_ip.isV4())
+        {
+            SWSS_LOG_ERROR("Wrong attribute: 'dst_ip'. Currently only IPv4 address is supported");
+            return false;
+        }
     }
 
     const auto& tunnel_name = request.getKeyString(0);
@@ -261,10 +270,10 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
         return false;
     }
 
-    auto tunnel_map_entry_name = request.getKeyString(1);
-    if (isTunnelMapExists(tunnel_map_entry_name))
+    const auto full_tunnel_map_entry_name = request.getFullKey();
+    if (isTunnelMapExists(full_tunnel_map_entry_name))
     {
-        SWSS_LOG_ERROR("Vxlan tunnel map '%s' is already exist", tunnel_map_entry_name.c_str());
+        SWSS_LOG_ERROR("Vxlan tunnel map '%s' is already exist", full_tunnel_map_entry_name.c_str());
         return false;
     }
 
@@ -273,10 +282,11 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     try
     {
         auto tunnel_map_entry_id = create_tunnel_map_entry(tunnel_map_id, vni_id, vlan_id);
-        vxlan_tunnel_map_table_[tunnel_map_entry_name] = tunnel_map_entry_id;
+        vxlan_tunnel_map_table_[full_tunnel_map_entry_name] = tunnel_map_entry_id;
     }
     catch(const std::runtime_error& error)
     {
+        auto tunnel_map_entry_name = request.getKeyString(1);
         SWSS_LOG_ERROR("Error adding tunnel map entry. Tunnel: %s. Entry: %s. Error: %s",
             tunnel_name.c_str(), tunnel_map_entry_name.c_str(), error.what());
         return false;
