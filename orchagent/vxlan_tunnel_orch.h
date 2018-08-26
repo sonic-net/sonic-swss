@@ -2,6 +2,7 @@
 
 #include <map>
 #include "request_parser.h"
+#include "portsorch.h"
 
 const request_description_t vxlan_tunnel_request_description = {
             { REQ_T_STRING },

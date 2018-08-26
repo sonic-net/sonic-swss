@@ -19,6 +19,7 @@ extern sai_object_id_t gSwitchId;
 extern sai_object_id_t gVirtualRouterId;
 extern sai_tunnel_api_t *sai_tunnel_api;
 extern Directory<Orch*> gDirectory;
+extern PortsOrch*       gPortsOrch;
 
 static sai_object_id_t
 create_tunnel_map()
@@ -253,7 +254,12 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     SWSS_LOG_ENTER();
 
     auto vlan_id = request.getAttrVlan("vlan");
-    // FIXME: check that vlan_id exists
+    Port tempPort;
+    if(!gPortsOrch->getVlanByVlanId(vlan_id, tempPort))
+    {
+        SWSS_LOG_ERROR("Vxlan tunnel map vlan id doesn't exist: %d", vlan_id);
+        return false;
+    }
 
     auto vni_id  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
     if (vni_id >= 1<<24)

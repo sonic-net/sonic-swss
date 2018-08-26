@@ -33,6 +33,11 @@ def entries(db, table):
     tbl =  swsscommon.Table(db, table)
     return set(tbl.getKeys())
 
+def get_exist_entries(dvs, table):
+    db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    tbl =  swsscommon.Table(db, table)
+    return set(tbl.getKeys())
+
 def get_created_entry(db, table, existed_entries):
     tbl =  swsscommon.Table(db, table)
     entries = set(tbl.getKeys())
@@ -65,6 +70,35 @@ def check_object(db, table, key, expected_attributes):
     for name, value in fvs:
         assert expected_attributes[name] == value, "Wrong value %s for the attribute %s = %s" % \
                                                    (value, name, expected_attributes[name])
+
+def create_vlan(dvs, vlan_name, vlan_ids):
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+
+    vlan_id = vlan_name[4:]
+
+    # create vlan
+    create_entry_tbl(
+        conf_db,
+        "VLAN", '|', vlan_name,
+        [
+          ("vlanid", vlan_id),
+        ],
+    )
+
+    time.sleep(1)
+
+    vlan_oid = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN", vlan_ids)
+
+    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN", vlan_oid,
+                    {
+                        "SAI_VLAN_ATTR_VLAN_ID": vlan_id,
+                    }
+                )
+
+    vlan_ids.add(vlan_oid)
+
+    return
 
 
 def create_vxlan_tunnel(dvs, name, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, skip_dst_ip=False):
@@ -187,40 +221,49 @@ def test_vxlan_term_orch(dvs):
     tunnel_ids           = set()
     tunnel_term_ids      = set()
     tunnel_map_map       = {}
+    vlan_ids             = get_exist_entries(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+
+    create_vlan(dvs, "Vlan50", vlan_ids)
+    create_vlan(dvs, "Vlan51", vlan_ids)
+    create_vlan(dvs, "Vlan52", vlan_ids)
+    create_vlan(dvs, "Vlan53", vlan_ids)
+    create_vlan(dvs, "Vlan54", vlan_ids)
+    create_vlan(dvs, "Vlan55", vlan_ids)
+    create_vlan(dvs, "Vlan56", vlan_ids)
+    create_vlan(dvs, "Vlan57", vlan_ids)
+
     tunnel_map_map['tunnel_1'] = create_vxlan_tunnel(dvs, 'tunnel_1', '10.0.0.1', '100.100.100.1',
                                                      tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
-    create_vxlan_tunnel_entry(dvs, 'tunnel_1', 'entry_1', tunnel_map_map['tunnel_1'], 'Vlan1', '815',
+    create_vxlan_tunnel_entry(dvs, 'tunnel_1', 'entry_1', tunnel_map_map['tunnel_1'], 'Vlan50', '850',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
     tunnel_map_map['tunnel_2'] = create_vxlan_tunnel(dvs, 'tunnel_2', '11.0.0.2', '101.101.101.2',
                                                      tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
-    create_vxlan_tunnel_entry(dvs, 'tunnel_2', 'entry_1', tunnel_map_map['tunnel_2'], 'Vlan2', '816',
+    create_vxlan_tunnel_entry(dvs, 'tunnel_2', 'entry_1', tunnel_map_map['tunnel_2'], 'Vlan51', '851',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
     tunnel_map_map['tunnel_3'] = create_vxlan_tunnel(dvs, 'tunnel_3', '12.0.0.3', '0.0.0.0',
                                                      tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
-    create_vxlan_tunnel_entry(dvs, 'tunnel_3', 'entry_1', tunnel_map_map['tunnel_3'], 'Vlan3', '818',
+    create_vxlan_tunnel_entry(dvs, 'tunnel_3', 'entry_1', tunnel_map_map['tunnel_3'], 'Vlan52', '852',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
     tunnel_map_map['tunnel_4'] = create_vxlan_tunnel(dvs, 'tunnel_4', '15.0.0.5', '0.0.0.0',
                                                      tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, True)
 
-    create_vxlan_tunnel_entry(dvs, 'tunnel_4', 'entry_1', tunnel_map_map['tunnel_4'], 'Vlan4', '518',
+    create_vxlan_tunnel_entry(dvs, 'tunnel_4', 'entry_1', tunnel_map_map['tunnel_4'], 'Vlan53', '853',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
-    create_vxlan_tunnel_entry(dvs, 'tunnel_1', 'entry_2', tunnel_map_map['tunnel_1'], 'Vlan4', '819',
+    create_vxlan_tunnel_entry(dvs, 'tunnel_1', 'entry_2', tunnel_map_map['tunnel_1'], 'Vlan54', '854',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
-    create_vxlan_tunnel_entry(dvs, 'tunnel_2', 'entry_2', tunnel_map_map['tunnel_2'], 'Vlan5', '820',
+    create_vxlan_tunnel_entry(dvs, 'tunnel_2', 'entry_2', tunnel_map_map['tunnel_2'], 'Vlan55', '855',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
-    create_vxlan_tunnel_entry(dvs, 'tunnel_3', 'entry_2', tunnel_map_map['tunnel_3'], 'Vlan6', '821',
+    create_vxlan_tunnel_entry(dvs, 'tunnel_3', 'entry_2', tunnel_map_map['tunnel_3'], 'Vlan56', '856',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
-    create_vxlan_tunnel_entry(dvs, 'tunnel_4', 'entry_2', tunnel_map_map['tunnel_4'], 'Vlan4', '515',
+    create_vxlan_tunnel_entry(dvs, 'tunnel_4', 'entry_2', tunnel_map_map['tunnel_4'], 'Vlan57', '857',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
-
-
