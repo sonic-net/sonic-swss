@@ -517,7 +517,7 @@ TEST(request_parser, wrongAttrTypePacketAction)
     }
 }
 
-TEST(request_parser, wrongAttrTypeVlan_1)
+TEST(request_parser, wrongAttrTypeVlan_wrong_name)
 {
     KeyOpFieldsValuesTuple t {"key1|02:03:04:05:06:07|key2", "SET",
                                  {
@@ -551,7 +551,7 @@ TEST(request_parser, wrongAttrTypeVlan_1)
     }
 }
 
-TEST(request_parser, wrongAttrTypeVlan_2)
+TEST(request_parser, wrongAttrTypeVlan_out_of_high_bound)
 {
     KeyOpFieldsValuesTuple t {"key1|02:03:04:05:06:07|key2", "SET",
                                  {
@@ -562,18 +562,18 @@ TEST(request_parser, wrongAttrTypeVlan_2)
                                      { "ip_opt_action", "drop" },
                                      { "l3_mc_action", "log" },
                                      { "just_string", "123" },
-                                     { "vlan", "Vlan10000" },
+                                     { "vlan", "Vlan4095" },
                                  }
                              };
     try
     {
         TestRequest2 request;
         request.parse(t);
-        FAIL() << "Expected std::invalid_argument";
+        FAIL() << "Expected std::out_of_range";
     }
     catch (const std::invalid_argument& e)
     {
-        EXPECT_STREQ(e.what(), "Invalid vlan interface (vlan id is too big): Vlan10000");
+        EXPECT_STREQ(e.what(), "Out of range vlan id: Vlan4095");
     }
     catch (const std::exception& e)
     {
@@ -585,6 +585,107 @@ TEST(request_parser, wrongAttrTypeVlan_2)
     }
 }
 
+TEST(request_parser, wrongAttrTypeVlan_out_of_low_bound)
+{
+    KeyOpFieldsValuesTuple t {"key1|02:03:04:05:06:07|key2", "SET",
+                                 {
+                                     { "v4", "true" },
+                                     { "v6", "true" },
+                                     { "src_mac", "02:03:04:05:06:07" },
+                                     { "ttl_action", "copy" },
+                                     { "ip_opt_action", "drop" },
+                                     { "l3_mc_action", "log" },
+                                     { "just_string", "123" },
+                                     { "vlan", "Vlan0" },
+                                 }
+                             };
+    try
+    {
+        TestRequest2 request;
+        request.parse(t);
+        FAIL() << "Expected std::out_of_range";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Out of range vlan id: Vlan0");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
+}
+
+TEST(request_parser, wrongAttrTypeVlan_out_of_int_range)
+{
+    KeyOpFieldsValuesTuple t {"key1|02:03:04:05:06:07|key2", "SET",
+                                 {
+                                     { "v4", "true" },
+                                     { "v6", "true" },
+                                     { "src_mac", "02:03:04:05:06:07" },
+                                     { "ttl_action", "copy" },
+                                     { "ip_opt_action", "drop" },
+                                     { "l3_mc_action", "log" },
+                                     { "just_string", "123" },
+                                     { "vlan", "Vlan1000000000000000000" },
+                                 }
+                             };
+    try
+    {
+        TestRequest2 request;
+        request.parse(t);
+        FAIL() << "Expected std::out_of_range";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Out of range vlan id: Vlan1000000000000000000");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
+}
+
+TEST(request_parser, wrongAttrTypeVlan_invalid_int)
+{
+    KeyOpFieldsValuesTuple t {"key1|02:03:04:05:06:07|key2", "SET",
+                                 {
+                                     { "v4", "true" },
+                                     { "v6", "true" },
+                                     { "src_mac", "02:03:04:05:06:07" },
+                                     { "ttl_action", "copy" },
+                                     { "ip_opt_action", "drop" },
+                                     { "l3_mc_action", "log" },
+                                     { "just_string", "123" },
+                                     { "vlan", "Vlana100" },
+                                 }
+                             };
+    try
+    {
+        TestRequest2 request;
+        request.parse(t);
+        FAIL() << "Expected std::invalid_argument";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(), "Invalid vlan id: Vlana100");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::invalid_argument, not other exception";
+    }
+}
 
 TEST(request_parser, correctAttrTypePacketAction1)
 {
@@ -984,7 +1085,7 @@ TEST(request_parser, uint_and_ip_keys)
         EXPECT_STREQ(request.getOperation().c_str(), "SET");
         EXPECT_STREQ(request.getFullKey().c_str(), "10.1.2.3|12345");
         EXPECT_EQ(request.getKeyIpAddress(0), IpAddress("10.1.2.3"));
-        EXPECT_EQ(request.getKeyUINT(1), 12345);
+        EXPECT_EQ(request.getKeyUint(1), 12345);
         EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4"}));
         EXPECT_FALSE(request.getAttrBool("v4"));
     }
@@ -1047,6 +1148,36 @@ TEST(request_parser, wrong_uint_key_1)
     catch (const std::invalid_argument& e)
     {
         EXPECT_STREQ(e.what(), "Invalid unsigned integer: a12345");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::logic_error, not other exception";
+    }
+}
+
+TEST(request_parser, wrong_uint_key_2)
+{
+    KeyOpFieldsValuesTuple t {"10.1.2.3|1234555555555555555555", "SET",
+                                 {
+                                     { "v4", "false" },
+                                 }
+                             };
+
+    try
+    {
+        TestRequest6 request;
+
+        request.parse(t);
+
+        FAIL() << "Expected std::invalid_argument error";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(),"Out of range unsigned integer: 1234555555555555555555");
     }
     catch (const std::exception& e)
     {
