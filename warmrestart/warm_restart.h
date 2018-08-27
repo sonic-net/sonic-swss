@@ -14,7 +14,7 @@ class WarmStart
 public:
 	enum WarmStartState
 	{
-	    INIT,
+	    INITIALIZED,
 	    RESTORED,
 	    RECONCILED,
 	};
@@ -22,19 +22,29 @@ public:
     typedef std::map<WarmStartState, std::string>  WarmStartStateNameMap;
     static const WarmStartStateNameMap warmStartStateNameMap;
 
-    static WarmStart &getInstance();
+    static WarmStart &getInstance(void);
 
-    static bool checkWarmStart(const std::string &app_name, const std::string &docker_name = "swss");
+    static void initialize(const std::string &app_name,
+                           const std::string &docker_name = "swss");
+
+    static bool checkWarmStart(const std::string &app_name,
+                               const std::string &docker_name = "swss");
+
+    static bool isWarmStart(void);
+
+    static void setWarmStartState(const std::string &app_name,
+                                  WarmStartState     state);
+
     static uint32_t getWarmStartTimer(const std::string &app_name,
-        const std::string &docker_name ="swss");
-    static bool isWarmStart();
-    static void setWarmStartState(const std::string &app_name, WarmStartState state);
+                                      const std::string &docker_name ="swss");
+
 private:
-	std::shared_ptr<swss::DBConnector>          m_stateDb;
-	std::shared_ptr<swss::DBConnector>          m_cfgDb;
-	std::unique_ptr<Table>         m_stateWarmRestartTable;
-	std::unique_ptr<Table>         m_cfgWarmRestartTable;
-	bool enabled;
+    std::shared_ptr<swss::DBConnector>   m_stateDb;
+    std::shared_ptr<swss::DBConnector>   m_cfgDb;
+    std::unique_ptr<Table>               m_stateWarmRestartTable;
+    std::unique_ptr<Table>               m_cfgWarmRestartTable;
+    bool                                 m_initialized;
+    bool                                 m_enabled;
 };
 
 }

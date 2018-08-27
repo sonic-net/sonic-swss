@@ -377,7 +377,7 @@ void OrchDaemon::start()
  */
 bool OrchDaemon::warmRestoreAndSyncUp()
 {
-    WarmStart::setWarmStartState("orchagent", WarmStart::INIT);
+    WarmStart::setWarmStartState("orchagent", WarmStart::INITIALIZED);
 
     for (Orch *o : m_orchList)
     {
