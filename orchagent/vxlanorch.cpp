@@ -11,7 +11,7 @@
 #include "ipaddress.h"
 #include "orch.h"
 #include "request_parser.h"
-#include "vxlan_tunnel_orch.h"
+#include "vxlanorch.h"
 #include "directory.h"
 
 /* Global variables */

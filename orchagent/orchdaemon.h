@@ -21,7 +21,7 @@
 #include "switchorch.h"
 #include "crmorch.h"
 #include "vrforch.h"
-#include "vxlan_tunnel_orch.h"
+#include "vxlanorch.h"
 #include "countercheckorch.h"
 #include "flexcounterorch.h"
 #include "directory.h"
