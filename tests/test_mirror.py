@@ -492,6 +492,8 @@ class TestMirror(object):
         for fv in fvs:
             if fv[0] == "SAI_MIRROR_SESSION_ATTR_MONITOR_PORT":
                 assert dvs.asicdb.portoidmap[fv[1]] == "Ethernet48"
+            elif fv[0] == "SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID":
+                assert fv[1] == "true"
 
         # mirror session move round 2
         # remove fdb entry
@@ -514,6 +516,8 @@ class TestMirror(object):
         for fv in fvs:
             if fv[0] == "SAI_MIRROR_SESSION_ATTR_MONITOR_PORT":
                 assert dvs.asicdb.portoidmap[fv[1]] == "Ethernet32"
+            elif fv[0] == "SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID":
+                assert fv[1] == "false"
 
         # bring down vlan and member; remove vlan member; remove vlan
         self.set_interface_status("Ethernet48", "down")

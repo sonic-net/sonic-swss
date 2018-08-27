@@ -191,7 +191,7 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
     auto session = m_syncdMirrors.find(key);
     if (session != m_syncdMirrors.end())
     {
-        SWSS_LOG_ERROR("Failed to create session, session %s already exists",
+        SWSS_LOG_NOTICE("Failed to create session, session %s already exists",
                 key.c_str());
         return;
     }
@@ -316,11 +316,14 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
 
-    // 1) Check if the destination IP is directly connected and get neighbor
-    // 2) Check if the session has next hop and neighbor information is available
+    // 1) If session destination IP is directly connected, and the neighbor
+    //    information is retrieved successfully, then continue.
+    // 2) If session has next hop, and the next hop's neighbor information is
+    //    retrieved successfully, then continue.
+    // 3) Otherwise, return false.
     if (!m_neighOrch->getNeighborEntry(session.dstIp,
                 session.neighborInfo.neighbor, session.neighborInfo.mac) &&
-            (session.nexthopInfo.nexthop == IpAddress() ||
+            (session.nexthopInfo.nexthop.isZero() ||
             !m_neighOrch->getNeighborEntry(session.nexthopInfo.nexthop,
                 session.neighborInfo.neighbor, session.neighborInfo.mac)))
     {
@@ -397,7 +400,7 @@ bool MirrorOrch::updateSession(const string& name, MirrorEntry& session)
             if (old_session.neighborInfo.port.m_type !=
                     session.neighborInfo.port.m_type)
             {
-                ret &= updateSessionVlan(name, session);
+                ret &= updateSessionType(name, session);
             }
 
             if (old_session.neighborInfo.mac !=
@@ -440,8 +443,8 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 
     assert(!session.status);
 
-    /* Some platforms don't support SAI_MIRROR_SESSION_ATTR_TC and only
-     * support global mirror session traffic class. */
+    // Some platforms don't support SAI_MIRROR_SESSION_ATTR_TC and only
+    // support global mirror session traffic class.
     if (session.queue != 0)
     {
         attr.id = SAI_MIRROR_SESSION_ATTR_TC;
@@ -449,7 +452,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         attrs.push_back(attr);
     }
 
-    attr.id =  SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+    attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
     attr.value.oid = session.neighborInfo.portId;
     attrs.push_back(attr);
 
@@ -457,18 +460,18 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
     attrs.push_back(attr);
 
-    /* Add the VLAN header when the packet is sent out from a VLAN */
+    // Add the VLAN header when the packet is sent out from a VLAN
     if (session.neighborInfo.port.m_type == Port::VLAN)
     {
         attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
         attr.value.booldata = true;
         attrs.push_back(attr);
 
-        attr.id =SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
         attr.value.u16 = ETH_P_8021Q;
         attrs.push_back(attr);
 
-        attr.id =SAI_MIRROR_SESSION_ATTR_VLAN_ID;
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_ID;
         attr.value.u16 = session.neighborInfo.port.m_vlan_info.vlan_id;
         attrs.push_back(attr);
 
@@ -485,37 +488,37 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
+    attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
     attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
     attrs.push_back(attr);
 
     // TOS value format is the following:
     // DSCP 6 bits | ECN 2 bits
-    attr.id =SAI_MIRROR_SESSION_ATTR_TOS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_TOS;
     attr.value.u16 = (uint16_t)(session.dscp << MIRROR_SESSION_DSCP_SHIFT);
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_TTL;
+    attr.id = SAI_MIRROR_SESSION_ATTR_TTL;
     attr.value.u8 = session.ttl;
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
     copy(attr.value.ipaddr, session.srcIp);
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
     copy(attr.value.ipaddr, session.dstIp);
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
     memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
     memcpy(attr.value.mac, session.neighborInfo.mac.getMac(), sizeof(sai_mac_t));
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
+    attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
     attr.value.u16 = session.greType;
     attrs.push_back(attr);
 
@@ -578,7 +581,7 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
     assert(session.sessionId != SAI_NULL_OBJECT_ID);
 
     sai_attribute_t attr;
-    attr.id =SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
     memcpy(attr.value.mac, session.neighborInfo.mac.getMac(), sizeof(sai_mac_t));
 
     sai_status_t status = sai_mirror_api->set_mirror_session_attribute(session.sessionId, &attr);
@@ -605,7 +608,7 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     m_portsOrch->getPort(session.neighborInfo.portId, port);
 
     sai_attribute_t attr;
-    attr.id =  SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+    attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
     attr.value.oid = session.neighborInfo.portId;
 
     sai_status_t status = sai_mirror_api->
@@ -624,7 +627,7 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     return true;
 }
 
-bool MirrorOrch::updateSessionVlan(const string& name, MirrorEntry& session)
+bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
 
@@ -637,8 +640,20 @@ bool MirrorOrch::updateSessionVlan(const string& name, MirrorEntry& session)
         attr.value.booldata = true;
         attrs.push_back(attr);
 
-        attr.id =SAI_MIRROR_SESSION_ATTR_VLAN_ID;
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
+        attr.value.u16 = ETH_P_8021Q;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_ID;
         attr.value.u16 = session.neighborInfo.port.m_vlan_info.vlan_id;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_PRI;
+        attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_PRI;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_CFI;
+        attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_CFI;
         attrs.push_back(attr);
     }
     else
@@ -648,13 +663,18 @@ bool MirrorOrch::updateSessionVlan(const string& name, MirrorEntry& session)
         attrs.push_back(attr);
     }
 
-    sai_status_t status = sai_mirror_api->
-        set_mirror_session_attribute(session.sessionId, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    sai_status_t status;
+    for (auto attr : attrs)
     {
-        SWSS_LOG_ERROR("Failed to update mirror session %s VLAN to %s, rv:%d",
-                name.c_str(), session.neighborInfo.port.m_alias.c_str(), status);
-        return false;
+        status = sai_mirror_api->
+            set_mirror_session_attribute(session.sessionId, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to update mirror session %s VLAN to %s, rv:%d",
+                    name.c_str(), session.neighborInfo.port.m_alias.c_str(), status);
+            return false;
+        }
     }
 
     SWSS_LOG_NOTICE("Update mirror session %s VLAN to %s",
@@ -663,6 +683,9 @@ bool MirrorOrch::updateSessionVlan(const string& name, MirrorEntry& session)
     return true;
 }
 
+// The function is called when SUBJECT_TYPE_NEXTHOP_CHANGE is received
+// This function will handle the case when the session's destination IP's
+// next hop changes.
 void MirrorOrch::updateNextHop(const NextHopUpdate& update)
 {
     SWSS_LOG_ENTER();
@@ -672,8 +695,7 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         const auto& name = it->first;
         auto& session = it->second;
 
-        // Check if mirror session's destination IP drops into the subnet
-        // of the next hop update's prefix
+        // Check if mirror session's destination IP is the update's destination IP
         if (session.dstIp != update.destination)
         {
             continue;
@@ -681,12 +703,13 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
 
         session.nexthopInfo.prefix = update.prefix;
 
-        // this is the ECMP scenario
+        // This is the ECMP scenario that the new next hop group contains the previous
+        // next hop. There is no need to update this session's monitor port.
         if (update.nexthopGroup != IpAddresses() &&
                 update.nexthopGroup.getIpAddresses().count(session.nexthopInfo.nexthop))
 
         {
-                continue;
+            continue;
         }
 
         SWSS_LOG_NOTICE("Updating mirror session %s with route %s",
@@ -701,10 +724,13 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
             session.nexthopInfo.nexthop = IpAddress();
         }
 
+        // Resolve the neighbor of the new next hop
         updateSession(name, session);
     }
 }
 
+// The function is called when SUBJECT_TYPE_NEIGH_CHANGE is received.
+// This function will handle the case when the neighbor is created or removed.
 void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
 {
     SWSS_LOG_ENTER();
@@ -714,10 +740,8 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
         const auto& name = it->first;
         auto& session = it->second;
 
-        SWSS_LOG_NOTICE("neighbor %s : %s", update.entry.ip_address.to_string().c_str(), update.entry.alias.c_str());
-
-
-        // XXX: add comments!
+        // Check if the session's destination IP matches the neighbor's update IP
+        // or if the session's next hop IP matches the neighbor's update IP
         if (session.dstIp != update.entry.ip_address &&
                 session.nexthopInfo.nexthop != update.entry.ip_address)
         {
@@ -731,6 +755,10 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
     }
 }
 
+// The function is called when SUBJECT_TYPE_FDB_CHANGE is received.
+// This function will handle the case when new FDB enty is learned/added in the VLAN,
+// or when the old FDB entry gets removed. Only when the neighbor is VLAN will the case
+// be handled.
 void MirrorOrch::updateFdb(const FdbUpdate& update)
 {
     SWSS_LOG_ENTER();

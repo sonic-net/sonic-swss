@@ -92,7 +92,7 @@ private:
     bool updateSession(const string&, MirrorEntry&);
     bool updateSessionDstMac(const string&, MirrorEntry&);
     bool updateSessionDstPort(const string&, MirrorEntry&);
-    bool updateSessionVlan(const string&, MirrorEntry&);
+    bool updateSessionType(const string&, MirrorEntry&);
     bool setSessionState(const string&, MirrorEntry&);
     bool getNeighborInfo(const string&, MirrorEntry&);
 
