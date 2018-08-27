@@ -646,6 +646,25 @@ Equivalent RedisDB entry:
 
     timer_duration  = 1*4DIGIT,                 ; timer duration, in seconds. Separated by "," if there are more than on timer.
 
+### VXLAN\_TUNNEL
+Stores vxlan tunnels configuration
+Status: ready
+
+    key       = VXLAN_TUNNEL:name               ; name is an arbitrary name of vxlan tunnel
+    src_ip    = ipv4_address                    ; tunnel source IP address. Mandatory
+    dst_ip    = ipv4_address                    ; tunnel destination IP address. Optional. When this attribute is omitted or equal to "0.0.0.0"
+                                                ; the created tunnel will be P2MP. Otherwise the created tunnel will be P2P
+
+### VXLAN\_TUNNEL\_MAP
+Stores vxlan tunnel map configuration. Defines mapping between vxlan vni and vlan interface
+Status: ready
+
+    key       = VXLAN_TUNNEL_MAP:tunnel_name:tunnel_map_name
+                                                ; tunnel_name is a reference to created vxlan tunnel
+                                                ; tunnel_map_name is an arbitrary name of the map
+    vni       = uint24                          ; vni id, defined for tunnel map
+    vlan      = "Vlan"vlan_id                   ; name of the existing vlan interface
+
 
 ## State DB schema
 
