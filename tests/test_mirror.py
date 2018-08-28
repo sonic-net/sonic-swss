@@ -463,6 +463,8 @@ class TestMirror(object):
         for fv in fvs:
             if fv[0] == "SAI_MIRROR_SESSION_ATTR_MONITOR_PORT":
                 assert dvs.asicdb.portoidmap[fv[1]] == "Ethernet32"
+            elif fv[0] == "SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID":
+                assert fv[1] == "false"
 
         # mirror session move round 1
         # create vlan; create vlan member; bring up vlan and member
@@ -494,6 +496,14 @@ class TestMirror(object):
                 assert dvs.asicdb.portoidmap[fv[1]] == "Ethernet48"
             elif fv[0] == "SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID":
                 assert fv[1] == "true"
+            elif fv[0] == "SAI_MIRROR_SESSION_ATTR_VLAN_TPID":
+                assert fv[1] == "33024"
+            elif fv[0] == "SAI_MIRROR_SESSION_ATTR_VLAN_ID":
+                assert fv[1] == "9"
+            elif fv[0] == "SAI_MIRROR_SESSION_ATTR_VLAN_PRI":
+                assert fv[1] == "0"
+            elif fv[0] == "SAI_MIRROR_SESSION_ATTR_VLAN_CFI":
+                assert fv[1] == "0"
 
         # mirror session move round 2
         # remove fdb entry
