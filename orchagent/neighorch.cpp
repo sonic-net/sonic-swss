@@ -293,7 +293,7 @@ void NeighOrch::doTask(Consumer &consumer)
         if (!p.m_rif_id)
         {
             SWSS_LOG_INFO("Router interface doesn't exist on %s", alias.c_str());
-            it = consumer.m_toSync.erase(it);
+            it++;
             continue;
         }
 
