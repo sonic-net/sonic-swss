@@ -29,6 +29,7 @@ AclOrch *gAclOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
+Directory<Orch*> gDirectory;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
         m_applDb(applDb),
@@ -71,6 +72,11 @@ bool OrchDaemon::init()
     gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gNeighOrch);
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
+
+    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_configDb, CFG_VXLAN_TUNNEL_TABLE_NAME);
+    gDirectory.set(vxlan_tunnel_orch);
+    VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_configDb, CFG_VXLAN_TUNNEL_MAP_TABLE_NAME);
+    gDirectory.set(vxlan_tunnel_map_orch);
 
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
@@ -166,6 +172,8 @@ bool OrchDaemon::init()
     m_orchList.push_back(mirror_orch);
     m_orchList.push_back(gAclOrch);
     m_orchList.push_back(vrf_orch);
+    m_orchList.push_back(vxlan_tunnel_orch);
+    m_orchList.push_back(vxlan_tunnel_map_orch);
 
     m_select = new Select();
 
@@ -264,7 +272,11 @@ bool OrchDaemon::init()
 
     if (WarmStart::isWarmStart())
     {
-        warmRestoreAndSyncUp();
+        bool suc = warmRestoreAndSyncUp();
+        if (!suc)
+        {
+            return false;
+        }
     }
 
     return true;
@@ -336,7 +348,7 @@ void OrchDaemon::start()
  * Try to perform orchagent state restore and dynamic states sync up if
  * warm start reqeust is detected.
  */
-void OrchDaemon::warmRestoreAndSyncUp()
+bool OrchDaemon::warmRestoreAndSyncUp()
 {
     WarmStart::setWarmStartState("orchagent", WarmStart::INIT);
 
@@ -366,7 +378,12 @@ void OrchDaemon::warmRestoreAndSyncUp()
      * orchagent should be in exact same state of pre-shutdown.
      * Perform restore validation as needed.
      */
-    warmRestoreValidation();
+    bool suc = warmRestoreValidation();
+    if (!suc)
+    {
+        SWSS_LOG_ERROR("Orchagent state restore failed");
+        return false;
+    }
 
     SWSS_LOG_NOTICE("Orchagent state restore done");
 
@@ -377,6 +394,7 @@ void OrchDaemon::warmRestoreAndSyncUp()
      * The "RECONCILED" state of orchagent doesn't mean the state related to neighbor is up to date.
      */
     WarmStart::setWarmStartState("orchagent", WarmStart::RECONCILED);
+    return true;
 }
 
 /*

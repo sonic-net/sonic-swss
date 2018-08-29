@@ -182,7 +182,7 @@ public:
     virtual bool bake();
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
-    void doTask();
+    virtual void doTask();
 
     /* Run doTask against a specific executor */
     virtual void doTask(Consumer &consumer) = 0;

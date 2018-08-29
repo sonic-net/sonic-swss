@@ -5,6 +5,8 @@
 #include "dbconnector.h"
 #include "table.h"
 
+#define MAXIMUN_WARMRESTART_TIMER_VALUE 9999
+
 namespace swss {
 
 class WarmStart
@@ -23,6 +25,8 @@ public:
     static WarmStart &getInstance();
 
     static bool checkWarmStart(const std::string &app_name, const std::string &docker_name = "swss");
+    static uint32_t getWarmStartTimer(const std::string &app_name,
+        const std::string &docker_name ="swss");
     static bool isWarmStart();
     static void setWarmStartState(const std::string &app_name, WarmStartState state);
 private:

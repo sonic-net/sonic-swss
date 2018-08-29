@@ -21,8 +21,10 @@
 #include "switchorch.h"
 #include "crmorch.h"
 #include "vrforch.h"
+#include "vxlanorch.h"
 #include "countercheckorch.h"
 #include "flexcounterorch.h"
+#include "directory.h"
 
 using namespace swss;
 
@@ -34,7 +36,7 @@ public:
 
     bool init();
     void start();
-    void warmRestoreAndSyncUp();
+    bool warmRestoreAndSyncUp();
     void getTaskToSync(vector<string> &ts);
     bool warmRestoreValidation();
 private:
