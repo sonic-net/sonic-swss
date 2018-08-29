@@ -1,12 +1,23 @@
 #include <iostream>
 #include "logger.h"
 #include "select.h"
+#include "selectabletimer.h"
 #include "netdispatcher.h"
+#include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
 
+
 using namespace std;
 using namespace swss;
+
+
+/*
+ * Default warm-restart timer interval for routing-stack app. To be used only if
+ * no explicit value has been defined in configuration.
+ */
+const uint32_t DEFAULT_ROUTING_RESTART_INTERVAL = 120;
+
 
 int main(int argc, char **argv)
 {
@@ -18,25 +29,70 @@ int main(int argc, char **argv)
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
 
-    while (1)
+    while (true)
     {
         try
         {
             FpmLink fpm;
             Select s;
 
-            cout << "Waiting for connection..." << endl;
+            SelectableTimer warmStartTimer(timespec{0, 0});
+
+            cout << "Waiting for fpm-client connection..." << endl;
             fpm.accept();
             cout << "Connected!" << endl;
 
             s.addSelectable(&fpm);
+
+            /* Initialize warm-restart logic if this one is enabled */
+            bool warmStartEnabled = sync.m_warmStartHelper.isEnabled();
+            if (warmStartEnabled)
+            {
+                /* Obtain warm-restart timer defined for routing application */
+                uint32_t warmRestartIval = sync.m_warmStartHelper.getRestartTimer();
+                if (!warmRestartIval)
+                {
+                    warmStartTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
+                }
+                else
+                {
+                    warmStartTimer.setInterval(timespec{warmRestartIval, 0});
+                }
+
+                /* Execute recovery instruction and kick off warm-restart timer */
+                if (sync.m_warmStartHelper.runRecovery())
+                {
+                    warmStartTimer.start();
+                    s.addSelectable(&warmStartTimer);
+                }
+            }
+
             while (true)
             {
                 Selectable *temps;
-                /* Reading FPM messages forever (and calling "readData" to read them) */
+
+                /* Reading FPM messages forever (and calling "readMe" to read them) */
                 s.select(&temps);
-                pipeline.flush();
-                SWSS_LOG_DEBUG("Pipeline flushed");
+
+                /*
+                 * Upon expiration of the warm-restart timer, proceed to run the
+                 * reconciliation process and remove warm-restart timer from
+                 * select() loop.
+                 */
+                if (warmStartEnabled && temps == &warmStartTimer)
+                {
+                    SWSS_LOG_NOTICE("Warm-Restart timer expired.");
+                    sync.m_warmStartHelper.reconciliate();
+                    s.removeSelectable(&warmStartTimer);
+
+                    pipeline.flush();
+                    SWSS_LOG_NOTICE("Pipeline flushed");
+                }
+                else if (!warmStartEnabled || sync.m_warmStartHelper.isReconciled())
+                {
+                    pipeline.flush();
+                    SWSS_LOG_NOTICE("Pipeline flushed");
+                }
             }
         }
         catch (FpmLink::FpmConnectionClosedException &e)

@@ -14,7 +14,8 @@ using namespace std;
 using namespace swss;
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
-    m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true)
+    m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
+    m_warmStartHelper(pipeline, &m_routeTable, "bgp", "bgp")
 {
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
@@ -38,10 +39,30 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
+    /*
+     * Upon arrival of a delete msg we could either push the change right away,
+     * or we could opt to defer it if we are in the middle of a warm-reboot
+     * process. The goal here is to avoid unnecessary churn in swss/syncd layers.
+     */
+    auto warmState = m_warmStartHelper.getState();
+
     if (nlmsg_type == RTM_DELROUTE)
     {
-        m_routeTable.del(destipprefix);
-        return;
+        if (warmState == WarmStart::INITIALIZED ||
+            warmState == WarmStart::RECONCILED)
+        {
+            m_routeTable.del(destipprefix);
+            return;
+        }
+        else
+        {
+            SWSS_LOG_INFO("Warm-Restart: Receiving delete msg: %s\n", destipprefix);
+
+            vector<FieldValueTuple> fvVector;
+            const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix, "", fvVector);
+            m_warmStartHelper.removeRecoveryMap(kfv, WarmStartHelper::DELETE);
+            return;
+        }
     }
     else if (nlmsg_type != RTM_NEWROUTE)
     {
@@ -118,8 +139,28 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     vector<FieldValueTuple> fvVector;
     FieldValueTuple nh("nexthop", nexthops);
     FieldValueTuple idx("ifname", ifnames);
+
     fvVector.push_back(nh);
     fvVector.push_back(idx);
-    m_routeTable.set(destipprefix, fvVector);
-    SWSS_LOG_DEBUG("RoutTable set: %s %s %s\n", destipprefix, nexthops.c_str(), ifnames.c_str());
+
+    if (warmState == WarmStart::INITIALIZED ||
+        warmState == WarmStart::RECONCILED)
+    {
+        m_routeTable.set(destipprefix, fvVector);
+        SWSS_LOG_DEBUG("RouteTable set msg: %s %s %s\n",
+                       destipprefix, nexthops.c_str(), ifnames.c_str());
+    }
+
+    /*
+     * During routing-stack restarting scenarios route-updates will be temporarily
+     * put on hold by warm-reboot logic.
+     */
+    else
+    {
+        SWSS_LOG_INFO("Warm-Restart: RouteTable set msg: %s %s %s\n",
+                      destipprefix, nexthops.c_str(), ifnames.c_str());
+
+        const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix, "", fvVector);
+        m_warmStartHelper.insertRecoveryMap(kfv, WarmStartHelper::CLEAN);
+    }
 }
