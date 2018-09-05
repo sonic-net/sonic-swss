@@ -50,8 +50,7 @@ NeighRestartAssist::NeighRestartAssist(RedisPipeline *pipelineAppDB,
             m_reconcileTimer = temp_value;
         }
         // Clear the producerstate table to make sure no pending data for the AppTable
-        // See sonic-swss-common PR-227, will add the call here once the PR is done.
-        //m_psTable->drop();
+        m_psTable->clear();
 
         WarmStart::setWarmStartState(m_appName, WarmStart::INIT);
     }
@@ -87,7 +86,7 @@ NeighRestartAssist::cache_state_t NeighRestartAssist::getCacheEntryState(const s
             return iter.first;
         }
     }
-    assert("Cache Entry State is corrupted" == NULL);
+    throw std::logic_error("cache entry state is invalid");
     return UNKNOWN;
 }
 
@@ -231,7 +230,7 @@ void NeighRestartAssist::reconcile()
         }
         else
         {
-            assert("unknown type cache state" == NULL);
+            throw std::logic_error("cache entry state is invalid");
         }
     }
     // clear the map
