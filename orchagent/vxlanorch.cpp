@@ -237,6 +237,8 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
 
     vxlan_tunnel_table_[tunnel_name] = ids;
 
+    SWSS_LOG_NOTICE("Vxlan tunnel '%s' was created", tunnel_name.c_str());
+
     return true;
 }
 
@@ -297,6 +299,8 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
             tunnel_name.c_str(), tunnel_map_entry_name.c_str(), error.what());
         return false;
     }
+
+    SWSS_LOG_NOTICE("Vxlan tunnel map entry '%s' for tunnel '%s' was created", tunnel_map_entry_name.c_str(), tunnel_name.c_str());
 
     return true;
 }
