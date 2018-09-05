@@ -6,7 +6,7 @@ import os
 class TestPort(object):
     def test_PortMtu(self, dvs):
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
         # set MTU to port
@@ -76,7 +76,7 @@ def test_PortFec(dvs):
     time.sleep(1)
 
     db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+    adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
     tbl = swsscommon.Table(db, "PORT_TABLE")
     ptbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")

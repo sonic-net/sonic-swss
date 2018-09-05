@@ -34,7 +34,7 @@ def entries(db, table):
     return set(tbl.getKeys())
 
 def get_exist_entries(dvs, table):
-    db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
     tbl =  swsscommon.Table(db, table)
     return set(tbl.getKeys())
 
@@ -72,7 +72,7 @@ def check_object(db, table, key, expected_attributes):
                                                    (value, name, expected_attributes[name])
 
 def create_vlan(dvs, vlan_name, vlan_ids):
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     vlan_id = vlan_name[4:]
@@ -102,7 +102,7 @@ def create_vlan(dvs, vlan_name, vlan_ids):
 
 
 def create_vxlan_tunnel(dvs, name, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, skip_dst_ip=False):
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     # check the source information
@@ -173,7 +173,7 @@ def create_vxlan_tunnel(dvs, name, src_ip, dst_ip, tunnel_map_ids, tunnel_map_en
 
 def create_vxlan_tunnel_entry(dvs, tunnel_name, tunnel_map_entry_name, tunnel_map_id, vlan, vni_id,
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids):
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     # Check source information

@@ -21,7 +21,7 @@ def pytest_addoption(parser):
 
 class AsicDbValidator(object):
     def __init__(self, dvs):
-        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # get default dot1q vlan id
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
@@ -131,7 +131,8 @@ class DockerVirtualSwitch(object):
                        'neighsyncd',
                        'orchagent',
                        'portsyncd',
-                       'redis-server',
+                       'redis-servers:redis-server',
+                       'redis-servers:redis-server-secondary',
                        'rsyslogd',
                        'syncd',
                        'teamsyncd',
@@ -139,6 +140,7 @@ class DockerVirtualSwitch(object):
                        'zebra']
         self.mount = "/var/run/redis-vs"
         self.redis_sock = self.mount + '/' + "redis.sock"
+        self.redis_sec_sock = self.mount + '/' + "redis-secondary.sock"
         self.client = docker.from_env()
 
         self.ctn = None

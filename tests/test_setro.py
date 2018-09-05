@@ -6,7 +6,7 @@ from pprint import pprint
 
 def test_SetReadOnlyAttribute(dvs):
 
-    db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
 
     tbl = swsscommon.Table(db, "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
 
@@ -16,7 +16,7 @@ def test_SetReadOnlyAttribute(dvs):
 
     swVid = keys[0]
  
-    r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB)
+    r = redis.Redis(unix_socket_path=dvs.redis_sec_sock, db=swsscommon.ASIC_DB)
 
     swRid = r.hget("VIDTORID", swVid)
 

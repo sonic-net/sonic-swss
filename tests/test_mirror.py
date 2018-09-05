@@ -7,7 +7,7 @@ from swsscommon import swsscommon
 
 class TestMirror(object):
     def get_acl_table_id(self, dvs):
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = tbl.getKeys()
         for k in dvs.asicdb.default_acl_tables:
@@ -19,7 +19,7 @@ class TestMirror(object):
         return acl_tables[0]
 
     def get_mirror_session_id(self, dvs):
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
         mirror_sessions = tbl.getKeys()
         assert len(mirror_sessions) == 1
@@ -28,7 +28,7 @@ class TestMirror(object):
 
     def test_AclMirrorTableCreation(self, dvs):
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
         bind_ports = ["Ethernet0", "Ethernet4"]
@@ -95,7 +95,7 @@ class TestMirror(object):
                 fv[1] == "active"
 
         # assert the mirror session is created
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
         mirror_session_ids = tbl.getKeys()
         assert len(mirror_session_ids) == 1
@@ -106,7 +106,7 @@ class TestMirror(object):
         hmset ACL_RULE|EVERFLOW_TABLE|EVERFLOW_DSCP_TEST_RULE_1 priority 1000 PACKET_ACTION FORWARD DSCP 48
         """
 
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
         tbl = swsscommon.Table(cdb, "ACL_RULE")
@@ -160,7 +160,7 @@ class TestMirror(object):
         hmset ACL_RULE|EVERFLOW_TABLE|EVERFLOW_DSCP_TEST_RULE_2 priority 1000 PACKET_ACTION FORWARD DSCP 16/16
         """
 
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
         tbl = swsscommon.Table(cdb, "ACL_RULE")
@@ -209,7 +209,7 @@ class TestMirror(object):
         assert status == False
 
     def test_AclMirrorTableDeletion(self, dvs):
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
         tbl = swsscommon.Table(cdb, "ACL_TABLE")

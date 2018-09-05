@@ -6,7 +6,7 @@ import json
 def test_DirectedBroadcast(dvs):
 
     db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+    adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
     # create vlan in config db
     tbl = swsscommon.Table(db, "VLAN")

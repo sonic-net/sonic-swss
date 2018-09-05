@@ -15,7 +15,7 @@ def test_PortAutoNeg(dvs):
 
     time.sleep(1)
 
-    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+    adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
     atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
     (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])

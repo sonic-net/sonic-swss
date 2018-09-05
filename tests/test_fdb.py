@@ -77,7 +77,7 @@ def is_fdb_entry_exists(db, table, key_values, attributes):
 
 def test_FDBAddedAfterMemberCreated(dvs):
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     # create a FDB entry in Application DB

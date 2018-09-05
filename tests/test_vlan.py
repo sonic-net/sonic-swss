@@ -10,7 +10,7 @@ from distutils.version import StrictVersion
 class TestVlan(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
     def create_vlan(self, vlan):

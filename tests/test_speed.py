@@ -19,7 +19,7 @@ class TestSpeedSet(object):
         speed_list = ['50000', '25000', '40000', '10000', '100000']
 
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         cfg_port_table = swsscommon.Table(cdb, "PORT")
         cfg_buffer_profile_table = swsscommon.Table(cdb, "BUFFER_PROFILE")
         cfg_buffer_pg_table = swsscommon.Table(cdb, "BUFFER_PG")

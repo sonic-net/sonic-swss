@@ -249,7 +249,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     removeDefaultBridgePorts();
 
     /* Add port oper status notification support */
-    DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::SECONDARY_UNIXSOCKET, 0);
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotificatier);

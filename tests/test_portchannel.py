@@ -21,7 +21,7 @@ def test_PortChannel(dvs):
     time.sleep(1)
 
     # check asic db table
-    asicdb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+    asicdb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
     lagtbl = swsscommon.Table(asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
 

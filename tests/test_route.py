@@ -28,7 +28,7 @@ def test_RouteAdd(dvs):
 
     # check if route was propagated to ASIC DB
 
-    db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+    db = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
     tbl = swsscommon.Table(db, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
 

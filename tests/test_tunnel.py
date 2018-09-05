@@ -167,7 +167,7 @@ class TestDecapTunnel(TestTunnelBase):
         """ test IPv4 tunnel creation """
 
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
 
         self.cleanup_left_over(db, asicdb)
 
@@ -181,7 +181,7 @@ class TestDecapTunnel(TestTunnelBase):
         """ test IPv6 tunnel creation """
 
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
 
         self.cleanup_left_over(db, asicdb)
 
@@ -199,7 +199,7 @@ class TestSymmetricTunnel(TestTunnelBase):
         """ test IPv4 tunnel creation """
 
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
 
         self.cleanup_left_over(db, asicdb)
 
@@ -214,7 +214,7 @@ class TestSymmetricTunnel(TestTunnelBase):
         """ test IPv6 tunnel creation """
 
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
 
         self.cleanup_left_over(db, asicdb)
 

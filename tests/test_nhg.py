@@ -32,7 +32,7 @@ def test_route_nhg(dvs):
 
     # check if route was propagated to ASIC DB
 
-    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+    adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
     rtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
     nhgtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")

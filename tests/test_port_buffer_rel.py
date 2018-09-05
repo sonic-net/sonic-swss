@@ -5,7 +5,7 @@ import time
 
 def test_PortsAreUpAfterBuffers(dvs):    
     num_ports = 32
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     conf_port_table = swsscommon.Table(conf_db, "PORT")

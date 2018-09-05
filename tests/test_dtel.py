@@ -9,7 +9,7 @@ class TestDtel(object):
     def test_DtelGlobalAttribs(self, dvs):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
     
         # create DTel global attributes in config db
         tbl = swsscommon.Table(db, "DTEL")
@@ -89,7 +89,7 @@ class TestDtel(object):
     def test_DtelReportSessionAttribs(self, dvs):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
     
         # create DTel report session attributes in config db
         tbl = swsscommon.Table(db, "DTEL_REPORT_SESSION")
@@ -130,7 +130,7 @@ class TestDtel(object):
     def test_DtelINTSessionAttribs(self, dvs):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
     
         # create DTel INT session attributes in config db
         tbl = swsscommon.Table(db, "DTEL_INT_SESSION")
@@ -174,7 +174,7 @@ class TestDtel(object):
     def test_DtelQueueReportAttribs(self, dvs):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
     
         # create DTel queue report attributes in config db
         tbl = swsscommon.Table(db, "DTEL_QUEUE_REPORT")
@@ -215,7 +215,7 @@ class TestDtel(object):
     def test_DtelEventAttribs(self, dvs):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
     
         # first create DTel report session in config db
         rtbl = swsscommon.Table(db, "DTEL_REPORT_SESSION")

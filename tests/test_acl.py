@@ -28,7 +28,7 @@ class TestAcl(object):
         return False
 
     def clean_up_left_over(self, dvs):
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
         keys = atbl.getKeys()
         for key in keys:
@@ -132,7 +132,7 @@ class TestAcl(object):
 
     def test_AclTableCreation(self, dvs):
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create ACL_TABLE in config db
         bind_ports = ["Ethernet0", "Ethernet4"]
@@ -165,7 +165,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -216,7 +216,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -273,7 +273,7 @@ class TestAcl(object):
     def test_AclTableDeletion(self, dvs):
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # get ACL_TABLE in config db
         tbl = swsscommon.Table(db, "ACL_TABLE")
@@ -289,7 +289,7 @@ class TestAcl(object):
     def test_V6AclTableCreation(self, dvs):
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         bind_ports = ["Ethernet0", "Ethernet4", "Ethernet8"]
         # create ACL_TABLE in config db
@@ -365,7 +365,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -416,7 +416,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -467,7 +467,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -518,7 +518,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -569,7 +569,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -620,7 +620,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -671,7 +671,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -722,7 +722,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -773,7 +773,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -838,7 +838,7 @@ class TestAcl(object):
         """
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # create acl rule
         tbl = swsscommon.Table(db, "ACL_RULE")
@@ -900,7 +900,7 @@ class TestAcl(object):
     def test_V6AclTableDeletion(self, dvs):
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         # get ACL_TABLE in config db
         tbl = swsscommon.Table(db, "ACL_TABLE")
@@ -930,7 +930,7 @@ class TestAcl(object):
 
     def test_InsertAclRuleBetweenPriorities(self, dvs):
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         bind_ports = ["Ethernet0", "Ethernet4"]
         # create ACL_TABLE in config db
@@ -1028,7 +1028,7 @@ class TestAcl(object):
 
     def test_RulesWithDiffMaskLengths(self, dvs):
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
         bind_ports = ["Ethernet0", "Ethernet4"]
         # create ACL_TABLE in config db
@@ -1115,7 +1115,7 @@ class TestAcl(object):
         # prepare db and tables
         self.clean_up_left_over(dvs)
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         apldb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
 
         # create port channel
@@ -1143,7 +1143,7 @@ class TestAcl(object):
         # prepare db and tables
         self.clean_up_left_over(dvs)
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         apldb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
 
         #create port channel
@@ -1193,7 +1193,7 @@ class TestAcl(object):
         # prepare db and tables
         self.clean_up_left_over(dvs)
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
         apldb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
 
         # create acl table

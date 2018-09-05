@@ -18,14 +18,14 @@ def getCrmCounterValue(dvs, key, counter):
 
 def setReadOnlyAttr(dvs, obj, attr, val):
 
-    db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sec_sock, 0)
     tbl = swsscommon.Table(db, "ASIC_STATE:{0}".format(obj))
     keys = tbl.getKeys()
 
     assert len(keys) == 1
 
     swVid = keys[0]
-    r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB)
+    r = redis.Redis(unix_socket_path=dvs.redis_sec_sock, db=swsscommon.ASIC_DB)
     swRid = r.hget("VIDTORID", swVid)
 
     assert swRid is not None
@@ -482,7 +482,7 @@ def test_CrmNexthopGroupMember(dvs):
 def test_CrmAcl(dvs):
 
     db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+    adb = swsscommon.DBConnector(1, dvs.redis_sec_sock, 0)
 
     dvs.runcmd("crm config polling interval 1")
 
