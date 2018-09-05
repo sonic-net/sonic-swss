@@ -13,17 +13,16 @@
 namespace swss {
 
 /*
- * This class is to support neighbor table reconciliation
- * However the design supports any application table which has
- * entries with key -> vector<f1/v2, f2/v2..>
+ * This class is to support application table reconciliation
+ * For any application table which has entries with key -> vector<f1/v2, f2/v2..>
  */
-class NeighRestartAssist
+class AppRestartAssist
 {
 public:
-    NeighRestartAssist(RedisPipeline *pipelineAppDB,
+    AppRestartAssist(RedisPipeline *pipelineAppDB,
         const std::string &app_name, const std::string &docker_name,
         ProducerStateTable *ps_table, const uint32_t defaultWarmStartTimerValue = 0);
-    virtual ~NeighRestartAssist();
+    virtual ~AppRestartAssist();
 
     enum cache_state_t
     {
@@ -49,7 +48,7 @@ private:
     static const cache_state_map cacheStateMap;
     const std::string CACHE_STATE_FIELD = "cache-state";
     typedef std::unordered_map<std::string, std::vector<swss::FieldValueTuple>> AppTableMap;
-    AppTableMap neighborCacheMap;
+    AppTableMap appTableCacheMap;
 
     Table m_appTable;
     std::string m_dockerName;
@@ -75,14 +74,14 @@ public:
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
-    NeighRestartAssist *getRestartAssist()
+    AppRestartAssist *getRestartAssist()
     {
-        return &m_neighRestartAssist;
+        return &m_AppRestartAssist;
     }
 
 private:
     ProducerStateTable m_neighTable;
-    NeighRestartAssist m_neighRestartAssist;
+    AppRestartAssist m_AppRestartAssist;
 };
 
 }

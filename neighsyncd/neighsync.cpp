@@ -17,7 +17,7 @@
 using namespace std;
 using namespace swss;
 
-const NeighRestartAssist::cache_state_map NeighRestartAssist::cacheStateMap =
+const AppRestartAssist::cache_state_map AppRestartAssist::cacheStateMap =
 {
     {STALE,     "STALE"},
     {SAME,      "SAME"},
@@ -26,7 +26,7 @@ const NeighRestartAssist::cache_state_map NeighRestartAssist::cacheStateMap =
     {UNKNOWN,   "UNKNOWN"}
 };
 
-NeighRestartAssist::NeighRestartAssist(RedisPipeline *pipelineAppDB,
+AppRestartAssist::AppRestartAssist(RedisPipeline *pipelineAppDB,
     const std::string &app_name, const std::string &docker_name,
     ProducerStateTable *ps_table, const uint32_t defaultWarmStartTimerValue):
     m_appTable(pipelineAppDB, APP_NEIGH_TABLE_NAME, false),
@@ -67,12 +67,12 @@ NeighRestartAssist::NeighRestartAssist(RedisPipeline *pipelineAppDB,
     }
 }
 
-NeighRestartAssist::~NeighRestartAssist()
+AppRestartAssist::~AppRestartAssist()
 {
 }
 
 /* join the field-value strings for straight printing */
-string NeighRestartAssist::joinVectorString(const vector<FieldValueTuple> &fv)
+string AppRestartAssist::joinVectorString(const vector<FieldValueTuple> &fv)
 {
     string s;
     for (const auto &temps : fv )
@@ -82,13 +82,13 @@ string NeighRestartAssist::joinVectorString(const vector<FieldValueTuple> &fv)
     return s;
 }
 
-void NeighRestartAssist::setCacheEntryState(std::vector<FieldValueTuple> &fvVector,
+void AppRestartAssist::setCacheEntryState(std::vector<FieldValueTuple> &fvVector,
     cache_state_t state)
 {
     fvVector.back().second = cacheStateMap.at(state);
 }
 
-NeighRestartAssist::cache_state_t NeighRestartAssist::getCacheEntryState(const std::vector<FieldValueTuple> &fvVector)
+AppRestartAssist::cache_state_t AppRestartAssist::getCacheEntryState(const std::vector<FieldValueTuple> &fvVector)
 {
     for (auto &iter : cacheStateMap)
     {
@@ -102,7 +102,7 @@ NeighRestartAssist::cache_state_t NeighRestartAssist::getCacheEntryState(const s
 }
 
 /* Read table from APPDB and append stale flag then insert to cachemap */
-void NeighRestartAssist::readTableToMap()
+void AppRestartAssist::readTableToMap()
 {
     vector<string> keys;
 
@@ -129,20 +129,17 @@ void NeighRestartAssist::readTableToMap()
                "%s", m_appTableName.c_str(), key.c_str(), s.c_str());
 
         // insert to the cache map
-        neighborCacheMap[key] = fv;
+        appTableCacheMap[key] = fv;
     }
     WarmStart::setWarmStartState(m_appName, WarmStart::RESTORED);
     SWSS_LOG_NOTICE("Restored appDB table to internal cache map");
     return;
 }
 
-void NeighRestartAssist::insertToMap(string key, vector<FieldValueTuple> fvVector, bool delete_key)
+void AppRestartAssist::insertToMap(string key, vector<FieldValueTuple> fvVector, bool delete_key)
 {
-    string s;
-    s = joinVectorString(fvVector);
-
     SWSS_LOG_INFO("Received message %s, key: %s, "
-            "%s, delete = %d", m_appTableName.c_str(), key.c_str(), s.c_str(), delete_key);
+            "%s, delete = %d", m_appTableName.c_str(), key.c_str(), joinVectorString(fvVector).c_str(), delete_key);
 
     /*
      * Check and insert to CacheMap Logic:
@@ -156,18 +153,18 @@ void NeighRestartAssist::insertToMap(string key, vector<FieldValueTuple> fvVecto
      *   }
      */
 
-    auto found = neighborCacheMap.find(key);
+    auto found = appTableCacheMap.find(key);
 
     if (delete_key)
     {
         SWSS_LOG_NOTICE("%s, delete key: %s, ", m_appTableName.c_str(), key.c_str());
         /* mark it as DELETE if exist, otherwise, no-op */
-        if (found != neighborCacheMap.end())
+        if (found != appTableCacheMap.end())
         {
             setCacheEntryState(found->second, DELETE);
         }
     }
-    else if (found != neighborCacheMap.end())
+    else if (found != appTableCacheMap.end())
     {
         /* check only the original vector range (exclude cache-state field/value) */
         if(!equal(fvVector.begin(), fvVector.end(), found->second.begin()))
@@ -179,7 +176,7 @@ void NeighRestartAssist::insertToMap(string key, vector<FieldValueTuple> fvVecto
 
             //mark as NEW flag
             setCacheEntryState(fvVector, NEW);
-            neighborCacheMap[key] = fvVector;
+            appTableCacheMap[key] = fvVector;
         }
         else
         {
@@ -195,34 +192,35 @@ void NeighRestartAssist::insertToMap(string key, vector<FieldValueTuple> fvVecto
         FieldValueTuple state(CACHE_STATE_FIELD, "");
         fvVector.push_back(state);
         setCacheEntryState(fvVector, NEW);
-        neighborCacheMap[key] = fvVector;
+        appTableCacheMap[key] = fvVector;
     }
 
     return;
 }
 
-void NeighRestartAssist::reconcile()
+void AppRestartAssist::reconcile()
 {
     /*
        iterate throught the table
        if the entry has "SAME" flag, do nothing
        if has "STALE/DELETE" flag, delete it from appDB.
        else if "NEW" flag,  add it to appDB
-       else, assert (should not happen)
+       else, throw (should not happen)
     */
     SWSS_LOG_NOTICE("Hit reconcile function");
-    for (auto iter = neighborCacheMap.begin(); iter != neighborCacheMap.end(); ++iter )
+    for (auto iter = appTableCacheMap.begin(); iter != appTableCacheMap.end(); ++iter )
     {
         string s = "";
         s = joinVectorString(iter->second);
-        if (getCacheEntryState(iter->second) == SAME)
+        auto state = getCacheEntryState(iter->second);
+
+        if (state == SAME)
         {
             SWSS_LOG_INFO("%s SAME, key: %s, %s",
                     m_appTableName.c_str(), iter->first.c_str(), s.c_str());
             continue;
         }
-        else if (getCacheEntryState(iter->second) == STALE ||
-            getCacheEntryState(iter->second) == DELETE)
+        else if (state == STALE || state == DELETE)
         {
             SWSS_LOG_NOTICE("%s STALE/DELETE, key: %s, %s",
                     m_appTableName.c_str(), iter->first.c_str(), s.c_str());
@@ -230,7 +228,7 @@ void NeighRestartAssist::reconcile()
             //delete from appDB
             m_psTable->del(iter->first);
         }
-        else if (getCacheEntryState(iter->second) == NEW)
+        else if (state == NEW)
         {
             SWSS_LOG_NOTICE("%s NEW, key: %s, %s",
                     m_appTableName.c_str(), iter->first.c_str(), s.c_str());
@@ -245,26 +243,28 @@ void NeighRestartAssist::reconcile()
         }
     }
     // clear the map
-    neighborCacheMap.clear();
+    appTableCacheMap.clear();
     WarmStart::setWarmStartState(m_appName, WarmStart::RECONCILED);
     m_warmStartInProgress = false;
     return;
 }
 
-void NeighRestartAssist::startReconcileTimer(Select &s)
+//start the timer, take Select class "s" to add the timer.
+void AppRestartAssist::startReconcileTimer(Select &s)
 {
     warmStartTimer.start();
     s.addSelectable(&warmStartTimer);
 }
 
-void NeighRestartAssist::stopReconcileTimer(Select &s)
+// stop the timer, take Select class "s" to remove the timer.
+void AppRestartAssist::stopReconcileTimer(Select &s)
 {
     warmStartTimer.stop();
     s.removeSelectable(&warmStartTimer);
 }
 
-
-bool NeighRestartAssist::checkReconcileTimer(Selectable *s)
+// take Selectable class pointer "*s" to check if timer expired.
+bool AppRestartAssist::checkReconcileTimer(Selectable *s)
 {
     if(s == &warmStartTimer) {
         SWSS_LOG_INFO("warmstart timer expired");
@@ -275,7 +275,7 @@ bool NeighRestartAssist::checkReconcileTimer(Selectable *s)
 
 NeighSync::NeighSync(RedisPipeline *pipelineAppDB) :
     m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
-    m_neighRestartAssist(pipelineAppDB, "neighsyncd", "swss", &m_neighTable, DEFAULT_RECONCILE_TIMER)
+    m_AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", &m_neighTable, DEFAULT_RECONCILE_TIMER)
 {
 }
 
@@ -326,9 +326,9 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     fvVector.push_back(nh);
     fvVector.push_back(f);
 
-    if (m_neighRestartAssist.isWarmStartInProgress())
+    if (m_AppRestartAssist.isWarmStartInProgress())
     {
-        m_neighRestartAssist.insertToMap(key, fvVector, delete_key);
+        m_AppRestartAssist.insertToMap(key, fvVector, delete_key);
     }
     else
     {

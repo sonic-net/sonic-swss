@@ -355,10 +355,6 @@ def test_swss_neighbor_syncup(dvs):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
-    # warm start with temp view not supported yet
-    #if dvs.tmpview == True:
-    #    return
-
     # enable warm restart
     # TODO: use cfg command to config it
     create_entry_tbl(
