@@ -17,9 +17,9 @@ def stop_swss(dvs):
         supervisorctl stop buffermgrd; supervisorctl stop arp_update'])
 
 
-# Get restart count of all processes supporting warm restart
-def swss_get_RestartCount(state_db):
-    restart_count = {}
+# Get restore count of all processes supporting warm restart
+def swss_get_RestoreCount(state_db):
+    restore_count = {}
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
     keys = warmtbl.getKeys()
     assert  len(keys) !=  0
@@ -27,13 +27,13 @@ def swss_get_RestartCount(state_db):
         (status, fvs) = warmtbl.get(key)
         assert status == True
         for fv in fvs:
-            if fv[0] == "restart_count":
-                restart_count[key] = int(fv[1])
-    print(restart_count)
-    return restart_count
+            if fv[0] == "restore_count":
+                restore_count[key] = int(fv[1])
+    print(restore_count)
+    return restore_count
 
-# function to check the restart count incremented by 1 for all processes supporting warm restart
-def swss_check_RestartCount(state_db, restart_count):
+# function to check the restore count incremented by 1 for all processes supporting warm restart
+def swss_check_RestoreCount(state_db, restore_count):
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
     keys = warmtbl.getKeys()
     print(keys)
@@ -42,8 +42,8 @@ def swss_check_RestartCount(state_db, restart_count):
         (status, fvs) = warmtbl.get(key)
         assert status == True
         for fv in fvs:
-            if fv[0] == "restart_count":
-                assert int(fv[1]) == restart_count[key] + 1
+            if fv[0] == "restore_count":
+                assert int(fv[1]) == restore_count[key] + 1
             elif fv[0] == "state":
                 assert fv[1] == "reconciled"
 
@@ -59,12 +59,12 @@ def check_port_oper_status(appl_db, port_name, state):
             break
     assert oper_status == state
 
-# function to check the restart count incremented by 1 for a single process
-def swss_app_check_RestartCount_single(state_db, restart_count, name):
+# function to check the restore count incremented by 1 for a single process
+def swss_app_check_RestoreCount_single(state_db, restore_count, name):
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
     keys = warmtbl.getKeys()
     print(keys)
-    print(restart_count)
+    print(restore_count)
     assert  len(keys) > 0
     for key in keys:
         if key != name:
@@ -72,8 +72,8 @@ def swss_app_check_RestartCount_single(state_db, restart_count, name):
         (status, fvs) = warmtbl.get(key)
         assert status == True
         for fv in fvs:
-            if fv[0] == "restart_count":
-                assert int(fv[1]) == restart_count[key] + 1
+            if fv[0] == "restore_count":
+                assert int(fv[1]) == restore_count[key] + 1
             elif fv[0] == "state":
                 assert fv[1] == "reconciled"
 
@@ -174,7 +174,7 @@ def test_PortSyncdWarmRestart(dvs):
     (status, fvs) = neighTbl.get("Ethernet20:11.0.0.10")
     assert status == True
 
-    restart_count = swss_get_RestartCount(state_db)
+    restore_count = swss_get_RestoreCount(state_db)
 
     # restart portsyncd
     dvs.runcmd(['sh', '-c', 'pkill -x portsyncd; cp /var/log/swss/sairedis.rec /var/log/swss/sairedis.rec.b; echo > /var/log/swss/sairedis.rec'])
@@ -203,7 +203,7 @@ def test_PortSyncdWarmRestart(dvs):
     check_port_oper_status(appl_db, "Ethernet24", "up")
 
 
-    swss_app_check_RestartCount_single(state_db, restart_count, "portsyncd")
+    swss_app_check_RestoreCount_single(state_db, restore_count, "portsyncd")
 
 
 def test_VlanMgrdWarmRestart(dvs):
@@ -291,7 +291,7 @@ def test_VlanMgrdWarmRestart(dvs):
     (exitcode, bv_before) = dvs.runcmd("bridge vlan")
     print(bv_before)
 
-    restart_count = swss_get_RestartCount(state_db)
+    restore_count = swss_get_RestoreCount(state_db)
 
     dvs.runcmd(['sh', '-c', 'pkill -x vlanmgrd; cp /var/log/swss/sairedis.rec /var/log/swss/sairedis.rec.b; echo > /var/log/swss/sairedis.rec'])
     dvs.runcmd(['sh', '-c', 'supervisorctl start vlanmgrd'])
@@ -829,4 +829,3 @@ def test_swss_port_state_syncup(dvs):
             assert oper_status == "down"
         else:
             assert oper_status == "up"
-

@@ -55,13 +55,14 @@ void WarmStart::initialize(const std::string &app_name,
  * No need to check docker level knobs in this case since the whole system is being rebooted .
 
  * <2> Upon docker service start, first to check system knob.
- * if enabled, docker warm start should be performed, otherwise system warm reboot will be ruined.
- * If system knob disabled, while docker knob enabled, this is likely an individual docker warm restart request.
+ * if enabled, docker warm-start should be performed, otherwise system warm-reboot will be ruined.
+ * If system knob disabled, while docker knob enabled, this is likely an individual docker
+ * warm-restart request.
 
  * Within each application which should take care warm start case,
  * when the system knob or docker knob enabled, we do further check on the
- * actual warm start state ( restart_count), if no warm start state data available,
- * the database has been flushed, do cold start. Otherwise warm start.
+ * actual warm-start state ( restore_count), if no warm-start state data available,
+ * the database has been flushed, do cold start. Otherwise warm-start.
  */
 
 /*
@@ -95,31 +96,31 @@ bool WarmStart::checkWarmStart(const std::string &app_name,
     // Create the entry for this app here.
     if (!warmStart.m_enabled)
     {
-        warmStart.m_stateWarmRestartTable->hset(app_name, "restart_count", "0");
+        warmStart.m_stateWarmRestartTable->hset(app_name, "restore_count", "0");
         return false;
     }
 
-    uint32_t restart_count = 0;
-    warmStart.m_stateWarmRestartTable->hget(app_name, "restart_count", value);
+    uint32_t restore_count = 0;
+    warmStart.m_stateWarmRestartTable->hget(app_name, "restore_count", value);
     if (value == "")
     {
-        SWSS_LOG_WARN("%s doing warm start, but restart_count not found in stateDB %s table, fall back to cold start",
+        SWSS_LOG_WARN("%s doing warm start, but restore_count not found in stateDB %s table, fall back to cold start",
                 app_name.c_str(), STATE_WARM_RESTART_TABLE_NAME);
         warmStart.m_enabled = false;
-        warmStart.m_stateWarmRestartTable->hset(app_name, "restart_count", "0");
+        warmStart.m_stateWarmRestartTable->hset(app_name, "restore_count", "0");
         return false;
     }
     else
     {
-        restart_count = (uint32_t)stoul(value);
+        restore_count = (uint32_t)stoul(value);
     }
 
-    restart_count++;
-    warmStart.m_stateWarmRestartTable->hset(app_name, "restart_count",
-                                            std::to_string(restart_count));
+    restore_count++;
+    warmStart.m_stateWarmRestartTable->hset(app_name, "restore_count",
+                                            std::to_string(restore_count));
 
-    SWSS_LOG_NOTICE("%s doing warm start, restart count %d", app_name.c_str(),
-                    restart_count);
+    SWSS_LOG_NOTICE("%s doing warm start, restore count %d", app_name.c_str(),
+                    restore_count);
 
     return true;
 }

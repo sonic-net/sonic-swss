@@ -677,6 +677,15 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                             ; and push the delta to appDB
                                             ; Valid value is 1-9999. 0 is invalid.
 
+    bgp_timer           = 1*4DIGIT          ; bgp_timer holds the time interval utilized by fpmsyncd during warm-restart episodes.
+                                            ; During this interval fpmsyncd will recover all the routing state previously pushed to
+                                            ; AppDB, as well as all the new state coming from zebra/bgpd. Upon expiration of this
+                                            ; timer, fpmsyncd will execute the reconciliation logic to eliminate all the staled
+                                            ; state from AppDB. This timer should match the BGP-GR restart-timer configured within
+                                            ; the elected routing-stack.
+                                            ; Supported range: 1-9999.
+
+
 ### VXLAN\_TUNNEL
 Stores vxlan tunnels configuration
 Status: ready
@@ -717,15 +726,25 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     ;Status: work in progress
 
     key             = WARM_RESTART_TABLE:process_name         ; process_name is a unique process identifier.
-    restart_count   = 1*10DIGIT                               ; a number between 0 and 2147483647,
-                                                              ; count of warm start times.
 
-    state           = "init" / "restored" / "reconciled"      ; init: process init with warm start enabled.
-                                                              ; restored: process restored to the previous
-                                                              ; state using saved data.
-                                                              ; reconciled: process reconciled with up to date
-                                                              ; dynanic data like port state, neighbor, routes
-                                                              ; and so on.
+    restore_count   = 1*10DIGIT                               ; a value between 0 and 2147483647 to keep track
+                                                              ; of the number of times that an application has
+                                                              ; 'restored' its state from its associated redis
+                                                              ; data-store; which is equivalent to the number
+                                                              ; of times an application has iterated through
+                                                              ; a warm-restart cycle.
+
+    state           = "initialized" / "restored" / "reconciled"  ; initialized: default/initial state for processes
+                                                                 ; with warm-restart capabilities turned on. This
+                                                                 ; state will be applied permanently for processes
+                                                                 ; with warm-restart feature being turned off.
+                                                                 ;
+                                                                 ; restored: process restored to the previous
+                                                                 ; state using saved data.
+                                                                 ;
+                                                                 ; reconciled: process reconciled with updated
+                                                                 ; dynanic data like port state, neighbor, routes
+                                                                 ; and so on.
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?
@@ -735,4 +754,3 @@ What configuration files should we have?  Do apps, orch agent each need separate
 portsyncd reads from port_config.ini and updates PORT_TABLE in APP_DB
 
 All other apps (intfsyncd) read from PORT_TABLE in APP_DB
-
