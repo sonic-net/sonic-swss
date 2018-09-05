@@ -9,6 +9,7 @@
 #include "ipaddress.h"
 #include "netmsg.h"
 #include "linkcache.h"
+#include "select.h"
 
 #include "neighsync.h"
 #include "warm_restart.h"
@@ -27,15 +28,22 @@ const NeighRestartAssist::cache_state_map NeighRestartAssist::cacheStateMap =
 
 NeighRestartAssist::NeighRestartAssist(RedisPipeline *pipelineAppDB,
     const std::string &app_name, const std::string &docker_name,
-    ProducerStateTable *ps_table):
+    ProducerStateTable *ps_table, const uint32_t defaultWarmStartTimerValue):
     m_appTable(pipelineAppDB, APP_NEIGH_TABLE_NAME, false),
     m_appName(app_name),
     m_dockerName(docker_name),
-    m_psTable(ps_table)
+    m_psTable(ps_table),
+    warmStartTimer(timespec{0, 0})
 {
     WarmStart::checkWarmStart(m_appName, m_dockerName);
 
     m_appTableName = m_appTable.getTableName();
+
+    // set the default timer value
+    if (defaultWarmStartTimerValue != 0)
+    {
+        m_reconcileTimer = defaultWarmStartTimerValue;
+    }
 
     if (!WarmStart::isWarmStart())
     {
@@ -49,6 +57,9 @@ NeighRestartAssist::NeighRestartAssist(RedisPipeline *pipelineAppDB,
         {
             m_reconcileTimer = temp_value;
         }
+
+        warmStartTimer.setInterval(timespec{m_reconcileTimer, 0});
+
         // Clear the producerstate table to make sure no pending data for the AppTable
         m_psTable->clear();
 
@@ -240,17 +251,23 @@ void NeighRestartAssist::reconcile()
     return;
 }
 
-void NeighRestartAssist::startReconcileTimer()
+void NeighRestartAssist::startReconcileTimer(Select &s)
 {
-    m_startTime = time(NULL);
+    warmStartTimer.start();
+    s.addSelectable(&warmStartTimer);
 }
 
-bool NeighRestartAssist::checkReconcileTimer()
+void NeighRestartAssist::stopReconcileTimer(Select &s)
 {
-    m_secondsPast =  difftime(time(NULL), m_startTime);
-    SWSS_LOG_INFO("restart timer past: %f seconds", m_secondsPast);
-    if (m_secondsPast >= m_reconcileTimer)
-    {
+    warmStartTimer.stop();
+    s.removeSelectable(&warmStartTimer);
+}
+
+
+bool NeighRestartAssist::checkReconcileTimer(Selectable *s)
+{
+    if(s == &warmStartTimer) {
+        SWSS_LOG_INFO("warmstart timer expired");
         return true;
     }
     return false;
@@ -258,7 +275,7 @@ bool NeighRestartAssist::checkReconcileTimer()
 
 NeighSync::NeighSync(RedisPipeline *pipelineAppDB) :
     m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
-    m_neighRestartAssist(pipelineAppDB, "neighsyncd", "swss", &m_neighTable)
+    m_neighRestartAssist(pipelineAppDB, "neighsyncd", "swss", &m_neighTable, DEFAULT_RECONCILE_TIMER)
 {
 }
 

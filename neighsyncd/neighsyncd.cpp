@@ -36,17 +36,18 @@ int main(int argc, char **argv)
             if (sync.getRestartAssist()->isWarmStartInProgress())
             {
                 sync.getRestartAssist()->readTableToMap();
-                sync.getRestartAssist()->startReconcileTimer();
+                sync.getRestartAssist()->startReconcileTimer(s);
             }
             while (true)
             {
                 Selectable *temps;
-                s.select(&temps, SELECT_TIMEOUT);
+                s.select(&temps);
                 if (sync.getRestartAssist()->isWarmStartInProgress())
                 {
-                    if (sync.getRestartAssist()->checkReconcileTimer())
+                    if (sync.getRestartAssist()->checkReconcileTimer(temps))
                     {
                         sync.getRestartAssist()->reconcile();
+                        sync.getRestartAssist()->stopReconcileTimer(s);
                     }
                 }
             }

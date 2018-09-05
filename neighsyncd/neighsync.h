@@ -1,15 +1,14 @@
 #ifndef __NEIGHSYNC__
 #define __NEIGHSYNC__
 
+#include <unordered_map>
+#include <string>
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "netmsg.h"
-#include <unordered_map>
-#include <string>
+#include "selectabletimer.h"
 
 #define DEFAULT_RECONCILE_TIMER 5
-#define SELECT_TIMEOUT 1000
-#define CACHE_STATE_FIELD	"cache-state"
 
 namespace swss {
 
@@ -23,7 +22,7 @@ class NeighRestartAssist
 public:
     NeighRestartAssist(RedisPipeline *pipelineAppDB,
         const std::string &app_name, const std::string &docker_name,
-        ProducerStateTable *ps_table);
+        ProducerStateTable *ps_table, const uint32_t defaultWarmStartTimerValue = 0);
     virtual ~NeighRestartAssist();
 
     enum cache_state_t
@@ -34,8 +33,9 @@ public:
         DELETE  = 3,
         UNKNOWN = 4
     };
-    void startReconcileTimer(void);
-    bool checkReconcileTimer(void);
+    void startReconcileTimer(Select &s);
+    void stopReconcileTimer(Select &s);
+    bool checkReconcileTimer(Selectable *s);
     void readTableToMap(void);
     void insertToMap(std::string key, std::vector<FieldValueTuple> fvVector, bool delete_key);
     void reconcile(void);
@@ -47,7 +47,7 @@ public:
 private:
     typedef std::map<cache_state_t, std::string> cache_state_map;
     static const cache_state_map cacheStateMap;
-
+    const std::string CACHE_STATE_FIELD = "cache-state";
     typedef std::unordered_map<std::string, std::vector<swss::FieldValueTuple>> AppTableMap;
     AppTableMap neighborCacheMap;
 
@@ -58,9 +58,8 @@ private:
     std::string m_appTableName;
 
     bool m_warmStartInProgress;
-    uint32_t m_reconcileTimer = DEFAULT_RECONCILE_TIMER;
-    time_t m_startTime;
-    double m_secondsPast = 0;
+    uint32_t m_reconcileTimer;
+    SelectableTimer warmStartTimer;
 
     std::string joinVectorString(const std::vector<FieldValueTuple> &fv);
     void setCacheEntryState(std::vector<FieldValueTuple> &fvVector, cache_state_t state);
