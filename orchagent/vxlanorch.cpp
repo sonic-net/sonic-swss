@@ -286,6 +286,7 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     }
 
     const auto tunnel_map_id = tunnel_orch->getTunnelMapId(tunnel_name);
+    const auto tunnel_map_entry_name = request.getKeyString(1);
 
     try
     {
@@ -294,7 +295,6 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     }
     catch(const std::runtime_error& error)
     {
-        auto tunnel_map_entry_name = request.getKeyString(1);
         SWSS_LOG_ERROR("Error adding tunnel map entry. Tunnel: %s. Entry: %s. Error: %s",
             tunnel_name.c_str(), tunnel_map_entry_name.c_str(), error.what());
         return false;
