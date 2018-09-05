@@ -17,7 +17,7 @@
 namespace swss {
 
 
-/* FieldValueTuple functor to serve as comparator for recoveryMap */
+/* FieldValueTuple functor to serve as comparator for restorationMap */
 struct fvComparator
 {
     bool operator()(const std::vector<FieldValueTuple> &left,
@@ -60,6 +60,7 @@ class WarmStartHelper {
 
     WarmStartHelper(RedisPipeline      *pipeline,
                     ProducerStateTable *syncTable,
+                    const std::string  &syncTableName,
                     const std::string  &dockerName,
                     const std::string  &appName);
 
@@ -68,7 +69,6 @@ class WarmStartHelper {
     /* State of collected fieldValue tuples */
     enum fvState_t
     {
-        INVALID = 0,
         STALE   = 1,
         CLEAN   = 2,
         NEW     = 3,
@@ -76,13 +76,13 @@ class WarmStartHelper {
     };
 
     /*
-     * RecoveryMap types serve as the buffer data-struct where to hold the state
+     * RestorationMap types serve as the buffer data-struct where to hold the state
      * over which to run the reconciliation logic.
      */
-    using fvRecoveryMap = std::map<std::vector<FieldValueTuple>, fvState_t, fvComparator>;
-    using recoveryMap = std::unordered_map<std::string, fvRecoveryMap>;
+    using fvRestorationMap = std::map<std::vector<FieldValueTuple>, fvState_t, fvComparator>;
+    using restorationMap = std::unordered_map<std::string, fvRestorationMap>;
 
-    /* Useful type for recoveryMap manipulation */
+    /* Useful type for restorationMap manipulation */
     using fieldValuesTupleVoV = std::vector<std::vector<FieldValueTuple>>;
 
 
@@ -90,36 +90,40 @@ class WarmStartHelper {
 
     WarmStart::WarmStartState getState(void) const;
 
-    bool isEnabled(void) const;
+    bool isEnabled(void);
 
     bool isReconciled(void) const;
 
+    bool inProgress(void) const;
+
     uint32_t getRestartTimer(void) const;
 
-    bool runRecovery(void);
+    bool runRestoration(void);
 
-    bool buildRecoveryMap(void);
+    bool buildRestorationMap(void);
 
-    void insertRecoveryMap(const KeyOpFieldsValuesTuple &kfv, fvState_t state);
+    void insertRestorationMap(const KeyOpFieldsValuesTuple &kfv, fvState_t state);
 
-    void removeRecoveryMap(const KeyOpFieldsValuesTuple &kfv, fvState_t state);
+    void removeRestorationMap(const KeyOpFieldsValuesTuple &kfv, fvState_t state);
 
-    void adjustRecoveryMap(fvRecoveryMap             &fvMap,
-                           const fieldValuesTupleVoV &fvVector,
-                           const std::string         &key);
+    void adjustRestorationMap(fvRestorationMap          &fvMap,
+                              const fieldValuesTupleVoV &fvVector,
+                              const std::string         &key);
 
-    void reconciliate(void);
+    void reconcile(void);
 
     void transformKFV(const std::vector<FieldValueTuple> &data,
                       std::vector<FieldValueTuple>       &fvVector);
 
   private:
-    Table                     m_recoveryTable;  // redis table to import current-state from
-    ProducerStateTable       *m_syncTable;      // producer-table to sync/push state to
-    recoveryMap               m_recoveryMap;    // buffer struct to hold old&new state
-    WarmStart::WarmStartState m_state;          // cached value of warmStart's FSM state
-    std::string               m_dockName;       // sonic-docker requesting warmStart services
-    std::string               m_appName;        // sonic-app requesting warmStart services
+    Table                     m_restorationTable;  // redis table to import current-state from
+    ProducerStateTable       *m_syncTable;         // producer-table to sync/push state to
+    restorationMap            m_restorationMap;    // buffer struct to hold old&new state
+    WarmStart::WarmStartState m_state;             // cached value of warmStart's FSM state
+    bool                      m_enabled;           // warm-reboot enabled/disabled status
+    std::string               m_syncTableName;     // producer-table-name to sync/push state to
+    std::string               m_dockName;          // sonic-docker requesting warmStart services
+    std::string               m_appName;           // sonic-app requesting warmStart services
 };
 
 

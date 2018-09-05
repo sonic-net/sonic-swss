@@ -35,8 +35,13 @@ int main(int argc, char **argv)
         {
             FpmLink fpm;
             Select s;
-
             SelectableTimer warmStartTimer(timespec{0, 0});
+
+            /*
+             * Pipeline should be flushed right away to deal with state pending
+             * from previous try/catch iterations.
+             */
+            pipeline.flush();
 
             cout << "Waiting for fpm-client connection..." << endl;
             fpm.accept();
@@ -44,7 +49,7 @@ int main(int argc, char **argv)
 
             s.addSelectable(&fpm);
 
-            /* Initialize warm-restart logic if this one is enabled */
+            /* If warm-restart feature is enabled, execute 'restoration' logic */
             bool warmStartEnabled = sync.m_warmStartHelper.isEnabled();
             if (warmStartEnabled)
             {
@@ -59,8 +64,8 @@ int main(int argc, char **argv)
                     warmStartTimer.setInterval(timespec{warmRestartIval, 0});
                 }
 
-                /* Execute recovery instruction and kick off warm-restart timer */
-                if (sync.m_warmStartHelper.runRecovery())
+                /* Execute restoration instruction and kick off warm-restart timer */
+                if (sync.m_warmStartHelper.runRestoration())
                 {
                     warmStartTimer.start();
                     s.addSelectable(&warmStartTimer);
@@ -82,16 +87,16 @@ int main(int argc, char **argv)
                 if (warmStartEnabled && temps == &warmStartTimer)
                 {
                     SWSS_LOG_NOTICE("Warm-Restart timer expired.");
-                    sync.m_warmStartHelper.reconciliate();
+                    sync.m_warmStartHelper.reconcile();
                     s.removeSelectable(&warmStartTimer);
 
                     pipeline.flush();
-                    SWSS_LOG_NOTICE("Pipeline flushed");
+                    SWSS_LOG_DEBUG("Pipeline flushed");
                 }
                 else if (!warmStartEnabled || sync.m_warmStartHelper.isReconciled())
                 {
                     pipeline.flush();
-                    SWSS_LOG_NOTICE("Pipeline flushed");
+                    SWSS_LOG_DEBUG("Pipeline flushed");
                 }
             }
         }

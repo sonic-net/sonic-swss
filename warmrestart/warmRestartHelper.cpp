@@ -9,10 +9,12 @@ using namespace swss;
 
 WarmStartHelper::WarmStartHelper(RedisPipeline      *pipeline,
                                  ProducerStateTable *syncTable,
+                                 const std::string  &syncTableName,
                                  const std::string  &dockerName,
                                  const std::string  &appName) :
-    m_recoveryTable(pipeline, APP_ROUTE_TABLE_NAME, false),
+    m_restorationTable(pipeline, syncTableName, false),
     m_syncTable(syncTable),
+    m_syncTableName(syncTableName),
     m_dockName(dockerName),
     m_appName(appName)
 {
@@ -29,6 +31,7 @@ void WarmStartHelper::setState(WarmStart::WarmStartState state)
 {
     WarmStart::setWarmStartState(m_appName, state);
 
+    /* Caching warm-restart FSM state in local member */
     m_state = state;
 }
 
@@ -39,15 +42,44 @@ WarmStart::WarmStartState WarmStartHelper::getState(void) const
 }
 
 
-bool WarmStartHelper::isEnabled(void) const
+/*
+ * To be called by each application to obtain the active/inactive state of
+ * warm-restart functionality, and proceed to initialize the FSM accordingly.
+ */
+bool WarmStartHelper::isEnabled(void)
 {
-    return WarmStart::checkWarmStart(m_appName, m_dockName);
+    bool enabled = WarmStart::checkWarmStart(m_appName, m_dockName);
+
+    /*
+     * If warm-restart feature is enabled for this application, proceed to
+     * initialize its FSM, and clean any pending state that could be potentially
+     * held in ProducerState queues.
+     */
+    if (enabled)
+    {
+        SWSS_LOG_NOTICE("Initializing Warm-Restart cycle for %s application.",
+                        m_appName.c_str());
+
+        setState(WarmStart::INITIALIZED);
+        m_syncTable->clear();
+    }
+
+    /* Keeping track of warm-reboot active/inactive state */
+    m_enabled = enabled;
+
+    return enabled;
 }
 
 
 bool WarmStartHelper::isReconciled(void) const
 {
     return (m_state == WarmStart::RECONCILED);
+}
+
+
+bool WarmStartHelper::inProgress(void) const
+{
+    return (m_enabled && m_state != WarmStart::RECONCILED);
 }
 
 
@@ -63,13 +95,14 @@ uint32_t WarmStartHelper::getRestartTimer(void) const
  * a temporary buffer, which will eventually serve to resolve any conflict between
  * 'old' and 'new' state.
  */
-bool WarmStartHelper::runRecovery()
+bool WarmStartHelper::runRestoration()
 {
     bool state_available;
 
-    SWSS_LOG_NOTICE("Initiating AppDB restoration process");
+    SWSS_LOG_NOTICE("Warm-Restart: Initiating AppDB restoration process for %s "
+                    "application.", m_appName.c_str());
 
-    if (buildRecoveryMap())
+    if (buildRestorationMap())
     {
         setState(WarmStart::RESTORED);
         state_available = true;
@@ -80,29 +113,33 @@ bool WarmStartHelper::runRecovery()
         state_available = false;
     }
 
-    SWSS_LOG_NOTICE("Completed AppDB restoration process");
+    SWSS_LOG_NOTICE("Warm-Restart: Completed AppDB restoration process for %s "
+                    "application.", m_appName.c_str());
 
     return state_available;
 }
 
 
-bool WarmStartHelper::buildRecoveryMap(void)
+bool WarmStartHelper::buildRestorationMap(void)
 {
-    std::vector<KeyOpFieldsValuesTuple> recoveryVector;
+    std::vector<KeyOpFieldsValuesTuple> restorationVector;
 
-    m_recoveryTable.getContent(recoveryVector);
-    if (!recoveryVector.size())
+    m_restorationTable.getContent(restorationVector);
+    if (!restorationVector.size())
     {
-        SWSS_LOG_NOTICE("Warm-Restart: No records received from AppDB\n");
+        SWSS_LOG_NOTICE("Warm-Restart: No records received from AppDB for %s "
+                        "application.", m_appName.c_str());
         return false;
     }
-    SWSS_LOG_NOTICE("Warm-Restart: Received %d records from AppDB\n",
-                    static_cast<int>(recoveryVector.size()));
+    SWSS_LOG_NOTICE("Warm-Restart: Received %d records from AppDB for %s "
+                    "application.",
+                    static_cast<int>(restorationVector.size()),
+                    m_appName.c_str());
 
-    /* Proceed to insert every recovered element into the reconciliation buffer */
-    for (auto &elem : recoveryVector)
+    /* Proceed to insert every restored element into the reconciliation buffer */
+    for (auto &elem : restorationVector)
     {
-        insertRecoveryMap(elem, STALE);
+        insertRestorationMap(elem, STALE);
     }
 
     return true;
@@ -110,12 +147,12 @@ bool WarmStartHelper::buildRecoveryMap(void)
 
 
 /*
- * Method in charge of populating the recoveryMap with old/new state. This state
+ * Method in charge of populating the restorationMap with old/new state. This state
  * can either come from southbound data-stores (old/existing state) or from any
- * of the applications (new state) interested in graceful-restart capabilities.
+ * of the applications (new state) interested in warm-reboot capabilities.
  */
-void WarmStartHelper::insertRecoveryMap(const KeyOpFieldsValuesTuple &kfv,
-                                        fvState_t                     state)
+void WarmStartHelper::insertRestorationMap(const KeyOpFieldsValuesTuple &kfv,
+                                           fvState_t                     state)
 {
     std::string key = kfvKey(kfv);
     std::vector<FieldValueTuple> fieldValues = kfvFieldsValues(kfv);
@@ -128,12 +165,23 @@ void WarmStartHelper::insertRecoveryMap(const KeyOpFieldsValuesTuple &kfv,
      * a temporary fieldValue vector.
      *
      * Here we are simply converting from KFV format to a split-based layout
-     * represented by the fvVector variable.
+     * represented by the fvVector variable. Notice that the conversion for
+     * applications with no special requirements (i.e one simple field-value per
+     * key) is straightforward.
+     *
+     * Example 1 (fpmsyncd):
      *
      * input kfv: 1.1.1.1/30, vector{nexthop: 10.1.1.1, 10.1.1.2, ifname: eth1, eth2}
      *
      * output fvVector: vector{v1{nexthop: 10.1.1.1, ifname: eth1},
      *                         v2{nexthop: 10.1.1.2, ifname: eth2}}
+     *
+     * Example 2 (neighsyncd):
+     *
+     * input kfv: Ethernet0:1.1.1.1, vector{neigh: 00:00:00:00:00:01, family: IPv4}
+     *
+     * output fvVector: vector{v1{neigh: 00:00:00:00:00:01, family: IPv4}}
+     *
      */
     for (auto &fv : fieldValues)
     {
@@ -157,30 +205,31 @@ void WarmStartHelper::insertRecoveryMap(const KeyOpFieldsValuesTuple &kfv,
             }
             else
             {
-                fvVector.emplace_back(std::vector<FieldValueTuple>{make_pair(field, splitValues[j])});
+                fvVector.emplace_back(
+                    std::vector<FieldValueTuple>{make_pair(field, splitValues[j])});
             }
         }
     }
 
     /*
-     * Now that we have a fvVector with separated fieldvalue-tuples, let's proceed
-     * to insert/update its fieldvalue entries into our recoveryMap.
+     * Proceeding to insert/update the received fieldvalue entries into the
+     * restorationMap.
      */
-    fvRecoveryMap fvMap;
+    fvRestorationMap fvMap;
 
-    if (m_recoveryMap.count(key))
+    if (m_restorationMap.count(key))
     {
-        fvMap = m_recoveryMap[key];
+        fvMap = m_restorationMap[key];
     }
 
     /*
-     * Let's now deal with transient best-path selections, which is only required
-     * when we are receiving new/refreshed state from north-bound apps (CLEAN
-     * flag).
+     * Let's now deal with transient (best-path) selections, which is only
+     * required when we are receiving new/refreshed state from north-bound apps
+     * (CLEAN flag).
      */
     if (state == CLEAN)
     {
-        adjustRecoveryMap(fvMap, fvVector, key);
+        adjustRestorationMap(fvMap, fvVector, key);
     }
 
     /*
@@ -206,42 +255,40 @@ void WarmStartHelper::insertRecoveryMap(const KeyOpFieldsValuesTuple &kfv,
         }
     }
 
-    m_recoveryMap[key] = fvMap;
+    m_restorationMap[key] = fvMap;
 }
 
 
 /*
- * Method takes care of marking eliminated entries (e.g. route paths) within the
- * recoveryMap buffer.
+ * Method takes care of marking eliminated entries from the restorationMap buffer.
  */
-void WarmStartHelper::removeRecoveryMap(const KeyOpFieldsValuesTuple &kfv,
-                                        fvState_t                     state)
+void WarmStartHelper::removeRestorationMap(const KeyOpFieldsValuesTuple &kfv,
+                                           fvState_t                     state)
 {
-    fvRecoveryMap fvMap;
+    fvRestorationMap fvMap;
 
     /*
-     * Notice that there's no point in processing bgp-withdrawal if an associated
-     * entry doesn't exist in the recoveryMap.
+     * There's no point in processing state-withdrawal if an associated entry
+     * doesn't exist in the restorationMap.
      */
     std::string key = kfvKey(kfv);
-    if (!m_recoveryMap.count(key))
+    if (!m_restorationMap.count(key))
     {
         return;
     }
 
-    fvMap = m_recoveryMap[key];
+    fvMap = m_restorationMap[key];
 
     /*
      * Iterate through all elements in the map and update the state of the
-     * entries being withdrawwn (i.e. 'paths' in routing case) with the proper
-     * flag.
+     * entries being withdrawn with the proper flag.
      */
     for (auto &fv : fvMap)
     {
         fv.second = state;
     }
 
-    m_recoveryMap[key] = fvMap;
+    m_restorationMap[key] = fvMap;
 }
 
 
@@ -250,20 +297,20 @@ void WarmStartHelper::removeRecoveryMap(const KeyOpFieldsValuesTuple &kfv,
  * and frr routing-stacks, which causes transient best-path selections to arrive
  * at fpmSyncd during bgp's initial peering establishments. In these scenarios we
  * must identify the 'transient' character of a routing-update and eliminate it
- * from the recoveryMap whenever a better one is received.
+ * from the restorationMap whenever a better one is received.
  *
  * As this issue is only observed when interacting with the routing-stack, we can
  * safely avoid this call when collecting state from AppDB (restoration phase);
  * hence caller should invoke this method only if/when the state of the new entry
  * to add is set to CLEAN.
  */
-void WarmStartHelper::adjustRecoveryMap(fvRecoveryMap             &fvMap,
-                                        const fieldValuesTupleVoV &fvVector,
-                                        const std::string         &key)
+void WarmStartHelper::adjustRestorationMap(fvRestorationMap          &fvMap,
+                                           const fieldValuesTupleVoV &fvVector,
+                                           const std::string         &key)
 {
     /*
      * Iterate through all field-value entries in the fvMap and determine if there's
-     * matching entry in the fvVector. If that's not the case, and this entry has
+     * a matching entry in the fvVector. If that's not the case, and this entry has
      * been recently added by the north-bound app (NEW flag), then proceed to
      * eliminate it from the fvMap.
      *
@@ -312,44 +359,45 @@ void WarmStartHelper::adjustRecoveryMap(fvRecoveryMap             &fvMap,
  *
  * In a nutshell, the process relies on the following basic guidelines:
  *
- * - An element in the recoveryMap with all its entries in the fvRecMap showing
+ * - An element in the restorationMap with all its entries in the fvResMap showing
  *   as STALE, will be eliminated from AppDB.
  *
- * - An element in the recoveryMap with all its entries in the fvRecMap showing
+ * - An element in the restorationMap with all its entries in the fvResMap showing
  *   as CLEAN, will have a NO-OP associated with it -- no changes in AppDB.
  *
- * - An element in the recoveryMap with all its entries in the fvRecMap showing
+ * - An element in the restorationMap with all its entries in the fvResMap showing
  *   as NEW, will correspond to a brand-new state, and as such, will be pushed to
  *   AppDB.
  *
- * - An element in the recoveryMap with some of its entries in the fvRecMap
+ * - An element in the restorationMap with some of its entries in the fvResMap
  *   showing as CLEAN, will have these CLEAN entries, along with any NEW one,
  *   being pushed down to AppDB.
  *
- * - An element in the recoveryMap with some of its entries in the fvRecMap
+ * - An element in the restorationMap with some of its entries in the fvResMap
  *   showing as NEW, will have these new entries, along with any CLEAN one,
  *   being pushed to AppDB.
  *
- * - An element in the recoveryMap with some/all of its entries in the
- *   fvRecMap showing as DELETE, will have these entries being eliminated
+ * - An element in the restorationMap with some/all of its entries in the
+ *   fvResMap showing as DELETE, will have these entries being eliminated
  *   from AppDB.
  *
  */
-void WarmStartHelper::reconciliate(void)
+void WarmStartHelper::reconcile(void)
 {
-    SWSS_LOG_NOTICE("Initiating AppDB reconciliation process...");
+    SWSS_LOG_NOTICE("Warm-Restart: Initiating reconciliation process for %s "
+                    "application.", m_appName.c_str());
 
     assert(getState() == WarmStart::RESTORED);
 
     /*
-     * Iterate through all the entries in the recoveryMap and take note of the
+     * Iterate through all the entries in the restorationMap and take note of the
      * attributes associated to each.
      */
-    auto it = m_recoveryMap.begin();
-    while (it != m_recoveryMap.end())
+    auto it = m_restorationMap.begin();
+    while (it != m_restorationMap.end())
     {
         std::string key = it->first;
-        fvRecoveryMap fvMap = it->second;
+        fvRestorationMap fvMap = it->second;
 
         int totalRecElems, staleRecElems, cleanRecElems, newRecElems, deleteRecElems;
         totalRecElems = staleRecElems = cleanRecElems = newRecElems = deleteRecElems = 0;
@@ -390,46 +438,49 @@ void WarmStartHelper::reconciliate(void)
         if (staleRecElems == totalRecElems)
         {
             m_syncTable->del(key);
-            SWSS_LOG_NOTICE("Route reconciliation: deleting stale prefix %s\n",
+            SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting stale entry %s",
                             key.c_str());
         }
         else if (cleanRecElems == totalRecElems)
         {
-            SWSS_LOG_NOTICE("Route reconciliation: no changes needed for existing"
-                            " prefix %s\n", key.c_str());
+            SWSS_LOG_INFO("Warm-Restart reconciliation: no changes needed for "
+                          "existing entry %s", key.c_str());
         }
         else if (newRecElems == totalRecElems)
         {
             m_syncTable->set(key, fvVector);
-            SWSS_LOG_NOTICE("Route reconciliation: creating new prefix %s\n",
+            SWSS_LOG_NOTICE("Warm-Restart reconciliation: creating new entry %s",
                             key.c_str());
         }
         else if (cleanRecElems)
         {
             m_syncTable->set(key, fvVector);
-            SWSS_LOG_NOTICE("Route reconciliation: updating attributes for prefix"
-                            " %s\n", key.c_str());
+            SWSS_LOG_NOTICE("Warm-Restart reconciliation: updating attributes "
+                            "for entry %s", key.c_str());
         }
         else if (newRecElems)
         {
             m_syncTable->set(key, fvVector);
-            SWSS_LOG_NOTICE("Route reconciliation: creating new attributes for "
-                            "prefix %s\n", key.c_str());
+            SWSS_LOG_NOTICE("Warm-Restart reconciliation: creating new attributes "
+                            "for entry %s", key.c_str());
         }
         else if (deleteRecElems)
         {
             m_syncTable->del(key);
-            SWSS_LOG_NOTICE("Route reconciliation: deleting withdrawn prefix %s\n",
+            SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting entry %s",
                             key.c_str());
         }
 
-        it = m_recoveryMap.erase(it);
+        it = m_restorationMap.erase(it);
     }
 
-    /* Recovery map should be entirely empty by now */
-    assert(m_recoveryMap.size() == 0);
+    /* Restoration map should be entirely empty by now */
+    assert(m_restorationMap.size() == 0);
 
     setState(WarmStart::RECONCILED);
+
+    SWSS_LOG_NOTICE("Warm-Restart: Concluded reconciliation process for %s "
+                    "application.", m_appName.c_str());
 }
 
 
