@@ -1,6 +1,9 @@
 # This test suite covers the functionality of mirror feature in SwSS
 
+import platform
+import pytest
 import time
+from distutils.version import StrictVersion
 
 from swsscommon import swsscommon
 
@@ -96,6 +99,7 @@ class TestMirror(object):
             else:
                 assert False
         return status
+
 
     def test_MirrorAddRemove(self, dvs):
         """
@@ -223,6 +227,9 @@ class TestMirror(object):
         time.sleep(1)
 
 
+    # Ignore testcase in Debian Jessie
+    # TODO: Remove this skip if Jessie support is no longer needed
+    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     def test_MirrorToVlanAddRemove(self, dvs):
         """
         This test covers basic mirror session creation and removal operation
@@ -427,6 +434,9 @@ class TestMirror(object):
         self.remove_mirror_session(session)
 
 
+    # Ignore testcase in Debian Jessie
+    # TODO: Remove this skip if Jessie support is no longer needed
+    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     def test_MirrorDestMoveVlan(self, dvs):
         """
         This test tests mirror session destination move from non-VLAN to VLAN
@@ -696,6 +706,7 @@ class TestMirror(object):
         tbl = swsscommon.Table(self.cdb, "ACL_RULE")
         tbl._del(table + "|" + rule)
         time.sleep(1)
+
 
     def test_AclBindMirror(self, dvs):
         """
