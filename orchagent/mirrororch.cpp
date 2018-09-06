@@ -528,6 +528,8 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     {
         SWSS_LOG_ERROR("Failed to activate mirroring session %s\n", name.c_str());
         session.status = false;
+
+        return false;
     }
 
     session.status = true;
