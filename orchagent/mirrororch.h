@@ -20,7 +20,7 @@
 /*
  * Contains session data specified by user in config file
  * and data required for MAC address and port resolution
- * */
+ */
 struct MirrorEntry
 {
     bool status;
@@ -94,6 +94,11 @@ private:
     bool updateSessionDstPort(const string&, MirrorEntry&);
     bool updateSessionType(const string&, MirrorEntry&);
     void setSessionStatus(const string&, MirrorEntry&);
+
+    /*
+     * Store mirror session state in StateDB
+     * attr is the field name will be stored, if empty then all fields will be stored
+     */
     void setSessionState(const std::string& name, const MirrorEntry& session, const std::string& attr = "");
     bool getNeighborInfo(const string&, MirrorEntry&);
 
