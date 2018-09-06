@@ -69,7 +69,7 @@ void WarmStart::initialize(const std::string &app_name,
  * Method to verify/obtain the state of Warm-Restart feature for any warm-reboot
  * capable component. Typically, this function will be called during initialization of
  * SONiC modules; however, method could be invoked at any given point to verify the
- * latest state of Warm-Restart functionality.
+ * latest state of Warm-Restart functionality and to update the restore_count value.
  */
 bool WarmStart::checkWarmStart(const std::string &app_name,
                                const std::string &docker_name)
