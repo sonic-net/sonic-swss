@@ -69,7 +69,7 @@ public:
 
     void update(SubjectType, void *);
     bool sessionExists(const string&);
-    bool getSessionState(const string&, bool&);
+    bool getSessionStatus(const string&, bool&);
     bool getSessionOid(const string&, sai_object_id_t&);
     bool increaseRefCount(const string&);
     bool decreaseRefCount(const string&);
@@ -80,7 +80,7 @@ private:
     NeighOrch *m_neighOrch;
     FdbOrch *m_fdbOrch;
 
-    Table m_mirrorTableProducer;
+    Table m_mirrorTable;
 
     MirrorTable m_syncdMirrors;
 
@@ -93,7 +93,8 @@ private:
     bool updateSessionDstMac(const string&, MirrorEntry&);
     bool updateSessionDstPort(const string&, MirrorEntry&);
     bool updateSessionType(const string&, MirrorEntry&);
-    bool setSessionState(const string&, MirrorEntry&);
+    void setSessionStatus(const string&, MirrorEntry&);
+    void setSessionState(const std::string& name, const MirrorEntry& session, const std::string& attr = "");
     bool getNeighborInfo(const string&, MirrorEntry&);
 
     void updateNextHop(const NextHopUpdate&);
