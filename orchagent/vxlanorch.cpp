@@ -193,8 +193,8 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
     auto src_ip = request.getAttrIP("src_ip");
     if (!src_ip.isV4())
     {
-        SWSS_LOG_ERROR("Wrong attribute: 'src_ip'. Currently only IPv4 address is supported");
-        return false;
+        SWSS_LOG_ERROR("Wrong format of the attribute: 'src_ip'. Currently only IPv4 address is supported");
+        return true;
     }
 
     IpAddress dst_ip;
@@ -208,8 +208,8 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
         dst_ip = request.getAttrIP("dst_ip");
         if (!dst_ip.isV4())
         {
-            SWSS_LOG_ERROR("Wrong attribute: 'dst_ip'. Currently only IPv4 address is supported");
-            return false;
+            SWSS_LOG_ERROR("Wrong format of the attribute: 'dst_ip'. Currently only IPv4 address is supported");
+            return true;
         }
     }
 
@@ -218,7 +218,7 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
     if(isTunnelExists(tunnel_name))
     {
         SWSS_LOG_ERROR("Vxlan tunnel '%s' is already exists", tunnel_name.c_str());
-        return false;
+        return true;
     }
 
     tunnel_ids_t ids;
@@ -236,6 +236,8 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
     }
 
     vxlan_tunnel_table_[tunnel_name] = ids;
+
+    SWSS_LOG_NOTICE("Vxlan tunnel '%s' was created", tunnel_name.c_str());
 
     return true;
 }
@@ -265,7 +267,7 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     if (vni_id >= 1<<24)
     {
         SWSS_LOG_ERROR("Vxlan tunnel map vni id is too big: %d", vni_id);
-        return false;
+        return true;
     }
 
     auto tunnel_name = request.getKeyString(0);
@@ -280,10 +282,11 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     if (isTunnelMapExists(full_tunnel_map_entry_name))
     {
         SWSS_LOG_ERROR("Vxlan tunnel map '%s' is already exist", full_tunnel_map_entry_name.c_str());
-        return false;
+        return true;
     }
 
     const auto tunnel_map_id = tunnel_orch->getTunnelMapId(tunnel_name);
+    const auto tunnel_map_entry_name = request.getKeyString(1);
 
     try
     {
@@ -292,11 +295,12 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     }
     catch(const std::runtime_error& error)
     {
-        auto tunnel_map_entry_name = request.getKeyString(1);
         SWSS_LOG_ERROR("Error adding tunnel map entry. Tunnel: %s. Entry: %s. Error: %s",
             tunnel_name.c_str(), tunnel_map_entry_name.c_str(), error.what());
         return false;
     }
+
+    SWSS_LOG_NOTICE("Vxlan tunnel map entry '%s' for tunnel '%s' was created", tunnel_map_entry_name.c_str(), tunnel_name.c_str());
 
     return true;
 }

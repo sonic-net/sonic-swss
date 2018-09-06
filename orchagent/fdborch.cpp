@@ -454,6 +454,12 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
 
+    FdbUpdate update = {entry, port, true};
+    for (auto observer: m_observers)
+    {
+        observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+    }
+
     return true;
 }
 
@@ -484,6 +490,15 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
     (void)m_entries.erase(entry);
 
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+
+    Port port;
+    m_portsOrch->getPortByBridgePortId(entry.bv_id, port);
+
+    FdbUpdate update = {entry, port, false};
+    for (auto observer: m_observers)
+    {
+        observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+    }
 
     return true;
 }
