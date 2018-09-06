@@ -11,18 +11,20 @@
 #include "converter.h"
 #include "mirrororch.h"
 
-#define MIRROR_SESSION_STATUS           "status"
-#define MIRROR_SESSION_STATUS_ACTIVE    "active"
-#define MIRROR_SESSION_STATUS_INACTIVE  "inactive"
-#define MIRROR_SESSION_SRC_IP           "src_ip"
-#define MIRROR_SESSION_DST_IP           "dst_ip"
-#define MIRROR_SESSION_GRE_TYPE         "gre_type"
-#define MIRROR_SESSION_DSCP             "dscp"
-#define MIRROR_SESSION_TTL              "ttl"
-#define MIRROR_SESSION_QUEUE            "queue"
-#define MIRROR_SESSION_DST_MAC_ADDRESS  "dst_mac"
-#define MIRROR_SESSION_MONITOR_PORT     "monitor_port"
-#define MIRROR_SESSION_ROUTE_PREFIX     "route_prefix"
+#define MIRROR_SESSION_STATUS               "status"
+#define MIRROR_SESSION_STATUS_ACTIVE        "active"
+#define MIRROR_SESSION_STATUS_INACTIVE      "inactive"
+#define MIRROR_SESSION_SRC_IP               "src_ip"
+#define MIRROR_SESSION_DST_IP               "dst_ip"
+#define MIRROR_SESSION_GRE_TYPE             "gre_type"
+#define MIRROR_SESSION_DSCP                 "dscp"
+#define MIRROR_SESSION_TTL                  "ttl"
+#define MIRROR_SESSION_QUEUE                "queue"
+#define MIRROR_SESSION_DST_MAC_ADDRESS      "dst_mac"
+#define MIRROR_SESSION_MONITOR_PORT         "monitor_port"
+#define MIRROR_SESSION_ROUTE_PREFIX         "route_prefix"
+#define MIRROR_SESSION_VLAN_HEADER_VALID    "vlan_header_valid"
+
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
@@ -332,6 +334,12 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
     if (attr.empty() || attr == MIRROR_SESSION_ROUTE_PREFIX)
     {
         value = session.nexthopInfo.prefix.to_string();
+        fvVector.emplace_back(attr, value);
+    }
+
+    if (attr.empty() || attr == MIRROR_SESSION_VLAN_HEADER_VALID)
+    {
+        value = to_string(session.neighborInfo.port.m_type == Port::VLAN);
         fvVector.emplace_back(attr, value);
     }
 
@@ -702,6 +710,8 @@ bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
 
     SWSS_LOG_NOTICE("Update mirror session %s VLAN to %s",
             name.c_str(), session.neighborInfo.port.m_alias.c_str());
+
+    setSessionState(name, session, MIRROR_SESSION_VLAN_HEADER_VALID);
 
     return true;
 }
