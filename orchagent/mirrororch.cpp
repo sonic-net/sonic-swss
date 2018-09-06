@@ -306,7 +306,6 @@ void MirrorOrch::setSessionStatus(const string& name, MirrorEntry& session)
 
     SWSS_LOG_INFO("Setting mirroring sessions %s status\n", name.c_str());
 
-    string status = session.status ? MIRROR_SESSION_STATUS_ACTIVE : MIRROR_SESSION_STATUS_INACTIVE;
 
     setSessionState(name, session, MIRROR_SESSION_STATUS);
 }
@@ -319,28 +318,34 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
 
     vector<FieldValueTuple> fvVector;
     string value;
+    if (attr.empty() || attr == MIRROR_SESSION_STATUS)
+    {
+        value = session.status ? MIRROR_SESSION_STATUS_ACTIVE : MIRROR_SESSION_STATUS_INACTIVE;
+        fvVector.emplace_back(MIRROR_SESSION_STATUS, value);
+    }
+
     if (attr.empty() || attr == MIRROR_SESSION_MONITOR_PORT)
     {
         value = sai_serialize_object_id(session.neighborInfo.portId);
-        fvVector.emplace_back(attr, value);
+        fvVector.emplace_back(MIRROR_SESSION_MONITOR_PORT, value);
     }
 
     if (attr.empty() || attr == MIRROR_SESSION_DST_MAC_ADDRESS)
     {
         value = session.neighborInfo.mac.to_string();
-        fvVector.emplace_back(attr, value);
+        fvVector.emplace_back(MIRROR_SESSION_DST_MAC_ADDRESS, value);
     }
 
     if (attr.empty() || attr == MIRROR_SESSION_ROUTE_PREFIX)
     {
         value = session.nexthopInfo.prefix.to_string();
-        fvVector.emplace_back(attr, value);
+        fvVector.emplace_back(MIRROR_SESSION_ROUTE_PREFIX, value);
     }
 
     if (attr.empty() || attr == MIRROR_SESSION_VLAN_HEADER_VALID)
     {
         value = to_string(session.neighborInfo.port.m_type == Port::VLAN);
-        fvVector.emplace_back(attr, value);
+        fvVector.emplace_back(MIRROR_SESSION_VLAN_HEADER_VALID, value);
     }
 
     m_mirrorTable.set(name, fvVector);
