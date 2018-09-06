@@ -85,17 +85,16 @@ class TestMirror(object):
 
     def get_mirror_session_status(self, name):
         status = ""
-        # TODO: the status of mirror session will be moved to state database
-        tbl = swsscommon.Table(self.pdb, "MIRROR_SESSION")
+        tbl = swsscommon.Table(self.sdb, "MIRROR_SESSION")
         (status, fvs) = tbl.get(name)
         assert status == True
-        assert len(fvs) == 1
+        assert len(fvs) > 0
         for fv in fvs:
             if fv[0] == "status":
                 status = fv[1]
-            else:
-                assert False
-        return status
+                return status
+        else:
+            assert False
 
     def test_MirrorAddRemove(self, dvs):
         """
