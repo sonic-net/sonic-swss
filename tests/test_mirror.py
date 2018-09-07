@@ -84,18 +84,14 @@ class TestMirror(object):
         time.sleep(1)
 
     def get_mirror_session_status(self, name):
-        status = ""
+        return self.get_mirror_session_state(name)["status"]
+
+    def get_mirror_session_state(self, name):
         tbl = swsscommon.Table(self.sdb, "MIRROR_SESSION")
         (status, fvs) = tbl.get(name)
         assert status == True
         assert len(fvs) > 0
-        for fv in fvs:
-            if fv[0] == "status":
-                status = fv[1]
-                return status
-
-        # If there is no status field, then it is a logic error
-        assert False
+        return { fv[0]: fv[1] for fv in fvs }
 
     def test_MirrorAddRemove(self, dvs):
         """
@@ -115,23 +111,26 @@ class TestMirror(object):
 
         # create mirror session
         self.create_mirror_session(session, "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring up Ethernet16
         self.set_interface_status("Ethernet16", "up")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # add IP address to Ethernet16
         self.add_ip_address("Ethernet16", "10.0.0.0/31")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # add neighbor to Ethernet16
         self.add_neighbor("Ethernet16", "10.0.0.1", "02:04:06:08:10:12")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # add route to mirror destination via 10.0.0.1
         self.add_route(dvs, "2.2.2.2", "10.0.0.1")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
+        assert self.get_mirror_session_state(session)["monitor_port"] == dvs.asicdb.portnamemap["Ethernet16"]
+        assert self.get_mirror_session_state(session)["dst_mac"] == "02:04:06:08:10:12"
+        assert self.get_mirror_session_state(session)["route_prefix"] == "2.2.2.2/32"
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
@@ -169,19 +168,19 @@ class TestMirror(object):
 
         # remove route
         self.remove_route(dvs, "2.2.2.2")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # remove neighbor
         self.remove_neighbor("Ethernet16", "10.0.0.1")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # remove IP address
         self.remove_ip_address("Ethernet16", "10.0.0.0/31")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring down Ethernet16
         self.set_interface_status("Ethernet16", "down")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # remove mirror session
         self.remove_mirror_session(session)
@@ -240,7 +239,7 @@ class TestMirror(object):
 
         # create mirror session
         self.create_mirror_session(session, "5.5.5.5", "6.6.6.6", "0x6558", "8", "100", "0")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # create vlan; create vlan member
         self.create_vlan(dvs, "6")
@@ -252,15 +251,15 @@ class TestMirror(object):
 
         # add ip address to vlan 6
         self.add_ip_address("Vlan6", "6.6.6.0/24")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # create neighbor to vlan 6
         self.add_neighbor("Vlan6", "6.6.6.6", "66:66:66:66:66:66")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # create fdb entry to ethernet4
         self.create_fdb("6", "66-66-66-66-66-66", "Ethernet4")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
@@ -308,15 +307,15 @@ class TestMirror(object):
 
         # remove fdb entry
         self.remove_fdb("6", "66-66-66-66-66-66")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # remove neighbor
         self.remove_neighbor("Vlan6", "6.6.6.6")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # remove ip address
         self.remove_ip_address("Vlan6", "6.6.6.0/24")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring down vlan and member
         self.set_interface_status("Ethernet4", "down")
@@ -377,7 +376,7 @@ class TestMirror(object):
 
         # create mirror session
         self.create_mirror_session(session, "10.10.10.10", "11.11.11.11", "0x6558", "8", "100", "0")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # create port channel; create port channel member
         self.create_port_channel(dvs, "008")
@@ -389,11 +388,11 @@ class TestMirror(object):
 
         # add ip address to port channel 008
         self.add_ip_address("PortChannel008", "11.11.11.0/24")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # create neighbor to port channel 008
         self.add_neighbor("PortChannel008", "11.11.11.11", "88:88:88:88:88:88")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
@@ -409,11 +408,11 @@ class TestMirror(object):
 
         # remove neighbor
         self.remove_neighbor("PortChannel008", "11.11.11.11")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # remove ip address
         self.remove_ip_address("PortChannel008", "11.11.11.0/24")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring down port channel and port channel member
         self.set_interface_status("PortChannel008", "down")
@@ -446,14 +445,14 @@ class TestMirror(object):
 
         # create mirror session
         self.create_mirror_session(session, "7.7.7.7", "8.8.8.8", "0x6558", "8", "100", "0")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring up port; add ip; add neighbor; add route
         self.set_interface_status("Ethernet32", "up")
         self.add_ip_address("Ethernet32", "80.0.0.0/31")
         self.add_neighbor("Ethernet32", "80.0.0.1", "02:04:06:08:10:12")
         self.add_route(dvs, "8.8.0.0/16", "80.0.0.1")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # check monitor port
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
@@ -472,19 +471,19 @@ class TestMirror(object):
         self.create_vlan_member("9", "Ethernet48")
         self.set_interface_status("Vlan9", "up")
         self.set_interface_status("Ethernet48", "up")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # add ip address to vlan 9
         self.add_ip_address("Vlan9", "8.8.8.0/24")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # create neighbor to vlan 9
         self.add_neighbor("Vlan9", "8.8.8.8", "88:88:88:88:88:88")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # create fdb entry to ethernet48
         self.create_fdb("9", "88-88-88-88-88-88", "Ethernet48")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # check monitor port
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
@@ -508,15 +507,15 @@ class TestMirror(object):
         # mirror session move round 2
         # remove fdb entry
         self.remove_fdb("9", "88-88-88-88-88-88")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # remove neighbor
         self.remove_neighbor("Vlan9", "8.8.8.8")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # remove ip address
         self.remove_ip_address("Vlan9", "8.8.8.0/24")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # check monitor port
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
@@ -564,14 +563,14 @@ class TestMirror(object):
 
         # create mirror session
         self.create_mirror_session(session, "12.12.12.12", "13.13.13.13", "0x6558", "8", "100", "0")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring up port; add ip; add neighbor; add route
         self.set_interface_status("Ethernet64", "up")
         self.add_ip_address("Ethernet64", "100.0.0.0/31")
         self.add_neighbor("Ethernet64", "100.0.0.1", "02:04:06:08:10:12")
         self.add_route(dvs, "13.13.0.0/16", "100.0.0.1")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # check monitor port
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
@@ -594,11 +593,11 @@ class TestMirror(object):
         # add ip address to port channel 080; create neighbor to port channel 080
         self.add_ip_address("PortChannel080", "200.0.0.0/31")
         self.add_neighbor("PortChannel080", "200.0.0.1", "12:10:08:06:04:02")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # add route
         self.add_route(dvs, "13.13.13.0/24", "200.0.0.1")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # check monitor port
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
@@ -614,12 +613,12 @@ class TestMirror(object):
         # mirror session move round 2
         # remove port channel member
         self.remove_port_channel_member("080", "Ethernet32")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # mirror session move round 3
         # create port channel member
         self.create_port_channel_member("080", "Ethernet32")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # check monitor port
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
@@ -635,7 +634,7 @@ class TestMirror(object):
         # mirror session move round 4
         # remove route
         self.remove_route(dvs, "13.13.13.0/24")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         port_oid = ""
         # check monitor port
@@ -658,14 +657,14 @@ class TestMirror(object):
         self.set_interface_status("PortChannel080", "down")
         self.remove_port_channel_member("080", "Ethernet32")
         self.remove_port_channel(dvs, "080")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # remove route; remove neighbor; remove ip; bring down port
         self.remove_route(dvs, "13.13.0.0/16")
         self.remove_neighbor("Ethernet64", "100.0.0.1")
         self.remove_ip_address("Ethernet64", "100.0.0.0/31")
         self.set_interface_status("Ethernet64", "down")
-        assert self.get_mirror_session_status(session) == "inactive"
+        assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # remove mirror session
         self.remove_mirror_session(session)
@@ -716,7 +715,7 @@ class TestMirror(object):
 
         # create mirror session
         self.create_mirror_session(session, "3.3.3.3", "4.4.4.4", "0x6558", "8", "100", "0")
-        assert self.get_mirror_session_status(session) == "active"
+        assert self.get_mirror_session_state(session)["status"] == "active"
 
         # assert mirror session in asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
