@@ -44,8 +44,6 @@ void WarmStart::initialize(const std::string &app_name,
     warmStart.m_cfgWarmRestartTable =
         std::unique_ptr<Table>(new Table(warmStart.m_cfgDb.get(), CFG_WARM_RESTART_TABLE_NAME));
 
-    setWarmStartState(app_name, WarmStart::INITIALIZED);
-
     warmStart.m_initialized = true;
 }
 
