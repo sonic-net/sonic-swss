@@ -18,9 +18,9 @@ namespace swss {
 class AppRestartAssist
 {
 public:
-    AppRestartAssist(RedisPipeline *pipelineAppDB,
-        const std::string &app_name, const std::string &docker_name,
-        ProducerStateTable *ps_table, const uint32_t defaultWarmStartTimerValue = 0);
+    AppRestartAssist(RedisPipeline *pipeline,
+        const std::string &appName, const std::string &dockerName,
+        ProducerStateTable *psTable, const uint32_t defaultWarmStartTimerValue = 0);
     virtual ~AppRestartAssist();
 
     enum cache_state_t
@@ -58,7 +58,7 @@ private:
 
     bool m_warmStartInProgress;
     uint32_t m_reconcileTimer;
-    SelectableTimer warmStartTimer;
+    SelectableTimer m_warmStartTimer;
 
     std::string joinVectorString(const std::vector<FieldValueTuple> &fv);
     void setCacheEntryState(std::vector<FieldValueTuple> &fvVector, cache_state_t state);

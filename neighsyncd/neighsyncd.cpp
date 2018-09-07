@@ -45,8 +45,8 @@ int main(int argc, char **argv)
                 {
                     if (sync.getRestartAssist()->checkReconcileTimer(temps))
                     {
-                        sync.getRestartAssist()->reconcile();
                         sync.getRestartAssist()->stopReconcileTimer(s);
+                        sync.getRestartAssist()->reconcile();
                     }
                 }
             }

@@ -16,14 +16,14 @@ const AppRestartAssist::cache_state_map AppRestartAssist::cacheStateMap =
     {UNKNOWN,   "UNKNOWN"}
 };
 
-AppRestartAssist::AppRestartAssist(RedisPipeline *pipelineAppDB,
-    const std::string &app_name, const std::string &docker_name,
-    ProducerStateTable *ps_table, const uint32_t defaultWarmStartTimerValue):
-    m_appTable(pipelineAppDB, APP_NEIGH_TABLE_NAME, false),
-    m_appName(app_name),
-    m_dockerName(docker_name),
-    m_psTable(ps_table),
-    warmStartTimer(timespec{0, 0})
+AppRestartAssist::AppRestartAssist(RedisPipeline *pipeline,
+    const std::string &appName, const std::string &dockerName,
+    ProducerStateTable *psTable, const uint32_t defaultWarmStartTimerValue):
+    m_appTable(pipeline, APP_NEIGH_TABLE_NAME, false),
+    m_appName(appName),
+    m_dockerName(dockerName),
+    m_psTable(psTable),
+    m_warmStartTimer(timespec{0, 0})
 {
     WarmStart::checkWarmStart(m_appName, m_dockerName);
 
@@ -56,7 +56,7 @@ AppRestartAssist::AppRestartAssist(RedisPipeline *pipelineAppDB,
             m_reconcileTimer = temp_value;
         }
 
-        warmStartTimer.setInterval(timespec{m_reconcileTimer, 0});
+        m_warmStartTimer.setInterval(timespec{m_reconcileTimer, 0});
 
         // Clear the producerstate table to make sure no pending data for the AppTable
         m_psTable->clear();
@@ -96,7 +96,6 @@ AppRestartAssist::cache_state_t AppRestartAssist::getCacheEntryState(const std::
         }
     }
     throw std::logic_error("cache entry state is invalid");
-    return UNKNOWN;
 }
 
 /* Read table from APPDB and append stale flag then insert to cachemap */
@@ -120,8 +119,7 @@ void AppRestartAssist::readTableToMap()
         fv.push_back(state);
         setCacheEntryState(fv, STALE);
 
-        string s = "";
-        s = joinVectorString(fv);
+        string s = joinVectorString(fv);
 
         SWSS_LOG_INFO("write to cachemap: %s, key: %s, "
                "%s", m_appTableName.c_str(), key.c_str(), s.c_str());
@@ -172,7 +170,7 @@ void AppRestartAssist::insertToMap(string key, vector<FieldValueTuple> fvVector,
             FieldValueTuple state(CACHE_STATE_FIELD, "");
             fvVector.push_back(state);
 
-            //mark as NEW flag
+            // mark as NEW flag
             setCacheEntryState(fvVector, NEW);
             appTableCacheMap[key] = fvVector;
         }
@@ -180,7 +178,7 @@ void AppRestartAssist::insertToMap(string key, vector<FieldValueTuple> fvVector,
         {
             SWSS_LOG_INFO("%s, found key: %s, same value", m_appTableName.c_str(), key.c_str());
 
-            //mark as SAME flag
+            // mark as SAME flag
             setCacheEntryState(found->second, SAME);
         }
     }
@@ -205,11 +203,10 @@ void AppRestartAssist::reconcile()
        else if "NEW" flag,  add it to appDB
        else, throw (should not happen)
     */
-    SWSS_LOG_NOTICE("Hit reconcile function");
+    SWSS_LOG_ENTER();
     for (auto iter = appTableCacheMap.begin(); iter != appTableCacheMap.end(); ++iter )
     {
-        string s = "";
-        s = joinVectorString(iter->second);
+        string s = joinVectorString(iter->second);
         auto state = getCacheEntryState(iter->second);
 
         if (state == SAME)
@@ -247,24 +244,24 @@ void AppRestartAssist::reconcile()
     return;
 }
 
-//start the timer, take Select class "s" to add the timer.
+// start the timer, take Select class "s" to add the timer.
 void AppRestartAssist::startReconcileTimer(Select &s)
 {
-    warmStartTimer.start();
-    s.addSelectable(&warmStartTimer);
+    m_warmStartTimer.start();
+    s.addSelectable(&m_warmStartTimer);
 }
 
 // stop the timer, take Select class "s" to remove the timer.
 void AppRestartAssist::stopReconcileTimer(Select &s)
 {
-    warmStartTimer.stop();
-    s.removeSelectable(&warmStartTimer);
+    m_warmStartTimer.stop();
+    s.removeSelectable(&m_warmStartTimer);
 }
 
 // take Selectable class pointer "*s" to check if timer expired.
 bool AppRestartAssist::checkReconcileTimer(Selectable *s)
 {
-    if(s == &warmStartTimer) {
+    if(s == &m_warmStartTimer) {
         SWSS_LOG_INFO("warmstart timer expired");
         return true;
     }
