@@ -93,8 +93,9 @@ class TestMirror(object):
             if fv[0] == "status":
                 status = fv[1]
                 return status
-        else:
-            assert False
+
+        # If there is no status field, then it is a logic error
+        assert False
 
     def test_MirrorAddRemove(self, dvs):
         """

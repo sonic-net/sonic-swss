@@ -25,7 +25,6 @@
 #define MIRROR_SESSION_ROUTE_PREFIX         "route_prefix"
 #define MIRROR_SESSION_VLAN_HEADER_VALID    "vlan_header_valid"
 
-
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
 #define MIRROR_SESSION_DEFAULT_IP_HDR_VER 4
@@ -298,16 +297,6 @@ void MirrorOrch::deleteEntry(const string& name)
     m_syncdMirrors.erase(sessionIter);
 
     SWSS_LOG_NOTICE("Removed mirror session %s", name.c_str());
-}
-
-void MirrorOrch::setSessionStatus(const string& name, MirrorEntry& session)
-{
-    SWSS_LOG_ENTER();
-
-    SWSS_LOG_INFO("Setting mirroring sessions %s status\n", name.c_str());
-
-
-    setSessionState(name, session, MIRROR_SESSION_STATUS);
 }
 
 void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session, const string& attr)
@@ -600,7 +589,9 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     }
 
     session.status = false;
-    setSessionStatus(name, session);
+
+    // Store whole state into StateDB, since it is far from that frequent it's durable
+    setSessionState(name, session);
 
     SWSS_LOG_NOTICE("Deactive mirror session %s", name.c_str());
 

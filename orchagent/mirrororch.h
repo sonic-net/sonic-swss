@@ -93,7 +93,6 @@ private:
     bool updateSessionDstMac(const string&, MirrorEntry&);
     bool updateSessionDstPort(const string&, MirrorEntry&);
     bool updateSessionType(const string&, MirrorEntry&);
-    void setSessionStatus(const string&, MirrorEntry&);
 
     /*
      * Store mirror session state in StateDB
