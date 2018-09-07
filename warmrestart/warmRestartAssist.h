@@ -28,8 +28,7 @@ public:
         STALE	= 0,
         SAME 	= 1,
         NEW 	= 2,
-        DELETE  = 3,
-        UNKNOWN = 4
+        DELETE  = 3
     };
     void startReconcileTimer(Select &s);
     void stopReconcileTimer(Select &s);

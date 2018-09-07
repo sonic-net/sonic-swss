@@ -12,8 +12,7 @@ const AppRestartAssist::cache_state_map AppRestartAssist::cacheStateMap =
     {STALE,     "STALE"},
     {SAME,      "SAME"},
     {NEW,       "NEW"},
-    {DELETE,    "DELETE"},
-    {UNKNOWN,   "UNKNOWN"}
+    {DELETE,    "DELETE"}
 };
 
 AppRestartAssist::AppRestartAssist(RedisPipeline *pipeline,
@@ -30,7 +29,7 @@ AppRestartAssist::AppRestartAssist(RedisPipeline *pipeline,
     m_appTableName = m_appTable.getTableName();
 
     // set the default timer value
-    if (defaultWarmStartTimerValue > MAXIMUN_WARMRESTART_TIMER_VALUE)
+    if (defaultWarmStartTimerValue > MAXIMUM_WARMRESTART_TIMER_VALUE)
     {
         throw std::invalid_argument("invalid timer value was provided");
     }
