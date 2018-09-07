@@ -734,15 +734,14 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                                               ; of times an application has iterated through
                                                               ; a warm-restart cycle.
 
-    state           = "initialized" / "restored" / "reconciled"  ; initialized: default/initial state for processes
-                                                                 ; with warm-restart capabilities turned on. This
-                                                                 ; state will be applied permanently for processes
-                                                                 ; with warm-restart feature being turned off.
+    state           = "initialized" / "restored" / "reconciled"  ; initialized: initial FSM state for processes
+                                                                 ; with warm-restart capabilities turned on.
                                                                  ;
-                                                                 ; restored: process restored to the previous
-                                                                 ; state using saved data.
+                                                                 ; restored: process restored the state previously
+                                                                 ; uploaded to redis data-stores.
                                                                  ;
-                                                                 ; reconciled: process reconciled with updated
+                                                                 ; reconciled: process reconciled 'old' and 'new'
+                                                                 ; state collected in 'restored' phase. Examples:
                                                                  ; dynanic data like port state, neighbor, routes
                                                                  ; and so on.
 
