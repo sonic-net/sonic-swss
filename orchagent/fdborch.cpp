@@ -22,7 +22,7 @@ const int fdborch_pri = 20;
 FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
     Orch(db, tableName, fdborch_pri),
     m_portsOrch(port),
-    m_table(Table(db, tableName))
+    m_table(db, tableName)
 {
     m_portsOrch->attach(this);
     m_flushNotificationsConsumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
@@ -47,36 +47,29 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
     switch (type)
     {
     case SAI_FDB_EVENT_LEARNED:
+    {
         if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
         {
             SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%lx", bridge_port_id);
             return;
         }
 
-        // we already have such entries
-        if (m_entries.find(update.entry) != m_entries.end())
-        {
-             SWSS_LOG_INFO("FdbOrch notification: mac %s is already in bv_id 0x%lx",
-                    update.entry.mac.to_string().c_str(), entry->bv_id);
-             break;
-        }
-
         update.add = true;
 
-        {
-            auto ret = m_entries.insert(update.entry);
+        auto ret = m_entries.insert(update.entry);
 
+        if (ret.second)
+        {
             SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx",
                             update.entry.mac.to_string().c_str(), entry->bv_id);
-
-            if (ret.second)
-            {
-                gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
-            }
-            else
-            {
-                SWSS_LOG_INFO("FdbOrch notification: mac %s is duplicate", update.entry.mac.to_string().c_str());
-            }
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+        }
+        else
+        {
+            // we already have such entries
+            SWSS_LOG_INFO("FdbOrch notification: mac %s is already in bv_id 0x%lx",
+                update.entry.mac.to_string().c_str(), entry->bv_id);
+            break;
         }
 
         for (auto observer: m_observers)
@@ -85,7 +78,7 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         }
 
         break;
-
+    }
     case SAI_FDB_EVENT_AGED:
     case SAI_FDB_EVENT_MOVE:
         update.add = false;
@@ -388,6 +381,40 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     }
 }
 
+bool FdbOrch::createFdbEntry(const FdbEntry& entry, const Port& port, const string& type)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+
+    attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
+    attr.value.s32 = (type == "dynamic") ? SAI_FDB_ENTRY_TYPE_DYNAMIC : SAI_FDB_ENTRY_TYPE_STATIC;
+    attrs.push_back(attr);
+
+    attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
+    attr.value.oid = port.m_bridge_port_id;
+    attrs.push_back(attr);
+
+    attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+    attrs.push_back(attr);
+
+    sai_fdb_entry_t fdb_entry;
+
+    fdb_entry.switch_id = gSwitchId;
+    memcpy(fdb_entry.mac_address, entry.mac.getMac(), sizeof(sai_mac_t));
+    fdb_entry.bv_id = entry.bv_id;
+
+    sai_status_t status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create %s FDB %s on %s, rv:%d", type.c_str(), entry.mac.to_string().c_str(), port.m_alias.c_str(), status);
+        return false;
+    }
+    return true;
+}
+
 bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const string& type)
 {
     SWSS_LOG_ENTER();
@@ -399,12 +426,6 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
         SWSS_LOG_ERROR("FDB entry already exists. mac=%s bv_id=0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
         return true;
     }
-
-    sai_fdb_entry_t fdb_entry;
-
-    fdb_entry.switch_id = gSwitchId;
-    memcpy(fdb_entry.mac_address, entry.mac.getMac(), sizeof(sai_mac_t));
-    fdb_entry.bv_id = entry.bv_id;
 
     Port port;
     /* Retry until port is created */
@@ -425,29 +446,10 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
         return true;
     }
 
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attrs;
-
-    attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
-    attr.value.s32 = (type == "dynamic") ? SAI_FDB_ENTRY_TYPE_DYNAMIC : SAI_FDB_ENTRY_TYPE_STATIC;
-    attrs.push_back(attr);
-
-    attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
-    attr.value.oid = port.m_bridge_port_id;
-    attrs.push_back(attr);
-
-    attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
-    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-    attrs.push_back(attr);
-
-    sai_status_t status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
+    if (!createFdbEntry(entry, port, type))
     {
-        SWSS_LOG_ERROR("Failed to create %s FDB %s on %s, rv:%d",
-                type.c_str(), entry.mac.to_string().c_str(), port_name.c_str(), status);
-        return false; //FIXME: it should be based on status. Some could be retried, some not
+        return false; // FIXME: it should be based on status. Some could be retried, some not
     }
-
     SWSS_LOG_NOTICE("Create %s FDB %s on %s", type.c_str(), entry.mac.to_string().c_str(), port_name.c_str());
 
     (void) m_entries.insert(entry);
