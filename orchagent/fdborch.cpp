@@ -36,42 +36,40 @@ FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
     Orch::addExecutor(fdbNotifier);
 }
 
-void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_object_id_t bridge_port_id)
+void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* fdb_entry, sai_object_id_t bridge_port_id)
 {
     SWSS_LOG_ENTER();
 
-    FdbUpdate update;
-    update.entry.mac = entry->mac_address;
-    update.entry.bv_id = entry->bv_id;
+    FdbEntry entry = { fdb_entry->mac_address, fdb_entry->bv_id };
 
     switch (type)
     {
         case SAI_FDB_EVENT_LEARNED:
         {
-            if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
+            Port port;
+            if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, port))
             {
                 SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%lx", bridge_port_id);
                 break;
             }
 
-            update.add = true;
-
-            auto ret = m_entries.insert(update.entry);
+            auto ret = m_entries.insert(entry);
 
             if (ret.second)
             {
                 SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx",
-                                update.entry.mac.to_string().c_str(), entry->bv_id);
+                                entry.mac.to_string().c_str(), entry.bv_id);
                 gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
             }
             else
             {
                 // we already have such entries
                 SWSS_LOG_INFO("FdbOrch notification: mac %s is already in bv_id 0x%lx",
-                    update.entry.mac.to_string().c_str(), entry->bv_id);
+                    entry.mac.to_string().c_str(), entry.bv_id);
                 break;
             }
 
+            FdbUpdate update = { entry, port, true };
             for (auto observer: m_observers)
             {
                 observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
@@ -82,16 +80,15 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         case SAI_FDB_EVENT_AGED:
         case SAI_FDB_EVENT_MOVE:
         {
-            update.add = false;
-
-            auto ret = m_entries.erase(update.entry);
-            SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
+            auto ret = m_entries.erase(entry);
+            SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
 
             if (ret)
             {
                 gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
             }
 
+            FdbUpdate update = { entry, Port(), false };
             for (auto observer: m_observers)
             {
                 observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
@@ -101,7 +98,7 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         }
         case SAI_FDB_EVENT_FLUSHED:
         {
-            if (bridge_port_id == SAI_NULL_OBJECT_ID && entry->bv_id == SAI_NULL_OBJECT_ID)
+            if (bridge_port_id == SAI_NULL_OBJECT_ID && entry.bv_id == SAI_NULL_OBJECT_ID)
             {
                 for (auto itr = m_entries.begin(); itr != m_entries.end();)
                 {
@@ -111,9 +108,7 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
                        no member to indicate the fdb entry type,
                        if there is static mac added, here will have issue.
                     */
-                    update.entry.mac = itr->mac;
-                    update.entry.bv_id = itr->bv_id;
-                    update.add = false;
+                    FdbUpdate update = { *itr, Port(), false };
 
                     itr = m_entries.erase(itr);
 
@@ -127,19 +122,19 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
                     }
                 }
             }
-            else if (bridge_port_id && entry->bv_id == SAI_NULL_OBJECT_ID)
+            else if (bridge_port_id && entry.bv_id == SAI_NULL_OBJECT_ID)
             {
                 /*this is a placeholder for flush port fdb case, not supported yet.*/
-                SWSS_LOG_ERROR("FdbOrch notification: not supported flush port fdb action, port_id = 0x%lx, bv_id = 0x%lx.", bridge_port_id, entry->bv_id);
+                SWSS_LOG_ERROR("FdbOrch notification: not supported flush port fdb action, port_id = 0x%lx, bv_id = 0x%lx.", bridge_port_id, entry.bv_id);
             }
-            else if (bridge_port_id == SAI_NULL_OBJECT_ID && entry->bv_id != SAI_NULL_OBJECT_ID)
+            else if (bridge_port_id == SAI_NULL_OBJECT_ID && entry.bv_id != SAI_NULL_OBJECT_ID)
             {
                 /*this is a placeholder for flush vlan fdb case, not supported yet.*/
-                SWSS_LOG_ERROR("FdbOrch notification: not supported flush vlan fdb action, port_id = 0x%lx, bv_id = 0x%lx.", bridge_port_id, entry->bv_id);
+                SWSS_LOG_ERROR("FdbOrch notification: not supported flush vlan fdb action, port_id = 0x%lx, bv_id = 0x%lx.", bridge_port_id, entry.bv_id);
             }
             else
             {
-                SWSS_LOG_ERROR("FdbOrch notification: not supported flush fdb action, port_id = 0x%lx, bv_id = 0x%lx.", bridge_port_id, entry->bv_id);
+                SWSS_LOG_ERROR("FdbOrch notification: not supported flush fdb action, port_id = 0x%lx, bv_id = 0x%lx.", bridge_port_id, entry.bv_id);
             }
             break;
         }
