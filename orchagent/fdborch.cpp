@@ -53,21 +53,18 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* fdb_entry, sai
                 break;
             }
 
-            auto ret = m_entries.insert(entry);
-
-            if (ret.second)
-            {
-                SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx",
-                                entry.mac.to_string().c_str(), entry.bv_id);
-                gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
-            }
-            else
+            auto inserted = m_entries.insert(entry);
+            if (!inserted.second)
             {
                 // we already have such entries
                 SWSS_LOG_INFO("FdbOrch notification: mac %s is already in bv_id 0x%lx",
                     entry.mac.to_string().c_str(), entry.bv_id);
                 break;
             }
+
+            SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx",
+                            entry.mac.to_string().c_str(), entry.bv_id);
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
 
             FdbUpdate update = { entry, port, true };
             for (auto observer: m_observers)
