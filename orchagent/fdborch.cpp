@@ -38,6 +38,40 @@ FdbOrch::FdbOrch(TableConnector applDbConnector, TableConnector stateDbConnector
     Orch::addExecutor(fdbNotifier);
 }
 
+void FdbOrch::syncUpFdb()
+{
+    SWSS_LOG_ENTER();
+
+    vector<string> keys;
+    m_fdbStateTable.getKeys(keys);
+
+    for (const auto &key: keys)
+    {
+        std::vector<FieldValueTuple> fvs;
+        if (!m_fdbStateTable.get(key, fvs))
+        {
+            continue;
+        }
+
+        sai_object_id_t bridge_port_id = SAI_NULL_OBJECT_ID;
+        for (auto &fv: fvs)
+        {
+            if(fvField(fv) == "SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID")
+            {
+                sai_deserialize_object_id(fvValue(fv), bridge_port_id);
+            }
+        }
+
+        if(bridge_port_id != SAI_NULL_OBJECT_ID)
+        {
+            sai_fdb_entry_t fdb_entry;
+            sai_deserialize_fdb_entry(key, fdb_entry);
+            this->update(SAI_FDB_EVENT_LEARNED, &fdb_entry, bridge_port_id);
+            SWSS_LOG_INFO("FDB from StateDB %s", key.c_str());
+        }
+    }
+}
+
 void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* fdb_entry, sai_object_id_t bridge_port_id)
 {
     SWSS_LOG_ENTER();
