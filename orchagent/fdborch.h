@@ -35,7 +35,7 @@ class FdbOrch: public Orch, public Subject, public Observer
 {
 public:
 
-    FdbOrch(DBConnector *db, string tableName, PortsOrch *port);
+    FdbOrch(TableConnector applDbConnector, TableConnector stateDbConnector, PortsOrch *port);
 
     ~FdbOrch()
     {
@@ -51,6 +51,7 @@ private:
     set<FdbEntry> m_entries;
     fdb_entries_by_port_t saved_fdb_entries;
     Table m_table;
+    Table m_fdbStateTable;
     NotificationConsumer* m_flushNotificationsConsumer;
     NotificationConsumer* m_fdbNotificationConsumer;
 
@@ -61,6 +62,7 @@ private:
     bool addFdbEntry(const FdbEntry&, const string&, const string&);
     bool removeFdbEntry(const FdbEntry&);
     bool createFdbEntry(const FdbEntry& entry, const Port& port, const string& type);
+    void storeFdbEntry(const sai_fdb_event_notification_data_t *fdb);
 };
 
 #endif /* SWSS_FDBORCH_H */

@@ -10,6 +10,7 @@
 #include "crmorch.h"
 #include "notifier.h"
 #include "sai_serialize.h"
+#include "saiattributelist.h"
 
 extern sai_fdb_api_t    *sai_fdb_api;
 
@@ -19,13 +20,14 @@ extern CrmOrch *        gCrmOrch;
 
 const int fdborch_pri = 20;
 
-FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
-    Orch(db, tableName, fdborch_pri),
+FdbOrch::FdbOrch(TableConnector applDbConnector, TableConnector stateDbConnector, PortsOrch *port) :
+    Orch(applDbConnector.first, applDbConnector.second, fdborch_pri),
     m_portsOrch(port),
-    m_table(db, tableName)
+    m_table(applDbConnector.first, applDbConnector.second),
+    m_fdbStateTable(stateDbConnector.first, stateDbConnector.second)
 {
     m_portsOrch->attach(this);
-    m_flushNotificationsConsumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
+    m_flushNotificationsConsumer = new NotificationConsumer(applDbConnector.first, "FLUSHFDBREQUEST");
     auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this, "FLUSHFDBREQUEST");
     Orch::addExecutor(flushNotifier);
 
@@ -332,6 +334,12 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
 
         sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
 
+        // Note: store fdb notification immediately after popping from NotificationConsumer, preventing any data loss for warm start
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            storeFdbEntry(&fdbevent[i]);
+        }
+
         for (uint32_t i = 0; i < count; ++i)
         {
             sai_object_id_t oid = SAI_NULL_OBJECT_ID;
@@ -350,6 +358,137 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
 
         sai_deserialize_free_fdb_event_ntf(count, fdbevent);
     }
+}
+
+// Store dynamic entries from syncd notifications into StateDB
+// Same feature as sonic-sairedis/syncd/syncd_notifications.cpp redisPutFdbEntryToAsicView()
+void FdbOrch::storeFdbEntry(const sai_fdb_event_notification_data_t *fdb)
+{
+    SWSS_LOG_ENTER();
+
+    std::string key = sai_serialize_fdb_entry(fdb->fdb_entry);
+
+    if ((fdb->fdb_entry.switch_id == SAI_NULL_OBJECT_ID ||
+         fdb->fdb_entry.bv_id == SAI_NULL_OBJECT_ID) &&
+        (fdb->event_type != SAI_FDB_EVENT_FLUSHED))
+    {
+        SWSS_LOG_WARN("skipped to put int db: %s", key.c_str());
+        return;
+    }
+
+    if (fdb->event_type == SAI_FDB_EVENT_AGED)
+    {
+        SWSS_LOG_DEBUG("remove fdb entry %s for SAI_FDB_EVENT_AGED",key.c_str());
+        m_fdbStateTable.del(key);
+        return;
+    }
+
+    if (fdb->event_type == SAI_FDB_EVENT_FLUSHED)
+    {
+        sai_object_id_t bv_id = fdb->fdb_entry.bv_id;
+        sai_object_id_t port_oid = 0;
+        bool port_oid_found = false;
+
+        for (uint32_t i = 0; i < fdb->attr_count; i++)
+        {
+            if(fdb->attr[i].id == SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID)
+            {
+                port_oid = fdb->attr[i].value.oid;
+                port_oid_found = true;
+            }
+        }
+
+        // TODO: if port_oid_found is false, flush or not?
+        if (!port_oid_found)
+        {
+            SWSS_LOG_ERROR("Failed to get bridge port ID for FDB entry %s", key.c_str());
+            return;
+        }
+
+        if (!port_oid && !bv_id)
+        {
+            /* we got a flush all fdb event here */
+            /* example of a flush all fdb event   */
+            /*
+            [{
+            "fdb_entry":"{
+                \"bv_id\":\"oid:0x0\",
+                \"mac\":\"00:00:00:00:00:00\",
+                \"switch_id\":\"oid:0x21000000000000\"}",
+            "fdb_event":"SAI_FDB_EVENT_FLUSHED",
+                "list":[
+                    {"id":"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID","value":"oid:0x0"},
+                    {"id":"SAI_FDB_ENTRY_ATTR_TYPE","value":"SAI_FDB_ENTRY_TYPE_DYNAMIC"},
+                    {"id":"SAI_FDB_ENTRY_ATTR_PACKET_ACTION","value":"SAI_PACKET_ACTION_FORWARD"}
+                ]
+            }]
+            */
+            SWSS_LOG_NOTICE("received a flush all fdb event");
+            std::vector<std::string> keys;
+            m_fdbStateTable.getKeys(keys);
+            for (const auto &fdbkey: keys)
+            {
+                // We only store dynamic fdb in StateDB, clear all of them
+                m_fdbStateTable.del(fdbkey);
+            }
+        }
+        else if (port_oid && !bv_id)
+        {
+            /* we got a flush port fdb event here        */
+            /* not supported yet, this is a place holder */
+            /* example of a flush port fdb event         */
+            /*
+            [{
+            "fdb_entry":"{
+                \"bv_id\":\"oid:0x0\",
+                \"mac\":\"00:00:00:00:00:00\",
+                \"switch_id\":\"oid:0x21000000000000\"}",
+            "fdb_event":"SAI_FDB_EVENT_FLUSHED",
+                "list":[
+                    {"id":"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID","value":"oid:0x3a0000000009cf"},
+                    {"id":"SAI_FDB_ENTRY_ATTR_TYPE","value":"SAI_FDB_ENTRY_TYPE_DYNAMIC"},
+                    {"id":"SAI_FDB_ENTRY_ATTR_PACKET_ACTION","value":"SAI_PACKET_ACTION_FORWARD"}
+                ]
+            }]
+            */
+            SWSS_LOG_ERROR("received a flush port fdb event, port_oid = 0x%lx, bv_id = 0x%lx, unsupported", port_oid, bv_id);
+        }
+        else if (!port_oid && bv_id)
+        {
+            /* we got a flush vlan fdb event here        */
+            /* not supported yet, this is a place holder */
+            /* example of a flush vlan event             */
+            /*
+            [{
+            "fdb_entry":"{
+                \"bridge_id\":\"oid:0x23000000000000\",
+                \"mac\":\"00:00:00:00:00:00\",
+                \"switch_id\":\"oid:0x21000000000000\"}",
+            "fdb_event":"SAI_FDB_EVENT_FLUSHED",
+                "list":[
+                    {"id":"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID","value":"oid:0x0"},
+                    {"id":"SAI_FDB_ENTRY_ATTR_TYPE","value":"SAI_FDB_ENTRY_TYPE_DYNAMIC"},
+                    {"id":"SAI_FDB_ENTRY_ATTR_PACKET_ACTION","value":"SAI_PACKET_ACTION_FORWARD"}
+                ]
+            }]
+            */
+            SWSS_LOG_ERROR("received a flush vlan fdb event, port_oid = 0x%lx, bv_id = 0x%lx, unsupported", port_oid, bv_id);
+
+        }
+        else
+        {
+            SWSS_LOG_ERROR("received a flush fdb event, port_oid = 0x%lx, bv_id = 0x%lx, unsupported", port_oid, bv_id);
+        }
+
+        return;
+    }
+
+    std::vector<swss::FieldValueTuple> fvs = SaiAttributeList::serialize_attr_list(
+        SAI_OBJECT_TYPE_FDB_ENTRY,
+        fdb->attr_count,
+        fdb->attr,
+        false);
+    m_fdbStateTable.set(key, fvs);
 }
 
 void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
