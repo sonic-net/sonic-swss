@@ -313,7 +313,7 @@ void NeighOrch::doTask(Consumer &consumer)
         if (!p.m_rif_id)
         {
             SWSS_LOG_INFO("Router interface doesn't exist on %s", alias.c_str());
-            it = consumer.m_toSync.erase(it);
+            it++;
             continue;
         }
 
@@ -492,9 +492,6 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
         }
     }
 
-    SWSS_LOG_NOTICE("Removed next hop %s on %s",
-                    ip_address.to_string().c_str(), alias.c_str());
-
     if (status != SAI_STATUS_ITEM_NOT_FOUND)
     {
         if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
@@ -506,6 +503,9 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
             gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
         }
     }
+
+    SWSS_LOG_NOTICE("Removed next hop %s on %s",
+                    ip_address.to_string().c_str(), alias.c_str());
 
     status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
     if (status != SAI_STATUS_SUCCESS)
@@ -524,9 +524,6 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
         }
     }
 
-    SWSS_LOG_NOTICE("Removed neighbor %s on %s",
-            m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str());
-
     if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
     {
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
@@ -536,11 +533,15 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
     }
 
-    NeighborUpdate update = { neighborEntry, MacAddress(), false };
-    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
+    SWSS_LOG_NOTICE("Removed neighbor %s on %s",
+            m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str());
 
     m_syncdNeighbors.erase(neighborEntry);
     m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+
+    NeighborUpdate update = { neighborEntry, MacAddress(), false };
+    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
+
     removeNextHop(ip_address, alias);
 
     return true;

@@ -5,7 +5,7 @@
 #include "dbconnector.h"
 #include "table.h"
 
-#define MAXIMUN_WARMRESTART_TIMER_VALUE 9999
+#define MAXIMUM_WARMRESTART_TIMER_VALUE 9999
 
 namespace swss {
 

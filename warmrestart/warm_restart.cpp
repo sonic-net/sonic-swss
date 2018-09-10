@@ -111,7 +111,7 @@ uint32_t WarmStart::getWarmStartTimer(const std::string &app_name,
     warmStart.m_cfgWarmRestartTable->hget(docker_name, timer_name, timer_value_str);
 
     unsigned long int temp_value = strtoul(timer_value_str.c_str(), NULL, 0);
-    if (temp_value != 0 && temp_value != ULONG_MAX && temp_value <= MAXIMUN_WARMRESTART_TIMER_VALUE)
+    if (temp_value != 0 && temp_value != ULONG_MAX && temp_value <= MAXIMUM_WARMRESTART_TIMER_VALUE)
     {
         SWSS_LOG_NOTICE("Getting warmStartTimer for docker: %s, app: %s, value: %lu",
                 docker_name.c_str(), app_name.c_str(), temp_value);

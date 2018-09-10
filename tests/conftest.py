@@ -186,6 +186,7 @@ class DockerVirtualSwitch(object):
                     network_mode="container:%s" % self.ctn_sw.name,
                     volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
 
+        self.appldb = None
         try:
             self.ctn.exec_run("sysctl -w net.ipv6.conf.all.disable_ipv6=0")
             self.check_ready()
@@ -196,7 +197,8 @@ class DockerVirtualSwitch(object):
             raise
 
     def destroy(self):
-        del self.appldb
+        if self.appldb:
+            del self.appldb
         if self.cleanup:
             self.ctn.remove(force=True)
             self.ctn_sw.remove(force=True)
