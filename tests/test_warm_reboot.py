@@ -327,12 +327,12 @@ def check_syslog_for_neighbor_entry(dvs, new_cnt, delete_cnt, iptype):
     if iptype == "ipv4":
         (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep neighsyncd /var/log/syslog| grep cache-state:NEW | grep IPv4 | wc -l'])
         assert num.strip() == str(new_cnt)
-        (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep neighsyncd /var/log/syslog| grep cache-state:DELETE | grep IPv4 | wc -l'])
+        (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep neighsyncd /var/log/syslog| grep \'cache-state:DELETE\|cache-state:STALE\' | grep IPv4 | wc -l'])
         assert num.strip() == str(delete_cnt)
     elif iptype == "ipv6":
         (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep neighsyncd /var/log/syslog| grep cache-state:NEW | grep IPv6 | wc -l'])
         assert num.strip() == str(new_cnt)
-        (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep neighsyncd /var/log/syslog| grep cache-state:DELETE | grep IPv6 | wc -l'])
+        (exitcode, num) = dvs.runcmd(['sh', '-c', 'grep neighsyncd /var/log/syslog| grep \'cache-state:DELETE\|cache-state:STALE\' | grep IPv6 | wc -l'])
         assert num.strip() == str(delete_cnt)
     else:
         assert "iptype is unknown" == ""
@@ -545,10 +545,10 @@ def test_swss_neighbor_syncup(dvs):
 
     # add even nummber of ipv4/ipv6 neighbor entries to each interface
     for i in range(0, len(ips), 2):
-        dvs.runcmd("ip neigh change {} dev {} lladdr {}".format(ips[i], intfs[i%2], macs[i]))
+        dvs.runcmd("ip neigh add {} dev {} lladdr {}".format(ips[i], intfs[i%2], macs[i]))
 
     for i in range(0, len(v6ips), 2):
-        dvs.runcmd("ip -6 neigh change {} dev {} lladdr {}".format(v6ips[i], intfs[i%2], macs[i]))
+        dvs.runcmd("ip -6 neigh add {} dev {} lladdr {}".format(v6ips[i], intfs[i%2], macs[i]))
 
     # start neighsyncd again
     start_neighsyncd(dvs)
