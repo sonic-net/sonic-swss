@@ -38,7 +38,7 @@ FdbOrch::FdbOrch(TableConnector applDbConnector, TableConnector stateDbConnector
     Orch::addExecutor(fdbNotifier);
 }
 
-void FdbOrch::syncUpFdb()
+void FdbOrch::refreshFdbEntries()
 {
     SWSS_LOG_ENTER();
 
@@ -50,6 +50,7 @@ void FdbOrch::syncUpFdb()
         std::vector<FieldValueTuple> fvs;
         if (!m_fdbStateTable.get(key, fvs))
         {
+            SWSS_LOG_WARN("Empty field value tuple for %s", key.c_str());
             continue;
         }
 
@@ -62,14 +63,19 @@ void FdbOrch::syncUpFdb()
             }
         }
 
-        if(bridge_port_id != SAI_NULL_OBJECT_ID)
+        if (bridge_port_id == SAI_NULL_OBJECT_ID)
         {
-            sai_fdb_entry_t fdb_entry;
-            sai_deserialize_fdb_entry(key, fdb_entry);
-            this->update(SAI_FDB_EVENT_LEARNED, &fdb_entry, bridge_port_id);
-            SWSS_LOG_INFO("FDB from StateDB %s", key.c_str());
+            SWSS_LOG_WARN("Null bridge_port_id for %s", key.c_str());
+            continue;
         }
+
+        sai_fdb_entry_t fdb_entry;
+        sai_deserialize_fdb_entry(key, fdb_entry);
+        this->update(SAI_FDB_EVENT_LEARNED, &fdb_entry, bridge_port_id);
+        SWSS_LOG_INFO("FDB from StateDB %s", key.c_str());
     }
+
+    // TODO: do we need to sai_fdb_api->create_fdb_entry() during warm start?
 }
 
 void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* fdb_entry, sai_object_id_t bridge_port_id)
@@ -368,7 +374,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
 
         sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
 
-        // Note: store fdb notification immediately after popping from NotificationConsumer, preventing any data loss for warm start
+        // Note: store fdb notification immediately after popped from NotificationConsumer, preventing any data loss for warm start
         for (uint32_t i = 0; i < count; ++i)
         {
             storeFdbEntry(&fdbevent[i]);
@@ -394,7 +400,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     }
 }
 
-// Store dynamic entries from syncd notifications into StateDB
+// Store learned and dynamic entries from syncd notifications into StateDB
 // Same feature as sonic-sairedis/syncd/syncd_notifications.cpp redisPutFdbEntryToAsicView()
 void FdbOrch::storeFdbEntry(const sai_fdb_event_notification_data_t *fdb)
 {
