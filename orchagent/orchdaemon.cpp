@@ -387,7 +387,8 @@ bool OrchDaemon::warmRestoreAndSyncUp()
 
     SWSS_LOG_NOTICE("Orchagent state restore done");
 
-    /* TODO: perform port and fdb state sync up*/
+    /* Start dynamic state sync up */
+    gPortsOrch->refreshPortStatus();
 
     /*
      * Note. Arp sync up is handled in neighsyncd.
