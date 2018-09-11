@@ -103,12 +103,6 @@ create_tunnel(sai_object_id_t tunnel_map_id)
     attr.value.objlist.list = decap_list;
     tunnel_attrs.push_back(attr);
 
-    sai_object_id_t encap_list[] = { tunnel_map_id };
-    attr.id = SAI_TUNNEL_ATTR_ENCAP_MAPPERS;
-    attr.value.objlist.count = 1;
-    attr.value.objlist.list = encap_list;
-    tunnel_attrs.push_back(attr);
-
     sai_object_id_t tunnel_id;
     sai_status_t status = sai_tunnel_api->create_tunnel(
                                 &tunnel_id,
