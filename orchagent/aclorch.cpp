@@ -961,7 +961,7 @@ bool AclRuleMirror::create()
     bool state = false;
     sai_object_id_t oid = SAI_NULL_OBJECT_ID;
 
-    if (!m_pMirrorOrch->getSessionState(m_sessionName, state))
+    if (!m_pMirrorOrch->getSessionStatus(m_sessionName, state))
     {
         throw runtime_error("Failed to get mirror session state");
     }

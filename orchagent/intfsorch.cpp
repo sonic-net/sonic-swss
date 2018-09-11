@@ -9,6 +9,7 @@
 #include "logger.h"
 #include "swssnet.h"
 #include "tokenize.h"
+#include "routeorch.h"
 #include "crmorch.h"
 #include "bufferorch.h"
 
@@ -20,6 +21,7 @@ extern sai_neighbor_api_t*          sai_neighbor_api;
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
+extern RouteOrch *gRouteOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 
@@ -76,6 +78,23 @@ bool IntfsOrch::setRouterIntfsMtu(Port &port)
     SWSS_LOG_NOTICE("Set router interface %s MTU to %u",
             port.m_alias.c_str(), port.m_mtu);
     return true;
+}
+
+set<IpPrefix> IntfsOrch:: getSubnetRoutes()
+{
+    SWSS_LOG_ENTER();
+
+    set<IpPrefix> subnet_routes;
+
+    for (auto it = m_syncdIntfses.begin(); it != m_syncdIntfses.end(); it++)
+    {
+        for (auto prefix : it->second.ip_addresses)
+        {
+            subnet_routes.emplace(prefix);
+        }
+    }
+
+    return subnet_routes;
 }
 
 void IntfsOrch::doTask(Consumer &consumer)
@@ -386,6 +405,8 @@ void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     {
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
+
+    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, IpAddresses(), true);
 }
 
 void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
@@ -416,6 +437,8 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     {
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
+
+    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, IpAddresses(), false);
 }
 
 void IntfsOrch::addIp2MeRoute(const IpPrefix &ip_prefix)
