@@ -146,7 +146,6 @@ def create_vxlan_tunnel(dvs, name, src_ip, dst_ip, tunnel_map_ids, tunnel_map_en
     check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_id,
                     {
                         'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
-                        'SAI_TUNNEL_ATTR_ENCAP_MAPPERS': '1:%s' % tunnel_map_id,
                         'SAI_TUNNEL_ATTR_DECAP_MAPPERS': '1:%s' % tunnel_map_id,
                     }
                 )
