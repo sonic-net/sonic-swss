@@ -312,7 +312,7 @@ def test_VlanMgrdWarmRestart(dvs):
     (status, fvs) = tbl.get("Vlan20:11.0.0.11")
     assert status == True
 
-    swss_app_check_RestartCount_single(state_db, restart_count, "vlanmgrd")
+    swss_app_check_RestoreCount_single(state_db, restore_count, "vlanmgrd")
 
 # function to stop neighsyncd service and clear syslog and sairedis records
 def stop_neighsyncd_clear_syslog_sairedis(dvs, save_number):
@@ -436,8 +436,8 @@ def test_swss_neighbor_syncup(dvs):
     # appDB should be kept the same.
     #
 
-    # get restart_count
-    restart_count = swss_get_RestartCount(state_db)
+    # get restore_count
+    restore_count = swss_get_RestoreCount(state_db)
 
     # stop neighsyncd and clear syslog and sairedis.rec
     stop_neighsyncd_clear_syslog_sairedis(dvs, 1)
@@ -471,8 +471,8 @@ def test_swss_neighbor_syncup(dvs):
     check_syslog_for_neighbor_entry(dvs, 0, 0, "ipv6")
     check_sairedis_for_neighbor_entry(dvs, 0, 0, 0)
 
-    # check restart Count
-    swss_app_check_RestartCount_single(state_db, restart_count, "neighsyncd")
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
     #
     # Testcase 3:
@@ -482,8 +482,8 @@ def test_swss_neighbor_syncup(dvs):
     #       but it will send netlink message to be removed from appDB, so it works ok here,
     #       just that if we want to add the same neighbor again, use "change" instead of "add"
 
-    # get restart_count
-    restart_count = swss_get_RestartCount(state_db)
+    # get restore_count
+    restore_count = swss_get_RestoreCount(state_db)
 
     # stop neighsyncd and clear syslog and sairedis.rec
     stop_neighsyncd_clear_syslog_sairedis(dvs, 2)
@@ -538,8 +538,8 @@ def test_swss_neighbor_syncup(dvs):
     check_syslog_for_neighbor_entry(dvs, 0, 2, "ipv4")
     check_syslog_for_neighbor_entry(dvs, 0, 2, "ipv6")
     check_sairedis_for_neighbor_entry(dvs, 0, 0, 4)
-    # check restart Count
-    swss_app_check_RestartCount_single(state_db, restart_count, "neighsyncd")
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
 
     #
@@ -549,8 +549,8 @@ def test_swss_neighbor_syncup(dvs):
     # The neighsyncd is supposed to sync up the entries from kernel after warm restart
     # Check the timer is not retrieved from configDB since it is not configured
 
-    # get restart_count
-    restart_count = swss_get_RestartCount(state_db)
+    # get restore_count
+    restore_count = swss_get_RestoreCount(state_db)
 
     # stop neighsyncd and clear syslog and sairedis.rec
     stop_neighsyncd_clear_syslog_sairedis(dvs, 3)
@@ -594,8 +594,8 @@ def test_swss_neighbor_syncup(dvs):
     check_syslog_for_neighbor_entry(dvs, 2, 0, "ipv4")
     check_syslog_for_neighbor_entry(dvs, 2, 0, "ipv6")
     check_sairedis_for_neighbor_entry(dvs, 4, 0, 0)
-    # check restart Count
-    swss_app_check_RestartCount_single(state_db, restart_count, "neighsyncd")
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
     #
     # Testcase 5:
@@ -615,8 +615,8 @@ def test_swss_neighbor_syncup(dvs):
         ]
     )
 
-    # get restart_count
-    restart_count = swss_get_RestartCount(state_db)
+    # get restore_count
+    restore_count = swss_get_RestoreCount(state_db)
 
     # stop neighsyncd and clear syslog and sairedis.rec
     stop_neighsyncd_clear_syslog_sairedis(dvs, 4)
@@ -693,8 +693,9 @@ def test_swss_neighbor_syncup(dvs):
     check_syslog_for_neighbor_entry(dvs, 4, 2, "ipv4")
     check_syslog_for_neighbor_entry(dvs, 4, 2, "ipv6")
     check_sairedis_for_neighbor_entry(dvs, 4, 4, 4)
-    # check restart Count
-    swss_app_check_RestartCount_single(state_db, restart_count, "neighsyncd")
+
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
 
 # TODO: The condition of warm restart readiness check is still under discussion.
@@ -768,7 +769,7 @@ def test_swss_port_state_syncup(dvs):
 
     tbl = swsscommon.Table(appl_db, swsscommon.APP_PORT_TABLE_NAME)
 
-    restart_count = swss_get_RestartCount(state_db)
+    restore_count = swss_get_RestoreCount(state_db)
 
     # update port admin state
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
@@ -815,7 +816,7 @@ def test_swss_port_state_syncup(dvs):
     start_swss(dvs)
     time.sleep(10)
 
-    swss_check_RestartCount(state_db, restart_count)
+    swss_check_RestoreCount(state_db, restore_count)
 
     for i in [0, 1, 2]:
         (status, fvs) = tbl.get("Ethernet%d" % (i * 4))

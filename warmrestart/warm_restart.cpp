@@ -142,18 +142,16 @@ uint32_t WarmStart::getWarmStartTimer(const std::string &app_name,
     unsigned long int temp_value = strtoul(timer_value_str.c_str(), NULL, 0);
 
     if (temp_value != 0 && temp_value != ULONG_MAX &&
-        temp_value <= MAXIMUN_WARMRESTART_TIMER_VALUE)
+        temp_value <= MAXIMUM_WARMRESTART_TIMER_VALUE)
     {
         SWSS_LOG_NOTICE("Getting warmStartTimer for docker: %s, app: %s, value: %lu",
                         docker_name.c_str(), app_name.c_str(), temp_value);
         return (uint32_t)temp_value;
     }
-    else
-    {
-        SWSS_LOG_NOTICE("warmStartTimer is not configured or invalid for docker: %s, app: %s",
-                        docker_name.c_str(), app_name.c_str());
-        return 0;
-    }
+
+    SWSS_LOG_NOTICE("warmStartTimer is not configured or invalid for docker: %s, app: %s",
+                    docker_name.c_str(), app_name.c_str());
+    return 0;
 }
 
 bool WarmStart::isWarmStart(void)
