@@ -2919,7 +2919,7 @@ void PortsOrch::refreshPortStatus()
             if (ret != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to get oper status for %s", p.m_alias.c_str());
-                continue;
+                throw "PortsOrch get port oper status failure";
             }
             sai_port_oper_status_t status = (sai_port_oper_status_t)attr.value.u32;
             SWSS_LOG_INFO("%s oper status is %s", p.m_alias.c_str(), oper_status_strings.at(status).c_str());
