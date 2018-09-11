@@ -117,7 +117,7 @@ class VirtualServer(object):
             os.system("ip netns delete %s" % self.nsname)
 
     def runcmd(self, cmd):
-        os.system("ip netns exec %s %s" % (self.nsname, cmd))
+        return os.system("ip netns exec %s %s" % (self.nsname, cmd))
 
     def runcmd_async(self, cmd):
         return subprocess.Popen("ip netns exec %s %s" % (self.nsname, cmd), shell=True)
