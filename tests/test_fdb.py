@@ -45,7 +45,7 @@ def is_fdb_entry_exists(db, table, key_values, attributes):
     tbl =  swsscommon.Table(db, table)
     keys = tbl.getKeys()
 
-    exists = True
+    exists = False
     extra_info = []
     key_found = False
     for key in keys:
@@ -67,8 +67,9 @@ def is_fdb_entry_exists(db, table, key_values, attributes):
         if len(d_attributes) != 0:
             exists = False
             extra_info.append("Desired attributes %s was not found for key %s" % (str(d_attributes), key))
-
-        break
+        else:
+            exists = True
+            break
 
     if not key_found:
         exists = False
@@ -207,3 +208,38 @@ class TestFdb(object):
         # get neighbor and arp entry
         rc = dvs.servers[16].runcmd("ping -c 1 6.6.6.7")
         assert rc == 0
+
+        # Get mapping between interface name and its bridge port_id
+        iface_2_bridge_port_id = get_map_iface_bridge_port_id(self.adb, dvs)
+
+        # check that the FDB entries were inserted into ASIC DB
+        ok, extra = is_fdb_entry_exists(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet64"]),
+                        ]
+        )
+        assert ok, str(extra)
+        ok, extra = is_fdb_entry_exists(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet68"]),
+                        ]
+        )
+        assert ok, str(extra)
+
+        # check that the FDB entries were inserted into State DB
+        ok, extra = is_fdb_entry_exists(self.sdb, "FDB_TABLE",
+                        [],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet64"]),
+                        ]
+        )
+        assert ok, str(extra)
+        ok, extra = is_fdb_entry_exists(self.sdb, "FDB_TABLE",
+                        [],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet68"]),
+                        ]
+        )
+        assert ok, str(extra)
