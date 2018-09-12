@@ -11,12 +11,14 @@
 #include "linkcache.h"
 
 #include "neighsync.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
 
-NeighSync::NeighSync(DBConnector *db) :
-    m_neighTable(db, APP_NEIGH_TABLE_NAME)
+NeighSync::NeighSync(RedisPipeline *pipelineAppDB) :
+    m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
+    m_AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", &m_neighTable, DEFAULT_NEIGHSYNC_WARMSTART_TIMER)
 {
 }
 
@@ -52,18 +54,32 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ipStr;
 
     int state = rtnl_neigh_get_state(neigh);
+    bool delete_key = false;
     if ((nlmsg_type == RTM_DELNEIGH) || (state == NUD_INCOMPLETE) ||
         (state == NUD_FAILED))
     {
-        m_neighTable.del(key);
-        return;
+	    delete_key = true;
     }
 
     nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
+
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple f("family", family);
     FieldValueTuple nh("neigh", macStr);
     fvVector.push_back(nh);
     fvVector.push_back(f);
-    m_neighTable.set(key, fvVector);
+
+    if (m_AppRestartAssist.isWarmStartInProgress())
+    {
+        m_AppRestartAssist.insertToMap(key, fvVector, delete_key);
+    }
+    else
+    {
+        if (delete_key == true)
+        {
+            m_neighTable.del(key);
+            return;
+        }
+        m_neighTable.set(key, fvVector);
+    }
 }

@@ -30,6 +30,14 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, string alias)
 {
     SWSS_LOG_ENTER();
 
+    Port p;
+    if (!gPortsOrch->getPort(alias, p))
+    {
+        SWSS_LOG_ERROR("Neighbor %s seen on port %s which doesn't exist",
+                        ipAddress.to_string().c_str(), alias.c_str());
+        return false;
+    }
+
     assert(!hasNextHop(ipAddress));
     sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
 
@@ -78,6 +86,18 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, string alias)
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
     }
 
+    // For nexthop with incoming port which has down oper status, NHFLAGS_IFDOWN
+    // flag Should be set on it.
+    // This scenario may happen under race condition where buffered neighbor event
+    // is processed after incoming port is down.
+    if (p.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
+    {
+        if (setNextHopFlag(ipAddress, NHFLAGS_IFDOWN) == false)
+        {
+            SWSS_LOG_WARN("Failed to set NHFLAGS_IFDOWN on nexthop %s for interface %s",
+                ipAddress.to_string().c_str(), alias.c_str());
+        }
+    }
     return true;
 }
 
@@ -293,7 +313,7 @@ void NeighOrch::doTask(Consumer &consumer)
         if (!p.m_rif_id)
         {
             SWSS_LOG_INFO("Router interface doesn't exist on %s", alias.c_str());
-            it = consumer.m_toSync.erase(it);
+            it++;
             continue;
         }
 
@@ -472,9 +492,6 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
         }
     }
 
-    SWSS_LOG_NOTICE("Removed next hop %s on %s",
-                    ip_address.to_string().c_str(), alias.c_str());
-
     if (status != SAI_STATUS_ITEM_NOT_FOUND)
     {
         if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
@@ -486,6 +503,9 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
             gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
         }
     }
+
+    SWSS_LOG_NOTICE("Removed next hop %s on %s",
+                    ip_address.to_string().c_str(), alias.c_str());
 
     status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
     if (status != SAI_STATUS_SUCCESS)
@@ -504,9 +524,6 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
         }
     }
 
-    SWSS_LOG_NOTICE("Removed neighbor %s on %s",
-            m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str());
-
     if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
     {
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
@@ -516,11 +533,15 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
     }
 
-    NeighborUpdate update = { neighborEntry, MacAddress(), false };
-    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
+    SWSS_LOG_NOTICE("Removed neighbor %s on %s",
+            m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str());
 
     m_syncdNeighbors.erase(neighborEntry);
     m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+
+    NeighborUpdate update = { neighborEntry, MacAddress(), false };
+    notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
+
     removeNextHop(ip_address, alias);
 
     return true;

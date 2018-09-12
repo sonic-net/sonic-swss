@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir)
+INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart
 
 bin_PROGRAMS = neighsyncd
 
@@ -8,7 +8,7 @@ else
 DBGFLAGS = -g
 endif
 
-neighsyncd_SOURCES = neighsyncd.cpp neighsync.cpp
+neighsyncd_SOURCES = neighsyncd.cpp neighsync.cpp $(top_srcdir)/warmrestart/warm_restart.cpp $(top_srcdir)/warmrestart/warmRestartAssist.cpp
 
 neighsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 neighsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)

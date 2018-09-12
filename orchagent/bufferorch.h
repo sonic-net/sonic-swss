@@ -35,6 +35,7 @@ private:
     typedef map<string, buffer_table_handler> buffer_table_handler_map;
     typedef pair<string, buffer_table_handler> buffer_handler_pair;
 
+    virtual void doTask() override;
     virtual void doTask(Consumer& consumer);
     void initTableHandlers();
     void initBufferReadyLists(DBConnector *db);
