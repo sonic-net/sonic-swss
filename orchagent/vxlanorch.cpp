@@ -20,6 +20,7 @@ extern sai_object_id_t gVirtualRouterId;
 extern sai_tunnel_api_t *sai_tunnel_api;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
+extern sai_object_id_t  gUnderlayIfId;
 
 static sai_object_id_t
 create_tunnel_map()
@@ -95,6 +96,10 @@ create_tunnel(sai_object_id_t tunnel_map_id)
 
     attr.id = SAI_TUNNEL_ATTR_TYPE;
     attr.value.s32 = SAI_TUNNEL_TYPE_VXLAN;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
+    attr.value.oid = gUnderlayIfId;
     tunnel_attrs.push_back(attr);
 
     sai_object_id_t decap_list[] = { tunnel_map_id };
