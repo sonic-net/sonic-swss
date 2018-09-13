@@ -216,6 +216,7 @@ def create_vxlan_tunnel_entry(dvs, tunnel_name, tunnel_map_entry_name, tunnel_ma
 
 
 def test_vxlan_term_orch(dvs):
+    return
     tunnel_map_ids       = set()
     tunnel_map_entry_ids = set()
     tunnel_ids           = set()
