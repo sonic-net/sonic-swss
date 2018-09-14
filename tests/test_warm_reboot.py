@@ -4,6 +4,19 @@ import re
 import time
 import json
 
+# start processes in SWSS
+def start_swss(dvs):
+    dvs.runcmd(['sh', '-c', 'supervisorctl start orchagent; supervisorctl start portsyncd; supervisorctl start intfsyncd; \
+        supervisorctl start neighsyncd; supervisorctl start intfmgrd; supervisorctl start vlanmgrd; \
+        supervisorctl start buffermgrd; supervisorctl start arp_update'])
+
+# stop processes in SWSS
+def stop_swss(dvs):
+    dvs.runcmd(['sh', '-c', 'supervisorctl stop orchagent; supervisorctl stop portsyncd; supervisorctl stop intfsyncd; \
+        supervisorctl stop neighsyncd;  supervisorctl stop intfmgrd; supervisorctl stop vlanmgrd; \
+        supervisorctl stop buffermgrd; supervisorctl stop arp_update'])
+
+
 # Get restart count of all processes supporting warm restart
 def swss_get_RestartCount(state_db):
     restart_count = {}
@@ -736,4 +749,84 @@ def test_OrchagentWarmRestartReadyCheck(dvs):
     stop_swss(dvs)
     start_swss(dvs)
     time.sleep(5)
+
+def test_swss_port_state_syncup(dvs):
+
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+    # enable warm restart
+    # TODO: use cfg command to config it
+    create_entry_tbl(
+        conf_db,
+        swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
+        [
+            ("enable", "true"),
+        ]
+    )
+
+    tbl = swsscommon.Table(appl_db, swsscommon.APP_PORT_TABLE_NAME)
+
+    restart_count = swss_get_RestartCount(state_db)
+
+    # update port admin state
+    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
+    dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
+    dvs.runcmd("ifconfig Ethernet8 10.0.0.4/31 up")
+
+    dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
+    dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
+    dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03")
+
+    dvs.servers[0].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[1].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[2].runcmd("ip link set down dev eth0") == 0
+
+    dvs.servers[2].runcmd("ip link set up dev eth0") == 0
+
+    time.sleep(3)
+
+    for i in [0, 1, 2]:
+        (status, fvs) = tbl.get("Ethernet%d" % (i * 4))
+        assert status == True
+        oper_status = "unknown"
+        for v in fvs:
+            if v[0] == "oper_status":
+                oper_status = v[1]
+                break
+        if i == 2:
+            assert oper_status == "up"
+        else:
+            assert oper_status == "down"
+
+    stop_swss(dvs)
+    time.sleep(3)
+
+    # flap the port oper status for Ethernet0, Ethernet4 and Ethernet8
+    dvs.servers[0].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[1].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[2].runcmd("ip link set down dev eth0") == 0
+
+    dvs.servers[0].runcmd("ip link set up dev eth0") == 0
+    dvs.servers[1].runcmd("ip link set up dev eth0") == 0
+
+    time.sleep(5)
+    start_swss(dvs)
+    time.sleep(10)
+
+    swss_check_RestartCount(state_db, restart_count)
+
+    for i in [0, 1, 2]:
+        (status, fvs) = tbl.get("Ethernet%d" % (i * 4))
+        assert status == True
+        oper_status = "unknown"
+        for v in fvs:
+            if v[0] == "oper_status":
+                oper_status = v[1]
+                break
+        if i == 2:
+            assert oper_status == "down"
+        else:
+            assert oper_status == "up"
 

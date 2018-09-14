@@ -104,9 +104,8 @@ class VirtualServer(object):
             # bring up link in the virtual switch
             ensure_system("nsenter -t %d -n ip link set dev %s up" % (pid, self.vifname))
 
-        # disable arp, so no neigh on vEthernet(s)
-        # Note: outside the if-else, so existing VS container could be fixed
-        ensure_system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.vifname))
+            # disable arp, so no neigh on vEthernet(s)
+            ensure_system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.vifname))
 
     def __del__(self):
         if self.cleanup:
