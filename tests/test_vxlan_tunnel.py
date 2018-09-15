@@ -101,7 +101,7 @@ def create_vlan(dvs, vlan_name, vlan_ids):
     return
 
 
-def create_vxlan_tunnel(dvs, name, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, skip_dst_ip=False):
+def create_vxlan_tunnel(dvs, name, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, lo_id, skip_dst_ip=False):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
@@ -143,13 +143,13 @@ def create_vxlan_tunnel(dvs, name, src_ip, dst_ip, tunnel_map_ids, tunnel_map_en
                         }
                 )
 
-# FIXME: !!!
-#    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_id,
-#                    {
-#                        'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
-#                        'SAI_TUNNEL_ATTR_DECAP_MAPPERS': '1:%s' % tunnel_map_id,
-#                    }
-#                )
+    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_id,
+                    {
+                        'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
+                        'SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE': lo_id,
+                        'SAI_TUNNEL_ATTR_DECAP_MAPPERS': '1:%s' % tunnel_map_id,
+                    }
+                )
 
     tunnel_type = 'SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2P' if dst_ip != '0.0.0.0' else 'SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2MP'
     expected_attributes = {
@@ -214,15 +214,35 @@ def create_vxlan_tunnel_entry(dvs, tunnel_name, tunnel_map_entry_name, tunnel_ma
 
     return
 
+def get_lo(dvs):
+    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+    vr_id = get_default_vr_id(asic_db)
+
+    tbl = swsscommon.Table(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE')
+
+    entries = tbl.getKeys()
+    lo_id = None
+    for entry in entries:
+        status, fvs = tbl.get(entry)
+        assert status, "Got an error when get a key"
+        for key, value in fvs:
+            if key == 'SAI_ROUTER_INTERFACE_ATTR_TYPE' and value == 'SAI_ROUTER_INTERFACE_TYPE_LOOPBACK':
+                lo_id = entry
+                break
+        else:
+            assert False, 'Don\'t found loopback id'
+
+    return lo_id
+
 
 def test_vxlan_term_orch(dvs):
-    return
     tunnel_map_ids       = set()
     tunnel_map_entry_ids = set()
     tunnel_ids           = set()
     tunnel_term_ids      = set()
     tunnel_map_map       = {}
     vlan_ids             = get_exist_entries(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+    loopback_id          = get_lo(dvs)
 
     create_vlan(dvs, "Vlan50", vlan_ids)
     create_vlan(dvs, "Vlan51", vlan_ids)
@@ -234,25 +254,25 @@ def test_vxlan_term_orch(dvs):
     create_vlan(dvs, "Vlan57", vlan_ids)
 
     tunnel_map_map['tunnel_1'] = create_vxlan_tunnel(dvs, 'tunnel_1', '10.0.0.1', '100.100.100.1',
-                                                     tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
+                                                     tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id)
 
     create_vxlan_tunnel_entry(dvs, 'tunnel_1', 'entry_1', tunnel_map_map['tunnel_1'], 'Vlan50', '850',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
     tunnel_map_map['tunnel_2'] = create_vxlan_tunnel(dvs, 'tunnel_2', '11.0.0.2', '101.101.101.2',
-                                                     tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
+                                                     tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id)
 
     create_vxlan_tunnel_entry(dvs, 'tunnel_2', 'entry_1', tunnel_map_map['tunnel_2'], 'Vlan51', '851',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
     tunnel_map_map['tunnel_3'] = create_vxlan_tunnel(dvs, 'tunnel_3', '12.0.0.3', '0.0.0.0',
-                                                     tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
+                                                     tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id)
 
     create_vxlan_tunnel_entry(dvs, 'tunnel_3', 'entry_1', tunnel_map_map['tunnel_3'], 'Vlan52', '852',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
 
     tunnel_map_map['tunnel_4'] = create_vxlan_tunnel(dvs, 'tunnel_4', '15.0.0.5', '0.0.0.0',
-                                                     tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, True)
+                                                     tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, loopback_id, True)
 
     create_vxlan_tunnel_entry(dvs, 'tunnel_4', 'entry_1', tunnel_map_map['tunnel_4'], 'Vlan53', '853',
                               tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids)
