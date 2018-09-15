@@ -50,12 +50,10 @@ MirrorEntry::MirrorEntry(const string& platform) :
     if (platform == MLNX_PLATFORM_SUBSTRING)
     {
         greType = 0x8949;
-        queue = 1;
     }
     else
     {
         greType = 0x88be;
-        queue = 0;
     }
 
     nexthopInfo.prefix = IpPrefix("0.0.0.0/0");

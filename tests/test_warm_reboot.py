@@ -4,6 +4,19 @@ import re
 import time
 import json
 
+# start processes in SWSS
+def start_swss(dvs):
+    dvs.runcmd(['sh', '-c', 'supervisorctl start orchagent; supervisorctl start portsyncd; supervisorctl start intfsyncd; \
+        supervisorctl start neighsyncd; supervisorctl start intfmgrd; supervisorctl start vlanmgrd; \
+        supervisorctl start buffermgrd; supervisorctl start arp_update'])
+
+# stop processes in SWSS
+def stop_swss(dvs):
+    dvs.runcmd(['sh', '-c', 'supervisorctl stop orchagent; supervisorctl stop portsyncd; supervisorctl stop intfsyncd; \
+        supervisorctl stop neighsyncd;  supervisorctl stop intfmgrd; supervisorctl stop vlanmgrd; \
+        supervisorctl stop buffermgrd; supervisorctl stop arp_update'])
+
+
 # Get restart count of all processes supporting warm restart
 def swss_get_RestartCount(state_db):
     restart_count = {}
@@ -300,7 +313,6 @@ def test_VlanMgrdWarmRestart(dvs):
     assert status == True
 
     swss_app_check_RestartCount_single(state_db, restart_count, "vlanmgrd")
-
 
 # function to stop neighsyncd service and clear syslog and sairedis records
 def stop_neighsyncd_clear_syslog_sairedis(dvs, save_number):
@@ -683,3 +695,138 @@ def test_swss_neighbor_syncup(dvs):
     check_sairedis_for_neighbor_entry(dvs, 4, 4, 4)
     # check restart Count
     swss_app_check_RestartCount_single(state_db, restart_count, "neighsyncd")
+
+
+# TODO: The condition of warm restart readiness check is still under discussion.
+def test_OrchagentWarmRestartReadyCheck(dvs):
+
+    # do a pre-cleanup
+    dvs.runcmd("ip -s -s neigh flush all")
+    time.sleep(1)
+
+    # enable warm restart
+    # TODO: use cfg command to config it
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+
+    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
+    dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
+
+    dvs.servers[0].runcmd("ifconfig eth0 10.0.0.1/31")
+    dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
+
+    dvs.servers[1].runcmd("ifconfig eth0 10.0.0.3/31")
+    dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
+
+
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    ps = swsscommon.ProducerStateTable(appl_db, swsscommon.APP_ROUTE_TABLE_NAME)
+    fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
+
+    ps.set("2.2.2.0/24", fvs)
+
+    time.sleep(1)
+    # Should fail, since neighbor for next 10.0.0.1 has not been not resolved yet
+    (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+    assert result == "RESTARTCHECK failed\n"
+
+    # Should succeed, the option for skipPendingTaskCheck -s and noFreeze -n have been provided.
+    # Wait up to 500 milliseconds for response from orchagent. Default wait time is 1000 milliseconds.
+    (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
+    assert result == "RESTARTCHECK succeeded\n"
+
+    # get neighbor and arp entry
+    dvs.servers[1].runcmd("ping -c 1 10.0.0.1")
+
+    time.sleep(1)
+    (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+    assert result == "RESTARTCHECK succeeded\n"
+
+    # Should fail since orchagent has been frozen at last step.
+    (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
+    assert result == "RESTARTCHECK failed\n"
+
+    # recover for test cases after this one.
+    stop_swss(dvs)
+    start_swss(dvs)
+    time.sleep(5)
+
+def test_swss_port_state_syncup(dvs):
+
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+    # enable warm restart
+    # TODO: use cfg command to config it
+    create_entry_tbl(
+        conf_db,
+        swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
+        [
+            ("enable", "true"),
+        ]
+    )
+
+    tbl = swsscommon.Table(appl_db, swsscommon.APP_PORT_TABLE_NAME)
+
+    restart_count = swss_get_RestartCount(state_db)
+
+    # update port admin state
+    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
+    dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
+    dvs.runcmd("ifconfig Ethernet8 10.0.0.4/31 up")
+
+    dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
+    dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
+    dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03")
+
+    dvs.servers[0].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[1].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[2].runcmd("ip link set down dev eth0") == 0
+
+    dvs.servers[2].runcmd("ip link set up dev eth0") == 0
+
+    time.sleep(3)
+
+    for i in [0, 1, 2]:
+        (status, fvs) = tbl.get("Ethernet%d" % (i * 4))
+        assert status == True
+        oper_status = "unknown"
+        for v in fvs:
+            if v[0] == "oper_status":
+                oper_status = v[1]
+                break
+        if i == 2:
+            assert oper_status == "up"
+        else:
+            assert oper_status == "down"
+
+    stop_swss(dvs)
+    time.sleep(3)
+
+    # flap the port oper status for Ethernet0, Ethernet4 and Ethernet8
+    dvs.servers[0].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[1].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[2].runcmd("ip link set down dev eth0") == 0
+
+    dvs.servers[0].runcmd("ip link set up dev eth0") == 0
+    dvs.servers[1].runcmd("ip link set up dev eth0") == 0
+
+    time.sleep(5)
+    start_swss(dvs)
+    time.sleep(10)
+
+    swss_check_RestartCount(state_db, restart_count)
+
+    for i in [0, 1, 2]:
+        (status, fvs) = tbl.get("Ethernet%d" % (i * 4))
+        assert status == True
+        oper_status = "unknown"
+        for v in fvs:
+            if v[0] == "oper_status":
+                oper_status = v[1]
+                break
+        if i == 2:
+            assert oper_status == "down"
+        else:
+            assert oper_status == "up"
+

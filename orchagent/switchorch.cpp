@@ -2,6 +2,8 @@
 
 #include "switchorch.h"
 #include "converter.h"
+#include "notifier.h"
+#include "notificationproducer.h"
 
 using namespace std;
 using namespace swss;
@@ -27,8 +29,12 @@ const map<string, sai_packet_action_t> packet_action_map =
 };
 
 SwitchOrch::SwitchOrch(DBConnector *db, string tableName) :
-        Orch(db, tableName)
+        Orch(db, tableName),
+        m_db(db)
 {
+    m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
+    auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
+    Orch::addExecutor(restartCheckNotifier);
 }
 
 void SwitchOrch::doTask(Consumer &consumer)
@@ -122,3 +128,51 @@ void SwitchOrch::doTask(Consumer &consumer)
     }
 }
 
+void SwitchOrch::doTask(NotificationConsumer& consumer)
+{
+    SWSS_LOG_ENTER();
+
+    std::string op;
+    std::string data;
+    std::vector<swss::FieldValueTuple> values;
+
+    consumer.pop(op, data, values);
+
+    if (&consumer != m_restartCheckNotificationConsumer)
+    {
+        return;
+    }
+
+    m_warmRestartCheck.checkRestartReadyState = false;
+    m_warmRestartCheck.noFreeze = false;
+    m_warmRestartCheck.skipPendingTaskCheck = false;
+
+    SWSS_LOG_NOTICE("RESTARTCHECK notification for %s ", op.c_str());
+    if (op == "orchagent")
+    {
+        string s  =  op;
+
+        m_warmRestartCheck.checkRestartReadyState = true;
+        for (auto &i : values)
+        {
+            s += "|" + fvField(i) + ":" + fvValue(i);
+
+            if (fvField(i) == "NoFreeze" && fvValue(i) == "true")
+            {
+                m_warmRestartCheck.noFreeze = true;
+            }
+            if (fvField(i) == "SkipPendingTaskCheck" && fvValue(i) == "true")
+            {
+                m_warmRestartCheck.skipPendingTaskCheck = true;
+            }
+        }
+        SWSS_LOG_NOTICE("%s", s.c_str());
+    }
+}
+
+void SwitchOrch::restartCheckReply(const string &op, const string &data, std::vector<FieldValueTuple> &values)
+{
+    NotificationProducer restartRequestReply(m_db, "RESTARTCHECKREPLY");
+    restartRequestReply.send(op, data, values);
+    checkRestartReadyDone();
+}

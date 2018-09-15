@@ -2866,10 +2866,64 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
 
             SWSS_LOG_NOTICE("Get port state change notification id:%lx status:%d", id, status);
 
-            this->updateDbPortOperStatus(id, status);
-            this->setHostIntfsOperStatus(id, status == SAI_PORT_OPER_STATUS_UP);
+            Port p;
+            if (!getPort(id, p))
+            {
+                SWSS_LOG_ERROR("Failed to get port object for port id 0x%lx", id);
+                continue;
+            }
+            updatePortOperStatus(p, status);
         }
 
         sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);
+    }
+}
+
+void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
+{
+    if (status != port.m_oper_status)
+    {
+        SWSS_LOG_NOTICE("Port state changed for %s from %s to %s", port.m_alias.c_str(),
+                oper_status_strings.at(port.m_oper_status).c_str(), oper_status_strings.at(status).c_str());
+        this->updateDbPortOperStatus(port.m_port_id, status);
+        if(status == SAI_PORT_OPER_STATUS_UP || port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
+        {
+            this->setHostIntfsOperStatus(port.m_port_id, status == SAI_PORT_OPER_STATUS_UP);
+        }
+    }
+}
+/*
+ * sync up orchagent with libsai/ASIC for port state.
+ *
+ * Currently NotificationProducer is used by syncd to inform port state change,
+ * which means orchagent will miss the signal if it happens between orchagent shutdown and startup.
+ * Syncd doesn't know whether the signal has been lost or not.
+ * Also the source of notification event is from libsai/SDK.
+ *
+ * Latest oper status for each port is retrieved via SAI_PORT_ATTR_OPER_STATUS sai API,
+ * the hostif and db are updated accordingly.
+ */
+void PortsOrch::refreshPortStatus()
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &it: m_portList)
+    {
+        auto &p = it.second;
+        if (p.m_type == Port::PHY)
+        {
+            sai_attribute_t attr;
+            attr.id = SAI_PORT_ATTR_OPER_STATUS;
+
+            sai_status_t ret = sai_port_api->get_port_attribute(p.m_port_id, 1, &attr);
+            if (ret != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to get oper status for %s", p.m_alias.c_str());
+                throw "PortsOrch get port oper status failure";
+            }
+            sai_port_oper_status_t status = (sai_port_oper_status_t)attr.value.u32;
+            SWSS_LOG_INFO("%s oper status is %s", p.m_alias.c_str(), oper_status_strings.at(status).c_str());
+            updatePortOperStatus(p, status);
+        }
     }
 }
