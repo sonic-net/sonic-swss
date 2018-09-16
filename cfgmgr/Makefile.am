@@ -1,7 +1,7 @@
 INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/orchagent -I $(top_srcdir)/warmrestart
 CFLAGS_SAI = -I /usr/include/sai
 
-bin_PROGRAMS = vlanmgrd portmgrd intfmgrd buffermgrd
+bin_PROGRAMS = vlanmgrd portmgrd intfmgrd buffermgrd vrfmgrd
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
@@ -30,3 +30,7 @@ buffermgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 buffermgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 buffermgrd_LDADD = -lswsscommon
 
+vrfmgrd_SOURCES = vrfmgrd.cpp vrfmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp shellcmd.h
+vrfmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+vrfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+vrfmgrd_LDADD = -lswsscommon
