@@ -286,6 +286,8 @@ void NeighOrch::doTask(Consumer &consumer)
         KeyOpFieldsValuesTuple t = it->second;
 
         string key = kfvKey(t);
+        string op = kfvOp(t);
+
         size_t found = key.find(':');
         if (found == string::npos)
         {
@@ -321,8 +323,6 @@ void NeighOrch::doTask(Consumer &consumer)
 
         NeighborEntry neighbor_entry = { ip_address, alias };
 
-        string op = kfvOp(t);
-
         if (op == SET_COMMAND)
         {
             MacAddress mac_address;
@@ -349,9 +349,13 @@ void NeighOrch::doTask(Consumer &consumer)
             if (m_syncdNeighbors.find(neighbor_entry) != m_syncdNeighbors.end())
             {
                 if (removeNeighbor(neighbor_entry))
+                {
                     it = consumer.m_toSync.erase(it);
+                }
                 else
+                {
                     it++;
+                }
             }
             else
                 /* Cannot locate the neighbor */
@@ -458,7 +462,9 @@ bool NeighOrch::removeNeighbor(NeighborEntry neighborEntry)
     string alias = neighborEntry.alias;
 
     if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+    {
         return true;
+    }
 
     if (m_syncdNextHops[ip_address].ref_count > 0)
     {
