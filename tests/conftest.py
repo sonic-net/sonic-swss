@@ -269,15 +269,28 @@ class DockerVirtualSwitch(object):
         self.ctn.put_archive(path, tarstr.getvalue())
         tarstr.close()
 
+    def get_map_iface_bridge_port_id(self, asic_db):
+        port_id_2_iface = self.asicdb.portoidmap
+        tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+        iface_2_bridge_port_id = {}
+        for key in tbl.getKeys():
+            status, data = tbl.get(key)
+            assert status
+            values = dict(data)
+            iface_id = values["SAI_BRIDGE_PORT_ATTR_PORT_ID"]
+            iface_name = port_id_2_iface[iface_id]
+            iface_2_bridge_port_id[iface_name] = key
+
+        return iface_2_bridge_port_id
+
     def is_table_entry_exists(self, db, table, keyregex, attributes):
         tbl = swsscommon.Table(db, table)
         keys = tbl.getKeys()
 
-        exists = False
         extra_info = []
-        key_found = False
         for key in keys:
-            key_found = re.match(keyregex, key)
+            if re.match(keyregex, key) is None:
+                continue
 
             status, fvs = tbl.get(key)
             assert status, "Error reading from table %s" % table
@@ -288,17 +301,12 @@ class DockerVirtualSwitch(object):
                     del d_attributes[k]
 
             if len(d_attributes) != 0:
-                exists = False
                 extra_info.append("Desired attributes %s was not found for key %s" % (str(d_attributes), key))
             else:
-                exists = True
-                break
-
-        if not key_found:
-            exists = False
-            extra_info.append("Desired key with parameters %s was not found" % str(key_values))
-
-        return exists, extra_info
+                return True, extra_info
+        else:
+            extra_info.append("Desired key regex %s was not found" % str(keyregex))
+            return False, extra_info
 
     def is_fdb_entry_exists(self, db, table, key_values, attributes):
         tbl =  swsscommon.Table(db, table)

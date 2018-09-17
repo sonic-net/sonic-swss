@@ -20,21 +20,6 @@ def create_entry_pst(db, table, key, pairs):
     tbl = swsscommon.ProducerStateTable(db, table)
     create_entry(tbl, key, pairs)
 
-
-def get_map_iface_bridge_port_id(asic_db, dvs):
-    port_id_2_iface = dvs.asicdb.portoidmap
-    tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
-    iface_2_bridge_port_id = {}
-    for key in tbl.getKeys():
-        status, data = tbl.get(key)
-        assert status
-        values = dict(data)
-        iface_id = values["SAI_BRIDGE_PORT_ATTR_PORT_ID"]
-        iface_name = port_id_2_iface[iface_id]
-        iface_2_bridge_port_id[iface_name] = key
-
-    return iface_2_bridge_port_id
-
 def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
@@ -90,7 +75,7 @@ def test_FDBAddedAfterMemberCreated(dvs):
     assert vm_after - vm_before == 1, "The vlan member wasn't added"
 
     # Get mapping between interface name and its bridge port_id
-    iface_2_bridge_port_id = get_map_iface_bridge_port_id(dvs.adb, dvs)
+    iface_2_bridge_port_id = dvs.get_map_iface_bridge_port_id(dvs.adb)
 
     # check that the FDB entry was inserted into ASIC DB
     assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The fdb entry wasn't inserted to ASIC"

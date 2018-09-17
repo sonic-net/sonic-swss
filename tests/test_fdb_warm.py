@@ -20,21 +20,6 @@ def create_entry_pst(db, table, key, pairs):
     tbl = swsscommon.ProducerStateTable(db, table)
     create_entry(tbl, key, pairs)
 
-
-def get_map_iface_bridge_port_id(asic_db, dvs):
-    port_id_2_iface = dvs.asicdb.portoidmap
-    tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
-    iface_2_bridge_port_id = {}
-    for key in tbl.getKeys():
-        status, data = tbl.get(key)
-        assert status
-        values = dict(data)
-        iface_id = values["SAI_BRIDGE_PORT_ATTR_PORT_ID"]
-        iface_name = port_id_2_iface[iface_id]
-        iface_2_bridge_port_id[iface_name] = key
-
-    return iface_2_bridge_port_id
-
 def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
@@ -42,7 +27,7 @@ def how_many_entries_exist(db, table):
 def test_fdb_notifications(dvs):
     dvs.setup_db()
 
-    #dvs.runcmd("sonic-clear fdb all")
+    dvs.runcmd("sonic-clear fdb all")
 
     dvs.runcmd("crm config polling interval 1")
     dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY', '1000')
@@ -54,6 +39,20 @@ def test_fdb_notifications(dvs):
     dvs.create_vlan("6")
     dvs.create_vlan_member("6", "Ethernet64")
     dvs.create_vlan_member("6", "Ethernet68")
+
+    # Get mapping between interface name and its bridge port_id
+    time.sleep(2)
+    iface_2_bridge_port_id = dvs.get_map_iface_bridge_port_id(dvs.adb)
+
+    # check FDB learning mode
+    ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
+        iface_2_bridge_port_id["Ethernet64"],
+        [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")])
+    assert ok, str(extra)
+    ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
+        iface_2_bridge_port_id["Ethernet68"],
+        [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")])
+    assert ok, str(extra)
 
     # bring up vlan and member
     dvs.set_interface_status("Vlan6", "up")
@@ -72,9 +71,6 @@ def test_fdb_notifications(dvs):
     rc = dvs.servers[17].runcmd("ping -c 1 6.6.6.6")
     assert rc == 0
 
-    # Get mapping between interface name and its bridge port_id
-    time.sleep(2)
-    iface_2_bridge_port_id = get_map_iface_bridge_port_id(dvs.adb, dvs)
 
     # check that the FDB entries were inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
@@ -113,24 +109,33 @@ def test_fdb_notifications(dvs):
     assert ok, str(extra)
 
     # enable warm restart
-    # TODO: use cfg command to config it
-    create_entry_tbl(
-        dvs.cdb,
-        swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
-        [
-            ("enable", "true"),
-        ]
-    )
+    dvs.runcmd("config warm_restart enable swss")
+
+    # freeze orchagent for warm restart
+    (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+    assert result == "RESTARTCHECK succeeded\n"
+    time.sleep(2)
 
     try:
         # restart orchagent
         dvs.stop_swss()
+
+        # check FDB learning mode
+        ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
+            iface_2_bridge_port_id["Ethernet64"],
+            [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE")])
+        assert ok, str(extra)
+        ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
+            iface_2_bridge_port_id["Ethernet68"],
+            [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE")])
+        assert ok, str(extra)
+
         dvs.start_swss()
         time.sleep(2)
 
         # Get mapping between interface name and its bridge port_id
         # Note: they are changed
-        iface_2_bridge_port_id = get_map_iface_bridge_port_id(dvs.adb, dvs)
+        iface_2_bridge_port_id = dvs.get_map_iface_bridge_port_id(dvs.adb)
 
         # check that the FDB entries were inserted into ASIC DB
         ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
@@ -148,17 +153,20 @@ def test_fdb_notifications(dvs):
         )
         assert ok, str(extra)
 
+        # check FDB learning mode
+        ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
+            iface_2_bridge_port_id["Ethernet64"],
+            [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")])
+        assert ok, str(extra)
+        ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
+            iface_2_bridge_port_id["Ethernet68"],
+            [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")])
+        assert ok, str(extra)
+
         time.sleep(2)
         counter_restarted = dvs.getCrmCounterValue('STATS', 'crm_stats_fdb_entry_used')
         assert counter_inserted == counter_restarted
 
     finally:
-        # disable warm restart
-        # TODO: use cfg command to config it
-        create_entry_tbl(
-            dvs.cdb,
-            swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
-            [
-                ("enable", "false"),
-            ]
-        )
+        # enable warm restart
+        dvs.runcmd("config warm_restart enable swss")
