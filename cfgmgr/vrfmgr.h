@@ -21,7 +21,7 @@ public:
 private:
     bool delLink(const string& vrfName);
     bool setLink(const string& vrfName);
-    void returnTable(uint32_t table);
+    void recycleTable(uint32_t table);
     uint32_t getFreeTable(void);
     void doTask(Consumer &consumer);
 

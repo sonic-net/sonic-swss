@@ -37,7 +37,7 @@ uint32_t VrfMgr::getFreeTable(void)
     return table;
 }
 
-void VrfMgr::returnTable(uint32_t table)
+void VrfMgr::recycleTable(uint32_t table)
 {
     SWSS_LOG_ENTER();
 
@@ -56,8 +56,6 @@ bool VrfMgr::delLink(const string& vrfName)
         return false;
     }
 
-    returnTable(m_vrfTableMap[vrfName]);
-
     cmd << IP_CMD << " link del " << vrfName;
     int ret = swss::exec(cmd.str(), res);
     if (ret)
@@ -66,6 +64,7 @@ bool VrfMgr::delLink(const string& vrfName)
         return false;
     }
 
+    recycleTable(m_vrfTableMap[vrfName]);
     m_vrfTableMap.erase(vrfName);
 
     return true;
@@ -77,6 +76,11 @@ bool VrfMgr::setLink(const string& vrfName)
 
     stringstream cmd;
     string res;
+
+    if (m_vrfTableMap.find(vrfName) != m_vrfTableMap.end())
+    {
+        return true;
+    }
 
     uint32_t table = getFreeTable();
     if (table == 0)
