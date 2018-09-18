@@ -2,6 +2,7 @@ import os
 import os.path
 import re
 import time
+import json
 import docker
 import pytest
 import commands
@@ -266,6 +267,95 @@ class DockerVirtualSwitch(object):
         self.ctn.exec_run("mkdir -p %s" % path)
         self.ctn.put_archive(path, tarstr.getvalue())
         tarstr.close()
+
+    def is_table_entry_exists(self, db, table, key_values, attributes):
+        tbl =  swsscommon.Table(db, table)
+        keys = tbl.getKeys()
+
+        exists = False
+        extra_info = []
+        key_found = False
+        for key in keys:
+            try:
+                d_key = json.loads(key)
+            except ValueError:
+                d_key = json.loads('{' + key + '}')
+
+            for k, v in key_values:
+                if k not in d_key or v != d_key[k]:
+                    continue
+
+            key_found = True
+
+            status, fvs = tbl.get(key)
+            assert status, "Error reading from table %s" % table
+
+            d_attributes = dict(attributes)
+            for k, v in fvs:
+                if k in d_attributes and d_attributes[k] == v:
+                    del d_attributes[k]
+
+            if len(d_attributes) != 0:
+                exists = False
+                extra_info.append("Desired attributes %s was not found for key %s" % (str(d_attributes), key))
+            else:
+                exists = True
+                break
+
+        if not key_found:
+            exists = False
+            extra_info.append("Desired key with parameters %s was not found" % str(key_values))
+
+        return exists, extra_info
+
+    def create_vlan(self, dvs, vlan):
+        tbl = swsscommon.Table(self.cdb, "VLAN")
+        fvs = swsscommon.FieldValuePairs([("vlanid", vlan)])
+        tbl.set("Vlan" + vlan, fvs)
+        time.sleep(1)
+
+    def create_vlan_member(self, vlan, interface):
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
+        tbl.set("Vlan" + vlan + "|" + interface, fvs)
+        time.sleep(1)
+
+    def set_interface_status(self, interface, admin_status):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN"
+        else:
+            tbl_name = "PORT"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up")])
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
+    def add_ip_address(self, interface, ip):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(interface + "|" + ip, fvs)
+        time.sleep(1)
+
+    def add_neighbor(self, interface, ip, mac):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "NEIGH_TABLE")
+        fvs = swsscommon.FieldValuePairs([("neigh", mac),
+                                          ("family", "IPv4")])
+        tbl.set(interface + ":" + ip, fvs)
+        time.sleep(1)
+
+    def setup_db(self, dvs):
+        self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        self.sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
 
 @pytest.yield_fixture(scope="module")
 def dvs(request):
