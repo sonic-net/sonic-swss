@@ -2235,16 +2235,6 @@ bool PortsOrch::initializePort(Port &p)
     /* Create host interface */
     addHostIntfs(p, p.m_alias, p.m_hif_id);
 
-#if 0
-    // TODO: Assure if_nametoindex(p.m_alias.c_str()) != 0
-    p.m_ifindex = if_nametoindex(p.m_alias.c_str());
-    if (p.m_ifindex == 0)
-    {
-        SWSS_LOG_ERROR("Failed to get netdev index alias:%s", p.m_alias.c_str());
-        return false;
-    }
-#endif
-
     /* Check warm start states */
     vector<FieldValueTuple> tuples;
     bool exist = m_portTable->get(p.m_alias, tuples);

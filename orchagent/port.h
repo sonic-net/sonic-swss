@@ -64,7 +64,6 @@ public:
     std::string         m_alias;
     Type                m_type;
     int                 m_index = 0;    // PHY_PORT: index
-    int                 m_ifindex = 0;
     uint32_t            m_mtu = DEFAULT_MTU;
     uint32_t            m_speed = 0;    // Mbps
     bool                m_autoneg = 0;
