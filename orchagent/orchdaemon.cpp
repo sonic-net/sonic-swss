@@ -400,6 +400,9 @@ bool OrchDaemon::warmRestoreAndSyncUp()
         o->doTask();
     }
 
+    /* FDB state sync up */
+    gFdbOrch->refreshFdbEntries();
+
     /*
      * At this point, all the pre-existing data should have been processed properly, and
      * orchagent should be in exact same state of pre-shutdown.

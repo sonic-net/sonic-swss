@@ -154,3 +154,43 @@ class TestFdb(object):
                         ]
         )
         assert ok, str(extra)
+
+        # DEBUG: print all bridge port keys in AsicDB
+        bp_table =  swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+        keys = bp_table.getKeys()
+        print "before restart"
+        for key in keys:
+            print key
+
+        # enable warm restart
+        # TODO: use cfg command to config it
+        create_entry_tbl(
+            dvs.cdb,
+            swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
+            [
+                ("enable", "true"),
+            ]
+        )
+
+        try:
+            # restart orchagent
+            dvs.runcmd(['sh', '-c', 'supervisorctl restart orchagent'])
+            time.sleep(2)
+
+            # DEBUG: print all bridge port keys in AsicDB
+            bp_table =  swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+            keys = bp_table.getKeys()
+            print "after restart"
+            for key in keys:
+                print key
+
+        finally:
+            # disable warm restart
+            # TODO: use cfg command to config it
+            create_entry_tbl(
+                dvs.cdb,
+                swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
+                [
+                    ("enable", "false"),
+                ]
+            )
