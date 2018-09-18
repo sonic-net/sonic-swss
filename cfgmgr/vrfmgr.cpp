@@ -8,8 +8,8 @@
 #include "exec.h"
 #include "shellcmd.h"
 
-#define VRF_TABLE_START 100
-#define VRF_TABLE_END 164
+#define VRF_TABLE_START 1001
+#define VRF_TABLE_END 2000
 
 using namespace swss;
 
