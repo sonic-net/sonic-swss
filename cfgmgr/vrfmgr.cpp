@@ -26,11 +26,7 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
     string res;
 
     cmd << IP_CMD << " -d link show type vrf";
-    int ret = swss::exec(cmd.str(), res);
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command %s failed, rc: %i", res.c_str(), ret);
-    }
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     enum IpShowRowType
     {
@@ -101,12 +97,7 @@ bool VrfMgr::delLink(const string& vrfName)
     }
 
     cmd << IP_CMD << " link del " << vrfName;
-    int ret = swss::exec(cmd.str(), res);
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Failed command %s, rc:%d", cmd.str().c_str(), ret);
-        return false;
-    }
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     recycleTable(m_vrfTableMap[vrfName]);
     m_vrfTableMap.erase(vrfName);
@@ -133,24 +124,14 @@ bool VrfMgr::setLink(const string& vrfName)
     }
 
     cmd << IP_CMD << " link add " << vrfName << " type vrf table " << table;
-    int ret = swss::exec(cmd.str(), res);
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Failed command %s, rc:%d", cmd.str().c_str(), ret);
-        return false;
-    }
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     m_vrfTableMap.emplace(vrfName, table);
 
     cmd.str("");
     cmd.clear();
     cmd << IP_CMD << " link set " << vrfName << " up";
-    ret = swss::exec(cmd.str(), res);
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Failed command %s, rc:%d", cmd.str().c_str(), ret);
-        return false;
-    }
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     return true;
 }
