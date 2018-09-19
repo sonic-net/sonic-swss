@@ -268,7 +268,38 @@ class DockerVirtualSwitch(object):
         self.ctn.put_archive(path, tarstr.getvalue())
         tarstr.close()
 
-    def is_table_entry_exists(self, db, table, key_values, attributes):
+    def is_table_entry_exists(self, db, table, keyregex, attributes):
+        tbl = swsscommon.Table(db, table)
+        keys = tbl.getKeys()
+
+        exists = False
+        extra_info = []
+        key_found = False
+        for key in keys:
+            key_found = re.match(keyregex, key)
+
+            status, fvs = tbl.get(key)
+            assert status, "Error reading from table %s" % table
+
+            d_attributes = dict(attributes)
+            for k, v in fvs:
+                if k in d_attributes and d_attributes[k] == v:
+                    del d_attributes[k]
+
+            if len(d_attributes) != 0:
+                exists = False
+                extra_info.append("Desired attributes %s was not found for key %s" % (str(d_attributes), key))
+            else:
+                exists = True
+                break
+
+        if not key_found:
+            exists = False
+            extra_info.append("Desired key with parameters %s was not found" % str(key_values))
+
+        return exists, extra_info
+
+    def is_fdb_entry_exists(self, db, table, key_values, attributes):
         tbl =  swsscommon.Table(db, table)
         keys = tbl.getKeys()
 

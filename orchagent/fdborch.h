@@ -42,10 +42,10 @@ public:
         m_portsOrch->detach(this);
     }
 
+    bool bake() override;
     void update(sai_fdb_event_t, const sai_fdb_entry_t *, sai_object_id_t);
     void update(SubjectType type, void *cntx);
     bool getPort(const MacAddress&, uint16_t, Port&);
-    void refreshFdbEntries();
 
 private:
     PortsOrch *m_portsOrch;
@@ -62,8 +62,8 @@ private:
     void updateVlanMember(const VlanMemberUpdate&);
     bool addFdbEntry(const FdbEntry&, const string&, const string&);
     bool removeFdbEntry(const FdbEntry&);
-    bool createFdbEntry(const FdbEntry& entry, const Port& port, const string& type);
-    void storeFdbEntry(const sai_fdb_event_notification_data_t *fdb);
+
+    bool storeFdbEntryState(const FdbUpdate& update);
 };
 
 #endif /* SWSS_FDBORCH_H */

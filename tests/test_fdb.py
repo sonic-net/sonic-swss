@@ -3,7 +3,6 @@ import os
 import sys
 import time
 import json
-from pprint import pprint
 from distutils.version import StrictVersion
 
 def create_entry(tbl, key, pairs):
@@ -96,42 +95,91 @@ def test_FDBAddedAfterMemberCreated(dvs):
     assert ok, str(extra)
 
 
-class TestFdb(object):
+def test_fdb_notifications(dvs):
+    dvs.setup_db(dvs)
 
-    def test_fdb_notifications(self, dvs):
-        dvs.setup_db(dvs)
+    # create vlan; create vlan member
+    dvs.create_vlan(dvs, "6")
+    dvs.create_vlan_member("6", "Ethernet64")
+    dvs.create_vlan_member("6", "Ethernet68")
 
-        # create vlan; create vlan member
-        dvs.create_vlan(dvs, "6")
-        dvs.create_vlan_member("6", "Ethernet64")
-        dvs.create_vlan_member("6", "Ethernet68")
+    # bring up vlan and member
+    dvs.set_interface_status("Vlan6", "up")
+    dvs.add_ip_address("Vlan6", "6.6.6.1/24")
+    dvs.set_interface_status("Ethernet64", "up")
+    dvs.set_interface_status("Ethernet68", "up")
+    dvs.servers[16].runcmd("ifconfig eth0 6.6.6.6/24 up")
+    dvs.servers[16].runcmd("ip route add default via 6.6.6.1")
+    dvs.servers[17].runcmd("ifconfig eth0 6.6.6.7/24 up")
+    dvs.servers[17].runcmd("ip route add default via 6.6.6.1")
 
-        # bring up vlan and member
-        dvs.set_interface_status("Vlan6", "up")
-        dvs.add_ip_address("Vlan6", "6.6.6.1/24")
-        dvs.set_interface_status("Ethernet64", "up")
-        dvs.set_interface_status("Ethernet68", "up")
-        dvs.servers[16].runcmd("ifconfig eth0 6.6.6.6/24 up")
-        dvs.servers[16].runcmd("ip route add default via 6.6.6.1")
-        dvs.servers[17].runcmd("ifconfig eth0 6.6.6.7/24 up")
-        dvs.servers[17].runcmd("ip route add default via 6.6.6.1")
+    # get neighbor and arp entry
+    rc = dvs.servers[16].runcmd("ping -c 1 6.6.6.7")
+    assert rc == 0
 
-        # get neighbor and arp entry
-        rc = dvs.servers[16].runcmd("ping -c 1 6.6.6.7")
-        assert rc == 0
+    # Get mapping between interface name and its bridge port_id
+    iface_2_bridge_port_id = get_map_iface_bridge_port_id(dvs.adb, dvs)
+
+    # check that the FDB entries were inserted into ASIC DB
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                    [],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+                     ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet64"]),
+                    ]
+    )
+    assert ok, str(extra)
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                    [],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+                     ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet68"]),
+                    ]
+    )
+    assert ok, str(extra)
+
+    # check that the FDB entries were inserted into State DB
+    ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
+                    "Vlan6:.*",
+                    [("port", "Ethernet64"),
+                     ("type", "dynamic"),
+                    ]
+    )
+    assert ok, str(extra)
+    ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
+                    "Vlan6:*",
+                    [("port", "Ethernet68"),
+                     ("type", "dynamic"),
+                    ]
+    )
+    assert ok, str(extra)
+
+    # enable warm restart
+    # TODO: use cfg command to config it
+    create_entry_tbl(
+        dvs.cdb,
+        swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
+        [
+            ("enable", "true"),
+        ]
+    )
+
+    try:
+        # restart orchagent
+        dvs.runcmd(['sh', '-c', 'supervisorctl restart orchagent'])
+        time.sleep(2)
 
         # Get mapping between interface name and its bridge port_id
+        # Note: they are changed
         iface_2_bridge_port_id = get_map_iface_bridge_port_id(dvs.adb, dvs)
 
         # check that the FDB entries were inserted into ASIC DB
-        ok, extra = dvs.is_table_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
                         [],
                         [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
                          ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet64"]),
                         ]
         )
         assert ok, str(extra)
-        ok, extra = dvs.is_table_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
                         [],
                         [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
                          ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet68"]),
@@ -139,58 +187,13 @@ class TestFdb(object):
         )
         assert ok, str(extra)
 
-        # check that the FDB entries were inserted into State DB
-        ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
-                        [],
-                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
-                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet64"]),
-                        ]
-        )
-        assert ok, str(extra)
-        ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
-                        [],
-                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
-                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet68"]),
-                        ]
-        )
-        assert ok, str(extra)
-
-        # DEBUG: print all bridge port keys in AsicDB
-        bp_table =  swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
-        keys = bp_table.getKeys()
-        print "before restart"
-        for key in keys:
-            print key
-
-        # enable warm restart
+    finally:
+        # disable warm restart
         # TODO: use cfg command to config it
         create_entry_tbl(
             dvs.cdb,
             swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
             [
-                ("enable", "true"),
+                ("enable", "false"),
             ]
         )
-
-        try:
-            # restart orchagent
-            dvs.runcmd(['sh', '-c', 'supervisorctl restart orchagent'])
-            time.sleep(2)
-
-            # DEBUG: print all bridge port keys in AsicDB
-            bp_table =  swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
-            keys = bp_table.getKeys()
-            print "after restart"
-            for key in keys:
-                print key
-
-        finally:
-            # disable warm restart
-            # TODO: use cfg command to config it
-            create_entry_tbl(
-                dvs.cdb,
-                swsscommon.CFG_WARM_RESTART_TABLE_NAME, "swss",
-                [
-                    ("enable", "false"),
-                ]
-            )
