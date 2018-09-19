@@ -71,7 +71,7 @@ bool OrchDaemon::init()
     gPortsOrch = new PortsOrch(m_applDb, ports_tables);
 
     TableConnector applDbFdb(m_applDb, APP_FDB_TABLE_NAME);
-    TableConnector stateDbFdb(m_stateDb, APP_FDB_TABLE_NAME);
+    TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME);
