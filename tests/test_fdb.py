@@ -86,7 +86,7 @@ def test_FDBAddedAfterMemberCreated(dvs):
     # check that the FDB entry was inserted into ASIC DB
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The fdb entry wasn't inserted to ASIC"
 
-    ok, extra = dvs.is_table_entry_exists(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+    ok, extra = dvs.is_fdb_entry_exists(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
                     [("mac", "52-54-00-25-06-E9"), ("vlan", "2")],
                     [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet0"]),
