@@ -13,11 +13,10 @@ Stores information for physical switch ports managed by the switch chip. Ports t
 
     ;Defines layer 2 ports
     ;In SONiC, Data is loaded from configuration file by portsyncd
-    port_table_key      = PORT_TABLE:ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
-    admin_status        = BIT           ; is the port enabled (1) or disabled (0)
-    oper_status         = BIT           ; physical status up (1) or down (0) of the link attached to this port
+    key                 = PORT_TABLE:ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    admin_status        = "down" / "up"        ; admin status
+    oper_status         = "down" / "up"        ; oper status
     lanes               = list of lanes ; (need format spec???)
-    ifname              = 1*64VCHAR     ; name of the port, must be unique
     mac                 = 12HEXDIG      ;
     alias               = 1*64VCHAR     ; alias name of the port used by LLDP and SNMP, must be unique
     description         = 1*64VCHAR     ; port description
@@ -638,10 +637,9 @@ Equivalent RedisDB entry:
 Stores information for physical switch ports managed by the switch chip. Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE. See MGMT_PORT.
 
     ;Configuration for layer 2 ports
-    port_table_key      = PORT|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
-    admin_status        = BIT           ; is the port enabled (1) or disabled (0)
+    key                 = PORT|ifname   ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    admin_status        = "down" / "up" ; admin status
     lanes               = list of lanes ; (need format spec???)
-    ifname              = 1*64VCHAR     ; name of the port, must be unique
     mac                 = 12HEXDIG      ;
     alias               = 1*64VCHAR     ; alias name of the port used by LLDP and SNMP, must be unique
     description         = 1*64VCHAR     ; port description
@@ -652,9 +650,8 @@ Stores information for physical switch ports managed by the switch chip. Ports t
 
 ### MGMT_PORT_TABLE
     ;Configuration for management port, including at least one key
-    port_table_key      = MGMT_PORT|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
-    admin_status        = BIT           ; is the port enabled (1) or disabled (0)
-    ifname              = 1*64VCHAR     ; name of the port, must be unique, eg. eth0
+    key                 = MGMT_PORT|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    admin_status        = "down" / "up" ; admin status
     mac                 = 12HEXDIG      ;
     alias               = 1*64VCHAR     ; alias name of the port used by LLDP and SNMP, must be unique
     description         = 1*64VCHAR     ; port description
@@ -706,16 +703,14 @@ Status: ready
 Stores information for physical switch ports managed by the switch chip. Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE. See MGMT_PORT.
 
     ;State for layer 2 ports
-    port_table_key      = PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
-    oper_status         = BIT           ; physical status up (1) or down (0) of the link attached to this port
-    state               = BIT           ; netlink ready
-    ifname              = 1*64VCHAR     ; name of the port, must be unique
+    key                 = PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    oper_status         = "down" / "up" ; oper status
+    state               = "" / "ok"     ; port created successfully
 
 ### MGMT_PORT_TABLE
     ;State for management port, including at least one key
-    port_table_key      = MGMT_PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
-    oper_status         = BIT           ; physical status up (1) or down (0) of the link attached to this port
-    ifname              = 1*64VCHAR     ; name of the port, must be unique, eg. eth0
+    key                 = MGMT_PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    oper_status         = "down" / "up" ; oper status
 
 ### WARM\_RESTART\_TABLE
     ;Stores application and orchdameon warm start status
