@@ -80,6 +80,8 @@ bool OrchDaemon::init()
     gDirectory.set(vxlan_tunnel_orch);
     VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_configDb, CFG_VXLAN_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_map_orch);
+    VxlanVrfMapOrch *vxlan_vrf_orch = new VxlanVrfMapOrch(m_applDb, APP_VXLAN_VRF_TABLE_NAME);
+    gDirectory.set(vxlan_vrf_orch);
 
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
