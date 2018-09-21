@@ -174,7 +174,8 @@ def test_fdb_notifications(dvs):
 
     try:
         # restart orchagent
-        dvs.runcmd(['sh', '-c', 'supervisorctl restart orchagent'])
+        dvs.stop_swss()
+        dvs.start_swss()
         time.sleep(2)
 
         # Get mapping between interface name and its bridge port_id

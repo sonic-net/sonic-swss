@@ -418,6 +418,18 @@ class DockerVirtualSwitch(object):
 
         ntf.send("set_ro", key, fvp)
 
+    # start processes in SWSS
+    def start_swss(self):
+        self.runcmd(['sh', '-c', 'supervisorctl start orchagent; supervisorctl start portsyncd; supervisorctl start intfsyncd; \
+            supervisorctl start neighsyncd; supervisorctl start intfmgrd; supervisorctl start vlanmgrd; \
+            supervisorctl start buffermgrd; supervisorctl start arp_update'])
+
+    # stop processes in SWSS
+    def stop_swss(self):
+        self.runcmd(['sh', '-c', 'supervisorctl stop orchagent; supervisorctl stop portsyncd; supervisorctl stop intfsyncd; \
+            supervisorctl stop neighsyncd;  supervisorctl stop intfmgrd; supervisorctl stop vlanmgrd; \
+            supervisorctl stop buffermgrd; supervisorctl stop arp_update'])
+
 @pytest.yield_fixture(scope="module")
 def dvs(request):
     name = request.config.getoption("--dvsname")
