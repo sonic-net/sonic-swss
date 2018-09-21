@@ -3,6 +3,7 @@ import os.path
 import re
 import time
 import json
+import redis
 import docker
 import pytest
 import commands
@@ -339,7 +340,7 @@ class DockerVirtualSwitch(object):
 
         return exists, extra_info
 
-    def create_vlan(self, dvs, vlan):
+    def create_vlan(self, vlan):
         tbl = swsscommon.Table(self.cdb, "VLAN")
         fvs = swsscommon.FieldValuePairs([("vlanid", vlan)])
         tbl.set("Vlan" + vlan, fvs)
@@ -382,11 +383,40 @@ class DockerVirtualSwitch(object):
         tbl.set(interface + ":" + ip, fvs)
         time.sleep(1)
 
-    def setup_db(self, dvs):
-        self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-        self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        self.sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
+    def setup_db(self):
+        self.pdb = swsscommon.DBConnector(0, self.redis_sock, 0)
+        self.adb = swsscommon.DBConnector(1, self.redis_sock, 0)
+        self.cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
+        self.sdb = swsscommon.DBConnector(6, self.redis_sock, 0)
+
+    def getCrmCounterValue(self, key, counter):
+        counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, self.redis_sock, 0)
+        crm_stats_table = swsscommon.Table(counters_db, 'CRM')
+
+        for k in crm_stats_table.get(key)[1]:
+            if k[0] == counter:
+                return int(k[1])
+
+    def setReadOnlyAttr(self, obj, attr, val):
+        db = swsscommon.DBConnector(swsscommon.ASIC_DB, self.redis_sock, 0)
+        tbl = swsscommon.Table(db, "ASIC_STATE:{0}".format(obj))
+        keys = tbl.getKeys()
+
+        assert len(keys) == 1
+
+        swVid = keys[0]
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.ASIC_DB)
+        swRid = r.hget("VIDTORID", swVid)
+
+        assert swRid is not None
+
+        ntf = swsscommon.NotificationProducer(db, "SAI_VS_UNITTEST_CHANNEL")
+        fvp = swsscommon.FieldValuePairs()
+        ntf.send("enable_unittests", "true", fvp)
+        fvp = swsscommon.FieldValuePairs([(attr, val)])
+        key = "SAI_OBJECT_TYPE_SWITCH:" + swRid
+
+        ntf.send("set_ro", key, fvp)
 
 @pytest.yield_fixture(scope="module")
 def dvs(request):

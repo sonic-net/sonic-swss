@@ -96,10 +96,16 @@ def test_FDBAddedAfterMemberCreated(dvs):
 
 
 def test_fdb_notifications(dvs):
-    dvs.setup_db(dvs)
+    dvs.setup_db()
+
+    dvs.runcmd("crm config polling interval 1")
+
+    dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY', '1000')
+
+    time.sleep(2)
 
     # create vlan; create vlan member
-    dvs.create_vlan(dvs, "6")
+    dvs.create_vlan("6")
     dvs.create_vlan_member("6", "Ethernet64")
     dvs.create_vlan_member("6", "Ethernet68")
 
@@ -135,6 +141,10 @@ def test_fdb_notifications(dvs):
                     ]
     )
     assert ok, str(extra)
+
+    time.sleep(2)
+    used_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_fdb_entry_used')
+    assert used_counter == 2
 
     # check that the FDB entries were inserted into State DB
     ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
@@ -186,6 +196,10 @@ def test_fdb_notifications(dvs):
                         ]
         )
         assert ok, str(extra)
+
+        time.sleep(2)
+        used_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_fdb_entry_used')
+        assert used_counter == 2
 
     finally:
         # disable warm restart
