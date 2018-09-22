@@ -165,12 +165,11 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
                 update.entry.mac = itr->mac;
                 update.entry.bv_id = itr->bv_id;
                 update.add = false;
+                itr++;
 
                 storeFdbEntryState(update);
 
                 SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed", update.entry.mac.to_string().c_str());
-
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
 
                 for (auto observer: m_observers)
                 {
