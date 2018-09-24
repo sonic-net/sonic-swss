@@ -2371,6 +2371,11 @@ bool PortsOrch::addBridgePort(Port &port)
     attr.value.booldata = true;
     attrs.push_back(attr);
 
+    /* And with hardware FDB learning mode set to HW (explicit default value) */
+    attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+    attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+    attrs.push_back(attr);
+
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
