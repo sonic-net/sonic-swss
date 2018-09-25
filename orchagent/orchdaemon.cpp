@@ -369,6 +369,7 @@ void OrchDaemon::start()
                         auto& port = pair.second;
                         gPortsOrch->setBridgePortLearningFDB(port, false);
                     }
+                    flush();
 
                     SWSS_LOG_WARN("Orchagent is frozen for warm restart!");
                     sleep(UINT_MAX);
