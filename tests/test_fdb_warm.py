@@ -109,10 +109,11 @@ def test_fdb_notifications(dvs):
     assert ok, str(extra)
 
     # enable warm restart
-    dvs.runcmd("config warm_restart enable swss")
+    (exitcode, result) = dvs.runcmd("config warm_restart enable swss")
+    assert exitcode == 0
 
     # freeze orchagent for warm restart
-    (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check")
+    (exitcode, result) = dvs.runcmd("/usr/bin/orchagent_restart_check")
     assert result == "RESTARTCHECK succeeded\n"
     time.sleep(2)
 
@@ -170,3 +171,5 @@ def test_fdb_notifications(dvs):
     finally:
         # enable warm restart
         dvs.runcmd("config warm_restart enable swss")
+        # slow down crm polling
+        dvs.runcmd("crm config polling interval 10000")
