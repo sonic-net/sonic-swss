@@ -305,7 +305,8 @@ class DockerVirtualSwitch(object):
             else:
                 return True, extra_info
         else:
-            extra_info.append("Desired key regex %s was not found" % str(keyregex))
+            if not extra_info:
+                extra_info.append("Desired key regex %s was not found" % str(keyregex))
             return False, extra_info
 
     def is_fdb_entry_exists(self, db, table, key_values, attributes):
