@@ -2312,7 +2312,7 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     return true;
 }
 
-bool PortsOrch::setBridgePortLearningFDB(Port &port, bool enable)
+bool PortsOrch::setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode)
 {
     // TODO: how to support 1D bridge?
     if (port.m_type != Port::PHY) return false;
@@ -2322,7 +2322,7 @@ bool PortsOrch::setBridgePortLearningFDB(Port &port, bool enable)
 
     sai_attribute_t bport_attr;
     bport_attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
-    bport_attr.value.s32 = enable ? SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW : SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
+    bport_attr.value.s32 = mode;
     auto status = sai_bridge_api->set_bridge_port_attribute(bridge_port_id, &bport_attr);
     if (status != SAI_STATUS_SUCCESS)
     {

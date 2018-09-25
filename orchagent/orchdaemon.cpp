@@ -367,7 +367,7 @@ void OrchDaemon::start()
                     for (auto& pair: gPortsOrch->getAllPorts())
                     {
                         auto& port = pair.second;
-                        gPortsOrch->setBridgePortLearningFDB(port, false);
+                        gPortsOrch->setBridgePortLearningFDB(port, SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE);
                     }
                     flush();
 
