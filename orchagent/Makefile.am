@@ -8,7 +8,9 @@ dist_swss_DATA = \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
 		 pfc_detect_barefoot.lua \
-		 pfc_restore.lua
+		 pfc_restore.lua \
+		 watermark_queue.lua \
+		 watermark_pg.lua
 
 bin_PROGRAMS = orchagent routeresync orchagent_restart_check
 
@@ -46,6 +48,7 @@ orchagent_SOURCES = \
             vnetorch.cpp \
             dtelorch.cpp \
             flexcounterorch.cpp \
+            watermarkorch.cpp  \
             acltable.h \
             aclorch.h \
             bufferorch.h \
@@ -76,7 +79,10 @@ orchagent_SOURCES = \
             countercheckorch.h \
             vxlanorch.h \
             vnetorch.h \
-            flexcounterorch.h
+            flexcounterorch.h   \
+            watermarkorch.h  \
+            $(top_srcdir)/warmrestart/warm_restart.cpp \
+            $(top_srcdir)/warmrestart/warm_restart.h
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
