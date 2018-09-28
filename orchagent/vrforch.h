@@ -3,6 +3,7 @@
 
 #include "request_parser.h"
 
+extern sai_object_id_t gVirtualRouterId;
 typedef std::unordered_map<std::string, sai_object_id_t> VRFTable;
 
 const request_description_t request_description = {
@@ -14,6 +15,7 @@ const request_description_t request_description = {
         { "ttl_action",    REQ_T_PACKET_ACTION },
         { "ip_opt_action", REQ_T_PACKET_ACTION },
         { "l3_mc_action",  REQ_T_PACKET_ACTION },
+        { "fall_through",  REQ_T_BOOL },
     },
     { } // no mandatory attributes
 };
@@ -21,7 +23,7 @@ const request_description_t request_description = {
 class VRFRequest : public Request
 {
 public:
-    VRFRequest() : Request(request_description, '|') { }
+    VRFRequest() : Request(request_description, ':') { }
 };
 
 
@@ -39,8 +41,16 @@ public:
 
     sai_object_id_t getVRFid(const std::string& name) const
     {
-        return vrf_table_.at(name);
+        if (vrf_table_.find(name) != std::end(vrf_table_))
+        {
+            return vrf_table_.at(name);
+        }
+        else
+        {
+            return gVirtualRouterId;
+        }
     }
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);

@@ -43,6 +43,7 @@ orchagent_SOURCES = \
             vrforch.cpp \
             countercheckorch.cpp \
             vxlanorch.cpp \
+            vnetorch.cpp \
             dtelorch.cpp \
             flexcounterorch.cpp \
             acltable.h \
@@ -74,6 +75,7 @@ orchagent_SOURCES = \
             dtelorch.h \
             countercheckorch.h \
             vxlanorch.h \
+            vnetorch.h \
             flexcounterorch.h   \
             $(top_srcdir)/warmrestart/warm_restart.cpp \
             $(top_srcdir)/warmrestart/warm_restart.h

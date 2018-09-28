@@ -13,6 +13,8 @@ using namespace swss;
 
 #define VLAN_PREFIX         "Vlan"
 #define LAG_PREFIX          "PortChannel"
+#define VNET_PREFIX         "Vnet"
+#define VRF_PREFIX          "Vrf"
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
@@ -21,6 +23,7 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
+        m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME)
 {
 }
@@ -63,6 +66,15 @@ bool IntfMgr::isIntfStateOk(const string &alias)
             return true;
         }
     }
+    else if (!alias.compare(0, strlen(VNET_PREFIX), VNET_PREFIX) ||
+             !alias.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+    {
+        if (m_stateVrfTable.get(alias, temp))
+        {
+            SWSS_LOG_DEBUG("Vnet/Vrf %s is ready", alias.c_str());
+            return true;
+        }
+    }
     else if (m_statePortTable.get(alias, temp))
     {
         SWSS_LOG_DEBUG("Port %s is ready", alias.c_str());
@@ -71,6 +83,7 @@ bool IntfMgr::isIntfStateOk(const string &alias)
 
     return false;
 }
+
 void IntfMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -82,15 +95,28 @@ void IntfMgr::doTask(Consumer &consumer)
 
         vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter);
 
-        if (keys.size() != 2)
+        const vector<FieldValueTuple>& data = kfvFieldsValues(t);
+        string vrf_name = "";
+
+        for (auto idx : data)
         {
-            SWSS_LOG_ERROR("Invalid key %s", kfvKey(t).c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
+            const auto &field = fvField(idx);
+            const auto &value = fvValue(idx);
+            if (field == "vnet_name" || field == "vrf_name")
+            {
+                vrf_name = value;
+            }
         }
 
         string alias(keys[0]);
-        IpPrefix ip_prefix(keys[1]);
+        IpPrefix ip_prefix;
+        bool ip_prefix_in_key = false;
+
+        if (keys.size() > 1)
+        {
+            ip_prefix = IpPrefix(keys[1]);
+            ip_prefix_in_key = true;
+        }
 
         string op = kfvOp(t);
         if (op == SET_COMMAND)
@@ -107,11 +133,33 @@ void IntfMgr::doTask(Consumer &consumer)
                 it++;
                 continue;
             }
-            setIntfIp(alias, "add", ip_prefix.to_string(), ip_prefix.isV4());
+
+            if (!vrf_name.empty() && !isIntfStateOk(vrf_name))
+            {
+                SWSS_LOG_DEBUG("VRF is not ready, skipping %s", kfvKey(t).c_str());
+                it++;
+                continue;
+            }
+
+            if (ip_prefix_in_key)
+            {
+                setIntfIp(alias, "add", ip_prefix.to_string(), ip_prefix.isV4());
+            }
+            else
+            {
+                // @TODO - Enslave VRF
+            }
         }
         else if (op == DEL_COMMAND)
         {
-            setIntfIp(alias, "del", ip_prefix.to_string(), ip_prefix.isV4());
+            if (ip_prefix_in_key)
+            {
+                setIntfIp(alias, "del", ip_prefix.to_string(), ip_prefix.isV4());
+            }
+            else
+            {
+                // @TODO - Remove enslave to master device
+            }
         }
         else
         {

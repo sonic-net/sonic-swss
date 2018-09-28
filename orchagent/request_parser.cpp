@@ -4,7 +4,6 @@
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
-#include <set>
 #include <exception>
 
 #include "sai.h"
@@ -145,6 +144,9 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
             case REQ_T_UINT:
                 attr_item_uint_[fvField(*i)] = parseUint(fvValue(*i));
                 break;
+            case REQ_T_SET:
+                attr_item_set_[fvField(*i)] = parseSet(fvValue(*i));
+                break;
             default:
                 throw std::logic_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
         }
@@ -204,6 +206,25 @@ IpAddress Request::parseIpAddress(const std::string& str)
     catch (std::invalid_argument& _)
     {
         throw std::invalid_argument(std::string("Invalid ip address: ") + str);
+    }
+}
+
+set<string> Request::parseSet(const std::string& str)
+{
+    try
+    {
+        set<string> str_set;
+        string substr;
+        std::istringstream iss(str);
+        while (getline(iss, substr, ','))
+        {
+            str_set.insert(str);
+        }
+        return str_set;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid string set"));
     }
 }
 

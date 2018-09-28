@@ -2,6 +2,8 @@
 #define __REQUEST_PARSER_H
 
 #include "ipaddress.h"
+#include <sstream>
+#include <set>
 
 typedef enum _request_types_t
 {
@@ -13,6 +15,7 @@ typedef enum _request_types_t
     REQ_T_IP,
     REQ_T_VLAN,
     REQ_T_UINT,
+    REQ_T_SET,
 } request_types_t;
 
 typedef struct _request_description
@@ -112,6 +115,12 @@ public:
         return attr_item_uint_.at(attr_name);
     }
 
+    const set<string>& getAttrSet(const std::string& attr_name) const
+    {
+        assert(is_parsed_);
+        return attr_item_set_.at(attr_name);
+    }
+
 protected:
     Request(const request_description_t& request_description, const char key_separator)
         : request_description_(request_description),
@@ -131,6 +140,7 @@ private:
     IpAddress parseIpAddress(const std::string& str);
     uint64_t parseUint(const std::string& str);
     uint16_t parseVlan(const std::string& str);
+    set<string> parseSet(const std::string& str);
 
     sai_packet_action_t parsePacketAction(const std::string& str);
 
@@ -154,6 +164,7 @@ private:
     std::unordered_map<std::string, uint16_t> attr_item_vlan_;
     std::unordered_map<std::string, IpAddress> attr_item_ip_;
     std::unordered_map<std::string, uint64_t> attr_item_uint_;
+    std::unordered_map<std::string, set<string>> attr_item_set_;
 };
 
 #endif // __REQUEST_PARSER_H
