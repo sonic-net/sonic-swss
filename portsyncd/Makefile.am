@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart
+INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I $(top_srcdir)/cfgmgr
 
 bin_PROGRAMS = portsyncd
 
@@ -8,7 +8,7 @@ else
 DBGFLAGS = -g
 endif
 
-portsyncd_SOURCES = portsyncd.cpp linksync.cpp $(top_srcdir)/warmrestart/warm_restart.cpp $(top_srcdir)/warmrestart/warm_restart.h
+portsyncd_SOURCES = portsyncd.cpp linksync.cpp $(top_srcdir)/warmrestart/warm_restart.cpp $(top_srcdir)/warmrestart/warm_restart.h $(top_srcdir)/cfgmgr/shellcmd.h
 
 portsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 portsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
