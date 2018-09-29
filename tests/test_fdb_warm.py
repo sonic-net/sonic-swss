@@ -54,6 +54,11 @@ def test_fdb_notifications(dvs):
         [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")])
     assert ok, str(extra)
 
+    # check fdb aging attr
+    ok, extra = dvs.all_table_entry_has_no(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_SWITCH',
+        ".*",
+        ["SAI_SWITCH_ATTR_FDB_AGING_TIME"])
+
     # bring up vlan and member
     dvs.set_interface_status("Vlan6", "up")
     dvs.add_ip_address("Vlan6", "6.6.6.1/24")
@@ -122,13 +127,14 @@ def test_fdb_notifications(dvs):
         dvs.stop_swss()
 
         # check FDB learning mode
-        ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
-            iface_2_bridge_port_id["Ethernet64"],
+        ok, extra = dvs.all_table_entry_has(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
+            ".*",
             [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE")])
         assert ok, str(extra)
-        ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
-            iface_2_bridge_port_id["Ethernet68"],
-            [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE")])
+        # check FDB aging time
+        ok, extra = dvs.all_table_entry_has(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_SWITCH',
+            ".*",
+            [("SAI_SWITCH_ATTR_FDB_AGING_TIME", "0")])
         assert ok, str(extra)
 
         dvs.start_swss()
@@ -167,6 +173,11 @@ def test_fdb_notifications(dvs):
         time.sleep(2)
         counter_restarted = dvs.getCrmCounterValue('STATS', 'crm_stats_fdb_entry_used')
         assert counter_inserted == counter_restarted
+
+        # check fdb aging attr
+        ok, extra = dvs.all_table_entry_has_no(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_SWITCH',
+            ".*",
+            ["SAI_SWITCH_ATTR_FDB_AGING_TIME"])
 
     finally:
         # enable warm restart

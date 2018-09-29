@@ -309,6 +309,56 @@ class DockerVirtualSwitch(object):
                 extra_info.append("Desired key regex %s was not found" % str(keyregex))
             return False, extra_info
 
+    def all_table_entry_has(self, db, table, keyregex, attributes):
+        tbl = swsscommon.Table(db, table)
+        keys = tbl.getKeys()
+        extra_info = []
+
+        if len(keys) == 0:
+            extra_info.append("keyregex %s not found" % keyregex)
+            return False, extra_info
+
+        for key in keys:
+            if re.match(keyregex, key) is None:
+                continue
+
+            status, fvs = tbl.get(key)
+            assert status, "Error reading from table %s" % table
+
+            d_attributes = dict(attributes)
+            for k, v in fvs:
+                if k in d_attributes and d_attributes[k] == v:
+                    del d_attributes[k]
+
+            if len(d_attributes) != 0:
+                extra_info.append("Desired attributes %s were not found for key %s" % (str(d_attributes), key))
+                return False, extra_info
+
+        return True, extra_info
+
+    def all_table_entry_has_no(self, db, table, keyregex, attributes_list):
+        tbl = swsscommon.Table(db, table)
+        keys = tbl.getKeys()
+        extra_info = []
+
+        if len(keys) == 0:
+            extra_info.append("keyregex %s not found" % keyregex)
+            return False, extra_info
+
+        for key in keys:
+            if re.match(keyregex, key) is None:
+                continue
+
+            status, fvs = tbl.get(key)
+            assert status, "Error reading from table %s" % table
+
+            for k, v in fvs:
+                if k in attributes_list:
+                    extra_info.append("Unexpected attribute %s was found for key %s" % (k, key))
+                    return False, extra_info
+
+        return True, extra_info
+
     def is_fdb_entry_exists(self, db, table, key_values, attributes):
         tbl =  swsscommon.Table(db, table)
         keys = tbl.getKeys()
