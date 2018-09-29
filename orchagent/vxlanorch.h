@@ -6,14 +6,17 @@
 #include "request_parser.h"
 #include "portsorch.h"
 #include "vrforch.h"
+#include "vnetorch.h"
 
-enum class map_type
+enum class MAP_T
 {
-    MAP_TYPE_INVALID,
+    MAP_TO_INVALID,
     VNI_TO_VLAN_ID,
     VLAN_ID_TO_VNI,
     VRID_TO_VNI,
-    VNI_TO_VRID
+    VNI_TO_VRID,
+    BRIDGE_TO_VNI,
+    VNI_TO_BRIDGE
 };
 
 struct tunnel_ids_t
@@ -35,9 +38,9 @@ public:
         return active;
     }
 
-    bool createTunnel(map_type encap, map_type decap);
-    sai_object_id_t addEncapMapperEntry(sai_object_id_t vrf, uint32_t vni);
-    sai_object_id_t addDecapMapperEntry(sai_object_id_t vrf, uint32_t vni);
+    bool createTunnel(MAP_T encap, MAP_T decap);
+    sai_object_id_t addEncapMapperEntry(sai_object_id_t obj, uint32_t vni);
+    sai_object_id_t addDecapMapperEntry(sai_object_id_t obj, uint32_t vni);
 
     sai_object_id_t getDecapMapId(const std::string& tunnel_name) const
     {
@@ -55,6 +58,8 @@ private:
     bool active = false;
 
     tunnel_ids_t ids = {0x0, 0x0, 0x0, 0x0};
+
+    std::pair<MAP_T, MAP_T> tunnel_map = { MAP_T::MAP_TO_INVALID, MAP_T::MAP_TO_INVALID };
 
     IpAddress       src_ip;
     IpAddress       dst_ip = 0x0;

@@ -23,32 +23,71 @@ extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gUnderlayIfId;
 
+const map<MAP_T, uint32_t> vxlanTunnelMap =
+{
+    { MAP_T::VNI_TO_VLAN_ID, SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID },
+    { MAP_T::VLAN_ID_TO_VNI, SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI },
+    { MAP_T::VRID_TO_VNI, SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI },
+    { MAP_T::VNI_TO_VRID, SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID },
+    { MAP_T::BRIDGE_TO_VNI, SAI_TUNNEL_MAP_TYPE_BRIDGE_IF_TO_VNI },
+    { MAP_T::VNI_TO_BRIDGE,  SAI_TUNNEL_MAP_TYPE_VNI_TO_BRIDGE_IF},
+};
+
+const map<MAP_T, std::pair<uint32_t, uint32_t>> vxlanTunnelMapKeyVal =
+{
+    { MAP_T::VNI_TO_VLAN_ID,
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE }
+    },
+    { MAP_T::VLAN_ID_TO_VNI,
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE }
+    },
+    { MAP_T::VRID_TO_VNI,
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_VIRTUAL_ROUTER_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE }
+    },
+    { MAP_T::VNI_TO_VRID,
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VIRTUAL_ROUTER_ID_VALUE }
+    },
+    { MAP_T::BRIDGE_TO_VNI,
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_BRIDGE_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE }
+    },
+    { MAP_T::VNI_TO_BRIDGE,
+        { SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY, SAI_TUNNEL_MAP_ENTRY_ATTR_BRIDGE_ID_VALUE }
+    },
+};
+
+/*
+ * Const manipulators for the above Map
+ */
+static inline uint32_t tunnelMapType (MAP_T map_t_)
+{
+    return vxlanTunnelMap.at(map_t_);
+}
+
+static inline uint32_t tunnelMapKey (MAP_T map_t_)
+{
+    return vxlanTunnelMapKeyVal.at(map_t_).first;
+}
+
+static inline uint32_t tunnelMapVal (MAP_T map_t_)
+{
+    return vxlanTunnelMapKeyVal.at(map_t_).second;
+}
+
 static sai_object_id_t
-create_tunnel_map(map_type maptype)
+create_tunnel_map(MAP_T map_t_)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_map_attrs;
 
-    attr.id = SAI_TUNNEL_MAP_ATTR_TYPE;
-
-    switch (maptype)
+    if (map_t_ == MAP_T::MAP_TO_INVALID)
     {
-        case map_type::VNI_TO_VLAN_ID:
-            attr.value.s32 = SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID;
-            break;
-        case map_type::VLAN_ID_TO_VNI:
-            attr.value.s32 = SAI_TUNNEL_MAP_TYPE_VLAN_ID_TO_VNI;
-            break;
-        case map_type::VRID_TO_VNI:
-            attr.value.s32 = SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI;
-            break;
-        case map_type::VNI_TO_VRID:
-            attr.value.s32 = SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID;
-            break;
-        default:
-            SWSS_LOG_NOTICE("Invalid map type %d", maptype);
-            return 0;
+        SWSS_LOG_NOTICE("Invalid map type %d", map_t_);
+        return 0;
     }
+
+    attr.id = SAI_TUNNEL_MAP_ATTR_TYPE;
+    attr.value.s32 = tunnelMapType(map_t_);
+
     tunnel_map_attrs.push_back(attr);
 
     sai_object_id_t tunnel_map_id;
@@ -67,8 +106,9 @@ create_tunnel_map(map_type maptype)
 }
 
 sai_object_id_t create_encap_tunnel_map_entry(
+    MAP_T map_t_,
     sai_object_id_t tunnel_map_id,
-    sai_object_id_t router_id,
+    sai_object_id_t obj_id,
     sai_uint32_t vni)
 {
     sai_attribute_t attr;
@@ -76,18 +116,18 @@ sai_object_id_t create_encap_tunnel_map_entry(
     std::vector<sai_attribute_t> tunnel_map_entry_attrs;
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
-    attr.value.s32 = SAI_TUNNEL_MAP_TYPE_VIRTUAL_ROUTER_ID_TO_VNI;
+    attr.value.s32 = tunnelMapType(map_t_);
     tunnel_map_entry_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP;
     attr.value.oid = tunnel_map_id;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_VIRTUAL_ROUTER_ID_KEY;
-    attr.value.oid = router_id;
+    attr.id = tunnelMapKey(map_t_);
+    attr.value.oid = obj_id;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_VALUE;
+    attr.id = tunnelMapVal(map_t_);
     attr.value.u32 = vni;
     tunnel_map_entry_attrs.push_back(attr);
 
@@ -99,8 +139,9 @@ sai_object_id_t create_encap_tunnel_map_entry(
 }
 
 sai_object_id_t create_decap_tunnel_map_entry(
+    MAP_T map_t_,
     sai_object_id_t tunnel_map_id,
-    sai_object_id_t router_id,
+    sai_object_id_t obj_id,
     sai_uint32_t vni)
 {
     sai_attribute_t attr;
@@ -108,19 +149,19 @@ sai_object_id_t create_decap_tunnel_map_entry(
     std::vector<sai_attribute_t> tunnel_map_entry_attrs;
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
-    attr.value.s32 = SAI_TUNNEL_MAP_TYPE_VNI_TO_VIRTUAL_ROUTER_ID;
+    attr.value.s32 = tunnelMapType(map_t_);
     tunnel_map_entry_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP;
     attr.value.oid = tunnel_map_id;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY;
+    attr.id = tunnelMapKey(map_t_);
     attr.value.u32 = vni;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_VIRTUAL_ROUTER_ID_VALUE;
-    attr.value.oid = router_id;
+    attr.id = tunnelMapVal(map_t_);
+    attr.value.oid = obj_id;
     tunnel_map_entry_attrs.push_back(attr);
 
     sai_tunnel_api->create_tunnel_map_entry(&tunnel_map_entry_id, gSwitchId,
@@ -174,6 +215,7 @@ sai_status_t create_nexthop_tunnel(
 
 static sai_object_id_t
 create_tunnel_map_entry(
+    MAP_T map_t_,
     sai_object_id_t tunnel_map_id,
     sai_uint32_t vni,
     sai_uint16_t vlan_id)
@@ -182,18 +224,18 @@ create_tunnel_map_entry(
     std::vector<sai_attribute_t> tunnel_map_entry_attrs;
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
-    attr.value.s32 = SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID;
+    attr.value.s32 = tunnelMapType(map_t_);
     tunnel_map_entry_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP;
     attr.value.oid = tunnel_map_id;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY;
+    attr.id = tunnelMapKey(map_t_);
     attr.value.u32 = vni;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE;
+    attr.id = tunnelMapVal(map_t_);
     attr.value.u16 = vlan_id;
     tunnel_map_entry_attrs.push_back(attr);
 
@@ -329,7 +371,7 @@ create_tunnel_termination(
     return term_table_id;
 }
 
-bool VxlanTunnel::createTunnel(map_type encap, map_type decap)
+bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap)
 {
     try
     {
@@ -338,7 +380,7 @@ bool VxlanTunnel::createTunnel(map_type encap, map_type decap)
 
         ids.tunnel_decap_id = create_tunnel_map(decap);
 
-        if (encap != map_type::MAP_TYPE_INVALID )
+        if (encap != MAP_T::MAP_TO_INVALID )
         {
             ids.tunnel_encap_id = create_tunnel_map(encap);
             ip = &ips;
@@ -355,6 +397,7 @@ bool VxlanTunnel::createTunnel(map_type encap, map_type decap)
 
         ids.tunnel_term_id = create_tunnel_termination(ids.tunnel_id, &ips, ip, gVirtualRouterId);
         active = true;
+        tunnel_map = { encap, decap };
     }
     catch (const std::runtime_error& error)
     {
@@ -368,16 +411,18 @@ bool VxlanTunnel::createTunnel(map_type encap, map_type decap)
     return true;
 }
 
-sai_object_id_t VxlanTunnel::addEncapMapperEntry(sai_object_id_t vrf, uint32_t vni)
+sai_object_id_t VxlanTunnel::addEncapMapperEntry(sai_object_id_t obj, uint32_t vni)
 {
     const auto encap_id = getEncapMapId(tunnel_name);
-    return create_encap_tunnel_map_entry(encap_id, vrf, vni);
+    const auto map_t = tunnel_map.first;
+    return create_encap_tunnel_map_entry(map_t, encap_id, obj, vni);
 }
 
-sai_object_id_t VxlanTunnel::addDecapMapperEntry(sai_object_id_t vrf, uint32_t vni)
+sai_object_id_t VxlanTunnel::addDecapMapperEntry(sai_object_id_t obj, uint32_t vni)
 {
     const auto decap_id = getDecapMapId(tunnel_name);
-    return create_decap_tunnel_map_entry(decap_id, vrf, vni);
+    const auto map_t = tunnel_map.second;
+    return create_decap_tunnel_map_entry(map_t, decap_id, obj, vni);
 }
 
 bool VxlanTunnelOrch::addOperation(const Request& request)
@@ -463,7 +508,7 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     if (!tunnel_obj->isActive())
     {
         //@Todo, currently only decap mapper is allowed
-        tunnel_obj->createTunnel(map_type::MAP_TYPE_INVALID, map_type::VNI_TO_VLAN_ID);
+        tunnel_obj->createTunnel(MAP_T::MAP_TO_INVALID, MAP_T::VNI_TO_VLAN_ID);
     }
 
     const auto full_tunnel_map_entry_name = request.getFullKey();
@@ -478,7 +523,8 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
 
     try
     {
-        auto tunnel_map_entry_id = create_tunnel_map_entry(tunnel_map_id, vni_id, vlan_id);
+        auto tunnel_map_entry_id = create_tunnel_map_entry(MAP_T::VNI_TO_VLAN_ID,
+                                                           tunnel_map_id, vni_id, vlan_id);
         vxlan_tunnel_map_table_[full_tunnel_map_entry_name] = tunnel_map_entry_id;
     }
     catch(const std::runtime_error& error)
@@ -521,48 +567,46 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
         return true;
     }
 
+    string vrf_name = request.getAttrString("vrf");;
+    VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
+    if (!vnet_orch->isVnetexists(vrf_name))
+    {
+        SWSS_LOG_INFO("VNet not yet created %s", vrf_name.c_str());
+        return false;
+    }
+
     auto& tunnel_obj = tunnel_orch->getVxlanTunnel(tunnel_name);
     if (!tunnel_obj->isActive())
     {
-        tunnel_obj->createTunnel(map_type::VRID_TO_VNI, map_type::VNI_TO_VRID);
-    }
-
-    auto vrf_name = request.getAttrString("vrf");
-    VRFOrch* vrf_orch = gDirectory.get<VRFOrch*>();
-    if (!vrf_orch->isVRFexists(vrf_name))
-    {
-        SWSS_LOG_INFO("VRF not created for VNET %s", vrf_name.c_str());
-        return false;
+        if (vnet_orch->isVnetExecVrf())
+        {
+            tunnel_obj->createTunnel(MAP_T::VRID_TO_VNI, MAP_T::VNI_TO_VRID);
+        }
+        else
+        {
+            tunnel_obj->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE);
+        }
     }
 
     const auto full_map_entry_name = request.getFullKey();
     if (isVrfMapExists(full_map_entry_name))
     {
-        SWSS_LOG_ERROR("Vxlan VRF map '%s' is already exist", full_map_entry_name.c_str());
+        SWSS_LOG_ERROR("Vxlan map '%s' is already exist", full_map_entry_name.c_str());
         return true;
     }
 
-    const auto tunnel_map_entry_name = request.getKeyString(1);
-    sai_object_id_t ivrf, evrf;
-    if (!vrf_orch->isMapexists(vrf_name))
-    {
-        ivrf = evrf = vrf_orch->getVRFid(vrf_name);
-    }
-    else
-    {
-        auto vnet_name = vrf_orch->getVnetName(vrf_name);
-        ivrf = vrf_orch->getVRFidEgress(vnet_name);
-        evrf = vrf_orch->getVRFidIngress(vnet_name);
-    }
+    sai_object_id_t encap_obj = vnet_orch->getEncapMapId(vrf_name);
+    sai_object_id_t decap_obj = vnet_orch->getDecapMapId(vrf_name);
 
+    const auto tunnel_map_entry_name = request.getKeyString(1);
     vrf_map_entry_t entry;
     try
     {
         /*
-         * Create encap and decap mapper for each VRF per VNET entry
+         * Create encap and decap mapper per VNET entry
          */
-        entry.encap_id = tunnel_obj->addEncapMapperEntry(ivrf, vni_id);
-        entry.decap_id = tunnel_obj->addDecapMapperEntry(evrf, vni_id);
+        entry.encap_id = tunnel_obj->addEncapMapperEntry(encap_obj, vni_id);
+        entry.decap_id = tunnel_obj->addDecapMapperEntry(decap_obj, vni_id);
 
         SWSS_LOG_INFO("Vxlan tunnel encap entry '%lx' decap entry '0x%lx'",
                 entry.encap_id, entry.decap_id);
