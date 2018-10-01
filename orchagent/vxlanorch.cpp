@@ -548,6 +548,26 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
     return true;
 }
 
+void VxlanVrfMapOrch::doTaskVnet(string& vrf_name, VxlanTunnel_T& tunnel_obj,
+                                 std::pair<sai_object_id_t, sai_object_id_t>& cap_obj)
+{
+    VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
+    if (!tunnel_obj->isActive())
+    {
+        if (vnet_orch->isVnetExecVrf())
+        {
+            tunnel_obj->createTunnel(MAP_T::VRID_TO_VNI, MAP_T::VNI_TO_VRID);
+        }
+        else
+        {
+            tunnel_obj->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE);
+        }
+    }
+
+    cap_obj.first = vnet_orch->getEncapMapId(vrf_name);
+    cap_obj.second = vnet_orch->getDecapMapId(vrf_name);
+}
+
 bool VxlanVrfMapOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
@@ -567,27 +587,6 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
         return true;
     }
 
-    string vrf_name = request.getAttrString("vrf");;
-    VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
-    if (!vnet_orch->isVnetexists(vrf_name))
-    {
-        SWSS_LOG_INFO("VNet not yet created %s", vrf_name.c_str());
-        return false;
-    }
-
-    auto& tunnel_obj = tunnel_orch->getVxlanTunnel(tunnel_name);
-    if (!tunnel_obj->isActive())
-    {
-        if (vnet_orch->isVnetExecVrf())
-        {
-            tunnel_obj->createTunnel(MAP_T::VRID_TO_VNI, MAP_T::VNI_TO_VRID);
-        }
-        else
-        {
-            tunnel_obj->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE);
-        }
-    }
-
     const auto full_map_entry_name = request.getFullKey();
     if (isVrfMapExists(full_map_entry_name))
     {
@@ -595,18 +594,36 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
         return true;
     }
 
-    sai_object_id_t encap_obj = vnet_orch->getEncapMapId(vrf_name);
-    sai_object_id_t decap_obj = vnet_orch->getDecapMapId(vrf_name);
+    auto& tunnel_obj = tunnel_orch->getVxlanTunnel(tunnel_name);
+    std::pair<sai_object_id_t, sai_object_id_t> cap_obj;
+
+    string vrf_name = request.getAttrString("vrf");;
+    VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
+    VRFOrch* vrf_orch = gDirectory.get<VRFOrch*>();
+
+    if (vnet_orch->isVnetexists(vrf_name))
+    {
+        doTaskVnet(vrf_name, tunnel_obj, cap_obj);
+    }
+    else if (vrf_orch->isVRFexists(vrf_name))
+    {
+        //Do VRF task
+    }
+    else
+    {
+        SWSS_LOG_INFO("VNet/Vrf not yet created %s", vrf_name.c_str());
+        return false;
+    }
 
     const auto tunnel_map_entry_name = request.getKeyString(1);
     vrf_map_entry_t entry;
     try
     {
         /*
-         * Create encap and decap mapper per VNET entry
+         * Create encap and decap mapper
          */
-        entry.encap_id = tunnel_obj->addEncapMapperEntry(encap_obj, vni_id);
-        entry.decap_id = tunnel_obj->addDecapMapperEntry(decap_obj, vni_id);
+        entry.encap_id = tunnel_obj->addEncapMapperEntry(cap_obj.first, vni_id);
+        entry.decap_id = tunnel_obj->addDecapMapperEntry(cap_obj.second, vni_id);
 
         SWSS_LOG_INFO("Vxlan tunnel encap entry '%lx' decap entry '0x%lx'",
                 entry.encap_id, entry.decap_id);

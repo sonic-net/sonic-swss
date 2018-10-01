@@ -176,6 +176,8 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
+    void doTaskVnet(string& , VxlanTunnel_T& , std::pair<sai_object_id_t, sai_object_id_t>&);
+
     VxlanVrfTable vxlan_vrf_table_;
     VxlanVrfRequest request_;
 };
