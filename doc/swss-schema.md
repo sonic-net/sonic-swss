@@ -38,7 +38,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
 
 ---------------------------------------------
 ### INTF_TABLE
-intfsyncd manages this table.  In SONiC, CPU (management) and logical ports (vlan, loopback, LAG) are declared in /etc/network/interface and loaded into the INTF_TABLE.
+cfgmgrd manages this table.  In SONiC, CPU (management) and logical ports (vlan, loopback, LAG) are declared in /etc/network/interface and /etc/sonic/config_db.json and loaded into the INTF_TABLE.
 
 IP prefixes are formatted according to [RFC5954](https://tools.ietf.org/html/rfc5954) with a prefix length appended to the end
 
@@ -751,5 +751,3 @@ What configuration files should we have?  Do apps, orch agent each need separate
 [port_config.ini](https://github.com/stcheng/swss/blob/mock/portsyncd/port_config.ini) - defines physical port information
 
 portsyncd reads from port_config.ini and updates PORT_TABLE in APP_DB
-
-All other apps (intfsyncd) read from PORT_TABLE in APP_DB

@@ -44,7 +44,6 @@ deps/
 ###############
 teamsyncd/teamsyncd
 fpmsyncd/fpmsyncd
-intfsyncd/intfsyncd
 cfgmgr/intfmgrd
 cfgmgr/vlanmgrd
 cfgmgr/buffermanager

@@ -6,13 +6,13 @@ import json
 
 # start processes in SWSS
 def start_swss(dvs):
-    dvs.runcmd(['sh', '-c', 'supervisorctl start orchagent; supervisorctl start portsyncd; supervisorctl start intfsyncd; \
+    dvs.runcmd(['sh', '-c', 'supervisorctl start orchagent; supervisorctl start portsyncd; \
         supervisorctl start neighsyncd; supervisorctl start intfmgrd; supervisorctl start vlanmgrd; \
         supervisorctl start buffermgrd; supervisorctl start arp_update'])
 
 # stop processes in SWSS
 def stop_swss(dvs):
-    dvs.runcmd(['sh', '-c', 'supervisorctl stop orchagent; supervisorctl stop portsyncd; supervisorctl stop intfsyncd; \
+    dvs.runcmd(['sh', '-c', 'supervisorctl stop orchagent; supervisorctl stop portsyncd; \
         supervisorctl stop neighsyncd;  supervisorctl stop intfmgrd; supervisorctl stop vlanmgrd; \
         supervisorctl stop buffermgrd; supervisorctl stop arp_update'])
 
