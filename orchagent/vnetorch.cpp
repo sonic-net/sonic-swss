@@ -49,7 +49,7 @@ bool VNetVrfObject::createObj(vector<sai_attribute_t>& attrs)
         }
     }
 
-    SWSS_LOG_NOTICE("VNET '%s' router object created ", vnet_name.c_str());
+    SWSS_LOG_INFO("VNET '%s' router object created ", vnet_name.c_str());
     return true;
 }
 
@@ -71,7 +71,7 @@ bool VNetVrfObject::updateObj(vector<sai_attribute_t>& attrs)
         }
     }
 
-    SWSS_LOG_NOTICE("VNET '%s' was updated", vnet_name.c_str());
+    SWSS_LOG_INFO("VNET '%s' was updated", vnet_name.c_str());
     return true;
 }
 
@@ -87,6 +87,8 @@ VNetVrfObject::~VNetVrfObject()
                             vnet_name.c_str(), status);
         }
     }
+
+    SWSS_LOG_INFO("VNET '%s' deleted ", vnet_name.c_str());
 }
 
 /*
@@ -132,6 +134,7 @@ bool VNetOrch::addOperation(const Request& request)
     }
 
     const std::string& vnet_name = request.getKeyString(0);
+    SWSS_LOG_INFO("VNET '%s' add request", vnet_name.c_str());
 
     try
     {
@@ -188,5 +191,6 @@ bool VNetOrch::delOperation(const Request& request)
 
     vnet_table_.erase(vnet_name);
 
+    SWSS_LOG_NOTICE("VNET '%s' del request", vnet_name.c_str());
     return true;
 }

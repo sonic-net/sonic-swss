@@ -181,6 +181,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);
     m_orchList.push_back(gAclOrch);
+    m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
