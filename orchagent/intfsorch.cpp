@@ -118,7 +118,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 
         if (keys.size() > 1)
         {
-            ip_prefix = IpPrefix(keys[1]);
+            ip_prefix = kfvKey(t).substr(kfvKey(t).find(':')+1);
             ip_prefix_in_key = true;
         }
 
