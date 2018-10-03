@@ -31,7 +31,7 @@ bool VNetVrfObject::createObj(vector<sai_attribute_t>& attrs)
         {
             SWSS_LOG_ERROR("Failed to create virtual router name: %s, rv: %d",
                            vnet_name.c_str(), status);
-            throw std::runtime_error("Failed to create VR object");;
+            throw std::runtime_error("Failed to create VR object");
         }
         return true;
     };

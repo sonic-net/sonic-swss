@@ -473,7 +473,7 @@ void IntfsOrch::addIp2MeRoute(string &vrf_name, const IpPrefix &ip_prefix)
 {
     sai_route_entry_t unicast_route_entry;
     unicast_route_entry.switch_id = gSwitchId;
-    unicast_route_entry.vr_id = m_vrfOrch->getVRFid(vrf_name);;
+    unicast_route_entry.vr_id = m_vrfOrch->getVRFid(vrf_name);
     copy(unicast_route_entry.destination, ip_prefix.getIp());
 
     sai_attribute_t attr;
