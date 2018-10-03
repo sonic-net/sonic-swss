@@ -27,7 +27,7 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 {
 }
 
-bool IntfMgr::setIntfIp(const string &alias, const string &opCmd,
+void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
                         const string &ipPrefixStr, const bool ipv4)
 {
     stringstream cmd;
@@ -41,11 +41,10 @@ bool IntfMgr::setIntfIp(const string &alias, const string &opCmd,
     {
         cmd << IP_CMD << " -6 address " << opCmd << " " << ipPrefixStr << " dev " << alias;
     }
-    int ret = swss::exec(cmd.str(), res);
-    return (ret == 0);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
-bool IntfMgr::setIntfVrf(const string &alias, const string vrfName)
+void IntfMgr::setIntfVrf(const string &alias, const string vrfName)
 {
     stringstream cmd;
     string res;
@@ -58,8 +57,7 @@ bool IntfMgr::setIntfVrf(const string &alias, const string vrfName)
     {
         cmd << IP_CMD << " link set " << alias << " nomaster";
     }
-    int ret = swss::exec(cmd.str(), res);
-    return (ret == 0);
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
 bool IntfMgr::isIntfStateOk(const string &alias)
