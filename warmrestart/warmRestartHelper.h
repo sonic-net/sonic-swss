@@ -5,6 +5,7 @@
 #include <vector>
 #include <map>
 #include <unordered_map>
+#include <algorithm>
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -15,44 +16,6 @@
 
 
 namespace swss {
-
-
-/* FieldValueTuple functor to serve as comparator for restorationMap */
-struct fvComparator
-{
-    bool operator()(const std::vector<FieldValueTuple> &left,
-                    const std::vector<FieldValueTuple> &right) const
-    {
-        /*
-         * The sizes of both tuple-vectors should always match within any given
-         * application, otherwise we are running into some form of bug.
-         */
-        assert(left.size() == right.size());
-
-        /*
-         * Iterate through all the tuples present in left-vector and compare them
-         * with those in the right one.
-         */
-        for (auto &fvLeft : left)
-        {
-            /*
-             * Notice that we are forced to iterate through all the tuples in the
-             * right-vector given that the order of fields within a tuple is not
-             * fully deterministic (i.e. 'left' could hold 'nh: 1.1.1.1 / if: eth0'
-             * and 'right' could be 'if: eth0, nh: 1.1.1.1').
-             */
-            for (auto &fvRight : right)
-            {
-                if (fvField(fvRight) == fvField(fvLeft))
-                {
-                    return fvLeft < fvRight;
-                }
-            }
-        }
-
-        return true;
-    }
-};
 
 
 class WarmStartHelper {
@@ -66,25 +29,14 @@ class WarmStartHelper {
 
     ~WarmStartHelper();
 
-    /* State of collected fieldValue tuples */
-    enum fvState_t
-    {
-        STALE   = 1,
-        CLEAN   = 2,
-        NEW     = 3,
-        DELETE  = 4
-    };
+    /* fvVector type to be used to host AppDB restored elements */
+    using kfvVector = std::vector<KeyOpFieldsValuesTuple>;
 
     /*
-     * RestorationMap types serve as the buffer data-struct where to hold the state
-     * over which to run the reconciliation logic.
+     * kfvMap type to be utilized to store all the new/refresh state coming
+     * from the restarting applications.
      */
-    using fvRestorationMap = std::map<std::vector<FieldValueTuple>, fvState_t, fvComparator>;
-    using restorationMap = std::unordered_map<std::string, fvRestorationMap>;
-
-    /* Useful type for restorationMap manipulation */
-    using fieldValuesTupleVoV = std::vector<std::vector<FieldValueTuple>>;
-
+    using kfvMap = std::unordered_map<std::string, KeyOpFieldsValuesTuple>;
 
     void setState(WarmStart::WarmStartState state);
 
@@ -100,25 +52,23 @@ class WarmStartHelper {
 
     bool runRestoration(void);
 
-    bool buildRestorationMap(void);
-
-    void insertRestorationMap(const KeyOpFieldsValuesTuple &kfv, fvState_t state);
-
-    void removeRestorationMap(const KeyOpFieldsValuesTuple &kfv, fvState_t state);
-
-    void adjustRestorationMap(fvRestorationMap          &fvMap,
-                              const fieldValuesTupleVoV &fvVector,
-                              const std::string         &key);
+    void insertRefreshMap(const KeyOpFieldsValuesTuple &kfv);
 
     void reconcile(void);
 
-    void transformKFV(const std::vector<FieldValueTuple> &data,
-                      std::vector<FieldValueTuple>       &fvVector);
+    bool compareAllFV(const std::vector<FieldValueTuple> &left,
+                      const std::vector<FieldValueTuple> &right);
+
+    bool compareOneFV(const std::string &v1, const std::string &v2);
+
+    const std::string printKFV(const std::string                  &key,
+                               const std::vector<FieldValueTuple> &fv);
 
   private:
-    Table                     m_restorationTable;  // redis table to import current-state from
     ProducerStateTable       *m_syncTable;         // producer-table to sync/push state to
-    restorationMap            m_restorationMap;    // buffer struct to hold old&new state
+    Table                     m_restorationTable;  // redis table to import current-state from
+    kfvVector                 m_restorationVector; // buffer struct to hold old state
+    kfvMap                    m_refreshMap;        // buffer struct to hold new state
     WarmStart::WarmStartState m_state;             // cached value of warmStart's FSM state
     bool                      m_enabled;           // warm-reboot enabled/disabled status
     std::string               m_syncTableName;     // producer-table-name to sync/push state to

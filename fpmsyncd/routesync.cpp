@@ -54,11 +54,14 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         }
         else
         {
-            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s\n", destipprefix);
+            SWSS_LOG_INFO("Warm-Restart mode: Receiving delete msg: %s\n",
+                          destipprefix);
 
             vector<FieldValueTuple> fvVector;
-            const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix, "", fvVector);
-            m_warmStartHelper.removeRestorationMap(kfv, WarmStartHelper::DELETE);
+            const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
+                                                               DEL_COMMAND,
+                                                               fvVector);
+            m_warmStartHelper.insertRefreshMap(kfv);
             return;
         }
     }
@@ -157,7 +160,9 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         SWSS_LOG_INFO("Warm-Restart mode: RouteTable set msg: %s %s %s\n",
                       destipprefix, nexthops.c_str(), ifnames.c_str());
 
-        const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix, "", fvVector);
-        m_warmStartHelper.insertRestorationMap(kfv, WarmStartHelper::CLEAN);
+        const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
+                                                           SET_COMMAND,
+                                                           fvVector);
+        m_warmStartHelper.insertRefreshMap(kfv);
     }
 }

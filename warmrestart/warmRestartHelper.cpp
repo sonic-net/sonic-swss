@@ -97,290 +97,53 @@ uint32_t WarmStartHelper::getRestartTimer(void) const
  */
 bool WarmStartHelper::runRestoration()
 {
-    bool state_available;
-
     SWSS_LOG_NOTICE("Warm-Restart: Initiating AppDB restoration process for %s "
                     "application.", m_appName.c_str());
 
-    if (buildRestorationMap())
-    {
-        setState(WarmStart::RESTORED);
-        state_available = true;
-    }
-    else
-    {
-        setState( WarmStart::RECONCILED);
-        state_available = false;
-    }
+    m_restorationTable.getContent(m_restorationVector);
 
-    SWSS_LOG_NOTICE("Warm-Restart: Completed AppDB restoration process for %s "
-                    "application.", m_appName.c_str());
-
-    return state_available;
-}
-
-
-bool WarmStartHelper::buildRestorationMap(void)
-{
-    std::vector<KeyOpFieldsValuesTuple> restorationVector;
-
-    m_restorationTable.getContent(restorationVector);
-    if (!restorationVector.size())
+    /*
+     * If there's no AppDB state to restore, then alert callee right away to avoid
+     * iterating through the 'reconciliation' process.
+     */
+    if (!m_restorationVector.size())
     {
         SWSS_LOG_NOTICE("Warm-Restart: No records received from AppDB for %s "
                         "application.", m_appName.c_str());
+
+        setState(WarmStart::RECONCILED);
+
         return false;
     }
+
     SWSS_LOG_NOTICE("Warm-Restart: Received %d records from AppDB for %s "
                     "application.",
-                    static_cast<int>(restorationVector.size()),
+                    static_cast<int>(m_restorationVector.size()),
                     m_appName.c_str());
 
-    /* Proceed to insert every restored element into the reconciliation buffer */
-    for (auto &elem : restorationVector)
-    {
-        insertRestorationMap(elem, STALE);
-    }
+    setState(WarmStart::RESTORED);
+
+    SWSS_LOG_NOTICE("Warm-Restart: Completed AppDB restoration process for %s "
+                    "application.", m_appName.c_str());
 
     return true;
 }
 
 
-/*
- * Method in charge of populating the restorationMap with old/new state. This state
- * can either come from southbound data-stores (old/existing state) or from any
- * of the applications (new state) interested in warm-reboot capabilities.
- */
-void WarmStartHelper::insertRestorationMap(const KeyOpFieldsValuesTuple &kfv,
-                                           fvState_t                     state)
+void WarmStartHelper::insertRefreshMap(const KeyOpFieldsValuesTuple &kfv)
 {
-    std::string key = kfvKey(kfv);
-    std::vector<FieldValueTuple> fieldValues = kfvFieldsValues(kfv);
+    const std::string key = kfvKey(kfv);
 
-    fieldValuesTupleVoV fvVector;
-
-    /*
-     * Iterate through all the fieldValue-tuples present in this kfv entry to
-     * split its values into separated tuples. Store these separated tuples in
-     * a temporary fieldValue vector.
-     *
-     * Here we are simply converting from KFV format to a split-based layout
-     * represented by the fvVector variable. Notice that the conversion for
-     * applications with no special requirements (i.e one simple field-value per
-     * key) is straightforward.
-     *
-     * Example 1 (fpmsyncd):
-     *
-     * input kfv: 1.1.1.1/30, vector{nexthop: 10.1.1.1, 10.1.1.2, ifname: eth1, eth2}
-     *
-     * output fvVector: vector{v1{nexthop: 10.1.1.1, ifname: eth1},
-     *                         v2{nexthop: 10.1.1.2, ifname: eth2}}
-     *
-     * Example 2 (neighsyncd):
-     *
-     * input kfv: Ethernet0:1.1.1.1, vector{neigh: 00:00:00:00:00:01, family: IPv4}
-     *
-     * output fvVector: vector{v1{neigh: 00:00:00:00:00:01, family: IPv4}}
-     *
-     */
-    for (auto &fv : fieldValues)
-    {
-        std::string field = fvField(fv);
-        std::vector<std::string> splitValues = tokenize(fvValue(fv), ',');
-
-        /*
-         * Dealing with tuples with empty values. Example: directly connected
-         * intfs will show up as [ nexthop = "" ]
-         */
-        if (!splitValues.size())
-        {
-            splitValues.push_back("");
-        }
-
-        for (int j = 0; j < static_cast<int>(splitValues.size()); ++j)
-        {
-            if (j < static_cast<int>(fvVector.size()))
-            {
-                fvVector[j].emplace_back(field, splitValues[j]);
-            }
-            else
-            {
-                fvVector.emplace_back(
-                    std::vector<FieldValueTuple>{make_pair(field, splitValues[j])});
-            }
-        }
-    }
-
-    /*
-     * Proceeding to insert/update the received fieldvalue entries into the
-     * restorationMap.
-     */
-    fvRestorationMap fvMap;
-
-    if (m_restorationMap.count(key))
-    {
-        fvMap = m_restorationMap[key];
-    }
-
-    /*
-     * Let's now deal with transient (best-path) selections, which is only
-     * required when we are receiving new/refreshed state from north-bound apps
-     * (CLEAN flag).
-     */
-    if (state == CLEAN)
-    {
-        adjustRestorationMap(fvMap, fvVector, key);
-    }
-
-    /*
-     * We will iterate through each of the fieldvalue-tuples in the fvVector to
-     * either insert or update the corresponding entry in the map.
-     */
-    for (auto &elem : fvVector)
-    {
-        if (fvMap.find(elem) == fvMap.end())
-        {
-            if (state == STALE)
-            {
-                fvMap[elem] = STALE;
-            }
-            else if (state == CLEAN)
-            {
-                fvMap[elem] = NEW;
-            }
-        }
-        else
-        {
-            fvMap[elem] = state;
-        }
-    }
-
-    m_restorationMap[key] = fvMap;
+    m_refreshMap[key] = kfv;
 }
 
 
 /*
- * Method takes care of marking eliminated entries from the restorationMap buffer.
- */
-void WarmStartHelper::removeRestorationMap(const KeyOpFieldsValuesTuple &kfv,
-                                           fvState_t                     state)
-{
-    fvRestorationMap fvMap;
-
-    /*
-     * There's no point in processing state-withdrawal if an associated entry
-     * doesn't exist in the restorationMap.
-     */
-    std::string key = kfvKey(kfv);
-    if (!m_restorationMap.count(key))
-    {
-        return;
-    }
-
-    fvMap = m_restorationMap[key];
-
-    /*
-     * Iterate through all elements in the map and update the state of the
-     * entries being withdrawn with the proper flag.
-     */
-    for (auto &fv : fvMap)
-    {
-        fv.second = state;
-    }
-
-    m_restorationMap[key] = fvMap;
-}
-
-
-/*
- * This method is currently required to deal with a specific limitation of quagga
- * and frr routing-stacks, which causes transient best-path selections to arrive
- * at fpmSyncd during bgp's initial peering establishments. In these scenarios we
- * must identify the 'transient' character of a routing-update and eliminate it
- * from the restorationMap whenever a better one is received.
- *
- * As this issue is only observed when interacting with the routing-stack, we can
- * safely avoid this call when collecting state from AppDB (restoration phase);
- * hence caller should invoke this method only if/when the state of the new entry
- * to add is set to CLEAN.
- */
-void WarmStartHelper::adjustRestorationMap(fvRestorationMap          &fvMap,
-                                           const fieldValuesTupleVoV &fvVector,
-                                           const std::string         &key)
-{
-    /*
-     * Iterate through all field-value entries in the fvMap and determine if there's
-     * a matching entry in the fvVector. If that's not the case, and this entry has
-     * been recently added by the north-bound app (NEW flag), then proceed to
-     * eliminate it from the fvMap.
-     *
-     * Notice that even though this is an O(n^2) logic, 'n' here is small (number
-     * of ecmp-paths per prefix), and this is only executed during restarting
-     * events.
-     */
-    for (auto it = fvMap.begin(); it != fvMap.end(); )
-    {
-        bool found = false;
-        /*
-         * Transient best-path selections would only apply to entries marked as
-         * NEW.
-         */
-        if (it->second != NEW)
-        {
-            it++;
-            continue;
-        }
-
-        for (auto const &fv : fvVector)
-        {
-            if (it->first == fv)
-            {
-                found = true;
-                break;
-            }
-        }
-
-        if (!found)
-        {
-            SWSS_LOG_INFO("Warm-Restart: Deleting transient best-path selection "
-                          "for entry %s\n", key.c_str());
-            it = fvMap.erase(it);
-        }
-        else
-        {
-            it++;
-        }
-    }
-}
-
-
-/*
- * Reconciliation process takes place here.
- *
- * In a nutshell, the process relies on the following basic guidelines:
- *
- * - An element in the restorationMap with all its entries in the fvResMap showing
- *   as STALE, will be eliminated from AppDB.
- *
- * - An element in the restorationMap with all its entries in the fvResMap showing
- *   as CLEAN, will have a NO-OP associated with it -- no changes in AppDB.
- *
- * - An element in the restorationMap with all its entries in the fvResMap showing
- *   as NEW, will correspond to a brand-new state, and as such, will be pushed to
- *   AppDB.
- *
- * - An element in the restorationMap with some of its entries in the fvResMap
- *   showing as CLEAN, will have these CLEAN entries, along with any NEW one,
- *   being pushed down to AppDB.
- *
- * - An element in the restorationMap with some of its entries in the fvResMap
- *   showing as NEW, will have these new entries, along with any CLEAN one,
- *   being pushed to AppDB.
- *
- * - An element in the restorationMap with some/all of its entries in the
- *   fvResMap showing as DELETE, will have these entries being eliminated
- *   from AppDB.
- *
+ * The reconciliation process takes place here. In essence, all we are doing
+ * is comparing the restored elements (old state) with the refreshed/new ones
+ * generated by the application once it completes its restart cycle. If a
+ * state-diff is found between these two, we will be honoring the refreshed
+ * one received from the application, and will proceed to push it down to AppDB.
  */
 void WarmStartHelper::reconcile(void)
 {
@@ -389,93 +152,86 @@ void WarmStartHelper::reconcile(void)
 
     assert(getState() == WarmStart::RESTORED);
 
-    /*
-     * Iterate through all the entries in the restorationMap and take note of the
-     * attributes associated to each.
-     */
-    auto it = m_restorationMap.begin();
-    while (it != m_restorationMap.end())
+    for (auto &restoredElem : m_restorationVector)
     {
-        std::string key = it->first;
-        fvRestorationMap fvMap = it->second;
+        std::string restoredKey  = kfvKey(restoredElem);
+        auto restoredFV          = kfvFieldsValues(restoredElem);
 
-        int totalRecElems, staleRecElems, cleanRecElems, newRecElems, deleteRecElems;
-        totalRecElems = staleRecElems = cleanRecElems = newRecElems = deleteRecElems = 0;
+        auto iter = m_refreshMap.find(restoredKey);
 
-        std::vector<FieldValueTuple> fvVector;
-
-        for (auto itMap = fvMap.begin(); itMap != fvMap.end(); )
+        /*
+         * If the restored element is not found in the refreshMap, we must
+         * push a delete operation for this entry.
+         */
+        if (iter == m_refreshMap.end())
         {
-            totalRecElems++;
-
-            auto recElem = itMap->first;
-            auto recElemState = itMap->second;
-
-            if (recElemState == STALE)
-            {
-                itMap = fvMap.erase(itMap);
-                staleRecElems++;
-            }
-            else if (recElemState == CLEAN)
-            {
-                cleanRecElems++;
-                transformKFV(recElem, fvVector);
-                ++itMap;
-            }
-            else if (recElemState == NEW)
-            {
-                newRecElems++;
-                transformKFV(recElem, fvVector);
-                ++itMap;
-            }
-            else if (recElemState == DELETE)
-            {
-                deleteRecElems++;
-                ++itMap;
-            }
-        }
-
-        if (staleRecElems == totalRecElems)
-        {
-            m_syncTable->del(key);
             SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting stale entry %s",
-                            key.c_str());
-        }
-        else if (cleanRecElems == totalRecElems)
-        {
-            SWSS_LOG_INFO("Warm-Restart reconciliation: no changes needed for "
-                          "existing entry %s", key.c_str());
-        }
-        else if (newRecElems == totalRecElems)
-        {
-            m_syncTable->set(key, fvVector);
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: creating new entry %s",
-                            key.c_str());
-        }
-        else if (cleanRecElems)
-        {
-            m_syncTable->set(key, fvVector);
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: updating attributes "
-                            "for entry %s", key.c_str());
-        }
-        else if (newRecElems)
-        {
-            m_syncTable->set(key, fvVector);
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: creating new attributes "
-                            "for entry %s", key.c_str());
-        }
-        else if (deleteRecElems)
-        {
-            m_syncTable->del(key);
-            SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting entry %s",
-                            key.c_str());
+                            printKFV(restoredKey, restoredFV).c_str());
+
+            m_syncTable->del(restoredKey);
+            continue;
         }
 
-        it = m_restorationMap.erase(it);
+        /*
+         * If an explicit delete request is sent by the application, process it
+         * right away.
+         */
+        else if (kfvOp(iter->second) == DEL_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Warm-Restart reconciliation: deleting entry %s",
+                            printKFV(restoredKey, restoredFV).c_str());
+
+            m_syncTable->del(restoredKey);
+        }
+
+        /*
+         * If a matching entry is found in refreshMap, proceed to compare it
+         * with its restored counterpart.
+         */
+        else
+        {
+            auto refreshedKey = kfvKey(iter->second);
+            auto refreshedFV  = kfvFieldsValues(iter->second);
+
+            if (compareAllFV(restoredFV, refreshedFV))
+            {
+                SWSS_LOG_NOTICE("Warm-Restart reconciliation: updating entry %s",
+                                printKFV(refreshedKey, refreshedFV).c_str());
+
+                m_syncTable->set(refreshedKey, refreshedFV);
+            }
+            else
+            {
+                SWSS_LOG_INFO("Warm-Restart reconciliation: no changes needed for "
+                              "existing entry %s",
+                              printKFV(refreshedKey, refreshedFV).c_str());
+            }
+        }
+
+        /* Deleting the just-processed restored entry from the refreshMap */
+        m_refreshMap.erase(restoredKey);
     }
 
-    /* Restoration map should be entirely empty by now */
-    assert(m_restorationMap.size() == 0);
+    /*
+     * Iterate through all the entries left in the refreshMap, which correspond
+     * to brand-new entries to be pushed down to AppDB.
+     */
+    for (auto &kfv : m_refreshMap)
+    {
+        auto refreshedKey = kfvKey(kfv.second);
+        auto refreshedFV  = kfvFieldsValues(kfv.second);
+
+        SWSS_LOG_NOTICE("Warm-Restart reconciliation: introducing new entry %s",
+                        printKFV(refreshedKey, refreshedFV).c_str());
+
+        m_syncTable->set(refreshedKey, refreshedFV);
+    }
+
+    /* Clearing pending kfv's from refreshMap */
+    m_refreshMap.clear();
+
+    /* Clearing restoration vector */
+    m_restorationVector.clear();
 
     setState(WarmStart::RECONCILED);
 
@@ -485,39 +241,112 @@ void WarmStartHelper::reconcile(void)
 
 
 /*
- * Method useful to transform fieldValueTuples from the split-format utilized
- * in warmStartHelper's reconciliation process to the regular format used
- * everywhere else.
+ * Compare all field-value-tuples within two vectors.
+ *
+ * Example: v1 {nexthop: 10.1.1.1, ifname: eth1}
+ *          v2 {nexthop: 10.1.1.2, ifname: eth2}
+ *
+ * Returns:
+ *
+ *    'false' : If the content of both 'fields' and 'values' fully match
+ *    'true'  : No full-match is found
  */
-void WarmStartHelper::transformKFV(const std::vector<FieldValueTuple> &data,
-                                   std::vector<FieldValueTuple>       &fvVector)
+bool WarmStartHelper::compareAllFV(const std::vector<FieldValueTuple> &v1,
+                                   const std::vector<FieldValueTuple> &v2)
 {
-    bool emptyVector = false;
+    std::unordered_map<std::string, std::string> v1Map((v1.begin()), v1.end());
 
-    /*
-     * Both input vectors should contain the same number of elements, with the
-     * exception of fvVector not being initialized yet.
-     */
-    if (data.size() != fvVector.size() && fvVector.size())
+     /* Iterate though all v2 tuples to check if their content match v1 ones */
+    for (auto &v2fv : v2)
     {
-        return;
-    }
-    else if (!fvVector.size())
-    {
-        emptyVector = true;
-    }
+        auto v1Iter = v1Map.find(v2fv.first);
+        /*
+         * The sizes of both tuple-vectors should always match within any
+         * given application. In other words, all fields within v1 should be
+         * also present within v2. Otherwise we are running into some form of
+         * bug or an unsupported functionality.
+         */
+        assert(v1Iter != v1Map.end());
 
-    /* Define fields in fvVector result-parameter */
-    for (int i = 0; i < static_cast<int>(data.size()); ++i)
-    {
-        if (emptyVector)
+        if (compareOneFV(v1Map[fvField(*v1Iter)], fvValue(v2fv)))
         {
-            fvVector.push_back(data[i]);
-            continue;
+            return true;
         }
-
-        std::string newVal = fvValue(fvVector[i]) + "," + fvValue(data[i]);
-
-        fvVector[i].second = newVal;
     }
+
+    return false;
+}
+
+
+/*
+ * Compare the values of a single field-value within two different KFVs.
+ *
+ * Example: s1 {nexthop: 10.1.1.1, 10.1.1.2}
+ *          s2 {nexthop: 10.1.1.2, 10.1.1.1}
+ *
+ * Example: s1 {Ethernet1, Ethernet2}
+ *          s2 {Ethernet2, Ethernet1}
+ *
+ * Returns:
+ *
+ *    'false' : If the content of both strings fully matches
+ *    'true'  : No full-match is found
+ */
+bool WarmStartHelper::compareOneFV(const std::string &s1, const std::string &s2)
+{
+    if (s1.size() != s2.size())
+    {
+        return true;
+    }
+
+    std::vector<std::string> splitValuesS1 = tokenize(s1, ',');
+    std::vector<std::string> splitValuesS2 = tokenize(s2, ',');
+
+    if (splitValuesS1.size() != splitValuesS2.size())
+    {
+        return true;
+    }
+
+    std::sort(splitValuesS1.begin(), splitValuesS1.end());
+    std::sort(splitValuesS2.begin(), splitValuesS2.end());
+
+    for (size_t i = 0; i < splitValuesS1.size(); i++)
+    {
+        if (splitValuesS1[i] != splitValuesS2[i])
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+/*
+ * Helper method to print KFVs in a friendly fashion.
+ *
+ * Example:
+ *
+ * 192.168.1.0/30 { nexthop: 10.2.2.1,10.1.2.1 | ifname: Ethernet116,Ethernet112 }
+ */
+const std::string WarmStartHelper::printKFV(const std::string                  &key,
+                                            const std::vector<FieldValueTuple> &fv)
+{
+    std::string res;
+
+    res = key + " { ";
+
+    for (size_t i = 0; i < fv.size(); ++i)
+    {
+        res += fv[i].first + ": " +  fv[i].second;
+
+        if (i != fv.size() - 1)
+        {
+            res += " | ";
+        }
+    }
+
+    res += " } ";
+
+    return res;
 }
