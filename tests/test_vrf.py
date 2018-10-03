@@ -29,6 +29,10 @@ def delete_entry_tbl(db, table, key):
     tbl._del(key)
     time.sleep(1)
 
+def delete_entry_pst(db, table, key):
+    tbl = swsscommon.ProducerStateTable(db, table)
+    tbl._del(key)
+    time.sleep(1)
 
 def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
@@ -71,7 +75,7 @@ def vrf_create(asic_db, appl_db, vrf_name, attributes, expected_attributes):
         attributes = [('empty', 'empty')]
 
     # create the VRF entry in Config DB
-    create_entry_tbl(appl_db, "VRF_TABLE", vrf_name, attributes)
+    create_entry_pst(appl_db, "VRF_TABLE", vrf_name, attributes)
 
     # check that the vrf entry was created
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 2, "The vrf wasn't created"
@@ -97,7 +101,7 @@ def vrf_create(asic_db, appl_db, vrf_name, attributes, expected_attributes):
 
 def vrf_remove(asic_db, appl_db, vrf_name, state):
     # delete the created vrf entry
-    delete_entry_tbl(appl_db, "VRF_TABLE", vrf_name)
+    delete_entry_pst(appl_db, "VRF_TABLE", vrf_name)
 
     # check that the vrf entry was removed
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 1, "The vrf wasn't removed"
@@ -108,7 +112,7 @@ def vrf_remove(asic_db, appl_db, vrf_name, state):
 
 def vrf_update(asic_db, appl_db, vrf_name, attributes, expected_attributes, state):
     # update the VRF entry in Config DB
-    create_entry_tbl(appl_db, "VRF_TABLE", vrf_name, attributes)
+    create_entry_pst(appl_db, "VRF_TABLE", vrf_name, attributes)
 
     # check correctness of the created attributes
     is_vrf_attributes_correct(
