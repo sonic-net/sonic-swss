@@ -118,19 +118,13 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
     if (op == SET_COMMAND)
     {
-        /*
-         * Don't proceed if port/LAG/VLAN is not ready yet.
-         * The pending task will be checked periodically and retried.
-         * TODO: Subscribe to stateDB for port/lag/VLAN state and retry
-         * pending tasks immediately upon state change.
-         */
         if (!isIntfStateOk(alias))
         {
             SWSS_LOG_DEBUG("Interface is not ready, skipping %s", alias.c_str());
             return false;
         }
 
-        if (!isIntfStateOk(vrf_name))
+        if (!vrf_name.empty() && !isIntfStateOk(vrf_name))
         {
             SWSS_LOG_DEBUG("VRF is not ready, skipping %s", vrf_name.c_str());
             return false;
@@ -167,8 +161,6 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
         /*
          * Don't proceed if port/LAG/VLAN is not ready yet.
          * The pending task will be checked periodically and retried.
-         * TODO: Subscribe to stateDB for port/lag/VLAN state and retry
-         * pending tasks immediately upon state change.
          */
         if (!isIntfStateOk(alias))
         {
