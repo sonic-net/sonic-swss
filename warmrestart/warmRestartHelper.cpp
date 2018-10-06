@@ -263,8 +263,14 @@ bool WarmStartHelper::compareAllFV(const std::vector<FieldValueTuple> &v1,
         /*
          * The sizes of both tuple-vectors should always match within any
          * given application. In other words, all fields within v1 should be
-         * also present within v2. Otherwise we are running into some form of
-         * bug or an unsupported functionality.
+         * also present in v2.
+         *
+         * To make this possible, every application should continue relying on a
+         * uniform schema to create/generate information. For example, fpmsyncd
+         * will be always expected to push FieldValueTuples with "nexthop" and
+         * "ifname" fields; neighsyncd is expected to make use of "family" and
+         * "neigh" fields, etc. The existing reconciliation logic will rely on
+         * this assumption.
          */
         assert(v1Iter != v1Map.end());
 

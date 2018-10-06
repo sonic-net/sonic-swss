@@ -56,15 +56,16 @@ class WarmStartHelper {
 
     void reconcile(void);
 
+    const std::string printKFV(const std::string                  &key,
+                               const std::vector<FieldValueTuple> &fv);
+
+  private:
+
     bool compareAllFV(const std::vector<FieldValueTuple> &left,
                       const std::vector<FieldValueTuple> &right);
 
     bool compareOneFV(const std::string &v1, const std::string &v2);
 
-    const std::string printKFV(const std::string                  &key,
-                               const std::vector<FieldValueTuple> &fv);
-
-  private:
     ProducerStateTable       *m_syncTable;         // producer-table to sync/push state to
     Table                     m_restorationTable;  // redis table to import current-state from
     kfvVector                 m_restorationVector; // buffer struct to hold old state

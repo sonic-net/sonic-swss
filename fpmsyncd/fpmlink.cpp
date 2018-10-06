@@ -61,7 +61,6 @@ FpmLink::FpmLink(int port) :
 
 FpmLink::~FpmLink()
 {
-    SWSS_LOG_INFO("Calling fpmlink destructor");
     delete m_messageBuffer;
     if (m_connected)
         close(m_connection_socket);
