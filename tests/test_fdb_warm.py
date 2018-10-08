@@ -181,6 +181,6 @@ def test_fdb_notifications(dvs):
 
     finally:
         # enable warm restart
-        dvs.runcmd("config warm_restart enable swss")
+        dvs.runcmd("config warm_restart disable swss")
         # slow down crm polling
         dvs.runcmd("crm config polling interval 10000")
