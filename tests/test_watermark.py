@@ -187,7 +187,3 @@ class TestWatermark(object):
         self.verify_value(dvs, self.uc_q, WmTables.user, SaiWmStats.queue_shared, "288") 
         self.verify_value(dvs, self.mc_q, WmTables.user, SaiWmStats.queue_shared, "288") 
 
-
-
-
-    

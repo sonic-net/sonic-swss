@@ -29,13 +29,13 @@ WatermarkOrch::WatermarkOrch(DBConnector *db, const string tableName):
     m_clearNotificationConsumer = new swss::NotificationConsumer(
             m_appDb.get(),
             "WATERMARK_CLEAR_REQUEST");
-    auto clearNotifier = new Notifier(m_clearNotificationConsumer, this);
-    Orch::addExecutor("WATERMARK_CLEAR_REQUEST", clearNotifier);
+    auto clearNotifier = new Notifier(m_clearNotificationConsumer, this, "WM_CLEAR_NOTIFIER");
+    Orch::addExecutor(clearNotifier);
 
     auto intervT = timespec { .tv_sec = DEFAULT_TELEMETRY_INTERVAL , .tv_nsec = 0 };
     m_telemetryTimer = new SelectableTimer(intervT);
-    auto executorT = new ExecutableTimer(m_telemetryTimer, this);
-    Orch::addExecutor("WATERMARK_TELEMETRY", executorT);
+    auto executorT = new ExecutableTimer(m_telemetryTimer, this, "WM_TELEMETRY_TIMER");
+    Orch::addExecutor(executorT);
     m_telemetryTimer->start();
 
     m_telemetryInterval = DEFAULT_TELEMETRY_INTERVAL;

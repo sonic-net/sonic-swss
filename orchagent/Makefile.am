@@ -80,9 +80,7 @@ orchagent_SOURCES = \
             vxlanorch.h \
             vnetorch.h \
             flexcounterorch.h   \
-            watermarkorch.h  \
-            $(top_srcdir)/warmrestart/warm_restart.cpp \
-            $(top_srcdir)/warmrestart/warm_restart.h
+            watermarkorch.h
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
