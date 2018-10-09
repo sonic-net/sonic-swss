@@ -15,7 +15,7 @@ const request_description_t request_description = {
         { "ttl_action",    REQ_T_PACKET_ACTION },
         { "ip_opt_action", REQ_T_PACKET_ACTION },
         { "l3_mc_action",  REQ_T_PACKET_ACTION },
-        { "fall_through",  REQ_T_BOOL },
+        { "fallback",      REQ_T_BOOL },
     },
     { } // no mandatory attributes
 };

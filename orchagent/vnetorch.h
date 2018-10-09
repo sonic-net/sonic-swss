@@ -48,7 +48,7 @@ class VNetObject
 public:
     VNetObject(set<string>& p_list)
     {
-        peer_list = p_list;
+        peer_list_ = p_list;
     }
 
     virtual sai_object_id_t getEncapMapId() const = 0;
@@ -59,54 +59,32 @@ public:
 
     void setPeerList(set<string>& p_list)
     {
-        peer_list = p_list;
+        peer_list_ = p_list;
+    }
+
+    virtual sai_object_id_t getVRid() const = 0;
+
+    const set<string>& getPeerList() const
+    {
+        return peer_list_;
     }
 
     virtual ~VNetObject() {};
 
 private:
-    set<string> peer_list = {};
+    set<string> peer_list_ = {};
 };
 
 class VNetVrfObject : public VNetObject
 {
 public:
-    VNetVrfObject(const std::string& name, set<string>& p_list, vector<sai_attribute_t>& attrs)
-                 : VNetObject(p_list)
-    {
-        vnet_name = name;
-        createObj(attrs);
-    }
+    VNetVrfObject(const std::string& name, set<string>& p_list, vector<sai_attribute_t>& attrs);
 
-    sai_object_id_t getVRidIngress() const
-    {
-        if (vr_ids.find(VR_TYPE::ING_VR_VALID) != vr_ids.end())
-        {
-            return vr_ids.at(VR_TYPE::ING_VR_VALID);
-        }
-        return 0x0;
-    }
+    sai_object_id_t getVRidIngress() const;
 
-    sai_object_id_t getVRidEgress() const
-    {
-        if (vr_ids.find(VR_TYPE::EGR_VR_VALID) != vr_ids.end())
-        {
-            return vr_ids.at(VR_TYPE::EGR_VR_VALID);
-        }
-        return 0x0;
-    }
+    sai_object_id_t getVRidEgress() const;
 
-    set<sai_object_id_t> getVRids() const
-    {
-        set<sai_object_id_t> ids;
-
-        for_each (vr_ids.begin(), vr_ids.end(), [&](std::pair<VR_TYPE, sai_object_id_t> element)
-        {
-            ids.insert(element.second);
-        });
-
-        return ids;
-    }
+    set<sai_object_id_t> getVRids() const;
 
     virtual sai_object_id_t getEncapMapId() const
     {
@@ -118,6 +96,11 @@ public:
         return getVRidEgress();
     }
 
+    virtual sai_object_id_t getVRid() const
+    {
+        return getVRidIngress();
+    }
+
     bool createObj(vector<sai_attribute_t>&);
 
     bool updateObj(vector<sai_attribute_t>&);
@@ -125,8 +108,8 @@ public:
     ~VNetVrfObject();
 
 private:
-    string vnet_name;
-    vrid_list_t vr_ids;
+    string vnet_name_;
+    vrid_list_t vr_ids_;
 };
 
 using VNetObject_T = std::unique_ptr<VNetObject>;
@@ -135,22 +118,9 @@ typedef std::unordered_map<std::string, VNetObject_T> VNetTable;
 class VNetOrch : public Orch2
 {
 public:
-    VNetOrch(DBConnector *db, const std::string& tableName, VNET_EXEC op = VNET_EXEC::VNET_EXEC_VRF)
-             : Orch2(db, tableName, request_)
-    {
-        vnet_exec_ = op;
+    VNetOrch(DBConnector *db, const std::string&, VNET_EXEC op = VNET_EXEC::VNET_EXEC_VRF);
 
-        if (op == VNET_EXEC::VNET_EXEC_VRF)
-        {
-            vr_cntxt = { VR_TYPE::ING_VR_VALID, VR_TYPE::EGR_VR_VALID };
-        }
-        else
-        {
-            // BRIDGE Handling
-        }
-    }
-
-    bool isVnetexists(const std::string& name) const
+    bool isVnetExists(const std::string& name) const
     {
         return vnet_table_.find(name) != std::end(vnet_table_);
     }
@@ -169,6 +139,16 @@ public:
     sai_object_id_t getDecapMapId(const std::string& name) const
     {
         return vnet_table_.at(name)->getDecapMapId();
+    }
+
+    const set<string>& getPeerList(const std::string& name) const
+    {
+        return vnet_table_.at(name)->getPeerList();
+    }
+
+    sai_object_id_t getVRid(const std::string& name) const
+    {
+        return vnet_table_.at(name)->getVRid();
     }
 
     bool isVnetExecVrf() const
@@ -192,6 +172,52 @@ private:
     VNetRequest request_;
     VNET_EXEC vnet_exec_;
 
+};
+
+const request_description_t vnet_route_description = {
+    { REQ_T_STRING, REQ_T_IP_PREFIX },
+    {
+        { "endpoint",   REQ_T_IP },
+        { "ifname",     REQ_T_STRING },
+    },
+    { }
+};
+
+class VNetRouteRequest : public Request
+{
+public:
+    VNetRouteRequest() : Request(vnet_route_description, ':') { }
+};
+
+using NextHopMap = map<IpAddress, sai_object_id_t>;
+using NextHopTunnels = map<string, NextHopMap>;
+
+class VNetRouteOrch : public Orch2
+{
+public:
+    VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *);
+    using handler_pair = pair<string, void (VNetRouteOrch::*) (const Request& )>;
+    using handler_map = map<string, void (VNetRouteOrch::*) (const Request& )>;
+
+private:
+    virtual bool addOperation(const Request& request);
+    virtual bool delOperation(const Request& request);
+
+    void handleRoutes(const Request&);
+    void handleTunnel(const Request&);
+
+    template<typename T>
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, IpAddress& ipAddr);
+
+    template<typename T>
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, string& ifname);
+
+    sai_object_id_t getNextHop(const string& vnet, IpAddress& ipAddr);
+
+    VNetOrch *vnet_orch_;
+    VNetRouteRequest request_;
+    handler_map handler_map_;
+    NextHopTunnels nh_tunnels_;
 };
 
 #endif // __VNETORCH_H

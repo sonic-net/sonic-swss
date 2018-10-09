@@ -42,14 +42,14 @@ private:
 
     int getRouterIntfsRefCount(const string&);
 
-    bool addRouterIntfs(string &vrf_name, Port &port);
+    bool addRouterIntfs(sai_object_id_t vrf_id, Port &port);
     bool removeRouterIntfs(Port &port);
 
     void addSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
     void removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
 
-    void addIp2MeRoute(string &vrf_name, const IpPrefix &ip_prefix);
-    void removeIp2MeRoute(string &vrf_name, const IpPrefix &ip_prefix);
+    void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
+    void removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
 
     void addDirectedBroadcast(const Port &port, const IpAddress &ip_addr);
     void removeDirectedBroadcast(const Port &port, const IpAddress &ip_addr);

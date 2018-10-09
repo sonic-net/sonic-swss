@@ -73,8 +73,14 @@ bool OrchDaemon::init()
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
 
+    vector<string> vnet_tables = {
+            APP_VNET_RT_TABLE_NAME,
+            APP_VNET_RT_TUNNEL_TABLE_NAME
+    };
     VNetOrch *vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
     gDirectory.set(vnet_orch);
+    VNetRouteOrch *vnet_rt_orch = new VNetRouteOrch(m_applDb, vnet_tables, vnet_orch);
+    gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME);
     gDirectory.set(vrf_orch);
 
@@ -182,6 +188,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(mirror_orch);
     m_orchList.push_back(gAclOrch);
     m_orchList.push_back(vnet_orch);
+    m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);

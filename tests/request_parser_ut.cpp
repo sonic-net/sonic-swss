@@ -89,7 +89,7 @@ TEST(request_parser, simpleKey)
         EXPECT_STREQ(request.getOperation().c_str(), "SET");
         EXPECT_STREQ(request.getFullKey().c_str(), "key1");
         EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action"}));
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "nlist"}));
         EXPECT_TRUE(request.getAttrBool("v4"));
         EXPECT_TRUE(request.getAttrBool("v6"));
         EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
@@ -973,7 +973,7 @@ TEST(request_parser, anotherKeySeparator)
                                  {
                                      { "v4", "false" },
                                      { "v6", "false" },
-                                     { "nlist", "name1, name2" },
+                                     { "nlist", "name1,name2" },
                                  }
                              };
 
@@ -1212,6 +1212,81 @@ TEST(request_parser, wrong_uint_key_2)
     catch (const std::invalid_argument& e)
     {
         EXPECT_STREQ(e.what(),"Out of range unsigned integer: 1234555555555555555555");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::logic_error, not other exception";
+    }
+}
+
+const request_description_t request_description7 = {
+    { REQ_T_STRING, REQ_T_IP_PREFIX },
+    {
+        { "ip",            REQ_T_IP },
+    },
+    { }  // no mandatory attributes
+};
+
+class TestRequest7 : public Request
+{
+public:
+    TestRequest7() : Request(request_description7, ':') { }
+};
+
+TEST(request_parser, prefix_key1)
+{
+    KeyOpFieldsValuesTuple t {"Ethernet1:10.1.1.1/24", "SET",
+                                 {
+                                     { "ip", "20.1.1.1" },
+                                 }
+                             };
+
+    try
+    {
+        TestRequest7 request;
+
+        EXPECT_NO_THROW(request.parse(t));
+
+        EXPECT_STREQ(request.getOperation().c_str(), "SET");
+        EXPECT_STREQ(request.getFullKey().c_str(), "Ethernet1:10.1.1.1/24");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "Ethernet1");
+        EXPECT_EQ(request.getKeyIpPrefix(1), IpPrefix("10.1.1.1/24"));
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"ip"}));
+        EXPECT_EQ(request.getAttrIP("ip"), IpAddress("20.1.1.1"));
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::logic_error, not other exception";
+    }
+}
+
+TEST(request_parser, wrong_key_ip_prefix)
+{
+    KeyOpFieldsValuesTuple t {"Ethernet1:10.1.1.1.1/24", "SET",
+                                 {
+                                     { "empty" , "empty" },
+                                 }
+                             };
+
+    try
+    {
+        TestRequest7 request;
+
+        request.parse(t);
+
+        FAIL() << "Expected std::invalid_argument error";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(),"Invalid ip prefix: 10.1.1.1.1/24");
     }
     catch (const std::exception& e)
     {

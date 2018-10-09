@@ -12,8 +12,11 @@
 #include "routeorch.h"
 #include "crmorch.h"
 #include "bufferorch.h"
+#include "directory.h"
+#include "vnetorch.h"
 
 extern sai_object_id_t gVirtualRouterId;
+extern Directory<Orch*> gDirectory;
 
 extern sai_router_interface_api_t*  sai_router_intfs_api;
 extern sai_route_api_t*             sai_route_api;
@@ -135,7 +138,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else if (field == "vnet_name")
             {
-                vnet_name = vrf_name = value;
+                vnet_name = value;
             }
         }
 
@@ -145,12 +148,33 @@ void IntfsOrch::doTask(Consumer &consumer)
             continue;
         }
 
+        sai_object_id_t vrf_id = gVirtualRouterId;
+        if (!vnet_name.empty())
+        {
+            VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
+            if (!vnet_orch->isVnetExists(vnet_name))
+            {
+                it++;
+                continue;
+            }
+            vrf_id = vnet_orch->getVRid(vnet_name);
+        }
+        else if (!vrf_name.empty())
+        {
+            if (m_vrfOrch->isVRFexists(vrf_name))
+            {
+                it++;
+                continue;
+            }
+            vrf_id = m_vrfOrch->getVRFid(vrf_name);
+        }
+
         string op = kfvOp(t);
         if (op == SET_COMMAND)
         {
             if (alias == "lo")
             {
-                addIp2MeRoute(vrf_name, ip_prefix);
+                addIp2MeRoute(vrf_id, ip_prefix);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -173,7 +197,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             auto it_intfs = m_syncdIntfses.find(alias);
             if (it_intfs == m_syncdIntfses.end())
             {
-                if (addRouterIntfs(vrf_name, port))
+                if (addRouterIntfs(vrf_id, port))
                 {
                     IntfsEntry intfs_entry;
                     intfs_entry.ref_count = 0;
@@ -186,6 +210,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                 }
             }
 
+            vrf_id = port.m_vr_id;
             if (!ip_prefix_in_key || m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
             {
                 /* Request to create router interface, no prefix present or Duplicate entry */
@@ -222,7 +247,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
 
             addSubnetRoute(port, ip_prefix);
-            addIp2MeRoute(vrf_name, ip_prefix);
+            addIp2MeRoute(vrf_id, ip_prefix);
 
             if (port.m_type == Port::VLAN && ip_prefix.isV4())
             {
@@ -236,7 +261,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         {
             if (alias == "lo")
             {
-                removeIp2MeRoute(vrf_name, ip_prefix);
+                removeIp2MeRoute(vrf_id, ip_prefix);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -249,12 +274,13 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
+            vrf_id = port.m_vr_id;
             if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
             {
                 if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
                 {
                     removeSubnetRoute(port, ip_prefix);
-                    removeIp2MeRoute(vrf_name, ip_prefix);
+                    removeIp2MeRoute(vrf_id, ip_prefix);
                     if(port.m_type == Port::VLAN && ip_prefix.isV4())
                     {
                         removeDirectedBroadcast(port, ip_prefix.getBroadcastIp());
@@ -286,7 +312,7 @@ void IntfsOrch::doTask(Consumer &consumer)
     }
 }
 
-bool IntfsOrch::addRouterIntfs(string& vrf_name, Port &port)
+bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
 {
     SWSS_LOG_ENTER();
 
@@ -298,14 +324,12 @@ bool IntfsOrch::addRouterIntfs(string& vrf_name, Port &port)
         return true;
     }
 
-    sai_object_id_t vr_id = m_vrfOrch->getVRFid(vrf_name);
-
     /* Create router interface if the router interface doesn't exist */
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
-    attr.value.oid = vr_id;
+    attr.value.oid = vrf_id;
     attrs.push_back(attr);
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
@@ -360,7 +384,7 @@ bool IntfsOrch::addRouterIntfs(string& vrf_name, Port &port)
         throw runtime_error("Failed to create router interface.");
     }
 
-    port.m_vr_id = vr_id;
+    port.m_vr_id = vrf_id;
 
     gPortsOrch->setPort(port.m_alias, port);
 
@@ -387,6 +411,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     }
 
     port.m_rif_id = 0;
+    port.m_vr_id = 0;
     gPortsOrch->setPort(port.m_alias, port);
 
     SWSS_LOG_NOTICE("Remove router interface for port %s", port.m_alias.c_str());
@@ -469,11 +494,11 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     gRouteOrch->notifyNextHopChangeObservers(ip_prefix, IpAddresses(), false);
 }
 
-void IntfsOrch::addIp2MeRoute(string &vrf_name, const IpPrefix &ip_prefix)
+void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
 {
     sai_route_entry_t unicast_route_entry;
     unicast_route_entry.switch_id = gSwitchId;
-    unicast_route_entry.vr_id = m_vrfOrch->getVRFid(vrf_name);
+    unicast_route_entry.vr_id = vrf_id;
     copy(unicast_route_entry.destination, ip_prefix.getIp());
 
     sai_attribute_t attr;
@@ -509,11 +534,11 @@ void IntfsOrch::addIp2MeRoute(string &vrf_name, const IpPrefix &ip_prefix)
     }
 }
 
-void IntfsOrch::removeIp2MeRoute(string &vrf_name, const IpPrefix &ip_prefix)
+void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
 {
     sai_route_entry_t unicast_route_entry;
     unicast_route_entry.switch_id = gSwitchId;
-    unicast_route_entry.vr_id = m_vrfOrch->getVRFid(vrf_name);
+    unicast_route_entry.vr_id = vrf_id;
     copy(unicast_route_entry.destination, ip_prefix.getIp());
 
     sai_status_t status = sai_route_api->remove_route_entry(&unicast_route_entry);
