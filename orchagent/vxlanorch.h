@@ -31,11 +31,11 @@ class VxlanTunnel
 {
 public:
     VxlanTunnel(string name, IpAddress src_ip, IpAddress dst_ip)
-                :tunnel_name(name), src_ip(src_ip), dst_ip(dst_ip) { }
+                :tunnel_name_(name), src_ip_(src_ip), dst_ip_(dst_ip) { }
 
     bool isActive() const
     {
-        return active;
+        return active_;
     }
 
     bool createTunnel(MAP_T encap, MAP_T decap);
@@ -44,25 +44,23 @@ public:
 
     sai_object_id_t getDecapMapId(const std::string& tunnel_name) const
     {
-        return ids.tunnel_decap_id;
+        return ids_.tunnel_decap_id;
     }
 
     sai_object_id_t getEncapMapId(const std::string& tunnel_name) const
     {
-        return ids.tunnel_encap_id;
+        return ids_.tunnel_encap_id;
     }
 
 private:
-    string tunnel_name;
+    string tunnel_name_;
+    bool active_ = false;
 
-    bool active = false;
+    tunnel_ids_t ids_;
+    std::pair<MAP_T, MAP_T> tunnel_map_ = { MAP_T::MAP_TO_INVALID, MAP_T::MAP_TO_INVALID };
 
-    tunnel_ids_t ids = {0x0, 0x0, 0x0, 0x0};
-
-    std::pair<MAP_T, MAP_T> tunnel_map = { MAP_T::MAP_TO_INVALID, MAP_T::MAP_TO_INVALID };
-
-    IpAddress       src_ip;
-    IpAddress       dst_ip = 0x0;
+    IpAddress src_ip_;
+    IpAddress dst_ip_ = 0x0;
 };
 
 const request_description_t vxlan_tunnel_request_description = {
@@ -176,7 +174,7 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    void doTaskVnet(string& , VxlanTunnel_T& , std::pair<sai_object_id_t, sai_object_id_t>&);
+    void doVnetTask(string& vrf_name, VxlanTunnel_T& tunnel_obj, std::pair<sai_object_id_t, sai_object_id_t>&);
 
     VxlanVrfTable vxlan_vrf_table_;
     VxlanVrfRequest request_;
