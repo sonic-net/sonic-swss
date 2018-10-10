@@ -964,13 +964,17 @@ def check_restart_timer(dvs, timer_value):
 
 def test_routing_WarmRestart(dvs):
 
-    # Let's wait a few seconds for system to initialize
-    time.sleep(60)
-
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
+    # Cleaning AppDB entry introduced in a previous test-case (no need to
+    # clean anything else).
+    ps = swsscommon.ProducerStateTable(appl_db, swsscommon.APP_ROUTE_TABLE_NAME)
+    ps._del("2.2.2.0/24")
+    time.sleep(1)
+
+    # Restart-timer to utilize during the following testcases
     restart_timer = 10
 
 
@@ -987,22 +991,22 @@ def test_routing_WarmRestart(dvs):
     # Enable ipv6 on docker
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
 
-    dvs.runcmd("ifconfig {} 11.0.0.1/24 up".format(intfs[0]))
-    dvs.runcmd("ip -6 addr add 1100::1/64 dev {}".format(intfs[0]))
+    dvs.runcmd("ifconfig {} 111.0.0.1/24 up".format(intfs[0]))
+    dvs.runcmd("ip -6 addr add 1110::1/64 dev {}".format(intfs[0]))
 
-    dvs.runcmd("ifconfig {} 12.0.0.1/24 up".format(intfs[1]))
-    dvs.runcmd("ip -6 addr add 1200::1/64 dev {}".format(intfs[1]))
+    dvs.runcmd("ifconfig {} 122.0.0.1/24 up".format(intfs[1]))
+    dvs.runcmd("ip -6 addr add 1220::1/64 dev {}".format(intfs[1]))
 
-    dvs.runcmd("ifconfig {} 13.0.0.1/24 up".format(intfs[2]))
-    dvs.runcmd("ip -6 addr add 1300::1/64 dev {}".format(intfs[2]))
+    dvs.runcmd("ifconfig {} 133.0.0.1/24 up".format(intfs[2]))
+    dvs.runcmd("ip -6 addr add 1330::1/64 dev {}".format(intfs[2]))
 
     time.sleep(1)
 
     #
     # Setting peer's ip-addresses and associated neighbor-entries
     #
-    ips = ["11.0.0.2", "12.0.0.2", "13.0.0.2"]
-    v6ips = ["1100::2", "1200::2", "1300::2"]
+    ips = ["111.0.0.2", "122.0.0.2", "133.0.0.2"]
+    v6ips = ["1110::2", "1220::2", "1330::2"]
     macs = ["00:00:00:00:11:02", "00:00:00:00:12:02", "00:00:00:00:13:02"]
 
     for i in range(len(ips)):
@@ -1016,30 +1020,30 @@ def test_routing_WarmRestart(dvs):
     #
     # Defining baseline IPv4 non-ecmp route-entries
     #
-    dvs.runcmd("ip route add 192.168.1.100/32 nexthop via 11.0.0.2")
-    dvs.runcmd("ip route add 192.168.1.200/32 nexthop via 12.0.0.2")
-    dvs.runcmd("ip route add 192.168.1.300/32 nexthop via 13.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.100/32 nexthop via 111.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.200/32 nexthop via 122.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.300/32 nexthop via 133.0.0.2")
 
     #
     # Defining baseline IPv4 ecmp route-entries
     #
-    dvs.runcmd("ip route add 192.168.1.1/32 nexthop via 11.0.0.2 nexthop via 12.0.0.2 nexthop via 13.0.0.2")
-    dvs.runcmd("ip route add 192.168.1.2/32 nexthop via 11.0.0.2 nexthop via 12.0.0.2 nexthop via 13.0.0.2")
-    dvs.runcmd("ip route add 192.168.1.3/32 nexthop via 11.0.0.2 nexthop via 12.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.1/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.2/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2")
 
     #
     # Defining baseline IPv6 non-ecmp route-entries
     #
-    dvs.runcmd("ip -6 route add fc00:11:11::1/128 nexthop via 1100::2")
-    dvs.runcmd("ip -6 route add fc00:12:12::1/128 nexthop via 1200::2")
-    dvs.runcmd("ip -6 route add fc00:13:13::1/128 nexthop via 1300::2")
+    dvs.runcmd("ip -6 route add fc00:11:11::1/128 nexthop via 1110::2")
+    dvs.runcmd("ip -6 route add fc00:12:12::1/128 nexthop via 1220::2")
+    dvs.runcmd("ip -6 route add fc00:13:13::1/128 nexthop via 1330::2")
 
     #
     # Defining baseline IPv6 ecmp route-entries
     #
-    dvs.runcmd("ip -6 route add fc00:1:1::1/128 nexthop via 1100::2 nexthop via 1200::2 nexthop via 1300::2")
-    dvs.runcmd("ip -6 route add fc00:2:2::1/128 nexthop via 1100::2 nexthop via 1200::2 nexthop via 1300::2")
-    dvs.runcmd("ip -6 route add fc00:3:3::1/128 nexthop via 1100::2 nexthop via 1200::2")
+    dvs.runcmd("ip -6 route add fc00:1:1::1/128 nexthop via 1110::2 nexthop via 1220::2 nexthop via 1330::2")
+    dvs.runcmd("ip -6 route add fc00:2:2::1/128 nexthop via 1110::2 nexthop via 1220::2 nexthop via 1330::2")
+    dvs.runcmd("ip -6 route add fc00:3:3::1/128 nexthop via 1110::2 nexthop via 1220::2")
 
     time.sleep(5)
 
@@ -1107,7 +1111,7 @@ def test_routing_WarmRestart(dvs):
     stop_zebra(dvs)
 
     # Add new prefix
-    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 11.0.0.2")
+    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 111.0.0.2")
     time.sleep(1)
 
     # Start zebra
@@ -1119,7 +1123,7 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify the changed prefix is seen in swss/sairedis
-    check_swss_change(dvs, "ROUTE", "192.168.100.0/24", "SET", "nexthop:11.0.0.2|ifname:Ethernet0")
+    check_swss_change(dvs, "ROUTE", "192.168.100.0/24", "SET", "nexthop:111.0.0.2|ifname:Ethernet0")
     check_sairedis_change(dvs, "ROUTE", "192.168.100.0/24", "CREATE")
 
     # Verify swss/sairedis changes -- a single one is expected
@@ -1139,7 +1143,7 @@ def test_routing_WarmRestart(dvs):
     stop_zebra(dvs)
 
     # Delete prefix
-    dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 11.0.0.2")
+    dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 111.0.0.2")
     time.sleep(1)
 
     # Start zebra
@@ -1171,7 +1175,7 @@ def test_routing_WarmRestart(dvs):
     stop_zebra(dvs)
 
     # Add prefix
-    dvs.runcmd("ip route add 192.168.200.0/24 nexthop via 11.0.0.2 nexthop via 12.0.0.2 nexthop via 13.0.0.2")
+    dvs.runcmd("ip route add 192.168.200.0/24 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
     time.sleep(1)
 
     # Start zebra
@@ -1187,7 +1191,7 @@ def test_routing_WarmRestart(dvs):
                       "ROUTE",
                       "192.168.200.0/24",
                       "SET",
-                      "nexthop:11.0.0.2,12.0.0.2,13.0.0.2|ifname:Ethernet0,Ethernet1,Ethernet2")
+                      "nexthop:111.0.0.2,122.0.0.2,133.0.0.2|ifname:Ethernet0,Ethernet1,Ethernet2")
 
     check_sairedis_change(dvs, "ROUTE", "192.168.200.0/24", "CREATE")
 
@@ -1208,7 +1212,7 @@ def test_routing_WarmRestart(dvs):
     stop_zebra(dvs)
 
     # Delete prefix
-    dvs.runcmd("ip route del 192.168.200.0/24 nexthop via 11.0.0.2 nexthop via 12.0.0.2 nexthop via 13.0.0.2")
+    dvs.runcmd("ip route del 192.168.200.0/24 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
     time.sleep(1)
 
     # Start zebra
@@ -1240,8 +1244,8 @@ def test_routing_WarmRestart(dvs):
     stop_zebra(dvs)
 
     # Add new path
-    dvs.runcmd("ip route del 192.168.1.3/32 nexthop via 11.0.0.2 nexthop via 12.0.0.2")
-    dvs.runcmd("ip route add 192.168.1.3/32 nexthop via 11.0.0.2 nexthop via 12.0.0.2 nexthop via 13.0.0.2")
+    dvs.runcmd("ip route del 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
     time.sleep(1)
 
     # Start zebra
@@ -1257,7 +1261,7 @@ def test_routing_WarmRestart(dvs):
                       "ROUTE",
                       "192.168.1.3/32",
                       "SET",
-                      "nexthop:11.0.0.2,12.0.0.2,13.0.0.2|ifname:Ethernet0,Ethernet4,Ethernet8")
+                      "nexthop:111.0.0.2,122.0.0.2,133.0.0.2|ifname:Ethernet0,Ethernet4,Ethernet8")
 
     check_sairedis_change(dvs, "ROUTE", "192.168.1.3/32", "SET")
 
@@ -1278,8 +1282,8 @@ def test_routing_WarmRestart(dvs):
     stop_zebra(dvs)
 
     # Delete ecmp-path
-    dvs.runcmd("ip route del 192.168.1.3/32 nexthop via 11.0.0.2 nexthop via 12.0.0.2 nexthop via 13.0.0.2")
-    dvs.runcmd("ip route add 192.168.1.3/32 nexthop via 11.0.0.2 nexthop via 12.0.0.2")
+    dvs.runcmd("ip route del 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2")
     time.sleep(1)
 
     # Start zebra
@@ -1295,7 +1299,7 @@ def test_routing_WarmRestart(dvs):
                       "ROUTE",
                       "192.168.1.3/32",
                       "SET",
-                      "nexthop:11.0.0.2,12.0.0.2|ifname:Ethernet0,Ethernet4")
+                      "nexthop:111.0.0.2,122.0.0.2|ifname:Ethernet0,Ethernet4")
 
     check_sairedis_change(dvs, "ROUTE", "192.168.1.3/32", "SET")
 
@@ -1316,7 +1320,7 @@ def test_routing_WarmRestart(dvs):
     stop_zebra(dvs)
 
     # Add prefix
-    dvs.runcmd("ip -6 route add fc00:4:4::1/128 nexthop via 1100::2")
+    dvs.runcmd("ip -6 route add fc00:4:4::1/128 nexthop via 1110::2")
     time.sleep(1)
 
     # Start zebra
@@ -1328,7 +1332,7 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify the changed prefix is seen in swss/sairedis
-    check_swss_change(dvs, "ROUTE", "fc00:4:4::1", "SET", "nexthop:1100::2|ifname:Ethernet0")
+    check_swss_change(dvs, "ROUTE", "fc00:4:4::1", "SET", "nexthop:1110::2|ifname:Ethernet0")
     check_sairedis_change(dvs, "ROUTE", "fc00:4:4::1/128", "CREATE")
 
     # Verify swss/sairedis changes -- a single one is expected
@@ -1347,7 +1351,7 @@ def test_routing_WarmRestart(dvs):
     stop_zebra(dvs)
 
     # Delete prefix
-    dvs.runcmd("ip -6 route del fc00:4:4::1/128 nexthop via 1100::2")
+    dvs.runcmd("ip -6 route del fc00:4:4::1/128 nexthop via 1110::2")
     time.sleep(1)
 
     # Start zebra
@@ -1401,7 +1405,7 @@ def test_routing_WarmRestart(dvs):
     stop_fpmsyncd(dvs)
 
     # Add new prefix
-    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 11.0.0.2")
+    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 111.0.0.2")
     time.sleep(1)
 
     # Start fpmsyncd
@@ -1413,7 +1417,7 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify the changed prefix is seen in swss/sairedis
-    check_swss_change(dvs, "ROUTE", "192.168.100.0/24", "SET", "nexthop:11.0.0.2|ifname:Ethernet0")
+    check_swss_change(dvs, "ROUTE", "192.168.100.0/24", "SET", "nexthop:111.0.0.2|ifname:Ethernet0")
     check_sairedis_change(dvs, "ROUTE", "192.168.100.0/24", "CREATE")
 
     # Verify swss/sairedis changes -- a single one is expected
@@ -1433,7 +1437,7 @@ def test_routing_WarmRestart(dvs):
     stop_fpmsyncd(dvs)
 
     # Delete prefix
-    dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 11.0.0.2")
+    dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 111.0.0.2")
     time.sleep(1)
 
     # Start fpmsyncd
