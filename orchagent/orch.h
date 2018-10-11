@@ -220,6 +220,11 @@ public:
     {
     }
 
+    Orch2(DBConnector *db, const vector<string> &tableNames, Request& request)
+        : Orch(db, tableNames), request_(request)
+    {
+    }
+
 protected:
     virtual void doTask(Consumer& consumer);
 

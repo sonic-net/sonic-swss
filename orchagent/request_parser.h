@@ -2,6 +2,9 @@
 #define __REQUEST_PARSER_H
 
 #include "ipaddress.h"
+#include "ipprefix.h"
+#include <sstream>
+#include <set>
 
 typedef enum _request_types_t
 {
@@ -11,8 +14,10 @@ typedef enum _request_types_t
     REQ_T_MAC_ADDRESS,
     REQ_T_PACKET_ACTION,
     REQ_T_IP,
+    REQ_T_IP_PREFIX,
     REQ_T_VLAN,
     REQ_T_UINT,
+    REQ_T_SET,
 } request_types_t;
 
 typedef struct _request_description
@@ -56,6 +61,12 @@ public:
     {
         assert(is_parsed_);
         return key_item_ip_addresses_.at(position);
+    }
+
+    const IpPrefix& getKeyIpPrefix(int position) const
+    {
+        assert(is_parsed_);
+        return key_item_ip_prefix_.at(position);
     }
 
     const uint64_t& getKeyUint(int position) const
@@ -112,6 +123,23 @@ public:
         return attr_item_uint_.at(attr_name);
     }
 
+    const set<string>& getAttrSet(const std::string& attr_name) const
+    {
+        assert(is_parsed_);
+        return attr_item_set_.at(attr_name);
+    }
+
+    void setTableName(std::string& table_name)
+    {
+        table_name_ = table_name;
+    }
+
+    const std::string& getTableName() const
+    {
+        assert(is_parsed_);
+        return table_name_;
+    }
+
 protected:
     Request(const request_description_t& request_description, const char key_separator)
         : request_description_(request_description),
@@ -129,8 +157,10 @@ private:
     bool parseBool(const std::string& str);
     MacAddress parseMacAddress(const std::string& str);
     IpAddress parseIpAddress(const std::string& str);
+    IpPrefix parseIpPrefix(const std::string& str);
     uint64_t parseUint(const std::string& str);
     uint16_t parseVlan(const std::string& str);
+    set<string> parseSet(const std::string& str);
 
     sai_packet_action_t parsePacketAction(const std::string& str);
 
@@ -139,11 +169,13 @@ private:
     bool is_parsed_;
     size_t number_of_key_items_;
 
+    std::string table_name_;
     std::string operation_;
     std::string full_key_;
     std::unordered_map<int, std::string> key_item_strings_;
     std::unordered_map<int, MacAddress> key_item_mac_addresses_;
     std::unordered_map<int, IpAddress> key_item_ip_addresses_;
+    std::unordered_map<int, IpPrefix> key_item_ip_prefix_;
     std::unordered_map<int, uint64_t> key_item_uint_;
     std::unordered_set<std::string> attr_names_;
     // FIXME: Make one union with all the values, except string
@@ -154,6 +186,7 @@ private:
     std::unordered_map<std::string, uint16_t> attr_item_vlan_;
     std::unordered_map<std::string, IpAddress> attr_item_ip_;
     std::unordered_map<std::string, uint64_t> attr_item_uint_;
+    std::unordered_map<std::string, set<string>> attr_item_set_;
 };
 
 #endif // __REQUEST_PARSER_H

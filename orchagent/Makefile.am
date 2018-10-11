@@ -43,6 +43,7 @@ orchagent_SOURCES = \
             vrforch.cpp \
             countercheckorch.cpp \
             vxlanorch.cpp \
+            vnetorch.cpp \
             dtelorch.cpp \
             flexcounterorch.cpp \
             acltable.h \
@@ -74,6 +75,7 @@ orchagent_SOURCES = \
             dtelorch.h \
             countercheckorch.h \
             vxlanorch.h \
+            vnetorch.h \
             flexcounterorch.h
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
