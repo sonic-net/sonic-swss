@@ -86,7 +86,7 @@ bool VNetVrfObject::createObj(vector<sai_attribute_t>& attrs)
         sai_object_id_t router_id;
         if (vr_type != VR_TYPE::VR_INVALID && l_fn(router_id))
         {
-            SWSS_LOG_DEBUG("VNET vr_type %d router id %lx  ", vr_type, router_id);
+            SWSS_LOG_DEBUG("VNET vr_type %d router id %lx", (int)vr_type, router_id);
             vr_ids_.insert(std::pair<VR_TYPE, sai_object_id_t>(vr_type, router_id));
         }
     }
