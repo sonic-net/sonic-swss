@@ -18,6 +18,7 @@ const request_description_t request_description1 = {
         { "ttl_action",    REQ_T_PACKET_ACTION },
         { "ip_opt_action", REQ_T_PACKET_ACTION },
         { "l3_mc_action",  REQ_T_PACKET_ACTION },
+        { "nlist",         REQ_T_SET },
     },
     { } // no mandatory attributes
 };
@@ -54,6 +55,7 @@ const request_description_t request_description3 = {
     {
         { "v4",            REQ_T_BOOL },
         { "v6",            REQ_T_BOOL },
+        { "nlist",         REQ_T_SET  },
     },
     { }  // no mandatory attributes
 };
@@ -73,7 +75,8 @@ TEST(request_parser, simpleKey)
                                      { "src_mac", "02:03:04:05:06:07" },
                                      { "ttl_action", "copy" },
                                      { "ip_opt_action", "drop" },
-                                     { "l3_mc_action", "log" }
+                                     { "l3_mc_action", "log" },
+                                     { "nlist", "name1" },
                                  }
                              };
 
@@ -86,13 +89,15 @@ TEST(request_parser, simpleKey)
         EXPECT_STREQ(request.getOperation().c_str(), "SET");
         EXPECT_STREQ(request.getFullKey().c_str(), "key1");
         EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
-        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action"}));
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "src_mac", "ttl_action", "ip_opt_action", "l3_mc_action", "nlist"}));
         EXPECT_TRUE(request.getAttrBool("v4"));
         EXPECT_TRUE(request.getAttrBool("v6"));
         EXPECT_STREQ(request.getAttrMacAddress("src_mac").to_string().c_str(), "02:03:04:05:06:07");
         EXPECT_EQ(request.getAttrPacketAction("ttl_action"),    SAI_PACKET_ACTION_COPY);
         EXPECT_EQ(request.getAttrPacketAction("ip_opt_action"), SAI_PACKET_ACTION_DROP);
         EXPECT_EQ(request.getAttrPacketAction("l3_mc_action"),  SAI_PACKET_ACTION_LOG);
+        EXPECT_TRUE(request.getAttrSet("nlist") == (std::set<std::string>{"name1"}));
+
     }
     catch (const std::exception& e)
     {
@@ -746,6 +751,32 @@ TEST(request_parser, correctAttrTypePacketAction2)
     }
 }
 
+TEST(request_parser, emptyAttrValue1)
+{
+    KeyOpFieldsValuesTuple t {"key1", "SET",
+                                 {
+                                     { "nlist", "" },
+                                 }
+                             };
+
+    try
+    {
+        TestRequest1 request;
+
+        EXPECT_NO_THROW(request.parse(t));
+
+        EXPECT_TRUE(request.getAttrSet("nlist") == (std::set<std::string>{}));
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Got unexpected exception";
+    }
+}
+
 TEST(request_parser, correctAttrTypePacketAction3)
 {
     KeyOpFieldsValuesTuple t {"key1", "SET",
@@ -942,6 +973,7 @@ TEST(request_parser, anotherKeySeparator)
                                  {
                                      { "v4", "false" },
                                      { "v6", "false" },
+                                     { "nlist", "name1,name2" },
                                  }
                              };
 
@@ -955,9 +987,11 @@ TEST(request_parser, anotherKeySeparator)
         EXPECT_STREQ(request.getFullKey().c_str(), "key1:key2");
         EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
         EXPECT_STREQ(request.getKeyString(1).c_str(), "key2");
-        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6"}));
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"v4", "v6", "nlist"}));
         EXPECT_FALSE(request.getAttrBool("v4"));
         EXPECT_FALSE(request.getAttrBool("v6"));
+        EXPECT_TRUE(request.getAttrSet("nlist") == (std::set<std::string>{"name1", "name2"}));
+
     }
     catch (const std::exception& e)
     {
@@ -1178,6 +1212,81 @@ TEST(request_parser, wrong_uint_key_2)
     catch (const std::invalid_argument& e)
     {
         EXPECT_STREQ(e.what(),"Out of range unsigned integer: 1234555555555555555555");
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::logic_error, not other exception";
+    }
+}
+
+const request_description_t request_description7 = {
+    { REQ_T_STRING, REQ_T_IP_PREFIX },
+    {
+        { "ip",            REQ_T_IP },
+    },
+    { }  // no mandatory attributes
+};
+
+class TestRequest7 : public Request
+{
+public:
+    TestRequest7() : Request(request_description7, ':') { }
+};
+
+TEST(request_parser, prefix_key1)
+{
+    KeyOpFieldsValuesTuple t {"Ethernet1:10.1.1.1/24", "SET",
+                                 {
+                                     { "ip", "20.1.1.1" },
+                                 }
+                             };
+
+    try
+    {
+        TestRequest7 request;
+
+        EXPECT_NO_THROW(request.parse(t));
+
+        EXPECT_STREQ(request.getOperation().c_str(), "SET");
+        EXPECT_STREQ(request.getFullKey().c_str(), "Ethernet1:10.1.1.1/24");
+        EXPECT_STREQ(request.getKeyString(0).c_str(), "Ethernet1");
+        EXPECT_EQ(request.getKeyIpPrefix(1), IpPrefix("10.1.1.1/24"));
+        EXPECT_TRUE(request.getAttrFieldNames() == (std::unordered_set<std::string>{"ip"}));
+        EXPECT_EQ(request.getAttrIP("ip"), IpAddress("20.1.1.1"));
+    }
+    catch (const std::exception& e)
+    {
+        FAIL() << "Got unexpected exception " << e.what();
+    }
+    catch (...)
+    {
+        FAIL() << "Expected std::logic_error, not other exception";
+    }
+}
+
+TEST(request_parser, wrong_key_ip_prefix)
+{
+    KeyOpFieldsValuesTuple t {"Ethernet1:10.1.1.1.1/24", "SET",
+                                 {
+                                     { "empty" , "empty" },
+                                 }
+                             };
+
+    try
+    {
+        TestRequest7 request;
+
+        request.parse(t);
+
+        FAIL() << "Expected std::invalid_argument error";
+    }
+    catch (const std::invalid_argument& e)
+    {
+        EXPECT_STREQ(e.what(),"Invalid ip prefix: 10.1.1.1.1/24");
     }
     catch (const std::exception& e)
     {

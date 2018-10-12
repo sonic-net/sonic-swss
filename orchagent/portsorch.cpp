@@ -2312,6 +2312,27 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     return true;
 }
 
+bool PortsOrch::setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode)
+{
+    // TODO: how to support 1D bridge?
+    if (port.m_type != Port::PHY) return false;
+
+    auto bridge_port_id = port.m_bridge_port_id;
+    if (bridge_port_id == SAI_NULL_OBJECT_ID) return false;
+
+    sai_attribute_t bport_attr;
+    bport_attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+    bport_attr.value.s32 = mode;
+    auto status = sai_bridge_api->set_bridge_port_attribute(bridge_port_id, &bport_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set bridge port %lx learning_mode attribute: %d", bridge_port_id, status);
+        return false;
+    }
+    SWSS_LOG_NOTICE("Disable FDB learning on bridge port %s(%lx)", port.m_alias.c_str(), bridge_port_id);
+    return true;
+}
+
 bool PortsOrch::addBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
@@ -2348,6 +2369,11 @@ bool PortsOrch::addBridgePort(Port &port)
     /* Create a bridge port with admin status set to UP */
     attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
     attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    /* And with hardware FDB learning mode set to HW (explicit default value) */
+    attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+    attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
     attrs.push_back(attr);
 
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());

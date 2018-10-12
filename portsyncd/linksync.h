@@ -20,7 +20,7 @@ public:
 
 private:
     ProducerStateTable m_portTableProducer;
-    Table m_portTable, m_statePortTable;
+    Table m_portTable, m_statePortTable, m_stateMgmtPortTable;
 
     std::map<unsigned int, std::string> m_ifindexNameMap;
     std::map<unsigned int, std::string> m_ifindexOldNameMap;

@@ -57,6 +57,7 @@ int main(int argc, char **argv)
         DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
+        WarmStart::initialize("vlanmgrd");
         WarmStart::checkWarmStart("vlanmgrd");
 
         /*

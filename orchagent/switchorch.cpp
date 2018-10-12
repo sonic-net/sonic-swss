@@ -176,3 +176,18 @@ void SwitchOrch::restartCheckReply(const string &op, const string &data, std::ve
     restartRequestReply.send(op, data, values);
     checkRestartReadyDone();
 }
+
+bool SwitchOrch::setAgingFDB(uint32_t sec)
+{
+    sai_attribute_t attr;
+    attr.id = SAI_SWITCH_ATTR_FDB_AGING_TIME;
+    attr.value.u32 = sec;
+    auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set switch %lx fdb_aging_time attribute: %d", gSwitchId, status);
+        return false;
+    }
+    SWSS_LOG_NOTICE("Set switch %lx fdb_aging_time %u sec", gSwitchId, sec);
+    return true;
+}

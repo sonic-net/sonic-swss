@@ -101,6 +101,8 @@ int main(int argc, char **argv)
     swss::Logger::linkToDbNative("orchagent");
 
     SWSS_LOG_ENTER();
+
+    WarmStart::initialize("orchagent");
     WarmStart::checkWarmStart("orchagent");
 
     if (signal(SIGHUP, sighup_handler) == SIG_ERR)

@@ -14,6 +14,7 @@
 #include "linkcache.h"
 #include "portsyncd/linksync.h"
 #include "warm_restart.h"
+#include "shellcmd.h"
 
 #include <iostream>
 #include <set>
@@ -24,6 +25,7 @@ using namespace swss;
 #define VLAN_DRV_NAME   "bridge"
 #define TEAM_DRV_NAME   "team"
 
+const string MGMT_PREFIX = "eth";
 const string INTFS_PREFIX = "Ethernet";
 const string LAG_PREFIX = "PortChannel";
 
@@ -40,8 +42,56 @@ extern "C" { extern struct if_nameindex *if_nameindex (void) __THROW; }
 LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     m_portTableProducer(appl_db, APP_PORT_TABLE_NAME),
     m_portTable(appl_db, APP_PORT_TABLE_NAME),
-    m_statePortTable(state_db, STATE_PORT_TABLE_NAME)
+    m_statePortTable(state_db, STATE_PORT_TABLE_NAME),
+    m_stateMgmtPortTable(state_db, STATE_MGMT_PORT_TABLE_NAME)
 {
+    struct if_nameindex *if_ni, *idx_p;
+    if_ni = if_nameindex();
+
+    for (idx_p = if_ni;
+            idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
+            idx_p++)
+    {
+        string key = idx_p->if_name;
+
+        /* Explicitly store management ports oper status into the state database.
+         * This piece of information is used by SNMP. */
+        if (!key.compare(0, MGMT_PREFIX.length(), MGMT_PREFIX))
+        {
+            string cmd, res;
+            cmd = "cat /sys/class/net/" + key + "/operstate";
+            try
+            {
+                EXEC_WITH_ERROR_THROW(cmd, res);
+            }
+            catch (...)
+            {
+                SWSS_LOG_WARN("Failed to get %s oper status", key.c_str());
+                continue;
+            }
+
+            /* Remove the trailing newline */
+            if (res.length() >= 1 && res.at(res.length() - 1) == '\n')
+            {
+                res.erase(res.length() - 1);
+                /* The value of operstate will be either up or down */
+                if (res != "up" && res != "down")
+                {
+                    SWSS_LOG_WARN("Unknown %s oper status %s",
+                            key.c_str(), res.c_str());
+                }
+                FieldValueTuple fv("oper_status", res);
+                vector<FieldValueTuple> fvs;
+                fvs.push_back(fv);
+
+                m_stateMgmtPortTable.set(key, fvs);
+                SWSS_LOG_INFO("Store %s oper status %s to state DB",
+                        key.c_str(), res.c_str());
+            }
+            continue;
+        }
+    }
+
     if (!WarmStart::isWarmStart())
     {
         /* See the comments for g_portSet in portsyncd.cpp */
@@ -61,16 +111,13 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
             }
         }
 
-        struct if_nameindex *if_ni, *idx_p;
-        if_ni = if_nameindex();
-        if (if_ni == NULL)
-        {
-            return;
-        }
-
-        for (idx_p = if_ni; ! (idx_p->if_index == 0 && idx_p->if_name == NULL); idx_p++)
+        for (idx_p = if_ni;
+                idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
+                idx_p++)
         {
             string key = idx_p->if_name;
+
+            /* Skip all non-frontpanel ports */
             if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
             {
                 continue;
@@ -78,8 +125,8 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
 
             m_ifindexOldNameMap[idx_p->if_index] = key;
 
-            /* Bring down the existing kernel interfaces */
             string cmd, res;
+            /* Bring down the existing kernel interfaces */
             SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
             cmd = "ip link set " + key + " down";
             try
@@ -106,7 +153,8 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     string key = rtnl_link_get_name(link);
 
     if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX) &&
-        key.compare(0, LAG_PREFIX.length(), LAG_PREFIX))
+        key.compare(0, LAG_PREFIX.length(), LAG_PREFIX) &&
+        key.compare(0, MGMT_PREFIX.length(), MGMT_PREFIX))
     {
         return;
     }
@@ -131,6 +179,17 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         SWSS_LOG_INFO("nlmsg type:%d key:%s admin:%d oper:%d addr:%s ifindex:%d master:%d",
                        nlmsg_type, key.c_str(), admin, oper, addrStr, ifindex, master);
+    }
+
+    if (!key.compare(0, MGMT_PREFIX.length(), MGMT_PREFIX))
+    {
+        FieldValueTuple fv("oper_status", oper ? "up" : "down");
+        vector<FieldValueTuple> fvs;
+        fvs.push_back(fv);
+        m_stateMgmtPortTable.set(key, fvs);
+        SWSS_LOG_INFO("Store %s oper status %s to state DB",
+                key.c_str(), oper ? "up" : "down");
+        return;
     }
 
     /* teamd instances are dealt in teamsyncd */

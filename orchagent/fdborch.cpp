@@ -19,13 +19,14 @@ extern CrmOrch *        gCrmOrch;
 
 const int fdborch_pri = 20;
 
-FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
-    Orch(db, tableName, fdborch_pri),
+FdbOrch::FdbOrch(TableConnector applDbConnector, TableConnector stateDbConnector, PortsOrch *port) :
+    Orch(applDbConnector.first, applDbConnector.second, fdborch_pri),
     m_portsOrch(port),
-    m_table(Table(db, tableName))
+    m_table(applDbConnector.first, applDbConnector.second),
+    m_fdbStateTable(stateDbConnector.first, stateDbConnector.second)
 {
     m_portsOrch->attach(this);
-    m_flushNotificationsConsumer = new NotificationConsumer(db, "FLUSHFDBREQUEST");
+    m_flushNotificationsConsumer = new NotificationConsumer(applDbConnector.first, "FLUSHFDBREQUEST");
     auto flushNotifier = new Notifier(m_flushNotificationsConsumer, this, "FLUSHFDBREQUEST");
     Orch::addExecutor(flushNotifier);
 
@@ -34,6 +35,73 @@ FdbOrch::FdbOrch(DBConnector *db, string tableName, PortsOrch *port) :
     m_fdbNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto fdbNotifier = new Notifier(m_fdbNotificationConsumer, this, "FDB_NOTIFICATIONS");
     Orch::addExecutor(fdbNotifier);
+}
+
+bool FdbOrch::bake()
+{
+    Orch::bake();
+
+    auto consumer = dynamic_cast<Consumer *>(getExecutor(APP_FDB_TABLE_NAME));
+    if (consumer == NULL)
+    {
+        SWSS_LOG_ERROR("No consumer %s in Orch", APP_FDB_TABLE_NAME);
+        return false;
+    }
+
+    size_t refilled = consumer->refillToSync(&m_fdbStateTable);
+    SWSS_LOG_NOTICE("Add warm input FDB State: %s, %zd", APP_FDB_TABLE_NAME, refilled);
+    return true;
+}
+
+bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
+{
+    const FdbEntry& entry = update.entry;
+    const Port& port = update.port;
+    sai_vlan_id_t vlan_id = port.m_port_vlan_id;
+    const MacAddress& mac = entry.mac;
+    string portName = port.m_alias;
+
+    // ref: https://github.com/Azure/sonic-swss/blob/master/doc/swss-schema.md#fdb_table
+    string key = "Vlan" + to_string(vlan_id) + ":" + mac.to_string();
+
+    if (update.add)
+    {
+        auto inserted = m_entries.insert(entry);
+
+        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx",
+                        entry.mac.to_string().c_str(), entry.bv_id);
+
+        if (!inserted.second)
+        {
+            SWSS_LOG_INFO("FdbOrch notification: mac %s is duplicate", entry.mac.to_string().c_str());
+            return false;
+        }
+
+        // Write to StateDb
+        std::vector<FieldValueTuple> fvs;
+        fvs.push_back(FieldValueTuple("port", portName));
+        fvs.push_back(FieldValueTuple("type", "dynamic"));
+        m_fdbStateTable.set(key, fvs);
+
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+        return true;
+    }
+    else
+    {
+        size_t erased = m_entries.erase(entry);
+        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
+
+        if (erased == 0)
+        {
+            return false;
+        }
+
+        // Remove in StateDb
+        m_fdbStateTable.del(key);
+
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+        return true;
+    }
 }
 
 void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_object_id_t bridge_port_id)
@@ -62,22 +130,7 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         }
 
         update.add = true;
-
-        {
-            auto ret = m_entries.insert(update.entry);
-
-            SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx",
-                            update.entry.mac.to_string().c_str(), entry->bv_id);
-
-            if (ret.second)
-            {
-                gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
-            }
-            else
-            {
-                SWSS_LOG_INFO("FdbOrch notification: mac %s is duplicate", update.entry.mac.to_string().c_str());
-            }
-        }
+        storeFdbEntryState(update);
 
         for (auto observer: m_observers)
         {
@@ -89,16 +142,7 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
     case SAI_FDB_EVENT_AGED:
     case SAI_FDB_EVENT_MOVE:
         update.add = false;
-
-        {
-            auto ret = m_entries.erase(update.entry);
-            SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
-
-            if (ret)
-            {
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
-            }
-        }
+        storeFdbEntryState(update);
 
         for (auto observer: m_observers)
         {
@@ -121,12 +165,11 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
                 update.entry.mac = itr->mac;
                 update.entry.bv_id = itr->bv_id;
                 update.add = false;
+                itr++;
 
-                itr = m_entries.erase(itr);
+                storeFdbEntryState(update);
 
                 SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed", update.entry.mac.to_string().c_str());
-
-                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
 
                 for (auto observer: m_observers)
                 {

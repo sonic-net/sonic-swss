@@ -19,6 +19,7 @@ public:
     bool skipPendingTaskCheck() { return m_warmRestartCheck.skipPendingTaskCheck; }
     void checkRestartReadyDone() { m_warmRestartCheck.checkRestartReadyState = false; }
     void restartCheckReply(const string &op, const string &data, std::vector<FieldValueTuple> &values);
+    bool setAgingFDB(uint32_t sec);
 private:
     void doTask(Consumer &consumer);
 
