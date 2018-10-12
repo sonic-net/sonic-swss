@@ -94,7 +94,10 @@ def test_CrmFdbEntry(dvs):
 
 def test_CrmIpv4Route(dvs):
 
-    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([])
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
 
     dvs.runcmd("crm config polling interval 1")
 
