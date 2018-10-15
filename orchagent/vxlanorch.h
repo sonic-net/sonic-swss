@@ -30,8 +30,8 @@ struct tunnel_ids_t
 class VxlanTunnel
 {
 public:
-    VxlanTunnel(string name, IpAddress src_ip, IpAddress dst_ip)
-                :tunnel_name_(name), src_ip_(src_ip), dst_ip_(dst_ip) { }
+    VxlanTunnel(string name, IpAddress srcIp, IpAddress dstIp)
+                :tunnel_name_(name), src_ip_(srcIp), dst_ip_(dstIp) { }
 
     bool isActive() const
     {
@@ -42,12 +42,17 @@ public:
     sai_object_id_t addEncapMapperEntry(sai_object_id_t obj, uint32_t vni);
     sai_object_id_t addDecapMapperEntry(sai_object_id_t obj, uint32_t vni);
 
-    sai_object_id_t getDecapMapId(const std::string& tunnel_name) const
+    sai_object_id_t getTunnelId() const
+    {
+        return ids_.tunnel_id;
+    }
+
+    sai_object_id_t getDecapMapId() const
     {
         return ids_.tunnel_decap_id;
     }
 
-    sai_object_id_t getEncapMapId(const std::string& tunnel_name) const
+    sai_object_id_t getEncapMapId() const
     {
         return ids_.tunnel_encap_id;
     }
@@ -79,21 +84,21 @@ public:
 };
 
 using VxlanTunnel_T = std::unique_ptr<VxlanTunnel>;
-typedef std::map<std::string, VxlanTunnel_T> VxlanTunnelTable;
+using VxlanTunnelTable = std::map<std::string, VxlanTunnel_T>;
 
 class VxlanTunnelOrch : public Orch2
 {
 public:
     VxlanTunnelOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_) { }
 
-    bool isTunnelExists(const std::string& tunnel_name) const
+    bool isTunnelExists(const std::string& tunnelName) const
     {
-        return vxlan_tunnel_table_.find(tunnel_name) != std::end(vxlan_tunnel_table_);
+        return vxlan_tunnel_table_.find(tunnelName) != std::end(vxlan_tunnel_table_);
     }
 
-    VxlanTunnel_T& getVxlanTunnel(const std::string& tunnel_name)
+    VxlanTunnel_T& getVxlanTunnel(const std::string& tunnelName)
     {
-        return vxlan_tunnel_table_.at(tunnel_name);
+        return vxlan_tunnel_table_.at(tunnelName);
     }
 
 private:
@@ -113,7 +118,7 @@ const request_description_t vxlan_tunnel_map_request_description = {
             { "vni", "vlan" }
 };
 
-typedef std::map<std::string, sai_object_id_t> VxlanTunnelMapTable;
+using VxlanTunnelMapTable = std::map<std::string, sai_object_id_t>;
 
 class VxlanTunnelMapRequest : public Request
 {
@@ -158,24 +163,31 @@ struct vrf_map_entry_t {
     sai_object_id_t decap_id;
 };
 
-typedef std::map<string, vrf_map_entry_t> VxlanVrfTable;
+using VxlanVrfTable = std::map<string, vrf_map_entry_t>;
+using VxlanVrfTunnel = std::map<string, sai_object_id_t>;
 
 class VxlanVrfMapOrch : public Orch2
 {
 public:
     VxlanVrfMapOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_) { }
 
+    using handler_pair = std::pair<sai_object_id_t, sai_object_id_t>;
+
     bool isVrfMapExists(const std::string& name) const
     {
         return vxlan_vrf_table_.find(name) != std::end(vxlan_vrf_table_);
     }
 
+    sai_object_id_t
+    createNextHopTunnel(const std::string& vnet, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni = 0);
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    void doVnetTask(string& vrf_name, VxlanTunnel_T& tunnel_obj, std::pair<sai_object_id_t, sai_object_id_t>&);
+    void vnetTaskHandler(string& vrfName, VxlanTunnel_T& tunnelObj, handler_pair&);
 
     VxlanVrfTable vxlan_vrf_table_;
+    VxlanVrfTunnel vxlan_vrf_tunnel_;
     VxlanVrfRequest request_;
 };

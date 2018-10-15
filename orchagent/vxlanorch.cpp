@@ -58,35 +58,35 @@ const map<MAP_T, std::pair<uint32_t, uint32_t>> vxlanTunnelMapKeyVal =
 /*
  * Manipulators for the above Map
  */
-static inline uint32_t tunnelMapType (MAP_T map_t_)
+static inline uint32_t tunnel_map_type (MAP_T map_t)
 {
-    return vxlanTunnelMap.at(map_t_);
+    return vxlanTunnelMap.at(map_t);
 }
 
-static inline uint32_t tunnelMapKey (MAP_T map_t_)
+static inline uint32_t tunnel_map_key (MAP_T map_t)
 {
-    return vxlanTunnelMapKeyVal.at(map_t_).first;
+    return vxlanTunnelMapKeyVal.at(map_t).first;
 }
 
-static inline uint32_t tunnelMapVal (MAP_T map_t_)
+static inline uint32_t tunnel_map_val (MAP_T map_t)
 {
-    return vxlanTunnelMapKeyVal.at(map_t_).second;
+    return vxlanTunnelMapKeyVal.at(map_t).second;
 }
 
 static sai_object_id_t
-create_tunnel_map(MAP_T map_t_)
+create_tunnel_map(MAP_T map_t)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_map_attrs;
 
-    if (map_t_ == MAP_T::MAP_TO_INVALID)
+    if (map_t == MAP_T::MAP_TO_INVALID)
     {
-        SWSS_LOG_INFO("Invalid map type %d", map_t_);
+        SWSS_LOG_INFO("Invalid map type %d", map_t);
         return SAI_NULL_OBJECT_ID;
     }
 
     attr.id = SAI_TUNNEL_MAP_ATTR_TYPE;
-    attr.value.s32 = tunnelMapType(map_t_);
+    attr.value.s32 = tunnel_map_type(map_t);
 
     tunnel_map_attrs.push_back(attr);
 
@@ -106,7 +106,7 @@ create_tunnel_map(MAP_T map_t_)
 }
 
 sai_object_id_t create_encap_tunnel_map_entry(
-    MAP_T map_t_,
+    MAP_T map_t,
     sai_object_id_t tunnel_map_id,
     sai_object_id_t obj_id,
     sai_uint32_t vni)
@@ -116,18 +116,18 @@ sai_object_id_t create_encap_tunnel_map_entry(
     std::vector<sai_attribute_t> tunnel_map_entry_attrs;
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
-    attr.value.s32 = tunnelMapType(map_t_);
+    attr.value.s32 = tunnel_map_type(map_t);
     tunnel_map_entry_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP;
     attr.value.oid = tunnel_map_id;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = tunnelMapKey(map_t_);
+    attr.id = tunnel_map_key(map_t);
     attr.value.oid = obj_id;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = tunnelMapVal(map_t_);
+    attr.id = tunnel_map_val(map_t);
     attr.value.u32 = vni;
     tunnel_map_entry_attrs.push_back(attr);
 
@@ -139,7 +139,7 @@ sai_object_id_t create_encap_tunnel_map_entry(
 }
 
 sai_object_id_t create_decap_tunnel_map_entry(
-    MAP_T map_t_,
+    MAP_T map_t,
     sai_object_id_t tunnel_map_id,
     sai_object_id_t obj_id,
     sai_uint32_t vni)
@@ -149,18 +149,18 @@ sai_object_id_t create_decap_tunnel_map_entry(
     std::vector<sai_attribute_t> tunnel_map_entry_attrs;
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
-    attr.value.s32 = tunnelMapType(map_t_);
+    attr.value.s32 = tunnel_map_type(map_t);
     tunnel_map_entry_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP;
     attr.value.oid = tunnel_map_id;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = tunnelMapKey(map_t_);
+    attr.id = tunnel_map_key(map_t);
     attr.value.u32 = vni;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = tunnelMapVal(map_t_);
+    attr.id = tunnel_map_val(map_t);
     attr.value.oid = obj_id;
     tunnel_map_entry_attrs.push_back(attr);
 
@@ -174,7 +174,7 @@ sai_object_id_t create_decap_tunnel_map_entry(
 sai_status_t create_nexthop_tunnel(
     sai_ip_address_t host_ip,
     sai_uint32_t vni, // optional vni
-    sai_mac_t mac, // inner destination mac
+    sai_mac_t *mac, // inner destination mac
     sai_object_id_t tunnel_id,
     sai_object_id_t *next_hop_id)
 {
@@ -200,7 +200,7 @@ sai_status_t create_nexthop_tunnel(
         next_hop_attrs.push_back(next_hop_attr);
     }
 
-    if (mac != NULL)
+    if (mac != nullptr)
     {
         next_hop_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_MAC;
         memcpy(next_hop_attr.value.mac, mac, sizeof(sai_mac_t));
@@ -215,7 +215,7 @@ sai_status_t create_nexthop_tunnel(
 
 static sai_object_id_t
 create_tunnel_map_entry(
-    MAP_T map_t_,
+    MAP_T map_t,
     sai_object_id_t tunnel_map_id,
     sai_uint32_t vni,
     sai_uint16_t vlan_id)
@@ -224,18 +224,18 @@ create_tunnel_map_entry(
     std::vector<sai_attribute_t> tunnel_map_entry_attrs;
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE;
-    attr.value.s32 = tunnelMapType(map_t_);
+    attr.value.s32 = tunnel_map_type(map_t);
     tunnel_map_entry_attrs.push_back(attr);
 
     attr.id = SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP;
     attr.value.oid = tunnel_map_id;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = tunnelMapKey(map_t_);
+    attr.id = tunnel_map_key(map_t);
     attr.value.u32 = vni;
     tunnel_map_entry_attrs.push_back(attr);
 
-    attr.id = tunnelMapVal(map_t_);
+    attr.id = tunnel_map_val(map_t);
     attr.value.u16 = vlan_id;
     tunnel_map_entry_attrs.push_back(attr);
 
@@ -413,14 +413,14 @@ bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap)
 
 sai_object_id_t VxlanTunnel::addEncapMapperEntry(sai_object_id_t obj, uint32_t vni)
 {
-    const auto encap_id = getEncapMapId(tunnel_name_);
+    const auto encap_id = getEncapMapId();
     const auto map_t = tunnel_map_.first;
     return create_encap_tunnel_map_entry(map_t, encap_id, obj, vni);
 }
 
 sai_object_id_t VxlanTunnel::addDecapMapperEntry(sai_object_id_t obj, uint32_t vni)
 {
-    const auto decap_id = getDecapMapId(tunnel_name_);
+    const auto decap_id = getDecapMapId();
     const auto map_t = tunnel_map_.second;
     return create_decap_tunnel_map_entry(map_t, decap_id, obj, vni);
 }
@@ -518,7 +518,7 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
         return true;
     }
 
-    const auto tunnel_map_id = tunnel_obj->getDecapMapId(tunnel_name);
+    const auto tunnel_map_id = tunnel_obj->getDecapMapId();
     const auto tunnel_map_entry_name = request.getKeyString(1);
 
     try
@@ -549,8 +549,38 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
     return true;
 }
 
-void VxlanVrfMapOrch::doVnetTask(string& vrf_name, VxlanTunnel_T& tunnel_obj,
-                                 std::pair<sai_object_id_t, sai_object_id_t>& cap_obj)
+
+sai_object_id_t
+VxlanVrfMapOrch::createNextHopTunnel(const std::string& vName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni)
+{
+    if (vxlan_vrf_tunnel_.find(vName) ==  vxlan_vrf_tunnel_.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    sai_ip_address_t host_ip;
+    swss::copy(host_ip, ipAddr);
+
+    sai_mac_t mac, *macptr = nullptr;
+    if (macAddress)
+    {
+        memcpy(mac, macAddress.getMac(), ETHER_ADDR_LEN);
+        macptr = &mac;
+    }
+
+    sai_object_id_t nh_id, tunnel_id = vxlan_vrf_tunnel_[vName];
+
+    if (create_nexthop_tunnel(host_ip, vni, macptr, tunnel_id, &nh_id) != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't create nexthop tunnel object");
+    }
+
+    SWSS_LOG_INFO("NH tunnel created for %s, id 0x%lx", vName.c_str(), nh_id);
+
+    return nh_id;
+}
+
+void VxlanVrfMapOrch::vnetTaskHandler(string& vrf_name, VxlanTunnel_T& tunnel_obj, handler_pair& cap_obj)
 {
     VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
     if (!tunnel_obj->isActive())
@@ -598,13 +628,13 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
     auto& tunnel_obj = tunnel_orch->getVxlanTunnel(tunnel_name);
     std::pair<sai_object_id_t, sai_object_id_t> cap_obj;
 
-    string vrf_name = request.getAttrString("vrf");;
+    string vrf_name = request.getAttrString("vrf");
     VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
     VRFOrch* vrf_orch = gDirectory.get<VRFOrch*>();
 
-    if (vnet_orch->isVnetexists(vrf_name))
+    if (vnet_orch->isVnetExists(vrf_name))
     {
-        doVnetTask(vrf_name, tunnel_obj, cap_obj);
+        vnetTaskHandler(vrf_name, tunnel_obj, cap_obj);
     }
     else if (vrf_orch->isVRFexists(vrf_name))
     {
@@ -630,6 +660,7 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
                 entry.encap_id, entry.decap_id);
 
         vxlan_vrf_table_[full_map_entry_name] = entry;
+        vxlan_vrf_tunnel_[vrf_name] = tunnel_obj->getTunnelId();
     }
     catch(const std::runtime_error& error)
     {
