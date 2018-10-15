@@ -30,6 +30,7 @@ const char ref_end             = ']';
 const char comma               = ',';
 const char range_specifier     = '-';
 const char config_db_key_delimiter = '|';
+const char state_db_key_delimiter  = '|';
 
 #define MLNX_PLATFORM_SUBSTRING "mellanox"
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
