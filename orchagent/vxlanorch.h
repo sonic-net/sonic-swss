@@ -118,7 +118,7 @@ const request_description_t vxlan_tunnel_map_request_description = {
             { "vni", "vlan" }
 };
 
-using VxlanTunnelMapTable = std::map<std::string, sai_object_id_t>;
+typedef std::map<std::string, sai_object_id_t> VxlanTunnelMapTable;
 
 class VxlanTunnelMapRequest : public Request
 {

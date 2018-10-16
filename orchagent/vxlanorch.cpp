@@ -5,6 +5,7 @@
 #include <unordered_set>
 #include <stdexcept>
 
+
 #include "sai.h"
 #include "macaddress.h"
 #include "ipaddress.h"
@@ -257,16 +258,20 @@ create_tunnel_map_entry(
 // Create Tunnel
 static sai_object_id_t
 create_tunnel(
-        sai_object_id_t tunnel_encap_id,
-        sai_object_id_t tunnel_decap_id,
-        sai_ip_address_t *src_ip,
-        sai_object_id_t underlay_rif)
+    sai_object_id_t tunnel_encap_id,
+    sai_object_id_t tunnel_decap_id,
+    sai_ip_address_t *src_ip,
+    sai_object_id_t underlay_rif)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_attrs;
 
     attr.id = SAI_TUNNEL_ATTR_TYPE;
     attr.value.s32 = SAI_TUNNEL_TYPE_VXLAN;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
+    attr.value.oid = underlay_rif;
     tunnel_attrs.push_back(attr);
 
     sai_object_id_t decap_list[] = { tunnel_decap_id };
@@ -283,10 +288,6 @@ create_tunnel(
         attr.value.objlist.list = encap_list;
         tunnel_attrs.push_back(attr);
     }
-
-    attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
-    attr.value.oid = underlay_rif;
-    tunnel_attrs.push_back(attr);
 
     // source ip
     if (src_ip != nullptr)
@@ -314,10 +315,10 @@ create_tunnel(
 // Create tunnel termination
 static sai_object_id_t
 create_tunnel_termination(
-    sai_object_id_t   tunnel_oid,
+    sai_object_id_t tunnel_oid,
     sai_ip_address_t *srcip,
     sai_ip_address_t *dstip,
-    sai_object_id_t   default_vrid)
+    sai_object_id_t default_vrid)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_attrs;
@@ -407,7 +408,6 @@ bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap)
     }
 
     SWSS_LOG_INFO("Vxlan tunnel '%s' was created", tunnel_name_.c_str());
-
     return true;
 }
 
@@ -463,8 +463,7 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
     std::unique_ptr<VxlanTunnel> tunnel_obj (new VxlanTunnel(tunnel_name, src_ip, dst_ip));
     vxlan_tunnel_table_[tunnel_name] = std::move(tunnel_obj);
 
-    SWSS_LOG_INFO("Vxlan tunnel '%s' saved", tunnel_name.c_str());
-
+    SWSS_LOG_INFO("Vxlan tunnel '%s' was added", tunnel_name.c_str());
     return true;
 }
 
@@ -549,7 +548,6 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
     return true;
 }
 
-
 sai_object_id_t
 VxlanVrfMapOrch::createNextHopTunnel(const std::string& vName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni)
 {
@@ -576,7 +574,6 @@ VxlanVrfMapOrch::createNextHopTunnel(const std::string& vName, IpAddress& ipAddr
     }
 
     SWSS_LOG_INFO("NH tunnel created for %s, id 0x%lx", vName.c_str(), nh_id);
-
     return nh_id;
 }
 
@@ -671,7 +668,6 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
 
     SWSS_LOG_INFO("Vxlan vrf map entry '%s' for tunnel '%s' was created",
                     tunnel_map_entry_name.c_str(), tunnel_name.c_str());
-
     return true;
 }
 
