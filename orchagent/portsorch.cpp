@@ -40,6 +40,7 @@ extern BufferOrch *gBufferOrch;
 #define DEFAULT_VLAN_ID     1
 #define PORT_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 #define QUEUE_FLEX_STAT_COUNTER_POLL_MSECS "10000"
+#define CPU_TRAF_QUEUE_IDX  0
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
 {
@@ -2299,6 +2300,22 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     attr.id = SAI_HOSTIF_ATTR_NAME;
     strncpy((char *)&attr.value.chardata, alias.c_str(), SAI_HOSTIF_NAME_SIZE);
     attrs.push_back(attr);
+
+    const char *platform = getenv("platform");
+    if (platform && strstr(platform, BRCM_PLATFORM_SUBSTRING))
+    {
+        // In the THx case, there is dedicated egress buffer pool
+        // reserved for CPU traffic. SAI will not look into the queue
+        // index value passed in as that pool is tied to a fixed queue index.
+        // But we still need the attr key in place to direct the CPU traffic to
+        // its designated queue, whose index is not the same as the one
+        // assigned by default.
+        // In the TD2 case, the attr value can be used to direct CPU traffic to an
+        // queue other than the default 0, but the benefit of doing so is at question.
+        attr.id = SAI_HOSTIF_ATTR_QUEUE;
+        attr.value.u32 = CPU_TRAF_QUEUE_IDX;
+        attrs.push_back(attr);
+    }
 
     sai_status_t status = sai_hostif_api->create_hostif(&host_intfs_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
