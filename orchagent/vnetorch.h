@@ -177,8 +177,10 @@ private:
 const request_description_t vnet_route_description = {
     { REQ_T_STRING, REQ_T_IP_PREFIX },
     {
-        { "endpoint",   REQ_T_IP },
-        { "ifname",     REQ_T_STRING },
+        { "endpoint",    REQ_T_IP },
+        { "ifname",      REQ_T_STRING },
+        { "vni",         REQ_T_UINT },
+        { "mac_address", REQ_T_MAC_ADDRESS },
     },
     { }
 };
@@ -191,6 +193,13 @@ public:
 
 using NextHopMap = map<IpAddress, sai_object_id_t>;
 using NextHopTunnels = map<string, NextHopMap>;
+
+struct endpoint
+{
+    IpAddress ip;
+    MacAddress mac;
+    uint32_t vni;
+};
 
 class VNetRouteOrch : public Orch2
 {
@@ -207,12 +216,12 @@ private:
     void handleTunnel(const Request&);
 
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, IpAddress& ipAddr);
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, endpoint& endp);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, string& ifname);
 
-    sai_object_id_t getNextHop(const string& vnet, IpAddress& ipAddr);
+    sai_object_id_t getNextHop(const string& vnet, endpoint& endp);
 
     VNetOrch *vnet_orch_;
     VNetRouteRequest request_;
