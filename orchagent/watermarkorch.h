@@ -7,9 +7,6 @@
 #include "notificationconsumer.h"
 #include "timer.h"
 
-extern "C" {
-#include "sai.h"
-}
 
 class WatermarkOrch : public Orch
 {
@@ -18,7 +15,7 @@ public:
     virtual ~WatermarkOrch(void);
 
     void doTask(Consumer &consumer);
-    void doTask(NotificationConsumer& consumer);
+    void doTask(NotificationConsumer &consumer);
     void doTask(SelectableTimer &timer);
 
     void init_pg_ids();

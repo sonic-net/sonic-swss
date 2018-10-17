@@ -477,7 +477,6 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         // Only register lossless tc counters in database.
         string str = counterIdsToStr(c_portStatIds, &sai_serialize_port_stat);
         string filteredStr = filterPfcCounters(str, losslessTc);
-        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
         fieldValues.emplace_back(PORT_COUNTER_ID_LIST, filteredStr);
 
         m_flexCounterTable->set(key, fieldValues);
@@ -506,7 +505,6 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         if (!c_queueStatIds.empty())
         {
             string str = counterIdsToStr(c_queueStatIds, sai_serialize_queue_stat);
-            queueFieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
             queueFieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, str);
         }
 
@@ -652,6 +650,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         vector<FieldValueTuple> fieldValues;
         fieldValues.emplace_back(QUEUE_PLUGIN_FIELD, detectSha + "," + restoreSha);
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, to_string(m_pollInterval));
+        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
         m_flexCounterGroupTable->set(PFC_WD_FLEX_COUNTER_GROUP, fieldValues);
     }
     catch (...)

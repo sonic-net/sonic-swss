@@ -74,6 +74,10 @@ void WatermarkOrch::doTask(Consumer &consumer)
                     {
                         m_telemetryInterval = to_uint<uint32_t>(i.second.c_str());
                     }
+                    else
+                    {
+                        SWSS_LOG_WARN("Unsupported key: %s", i.first.c_str());
+                    }
                 }
             }
         }
