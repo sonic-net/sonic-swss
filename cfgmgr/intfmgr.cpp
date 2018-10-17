@@ -21,6 +21,7 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
+        m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME)
 {
 }
@@ -108,10 +109,12 @@ void IntfMgr::doTask(Consumer &consumer)
                 continue;
             }
             setIntfIp(alias, "add", ip_prefix.to_string(), ip_prefix.isV4());
+            m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");
         }
         else if (op == DEL_COMMAND)
         {
             setIntfIp(alias, "del", ip_prefix.to_string(), ip_prefix.isV4());
+            m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
         }
         else
         {
