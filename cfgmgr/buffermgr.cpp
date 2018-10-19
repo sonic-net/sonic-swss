@@ -119,7 +119,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
 
     if (m_cableLenLookup.count(port) == 0)
     {
-        SWSS_LOG_WARN("Unable to create/update PG profile for port %s. Cable length is not set", port.c_str());
+        SWSS_LOG_INFO("Unable to create/update PG profile for port %s. Cable length is not set", port.c_str());
         return task_process_status::task_need_retry;
     }
 
@@ -146,7 +146,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
         if (mode.empty())
         {
             // this should never happen if switch initialized properly
-            SWSS_LOG_WARN("PG lossless pool is not yet created");
+            SWSS_LOG_INFO("PG lossless pool is not yet created");
             return task_process_status::task_need_retry;
         }
 

@@ -133,23 +133,30 @@ class TestLagRouterInterfaceIpv4(object):
 
     # TODO: below three functions will be replaced with configuration
     # database updates after the future changes of the lagmgrd
-    def create_port_channel(self, dvs, interface):
-        dvs.runcmd("teamd -d -t" + interface)
-        time.sleep(1)
-
-    def remove_port_channel(self, dvs, interface):
-        dvs.runcmd("teamd -k -t" + interface)
-        time.sleep(1)
-
-    def add_port_channel_members(self, dvs, interface, members):
-        for member in members:
-            dvs.runcmd("ip link set dev " + interface + " up")
-            dvs.runcmd("ip link set dev " + interface + " down")
-            dvs.runcmd("teamdctl " + interface + " port add " + member)
+    def create_port_channel(self, dvs, alias):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
-        fvs = swsscommon.FieldValuePairs([("members@", ",".join(members))])
-        tbl.set(interface, fvs)
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),
+                                          ("mtu", "9100")])
+        tbl.set(alias, fvs)
         time.sleep(1)
+
+    def remove_port_channel(self, dvs, alias):
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
+        tbl._del(alias)
+        time.sleep(1)
+
+    def add_port_channel_members(self, dvs, lag, members):
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        for member in members:
+            tbl.set(lag + "|" + member, fvs)
+            time.sleep(1)
+
+    def remove_port_channel_members(self, dvs, lag, members):
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
+        for member in members:
+            tbl._del(lag + "|" + member)
+            time.sleep(1)
 
     def add_ip_address(self, interface, ip):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_INTERFACE")
@@ -293,6 +300,9 @@ class TestLagRouterInterfaceIpv4(object):
 
         # remove IP from interface
         self.remove_ip_address("Ethernet16", "40.0.0.8/29")
+
+        # remove port channel members
+        self.remove_port_channel_members(dvs, "PortChannel002", ["Ethernet0", "Ethernet4"])
 
         # remove port channel
         self.remove_port_channel(dvs, "PortChannel002")

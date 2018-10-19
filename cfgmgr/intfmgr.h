@@ -20,6 +20,7 @@ private:
     ProducerStateTable m_appIntfTableProducer;
     Table m_cfgIntfTable, m_cfgVlanIntfTable;
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable;
+    Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateIntfTable;
 
     void setIntfIp(const string &alias, const string &opCmd, const string &ipPrefixStr, const bool ipv4 = true);
     void setIntfVrf(const string &alias, const string vrfName);

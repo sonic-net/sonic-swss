@@ -180,7 +180,7 @@ def test_fdb_notifications(dvs):
             ["SAI_SWITCH_ATTR_FDB_AGING_TIME"])
 
     finally:
-        # enable warm restart
-        dvs.runcmd("config warm_restart enable swss")
+        # disable warm restart
+        dvs.runcmd("config warm_restart disable swss")
         # slow down crm polling
         dvs.runcmd("crm config polling interval 10000")

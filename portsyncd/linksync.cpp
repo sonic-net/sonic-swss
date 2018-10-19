@@ -215,10 +215,6 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
     /* Insert or update the ifindex to key map */
     m_ifindexNameMap[ifindex] = key;
 
-    vector<FieldValueTuple> fvVector;
-    FieldValueTuple a("admin_status", admin ? "up" : "down");
-    fvVector.push_back(a);
-
     /* front panel interfaces: Check if the port is in the PORT_TABLE
      * non-front panel interfaces such as eth0, lo which are not in the
      * PORT_TABLE are ignored. */
@@ -241,7 +237,5 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
             m_statePortTable.set(key, vector);
             SWSS_LOG_INFO("Publish %s(ok) to state db", key.c_str());
         }
-
-        m_portTableProducer.set(key, fvVector);
     }
 }
