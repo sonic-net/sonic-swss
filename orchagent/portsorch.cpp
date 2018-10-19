@@ -1315,7 +1315,7 @@ bool PortsOrch::bake()
     string value;
     bool foundPortConfigDone = m_portTable->hget("PortConfigDone", "count", value);
     unsigned long portCount = stoul(value);
-    SWSS_LOG_NOTICE("foundPortConfigDone = %d, portCount = %lu", foundPortConfigDone, portCount);
+    SWSS_LOG_NOTICE("foundPortConfigDone = %d, portCount = %lu, m_portCount = %u", foundPortConfigDone, portCount, m_portCount);
 
     bool foundPortInitDone = m_portTable->get("PortInitDone", tuples);
     SWSS_LOG_NOTICE("foundPortInitDone = %d", foundPortInitDone);
