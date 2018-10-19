@@ -398,10 +398,10 @@ def test_CrmNexthopGroup(dvs):
     config_db = swsscommon.dbconnector(swsscommon.config_db, dvs.redis_sock, 0)
     intf_tbl = swsscommon.table(config_db, "INTERFACE")
     fvs = swsscommon.fieldvaluepairs([("NULL","NULL")])
-    intf_tbl.set("ethernet0|10.0.0.0/31", fvs)
-    intf_tbl.set("ethernet4|10.0.0.2/31", fvs)
-    dvs.runcmd("ifconfig ethernet0 up")
-    dvs.runcmd("ifconfig ethernet4 up")
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
+    dvs.runcmd("ifconfig Ethernet4 up")
 
     dvs.runcmd("crm config polling interval 1")
 
@@ -461,10 +461,10 @@ def test_CrmNexthopGroupMember(dvs):
     config_db = swsscommon.dbconnector(swsscommon.config_db, dvs.redis_sock, 0)
     intf_tbl = swsscommon.table(config_db, "INTERFACE")
     fvs = swsscommon.fieldvaluepairs([("NULL","NULL")])
-    intf_tbl.set("ethernet0|10.0.0.0/31", fvs)
-    intf_tbl.set("ethernet4|10.0.0.2/31", fvs)
-    dvs.runcmd("ifconfig ethernet0 up")
-    dvs.runcmd("ifconfig ethernet4 up")
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
+    dvs.runcmd("ifconfig Ethernet4 up")
 
     dvs.runcmd("crm config polling interval 1")
 
