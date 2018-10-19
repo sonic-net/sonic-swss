@@ -749,7 +749,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                                                  ; failed: pre-shutdown data check failed
                                                                  ; ignored: pre-shutdown data check failed, but asked to ignore it
                                                                  ;
-                                                                 ; Note, data check is alwarys performed for warm restart.
+                                                                 ; Note, data check is always performed for warm restart.
 
     restore_check   = "ignored"/ "passed" / "failed"             ; passed: warm restore data check passed
                                                                  ; failed: warm restore data check failed
