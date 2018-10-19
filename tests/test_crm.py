@@ -397,7 +397,7 @@ def test_CrmNexthopGroup(dvs):
 
     config_db = swsscommon.dbconnector(swsscommon.config_db, dvs.redis_sock, 0)
     intf_tbl = swsscommon.table(config_db, "interface")
-    fvs = swsscommon.fieldvaluepairs([("null","null")])
+    fvs = swsscommon.fieldvaluepairs([("NULL","NULL")])
     intf_tbl.set("ethernet0|10.0.0.0/31", fvs)
     intf_tbl.set("ethernet4|10.0.0.2/31", fvs)
     dvs.runcmd("ifconfig ethernet0 up")
@@ -460,7 +460,7 @@ def test_CrmNexthopGroupMember(dvs):
 
     config_db = swsscommon.dbconnector(swsscommon.config_db, dvs.redis_sock, 0)
     intf_tbl = swsscommon.table(config_db, "interface")
-    fvs = swsscommon.fieldvaluepairs([("null","null")])
+    fvs = swsscommon.fieldvaluepairs([("NULL","NULL")])
     intf_tbl.set("ethernet0|10.0.0.0/31", fvs)
     intf_tbl.set("ethernet4|10.0.0.2/31", fvs)
     dvs.runcmd("ifconfig ethernet0 up")

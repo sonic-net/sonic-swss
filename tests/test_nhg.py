@@ -6,9 +6,15 @@ import json
 
 def test_route_nhg(dvs):
 
-    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
-    dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
-    dvs.runcmd("ifconfig Ethernet8 10.0.0.4/31 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    intf_tbl.set("Ethernet8|10.0.0.4/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
+    dvs.runcmd("ifconfig Ethernet4 up")
+    dvs.runcmd("ifconfig Ethernet8 up")
 
     dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
     dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
