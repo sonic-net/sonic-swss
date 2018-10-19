@@ -136,8 +136,13 @@ def test_PortSyncdWarmRestart(dvs):
 
     time.sleep(1)
 
-    dvs.runcmd("ifconfig Ethernet16 11.0.0.1/29 up")
-    dvs.runcmd("ifconfig Ethernet20 11.0.0.9/29 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet16|11.0.0.1/31", fvs)
+    intf_tbl.set("Ethernet20|11.0.0.9/31", fvs)
+    dvs.runcmd("ifconfig Ethernet16 up")
+    dvs.runcmd("ifconfig Ethernet20 up")
 
     dvs.servers[4].runcmd("ip link set down dev eth0") == 0
     dvs.servers[4].runcmd("ip link set up dev eth0") == 0
@@ -676,8 +681,13 @@ def test_OrchagentWarmRestartReadyCheck(dvs):
 
     dvs.runcmd("config warm_restart enable swss")
 
-    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
-    dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
+    dvs.runcmd("ifconfig Ethernet4 up")
 
     dvs.servers[0].runcmd("ifconfig eth0 10.0.0.1/31")
     dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
@@ -731,9 +741,15 @@ def test_swss_port_state_syncup(dvs):
     restore_count = swss_get_RestoreCount(state_db)
 
     # update port admin state
-    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
-    dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
-    dvs.runcmd("ifconfig Ethernet8 10.0.0.4/31 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    intf_tbl.set("Ethernet8|10.0.0.4/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
+    dvs.runcmd("ifconfig Ethernet4 up")
+    dvs.runcmd("ifconfig Ethernet8 up")
 
     dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
     dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
