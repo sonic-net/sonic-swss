@@ -471,6 +471,8 @@ bool OrchDaemon::warmRestoreValidation()
      * All the prexisting data in appDB and configDb have been read and processed.
      */
     vector<string> ts;
+    bool passed = true;
+
     getTaskToSync(ts);
     if (ts.size() != 0)
     {
@@ -480,9 +482,29 @@ bool OrchDaemon::warmRestoreValidation()
         {
             SWSS_LOG_NOTICE("%s", s.c_str());
         }
+        auto dataState = WarmStart::getDataCheckState("orchagent", WarmStart::STAGE_SHUTDOWN);
+        if (dataState == WarmStart::CHECK_IGNORED)
+        {
+            // Ignore the failure as it was ignored at shutdown state too.
+            WarmStart::setDataCheckState("orchagent", WarmStart::STAGE_RESTORE, WarmStart::CHECK_IGNORED);
+        }
+        else
+        {
+            WarmStart::setDataCheckState("orchagent", WarmStart::STAGE_RESTORE, WarmStart::CHECK_FAILED);
+            passed = false;
+        }
     }
-    WarmStart::setWarmStartState("orchagent", WarmStart::RESTORED);
-    return ts.empty();
+    else
+    {
+        WarmStart::setDataCheckState("orchagent", WarmStart::STAGE_RESTORE, WarmStart::CHECK_PASSED);
+    }
+
+    if (passed)
+    {
+        WarmStart::setWarmStartState("orchagent", WarmStart::RESTORED);
+    }
+
+    return passed;
 }
 
 /*
@@ -512,11 +534,17 @@ bool OrchDaemon::warmRestartCheck()
         {
             data = "NOT_READY";
             ret = false;
+            WarmStart::setDataCheckState("orchagent", WarmStart::STAGE_SHUTDOWN, WarmStart::CHECK_FAILED);
         }
         else
         {
             SWSS_LOG_NOTICE("Orchagent objects dependency check skipped");
+            WarmStart::setDataCheckState("orchagent", WarmStart::STAGE_SHUTDOWN, WarmStart::CHECK_IGNORED);
         }
+    }
+    else
+    {
+        WarmStart::setDataCheckState("orchagent", WarmStart::STAGE_SHUTDOWN, WarmStart::CHECK_PASSED);
     }
 
     SWSS_LOG_NOTICE("Restart check result: %s", data.c_str());
