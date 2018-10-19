@@ -11,6 +11,8 @@ def test_RouteAdd(dvs):
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
     intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
     intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
+    dvs.runcmd("ifconfig Ethernet4 up")
 
     dvs.servers[0].runcmd("ifconfig eth0 10.0.0.1/31")
     dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
