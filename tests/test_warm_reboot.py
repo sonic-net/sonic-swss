@@ -139,8 +139,8 @@ def test_PortSyncdWarmRestart(dvs):
     config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     intf_tbl = swsscommon.Table(config_db, "INTERFACE")
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-    intf_tbl.set("Ethernet16|11.0.0.1/31", fvs)
-    intf_tbl.set("Ethernet20|11.0.0.9/31", fvs)
+    intf_tbl.set("Ethernet16|11.0.0.1/29", fvs)
+    intf_tbl.set("Ethernet20|11.0.0.9/29", fvs)
     dvs.runcmd("ifconfig Ethernet16 up")
     dvs.runcmd("ifconfig Ethernet20 up")
 
@@ -367,11 +367,15 @@ def test_swss_neighbor_syncup(dvs):
     #enable ipv6 on docker
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
 
-    dvs.runcmd("ifconfig {} 24.0.0.1/24 up".format(intfs[0]))
-    dvs.runcmd("ip -6 addr add 2400::1/64 dev {}".format(intfs[0]))
-
-    dvs.runcmd("ifconfig {} 28.0.0.1/24 up".format(intfs[1]))
-    dvs.runcmd("ip -6 addr add 2800::1/64 dev {}".format(intfs[1]))
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet24|24.0.0.1/24", fvs)
+    intf_tbl.set("Ethernet28|28.0.0.9/24", fvs)
+    intf_tbl.set("Ethernet24|2400::1/64", fvs)
+    intf_tbl.set("Ethernet28|2800::1/64", fvs)
+    dvs.runcmd("ifconfig Ethernet24 up")
+    dvs.runcmd("ifconfig Ethernet28 up")
 
     ips = ["24.0.0.2", "24.0.0.3", "28.0.0.2", "28.0.0.3"]
     v6ips = ["2400::2", "2400::3", "2800::2", "2800::3"]

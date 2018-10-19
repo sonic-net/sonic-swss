@@ -396,7 +396,7 @@ def test_CrmIpv6Neighbor(dvs):
 def test_CrmNexthopGroup(dvs):
 
     config_db = swsscommon.dbconnector(swsscommon.config_db, dvs.redis_sock, 0)
-    intf_tbl = swsscommon.table(config_db, "interface")
+    intf_tbl = swsscommon.table(config_db, "INTERFACE")
     fvs = swsscommon.fieldvaluepairs([("NULL","NULL")])
     intf_tbl.set("ethernet0|10.0.0.0/31", fvs)
     intf_tbl.set("ethernet4|10.0.0.2/31", fvs)
@@ -459,7 +459,7 @@ def test_CrmNexthopGroupMember(dvs):
     dvs.servers[1].runcmd("ip link set up dev eth0") == 0
 
     config_db = swsscommon.dbconnector(swsscommon.config_db, dvs.redis_sock, 0)
-    intf_tbl = swsscommon.table(config_db, "interface")
+    intf_tbl = swsscommon.table(config_db, "INTERFACE")
     fvs = swsscommon.fieldvaluepairs([("NULL","NULL")])
     intf_tbl.set("ethernet0|10.0.0.0/31", fvs)
     intf_tbl.set("ethernet4|10.0.0.2/31", fvs)
