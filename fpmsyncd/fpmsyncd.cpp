@@ -50,7 +50,7 @@ int main(int argc, char **argv)
             s.addSelectable(&fpm);
 
             /* If warm-restart feature is enabled, execute 'restoration' logic */
-            bool warmStartEnabled = sync.m_warmStartHelper.isEnabled();
+            bool warmStartEnabled = sync.m_warmStartHelper.checkAndStart();
             if (warmStartEnabled)
             {
                 /* Obtain warm-restart timer defined for routing application */

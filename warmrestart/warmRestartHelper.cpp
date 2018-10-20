@@ -46,7 +46,7 @@ WarmStart::WarmStartState WarmStartHelper::getState(void) const
  * To be called by each application to obtain the active/inactive state of
  * warm-restart functionality, and proceed to initialize the FSM accordingly.
  */
-bool WarmStartHelper::isEnabled(void)
+bool WarmStartHelper::checkAndStart(void)
 {
     bool enabled = WarmStart::checkWarmStart(m_appName, m_dockName);
 
@@ -63,6 +63,10 @@ bool WarmStartHelper::isEnabled(void)
         setState(WarmStart::INITIALIZED);
         m_syncTable->clear();
     }
+
+    /* Cleaning state from previous (unsuccessful) warm-restart attempts */
+    m_restorationVector.clear();
+    m_refreshMap.clear();
 
     /* Keeping track of warm-reboot active/inactive state */
     m_enabled = enabled;
@@ -116,9 +120,9 @@ bool WarmStartHelper::runRestoration()
         return false;
     }
 
-    SWSS_LOG_NOTICE("Warm-Restart: Received %d records from AppDB for %s "
+    SWSS_LOG_NOTICE("Warm-Restart: Received %zu records from AppDB for %s "
                     "application.",
-                    static_cast<int>(m_restorationVector.size()),
+                    m_restorationVector.size(),
                     m_appName.c_str());
 
     setState(WarmStart::RESTORED);

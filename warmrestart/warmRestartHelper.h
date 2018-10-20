@@ -42,7 +42,7 @@ class WarmStartHelper {
 
     WarmStart::WarmStartState getState(void) const;
 
-    bool isEnabled(void);
+    bool checkAndStart(void);
 
     bool isReconciled(void) const;
 
