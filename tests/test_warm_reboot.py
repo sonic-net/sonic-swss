@@ -363,6 +363,7 @@ def test_swss_neighbor_syncup(dvs):
     #
 
     # create neighbor entries (4 ipv4 and 4 ip6, two each on each interface) in linux kernel
+    intfs = ["Ethernet24", "Ethernet28"]
     #enable ipv6 on docker
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
 
