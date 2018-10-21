@@ -108,6 +108,7 @@ class VirtualServer(object):
 
             # disable arp, so no neigh on vEthernet(s)
             ensure_system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.vifname))
+            ensure_system("nsenter -t %d -n sysctl -w net.ipv6.conf.%s.disable_ipv6=1" % (pid, self.vifname))
 
     def __del__(self):
         if self.cleanup:
@@ -189,7 +190,10 @@ class DockerVirtualSwitch(object):
 
         self.appldb = None
         try:
-            self.ctn.exec_run("sysctl -w net.ipv6.conf.all.disable_ipv6=0")
+            # temp fix: remove them once they are moved to vs start.sh
+            self.ctn.exec_run("sysctl -w net.ipv6.conf.default.disable_ipv6=0")
+            for i in range(0, 128, 4):
+                self.ctn.exec_run("sysctl -w net.ipv6.conf.vEthernet%d.disable_ipv6=1" % i)
             self.check_ready()
             self.init_asicdb_validator()
             self.appldb = ApplDbValidator(self)
