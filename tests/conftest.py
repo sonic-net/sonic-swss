@@ -176,6 +176,8 @@ class DockerVirtualSwitch(object):
                 server = VirtualServer(ctn_sw_name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
+            self.mount = "/var/run/redis-vs/"
+
             self.restart()
         else:
             self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
@@ -192,7 +194,6 @@ class DockerVirtualSwitch(object):
             # mount redis to base to unique directory
             self.mount = "/var/run/redis-vs/{}".format(self.ctn_sw.name)
             os.system("mkdir -p {}".format(self.mount))
-            self.redis_sock = self.mount + '/' + "redis.sock"
 
             # create virtual switch container
             self.ctn = self.client.containers.run('docker-sonic-vs', privileged=True, detach=True,
@@ -200,6 +201,7 @@ class DockerVirtualSwitch(object):
                     volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
 
         self.appldb = None
+        self.redis_sock = self.mount + '/' + "redis.sock"
         try:
             # temp fix: remove them once they are moved to vs start.sh
             self.ctn.exec_run("sysctl -w net.ipv6.conf.default.disable_ipv6=0")
