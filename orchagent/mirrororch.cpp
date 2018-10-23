@@ -424,7 +424,9 @@ bool MirrorOrch::updateSession(const string& name, MirrorEntry& session)
         if (session.status)
         {
             if (old_session.neighborInfo.port.m_type !=
-                    session.neighborInfo.port.m_type)
+                    session.neighborInfo.port.m_type &&
+                (old_session.neighborInfo.port.m_type == Port::VLAN ||
+                 session.neighborInfo.port.m_type == Port::VLAN))
             {
                 ret &= updateSessionType(name, session);
             }

@@ -97,7 +97,7 @@ class TestMirror(object):
         return { fv[0]: fv[1] for fv in fvs }
 
 
-    def test_MirrorAddRemove(self, dvs):
+    def test_MirrorAddRemove(self, dvs, testlog):
         """
         This test covers the basic mirror session creation and removal operations
         Operation flow:
@@ -229,7 +229,7 @@ class TestMirror(object):
     # Ignore testcase in Debian Jessie
     # TODO: Remove this skip if Jessie support is no longer needed
     @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
-    def test_MirrorToVlanAddRemove(self, dvs):
+    def test_MirrorToVlanAddRemove(self, dvs, testlog):
         """
         This test covers basic mirror session creation and removal operation
         with destination port sits in a VLAN
@@ -365,7 +365,7 @@ class TestMirror(object):
         time.sleep(1)
 
 
-    def test_MirrorToLagAddRemove(self, dvs):
+    def test_MirrorToLagAddRemove(self, dvs, testlog):
         """
         This test covers basic mirror session creation and removal operations
         with destination port sits in a LAG
@@ -436,7 +436,7 @@ class TestMirror(object):
     # Ignore testcase in Debian Jessie
     # TODO: Remove this skip if Jessie support is no longer needed
     @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
-    def test_MirrorDestMoveVlan(self, dvs):
+    def test_MirrorDestMoveVlan(self, dvs, testlog):
         """
         This test tests mirror session destination move from non-VLAN to VLAN
         and back to non-VLAN port
@@ -554,7 +554,7 @@ class TestMirror(object):
         self.remove_mirror_session(session)
 
 
-    def test_MirrorDestMoveLag(self, dvs):
+    def test_MirrorDestMoveLag(self, dvs, testlog):
         """
         This test tests mirror session destination move from non-LAG to LAG
         and back to non-LAG port
@@ -707,7 +707,7 @@ class TestMirror(object):
         time.sleep(1)
 
 
-    def test_AclBindMirror(self, dvs):
+    def test_AclBindMirror(self, dvs, testlog):
         """
         This test tests ACL associated with mirror session with DSCP value
         The DSCP value is tested on both with mask and without mask

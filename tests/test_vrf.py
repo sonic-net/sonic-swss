@@ -151,7 +151,7 @@ def packet_action_gen():
     return r[0], r[1]
 
 
-def test_VRFOrch_Comprehensive(dvs):
+def test_VRFOrch_Comprehensive(dvs, testlog):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
@@ -182,7 +182,7 @@ def test_VRFOrch_Comprehensive(dvs):
         vrf_remove(asic_db, appl_db, vrf_name, state)
 
 
-def test_VRFOrch(dvs):
+def test_VRFOrch(dvs, testlog):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     state = vrf_create(asic_db, appl_db, "vrf0",
@@ -205,7 +205,7 @@ def test_VRFOrch(dvs):
     )
     vrf_remove(asic_db, appl_db, "vrf1", state)
 
-def test_VRFOrch_Update(dvs):
+def test_VRFOrch_Update(dvs, testlog):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 

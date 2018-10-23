@@ -235,7 +235,7 @@ def get_lo(dvs):
     return lo_id
 
 
-def test_vxlan_term_orch(dvs):
+def test_vxlan_term_orch(dvs, testlog):
     tunnel_map_ids       = set()
     tunnel_map_entry_ids = set()
     tunnel_ids           = set()

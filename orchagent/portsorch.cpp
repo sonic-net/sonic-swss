@@ -1312,8 +1312,10 @@ bool PortsOrch::bake()
 
     // Check the APP_DB port table for warm reboot
     vector<FieldValueTuple> tuples;
-    bool foundPortConfigDone = m_portTable->get("PortConfigDone", tuples);
-    SWSS_LOG_NOTICE("foundPortConfigDone = %d", foundPortConfigDone);
+    string value;
+    bool foundPortConfigDone = m_portTable->hget("PortConfigDone", "count", value);
+    unsigned long portCount = stoul(value);
+    SWSS_LOG_NOTICE("foundPortConfigDone = %d, portCount = %lu, m_portCount = %u", foundPortConfigDone, portCount, m_portCount);
 
     bool foundPortInitDone = m_portTable->get("PortInitDone", tuples);
     SWSS_LOG_NOTICE("foundPortInitDone = %d", foundPortInitDone);
@@ -1329,11 +1331,11 @@ bool PortsOrch::bake()
         return false;
     }
 
-    if (m_portCount != keys.size() - 2)
+    if (portCount != keys.size() - 2)
     {
         // Invalid port table
-        SWSS_LOG_ERROR("Invalid port table: m_portCount, expecting %u, got %lu",
-                m_portCount, keys.size() - 2);
+        SWSS_LOG_ERROR("Invalid port table: portCount, expecting %lu, got %lu",
+                portCount, keys.size() - 2);
 
         cleanPortTable(keys);
         return false;

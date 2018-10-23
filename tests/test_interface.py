@@ -26,7 +26,7 @@ class TestRouterInterfaceIpv4(object):
         tbl.set(interface, fvs)
         time.sleep(1)
 
-    def test_InterfaceAddRemoveIpv4Address(self, dvs):
+    def test_InterfaceAddRemoveIpv4Address(self, dvs, testlog):
         self.setup_db(dvs)
 
         # assign IP to interface
@@ -95,7 +95,7 @@ class TestRouterInterfaceIpv4(object):
             if route["dest"] == "10.0.0.4/32":
                 assert False
 
-    def test_InterfaceSetMtu(self, dvs):
+    def test_InterfaceSetMtu(self, dvs, testlog):
         self.setup_db(dvs)
 
         # assign IP to interface
@@ -175,7 +175,7 @@ class TestLagRouterInterfaceIpv4(object):
         tbl.set(interface, fvs)
         time.sleep(1)
 
-    def test_InterfaceAddRemoveIpv4Address(self, dvs):
+    def test_InterfaceAddRemoveIpv4Address(self, dvs, testlog):
         self.setup_db(dvs)
 
         # create port channel
@@ -251,7 +251,7 @@ class TestLagRouterInterfaceIpv4(object):
         self.remove_port_channel(dvs, "PortChannel001")
 
 
-    def test_InterfaceSetMtu(self, dvs):
+    def test_InterfaceSetMtu(self, dvs, testlog):
         self.setup_db(dvs)
 
         # create port channel

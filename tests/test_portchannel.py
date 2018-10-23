@@ -3,7 +3,7 @@ import time
 import re
 import json
 
-def test_PortChannel(dvs):
+def test_PortChannel(dvs, testlog):
 
     # create port channel
     db = swsscommon.DBConnector(0, dvs.redis_sock, 0)

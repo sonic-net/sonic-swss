@@ -4,7 +4,7 @@ import re
 import time
 import json
 
-def test_RouteAdd(dvs):
+def test_RouteAdd(dvs, testlog):
 
     config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     intf_tbl = swsscommon.Table(config_db, "INTERFACE")

@@ -10,6 +10,7 @@ import commands
 import tarfile
 import StringIO
 import subprocess
+from datetime import datetime
 from swsscommon import swsscommon
 
 def ensure_system(cmd):
@@ -20,6 +21,8 @@ def ensure_system(cmd):
 def pytest_addoption(parser):
     parser.addoption("--dvsname", action="store", default=None,
                       help="dvs name")
+    parser.addoption("--keeptb", action="store_true", default=False,
+                      help="keep testbed after test")
 
 class AsicDbValidator(object):
     def __init__(self, dvs):
@@ -108,15 +111,16 @@ class VirtualServer(object):
 
             # disable arp, so no neigh on vEthernet(s)
             ensure_system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.vifname))
+            ensure_system("nsenter -t %d -n sysctl -w net.ipv6.conf.%s.disable_ipv6=1" % (pid, self.vifname))
 
-    def __del__(self):
+    def destroy(self):
         if self.cleanup:
             pids = subprocess.check_output("ip netns pids %s" % (self.nsname), shell=True)
             if pids:
                 for pid in pids.split('\n'):
                     if len(pid) > 0:
                         os.system("kill %s" % int(pid))
-            os.system("ip netns delete %s" % self.nsname)
+            ensure_system("ip netns delete %s" % self.nsname)
 
     def runcmd(self, cmd):
         return os.system("ip netns exec %s %s" % (self.nsname, cmd))
@@ -125,24 +129,27 @@ class VirtualServer(object):
         return subprocess.Popen("ip netns exec %s %s" % (self.nsname, cmd), shell=True)
 
 class DockerVirtualSwitch(object):
-    def __init__(self, name=None):
-        self.pnames = ['fpmsyncd',
-                       'intfmgrd',
-                       'neighsyncd',
-                       'orchagent',
-                       'portsyncd',
-                       'redis-server',
-                       'rsyslogd',
-                       'syncd',
-                       'teamsyncd',
-                       'vlanmgrd',
-                       'zebra']
-        self.mount = "/var/run/redis-vs"
-        self.redis_sock = self.mount + '/' + "redis.sock"
+    def __init__(self, name=None, keeptb=False):
+        self.basicd = ['redis-server',
+                       'rsyslogd']
+        self.swssd = ['orchagent',
+                      'intfmgrd',
+                      'neighsyncd',
+                      'portsyncd',
+                      'vlanmgrd',
+                      'vrfmgrd',
+                      'portmgrd']
+        self.syncd = ['syncd']
+        self.rtd   = ['fpmsyncd', 'zebra']
+        self.teamd = ['teamsyncd', 'teammgrd']
+        self.alld  = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd
         self.client = docker.from_env()
 
         self.ctn = None
-        self.cleanup = True
+        if keeptb:
+            self.cleanup = False
+        else:
+            self.cleanup = True
         if name != None:
             # get virtual switch container
             for ctn in self.client.containers.list():
@@ -168,6 +175,8 @@ class DockerVirtualSwitch(object):
                 server = VirtualServer(ctn_sw_name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
+            self.mount = "/var/run/redis-vs/"
+
             self.restart()
         else:
             self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
@@ -181,14 +190,22 @@ class DockerVirtualSwitch(object):
                 server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
+            # mount redis to base to unique directory
+            self.mount = "/var/run/redis-vs/{}".format(self.ctn_sw.name)
+            os.system("mkdir -p {}".format(self.mount))
+
             # create virtual switch container
             self.ctn = self.client.containers.run('docker-sonic-vs', privileged=True, detach=True,
                     network_mode="container:%s" % self.ctn_sw.name,
                     volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
 
         self.appldb = None
+        self.redis_sock = self.mount + '/' + "redis.sock"
         try:
-            self.ctn.exec_run("sysctl -w net.ipv6.conf.all.disable_ipv6=0")
+            # temp fix: remove them once they are moved to vs start.sh
+            self.ctn.exec_run("sysctl -w net.ipv6.conf.default.disable_ipv6=0")
+            for i in range(0, 128, 4):
+                self.ctn.exec_run("sysctl -w net.ipv6.conf.vEthernet%d.disable_ipv6=1" % i)
             self.check_ready()
             self.init_asicdb_validator()
             self.appldb = ApplDbValidator(self)
@@ -202,8 +219,9 @@ class DockerVirtualSwitch(object):
         if self.cleanup:
             self.ctn.remove(force=True)
             self.ctn_sw.remove(force=True)
+            os.system("rm -rf {}".format(self.mount))
             for s in self.servers:
-                del(s)
+                s.destroy()
 
     def check_ready(self, timeout=30):
         '''check if all processes in the dvs is ready'''
@@ -227,12 +245,16 @@ class DockerVirtualSwitch(object):
 
             # check if all processes are running
             ready = True
-            for pname in self.pnames:
+            for pname in self.alld:
                 try:
                     if process_status[pname] != "RUNNING":
                         ready = False
                 except KeyError:
                     ready = False
+
+            # check if start.sh exited
+            if process_status["start.sh"] != "EXITED":
+                ready = False
 
             if ready == True:
                 break
@@ -245,6 +267,20 @@ class DockerVirtualSwitch(object):
 
     def restart(self):
         self.ctn.restart()
+
+    # start processes in SWSS
+    def start_swss(self):
+        cmd = ""
+        for pname in self.swssd:
+            cmd += "supervisorctl start {}; ".format(pname)
+        self.runcmd(['sh', '-c', cmd])
+
+    # stop processes in SWSS
+    def stop_swss(self):
+        cmd = ""
+        for pname in self.swssd:
+            cmd += "supervisorctl stop {}; ".format(pname)
+        self.runcmd(['sh', '-c', cmd])
 
     def init_asicdb_validator(self):
         self.asicdb = AsicDbValidator(self)
@@ -267,6 +303,57 @@ class DockerVirtualSwitch(object):
         self.ctn.exec_run("mkdir -p %s" % path)
         self.ctn.put_archive(path, tarstr.getvalue())
         tarstr.close()
+
+    def get_logs(self, modname=None):
+        stream, stat = self.ctn.get_archive("/var/log/")
+        if modname == None:
+            log_dir = "log"
+        else:
+            log_dir = "log/{}".format(modname)
+        os.system("rm -rf {}".format(log_dir))
+        os.system("mkdir -p {}".format(log_dir))
+        p = subprocess.Popen(["tar", "--no-same-owner", "-C", "./{}".format(log_dir), "-x"], stdin=subprocess.PIPE)
+        for x in stream:
+            p.stdin.write(x)
+        p.stdin.close()
+        p.wait()
+        if p.returncode:
+            raise RuntimeError("Failed to unpack the archive.")
+        os.system("chmod a+r -R log")
+
+    def add_log_marker(self):
+        marker = "=== start marker {} ===".format(datetime.now().isoformat())
+        self.ctn.exec_run("logger {}".format(marker))
+        return marker
+
+    def SubscribeAsicDbObject(self, objpfx):
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.ASIC_DB)
+        pubsub = r.pubsub()
+        pubsub.psubscribe("__keyspace@1__:ASIC_STATE:%s*" % objpfx)
+        return pubsub
+
+    def CountSubscribedObjects(self, pubsub, ignore=None, timeout=10):
+        nadd = 0
+        ndel = 0
+        idle = 0
+        while True and idle < timeout:
+            message = pubsub.get_message()
+            if message:
+                print message
+                if ignore:
+                    fds = message['channel'].split(':')
+                    if fds[2] in ignore:
+                        continue
+                if message['data'] == 'hset':
+                    nadd += 1
+                elif message['data'] == 'del':
+                    ndel += 1
+                idle = 0
+            else:
+                time.sleep(1)
+                idle += 1
+
+        return (nadd, ndel)
 
     def get_map_iface_bridge_port_id(self, asic_db):
         port_id_2_iface = self.asicdb.portoidmap
@@ -476,21 +563,20 @@ class DockerVirtualSwitch(object):
 
         ntf.send("set_ro", key, fvp)
 
-    # start processes in SWSS
-    def start_swss(self):
-        self.runcmd(['sh', '-c', 'supervisorctl start orchagent; supervisorctl start portsyncd; \
-            supervisorctl start neighsyncd; supervisorctl start intfmgrd; supervisorctl start vlanmgrd; \
-            supervisorctl start buffermgrd; supervisorctl start arp_update'])
-
-    # stop processes in SWSS
-    def stop_swss(self):
-        self.runcmd(['sh', '-c', 'supervisorctl stop orchagent; supervisorctl stop portsyncd; \
-            supervisorctl stop neighsyncd;  supervisorctl stop intfmgrd; supervisorctl stop vlanmgrd; \
-            supervisorctl stop buffermgrd; supervisorctl stop arp_update'])
-
 @pytest.yield_fixture(scope="module")
 def dvs(request):
     name = request.config.getoption("--dvsname")
-    dvs = DockerVirtualSwitch(name)
+    keeptb = request.config.getoption("--keeptb")
+    dvs = DockerVirtualSwitch(name, keeptb)
     yield dvs
+    if name == None:
+        dvs.get_logs(request.module.__name__)
+    else:
+        dvs.get_logs()
     dvs.destroy()
+
+@pytest.yield_fixture
+def testlog(request, dvs):
+    dvs.runcmd("logger === start test %s ===" % request.node.name)
+    yield testlog
+    dvs.runcmd("logger === finish test %s ===" % request.node.name)

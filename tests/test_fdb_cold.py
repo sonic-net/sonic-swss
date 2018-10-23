@@ -24,7 +24,7 @@ def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
 
-def test_FDBAddedAfterMemberCreated(dvs):
+def test_FDBAddedAfterMemberCreated(dvs, testlog):
     dvs.setup_db()
 
     dvs.runcmd("sonic-clear fdb all")

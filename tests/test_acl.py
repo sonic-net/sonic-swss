@@ -130,7 +130,7 @@ class TestAcl(object):
         assert len(port_groups) == len(lag_ids)
         assert set(port_groups) == set(acl_table_groups)
 
-    def test_AclTableCreation(self, dvs):
+    def test_AclTableCreation(self, dvs, testlog):
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
@@ -159,7 +159,7 @@ class TestAcl(object):
         # check port binding
         self.verify_acl_port_binding(dvs, adb, bind_ports)
 
-    def test_AclRuleL4SrcPort(self, dvs):
+    def test_AclRuleL4SrcPort(self, dvs, testlog):
         """
         hmset ACL_RULE|test|acl_test_rule priority 55 PACKET_ACTION FORWARD L4_SRC_PORT 65000
         """
@@ -210,7 +210,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_AclRuleInOutPorts(self, dvs):
+    def test_AclRuleInOutPorts(self, dvs, testlog):
         """
         hmset ACL_RULE|test|acl_test_rule priority 55 PACKET_ACTION FORWARD IN_PORTS Ethernet0,Ethernet4 OUT_PORTS Ethernet8,Ethernet12
         """
@@ -270,7 +270,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_AclTableDeletion(self, dvs):
+    def test_AclTableDeletion(self, dvs, testlog):
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -286,7 +286,7 @@ class TestAcl(object):
         # only the default table was left along with DTel tables
         assert len(keys) >= 1
 
-    def test_V6AclTableCreation(self, dvs):
+    def test_V6AclTableCreation(self, dvs, testlog):
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -359,7 +359,7 @@ class TestAcl(object):
 
         assert set(port_groups) == set(acl_table_groups)
 
-    def test_V6AclRuleIPv6Any(self, dvs):
+    def test_V6AclRuleIPv6Any(self, dvs, testlog):
         """
         hmset ACL_RULE|test-aclv6|test_rule1 priority 1000 PACKET_ACTION FORWARD IPv6Any
         """
@@ -410,7 +410,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_V6AclRuleIPv6AnyDrop(self, dvs):
+    def test_V6AclRuleIPv6AnyDrop(self, dvs, testlog):
         """
         hmset ACL_RULE|test-aclv6|test_rule2 priority 1002 PACKET_ACTION DROP IPv6Any
         """
@@ -461,7 +461,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_V6AclRuleIpProtocol(self, dvs):
+    def test_V6AclRuleIpProtocol(self, dvs, testlog):
         """
         hmset ACL_RULE|test-aclv6|test_rule3 priority 1003 PACKET_ACTION DROP IP_PROTOCOL 6
         """
@@ -512,7 +512,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_V6AclRuleSrcIPv6(self, dvs):
+    def test_V6AclRuleSrcIPv6(self, dvs, testlog):
         """
         hmset ACL_RULE|test-aclv6|test_rule4 priority 1004 PACKET_ACTION DROP SRC_IPV6 2777::0/64
         """
@@ -563,7 +563,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_V6AclRuleDstIPv6(self, dvs):
+    def test_V6AclRuleDstIPv6(self, dvs, testlog):
         """
         hmset ACL_RULE|test-aclv6|test_rule5 priority 1005 PACKET_ACTION DROP DST_IPV6 2002::2/128
         """
@@ -614,7 +614,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_V6AclRuleL4SrcPort(self, dvs):
+    def test_V6AclRuleL4SrcPort(self, dvs, testlog):
         """
         hmset ACL_RULE|test-aclv6|test_rule6 priority 1006 PACKET_ACTION DROP L4_SRC_PORT 65000
         """
@@ -665,7 +665,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_V6AclRuleL4DstPort(self, dvs):
+    def test_V6AclRuleL4DstPort(self, dvs, testlog):
         """
         hmset ACL_RULE|test-aclv6|test_rule7 priority 1007 PACKET_ACTION DROP L4_DST_PORT 65001
         """
@@ -716,7 +716,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_V6AclRuleTCPFlags(self, dvs):
+    def test_V6AclRuleTCPFlags(self, dvs, testlog):
         """
         hmset ACL_RULE|test-aclv6|test_rule8 priority 1008 PACKET_ACTION DROP TCP_FLAGS 0x7/0x3f
         """
@@ -767,7 +767,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_V6AclRuleL4SrcPortRange(self, dvs):
+    def test_V6AclRuleL4SrcPortRange(self, dvs, testlog):
         """
         hmset ACL_RULE|test-aclv6|test_rule9 priority 1009 PACKET_ACTION DROP L4_SRC_PORT_RANGE 1-100
         """
@@ -832,7 +832,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_V6AclRuleL4DstPortRange(self, dvs):
+    def test_V6AclRuleL4DstPortRange(self, dvs, testlog):
         """
         hmset ACL_RULE|test-aclv6|test_rule10 priority 1010 PACKET_ACTION DROP L4_DST_PORT_RANGE 101-200
         """
@@ -897,7 +897,7 @@ class TestAcl(object):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_V6AclTableDeletion(self, dvs):
+    def test_V6AclTableDeletion(self, dvs, testlog):
 
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -928,7 +928,7 @@ class TestAcl(object):
         #did not find the rule
         return False
 
-    def test_InsertAclRuleBetweenPriorities(self, dvs):
+    def test_InsertAclRuleBetweenPriorities(self, dvs, testlog):
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
@@ -1026,7 +1026,7 @@ class TestAcl(object):
         # only the default table was left
         assert len(keys) >= 1
 
-    def test_RulesWithDiffMaskLengths(self, dvs):
+    def test_RulesWithDiffMaskLengths(self, dvs, testlog):
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
@@ -1111,7 +1111,7 @@ class TestAcl(object):
         keys = atbl.getKeys()
         assert len(keys) >= 1
 
-    def test_AclTableCreationOnLAGMember(self, dvs):
+    def test_AclTableCreationOnLAGMember(self, dvs, testlog):
         # prepare db and tables
         self.clean_up_left_over(dvs)
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
@@ -1139,7 +1139,7 @@ class TestAcl(object):
         # verify test result - ACL table creation should fail
         assert self.verify_if_any_acl_table_created(dvs, adb) == False
 
-    def test_AclTableCreationOnLAG(self, dvs):
+    def test_AclTableCreationOnLAG(self, dvs, testlog):
         # prepare db and tables
         self.clean_up_left_over(dvs)
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
@@ -1189,7 +1189,7 @@ class TestAcl(object):
         tbl = swsscommon.Table(db, "ACL_TABLE")
         tbl._del("test_LAG")
 
-    def test_AclTableCreationBeforeLAG(self, dvs):
+    def test_AclTableCreationBeforeLAG(self, dvs, testlog):
         # prepare db and tables
         self.clean_up_left_over(dvs)
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
