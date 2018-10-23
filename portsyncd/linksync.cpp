@@ -92,52 +92,49 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
         }
     }
 
-    if (!WarmStart::isWarmStart())
+    /* See the comments for g_portSet in portsyncd.cpp */
+    for (string port : g_portSet)
     {
-        /* See the comments for g_portSet in portsyncd.cpp */
-        for (string port : g_portSet)
+        vector<FieldValueTuple> temp;
+        if (m_portTable.get(port, temp))
         {
-            vector<FieldValueTuple> temp;
-            if (m_portTable.get(port, temp))
+            for (auto it : temp)
             {
-                for (auto it : temp)
+                if (fvField(it) == "admin_status")
                 {
-                    if (fvField(it) == "admin_status")
-                    {
-                        g_portSet.erase(port);
-                        break;
-                    }
+                    g_portSet.erase(port);
+                    break;
                 }
             }
         }
+    }
 
-        for (idx_p = if_ni;
-                idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
-                idx_p++)
+    for (idx_p = if_ni;
+            idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
+            idx_p++)
+    {
+        string key = idx_p->if_name;
+
+        /* Skip all non-frontpanel ports */
+        if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
         {
-            string key = idx_p->if_name;
+            continue;
+        }
 
-            /* Skip all non-frontpanel ports */
-            if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
-            {
-                continue;
-            }
+        m_ifindexOldNameMap[idx_p->if_index] = key;
 
-            m_ifindexOldNameMap[idx_p->if_index] = key;
-
-            string cmd, res;
-            /* Bring down the existing kernel interfaces */
-            SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
-            cmd = "ip link set " + key + " down";
-            try
-            {
-                swss::exec(cmd, res);
-            }
-            catch (...)
-            {
-                /* Ignore error in this flow ; */
-                SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
-            }
+        string cmd, res;
+        /* Bring down the existing kernel interfaces */
+        SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+        cmd = "ip link set " + key + " down";
+        try
+        {
+            swss::exec(cmd, res);
+        }
+        catch (...)
+        {
+            /* Ignore error in this flow ; */
+            SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
         }
     }
 }

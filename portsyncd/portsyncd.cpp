@@ -97,15 +97,11 @@ int main(int argc, char **argv)
         netlink.registerGroup(RTNLGRP_LINK);
         cout << "Listen to link messages..." << endl;
 
-        /* For portsyncd warm start, don't process init port config again */
-        if (!WarmStart::isWarmStart())
+        if (!port_config_file.empty())
         {
-            if (!port_config_file.empty())
-            {
-                handlePortConfigFile(p, port_config_file);
-            } else {
-                handlePortConfigFromConfigDB(p, cfgDb);
-            }
+            handlePortConfigFile(p, port_config_file);
+        } else {
+            handlePortConfigFromConfigDB(p, cfgDb);
         }
 
         s.addSelectable(&netlink);
