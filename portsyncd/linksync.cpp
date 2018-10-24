@@ -109,32 +109,35 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
         }
     }
 
-    for (idx_p = if_ni;
-            idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
-            idx_p++)
+    if (!WarmStart::isWarmStart())
     {
-        string key = idx_p->if_name;
-
-        /* Skip all non-frontpanel ports */
-        if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
+        for (idx_p = if_ni;
+                idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
+                idx_p++)
         {
-            continue;
-        }
+            string key = idx_p->if_name;
 
-        m_ifindexOldNameMap[idx_p->if_index] = key;
+            /* Skip all non-frontpanel ports */
+            if (key.compare(0, INTFS_PREFIX.length(), INTFS_PREFIX))
+            {
+                continue;
+            }
 
-        string cmd, res;
-        /* Bring down the existing kernel interfaces */
-        SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
-        cmd = "ip link set " + key + " down";
-        try
-        {
-            swss::exec(cmd, res);
-        }
-        catch (...)
-        {
-            /* Ignore error in this flow ; */
-            SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+            m_ifindexOldNameMap[idx_p->if_index] = key;
+
+            string cmd, res;
+            /* Bring down the existing kernel interfaces */
+            SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+            cmd = "ip link set " + key + " down";
+            try
+            {
+                swss::exec(cmd, res);
+            }
+            catch (...)
+            {
+                /* Ignore error in this flow ; */
+                SWSS_LOG_WARN("Failed to bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
+            }
         }
     }
 }
