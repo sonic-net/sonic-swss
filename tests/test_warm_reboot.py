@@ -293,6 +293,9 @@ def stop_neighsyncd(dvs):
 def start_neighsyncd(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start neighsyncd'])
 
+def start_restore_neighbors(dvs):
+    dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
+
 def check_no_neighsyncd_timer(dvs):
     (exitcode, string) = dvs.runcmd(['sh', '-c', 'grep getWarmStartTimer /var/log/syslog | grep neighsyncd | grep invalid'])
     assert string.strip() != ""
@@ -301,13 +304,37 @@ def check_neighsyncd_timer(dvs, timer_value):
     (exitcode, num) = dvs.runcmd(['sh', '-c', "grep getWarmStartTimer /var/log/syslog | grep neighsyncd | tail -n 1 | rev | cut -d ' ' -f 1 | rev"])
     assert num.strip() == timer_value
 
+def check_redis_neigh_entries(dvs, neigh_tbl, number):
+    (exitcode, lb_output) = dvs.runcmd(['sh', '-c', "redis-cli keys NEIGH_TABLE:lo* | grep NEI | wc -l"])
+    lb_num = int(lb_output.strip())
+    assert len(neigh_tbl.getKeys()) == number + lb_num
+
+def check_kernel_reachable_neigh_num(dvs, number):
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "ip neigh show nud reachable| grep -v 'dev lo' | wc -l"])
+    neigh_num = int(output.strip())
+    assert neigh_num == number
+
+def check_kernel_reachable_v4_neigh_num(dvs, number):
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "ip -4 neigh show nud reachable | grep -v 'dev lo' | wc -l"])
+    neigh_num = int(output.strip())
+    assert neigh_num == number
+
+def check_kernel_reachable_v6_neigh_num(dvs, number):
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "ip -6 neigh show nud reachable | grep -v 'dev lo' | wc -l"])
+    neigh_num = int(output.strip())
+    assert neigh_num == number
+
+def kernel_restore_neighs_done(restoretbl):
+    keys = restoretbl.getKeys()
+    return (len(keys) > 0)
+
 # function to check neighbor entry reconciliation status written in syslog
 def check_syslog_for_neighbor_entry(dvs, marker, new_cnt, delete_cnt, iptype):
     # check reconciliation results (new or delete entries) for ipv4 and ipv6
     if iptype == "ipv4" or iptype == "ipv6":
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep neighsyncd | grep cache-state:NEW | grep -i %s | wc -l" % (marker, iptype)])
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep neighsyncd | grep cache-state:NEW | grep -i %s | grep -v 'lo:'| wc -l" % (marker, iptype)])
         assert num.strip() == str(new_cnt)
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep neighsyncd | grep -E \"cache-state:(DELETE|STALE)\" | grep -i %s | wc -l" % (marker, iptype)])
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep neighsyncd | grep -E \"cache-state:(DELETE|STALE)\" | grep -i %s | grep -v 'lo:' | wc -l" % (marker, iptype)])
         assert num.strip() == str(delete_cnt)
     else:
         assert "iptype is unknown" == ""
@@ -327,6 +354,12 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     # create neighbor entries (4 ipv4 and 4 ip6, two each on each interface) in linux kernel
     intfs = ["Ethernet24", "Ethernet28"]
+
+    for intf in intfs:
+        # set timeout to be the same as real HW
+        dvs.runcmd("sysctl -w net.ipv4.neigh.{}.base_reachable_time_ms=1800000".format(intf))
+        dvs.runcmd("sysctl -w net.ipv6.neigh.{}.base_reachable_time_ms=1800000".format(intf))
+
     #enable ipv6 on docker
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
 
@@ -342,10 +375,10 @@ def test_swss_neighbor_syncup(dvs, testlog):
     macs = ["00:00:00:00:24:02", "00:00:00:00:24:03", "00:00:00:00:28:02", "00:00:00:00:28:03"]
 
     for i in range(len(ips)):
-        dvs.runcmd("ip neigh add {} dev {} lladdr {}".format(ips[i], intfs[i%2], macs[i]))
+        dvs.runcmd("ip neigh add {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], macs[i]))
 
     for i in range(len(v6ips)):
-        dvs.runcmd("ip -6 neigh add {} dev {} lladdr {}".format(v6ips[i], intfs[i%2], macs[i]))
+        dvs.runcmd("ip -6 neigh add {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], macs[i]))
 
     time.sleep(1)
 
@@ -354,7 +387,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
     tbl = swsscommon.Table(db, "NEIGH_TABLE")
 
     for i in range(len(ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
         assert status == True
 
         for v in fvs:
@@ -364,7 +397,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 assert v[1] == "IPv4"
 
     for i in range(len(v6ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], v6ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
         assert status == True
 
         for v in fvs:
@@ -384,14 +417,16 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     # stop neighsyncd and sairedis.rec
     stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
     marker = dvs.add_log_marker()
     pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
     start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
     time.sleep(10)
 
     # Check the neighbor entries are still in appDB correctly
     for i in range(len(ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
         assert status == True
 
         for v in fvs:
@@ -401,7 +436,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 assert v[1] == "IPv4"
 
     for i in range(len(v6ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], v6ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
         assert status == True
 
         for v in fvs:
@@ -433,24 +468,26 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     # stop neighsyncd
     stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
     marker = dvs.add_log_marker()
 
     # delete even nummber of ipv4/ipv6 neighbor entries from each interface
     for i in range(0, len(ips), 2):
-        dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i%2]))
+        dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i/2]))
 
     for i in range(0, len(v6ips), 2):
-        dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i%2]))
+        dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i/2]))
 
     # start neighsyncd again
     start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
     time.sleep(10)
 
     # check ipv4 and ipv6 neighbors
     for i in range(len(ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
         #should not see deleted neighbor entries
-        if i %2 == 0:
+        if i % 2 == 0:
             assert status == False
             continue
         else:
@@ -464,9 +501,9 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 assert v[1] == "IPv4"
 
     for i in range(len(v6ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], v6ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
         #should not see deleted neighbor entries
-        if i %2 == 0:
+        if i % 2 == 0:
             assert status == False
             continue
         else:
@@ -504,6 +541,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     # stop neighsyncd
     stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
     marker = dvs.add_log_marker()
 
     # add even nummber of ipv4/ipv6 neighbor entries to each interface
@@ -511,21 +549,22 @@ def test_swss_neighbor_syncup(dvs, testlog):
     for i in range(0, len(ips), 2):
         (rc, output) = dvs.runcmd(['sh', '-c', "ip -4 neigh | grep {}".format(ips[i])])
         print output
-        if rc == 0:
-            dvs.runcmd("ip neigh change {} dev {} lladdr {}".format(ips[i], intfs[i%2], macs[i]))
+        if output:
+            dvs.runcmd("ip neigh change {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], macs[i]))
         else:
-            dvs.runcmd("ip neigh add {} dev {} lladdr {}".format(ips[i], intfs[i%2], macs[i]))
+            dvs.runcmd("ip neigh add {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], macs[i]))
 
     for i in range(0, len(v6ips), 2):
         (rc, output) = dvs.runcmd(['sh', '-c', "ip -6 neigh | grep {}".format(v6ips[i])])
         print output
-        if rc == 0:
-            dvs.runcmd("ip -6 neigh change {} dev {} lladdr {}".format(v6ips[i], intfs[i%2], macs[i]))
+        if output:
+            dvs.runcmd("ip -6 neigh change {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], macs[i]))
         else:
-            dvs.runcmd("ip -6 neigh add {} dev {} lladdr {}".format(v6ips[i], intfs[i%2], macs[i]))
+            dvs.runcmd("ip -6 neigh add {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], macs[i]))
 
     # start neighsyncd again
     start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
     time.sleep(10)
 
     # no neighsyncd timer configured
@@ -533,7 +572,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     # check ipv4 and ipv6 neighbors, should see all neighbors
     for i in range(len(ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
         assert status == True
         for v in fvs:
             if v[0] == "neigh":
@@ -542,7 +581,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 assert v[1] == "IPv4"
 
     for i in range(len(v6ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], v6ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
         assert status == True
         for v in fvs:
             if v[0] == "neigh":
@@ -579,6 +618,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     # stop neighsyncd
     stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
     marker = dvs.add_log_marker()
 
     # Even number of ip4/6 neigbors updated with new mac.
@@ -587,20 +627,21 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     for i in range(len(ips)):
         if i % 2 == 0:
-            dvs.runcmd("ip neigh change {} dev {} lladdr {}".format(ips[i], intfs[i%2], newmacs[i]))
+            dvs.runcmd("ip neigh change {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], newmacs[i]))
         else:
-            dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i%2]))
-            dvs.runcmd("ip neigh add {} dev {} lladdr {}".format(ips[i], intfs[1-i%2], macs[i]))
+            dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i/2]))
+            dvs.runcmd("ip neigh add {} dev {} lladdr {} nud reachable".format(ips[i], intfs[1-i/2], macs[i]))
 
     for i in range(len(v6ips)):
         if i % 2 == 0:
-            dvs.runcmd("ip -6 neigh change {} dev {} lladdr {}".format(v6ips[i], intfs[i%2], newmacs[i]))
+            dvs.runcmd("ip -6 neigh change {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], newmacs[i]))
         else:
-            dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i%2]))
-            dvs.runcmd("ip -6 neigh add {} dev {} lladdr {}".format(v6ips[i], intfs[1-i%2], macs[i]))
+            dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i/2]))
+            dvs.runcmd("ip -6 neigh add {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[1-i/2], macs[i]))
 
     # start neighsyncd again
     start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
     time.sleep(10)
 
     # timer is not expired yet, state should be "restored"
@@ -613,7 +654,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
     # check ipv4 and ipv6 neighbors, should see all neighbors with updated info
     for i in range(len(ips)):
         if i % 2 == 0:
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
             assert status == True
             for v in fvs:
                 if v[0] == "neigh":
@@ -621,7 +662,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 if v[0] == "family":
                     assert v[1] == "IPv4"
         else:
-            (status, fvs) = tbl.get("{}:{}".format(intfs[1-i%2], ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[1-i/2], ips[i]))
             assert status == True
             for v in fvs:
                 if v[0] == "neigh":
@@ -631,7 +672,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     for i in range(len(v6ips)):
         if i % 2 == 0:
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], v6ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
             assert status == True
             for v in fvs:
                 if v[0] == "neigh":
@@ -639,7 +680,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 if v[0] == "family":
                     assert v[1] == "IPv6"
         else:
-            (status, fvs) = tbl.get("{}:{}".format(intfs[1-i%2], v6ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[1-i/2], v6ips[i]))
             assert status == True
             for v in fvs:
                 if v[0] == "neigh":
@@ -787,6 +828,10 @@ def test_swss_port_state_syncup(dvs, testlog):
             assert oper_status == "down"
         else:
             assert oper_status == "up"
+    #clean up arp
+    dvs.runcmd("arp -d 10.0.0.1")
+    dvs.runcmd("arp -d 10.0.0.3")
+    dvs.runcmd("arp -d 10.0.0.5")
 
 
 #############################################################################
@@ -1441,4 +1486,275 @@ def test_routing_WarmRestart(dvs, testlog):
     rt_key = json.loads(addobjs[0]['key'])
     assert rt_key['dest'] == "192.168.100.0/24"
 
+def test_system_warmreboot_neighbor_syncup(dvs, testlog):
+
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+    #enable ipv6 on docker
+    dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
+
+    # flush all neighs first
+    dvs.runcmd("ip neigh flush all")
+    time.sleep(5)
+
+    dvs.runcmd("config warm_restart enable system")
+
+    # Test neighbors on NUM_INTF (e,g 8) interfaces
+    # Ethernet32/36/.../60, with ip: 32.0.0.1/24... 60.0.0.1/24
+    # ipv6: 3200::1/64...6000::1/64
+    # bring up the servers'interfaces and assign NUM_NEIGH_PER_INTF (e,g 128) ips per interface
+    # TBD: NUM_NEIGH_PER_INTF = 128 ips seem to cause some test framework log overflow issue
+    NUM_INTF = 8
+    NUM_NEIGH_PER_INTF = 128 #100
+    NUM_OF_NEIGHS = (NUM_INTF*NUM_NEIGH_PER_INTF)
+    macs = []
+    for i in range(8, 8+NUM_INTF):
+        # set timeout to be the same as real HW
+        # set ip on server facing interfaces
+        # bring servers' interface up, save the macs
+        dvs.runcmd("sysctl -w net.ipv4.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
+        dvs.runcmd("sysctl -w net.ipv6.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
+        dvs.runcmd("ip addr flush dev Ethernet{}".format(i*4))
+        dvs.runcmd("ifconfig Ethernet{} {}.0.0.1/24 up".format(i*4, i*4))
+        dvs.runcmd("ip -6 addr add {}00::1/64 dev Ethernet{}".format(i*4,i*4))
+        dvs.servers[i].runcmd("ip link set up dev eth0")
+        dvs.servers[i].runcmd("ip addr flush dev eth0")
+        result = dvs.servers[i].runcmd_output("ifconfig eth0 | grep HWaddr | awk '{print $NF}'")
+        macs.append(result.strip())
+
+    #
+    # Testcase 1:
+    # Add neighbor entries on servers connecting to SONiC ports
+    # 128 ipv4 and 128 ipv6 on each server
+    # total: 1024 ipv4 and 1024 ipv6
+    # ping them to get the neighbor entries
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF):
+            dvs.servers[i].runcmd("ip addr add {}.0.0.{}/24 dev eth0".format(i*4, j+2))
+            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4,j+2))
+
+    time.sleep(1)
+
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF):
+            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+2)])
+            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+2)])
+
+    # Check the neighbor entries are inserted correctly
+    db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(db, "NEIGH_TABLE")
+
+    # number of neighbors should match what we configured
+    # ipv4/ipv6 entries and loopback
+    check_redis_neigh_entries(dvs, tbl, 2*NUM_OF_NEIGHS)
+
+    # All neighbor entries should match
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF):
+            (status, fvs) = tbl.get("Ethernet{}:{}.0.0.{}".format(i*4, i*4, j+2))
+            assert status == True
+            for v in fvs:
+                if v[0] == "family":
+                    assert v[1] == "IPv4"
+                if v[0] == "neigh":
+                    assert v[1] == macs[i-8]
+
+            (status, fvs) = tbl.get("Ethernet{}:{}00::{}".format(i*4, i*4, j+2))
+            assert status == True
+            for v in fvs:
+                if v[0] == "family":
+                    assert v[1] == "IPv6"
+                if v[0] == "neigh":
+                    assert v[1] == macs[i-8]
+
+    #
+    # Testcase 2:
+    # Stop neighsyncd, appDB entries should be reserved
+    # flush kernel neigh table to simulate warm reboot
+    # start neighsyncd, start restore_neighbors service to restore the neighbor table in kernel
+    # check all neighbors learned in kernel
+    # no changes should be there in syslog and sairedis.rec
+
+    # get restore_count
+    restore_count = swss_get_RestoreCount(dvs, state_db)
+
+    # stop neighsyncd and sairedis.rec
+    stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
+    time.sleep(3)
+    dvs.runcmd("ip neigh flush all")
+    time.sleep(1)
+
+    # check neighbors are gone
+    check_kernel_reachable_neigh_num(dvs, 0)
+
+    # start neighsyncd and restore_neighbors
+    marker = dvs.add_log_marker()
+    pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+    start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
+
+    # should finish the store within 10 seconds
+    time.sleep(10)
+
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS)
+
+    # check syslog and sairedis.rec file for activities
+    check_syslog_for_neighbor_entry(dvs, marker, 0, 0, "ipv4")
+    check_syslog_for_neighbor_entry(dvs, marker, 0, 0, "ipv6")
+    (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
+    assert nadd == 0
+    assert ndel == 0
+
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
+
+    #
+    # Testcase 3:
+    # Stop neighsyncd, appDB entries should be reserved
+    # flush kernel neigh table to simulate warm reboot
+    # Remove half of ips of servers' interfaces, add new half of ips
+    # start neighsyncd, start restore_neighbors service to restore the neighbor table in kernel
+    # check all new neighbors learned in kernel
+    # no changes should be there in syslog and sairedis.rec
+
+    # get restore_count
+    restore_count = swss_get_RestoreCount(dvs, state_db)
+
+    # stop neighsyncd and sairedis.rec
+    stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
+
+    # Del half of the ips and a new half of the ips
+    # note: the first ipv4 can not be deleted only
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF/2):
+            dvs.servers[i].runcmd("ip addr del {}.0.0.{}/24 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF/2+2))
+            dvs.servers[i].runcmd("ip -6 addr del {}00::{}/64 dev eth0".format(i*4,j+NUM_NEIGH_PER_INTF/2+2))
+            dvs.servers[i].runcmd("ip addr add {}.0.0.{}/24 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF+2))
+            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4,j+NUM_NEIGH_PER_INTF+2))
+
+    dvs.runcmd("ip neigh flush all")
+    time.sleep(3)
+
+    # check neighbors are gone
+    check_kernel_reachable_neigh_num(dvs, 0)
+
+    # start neighsyncd and restore_neighbors
+    marker = dvs.add_log_marker()
+    start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
+
+    # should finish the store within 10 seconds
+    time.sleep(10)
+
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS)
+
+    # check syslog and sairedis.rec file for activities
+    check_syslog_for_neighbor_entry(dvs, marker, 0, 0, "ipv4")
+    check_syslog_for_neighbor_entry(dvs, marker, 0, 0, "ipv6")
+    (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
+    assert nadd == 0
+    assert ndel == 0
+
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
+
+    # Test case 4:
+    # ping the new ips, should get it into appDB
+    marker = dvs.add_log_marker()
+
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF/2):
+            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
+            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
+
+
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS+NUM_OF_NEIGHS/2)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS+NUM_OF_NEIGHS/2)
+    check_redis_neigh_entries(dvs, tbl, 2*(NUM_OF_NEIGHS+NUM_OF_NEIGHS/2))
+
+    (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
+    assert nadd == NUM_OF_NEIGHS #ipv4 and ipv6
+    assert ndel == 0
+
+    # Remove stale entries manually
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF/2):
+            dvs.runcmd(['sh', '-c', "ip neigh del {}.0.0.{} dev Ethernet{}".format(i*4,j+NUM_NEIGH_PER_INTF/2+2, i*4)])
+            dvs.runcmd(['sh', '-c', "ip -6 neigh del {}00::{} dev Ethernet{}".format(i*4,j+NUM_NEIGH_PER_INTF/2+2, i*4)])
+
+    time.sleep(5)
+
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS)
+    check_redis_neigh_entries(dvs, tbl, 2*NUM_OF_NEIGHS)
+
+    (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
+    assert nadd == 0
+    assert ndel == NUM_OF_NEIGHS #ipv4 and ipv6
+
+    #
+    # Testcase 5:
+    # Stop neighsyncd, appDB entries should be reserved
+    # flush kernel neigh table to simulate warm reboot
+    # keep half of the interface down
+    # start neighsyncd, start restore_neighbors service to restore the neighbor table in kernel
+    # check all new neighbors with interface up to be learned in kernel
+    # syslog/sai log should show half of the entries stale/deleted
+
+    # get restore_count
+    restore_count = swss_get_RestoreCount(dvs, state_db)
+
+    # stop neighsyncd and sairedis.rec
+    stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
+    time.sleep(3)
+
+    dvs.runcmd("ip neigh flush all")
+    time.sleep(3)
+
+    # check neighbors are gone
+    check_kernel_reachable_neigh_num(dvs, 0)
+
+    # bring down half of the links
+    for i in range(8, 8+NUM_INTF/2):
+        dvs.runcmd("ip link set down dev Ethernet{}".format(i*4))
+
+    # start neighsyncd and restore_neighbors
+    marker = dvs.add_log_marker()
+    start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
+
+    # restore for up interfaces should be done within 10 seconds
+    time.sleep(10)
+
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS/2)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS/2)
+
+    restoretbl = swsscommon.Table(state_db, swsscommon.STATE_NEIGH_RESTORE_TABLE_NAME)
+
+    # waited 10 above already
+    i = 10
+    while (not kernel_restore_neighs_done(restoretbl)):
+        print "Waiting for kernel neighbors restore process done: {} seconds".format(i)
+        time.sleep(10)
+        i += 10
+
+    # check syslog and sairedis.rec file for activities
+    check_syslog_for_neighbor_entry(dvs, marker, 0, NUM_OF_NEIGHS/2, "ipv4")
+    check_syslog_for_neighbor_entry(dvs, marker, 0, NUM_OF_NEIGHS/2, "ipv6")
+    (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
+    assert nadd == 0
+    assert ndel == NUM_OF_NEIGHS
+
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
+
+    # disable system warm restart
+    dvs.runcmd("config warm_restart disable system")
 

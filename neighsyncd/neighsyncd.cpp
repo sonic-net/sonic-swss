@@ -1,4 +1,5 @@
 #include <iostream>
+#include <unistd.h>
 #include "logger.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -14,8 +15,9 @@ int main(int argc, char **argv)
 
     DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     RedisPipeline pipelineAppDB(&appDb);
+    DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-    NeighSync sync(&pipelineAppDB);
+    NeighSync sync(&pipelineAppDB, &stateDb);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &sync);
@@ -27,16 +29,21 @@ int main(int argc, char **argv)
             NetLink netlink;
             Select s;
 
+            if (sync.getRestartAssist()->isWarmStartInProgress())
+            {
+                sync.getRestartAssist()->readTableToMap();
+                while (!sync.isNeighRestoreDone()) {
+                    SWSS_LOG_INFO("waiting neighbor table to be restored to kerne");
+                    sleep(1);
+                }
+                sync.getRestartAssist()->startReconcileTimer(s);
+            }
+
             netlink.registerGroup(RTNLGRP_NEIGH);
             cout << "Listens to neigh messages..." << endl;
             netlink.dumpRequest(RTM_GETNEIGH);
 
             s.addSelectable(&netlink);
-            if (sync.getRestartAssist()->isWarmStartInProgress())
-            {
-                sync.getRestartAssist()->readTableToMap();
-                sync.getRestartAssist()->startReconcileTimer(s);
-            }
             while (true)
             {
                 Selectable *temps;

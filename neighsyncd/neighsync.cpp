@@ -16,10 +16,24 @@
 using namespace std;
 using namespace swss;
 
-NeighSync::NeighSync(RedisPipeline *pipelineAppDB) :
+NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb) :
     m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
+    m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
     m_AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", &m_neighTable, DEFAULT_NEIGHSYNC_WARMSTART_TIMER)
 {
+}
+
+// Check if neighbor table is restored in kernel
+bool NeighSync::isNeighRestoreDone()
+{
+    vector<FieldValueTuple> temp;
+
+    if (m_stateNeighRestoreTable.get("Flags", temp))
+    {
+        SWSS_LOG_NOTICE("neighbor table restore to kernel is done");
+        return true;
+    }
+    return false;
 }
 
 void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)

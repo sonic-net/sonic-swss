@@ -15,9 +15,11 @@ class NeighSync : public NetMsg
 public:
     enum { MAX_ADDR_SIZE = 64 };
 
-    NeighSync(RedisPipeline *pipelineAppDB);
+    NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb);
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
+
+    bool isNeighRestoreDone();
 
     AppRestartAssist *getRestartAssist()
     {
@@ -25,6 +27,7 @@ public:
     }
 
 private:
+    Table m_stateNeighRestoreTable;
     ProducerStateTable m_neighTable;
     AppRestartAssist m_AppRestartAssist;
 };
