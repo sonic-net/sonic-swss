@@ -290,6 +290,26 @@ class DockerVirtualSwitch(object):
             cmd += "supervisorctl stop {}; ".format(pname)
         self.runcmd(['sh', '-c', cmd])
 
+    def start_zebra(dvs):
+        dvs.runcmd(['sh', '-c', 'supervisorctl start zebra'])
+
+        # Let's give zebra a chance to connect to FPM.
+        time.sleep(5)
+
+    def stop_zebra(dvs):
+        dvs.runcmd(['sh', '-c', 'pkill -x zebra'])
+        time.sleep(1)
+
+    def start_fpmsyncd(dvs):
+        dvs.runcmd(['sh', '-c', 'supervisorctl start fpmsyncd'])
+
+        # Let's give fpmsyncd a chance to connect to Zebra.
+        time.sleep(5)
+
+    def stop_fpmsyncd(dvs):
+        dvs.runcmd(['sh', '-c', 'pkill -x fpmsyncd'])
+        time.sleep(1)
+
     def init_asicdb_validator(self):
         self.asicdb = AsicDbValidator(self)
 
@@ -334,9 +354,14 @@ class DockerVirtualSwitch(object):
             raise RuntimeError("Failed to unpack the archive.")
         os.system("chmod a+r -R log")
 
-    def add_log_marker(self):
+    def add_log_marker(self, file=None):
         marker = "=== start marker {} ===".format(datetime.now().isoformat())
-        self.ctn.exec_run("logger {}".format(marker))
+
+        if file:
+            self.runcmd(['sh', '-c', "echo \"{}\" >> {}".format(marker, file)])
+        else:
+            self.ctn.exec_run("logger {}".format(marker))
+
         return marker
 
     def SubscribeAppDbObject(self, objpfx):

@@ -494,7 +494,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     #
     # Testcase 4:
-    # Stop neighsyncd, add even nummber of ipv4/ipv6 neighbor entries to each interface again, 
+    # Stop neighsyncd, add even nummber of ipv4/ipv6 neighbor entries to each interface again,
     # Start neighsyncd
     # The neighsyncd is supposed to sync up the entries from kernel after warm restart
     # Check the timer is not retrieved from configDB since it is not configured
@@ -802,30 +802,6 @@ def clear_logs(dvs):
     dvs.runcmd(['sh', '-c', '> /var/log/swss/sairedis.rec'])
 
 
-def start_zebra(dvs):
-    dvs.runcmd(['sh', '-c', 'supervisorctl start zebra'])
-
-    # Let's give zebra a chance to connect to FPM.
-    time.sleep(5)
-
-
-def stop_zebra(dvs):
-    dvs.runcmd(['sh', '-c', 'pkill -x zebra'])
-    time.sleep(1)
-
-
-def start_fpmsyncd(dvs):
-    dvs.runcmd(['sh', '-c', 'supervisorctl start fpmsyncd'])
-
-    # Let's give zebra a chance to connect to Zebra.
-    time.sleep(5)
-
-
-def stop_fpmsyncd(dvs):
-    dvs.runcmd(['sh', '-c', 'pkill -x fpmsyncd'])
-    time.sleep(1)
-
-
 def set_restart_timer(dvs, db, app_name, value):
     create_entry_tbl(
         db,
@@ -834,12 +810,6 @@ def set_restart_timer(dvs, db, app_name, value):
             (app_name + "_timer", value),
         ]
     )
-
-
-# function to check neighbor entry reconciliation status written in syslog
-def check_syslog_change(dvs, entry, action):#new_cnt, delete_cnt, iptype):
-    (exitcode, buf) = dvs.runcmd(['sh', '-c', 'egrep entry /var/log/syslog'])
-    assert buf.find(action) != -1
 
 
 #
@@ -857,22 +827,18 @@ def check_syslog_change(dvs, entry, action):#new_cnt, delete_cnt, iptype):
 #
 # .* ROUTE_TABLE:192.168.1.0/30|SET|nexthop:10.1.2.1,10.2.2.1,10.3.2.1|ifname:Ethernet112,Ethernet116,Ethernet120 .*
 #
-def check_swss_change(dvs, table, entry, action, attribs):
+def check_swss_change(dvs, marker, table, entry, action, attribs):
 
     if action == 'SET':
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "egrep \"{}\" /var/log/swss/swss.rec | wc -l".
-                                      format(table + ".*" + entry + ".*" + "SET\|" + attribs)])
+        pattern = table + ".*" + entry + ".*" + "SET\|" + attribs
 
     elif action == 'CREATE':
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "egrep \"{}\" /var/log/swss/swss.rec | wc -l".
-                                      format(table + ".*" + entry + ".*" + "CREATE\|" + attribs)])
+        pattern = table + ".*" + entry + ".*" + "CREATE\|" + attribs
 
     elif action == 'DELETE':
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "egrep \"{}\" /var/log/swss/swss.rec | wc -l".
-                                      format(table + ".*" + entry + ".*" + "DEL")])
+        pattern = table + ".*" + entry + ".*" + "DEL"
 
-    print exitcode
-    print num
+    (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/swss/swss.rec | egrep \"%s\" | wc -l" % (marker, pattern)])
 
     assert num.strip() == "1"
 
@@ -891,19 +857,18 @@ def check_swss_change(dvs, table, entry, action, attribs):
 #
 # .* |s|SAI_OBJECT_TYPE_ROUTE_ENTRY:{"dest":"192.168.1.0/30" .*
 #
-def check_sairedis_change(dvs, table, entry, action):
+def check_sairedis_change(dvs, marker, table, entry, action):
 
     if action == 'SET':
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "egrep \"{}\" /var/log/swss/sairedis.rec | wc -l".
-                                      format("s\|" + ".*" + table + ".*" + entry)])
+        pattern = "s\|" + ".*" + table + ".*" + entry
 
     elif action == 'CREATE':
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "egrep \"{}\" /var/log/swss/sairedis.rec | wc -l".
-                                      format("c\|" + ".*" + table + ".*" + entry)])
+        pattern = "c\|" + ".*" + table + ".*" + entry
 
     elif action == 'DELETE':
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "egrep \"{}\" /var/log/swss/sairedis.rec | wc -l".
-                                      format("r\|" + ".*" + table + ".*" + entry)])
+        pattern = "r\|" + ".*" + table + ".*" + entry
+
+    (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/swss/sairedis.rec | egrep \"%s\" | wc -l" % (marker, pattern)])
 
     assert num.strip() == "1"
 
@@ -918,18 +883,22 @@ def obtain_syslog_changes(dvs):
 #
 # Obtain the total number of changes observed in swss.rec for a particular table.
 #
-def obtain_swss_changes(dvs, table):
-    (exitcode, num) = dvs.runcmd(['sh', '-c', "egrep \"{}\" /var/log/swss/swss.rec | wc -l".
-                                  format(table + "_TABLE")])
+def obtain_swss_changes(dvs, marker, table):
+    pattern = table + "_TABLE"
+
+    (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/swss/swss.rec | egrep \"%s\" | wc -l" % (marker, pattern)])
+
     return num.strip()
 
 
 #
 # Obtain the total number of changes observed in sairedis.rec for a particular table.
 #
-def obtain_sairedis_changes(dvs, table):
-    (exitcode, num) = dvs.runcmd(['sh', '-c', "egrep \"{}\" /var/log/swss/sairedis.rec | wc -l".
-                                  format("TYPE_" + table + "_ENTRY")])
+def obtain_sairedis_changes(dvs, marker, table):
+    pattern = "TYPE_" + table + "_ENTRY"
+
+    (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/swss/sairedis.rec | egrep \"%s\" | wc -l" % (marker, pattern)])
+
     return num.strip()
 
 
@@ -957,7 +926,7 @@ def enable_warmrestart(dvs, db, app_name):
 #
 ################################################################################
 
-def test_routing_WarmRestart(dvs):
+def test_routing_WarmRestart(dvs, testlog):
 
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -1046,17 +1015,18 @@ def test_routing_WarmRestart(dvs):
     #
     #############################################################################
 
-    # Clear logs and restart zebra
-    clear_logs(dvs)
-    stop_zebra(dvs)
-    start_zebra(dvs)
+    # Restart zebra
+    dvs.stop_zebra()
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+    dvs.start_zebra()
 
     time.sleep(5)
 
     # Verify that multiple changes are seen in swss and sairedis logs as there's
     # no warm-reboot logic in place.
-    assert obtain_swss_changes(dvs, "ROUTE") != "0"
-    assert obtain_sairedis_changes(dvs, "ROUTE") != "0"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") != "0"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") != "0"
 
 
     #############################################################################
@@ -1078,10 +1048,11 @@ def test_routing_WarmRestart(dvs):
 
     time.sleep(1)
 
-    # Clear logs and restart zebra
-    clear_logs(dvs)
-    stop_zebra(dvs)
-    start_zebra(dvs)
+    # Restart zebra
+    dvs.stop_zebra()
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+    dvs.start_zebra()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1089,8 +1060,8 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify swss/sairedis changes -- none are expected this time
-    assert obtain_swss_changes(dvs, "ROUTE") == "0"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "0"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "0"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "0"
 
 
     #############################################################################
@@ -1100,16 +1071,18 @@ def test_routing_WarmRestart(dvs):
     #############################################################################
 
 
-    # Clear logs and stop zebra
-    clear_logs(dvs)
-    stop_zebra(dvs)
+    # Stop zebra
+    dvs.stop_zebra()
 
     # Add new prefix
     dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 111.0.0.2")
     time.sleep(1)
 
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
     # Start zebra
-    start_zebra(dvs)
+    dvs.start_zebra()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1117,12 +1090,18 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify the changed prefix is seen in swss/sairedis
-    check_swss_change(dvs, "ROUTE", "192.168.100.0/24", "SET", "nexthop:111.0.0.2|ifname:Ethernet0")
-    check_sairedis_change(dvs, "ROUTE", "192.168.100.0/24", "CREATE")
+    check_swss_change(dvs,
+                      marker1,
+                      "ROUTE",
+                      "192.168.100.0/24",
+                      "SET",
+                      "nexthop:111.0.0.2|ifname:Ethernet0")
+
+    check_sairedis_change(dvs, marker2, "ROUTE", "192.168.100.0/24", "CREATE")
 
     # Verify swss/sairedis changes -- a single one is expected
-    assert obtain_swss_changes(dvs, "ROUTE") == "1"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "1"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "1"
 
 
     #############################################################################
@@ -1132,16 +1111,18 @@ def test_routing_WarmRestart(dvs):
     #############################################################################
 
 
-    # Clear logs and stop zebra
-    clear_logs(dvs)
-    stop_zebra(dvs)
+    # Stop zebra
+    dvs.stop_zebra()
 
     # Delete prefix
     dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 111.0.0.2")
     time.sleep(1)
 
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
     # Start zebra
-    start_zebra(dvs)
+    dvs.start_zebra()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1149,12 +1130,12 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify the changed prefix is seen in swss/sairedis
-    check_swss_change(dvs, "ROUTE", "192.168.100.0/24", "DELETE", "")
-    check_sairedis_change(dvs, "ROUTE", "192.168.100.0/24", "DELETE")
+    check_swss_change(dvs, marker1, "ROUTE", "192.168.100.0/24", "DELETE", "")
+    check_sairedis_change(dvs, marker2, "ROUTE", "192.168.100.0/24", "DELETE")
 
     # Verify swss/sairedis changes -- a single one is expected
-    assert obtain_swss_changes(dvs, "ROUTE") == "1"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "1"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "1"
 
 
     #############################################################################
@@ -1164,16 +1145,18 @@ def test_routing_WarmRestart(dvs):
     #############################################################################
 
 
-    # Clear logs and stop zebra
-    clear_logs(dvs)
-    stop_zebra(dvs)
+    # Stop zebra
+    dvs.stop_zebra()
 
     # Add prefix
     dvs.runcmd("ip route add 192.168.200.0/24 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
     time.sleep(1)
 
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
     # Start zebra
-    start_zebra(dvs)
+    dvs.start_zebra()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1182,16 +1165,17 @@ def test_routing_WarmRestart(dvs):
 
     # Verify the changed prefix is seen in swss/sairedis
     check_swss_change(dvs,
+                      marker1,
                       "ROUTE",
                       "192.168.200.0/24",
                       "SET",
                       "nexthop:111.0.0.2,122.0.0.2,133.0.0.2|ifname:Ethernet0,Ethernet1,Ethernet2")
 
-    check_sairedis_change(dvs, "ROUTE", "192.168.200.0/24", "CREATE")
+    check_sairedis_change(dvs, marker2, "ROUTE", "192.168.200.0/24", "CREATE")
 
     # Verify swss/sairedis changes -- a single one is expected
-    assert obtain_swss_changes(dvs, "ROUTE") == "1"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "1"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "1"
 
 
     #############################################################################
@@ -1201,16 +1185,18 @@ def test_routing_WarmRestart(dvs):
     #############################################################################
 
 
-    # Clear logs and stop zebra
-    clear_logs(dvs)
-    stop_zebra(dvs)
+    # Stop zebra
+    dvs.stop_zebra()
 
     # Delete prefix
     dvs.runcmd("ip route del 192.168.200.0/24 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
     time.sleep(1)
 
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
     # Start zebra
-    start_zebra(dvs)
+    dvs.start_zebra()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1218,12 +1204,12 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify the changed prefix is seen in swss/sairedis
-    check_swss_change(dvs, "ROUTE", "192.168.200.0/24", "DELETE", "")
-    check_sairedis_change(dvs, "ROUTE", "192.168.200.0/24", "DELETE")
+    check_swss_change(dvs, marker1, "ROUTE", "192.168.200.0/24", "DELETE", "")
+    check_sairedis_change(dvs, marker2, "ROUTE", "192.168.200.0/24", "DELETE")
 
     # Verify swss/sairedis changes -- a single one is expected
-    assert obtain_swss_changes(dvs, "ROUTE") == "1"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "1"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "1"
 
 
     #############################################################################
@@ -1233,17 +1219,19 @@ def test_routing_WarmRestart(dvs):
     #############################################################################
 
 
-    # Clear logs and stop zebra
-    clear_logs(dvs)
-    stop_zebra(dvs)
+    # Stop zebra
+    dvs.stop_zebra()
 
     # Add new path
     dvs.runcmd("ip route del 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2")
     dvs.runcmd("ip route add 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
     time.sleep(1)
 
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
     # Start zebra
-    start_zebra(dvs)
+    dvs.start_zebra()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1252,16 +1240,17 @@ def test_routing_WarmRestart(dvs):
 
     # Verify the changed prefix is seen in swss/sairedis
     check_swss_change(dvs,
+                      marker1,
                       "ROUTE",
                       "192.168.1.3/32",
                       "SET",
                       "nexthop:111.0.0.2,122.0.0.2,133.0.0.2|ifname:Ethernet0,Ethernet4,Ethernet8")
 
-    check_sairedis_change(dvs, "ROUTE", "192.168.1.3/32", "SET")
+    check_sairedis_change(dvs, marker2, "ROUTE", "192.168.1.3/32", "SET")
 
     # Verify swss/sairedis changes -- a single one is expected
-    assert obtain_swss_changes(dvs, "ROUTE") == "1"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "1"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "1"
 
 
     #############################################################################
@@ -1271,17 +1260,19 @@ def test_routing_WarmRestart(dvs):
     #############################################################################
 
 
-    # Clear logs and stop zebra
-    clear_logs(dvs)
-    stop_zebra(dvs)
+    # Stop zebra
+    dvs.stop_zebra()
 
     # Delete ecmp-path
     dvs.runcmd("ip route del 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
     dvs.runcmd("ip route add 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2")
     time.sleep(1)
 
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
     # Start zebra
-    start_zebra(dvs)
+    dvs.start_zebra()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1290,16 +1281,17 @@ def test_routing_WarmRestart(dvs):
 
     # Verify the changed prefix is seen in swss/sairedis
     check_swss_change(dvs,
+                      marker1,
                       "ROUTE",
                       "192.168.1.3/32",
                       "SET",
                       "nexthop:111.0.0.2,122.0.0.2|ifname:Ethernet0,Ethernet4")
 
-    check_sairedis_change(dvs, "ROUTE", "192.168.1.3/32", "SET")
+    check_sairedis_change(dvs, marker2, "ROUTE", "192.168.1.3/32", "SET")
 
     # Verify swss/sairedis changes -- a single one is expected
-    assert obtain_swss_changes(dvs, "ROUTE") == "1"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "1"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "1"
 
 
     #############################################################################
@@ -1309,16 +1301,18 @@ def test_routing_WarmRestart(dvs):
     #############################################################################
 
 
-    # Clear logs and stop zebra
-    clear_logs(dvs)
-    stop_zebra(dvs)
+    # Stop zebra
+    dvs.stop_zebra()
 
     # Add prefix
     dvs.runcmd("ip -6 route add fc00:4:4::1/128 nexthop via 1110::2")
     time.sleep(1)
 
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
     # Start zebra
-    start_zebra(dvs)
+    dvs.start_zebra()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1326,12 +1320,18 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify the changed prefix is seen in swss/sairedis
-    check_swss_change(dvs, "ROUTE", "fc00:4:4::1", "SET", "nexthop:1110::2|ifname:Ethernet0")
-    check_sairedis_change(dvs, "ROUTE", "fc00:4:4::1/128", "CREATE")
+    check_swss_change(dvs,
+                      marker1,
+                      "ROUTE",
+                      "fc00:4:4::1",
+                      "SET",
+                      "nexthop:1110::2|ifname:Ethernet0")
+
+    check_sairedis_change(dvs, marker2, "ROUTE", "fc00:4:4::1/128", "CREATE")
 
     # Verify swss/sairedis changes -- a single one is expected
-    assert obtain_swss_changes(dvs, "ROUTE") == "1"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "1"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "1"
 
 
     #############################################################################
@@ -1340,16 +1340,18 @@ def test_routing_WarmRestart(dvs):
     #
     #############################################################################
 
-    # Clear logs and stop zebra
-    clear_logs(dvs)
-    stop_zebra(dvs)
+    # Stop zebra
+    dvs.stop_zebra()
 
     # Delete prefix
     dvs.runcmd("ip -6 route del fc00:4:4::1/128 nexthop via 1110::2")
     time.sleep(1)
 
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
     # Start zebra
-    start_zebra(dvs)
+    dvs.start_zebra()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1357,12 +1359,12 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify the changed prefix is seen in swss/sairedis
-    check_swss_change(dvs, "ROUTE", "fc00:4:4::1", "DELETE", "")
-    check_sairedis_change(dvs, "ROUTE", "fc00:4:4::1/128", "DELETE")
+    check_swss_change(dvs, marker1, "ROUTE", "fc00:4:4::1", "DELETE", "")
+    check_sairedis_change(dvs, marker2, "ROUTE", "fc00:4:4::1/128", "DELETE")
 
     # Verify swss/sairedis changes -- a single one is expected
-    assert obtain_swss_changes(dvs, "ROUTE") == "1"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "1"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "1"
 
 
     #############################################################################
@@ -1372,10 +1374,14 @@ def test_routing_WarmRestart(dvs):
     #############################################################################
 
 
-    # Clear logs and restart fpmsyncd
-    clear_logs(dvs)
-    stop_fpmsyncd(dvs)
-    start_fpmsyncd(dvs)
+    # Stop fpmsyncd
+    dvs.stop_fpmsyncd()
+
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
+    # Start fpmsyncd
+    dvs.start_fpmsyncd()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1383,8 +1389,8 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify swss/sairedis changes -- none are expected this time
-    assert obtain_swss_changes(dvs, "ROUTE") == "0"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "0"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "0"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "0"
 
 
     #############################################################################
@@ -1394,16 +1400,18 @@ def test_routing_WarmRestart(dvs):
     #############################################################################
 
 
-    # Clear logs and stop fpmsyncd
-    clear_logs(dvs)
-    stop_fpmsyncd(dvs)
+    # Stop fpmsyncd
+    dvs.stop_fpmsyncd()
 
     # Add new prefix
     dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 111.0.0.2")
     time.sleep(1)
 
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
     # Start fpmsyncd
-    start_fpmsyncd(dvs)
+    dvs.start_fpmsyncd()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1411,12 +1419,18 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify the changed prefix is seen in swss/sairedis
-    check_swss_change(dvs, "ROUTE", "192.168.100.0/24", "SET", "nexthop:111.0.0.2|ifname:Ethernet0")
-    check_sairedis_change(dvs, "ROUTE", "192.168.100.0/24", "CREATE")
+    check_swss_change(dvs,
+                      marker1,
+                      "ROUTE",
+                      "192.168.100.0/24",
+                      "SET",
+                      "nexthop:111.0.0.2|ifname:Ethernet0")
+
+    check_sairedis_change(dvs, marker2, "ROUTE", "192.168.100.0/24", "CREATE")
 
     # Verify swss/sairedis changes -- a single one is expected
-    assert obtain_swss_changes(dvs, "ROUTE") == "1"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "1"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "1"
 
 
     #############################################################################
@@ -1426,16 +1440,18 @@ def test_routing_WarmRestart(dvs):
     #############################################################################
 
 
-    # Clear logs and stop fpmsyncd
-    clear_logs(dvs)
-    stop_fpmsyncd(dvs)
+    # Stop fpmsyncd
+    dvs.stop_fpmsyncd()
 
     # Delete prefix
     dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 111.0.0.2")
     time.sleep(1)
 
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
     # Start fpmsyncd
-    start_fpmsyncd(dvs)
+    dvs.start_fpmsyncd()
 
     # Verify FSM
     swss_app_check_warmstart_state(state_db, "bgp", "restored")
@@ -1443,9 +1459,15 @@ def test_routing_WarmRestart(dvs):
     swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
 
     # Verify the changed prefix is seen in swss/sairedis
-    check_swss_change(dvs, "ROUTE", "192.168.100.0/24", "DELETE", "")
-    check_sairedis_change(dvs, "ROUTE", "192.168.100.0/24", "DELETE")
+    check_swss_change(dvs,
+                      marker1,
+                      "ROUTE",
+                      "192.168.100.0/24",
+                      "DELETE",
+                      "")
+
+    check_sairedis_change(dvs, marker2, "ROUTE", "192.168.100.0/24", "DELETE")
 
     # Verify swss/sairedis changes -- a single one is expected
-    assert obtain_swss_changes(dvs, "ROUTE") == "1"
-    assert obtain_sairedis_changes(dvs, "ROUTE") == "1"
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "1"
