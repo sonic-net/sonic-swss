@@ -15,6 +15,9 @@ using namespace swss;
 
 VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
+        m_appVrfTableProducer(appDb, APP_VRF_TABLE_NAME),
+        m_appVnetTableProducer(appDb, APP_VNET_TABLE_NAME),
+        m_appTunnelMapTableProducer(appDb, APP_VXLAN_VRF_TABLE_NAME),
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME)
 {
     for (uint32_t i = VRF_TABLE_START; i < VRF_TABLE_END; i++)
@@ -137,6 +140,41 @@ bool VrfMgr::setLink(const string& vrfName)
     return true;
 }
 
+void VrfMgr::handleVnetConfigSet(KeyOpFieldsValuesTuple &t)
+{
+    SWSS_LOG_ENTER();
+
+    string tunnelName;
+    vector<FieldValueTuple> tunnelValues;
+    vector<FieldValueTuple> vnetValues;
+
+    const auto& values = kfvFieldsValues(t);
+    const auto& vrfName = kfvKey(t);
+
+    for (const auto& fv : values)
+    {
+        const auto& name = fvField(fv);
+
+        if (name == "vni")
+        {
+            tunnelValues.push_back(fv);
+        }
+        else if (name == "tunnel")
+        {
+            tunnelName = fvField(fv);
+        }
+        else
+        {
+            vnetValues.push_back(fv);
+        }
+    }
+
+    tunnelValues.emplace_back("vrf", vrfName);
+
+    m_appVnetTableProducer.set(vrfName, vnetValues);
+    m_appTunnelMapTableProducer.set(tunnelName, tunnelValues);
+}
+
 void VrfMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -160,6 +198,14 @@ void VrfMgr::doTask(Consumer &consumer)
             m_stateVrfTable.set(vrfName, fvVector);
 
             SWSS_LOG_NOTICE("Created vrf netdev %s", vrfName.c_str());
+            if (consumer.getTableName() == APP_VRF_TABLE_NAME)
+            {
+                m_appVrfTableProducer.set(vrfName, kfvFieldsValues(t));
+            }
+            else
+            {
+                handleVnetConfigSet(t);
+            }
         }
         else if (op == DEL_COMMAND)
         {
@@ -169,6 +215,15 @@ void VrfMgr::doTask(Consumer &consumer)
             }
 
             m_stateVrfTable.del(vrfName);
+
+            if (consumer.getTableName() == APP_VRF_TABLE_NAME)
+            {
+                m_appVrfTableProducer.del(vrfName);
+            }
+            else
+            {
+                m_appVnetTableProducer.del(vrfName);
+            }
 
             SWSS_LOG_NOTICE("Removed vrf netdev %s", vrfName.c_str());
         }

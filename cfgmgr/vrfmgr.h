@@ -23,12 +23,14 @@ private:
     bool setLink(const string& vrfName);
     void recycleTable(uint32_t table);
     uint32_t getFreeTable(void);
+    void handleVnetConfigSet(KeyOpFieldsValuesTuple &t);
     void doTask(Consumer &consumer);
 
     map<string, uint32_t> m_vrfTableMap;
     set<uint32_t> m_freeTables;
 
     Table m_stateVrfTable;
+    ProducerStateTable m_appVrfTableProducer, m_appVnetTableProducer, m_appTunnelMapTableProducer;
 };
 
 }
