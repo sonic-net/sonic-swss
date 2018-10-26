@@ -174,13 +174,35 @@ void IntfsOrch::doTask(Consumer &consumer)
         {
             if (alias == "lo")
             {
-                // set request for lo may come after warm start restore
+                if (!ip_prefix_in_key)
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
+                bool addIp2Me = false;
+                // set request for lo may come after warm start restore.
+                // It is also to prevent dupicate set requests in normal running case.
                 auto it_intfs = m_syncdIntfses.find(alias);
                 if (it_intfs == m_syncdIntfses.end())
                 {
                     IntfsEntry intfs_entry;
+
                     intfs_entry.ref_count = 0;
+                    intfs_entry.ip_addresses.insert(ip_prefix);
                     m_syncdIntfses[alias] = intfs_entry;
+                    addIp2Me = true;
+                }
+                else
+                {
+                     if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix) == 0)
+                     {
+                        m_syncdIntfses[alias].ip_addresses.insert(ip_prefix);
+                        addIp2Me = true;
+                     }
+                }
+                if (addIp2Me)
+                {
                     addIp2MeRoute(vrf_id, ip_prefix);
                 }
 
@@ -270,8 +292,15 @@ void IntfsOrch::doTask(Consumer &consumer)
         {
             if (alias == "lo")
             {
-                m_syncdIntfses.erase(alias);
-                removeIp2MeRoute(vrf_id, ip_prefix);
+                if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
+                {
+                    m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
+                    removeIp2MeRoute(vrf_id, ip_prefix);
+                }
+                if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+                {
+                    m_syncdIntfses.erase(alias);
+                }
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
