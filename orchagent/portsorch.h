@@ -147,7 +147,7 @@ private:
     bool initPort(const string &alias, const set<int> &lane_set);
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);
-    bool setPortMtu(Port& p, sai_uint32_t mtu);
+    bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
     bool setPortFec(sai_object_id_t id, sai_port_fec_mode_t mode);

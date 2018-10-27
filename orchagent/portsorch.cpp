@@ -481,16 +481,9 @@ bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
     return true;
 }
 
-bool PortsOrch::setPortMtu(Port& p, sai_uint32_t mtu)
+bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
 {
     SWSS_LOG_ENTER();
-
-    auto id = p.m_port_id;
-    if (mtu == p.m_mtu)
-    {
-        SWSS_LOG_NOTICE("Already set mtu %u to port pid:%lx", p.m_mtu, id);
-        return true;
-    }
 
     sai_attribute_t attr;
     attr.id = SAI_PORT_ATTR_MTU;
@@ -505,7 +498,6 @@ bool PortsOrch::setPortMtu(Port& p, sai_uint32_t mtu)
         return false;
     }
     SWSS_LOG_INFO("Set MTU %u to port pid:%lx", attr.value.u32, id);
-    p.m_mtu = mtu;
     return true;
 }
 
@@ -1697,10 +1689,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     m_portList[alias].m_speed = speed;
                 }
 
-                if (mtu != 0)
+                if (mtu != 0 && mtu != p.m_mtu)
                 {
-                    if (setPortMtu(p, mtu))
+                    if (setPortMtu(p.m_port_id, mtu))
                     {
+                        p.m_mtu = mtu;
                         m_portList[alias] = p;
                         SWSS_LOG_NOTICE("Set port %s MTU to %u", alias.c_str(), mtu);
                         if (p.m_rif_id)
