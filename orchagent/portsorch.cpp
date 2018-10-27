@@ -1598,8 +1598,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         m_portList[alias] = p;
 
                         // Once AN is changed
-                        // - no speed specified: need to reset the port speed or port adv speed accordingly
-                        // - speed specified: need to overwrite the port speed or port adv speed by the specified one
+                        // - no speed specified: need to reapply the port speed or port adv speed accordingly
+                        // - speed specified: need to apply the port speed or port adv speed by the specified one
+                        // Note: one special case is
+                        // - speed specified as existing m_speed: need to apply even they are the same
                         auto old_speed = p.m_speed;
                         p.m_speed = 0;
                         auto new_speed = speed ? speed : old_speed;
