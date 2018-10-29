@@ -34,7 +34,7 @@ enum class VR_TYPE
     VR_INVALID
 };
 
-using vrid_list_t = map<VR_TYPE, sai_object_id_t>;
+typedef map<VR_TYPE, sai_object_id_t> vrid_list_t;
 extern std::vector<VR_TYPE> vr_cntxt;
 
 class VNetRequest : public Request
@@ -112,7 +112,7 @@ private:
     vrid_list_t vr_ids_;
 };
 
-using VNetObject_T = std::unique_ptr<VNetObject>;
+typedef std::unique_ptr<VNetObject> VNetObject_T;
 typedef std::unordered_map<std::string, VNetObject_T> VNetTable;
 
 class VNetOrch : public Orch2
@@ -191,10 +191,10 @@ public:
     VNetRouteRequest() : Request(vnet_route_description, ':') { }
 };
 
-using NextHopMap = map<IpAddress, sai_object_id_t>;
-using NextHopTunnels = map<string, NextHopMap>;
+typedef map<IpAddress, sai_object_id_t> NextHopMap;
+typedef map<string, NextHopMap> NextHopTunnels;
 
-struct endpoint
+struct tunnelEndpoint
 {
     IpAddress ip;
     MacAddress mac;
@@ -205,8 +205,9 @@ class VNetRouteOrch : public Orch2
 {
 public:
     VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *);
-    using handler_pair = pair<string, void (VNetRouteOrch::*) (const Request& )>;
-    using handler_map = map<string, void (VNetRouteOrch::*) (const Request& )>;
+
+    typedef pair<string, void (VNetRouteOrch::*) (const Request& )> handler_pair;
+    typedef map<string, void (VNetRouteOrch::*) (const Request& )> handler_map;
 
 private:
     virtual bool addOperation(const Request& request);
@@ -216,12 +217,12 @@ private:
     void handleTunnel(const Request&);
 
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, endpoint& endp);
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, tunnelEndpoint& endp);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, string& ifname);
 
-    sai_object_id_t getNextHop(const string& vnet, endpoint& endp);
+    sai_object_id_t getNextHop(const string& vnet, tunnelEndpoint& endp);
 
     VNetOrch *vnet_orch_;
     VNetRouteRequest request_;

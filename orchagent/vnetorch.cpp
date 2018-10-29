@@ -294,7 +294,7 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
     handler_map_.insert(handler_pair(APP_VNET_RT_TUNNEL_TABLE_NAME, &VNetRouteOrch::handleTunnel));
 }
 
-sai_object_id_t VNetRouteOrch::getNextHop(const string& vnet, endpoint& endp)
+sai_object_id_t VNetRouteOrch::getNextHop(const string& vnet, tunnelEndpoint& endp)
 {
     auto it = nh_tunnels_.find(vnet);
     if (it != nh_tunnels_.end())
@@ -319,7 +319,7 @@ sai_object_id_t VNetRouteOrch::getNextHop(const string& vnet, endpoint& endp)
 }
 
 template<>
-bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix, endpoint& endp)
+bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix, tunnelEndpoint& endp)
 {
     SWSS_LOG_ENTER();
 
@@ -485,7 +485,7 @@ void VNetRouteOrch::handleTunnel(const Request& request)
 
     SWSS_LOG_INFO("VNET-RT '%s' add for endpoint %s", vnet_name.c_str(), ip_pfx.to_string().c_str());
 
-    endpoint endp = { ip, mac, vni };
+    tunnelEndpoint endp = { ip, mac, vni };
     if (vnet_orch_->isVnetExecVrf())
     {
         if (!doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, endp))

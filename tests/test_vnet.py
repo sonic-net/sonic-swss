@@ -4,7 +4,6 @@ import json
 import random
 import time
 from pprint import pprint
-from dns.name import empty
 
 
 def create_entry(tbl, key, pairs):

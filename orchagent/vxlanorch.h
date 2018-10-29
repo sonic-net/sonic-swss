@@ -83,8 +83,8 @@ public:
     VxlanTunnelRequest() : Request(vxlan_tunnel_request_description, '|') { }
 };
 
-using VxlanTunnel_T = std::unique_ptr<VxlanTunnel>;
-using VxlanTunnelTable = std::map<std::string, VxlanTunnel_T>;
+typedef std::unique_ptr<VxlanTunnel> VxlanTunnel_T;
+typedef std::map<std::string, VxlanTunnel_T> VxlanTunnelTable;
 
 class VxlanTunnelOrch : public Orch2
 {
@@ -163,15 +163,15 @@ struct vrf_map_entry_t {
     sai_object_id_t decap_id;
 };
 
-using VxlanVrfTable = std::map<string, vrf_map_entry_t>;
-using VxlanVrfTunnel = std::map<string, sai_object_id_t>;
+typedef std::map<string, vrf_map_entry_t> VxlanVrfTable;
+typedef std::map<string, sai_object_id_t> VxlanVrfTunnel;
 
 class VxlanVrfMapOrch : public Orch2
 {
 public:
     VxlanVrfMapOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_) { }
 
-    using handler_pair = std::pair<sai_object_id_t, sai_object_id_t>;
+    typedef std::pair<sai_object_id_t, sai_object_id_t> handler_pair;
 
     bool isVrfMapExists(const std::string& name) const
     {

@@ -513,7 +513,7 @@ bool VxlanTunnelMapOrch::addOperation(const Request& request)
     const auto full_tunnel_map_entry_name = request.getFullKey();
     if (isTunnelMapExists(full_tunnel_map_entry_name))
     {
-        SWSS_LOG_ERROR("Vxlan tunnel map '%s' is already exist", full_tunnel_map_entry_name.c_str());
+        SWSS_LOG_NOTICE("Vxlan tunnel map '%s' already exist", full_tunnel_map_entry_name.c_str());
         return true;
     }
 
@@ -635,7 +635,7 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
     }
     else if (vrf_orch->isVRFexists(vrf_name))
     {
-        //Do VRF task
+        //Placeholder for "Do VRF task" (for non-vnet L3 Vxlan use-cases)
     }
     else
     {
