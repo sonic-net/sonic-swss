@@ -92,25 +92,25 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
         }
     }
 
-    /* See the comments for g_portSet in portsyncd.cpp */
-    for (string port : g_portSet)
+    if (!WarmStart::isWarmStart())
     {
-        vector<FieldValueTuple> temp;
-        if (m_portTable.get(port, temp))
+        /* See the comments for g_portSet in portsyncd.cpp */
+        for (string port : g_portSet)
         {
-            for (auto it : temp)
+            vector<FieldValueTuple> temp;
+            if (m_portTable.get(port, temp))
             {
-                if (fvField(it) == "admin_status")
+                for (auto it : temp)
                 {
-                    g_portSet.erase(port);
-                    break;
+                    if (fvField(it) == "admin_status")
+                    {
+                        g_portSet.erase(port);
+                        break;
+                    }
                 }
             }
         }
-    }
 
-    if (!WarmStart::isWarmStart())
-    {
         for (idx_p = if_ni;
                 idx_p != NULL && idx_p->if_index != 0 && idx_p->if_name != NULL;
                 idx_p++)
