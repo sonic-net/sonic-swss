@@ -949,14 +949,17 @@ def test_routing_WarmRestart(dvs, testlog):
     # Enable ipv6 on docker
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
 
-    dvs.runcmd("ifconfig {} 111.0.0.1/24 up".format(intfs[0]))
+    dvs.runcmd("ip -4 addr add 111.0.0.1/24 dev {}".format(intfs[0]))
     dvs.runcmd("ip -6 addr add 1110::1/64 dev {}".format(intfs[0]))
+    dvs.runcmd("ip link set {} up".format(intfs[0]))
 
-    dvs.runcmd("ifconfig {} 122.0.0.1/24 up".format(intfs[1]))
+    dvs.runcmd("ip -4 addr add 122.0.0.1/24 dev {}".format(intfs[1]))
     dvs.runcmd("ip -6 addr add 1220::1/64 dev {}".format(intfs[1]))
+    dvs.runcmd("ip link set {} up".format(intfs[1]))
 
-    dvs.runcmd("ifconfig {} 133.0.0.1/24 up".format(intfs[2]))
+    dvs.runcmd("ip -4 addr add 133.0.0.1/24 dev {}".format(intfs[2]))
     dvs.runcmd("ip -6 addr add 1330::1/64 dev {}".format(intfs[2]))
+    dvs.runcmd("ip link set {} up".format(intfs[2]))
 
     time.sleep(1)
 
@@ -1022,6 +1025,9 @@ def test_routing_WarmRestart(dvs, testlog):
     dvs.start_zebra()
 
     time.sleep(5)
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "")
 
     # Verify that multiple changes are seen in swss and sairedis logs as there's
     # no warm-reboot logic in place.
@@ -1467,6 +1473,82 @@ def test_routing_WarmRestart(dvs, testlog):
                       "")
 
     check_sairedis_change(dvs, marker2, "ROUTE", "192.168.100.0/24", "DELETE")
+
+    # Verify swss/sairedis changes -- a single one is expected
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "1"
+
+
+    #############################################################################
+    #
+    # Testcase 14. Restart zebra and add/remove a new non-ecmp IPv4 prefix. As
+    #              the 'delete' instruction would arrive after the 'add' one, no
+    #              changes should be pushed down to SwSS.
+    #
+    #############################################################################
+
+
+    # Restart zebra
+    dvs.stop_zebra()
+    dvs.start_zebra()
+
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
+    # Add/delete new prefix
+    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+    dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify swss/sairedis changes -- none are expected this time
+    assert obtain_swss_changes(dvs, marker1, "ROUTE") == "0"
+    assert obtain_sairedis_changes(dvs, marker2, "ROUTE") == "0"
+
+
+    #############################################################################
+    #
+    # Testcase 15. Restart zebra and generate an add/remove/add for new non-ecmp
+    #              IPv4 prefix. Verify that only the second 'add' instruction is
+    #              honored and the corresponding update passed down to SwSS.
+    #
+    #############################################################################
+
+
+    # Restart zebra
+    dvs.stop_zebra()
+    dvs.start_zebra()
+
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
+    # Add/delete new prefix
+    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+    dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 122.0.0.2")
+    time.sleep(1)
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify that only the second 'add' goes through
+    check_swss_change(dvs,
+                      marker1,
+                      "ROUTE",
+                      "192.168.100.0/24",
+                      "SET",
+                      "nexthop:122.0.0.2|ifname:Ethernet1")
+
+    check_sairedis_change(dvs, marker2, "ROUTE", "192.168.100.0/24", "CREATE")
 
     # Verify swss/sairedis changes -- a single one is expected
     assert obtain_swss_changes(dvs, marker1, "ROUTE") == "1"

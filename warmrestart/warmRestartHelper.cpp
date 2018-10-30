@@ -223,12 +223,28 @@ void WarmStartHelper::reconcile(void)
     for (auto &kfv : m_refreshMap)
     {
         auto refreshedKey = kfvKey(kfv.second);
+        auto refreshedOp  = kfvOp(kfv.second);
         auto refreshedFV  = kfvFieldsValues(kfv.second);
 
-        SWSS_LOG_NOTICE("Warm-Restart reconciliation: introducing new entry %s",
-                        printKFV(refreshedKey, refreshedFV).c_str());
+        /*
+         * During warm-reboot, apps could receive an 'add' and a 'delete' for an
+         * entry that does not exist in AppDB. In these cases we must prevent the
+         * 'delete' from being pushed down to AppDB, so we are handling this case
+         * differently than the 'add' one.
+         */
+        if(refreshedOp == DEL_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Warm-Restart reconciliation: discarding non-existing"
+                            " entry %s\n",
+                            refreshedKey.c_str());
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Warm-Restart reconciliation: introducing new entry %s",
+                            printKFV(refreshedKey, refreshedFV).c_str());
 
-        m_syncTable->set(refreshedKey, refreshedFV);
+            m_syncTable->set(refreshedKey, refreshedFV);
+        }
     }
 
     /* Clearing pending kfv's from refreshMap */
