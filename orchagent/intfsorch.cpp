@@ -292,15 +292,19 @@ void IntfsOrch::doTask(Consumer &consumer)
         {
             if (alias == "lo")
             {
-                if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
+                if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
                 {
-                    m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
-                    removeIp2MeRoute(vrf_id, ip_prefix);
+                    if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
+                    {
+                        m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
+                        removeIp2MeRoute(vrf_id, ip_prefix);
+                    }
+                    if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+                    {
+                        m_syncdIntfses.erase(alias);
+                    }
                 }
-                if (m_syncdIntfses[alias].ip_addresses.size() == 0)
-                {
-                    m_syncdIntfses.erase(alias);
-                }
+
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
