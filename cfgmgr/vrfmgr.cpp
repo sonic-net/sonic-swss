@@ -145,7 +145,7 @@ void VrfMgr::handleVnetConfigSet(KeyOpFieldsValuesTuple &t)
     SWSS_LOG_ENTER();
 
     string tunnelName;
-    vector<FieldValueTuple> tunnelValues;
+    vector<FieldValueTuple> tunnelMapValues;
     vector<FieldValueTuple> vnetValues;
 
     const auto& values = kfvFieldsValues(t);
@@ -157,11 +157,11 @@ void VrfMgr::handleVnetConfigSet(KeyOpFieldsValuesTuple &t)
 
         if (name == "vni")
         {
-            tunnelValues.push_back(fv);
+            tunnelMapValues.push_back(fv);
         }
-        else if (name == "tunnel")
+        else if (name == "vxlan_tunnel")
         {
-            tunnelName = fvField(fv);
+            tunnelName = fvValue(fv);
         }
         else
         {
@@ -169,10 +169,10 @@ void VrfMgr::handleVnetConfigSet(KeyOpFieldsValuesTuple &t)
         }
     }
 
-    tunnelValues.emplace_back("vrf", vrfName);
+    tunnelMapValues.emplace_back("vrf", vrfName);
 
     m_appVnetTableProducer.set(vrfName, vnetValues);
-    m_appTunnelMapTableProducer.set(tunnelName, tunnelValues);
+    m_appTunnelMapTableProducer.set(tunnelName + ":" + vrfName, tunnelMapValues);
 }
 
 void VrfMgr::doTask(Consumer &consumer)
