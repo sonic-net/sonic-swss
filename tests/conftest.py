@@ -176,7 +176,7 @@ class DockerVirtualSwitch(object):
                 server = VirtualServer(ctn_sw_name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
-            self.mount = "/var/run/redis-vs/"
+            self.mount = "/var/run/redis-vs/{}".format(ctn_sw_name)
 
             self.restart()
         else:
