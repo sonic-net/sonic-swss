@@ -327,6 +327,12 @@ class DockerVirtualSwitch(object):
         self.ctn.exec_run("logger {}".format(marker))
         return marker
 
+    def SubscribeAppDbObject(self, objpfx):
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APP_DB)
+        pubsub = r.pubsub()
+        pubsub.psubscribe("__keyspace@0__:%s*" % objpfx)
+        return pubsub
+
     def SubscribeAsicDbObject(self, objpfx):
         r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.ASIC_DB)
         pubsub = r.pubsub()
@@ -355,6 +361,64 @@ class DockerVirtualSwitch(object):
                 idle += 1
 
         return (nadd, ndel)
+
+    def GetSubscribedAppDbObjects(self, pubsub, ignore=None, timeout=10):
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APP_DB)
+
+        addobjs = []
+        delobjs = []
+        idle = 0
+
+        while True and idle < timeout:
+            message = pubsub.get_message()
+            if message:
+                print message
+                key = message['channel'].split(':', 1)[1]
+                if ignore:
+                    fds = message['channel'].split(':')
+                    if fds[2] in ignore:
+                        continue
+                if message['data'] == 'hset':
+                    value=r.hgetall(key)
+                    addobjs.append({'key':k, 'vals':value})
+                elif message['data'] == 'del':
+                    delobjs.append(key)
+                idle = 0
+            else:
+                time.sleep(1)
+                idle += 1
+
+        return (addobjs, delobjs)
+
+
+    def GetSubscribedAsicDbObjects(self, pubsub, ignore=None, timeout=10):
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.ASIC_DB)
+
+        addobjs = []
+        delobjs = []
+        idle = 0
+
+        while True and idle < timeout:
+            message = pubsub.get_message()
+            if message:
+                print message
+                key = message['channel'].split(':', 1)[1]
+                if ignore:
+                    fds = message['channel'].split(':')
+                    if fds[2] in ignore:
+                        continue
+                if message['data'] == 'hset':
+                    value=r.hgetall(key)
+                    (_, t, k) = key.split(':', 2)
+                    addobjs.append({'type':t, 'key':k, 'vals':value})
+                elif message['data'] == 'del':
+                    delobjs.append(key)
+                idle = 0
+            else:
+                time.sleep(1)
+                idle += 1
+
+        return (addobjs, delobjs)
 
     def get_map_iface_bridge_port_id(self, asic_db):
         port_id_2_iface = self.asicdb.portoidmap
