@@ -33,7 +33,7 @@ int main(int argc, char **argv)
             {
                 sync.getRestartAssist()->readTableToMap();
                 while (!sync.isNeighRestoreDone()) {
-                    SWSS_LOG_INFO("waiting neighbor table to be restored to kerne");
+                    SWSS_LOG_INFO("waiting neighbor table to be restored to kernel");
                     sleep(1);
                 }
                 sync.getRestartAssist()->startReconcileTimer(s);

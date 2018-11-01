@@ -745,6 +745,11 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                                                  ; dynanic data like port state, neighbor, routes
                                                                  ; and so on.
 
+### NEIGH_RESTORE_TABLE
+    ;State for neighbor table restoring process during warm reboot
+    key                 = NEIGH_RESTORE_TABLE|Flags
+    restored            = "true" / "false" ; restored state
+
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?
 
