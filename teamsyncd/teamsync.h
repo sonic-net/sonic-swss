@@ -18,11 +18,11 @@ class TeamSync : public NetMsg
 public:
     TeamSync(DBConnector *db, DBConnector *stateDb, Select *select);
 
-    /*
-     * Listens to RTM_NEWLINK and RTM_DELLINK to undestand if there is a new
-     * team device
-     */
+    /* Listen to RTM_NEWLINK, RTM_DELLINK to track team devices */
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
+
+    /* Handle all selectables add/removal events */
+    void doSelectableTask();
 
     class TeamPortSync : public Selectable
     {
@@ -35,6 +35,8 @@ public:
         int getFd() override;
         void readData() override;
 
+        /* member_name -> enabled|disabled */
+        std::map<std::string, bool> m_lagMembers;
     protected:
         int onChange();
         static int teamdHandler(struct team_handle *th, void *arg,
@@ -45,7 +47,6 @@ public:
         struct team_handle *m_team;
         std::string m_lagName;
         int m_ifindex;
-        std::map<std::string, bool> m_lagMembers; /* map[ifname] = status (enabled|disabled) */
     };
 
 protected:
@@ -58,7 +59,11 @@ private:
     ProducerStateTable m_lagTable;
     ProducerStateTable m_lagMemberTable;
     Table m_stateLagTable;
-    std::map<std::string, std::shared_ptr<TeamPortSync> > m_teamPorts;
+
+    /* Store selectables needed to be updated in doSelectableTask function */
+    std::set<std::string> m_selectablesToAdd;
+    std::set<std::string> m_selectablesToRemove;
+    std::map<std::string, std::shared_ptr<TeamPortSync> > m_teamSelectables;
 };
 
 }
