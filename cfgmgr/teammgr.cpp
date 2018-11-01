@@ -1,3 +1,5 @@
+#include <unistd.h>
+
 #include "exec.h"
 #include "teammgr.h"
 #include "logger.h"
@@ -373,7 +375,34 @@ bool TeamMgr::addLagMember(const string &lag, const string &member)
     // ip link set dev <member> down;
     // teamdctl <port_channel_name> port add <member>;
     cmd << IP_CMD << " link set dev " << member << " down; ";
-    cmd << TEAMDCTL_CMD << " " << lag << " port add " << member << "; ";
+    cmd << TEAMDCTL_CMD << " " << lag << " port add " << member;
+
+    // teamdctl port add command will fail when the member port is not
+    // set to admin status down; it is possible that some other processes
+    // or users are executing the command to bring up the member port
+    // while adding this port into the port channel. This piece of retry
+    // logic will try three times to ensure that a port could be added
+    // into the port channel.
+    int retry = 0;
+    while (retry < 3)
+    {
+        int ret = exec(cmd.str(), res);
+        if (ret == 0)
+            break;
+
+        SWSS_LOG_NOTICE("Failed to enslave %s to %s, wait 1 second and retry...",
+                member.c_str(), lag.c_str());
+
+        sleep(1);
+        retry++;
+    }
+
+    if (retry == 3)
+    {
+        SWSS_LOG_ERROR("Failed to enslave %s to %s",
+                member.c_str(), lag.c_str());
+        return false;
+    }
 
     vector<FieldValueTuple> fvs;
     m_cfgPortTable.get(member, fvs);
@@ -403,6 +432,7 @@ bool TeamMgr::addLagMember(const string &lag, const string &member)
     }
 
     // ip link set dev <member> [up|down]
+    cmd.str(string());
     cmd << IP_CMD << " link set dev " << member << " " << admin_status;
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
