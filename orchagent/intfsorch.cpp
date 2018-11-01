@@ -292,6 +292,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         {
             if (alias == "lo")
             {
+                // TODO: handle case for which lo is not in default vrf gVirtualRouterId
                 if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
                 {
                     if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
