@@ -196,10 +196,8 @@ def create_vxlan_tunnel_entry(dvs, tunnel_name, tunnel_map_entry_name, tunnel_ma
         ],
     )
 
-    create = False
     if (tunnel_map_map.get(tunnel_name) is None):
         tunnel_map_id = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", tunnel_map_ids)
-        create = True
     else:
         tunnel_map_id = tunnel_map_map[tunnel_name]
 
