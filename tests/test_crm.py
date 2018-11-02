@@ -39,8 +39,12 @@ def setReadOnlyAttr(dvs, obj, attr, val):
     ntf.send("set_ro", key, fvp)
 
 
-def test_CrmFdbEntry(dvs):
+def test_CrmFdbEntry(dvs, testlog):
 
+    # disable ipv6 on Ethernet8 neighbor as once ipv6 link-local address is
+    # configured, server 2 will send packet which can switch to learn another
+    # mac and fail the test.
+    dvs.servers[2].runcmd("sysctl -w net.ipv6.conf.eth0.disable_ipv6=1")
     dvs.runcmd("crm config polling interval 1")
 
     setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY', '1000')
@@ -91,8 +95,10 @@ def test_CrmFdbEntry(dvs):
 
     assert new_avail_counter == avail_counter
 
+    # enable ipv6 on server 2
+    dvs.servers[2].runcmd("sysctl -w net.ipv6.conf.eth0.disable_ipv6=0")
 
-def test_CrmIpv4Route(dvs):
+def test_CrmIpv4Route(dvs, testlog):
 
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
 
@@ -141,7 +147,7 @@ def test_CrmIpv4Route(dvs):
     assert new_avail_counter == avail_counter
 
 
-def test_CrmIpv6Route(dvs):
+def test_CrmIpv6Route(dvs, testlog):
 
     # Enable IPv6 routing
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
@@ -197,7 +203,7 @@ def test_CrmIpv6Route(dvs):
     assert new_avail_counter == avail_counter
 
 
-def test_CrmIpv4Nexthop(dvs):
+def test_CrmIpv4Nexthop(dvs, testlog):
 
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
 
@@ -238,7 +244,7 @@ def test_CrmIpv4Nexthop(dvs):
     assert new_avail_counter == avail_counter
 
 
-def test_CrmIpv6Nexthop(dvs):
+def test_CrmIpv6Nexthop(dvs, testlog):
 
     # Enable IPv6 routing
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
@@ -283,7 +289,7 @@ def test_CrmIpv6Nexthop(dvs):
     assert new_avail_counter == avail_counter
 
 
-def test_CrmIpv4Neighbor(dvs):
+def test_CrmIpv4Neighbor(dvs, testlog):
 
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
 
@@ -324,7 +330,7 @@ def test_CrmIpv4Neighbor(dvs):
     assert new_avail_counter == avail_counter
 
 
-def test_CrmIpv6Neighbor(dvs):
+def test_CrmIpv6Neighbor(dvs, testlog):
 
     # Enable IPv6 routing
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
@@ -369,7 +375,7 @@ def test_CrmIpv6Neighbor(dvs):
     assert new_avail_counter == avail_counter
 
 
-def test_CrmNexthopGroup(dvs):
+def test_CrmNexthopGroup(dvs, testlog):
 
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
     dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
@@ -421,7 +427,13 @@ def test_CrmNexthopGroup(dvs):
     assert new_avail_counter == avail_counter
 
 
-def test_CrmNexthopGroupMember(dvs):
+def test_CrmNexthopGroupMember(dvs, testlog):
+
+    # down, then up to generate port up signal
+    dvs.servers[0].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[1].runcmd("ip link set down dev eth0") == 0
+    dvs.servers[0].runcmd("ip link set up dev eth0") == 0
+    dvs.servers[1].runcmd("ip link set up dev eth0") == 0
 
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
     dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
@@ -473,7 +485,7 @@ def test_CrmNexthopGroupMember(dvs):
     assert new_avail_counter == avail_counter
 
 
-def test_CrmAcl(dvs):
+def test_CrmAcl(dvs, testlog):
 
     db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
     adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -499,7 +511,7 @@ def test_CrmAcl(dvs):
 
     # get ACL table key
     atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
-    acl_tables = [k for k in atbl.getKeys() if k not in dvs.asicdb.default_acl_table]
+    acl_tables = [k for k in atbl.getKeys() if k not in dvs.asicdb.default_acl_tables]
     key = "ACL_TABLE_STATS:{0}".format(acl_tables[0].replace('oid:', ''))
 
     entry_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_entry_used')

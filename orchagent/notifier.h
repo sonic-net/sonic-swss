@@ -2,8 +2,8 @@
 
 class Notifier : public Executor {
 public:
-    Notifier(NotificationConsumer *select, Orch *orch)
-        : Executor(select, orch)
+    Notifier(NotificationConsumer *select, Orch *orch, const string &name)
+        : Executor(select, orch, name)
     {
     }
 

@@ -15,7 +15,6 @@ using namespace swss;
 
 BufferMgr::BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, string pg_lookup_file, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
-        m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
         m_cfgCableLenTable(cfgDb, CFG_PORT_CABLE_LEN_TABLE_NAME),
         m_cfgBufferProfileTable(cfgDb, CFG_BUFFER_PROFILE_TABLE_NAME),
@@ -31,9 +30,12 @@ void BufferMgr::readPgProfileLookupFile(string file)
 {
     SWSS_LOG_NOTICE("Read lookup configuration file...");
 
+    m_pgfile_processed = false;
+
     ifstream infile(file);
     if (!infile.is_open())
     {
+        SWSS_LOG_WARN("PG profile lookup file: %s is not readable", file.c_str());
         return;
     }
 
@@ -69,6 +71,7 @@ void BufferMgr::readPgProfileLookupFile(string file)
                        );
     }
 
+    m_pgfile_processed = true;
     infile.close();
 }
 
@@ -116,7 +119,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
 
     if (m_cableLenLookup.count(port) == 0)
     {
-        SWSS_LOG_WARN("Unable to create/update PG profile for port %s. Cable length is not set", port.c_str());
+        SWSS_LOG_INFO("Unable to create/update PG profile for port %s. Cable length is not set", port.c_str());
         return task_process_status::task_need_retry;
     }
 
@@ -143,7 +146,7 @@ task_process_status BufferMgr::doSpeedUpdateTask(string port, string speed)
         if (mode.empty())
         {
             // this should never happen if switch initialized properly
-            SWSS_LOG_WARN("PG lossless pool is not yet created");
+            SWSS_LOG_INFO("PG lossless pool is not yet created");
             return task_process_status::task_need_retry;
         }
 
@@ -211,7 +214,7 @@ void BufferMgr::doTask(Consumer &consumer)
                     task_status = doCableTask(fvField(i), fvValue(i));
                 }
                 // In case of PORT table update, Buffer Manager is interested in speed update only
-                if (table_name == CFG_PORT_TABLE_NAME && fvField(i) == "speed")
+                if (m_pgfile_processed && table_name == CFG_PORT_TABLE_NAME && fvField(i) == "speed")
                 {
                     // create/update profile for port
                     task_status = doSpeedUpdateTask(port, fvValue(i));

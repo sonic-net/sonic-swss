@@ -30,8 +30,8 @@ CounterCheckOrch::CounterCheckOrch(DBConnector *db, vector<string> &tableNames):
 
     auto interv = timespec { .tv_sec = COUNTER_CHECK_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
     auto timer = new SelectableTimer(interv);
-    auto executor = new ExecutableTimer(timer, this);
-    Orch::addExecutor("MC_COUNTERS_POLL", executor);
+    auto executor = new ExecutableTimer(timer, this, "MC_COUNTERS_POLL");
+    Orch::addExecutor(executor);
     timer->start();
 }
 
@@ -52,13 +52,11 @@ void CounterCheckOrch::mcCounterCheck()
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
-
     for (auto& i : m_mcCountersMap)
     {
         auto oid = i.first;
         auto mcCounters = i.second;
+        uint8_t pfcMask = 0;
 
         Port port;
         if (!gPortsOrch->getPort(oid, port))
@@ -69,14 +67,11 @@ void CounterCheckOrch::mcCounterCheck()
 
         auto newMcCounters = getQueueMcCounters(port);
 
-        sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
             continue;
         }
-
-        uint8_t pfcMask = attr.value.u8;
 
         for (size_t prio = 0; prio != mcCounters.size(); prio++)
         {
@@ -104,14 +99,12 @@ void CounterCheckOrch::pfcFrameCounterCheck()
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
-
     for (auto& i : m_pfcFrameCountersMap)
     {
         auto oid = i.first;
         auto counters = i.second;
         auto newCounters = getPfcFrameCounters(oid);
+        uint8_t pfcMask = 0;
 
         Port port;
         if (!gPortsOrch->getPort(oid, port))
@@ -120,14 +113,11 @@ void CounterCheckOrch::pfcFrameCounterCheck()
             continue;
         }
 
-        sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
             continue;
         }
-
-        uint8_t pfcMask = attr.value.u8;
 
         for (size_t prio = 0; prio != counters.size(); prio++)
         {

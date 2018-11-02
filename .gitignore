@@ -48,10 +48,12 @@ intfsyncd/intfsyncd
 cfgmgr/intfmgrd
 cfgmgr/vlanmgrd
 cfgmgr/buffermanager
+cfgmgr/vrfmgrd
 neighsyncd/neighsyncd
 portsyncd/portsyncd
 orchagent/orchagent
 orchagent/routeresync
+orchagent/orchagent_restart_check
 swssconfig/swssconfig
 swssconfig/swssplayer
 tests/tests

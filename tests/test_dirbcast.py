@@ -3,7 +3,7 @@ import time
 import re
 import json
 
-def test_DirectedBroadcast(dvs):
+def test_DirectedBroadcast(dvs, testlog):
 
     db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
     adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)

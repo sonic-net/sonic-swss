@@ -11,7 +11,7 @@ extern "C" {
 #include <map>
 
 #define DEFAULT_PORT_VLAN_ID    1
-#define DEFAULT_MTU        9100
+#define DEFAULT_MTU              9100
 
 namespace swss {
 
@@ -64,23 +64,28 @@ public:
     std::string         m_alias;
     Type                m_type;
     int                 m_index = 0;    // PHY_PORT: index
-    int                 m_ifindex = 0;
     uint32_t            m_mtu = DEFAULT_MTU;
+    uint32_t            m_speed = 0;    // Mbps
+    bool                m_autoneg = 0;
     sai_object_id_t     m_port_id = 0;
     sai_port_fec_mode_t m_fec_mode = SAI_PORT_FEC_MODE_NONE;
     VlanInfo            m_vlan_info;
     sai_object_id_t     m_bridge_port_id = 0;   // TODO: port could have multiple bridge port IDs
     sai_vlan_id_t       m_port_vlan_id = DEFAULT_PORT_VLAN_ID;  // Port VLAN ID
     sai_object_id_t     m_rif_id = 0;
+    sai_object_id_t     m_vr_id = 0;
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
     sai_object_id_t     m_ingress_acl_table_group_id = 0;
     sai_object_id_t     m_egress_acl_table_group_id = 0;
     vlan_members_t      m_vlan_members;
+    sai_port_oper_status_t m_oper_status;
     std::set<std::string> m_members;
     std::vector<sai_object_id_t> m_queue_ids;
     std::vector<sai_object_id_t> m_priority_group_ids;
+    sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;
+    uint8_t m_pfc_bitmask = 0;
 };
 
 }

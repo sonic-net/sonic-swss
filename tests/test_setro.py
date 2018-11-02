@@ -4,7 +4,7 @@ import json
 import redis
 from pprint import pprint
 
-def test_SetReadOnlyAttribute(dvs):
+def test_SetReadOnlyAttribute(dvs, testlog):
 
     db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 

@@ -15,7 +15,7 @@ import os
 
 class TestSpeedSet(object):
     num_ports = 32
-    def test_SpeedAndBufferSet(self, dvs):
+    def test_SpeedAndBufferSet(self, dvs, testlog):
         speed_list = ['50000', '25000', '40000', '10000', '100000']
 
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
