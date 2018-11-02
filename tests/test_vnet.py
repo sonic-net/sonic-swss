@@ -562,7 +562,7 @@ class VnetVxlanVrfTunnel(object):
 
         try:
             for peer in self.vr_map[name].get('peer'):
-                vr_set.add(self.vr_map[name].get('ing'))
+                vr_set.add(self.vr_map[peer].get('ing'))
         except IndexError:
             pass
 
@@ -678,20 +678,21 @@ class TestVnetOrch(object):
         create_vxlan_tunnel(dvs, tunnel_name, '7.7.7.7')
 
         create_vnet_entry(dvs, 'Vnet_10', tunnel_name, '1111', "Vnet_20")
-        vr_id = vnet_obj.check_vnet_entry(dvs, 'Vnet_10', ['Vnet20'])
-        vnet_vr['Vnet10'] = vr_id
-
-        create_vnet_entry(dvs, 'Vnet_20', tunnel_name, '2222', "Vnet_10")
-        vr_id = vnet_obj.check_vnet_entry(dvs, 'Vnet_20', ['Vnet10'])
-        vnet_vr['Vnet20'] = vr_id
+        vr_id = vnet_obj.check_vnet_entry(dvs, 'Vnet_10', ['Vnet_20'])
+        vnet_vr['Vnet_10'] = vr_id
 
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_10', '1111')
+
+        create_vnet_entry(dvs, 'Vnet_20', tunnel_name, '2222', "Vnet_10")
+        vr_id = vnet_obj.check_vnet_entry(dvs, 'Vnet_20', ['Vnet_10'])
+        vnet_vr['Vnet_20'] = vr_id
+
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_20', '2222')
 
         tun_id = vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '7.7.7.7')
 
-        create_vlan_interface(dvs, "Vlan2001", "Ethernet8", "Vnet_10", "5.5.10.1/24", vnet_vr['Vnet10'])
-        create_vlan_interface(dvs, "Vlan2002", "Ethernet12", "Vnet_20", "8.8.10.1/24", vnet_vr['Vnet20'])
+        create_vlan_interface(dvs, "Vlan2001", "Ethernet8", "Vnet_10", "5.5.10.1/24", vnet_vr['Vnet_10'])
+        create_vlan_interface(dvs, "Vlan2002", "Ethernet12", "Vnet_20", "8.8.10.1/24", vnet_vr['Vnet_20'])
 
         vr_set = vnet_obj.vnet_route_ids(dvs, "Vnet_10")
 
@@ -702,6 +703,6 @@ class TestVnetOrch(object):
 
         create_vnet_local_routes(dvs, "5.5.10.0/24", 'Vnet_10', 'Vlan2001', vr_set)
 
-        vr_set = vnet_obj.vnet_route_ids(dvs, "Vnet_20")
+        vr_set = vnet_obj.vnet_route_ids(dvs, "Vnet_20", True)
 
         create_vnet_local_routes(dvs, "8.8.10.0/24", 'Vnet_20', 'Vlan2002', vr_set)

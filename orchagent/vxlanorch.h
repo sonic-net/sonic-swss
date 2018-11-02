@@ -96,9 +96,9 @@ public:
         return vxlan_tunnel_table_.find(tunnelName) != std::end(vxlan_tunnel_table_);
     }
 
-    VxlanTunnel_T& getVxlanTunnel(const std::string& tunnelName)
+    VxlanTunnel* getVxlanTunnel(const std::string& tunnelName)
     {
-        return vxlan_tunnel_table_.at(tunnelName);
+        return vxlan_tunnel_table_.at(tunnelName).get();
     }
 
 private:
@@ -185,7 +185,7 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    void vnetTaskHandler(string& vrfName, VxlanTunnel_T& tunnelObj, handler_pair&);
+    void vnetTaskHandler(string& vrfName, VxlanTunnel* tunnelObj, handler_pair&);
 
     VxlanVrfTable vxlan_vrf_table_;
     VxlanVrfTunnel vxlan_vrf_tunnel_;

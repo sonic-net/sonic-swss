@@ -311,7 +311,7 @@ sai_object_id_t VNetRouteOrch::getNextHop(const string& vnet, tunnelEndpoint& en
     nh_id = vxlan_orch->createNextHopTunnel(vnet, endp.ip, endp.mac, endp.vni);
     if (nh_id == SAI_NULL_OBJECT_ID)
     {
-        throw std::runtime_error("NH Tunnel create failed");
+        throw std::runtime_error("NH Tunnel create failed for " + vnet + " ip " + endp.ip.to_string());
     }
 
     nh_tunnels_[vnet].insert({endp.ip, nh_id});
