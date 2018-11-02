@@ -159,9 +159,9 @@ private:
     bool setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 
-    bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
-
     bool setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed);
+    
+    bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 
     bool m_isQueueMapGenerated = false;
     void generateQueueMapPerPort(const Port& port);
