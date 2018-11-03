@@ -30,7 +30,7 @@ private:
     set<uint32_t> m_freeTables;
 
     Table m_stateVrfTable;
-    ProducerStateTable m_appVrfTableProducer, m_appVnetTableProducer, m_appTunnelMapTableProducer;
+    ProducerStateTable m_appVrfTableProducer, m_appVnetTableProducer;
 };
 
 }
