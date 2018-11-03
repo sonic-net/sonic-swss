@@ -123,7 +123,14 @@ class VirtualServer(object):
             ensure_system("ip netns delete %s" % self.nsname)
 
     def runcmd(self, cmd):
-        return os.system("ip netns exec %s %s" % (self.nsname, cmd))
+        try:
+            out = subprocess.check_output("ip netns exec %s %s" % (self.nsname, cmd), stderr=subprocess.STDOUT, shell=True)
+        except subprocess.CalledProcessError as e:
+            print "------rc={} for cmd: {}------".format(e.returncode, e.cmd)
+            print e.output
+            print "------"
+            return e.returncode
+        return 0
 
     def runcmd_async(self, cmd):
         return subprocess.Popen("ip netns exec %s %s" % (self.nsname, cmd), shell=True)
@@ -294,6 +301,11 @@ class DockerVirtualSwitch(object):
         except AttributeError:
             exitcode = 0
             out = res
+        if exitcode != 0:
+            print "-----rc={} for cmd {}-----".format(exitcode, cmd)
+            print out
+            print "-----"
+
         return (exitcode, out)
 
     def copy_file(self, path, filename):
