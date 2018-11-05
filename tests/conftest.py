@@ -127,7 +127,7 @@ class VirtualServer(object):
             out = subprocess.check_output("ip netns exec %s %s" % (self.nsname, cmd), stderr=subprocess.STDOUT, shell=True)
         except subprocess.CalledProcessError as e:
             print "------rc={} for cmd: {}------".format(e.returncode, e.cmd)
-            print e.output
+            print e.output.rstrip()
             print "------"
             return e.returncode
         return 0
@@ -303,7 +303,7 @@ class DockerVirtualSwitch(object):
             out = res
         if exitcode != 0:
             print "-----rc={} for cmd {}-----".format(exitcode, cmd)
-            print out
+            print out.rstrip()
             print "-----"
 
         return (exitcode, out)
