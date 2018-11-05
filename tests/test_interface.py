@@ -299,7 +299,7 @@ class TestLagRouterInterfaceIpv4(object):
                         assert fv[1] == "8910"
 
         # remove IP from interface
-        self.remove_ip_address("Ethernet16", "40.0.0.8/29")
+        self.remove_ip_address("PortChannel002", "40.0.0.8/29")
 
         # remove port channel members
         self.remove_port_channel_members(dvs, "PortChannel002", ["Ethernet0", "Ethernet4"])
