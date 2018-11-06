@@ -1,4 +1,6 @@
 #include <iostream>
+#include <time.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include "logger.h"
 #include "select.h"
@@ -28,12 +30,22 @@ int main(int argc, char **argv)
         {
             NetLink netlink;
             Select s;
+            time_t starttime;
 
             if (sync.getRestartAssist()->isWarmStartInProgress())
             {
                 sync.getRestartAssist()->readTableToMap();
-                while (!sync.isNeighRestoreDone()) {
-                    SWSS_LOG_INFO("waiting neighbor table to be restored to kernel");
+                starttime = time(NULL);
+                while (!sync.isNeighRestoreDone())
+                {
+                    int pasttime = int(difftime(time(NULL), starttime));
+                    SWSS_LOG_INFO("waited neighbor table to be restored to kernel"
+                      "for %d seconds", pasttime);
+                    if (pasttime > RESTORE_NEIGH_WAIT_TIME_OUT)
+                    {
+                        SWSS_LOG_ERROR("neighbor table restore is not finished after timed-out, exit!!!");
+                        exit(EXIT_FAILURE);
+                    }
                     sleep(1);
                 }
                 sync.getRestartAssist()->startReconcileTimer(s);
