@@ -552,6 +552,8 @@ void Orch2::doTask(Consumer &consumer)
         try
         {
             request_.parse(it->second);
+            auto table_name = consumer.getTableName();
+            request_.setTableName(table_name);
 
             auto op = request_.getOperation();
             if (op == SET_COMMAND)

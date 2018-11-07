@@ -40,6 +40,7 @@ DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOr
 
     attr.id = SAI_DTEL_ATTR_INT_L4_DSCP;
 
+    attr.value.aclfield.enable = true;
     attr.value.aclfield.data.u8 = 0x11;
     attr.value.aclfield.mask.u8 = 0x3f;
 
@@ -660,6 +661,8 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                     SWSS_LOG_ERROR("DTEL ERROR: Invalid INT L4 DSCP value/mask");
                     goto dtel_table_continue;
                 }
+
+                attr.value.aclfield.enable = true;
 
                 status = sai_dtel_api->set_dtel_attribute(dtelId, &attr);
                 if (status != SAI_STATUS_SUCCESS)

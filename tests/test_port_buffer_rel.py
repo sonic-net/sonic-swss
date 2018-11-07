@@ -3,7 +3,7 @@ import time
 
 # The test check that the ports will be up, when the admin state is UP by conf db.
 
-def test_PortsAreUpAfterBuffers(dvs):    
+def test_PortsAreUpAfterBuffers(dvs, testlog):
     num_ports = 32
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)

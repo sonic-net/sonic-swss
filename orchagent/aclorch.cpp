@@ -164,8 +164,6 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
     {
         if (aclMatchLookup.find(attr_name) == aclMatchLookup.end())
         {
-            SWSS_LOG_ERROR("Failed to locate match criterion %s",
-                    attr_name.c_str());
             return false;
         }
         else if (attr_name == MATCH_IN_PORTS)

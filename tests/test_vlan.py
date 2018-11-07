@@ -35,7 +35,7 @@ class TestVlan(object):
         tbl._del("Vlan" + vlan + "|" + interface)
         time.sleep(1)
 
-    def test_VlanAddRemove(self, dvs):
+    def test_VlanAddRemove(self, dvs, testlog):
         self.setup_db(dvs)
 
         # create vlan
@@ -108,10 +108,7 @@ class TestVlan(object):
         # remvoe vlan
         self.remove_vlan("2")
 
-    # Ignore testcase in Debian Jessie
-    # TODO: remove this skip if we have fix
-    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
-    def test_MultipleVlan(self, dvs):
+    def test_MultipleVlan(self, dvs, testlog):
         return
         self.setup_db(dvs)
 

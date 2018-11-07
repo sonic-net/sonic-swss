@@ -9,22 +9,25 @@ Schema data is defined in ABNF [RFC5234](https://tools.ietf.org/html/rfc5234) sy
 ## Application DB schema
 
 ### PORT_TABLE
-Stores information for physical switch ports managed by the switch chip.  device_names are defined in [port_config.ini](../portsyncd/port_config.ini).  Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE.   See INTF_TABLE.
+Stores information for physical switch ports managed by the switch chip. Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE. See INTF_TABLE.
 
     ;Defines layer 2 ports
     ;In SONiC, Data is loaded from configuration file by portsyncd
-    ;Status: Mandatory
-    port_table_key      = PORT_TABLE:ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
-    device_name         = 1*64VCHAR     ; must be unique across PORT,INTF,VLAN,LAG TABLES and must map to PORT_TABLE.name
-    admin_status        = BIT           ; is the port enabled (1) or disabled (0)
-    oper_status         = BIT           ; physical status up (1) or down (0) of the link attached to this port
+    key                 = PORT_TABLE:ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    admin_status        = "down" / "up"        ; admin status
+    oper_status         = "down" / "up"        ; oper status
     lanes               = list of lanes ; (need format spec???)
-    ifname              = 1*64VCHAR     ; name of the port, must be unique
     mac                 = 12HEXDIG      ;
+    alias               = 1*64VCHAR     ; alias name of the port used by LLDP and SNMP, must be unique
+    description         = 1*64VCHAR     ; port description
+    speed               = 1*6DIGIT      ; port line speed in Mbps
+    mtu                 = 1*4DIGIT      ; port MTU
+    fec                 = 1*64VCHAR     ; port fec mode
+    autoneg             = BIT           ; auto-negotiation mode
 
     ;QOS Mappings
-    map_dscp_to_tc  = ref_hash_key_reference
-    map_tc_to_queue = ref_hash_key_reference
+    map_dscp_to_tc      = ref_hash_key_reference
+    map_tc_to_queue     = ref_hash_key_reference
 
     Example:
     127.0.0.1:6379> hgetall PORT_TABLE:ETHERNET4
@@ -630,6 +633,33 @@ Equivalent RedisDB entry:
 
 ## Configuration DB schema
 
+### PORT_TABLE
+Stores information for physical switch ports managed by the switch chip. Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE. See MGMT_PORT.
+
+    ;Configuration for layer 2 ports
+    key                 = PORT|ifname   ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    admin_status        = "down" / "up" ; admin status
+    lanes               = list of lanes ; (need format spec???)
+    mac                 = 12HEXDIG      ;
+    alias               = 1*64VCHAR     ; alias name of the port used by LLDP and SNMP, must be unique
+    description         = 1*64VCHAR     ; port description
+    speed               = 1*6DIGIT      ; port line speed in Mbps
+    mtu                 = 1*4DIGIT      ; port MTU
+    fec                 = 1*64VCHAR     ; port fec mode
+    autoneg             = BIT           ; auto-negotiation mode
+
+### MGMT_PORT_TABLE
+    ;Configuration for management port, including at least one key
+    key                 = MGMT_PORT|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    admin_status        = "down" / "up" ; admin status
+    mac                 = 12HEXDIG      ;
+    alias               = 1*64VCHAR     ; alias name of the port used by LLDP and SNMP, must be unique
+    description         = 1*64VCHAR     ; port description
+    speed               = 1*6DIGIT      ; port line speed in Mbps
+    mtu                 = 1*4DIGIT      ; port MTU
+    fec                 = 1*64VCHAR     ; port fec mode
+    autoneg             = BIT           ; auto-negotiation mode
+
 ### WARM\_RESTART
     ;Stores system warm start configuration
     ;Status: work in progress
@@ -646,6 +676,15 @@ Equivalent RedisDB entry:
                                             ; the data structures accordingly. Once the timer is expired, we will do reconciliation
                                             ; and push the delta to appDB
                                             ; Valid value is 1-9999. 0 is invalid.
+
+    bgp_timer           = 1*4DIGIT          ; bgp_timer holds the time interval utilized by fpmsyncd during warm-restart episodes.
+                                            ; During this interval fpmsyncd will recover all the routing state previously pushed to
+                                            ; AppDB, as well as all the new state coming from zebra/bgpd. Upon expiration of this
+                                            ; timer, fpmsyncd will execute the reconciliation logic to eliminate all the staled
+                                            ; state from AppDB. This timer should match the BGP-GR restart-timer configured within
+                                            ; the elected routing-stack.
+                                            ; Supported range: 1-9999.
+
 
 ### VXLAN\_TUNNEL
 Stores vxlan tunnels configuration
@@ -669,20 +708,42 @@ Status: ready
 
 ## State DB schema
 
+### PORT_TABLE
+Stores information for physical switch ports managed by the switch chip. Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE. See MGMT_PORT.
+
+    ;State for layer 2 ports
+    key                 = PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    oper_status         = "down" / "up" ; oper status
+    state               = "" / "ok"     ; port created successfully
+
+### MGMT_PORT_TABLE
+    ;State for management port, including at least one key
+    key                 = MGMT_PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    oper_status         = "down" / "up" ; oper status
+
 ### WARM\_RESTART\_TABLE
     ;Stores application and orchdameon warm start status
     ;Status: work in progress
 
     key             = WARM_RESTART_TABLE:process_name         ; process_name is a unique process identifier.
-    restart_count   = 1*10DIGIT                               ; a number between 0 and 2147483647,
-                                                              ; count of warm start times.
 
-    state           = "init" / "restored" / "reconciled"      ; init: process init with warm start enabled.
-                                                              ; restored: process restored to the previous
-                                                              ; state using saved data.
-                                                              ; reconciled: process reconciled with up to date
-                                                              ; dynanic data like port state, neighbor, routes
-                                                              ; and so on.
+    restore_count   = 1*10DIGIT                               ; a value between 0 and 2147483647 to keep track
+                                                              ; of the number of times that an application has
+                                                              ; 'restored' its state from its associated redis
+                                                              ; data-store; which is equivalent to the number
+                                                              ; of times an application has iterated through
+                                                              ; a warm-restart cycle.
+
+    state           = "initialized" / "restored" / "reconciled"  ; initialized: initial FSM state for processes
+                                                                 ; with warm-restart capabilities turned on.
+                                                                 ;
+                                                                 ; restored: process restored the state previously
+                                                                 ; uploaded to redis data-stores.
+                                                                 ;
+                                                                 ; reconciled: process reconciled 'old' and 'new'
+                                                                 ; state collected in 'restored' phase. Examples:
+                                                                 ; dynanic data like port state, neighbor, routes
+                                                                 ; and so on.
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?
@@ -692,4 +753,3 @@ What configuration files should we have?  Do apps, orch agent each need separate
 portsyncd reads from port_config.ini and updates PORT_TABLE in APP_DB
 
 All other apps (intfsyncd) read from PORT_TABLE in APP_DB
-

@@ -595,16 +595,21 @@ bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
         return false;
     }
 
-    try
-    {
-        port.m_pfc_asym = pfc_asym_map.at(pfc_asym);
-    }
-    catch (...)
+    auto found = pfc_asym_map.find(pfc_asym);
+    if (found == pfc_asym_map.end())
     {
         SWSS_LOG_ERROR("Incorrect asymmetric PFC mode: %s", pfc_asym.c_str());
         return false;
     }
 
+    auto new_pfc_asym = found->second;
+    if (port.m_pfc_asym == new_pfc_asym)
+    {
+        SWSS_LOG_NOTICE("Already set asymmetric PFC mode: %s", pfc_asym.c_str());
+        return true;
+    }
+
+    port.m_pfc_asym = new_pfc_asym;
     m_portList[port.m_alias] = port;
 
     attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE;
@@ -1312,8 +1317,10 @@ bool PortsOrch::bake()
 
     // Check the APP_DB port table for warm reboot
     vector<FieldValueTuple> tuples;
-    bool foundPortConfigDone = m_portTable->get("PortConfigDone", tuples);
-    SWSS_LOG_NOTICE("foundPortConfigDone = %d", foundPortConfigDone);
+    string value;
+    bool foundPortConfigDone = m_portTable->hget("PortConfigDone", "count", value);
+    unsigned long portCount = stoul(value);
+    SWSS_LOG_NOTICE("foundPortConfigDone = %d, portCount = %lu, m_portCount = %u", foundPortConfigDone, portCount, m_portCount);
 
     bool foundPortInitDone = m_portTable->get("PortInitDone", tuples);
     SWSS_LOG_NOTICE("foundPortInitDone = %d", foundPortInitDone);
@@ -1329,11 +1336,11 @@ bool PortsOrch::bake()
         return false;
     }
 
-    if (m_portCount != keys.size() - 2)
+    if (portCount != keys.size() - 2)
     {
         // Invalid port table
-        SWSS_LOG_ERROR("Invalid port table: m_portCount, expecting %u, got %lu",
-                m_portCount, keys.size() - 2);
+        SWSS_LOG_ERROR("Invalid port table: portCount, expecting %lu, got %lu",
+                portCount, keys.size() - 2);
 
         cleanPortTable(keys);
         return false;
@@ -1371,6 +1378,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (alias == "PortConfigDone")
         {
+            if (m_portConfigDone)
+            {
+                // Already done, ignore this task
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             m_portConfigDone = true;
 
             for (auto i : kfvFieldsValues(t))
@@ -1583,11 +1597,20 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         p.m_autoneg = an;
                         m_portList[alias] = p;
 
-                        /* Once AN is changed, need to reset the port speed or
-                           port adv speed accordingly */
-                        if (speed == 0 && p.m_speed != 0)
+                        // Once AN is changed
+                        // - no speed specified: need to reapply the port speed or port adv speed accordingly
+                        // - speed specified: need to apply the port speed or port adv speed by the specified one
+                        // Note: one special case is
+                        // - speed specified as existing m_speed: need to apply even they are the same
+                        auto old_speed = p.m_speed;
+                        p.m_speed = 0;
+                        auto new_speed = speed ? speed : old_speed;
+                        if (new_speed)
                         {
-                            speed = p.m_speed;
+                            // Modify the task in place
+                            kfvFieldsValues(t).emplace_back("speed", to_string(new_speed));
+                            // Fallthrough to process `speed'
+                            speed = new_speed;
                         }
                     }
                     else
@@ -1606,9 +1629,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                  * 3. Set port admin status to DOWN before changing the speed
                  * 4. Set port speed
                  */
-                if (speed != 0)
+                if (speed != 0 && speed != p.m_speed)
                 {
-                    p.m_speed = speed;
                     m_portList[alias] = p;
 
                     if (p.m_autoneg)
@@ -1654,17 +1676,22 @@ void PortsOrch::doPortTask(Consumer &consumer)
                                 else
                                 {
                                     SWSS_LOG_ERROR("Failed to set port admin status DOWN to set speed");
+                                    it++;
+                                    continue;
                                 }
                             }
                         }
                         else
                         {
                             SWSS_LOG_ERROR("Failed to get current speed for port %s", alias.c_str());
+                            it++;
+                            continue;
                         }
                     }
+                    m_portList[alias].m_speed = speed;
                 }
 
-                if (mtu != 0)
+                if (mtu != 0 && mtu != p.m_mtu)
                 {
                     if (setPortMtu(p.m_port_id, mtu))
                     {
@@ -1697,7 +1724,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
                 }
-
 
                 if (!fec_mode.empty())
                 {
@@ -2235,16 +2261,6 @@ bool PortsOrch::initializePort(Port &p)
     /* Create host interface */
     addHostIntfs(p, p.m_alias, p.m_hif_id);
 
-#if 0
-    // TODO: Assure if_nametoindex(p.m_alias.c_str()) != 0
-    p.m_ifindex = if_nametoindex(p.m_alias.c_str());
-    if (p.m_ifindex == 0)
-    {
-        SWSS_LOG_ERROR("Failed to get netdev index alias:%s", p.m_alias.c_str());
-        return false;
-    }
-#endif
-
     /* Check warm start states */
     vector<FieldValueTuple> tuples;
     bool exist = m_portTable->get(p.m_alias, tuples);
@@ -2322,6 +2338,27 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     return true;
 }
 
+bool PortsOrch::setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode)
+{
+    // TODO: how to support 1D bridge?
+    if (port.m_type != Port::PHY) return false;
+
+    auto bridge_port_id = port.m_bridge_port_id;
+    if (bridge_port_id == SAI_NULL_OBJECT_ID) return false;
+
+    sai_attribute_t bport_attr;
+    bport_attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+    bport_attr.value.s32 = mode;
+    auto status = sai_bridge_api->set_bridge_port_attribute(bridge_port_id, &bport_attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set bridge port %lx learning_mode attribute: %d", bridge_port_id, status);
+        return false;
+    }
+    SWSS_LOG_NOTICE("Disable FDB learning on bridge port %s(%lx)", port.m_alias.c_str(), bridge_port_id);
+    return true;
+}
+
 bool PortsOrch::addBridgePort(Port &port)
 {
     SWSS_LOG_ENTER();
@@ -2358,6 +2395,11 @@ bool PortsOrch::addBridgePort(Port &port)
     /* Create a bridge port with admin status set to UP */
     attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
     attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    /* And with hardware FDB learning mode set to HW (explicit default value) */
+    attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+    attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
     attrs.push_back(attr);
 
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());

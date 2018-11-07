@@ -59,6 +59,7 @@ public:
     bool bake() override;
     void cleanPortTable(const vector<string>& keys);
     bool getBridgePort(sai_object_id_t id, Port &port);
+    bool setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode);
     bool getPort(string alias, Port &port);
     bool getPort(sai_object_id_t id, Port &port);
     bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);

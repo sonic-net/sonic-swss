@@ -1,27 +1,19 @@
 #include <unistd.h>
 #include <vector>
-#include <sstream>
-#include <fstream>
-#include <iostream>
 #include <mutex>
-#include <algorithm>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
 #include "schema.h"
-#include "macaddress.h"
-#include "producerstatetable.h"
-#include "vlanmgr.h"
-#include "shellcmd.h"
-#include "warm_restart.h"
+#include "vrfmgr.h"
+#include <fstream>
+#include <iostream>
 
 using namespace std;
 using namespace swss;
 
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
-
-MacAddress gMacAddress;
 
 /*
  * Following global variables are defined here for the purpose of
@@ -41,42 +33,26 @@ mutex gDbMutex;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("vlanmgrd");
+    Logger::linkToDbNative("vrfmgrd");
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("--- Starting vlanmgrd ---");
+    SWSS_LOG_NOTICE("--- Starting vrfmgrd ---");
 
     try
     {
-        vector<string> cfg_vlan_tables = {
-            CFG_VLAN_TABLE_NAME,
-            CFG_VLAN_MEMBER_TABLE_NAME,
+        vector<string> cfg_vrf_tables = {
+            CFG_VRF_TABLE_NAME,
+            CFG_VNET_TABLE_NAME,
         };
 
         DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-        WarmStart::initialize("vlanmgrd");
-        WarmStart::checkWarmStart("vlanmgrd");
+        VrfMgr vrfmgr(&cfgDb, &appDb, &stateDb, cfg_vrf_tables);
 
-        /*
-         * swss service starts after interfaces-config.service which will have
-         * switch_mac set.
-         * Dynamic switch_mac update is not supported for now.
-         */
-        Table table(&cfgDb, "DEVICE_METADATA");
-        std::vector<FieldValueTuple> ovalues;
-        table.get("localhost", ovalues);
-        auto it = std::find_if( ovalues.begin(), ovalues.end(), [](const FieldValueTuple& t){ return t.first == "mac";} );
-        if ( it == ovalues.end() ) {
-            throw runtime_error("couldn't find MAC address of the device from config DB");
-        }
-        gMacAddress = MacAddress(it->second);
-
-        VlanMgr vlanmgr(&cfgDb, &appDb, &stateDb, cfg_vlan_tables);
-
-        std::vector<Orch *> cfgOrchList = {&vlanmgr};
+        // TODO: add tables in stateDB which interface depends on to monitor list
+        std::vector<Orch *> cfgOrchList = {&vrfmgr};
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
@@ -98,7 +74,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                vlanmgr.doTask();
+                vrfmgr.doTask();
                 continue;
             }
 

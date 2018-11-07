@@ -64,7 +64,6 @@ public:
     std::string         m_alias;
     Type                m_type;
     int                 m_index = 0;    // PHY_PORT: index
-    int                 m_ifindex = 0;
     uint32_t            m_mtu = DEFAULT_MTU;
     uint32_t            m_speed = 0;    // Mbps
     bool                m_autoneg = 0;
@@ -74,6 +73,7 @@ public:
     sai_object_id_t     m_bridge_port_id = 0;   // TODO: port could have multiple bridge port IDs
     sai_vlan_id_t       m_port_vlan_id = DEFAULT_PORT_VLAN_ID;  // Port VLAN ID
     sai_object_id_t     m_rif_id = 0;
+    sai_object_id_t     m_vr_id = 0;
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;

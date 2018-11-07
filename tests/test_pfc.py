@@ -58,7 +58,7 @@ def getPortAttr(dvs, port_oid, port_attr):
     return ''
 
 
-def test_PfcAsymmetric(dvs):
+def test_PfcAsymmetric(dvs, testlog):
 
     port_name = 'Ethernet0'
     pfc_queues = [ 3, 4 ]

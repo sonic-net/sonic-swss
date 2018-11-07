@@ -24,6 +24,7 @@ AppRestartAssist::AppRestartAssist(RedisPipeline *pipeline,
     m_psTable(psTable),
     m_warmStartTimer(timespec{0, 0})
 {
+    WarmStart::initialize(m_appName, m_dockerName);
     WarmStart::checkWarmStart(m_appName, m_dockerName);
 
     m_appTableName = m_appTable.getTableName();
@@ -60,7 +61,7 @@ AppRestartAssist::AppRestartAssist(RedisPipeline *pipeline,
         // Clear the producerstate table to make sure no pending data for the AppTable
         m_psTable->clear();
 
-        WarmStart::setWarmStartState(m_appName, WarmStart::INIT);
+        WarmStart::setWarmStartState(m_appName, WarmStart::INITIALIZED);
     }
 }
 
@@ -266,4 +267,3 @@ bool AppRestartAssist::checkReconcileTimer(Selectable *s)
     }
     return false;
 }
-

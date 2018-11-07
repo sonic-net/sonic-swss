@@ -4,7 +4,6 @@
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
-#include <set>
 #include <exception>
 
 #include "sai.h"
@@ -91,6 +90,9 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
             case REQ_T_IP:
                 key_item_ip_addresses_[i] = parseIpAddress(key_items[i]);
                 break;
+            case REQ_T_IP_PREFIX:
+                key_item_ip_prefix_[i] = parseIpPrefix(key_items[i]);
+                break;
             case REQ_T_UINT:
                 key_item_uint_[i] = parseUint(key_items[i]);
                 break;
@@ -144,6 +146,9 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
                 break;
             case REQ_T_UINT:
                 attr_item_uint_[fvField(*i)] = parseUint(fvValue(*i));
+                break;
+            case REQ_T_SET:
+                attr_item_set_[fvField(*i)] = parseSet(fvValue(*i));
                 break;
             default:
                 throw std::logic_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
@@ -204,6 +209,38 @@ IpAddress Request::parseIpAddress(const std::string& str)
     catch (std::invalid_argument& _)
     {
         throw std::invalid_argument(std::string("Invalid ip address: ") + str);
+    }
+}
+
+IpPrefix Request::parseIpPrefix(const std::string& str)
+{
+    try
+    {
+        IpPrefix pfx(str);
+        return pfx;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid ip prefix: ") + str);
+    }
+}
+
+set<string> Request::parseSet(const std::string& str)
+{
+    try
+    {
+        set<string> str_set;
+        string substr;
+        std::istringstream iss(str);
+        while (getline(iss, substr, ','))
+        {
+            str_set.insert(substr);
+        }
+        return str_set;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid string set"));
     }
 }
 

@@ -1,13 +1,13 @@
-#include <unistd.h>
-#include <vector>
-#include <mutex>
-#include "dbconnector.h"
-#include "select.h"
-#include "exec.h"
-#include "schema.h"
-#include "portmgr.h"
 #include <fstream>
 #include <iostream>
+#include <mutex>
+#include <unistd.h>
+#include <vector>
+
+#include "exec.h"
+#include "portmgr.h"
+#include "schema.h"
+#include "select.h"
 
 using namespace std;
 using namespace swss;
@@ -42,7 +42,6 @@ int main(int argc, char **argv)
     {
         vector<string> cfg_port_tables = {
             CFG_PORT_TABLE_NAME,
-            CFG_LAG_TABLE_NAME,
         };
 
         DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
@@ -52,7 +51,7 @@ int main(int argc, char **argv)
         PortMgr portmgr(&cfgDb, &appDb, &stateDb, cfg_port_tables);
 
         // TODO: add tables in stateDB which interface depends on to monitor list
-        std::vector<Orch *> cfgOrchList = {&portmgr};
+        vector<Orch *> cfgOrchList = {&portmgr};
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
@@ -81,7 +80,7 @@ int main(int argc, char **argv)
             c->execute();
         }
     }
-    catch(const std::exception &e)
+    catch (const exception &e)
     {
         SWSS_LOG_ERROR("Runtime error: %s", e.what());
     }
