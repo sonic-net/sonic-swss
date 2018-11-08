@@ -29,8 +29,13 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 logger.addHandler(logging.NullHandler())
 
-TIME_OUT = 300      # timeout the restore process in 5 mins if not finished
-CHECK_INTERVAL = 5  # every 5 seconds to check interfaces state
+# timeout the restore process in 1 min if not finished
+# This is mostly to wait for interfaces to be created and up after warm-reboot
+# It would be good to keep that below routing reconciliation time-out.
+TIME_OUT = 60
+
+# every 5 seconds to check interfaces state
+CHECK_INTERVAL = 5
 
 ip_family = {"IPv4": AF_INET, "IPv6": AF_INET6}
 

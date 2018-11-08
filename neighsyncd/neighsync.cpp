@@ -26,19 +26,13 @@ NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb) :
 // Check if neighbor table is restored in kernel
 bool NeighSync::isNeighRestoreDone()
 {
-    vector<FieldValueTuple> temp;
+    string value;
 
-    if (m_stateNeighRestoreTable.get("Flags", temp))
+    m_stateNeighRestoreTable.hget("Flags", "restored", value);
+    if (value == "true")
     {
-        for (auto it : temp)
-        {
-            if (it.first == "restored" && it.second == "true")
-            {
-                SWSS_LOG_NOTICE("neighbor table restore to kernel is done");
-                return true;
-            }
-        }
-
+        SWSS_LOG_NOTICE("neighbor table restore to kernel is done");
+        return true;
     }
     return false;
 }

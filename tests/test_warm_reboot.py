@@ -836,7 +836,6 @@ def test_swss_port_state_syncup(dvs, testlog):
     dvs.runcmd("arp -d 10.0.0.3")
     dvs.runcmd("arp -d 10.0.0.5")
 
-<<<<<<< HEAD
 
 #############################################################################
 #                                                                           #
@@ -1489,14 +1488,14 @@ def test_routing_WarmRestart(dvs, testlog):
     assert len(addobjs) == 1 and len(delobjs) == 0
     rt_key = json.loads(addobjs[0]['key'])
     assert rt_key['dest'] == "192.168.100.0/24"
-=======
+
+
 # 'ip neigh flush all' won't remove failed entries if number of neighs less than gc_threshold1
 # Also it takes time to remove them completly.
 # We use arp off/on to do it
 def flush_neigh_entries(dvs):
     dvs.runcmd("ip link set group default arp off")
     dvs.runcmd("ip link set group default arp on")
->>>>>>> Add restore_neighbors.py to be part of swss deb pkg:
 
 def test_system_warmreboot_neighbor_syncup(dvs, testlog):
 
@@ -1517,9 +1516,10 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     # Ethernet32/36/.../60, with ip: 32.0.0.1/24... 60.0.0.1/24
     # ipv6: 3200::1/64...6000::1/64
     # bring up the servers'interfaces and assign NUM_NEIGH_PER_INTF (e,g 128) ips per interface
-    # TBD: NUM_NEIGH_PER_INTF = 128 ips seem to cause some test framework log overflow issue
+    # TBD: NUM_NEIGH_PER_INTF >= 128 ips will cause test framework to hang by default settings
+    # TBD: Need tune gc_thresh1/2/3 at host side of vs docker to support this.
     NUM_INTF = 8
-    NUM_NEIGH_PER_INTF = 128 #100
+    NUM_NEIGH_PER_INTF = 100 #128
     NUM_OF_NEIGHS = (NUM_INTF*NUM_NEIGH_PER_INTF)
     macs = []
     for i in range(8, 8+NUM_INTF):

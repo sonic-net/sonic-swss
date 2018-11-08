@@ -9,9 +9,9 @@
 #define DEFAULT_NEIGHSYNC_WARMSTART_TIMER 5
 
 //This is the timer value (in seconds) that the neighsyncd waiting for restore_neighbors
-//service to finish, should be longer than the restore_neighbors timeout value (300)
+//service to finish, should be longer than the restore_neighbors timeout value (60)
 //This should not happen, if happens, system is in a unknown state, we should exit.
-#define RESTORE_NEIGH_WAIT_TIME_OUT 600
+#define RESTORE_NEIGH_WAIT_TIME_OUT 70
 
 namespace swss {
 
