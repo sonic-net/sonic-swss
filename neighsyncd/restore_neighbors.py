@@ -15,6 +15,7 @@ import sys
 import swsssdk
 import netifaces
 import time
+import monotonic
 from pyroute2 import IPRoute, NetlinkError
 from pyroute2.netlink.rtnl import ndmsg
 from socket import AF_INET,AF_INET6
@@ -159,9 +160,9 @@ def set_statedb_neigh_restore_done():
 def restore_update_kernel_neighbors(intf_neigh_map):
     # create object for netlink calls to kernel
     ipclass = IPRoute()
-
-    start_time = time.time()
-    while (time.time() - start_time) < TIME_OUT:
+    mtime = monotonic.time.time
+    start_time = mtime()
+    while (mtime() - start_time) < TIME_OUT:
         for intf, family_neigh_map in intf_neigh_map.items():
             # only try to restore to kernel when link is up
             if is_intf_oper_state_up(intf):
@@ -204,7 +205,7 @@ def main():
     # Use warmstart python binding
     warmstart = swsscommon.WarmStart()
     warmstart.initialize("neighsyncd", "swss")
-    warmstart.checkWarmStart("neighsyncd", "swss")
+    warmstart.checkWarmStart("neighsyncd", "swss", False)
 
     # if swss or system warm reboot not enabled, don't run
     if not warmstart.isWarmStart():
@@ -212,7 +213,7 @@ def main():
         return
 
     # swss restart not system warm reboot
-    if not warmstart.isSystemWarmReboot():
+    if not warmstart.isSystemWarmRebootEnabled():
         set_statedb_neigh_restore_done()
         print "restore_neighbors service is done as system warm reboot not enabled"
         return

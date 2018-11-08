@@ -1,7 +1,7 @@
 #include <iostream>
-#include <time.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <chrono>
 #include "logger.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -30,20 +30,25 @@ int main(int argc, char **argv)
         {
             NetLink netlink;
             Select s;
-            time_t starttime;
+
+            using namespace std::chrono;
 
             if (sync.getRestartAssist()->isWarmStartInProgress())
             {
                 sync.getRestartAssist()->readTableToMap();
-                starttime = time(NULL);
+
+                steady_clock::time_point starttime = steady_clock::now();
                 while (!sync.isNeighRestoreDone())
                 {
-                    int pasttime = int(difftime(time(NULL), starttime));
+                    duration<double> time_span =
+                        duration_cast<duration<double>>(steady_clock::now() - starttime);
+                    int pasttime = int(time_span.count());
                     SWSS_LOG_INFO("waited neighbor table to be restored to kernel"
-                      "for %d seconds", pasttime);
+                      " for %d seconds", pasttime);
                     if (pasttime > RESTORE_NEIGH_WAIT_TIME_OUT)
                     {
-                        SWSS_LOG_ERROR("neighbor table restore is not finished after timed-out, exit!!!");
+                        SWSS_LOG_ERROR("neighbor table restore is not finished"
+                            " after timed-out, exit!!!");
                         exit(EXIT_FAILURE);
                     }
                     sleep(1);

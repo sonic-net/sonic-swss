@@ -1621,8 +1621,8 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     assert nadd == 0
     assert ndel == 0
 
-    # check restore Count -- TBD
-    #swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
     #
     # Testcase 3:
@@ -1673,8 +1673,8 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     assert nadd == 0
     assert ndel == 0
 
-    # check restore Count -- TBD
-    #swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
     # Test case 4:
     # ping the new ips, should get it into appDB
@@ -1764,8 +1764,8 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     assert nadd == 0
     assert ndel == NUM_OF_NEIGHS
 
-    # check restore Count -- TBD
-    #swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
     # disable system warm restart
     dvs.runcmd("config warm_restart disable system")
