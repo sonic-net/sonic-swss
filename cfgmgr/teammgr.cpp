@@ -5,6 +5,7 @@
 #include "logger.h"
 #include "shellcmd.h"
 #include "tokenize.h"
+#include "warm_restart.h"
 
 #include <algorithm>
 #include <sstream>
@@ -380,7 +381,15 @@ bool TeamMgr::addLag(const string &alias, int min_links, bool fallback)
     SWSS_LOG_INFO("Port channel %s teamd configuration: %s",
             alias.c_str(), conf.str().c_str());
 
-    cmd << TEAMD_CMD << " -r -t " << alias << " -c " << conf.str() << " -d";
+    string warmstart_flag = WarmStart::isWarmStart() ? " -w " : "";
+    const string dump_path = "/var/warmboot/teamd/";
+
+    cmd << TEAMD_CMD
+        << warmstart_flag
+        << " -r -t " << alias
+        << " -c " << conf.str()
+        << " -L " << dump_path
+        << " -d";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     SWSS_LOG_NOTICE("Start port channel %s with teamd", alias.c_str());
