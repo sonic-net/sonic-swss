@@ -27,23 +27,16 @@ def test_RouteAdd(dvs, testlog):
     ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
     fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
 
-    ps.set("2.2.2.0/24", fvs)
+    pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_ROUTE_ENTRY")
 
-    time.sleep(1)
+    ps.set("2.2.2.0/24", fvs)
 
     # check if route was propagated to ASIC DB
 
-    db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsub)
 
-    tbl = swsscommon.Table(db, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+    assert len(addobjs) == 1
 
-    keys = tbl.getKeys()
+    rt_key = json.loads(addobjs[0]['key'])
 
-    found_route = False
-    for k in keys:
-        rt_key = json.loads(k)
-
-        if rt_key['dest'] == "2.2.2.0/24":
-            found_route = True
-
-    assert found_route
+    assert rt_key['dest'] == "2.2.2.0/24"

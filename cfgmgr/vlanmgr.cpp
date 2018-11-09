@@ -169,13 +169,11 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
 
     // The command should be generated as:
     // /bin/bash -c "/sbin/ip link set {{port_alias}} master Bridge &&
-    //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}
-    //               /sbin/ip link set {{port_alias}} up mtu 9100"
+    //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}"
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
       + IP_CMD + " link set " + port_alias + " master " + DOT1Q_BRIDGE_NAME + " && "
-      + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + " && "
-      + IP_CMD + " link set " + port_alias + " up mtu " + std::to_string(MAX_MTU) + "\"";
+      + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + "\"";
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);

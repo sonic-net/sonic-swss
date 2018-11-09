@@ -24,6 +24,26 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
 {
 }
 
+void TeamSync::doSelectableTask()
+{
+    /* Start to track the new team instances */
+    for (auto s : m_selectablesToAdd)
+    {
+        m_select->addSelectable(m_teamSelectables[s].get());
+    }
+
+    m_selectablesToAdd.clear();
+
+    /* No longer track the deprecated team instances */
+    for (auto s : m_selectablesToRemove)
+    {
+        m_select->removeSelectable(m_teamSelectables[s].get());
+        m_teamSelectables.erase(s);
+    }
+
+    m_selectablesToRemove.clear();
+}
+
 void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 {
     struct rtnl_link *link = (struct rtnl_link *)obj;
@@ -31,6 +51,7 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
 
     string lagName = rtnl_link_get_name(link);
+
     /* Listens to LAG messages */
     char *type = rtnl_link_get_type(link);
     if (!type || (strcmp(type, TEAM_DRV_NAME) != 0))
@@ -63,35 +84,40 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
                    lagName.c_str(), admin_state ? "up" : "down", oper_state ? "up" : "down");
 
     /* Return when the team instance has already been tracked */
-    if (m_teamPorts.find(lagName) != m_teamPorts.end())
+    if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
         return;
-
-    /* Start track the team instance */
-    auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
-    m_select->addSelectable(sync.get());
-    m_teamPorts[lagName] = sync;
 
     fvVector.clear();
     FieldValueTuple s("state", "ok");
     fvVector.push_back(s);
     m_stateLagTable.set(lagName, fvVector);
+
+    /* Create the team instance */
+    auto sync = make_shared<TeamPortSync>(lagName, ifindex, &m_lagMemberTable);
+    m_teamSelectables[lagName] = sync;
+    m_selectablesToAdd.insert(lagName);
 }
 
 void TeamSync::removeLag(const string &lagName)
 {
+    /* Delete all members */
+    auto selectable = m_teamSelectables[lagName];
+    for (auto it : selectable->m_lagMembers)
+    {
+        m_lagMemberTable.del(lagName + ":" + it.first);
+    }
+
     /* Delete the LAG */
     m_lagTable.del(lagName);
 
     SWSS_LOG_INFO("Remove %s", lagName.c_str());
 
     /* Return when the team instance hasn't been tracked before */
-    if (m_teamPorts.find(lagName) == m_teamPorts.end())
+    if (m_teamSelectables.find(lagName) == m_teamSelectables.end())
         return;
 
-    /* No longer track the current team instance */
-    m_select->removeSelectable(m_teamPorts[lagName].get());
-    m_teamPorts.erase(lagName);
     m_stateLagTable.del(lagName);
+    m_selectablesToRemove.insert(lagName);
 }
 
 const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {
@@ -114,7 +140,8 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
     }
 
     int err = team_init(m_team, ifindex);
-    if (err) {
+    if (err)
+    {
         team_free(m_team);
         m_team = NULL;
         SWSS_LOG_ERROR("Unable to init team socket");
@@ -123,7 +150,8 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
     }
 
     err = team_change_handler_register(m_team, &gPortChangeHandler, this);
-    if (err) {
+    if (err)
+    {
         team_free(m_team);
         m_team = NULL;
         SWSS_LOG_ERROR("Unable to register port change event");

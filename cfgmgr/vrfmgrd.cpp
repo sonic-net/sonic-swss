@@ -42,6 +42,7 @@ int main(int argc, char **argv)
     {
         vector<string> cfg_vrf_tables = {
             CFG_VRF_TABLE_NAME,
+            CFG_VNET_TABLE_NAME,
         };
 
         DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);

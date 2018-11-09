@@ -595,16 +595,21 @@ bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
         return false;
     }
 
-    try
-    {
-        port.m_pfc_asym = pfc_asym_map.at(pfc_asym);
-    }
-    catch (...)
+    auto found = pfc_asym_map.find(pfc_asym);
+    if (found == pfc_asym_map.end())
     {
         SWSS_LOG_ERROR("Incorrect asymmetric PFC mode: %s", pfc_asym.c_str());
         return false;
     }
 
+    auto new_pfc_asym = found->second;
+    if (port.m_pfc_asym == new_pfc_asym)
+    {
+        SWSS_LOG_NOTICE("Already set asymmetric PFC mode: %s", pfc_asym.c_str());
+        return true;
+    }
+
+    port.m_pfc_asym = new_pfc_asym;
     m_portList[port.m_alias] = port;
 
     attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE;
@@ -1373,6 +1378,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (alias == "PortConfigDone")
         {
+            if (m_portConfigDone)
+            {
+                // Already done, ignore this task
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             m_portConfigDone = true;
 
             for (auto i : kfvFieldsValues(t))
@@ -1585,11 +1597,20 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         p.m_autoneg = an;
                         m_portList[alias] = p;
 
-                        /* Once AN is changed, need to reset the port speed or
-                           port adv speed accordingly */
-                        if (speed == 0 && p.m_speed != 0)
+                        // Once AN is changed
+                        // - no speed specified: need to reapply the port speed or port adv speed accordingly
+                        // - speed specified: need to apply the port speed or port adv speed by the specified one
+                        // Note: one special case is
+                        // - speed specified as existing m_speed: need to apply even they are the same
+                        auto old_speed = p.m_speed;
+                        p.m_speed = 0;
+                        auto new_speed = speed ? speed : old_speed;
+                        if (new_speed)
                         {
-                            speed = p.m_speed;
+                            // Modify the task in place
+                            kfvFieldsValues(t).emplace_back("speed", to_string(new_speed));
+                            // Fallthrough to process `speed'
+                            speed = new_speed;
                         }
                     }
                     else
@@ -1608,9 +1629,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                  * 3. Set port admin status to DOWN before changing the speed
                  * 4. Set port speed
                  */
-                if (speed != 0)
+                if (speed != 0 && speed != p.m_speed)
                 {
-                    p.m_speed = speed;
                     m_portList[alias] = p;
 
                     if (p.m_autoneg)
@@ -1656,17 +1676,22 @@ void PortsOrch::doPortTask(Consumer &consumer)
                                 else
                                 {
                                     SWSS_LOG_ERROR("Failed to set port admin status DOWN to set speed");
+                                    it++;
+                                    continue;
                                 }
                             }
                         }
                         else
                         {
                             SWSS_LOG_ERROR("Failed to get current speed for port %s", alias.c_str());
+                            it++;
+                            continue;
                         }
                     }
+                    m_portList[alias].m_speed = speed;
                 }
 
-                if (mtu != 0)
+                if (mtu != 0 && mtu != p.m_mtu)
                 {
                     if (setPortMtu(p.m_port_id, mtu))
                     {
@@ -1699,7 +1724,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         continue;
                     }
                 }
-
 
                 if (!fec_mode.empty())
                 {

@@ -40,12 +40,14 @@ private:
 
     bool addLag(const string &alias, int min_links, bool fall_back);
     bool removeLag(const string &alias);
-    bool addLagMember(const string &lag, const string &member);
+    task_process_status addLagMember(const string &lag, const string &member);
     bool removeLagMember(const string &lag, const string &member);
 
     bool setLagAdminStatus(const string &alias, const string &admin_status);
     bool setLagMtu(const string &alias, const string &mtu);
 
+    bool findPortMaster(string &, const string &);
+    bool checkPortIffUp(const string &);
     bool isPortStateOk(const string&);
     bool isLagStateOk(const string&);
 };
