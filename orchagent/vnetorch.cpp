@@ -26,10 +26,10 @@ extern PortsOrch *gPortsOrch;
  */
 std::vector<VR_TYPE> vr_cntxt;
 
-VNetVrfObject::VNetVrfObject(const std::string& name, set<string>& p_list, vector<sai_attribute_t>& attrs)
-             : VNetObject(p_list)
+VNetVrfObject::VNetVrfObject(const std::string& vnet, string& tunnel, set<string>& peer,
+                             vector<sai_attribute_t>& attrs) : VNetObject(tunnel, peer)
 {
-    vnet_name_ = name;
+    vnet_name_ = vnet;
     createObj(attrs);
 }
 
@@ -141,10 +141,10 @@ VNetVrfObject::~VNetVrfObject()
  */
 
 template <class T>
-std::unique_ptr<T> VNetOrch::createObject(const string& vnet_name, set<string>& plist,
+std::unique_ptr<T> VNetOrch::createObject(const string& vnet_name, string& tunnel, set<string>& plist,
                                           vector<sai_attribute_t>& attrs)
 {
-    std::unique_ptr<T> vnet_obj(new T(vnet_name, plist, attrs));
+    std::unique_ptr<T> vnet_obj(new T(vnet_name, tunnel, plist, attrs));
     return vnet_obj;
 }
 
@@ -171,6 +171,8 @@ bool VNetOrch::addOperation(const Request& request)
     vector<sai_attribute_t> attrs;
     set<string> peer_list = {};
     bool peer = false, create = false;
+    uint32_t vni=0;
+    string tunnel;
 
     for (const auto& name: request.getAttrFieldNames())
     {
@@ -185,6 +187,14 @@ bool VNetOrch::addOperation(const Request& request)
         {
             peer_list  = request.getAttrSet("peer_list");
             peer = true;
+        }
+        else if (name == "vni")
+        {
+            vni  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
+        }
+        else if (name == "vxlan_tunnel")
+        {
+            tunnel = request.getAttrString("vxlan_tunnel");
         }
         else
         {
@@ -202,11 +212,27 @@ bool VNetOrch::addOperation(const Request& request)
         auto it = vnet_table_.find(vnet_name);
         if (isVnetExecVrf())
         {
+            VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+            if (!vxlan_orch->isTunnelExists(tunnel))
+            {
+                SWSS_LOG_WARN("Vxlan tunnel '%s' doesn't exist", tunnel.c_str());
+                return false;
+            }
+
             if (it == std::end(vnet_table_))
             {
-                obj = createObject<VNetVrfObject>(vnet_name, peer_list, attrs);
+                obj = createObject<VNetVrfObject>(vnet_name, tunnel, peer_list, attrs);
                 create = true;
             }
+
+            if (!vxlan_orch->createVxlanTunnelMap(tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
+                                                  obj->getEncapMapId(), obj->getDecapMapId()))
+            {
+                SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
+                                vnet_name.c_str(), tunnel.c_str());
+            }
+
             SWSS_LOG_INFO("VNET '%s' was added ", vnet_name.c_str());
         }
         else
@@ -306,9 +332,11 @@ sai_object_id_t VNetRouteOrch::getNextHop(const string& vnet, tunnelEndpoint& en
     }
 
     sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
-    VxlanVrfMapOrch* vxlan_orch = gDirectory.get<VxlanVrfMapOrch*>();
+    auto tun_name = vnet_orch_->getTunnelName(vnet);
 
-    nh_id = vxlan_orch->createNextHopTunnel(vnet, endp.ip, endp.mac, endp.vni);
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+    nh_id = vxlan_orch->createNextHopTunnel(tun_name, endp.ip, endp.mac, endp.vni);
     if (nh_id == SAI_NULL_OBJECT_ID)
     {
         throw std::runtime_error("NH Tunnel create failed for " + vnet + " ip " + endp.ip.to_string());

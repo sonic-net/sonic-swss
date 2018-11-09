@@ -14,10 +14,11 @@ const request_description_t vnet_request_description = {
     { REQ_T_STRING },
     {
         { "src_mac",       REQ_T_MAC_ADDRESS },
-        { "vnet_name",     REQ_T_STRING },
+        { "vxlan_tunnel",  REQ_T_STRING },
+        { "vni",           REQ_T_UINT },
         { "peer_list",     REQ_T_SET },
     },
-    { } // no mandatory attributes
+    { "vxlan_tunnel", "vni" } // mandatory attributes
 };
 
 enum class VNET_EXEC
@@ -46,10 +47,7 @@ public:
 class VNetObject
 {
 public:
-    VNetObject(set<string>& p_list)
-    {
-        peer_list_ = p_list;
-    }
+    VNetObject(string& tunName, set<string>& peer) : tunnel_(tunName), peer_list_(peer) { }
 
     virtual sai_object_id_t getEncapMapId() const = 0;
 
@@ -69,16 +67,22 @@ public:
         return peer_list_;
     }
 
+    string getTunnelName() const
+    {
+        return tunnel_;
+    }
+
     virtual ~VNetObject() {};
 
 private:
     set<string> peer_list_ = {};
+    string tunnel_;
 };
 
 class VNetVrfObject : public VNetObject
 {
 public:
-    VNetVrfObject(const std::string& name, set<string>& p_list, vector<sai_attribute_t>& attrs);
+    VNetVrfObject(const string& vnet, string& tunnel, set<string>& peer, vector<sai_attribute_t>& attrs);
 
     sai_object_id_t getVRidIngress() const;
 
@@ -151,6 +155,11 @@ public:
         return vnet_table_.at(name)->getVRid();
     }
 
+    string getTunnelName(const std::string& name) const
+    {
+        return vnet_table_.at(name)->getTunnelName();
+    }
+
     bool isVnetExecVrf() const
     {
         return (vnet_exec_ == VNET_EXEC::VNET_EXEC_VRF);
@@ -166,7 +175,7 @@ private:
     virtual bool delOperation(const Request& request);
 
     template <class T>
-    std::unique_ptr<T> createObject(const string&, set<string>&, vector<sai_attribute_t>&);
+    std::unique_ptr<T> createObject(const string&, string&, set<string>&, vector<sai_attribute_t>&);
 
     VNetTable vnet_table_;
     VNetRequest request_;

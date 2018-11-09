@@ -6,7 +6,6 @@
 #include "request_parser.h"
 #include "portsorch.h"
 #include "vrforch.h"
-#include "vnetorch.h"
 
 enum class MAP_T
 {
@@ -86,6 +85,13 @@ public:
 typedef std::unique_ptr<VxlanTunnel> VxlanTunnel_T;
 typedef std::map<std::string, VxlanTunnel_T> VxlanTunnelTable;
 
+typedef enum
+{
+    TUNNEL_MAP_T_VLAN,
+    TUNNEL_MAP_T_BRIDGE,
+    TUNNEL_MAP_T_VIRTUAL_ROUTER,
+} tunnel_map_type_t;
+
 class VxlanTunnelOrch : public Orch2
 {
 public:
@@ -100,6 +106,12 @@ public:
     {
         return vxlan_tunnel_table_.at(tunnelName).get();
     }
+
+    bool createVxlanTunnelMap(string tunnelName, tunnel_map_type_t mapType, uint32_t vni,
+                              sai_object_id_t encap, sai_object_id_t decap);
+
+    sai_object_id_t
+    createNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni=0);
 
 private:
     virtual bool addOperation(const Request& request);
@@ -178,14 +190,9 @@ public:
         return vxlan_vrf_table_.find(name) != std::end(vxlan_vrf_table_);
     }
 
-    sai_object_id_t
-    createNextHopTunnel(const std::string& vnet, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni = 0);
-
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
-
-    void vnetTaskHandler(string& vrfName, VxlanTunnel* tunnelObj, handler_pair&);
 
     VxlanVrfTable vxlan_vrf_table_;
     VxlanVrfTunnel vxlan_vrf_tunnel_;
