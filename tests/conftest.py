@@ -365,7 +365,7 @@ class DockerVirtualSwitch(object):
         return marker
 
     def SubscribeAppDbObject(self, objpfx):
-        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APP_DB)
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APPL_DB)
         pubsub = r.pubsub()
         pubsub.psubscribe("__keyspace@0__:%s*" % objpfx)
         return pubsub
@@ -400,26 +400,40 @@ class DockerVirtualSwitch(object):
         return (nadd, ndel)
 
     def GetSubscribedAppDbObjects(self, pubsub, ignore=None, timeout=10):
-        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APP_DB)
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APPL_DB)
 
         addobjs = []
         delobjs = []
         idle = 0
+        prev_key = None
 
         while True and idle < timeout:
             message = pubsub.get_message()
             if message:
                 print message
                 key = message['channel'].split(':', 1)[1]
+                # In producer/consumer_state_table scenarios, every entry will
+                # show up twice for every push/pop operation, so skip the second
+                # one to avoid double counting.
+                if key != None and key == prev_key:
+                    continue
+                # Skip instructions with meaningless keys. To be extended in the
+                # future to other undesired keys.
+                if key == "ROUTE_TABLE_KEY_SET" or key == "ROUTE_TABLE_DEL_SET":
+                    continue
                 if ignore:
                     fds = message['channel'].split(':')
                     if fds[2] in ignore:
                         continue
+
                 if message['data'] == 'hset':
+                    (_, k) = key.split(':', 1)
                     value=r.hgetall(key)
-                    addobjs.append({'key':k, 'vals':value})
+                    addobjs.append({'key':json.dumps(k), 'vals':json.dumps(value)})
+                    prev_key = key
                 elif message['data'] == 'del':
-                    delobjs.append(key)
+                    (_, k) = key.split(':', 1)
+                    delobjs.append({'key':json.dumps(k)})
                 idle = 0
             else:
                 time.sleep(1)
@@ -449,7 +463,8 @@ class DockerVirtualSwitch(object):
                     (_, t, k) = key.split(':', 2)
                     addobjs.append({'type':t, 'key':k, 'vals':value})
                 elif message['data'] == 'del':
-                    delobjs.append(key)
+                    (_, t, k) = key.split(':', 2)
+                    delobjs.append({'key':k})
                 idle = 0
             else:
                 time.sleep(1)
