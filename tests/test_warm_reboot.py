@@ -607,7 +607,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
     #
     # Testcase 5:
     # Even number of ip4/6 neigbors updated with new mac.
-    # Odd number of ipv4/6 neighbors removed and added to different interfaces.
+    # Odd number of ipv4/6 neighbors removed
     # neighbor syncd should sync it up after warm restart
     # include the timer settings in this testcase
 
@@ -625,7 +625,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
     marker = dvs.add_log_marker()
 
     # Even number of ip4/6 neigbors updated with new mac.
-    # Odd number of ipv4/6 neighbors removed and added to different interfaces.
+    # Odd number of ipv4/6 neighbors removed
     newmacs = ["00:00:00:01:12:02", "00:00:00:01:12:03", "00:00:00:01:16:02", "00:00:00:01:16:03"]
 
     for i in range(len(ips)):
@@ -633,14 +633,12 @@ def test_swss_neighbor_syncup(dvs, testlog):
             dvs.runcmd("ip neigh change {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], newmacs[i]))
         else:
             dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i/2]))
-            dvs.runcmd("ip neigh add {} dev {} lladdr {} nud reachable".format(ips[i], intfs[1-i/2], macs[i]))
 
     for i in range(len(v6ips)):
         if i % 2 == 0:
             dvs.runcmd("ip -6 neigh change {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], newmacs[i]))
         else:
             dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i/2]))
-            dvs.runcmd("ip -6 neigh add {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[1-i/2], macs[i]))
 
     # start neighsyncd again
     start_neighsyncd(dvs)
@@ -665,13 +663,8 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 if v[0] == "family":
                     assert v[1] == "IPv4"
         else:
-            (status, fvs) = tbl.get("{}:{}".format(intfs[1-i/2], ips[i]))
-            assert status == True
-            for v in fvs:
-                if v[0] == "neigh":
-                    assert v[1] == macs[i]
-                if v[0] == "family":
-                    assert v[1] == "IPv4"
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
+            assert status == False
 
     for i in range(len(v6ips)):
         if i % 2 == 0:
@@ -683,23 +676,18 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 if v[0] == "family":
                     assert v[1] == "IPv6"
         else:
-            (status, fvs) = tbl.get("{}:{}".format(intfs[1-i/2], v6ips[i]))
-            assert status == True
-            for v in fvs:
-                if v[0] == "neigh":
-                    assert v[1] == macs[i]
-                if v[0] == "family":
-                    assert v[1] == "IPv6"
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
+            assert status == False
 
     time.sleep(2)
 
     # check syslog and asic db for activities
-    # 4 news, 2 deletes for ipv4 and ipv6 each
-    # 4 create, 4 set, 4 removes for neighbor in asic db
-    check_syslog_for_neighbor_entry(dvs, marker, 4, 2, "ipv4")
-    check_syslog_for_neighbor_entry(dvs, marker, 4, 2, "ipv6")
+    # 2 news, 2 deletes for ipv4 and ipv6 each
+    # 4 set, 4 removes for neighbor in asic db
+    check_syslog_for_neighbor_entry(dvs, marker, 2, 2, "ipv4")
+    check_syslog_for_neighbor_entry(dvs, marker, 2, 2, "ipv6")
     (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
-    assert nadd == 8
+    assert nadd == 4
     assert ndel == 4
 
     # check restore Count
@@ -1519,7 +1507,7 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     # TBD: NUM_NEIGH_PER_INTF >= 128 ips will cause test framework to hang by default settings
     # TBD: Need tune gc_thresh1/2/3 at host side of vs docker to support this.
     NUM_INTF = 8
-    NUM_NEIGH_PER_INTF = 100 #128
+    NUM_NEIGH_PER_INTF = 64 #128
     NUM_OF_NEIGHS = (NUM_INTF*NUM_NEIGH_PER_INTF)
     macs = []
     for i in range(8, 8+NUM_INTF):
@@ -1756,6 +1744,8 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
         print "Waiting for kernel neighbors restore process done: {} seconds".format(i)
         time.sleep(10)
         i += 10
+
+    time.sleep(10)
 
     # check syslog and sairedis.rec file for activities
     check_syslog_for_neighbor_entry(dvs, marker, 0, NUM_OF_NEIGHS/2, "ipv4")
