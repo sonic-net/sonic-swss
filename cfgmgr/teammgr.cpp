@@ -11,8 +11,9 @@
 #include <sstream>
 #include <thread>
 
-#include <sys/ioctl.h>
 #include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
 
 using namespace std;
 using namespace swss;
@@ -237,6 +238,16 @@ bool TeamMgr::checkPortIffUp(const string &port)
     return ifr.ifr_flags & IFF_UP;
 }
 
+bool TeamMgr::isPortEnslaved(const string &port)
+{
+    SWSS_LOG_ENTER();
+
+    struct stat buf;
+    string path = "/sys/class/net/" + port + "/master";
+
+    return lstat(path.c_str(), &buf) == 0;
+}
+
 bool TeamMgr::findPortMaster(string &master, const string &port)
 {
     SWSS_LOG_ENTER();
@@ -280,7 +291,7 @@ void TeamMgr::doPortUpdateTask(Consumer &consumer)
             SWSS_LOG_INFO("Received port %s state update", alias.c_str());
 
             string lag;
-            if (findPortMaster(lag, alias))
+            if (!isPortEnslaved(alias) && findPortMaster(lag, alias))
             {
                 if (addLagMember(lag, alias) == task_need_retry)
                 {
