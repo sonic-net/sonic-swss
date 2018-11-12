@@ -683,7 +683,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                             ; timer, fpmsyncd will execute the reconciliation logic to eliminate all the staled
                                             ; state from AppDB. This timer should match the BGP-GR restart-timer configured within
                                             ; the elected routing-stack.
-                                            ; Supported range: 1-9999.
+                                            ; Supported range: 1-3600.
 
 
 ### VXLAN\_TUNNEL
