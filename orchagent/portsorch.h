@@ -77,7 +77,6 @@ public:
 
     void generateQueueMap();
     void refreshPortStatus();
-    bool restorePortOperStatus();
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
