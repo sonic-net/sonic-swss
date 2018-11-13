@@ -2908,13 +2908,17 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
 
             SWSS_LOG_NOTICE("Get port state change notification id:%lx status:%d", id, status);
 
-            Port p;
-            if (!getPort(id, p))
+            Port port;
+            if (!getPort(id, port))
             {
                 SWSS_LOG_ERROR("Failed to get port object for port id 0x%lx", id);
                 continue;
             }
-            updatePortOperStatus(p, status);
+
+            if (status != port.m_oper_status)
+            {
+                updatePortOperStatus(port, status);
+            }
         }
 
         sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);
@@ -2923,17 +2927,17 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
 
 void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
 {
-    if (status != port.m_oper_status)
+    SWSS_LOG_NOTICE("Port %s oper state set from %s to %s",
+            port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(),
+            oper_status_strings.at(status).c_str());
+
+    this->updateDbPortOperStatus(port.m_port_id, status);
+    if (status == SAI_PORT_OPER_STATUS_UP || port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
     {
-        SWSS_LOG_NOTICE("Port state changed for %s from %s to %s", port.m_alias.c_str(),
-                oper_status_strings.at(port.m_oper_status).c_str(), oper_status_strings.at(status).c_str());
-        this->updateDbPortOperStatus(port.m_port_id, status);
-        if(status == SAI_PORT_OPER_STATUS_UP || port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
-        {
-            this->setHostIntfsOperStatus(port.m_port_id, status == SAI_PORT_OPER_STATUS_UP);
-        }
+        this->setHostIntfsOperStatus(port.m_port_id, status == SAI_PORT_OPER_STATUS_UP);
     }
 }
+
 /*
  * sync up orchagent with libsai/ASIC for port state.
  *
