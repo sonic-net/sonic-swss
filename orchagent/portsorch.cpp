@@ -2914,11 +2914,7 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
                 SWSS_LOG_ERROR("Failed to get port object for port id 0x%lx", id);
                 continue;
             }
-
-            if (status != port.m_oper_status)
-            {
-                updatePortOperStatus(port, status);
-            }
+            updatePortOperStatus(port, status);
         }
 
         sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);
@@ -2930,11 +2926,13 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     SWSS_LOG_NOTICE("Port %s oper state set from %s to %s",
             port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(),
             oper_status_strings.at(status).c_str());
-
-    this->updateDbPortOperStatus(port.m_port_id, status);
-    if (status == SAI_PORT_OPER_STATUS_UP || port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
+    if (status != port.m_oper_status)
     {
-        this->setHostIntfsOperStatus(port.m_port_id, status == SAI_PORT_OPER_STATUS_UP);
+        this->updateDbPortOperStatus(port.m_port_id, status);
+        if (status == SAI_PORT_OPER_STATUS_UP || port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
+        {
+            this->setHostIntfsOperStatus(port.m_port_id, status == SAI_PORT_OPER_STATUS_UP);
+        }
     }
 }
 
@@ -2972,4 +2970,36 @@ void PortsOrch::refreshPortStatus()
             updatePortOperStatus(p, status);
         }
     }
+}
+
+/*
+ * Restore port oper status from data saved in appDB port table.
+ * For warm reboot only.
+ */
+bool PortsOrch::restorePortOperStatus()
+{
+    SWSS_LOG_ENTER();
+
+    for (auto &it : m_portList)
+    {
+        auto &port = it.second;
+        string operStr;
+        sai_port_oper_status_t status = SAI_PORT_OPER_STATUS_UNKNOWN;
+
+        m_portTable->hget(it.first, "oper_status", operStr);
+
+        for (auto &statusIt : oper_status_strings)
+        {
+            if (operStr == statusIt.second)
+            {
+                status = statusIt.first;
+            }
+        }
+
+       if (!this->setHostIntfsOperStatus(port.m_port_id, status == SAI_PORT_OPER_STATUS_UP))
+       {
+            return false;
+       }
+    }
+    return true;
 }

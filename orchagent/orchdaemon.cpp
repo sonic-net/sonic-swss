@@ -431,6 +431,12 @@ bool OrchDaemon::warmRestoreAndSyncUp()
         }
     }
 
+    if (!gPortsOrch->restorePortOperStatus())
+    {
+        SWSS_LOG_ERROR("Orchagent state restore port oper status failed");
+        return false;
+    }
+
     /*
      * At this point, all the pre-existing data should have been processed properly, and
      * orchagent should be in exact same state of pre-shutdown.
