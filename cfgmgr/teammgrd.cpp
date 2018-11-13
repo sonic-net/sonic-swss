@@ -30,8 +30,8 @@ int main(int argc, char **argv)
         DBConnector app_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-        WarmStart::initialize("teammgrd");
-        WarmStart::checkWarmStart("teammgrd");
+        WarmStart::initialize("teammgrd", "teamd");
+        WarmStart::checkWarmStart("teammgrd", "teamd");
 
         TableConnector conf_lag_table(&conf_db, CFG_LAG_TABLE_NAME);
         TableConnector conf_lag_member_table(&conf_db, CFG_LAG_MEMBER_TABLE_NAME);
