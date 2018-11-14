@@ -379,7 +379,7 @@ public:
     bool removeAclTable(string table_id);
     bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
-
+    void processPendingPorts();
 private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);

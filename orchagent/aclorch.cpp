@@ -2120,6 +2120,31 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
     }
 }
 
+void AclOrch::processPendingPorts()
+{
+    for (auto itmap : m_AclTables)
+    {
+        auto table = itmap.second;
+        for (auto port_alias: table.pendingPortSet)
+        {
+            SWSS_LOG_INFO("found the port: %s in ACL table: %s pending port list, bind it to ACL table.", port_alias.c_str(), table.description.c_str());
+
+            bool suc = processPendingPort(table, port_alias, [&](sai_object_id_t portOid) {
+                table.link(portOid);
+            });
+
+            if (!suc)
+            {
+                SWSS_LOG_ERROR("Failed to bind the ACL table: %s to port: %s", table.description.c_str(), port_alias.c_str());
+            }
+            else
+            {
+                table.pendingPortSet.erase(port_alias);
+                SWSS_LOG_DEBUG("port: %s bound to ACL table table: %s, remove it from pending list", port_alias.c_str(), table.description.c_str());
+            }
+        }
+    }
+}
 void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();

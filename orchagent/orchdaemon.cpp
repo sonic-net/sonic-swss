@@ -432,6 +432,13 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     }
 
     /*
+     * There could be pending ports for ACL.
+     * During warm restore, lag is processed after acl and put into acl pending port list.
+     * The lag state flag needed to trigger pending port clean up won't come at this this stage.
+     * Do it here explicitly.
+     */
+    gAclOrch->processPendingPorts();
+    /*
      * At this point, all the pre-existing data should have been processed properly, and
      * orchagent should be in exact same state of pre-shutdown.
      * Perform restore validation as needed.
