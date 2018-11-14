@@ -381,12 +381,12 @@ bool TeamMgr::addLag(const string &alias, int min_links, bool fallback)
     SWSS_LOG_INFO("Port channel %s teamd configuration: %s",
             alias.c_str(), conf.str().c_str());
 
-    string warmstart_flag = WarmStart::isWarmStart() ? " -w " : "";
+    string warmstart_flag = WarmStart::isWarmStart() ? " -w -o " : " -r ";
     const string dump_path = "/var/warmboot/teamd/";
 
     cmd << TEAMD_CMD
         << warmstart_flag
-        << " -r -t " << alias
+        << " -t " << alias
         << " -c " << conf.str()
         << " -L " << dump_path
         << " -d";
