@@ -2127,7 +2127,7 @@ void AclOrch::processPendingPorts()
         auto table = itmap.second;
         for (auto port_alias: table.pendingPortSet)
         {
-            SWSS_LOG_INFO("found the port: %s in ACL table: %s pending port list, bind it to ACL table.", port_alias.c_str(), table.description.c_str());
+            SWSS_LOG_NOTICE("found the port: %s in ACL table: %s pending port list, bind it to ACL table.", port_alias.c_str(), table.description.c_str());
 
             bool suc = processPendingPort(table, port_alias, [&](sai_object_id_t portOid) {
                 table.link(portOid);
@@ -2145,6 +2145,7 @@ void AclOrch::processPendingPorts()
         }
     }
 }
+
 void AclOrch::doAclTablePortUpdateTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
