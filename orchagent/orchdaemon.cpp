@@ -124,12 +124,10 @@ bool OrchDaemon::init()
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
-    TableConnector stateDbLagTable(m_stateDb, STATE_LAG_TABLE_NAME);
 
     vector<TableConnector> acl_table_connectors = {
         confDbAclTable,
-        confDbAclRuleTable,
-        stateDbLagTable
+        confDbAclRuleTable
     };
 
     vector<string> dtel_tables = {

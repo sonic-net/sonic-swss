@@ -2683,6 +2683,9 @@ bool PortsOrch::addLag(string lag_alias)
     lag.m_members = set<string>();
     m_portList[lag_alias] = lag;
 
+    PortUpdate update = { lag, true };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+
     return true;
 }
 
@@ -2712,6 +2715,9 @@ bool PortsOrch::removeLag(Port lag)
     SWSS_LOG_NOTICE("Remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
 
     m_portList.erase(lag.m_alias);
+
+    PortUpdate update = { lag, false };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
     return true;
 }
