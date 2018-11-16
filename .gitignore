@@ -49,6 +49,7 @@ cfgmgr/intfmgrd
 cfgmgr/vlanmgrd
 cfgmgr/buffermanager
 cfgmgr/vrfmgrd
+cfgmgr/nbrmgrd
 neighsyncd/neighsyncd
 portsyncd/portsyncd
 orchagent/orchagent

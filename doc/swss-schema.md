@@ -705,6 +705,12 @@ Status: ready
     vni       = uint24                          ; vni id, defined for tunnel map
     vlan      = "Vlan"vlan_id                   ; name of the existing vlan interface
 
+### NEIGH_TABLE
+    ; Stores the neighbors. Defines static configuration of neighbor entries. If mac address is not specified, implementation shall resolve the mac-address for the neighbor IP.
+    ; interface for routes
+    key           = NEIGH_TABLE|PORT_TABLE.name / VLAN_INTF_TABLE.name / LAG_INTF_TABLE.name|prefix
+    neigh         = 12HEXDIG         ; mac address of the neighbor (optional)
+    family        = "IPv4" / "IPv6"  ; address family
 
 ## State DB schema
 
