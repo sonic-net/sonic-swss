@@ -741,7 +741,8 @@ def test_OrchagentWarmRestartReadyCheck(dvs, testlog):
     assert result == "RESTARTCHECK failed\n"
 
     # Cleaning previously pushed route-entry to ease life of subsequent testcases.
-    del_entry_tbl(appl_db, swsscommon.APP_ROUTE_TABLE_NAME, "2.2.2.0/24")
+    ps._del("2.2.2.0/24")
+    time.sleep(1)
 
     # recover for test cases after this one.
     dvs.stop_swss()
