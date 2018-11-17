@@ -1,7 +1,10 @@
 #include <map>
+#include <tuple>
 
 #include "switchorch.h"
+#include "schema.h"
 #include "converter.h"
+#include "sai_serialize.h"
 #include "notifier.h"
 #include "notificationproducer.h"
 
@@ -28,6 +31,15 @@ const map<string, sai_packet_action_t> packet_action_map =
     {"trap",    SAI_PACKET_ACTION_TRAP}
 };
 
+#define SWITCH_SENSORS_FLEX_POLL_MSECS "15000"
+
+static const vector<sai_switch_attr_t> SwitchSensorIds =
+{
+    SAI_SWITCH_ATTR_MAX_TEMP,
+    SAI_SWITCH_ATTR_AVERAGE_TEMP,
+    SAI_SWITCH_ATTR_TEMP_LIST
+};
+
 SwitchOrch::SwitchOrch(DBConnector *db, string tableName) :
         Orch(db, tableName),
         m_db(db)
@@ -35,11 +47,59 @@ SwitchOrch::SwitchOrch(DBConnector *db, string tableName) :
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
     Orch::addExecutor(restartCheckNotifier);
+
+    m_flex_db = shared_ptr<DBConnector>(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_flexCounterTable = shared_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
+    m_flexCounterGroupTable = shared_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
+}
+
+string SwitchOrch::getSwitchSensorsFlexCounterTableKey(string key)
+{
+    return string(SWITCH_SENSORS_FLEX_GROUP) + ":" + key;
+}
+
+void SwitchOrch::addSwitchSensorsToFlexCounters()
+{
+    SWSS_LOG_ENTER();
+
+    try
+    {
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(POLL_INTERVAL_FIELD, SWITCH_SENSORS_FLEX_POLL_MSECS);
+        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
+        m_flexCounterGroupTable->set(SWITCH_SENSORS_FLEX_GROUP, fieldValues);
+    }
+
+    catch (...)
+    {
+        SWSS_LOG_WARN("SWITCH Sensors flex counter groups was not set");
+    }
+
+    /* Add switch to flex_counter for updating sensors */
+    const auto id = sai_serialize_object_id(gSwitchId);
+    string key = getSwitchSensorsFlexCounterTableKey(id);
+    std::string delimiter = "";
+    std::ostringstream counters_stream;
+    for (const auto &id: SwitchSensorIds)
+    {
+        counters_stream << delimiter << sai_serialize_switch_attr(id);
+        delimiter = ",";
+    }
+
+    vector<FieldValueTuple> fields;
+    fields.clear();
+    fields.emplace_back(SWITCH_SENSOR_ID_LIST, counters_stream.str());
+
+    m_flexCounterTable->set(key, fields);
+
+    SWSS_LOG_NOTICE("Added SWITCH Sensors to Flex Counters");
 }
 
 void SwitchOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+
+    addSwitchSensorsToFlexCounters();
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())

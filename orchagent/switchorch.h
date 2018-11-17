@@ -1,6 +1,9 @@
 #pragma once
 
 #include "orch.h"
+#include "producertable.h"
+
+#define SWITCH_SENSORS_FLEX_GROUP "SWITCH_SENSORS"
 
 struct WarmRestartCheck
 {
@@ -22,10 +25,16 @@ public:
     bool setAgingFDB(uint32_t sec);
 private:
     void doTask(Consumer &consumer);
+    std::string  getSwitchSensorsFlexCounterTableKey(std::string);
+    void addSwitchSensorsToFlexCounters();
 
     NotificationConsumer* m_restartCheckNotificationConsumer;
     void doTask(NotificationConsumer& consumer);
     DBConnector *m_db;
+
+    shared_ptr<DBConnector> m_flex_db = nullptr;
+    shared_ptr<ProducerTable> m_flexCounterTable = nullptr;
+    shared_ptr<ProducerTable> m_flexCounterGroupTable = nullptr;
 
     // Information contained in the request from
     // external program for orchagent pre-shutdown state check

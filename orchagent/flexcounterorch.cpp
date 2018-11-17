@@ -1,6 +1,7 @@
 #include <unordered_map>
 #include "flexcounterorch.h"
 #include "portsorch.h"
+#include "switchorch.h"
 #include "select.h"
 #include "notifier.h"
 #include "redisclient.h"
@@ -16,6 +17,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
+    {"SENSORS", SWITCH_SENSORS_FLEX_GROUP},
 };
 
 
