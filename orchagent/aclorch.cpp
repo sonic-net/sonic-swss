@@ -1848,7 +1848,6 @@ void AclOrch::update(SubjectType type, void *cntx)
             type != SUBJECT_TYPE_INT_SESSION_CHANGE &&
             type != SUBJECT_TYPE_PORT_CHANGE)
     {
-        SWSS_LOG_WARN("Received unwanted change update %d", type);
         return;
     }
 
