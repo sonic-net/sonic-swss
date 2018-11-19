@@ -75,8 +75,8 @@ int main(int argc, char **argv)
     ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
     SubscriberStateTable portCfg(&cfgDb, CFG_PORT_TABLE_NAME);
 
-    WarmStart::initialize("portsyncd");
-    WarmStart::checkWarmStart("portsyncd");
+    WarmStart::initialize("portsyncd", "swss");
+    WarmStart::checkWarmStart("portsyncd", "swss");
     const bool warm = WarmStart::isWarmStart();
 
     LinkSync sync(&appl_db, &state_db);

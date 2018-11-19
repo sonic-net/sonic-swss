@@ -291,7 +291,7 @@ void TeamMgr::doPortUpdateTask(Consumer &consumer)
             SWSS_LOG_INFO("Received port %s state update", alias.c_str());
 
             string lag;
-            if (!isPortEnslaved(alias) && findPortMaster(lag, alias))
+            if (findPortMaster(lag, alias))
             {
                 if (addLagMember(lag, alias) == task_need_retry)
                 {
@@ -429,6 +429,13 @@ bool TeamMgr::removeLag(const string &alias)
 task_process_status TeamMgr::addLagMember(const string &lag, const string &member)
 {
     SWSS_LOG_ENTER();
+
+    // If port is already enslaved, ignore this operation
+    // TODO: check the current master if it is the same as to be configured
+    if (isPortEnslaved(member))
+    {
+        return task_ignore;
+    }
 
     stringstream cmd;
     string res;

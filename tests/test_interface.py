@@ -214,8 +214,6 @@ class TestLagRouterInterfaceIpv4(object):
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
-    # TODO: below three functions will be replaced with configuration
-    # database updates after the future changes of the lagmgrd
     def create_port_channel(self, dvs, alias):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
         fvs = swsscommon.FieldValuePairs([("admin_status", "up"),

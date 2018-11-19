@@ -741,7 +741,8 @@ def test_OrchagentWarmRestartReadyCheck(dvs, testlog):
     assert result == "RESTARTCHECK failed\n"
 
     # Cleaning previously pushed route-entry to ease life of subsequent testcases.
-    del_entry_tbl(appl_db, swsscommon.APP_ROUTE_TABLE_NAME, "2.2.2.0/24")
+    ps._del("2.2.2.0/24")
+    time.sleep(1)
 
     # recover for test cases after this one.
     dvs.stop_swss()
@@ -1521,7 +1522,8 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
         dvs.runcmd("ip -6 addr add {}00::1/64 dev Ethernet{}".format(i*4,i*4))
         dvs.servers[i].runcmd("ip link set up dev eth0")
         dvs.servers[i].runcmd("ip addr flush dev eth0")
-        result = dvs.servers[i].runcmd_output("ifconfig eth0 | grep HWaddr | awk '{print $NF}'")
+        #result = dvs.servers[i].runcmd_output("ifconfig eth0 | grep HWaddr | awk '{print $NF}'")
+        result = dvs.servers[i].runcmd_output("cat /sys/class/net/eth0/address")
         macs.append(result.strip())
 
     #
