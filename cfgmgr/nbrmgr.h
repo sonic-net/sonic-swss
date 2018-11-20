@@ -27,6 +27,7 @@ private:
     void doTask(Consumer &consumer);
 
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateIntfTable;
+    struct nl_sock *m_nl_sock;
 };
 
 }

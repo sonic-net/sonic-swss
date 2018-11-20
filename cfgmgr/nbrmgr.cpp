@@ -16,27 +16,29 @@ using namespace swss;
 #define VLAN_PREFIX "Vlan"
 #define LAG_PREFIX  "PortChannel"
 
-static bool send_message(struct nl_msg *msg)
+static bool send_message(struct nl_sock *sk, struct nl_msg *msg)
 {
-    struct nl_sock *sk = nl_socket_alloc();
-    if (!sk)
-    {
-        SWSS_LOG_ERROR("Netlink socket alloc failed");
-        return false;
-    }
+    bool rc = false;
+    int err = 0;
 
-    nl_connect(sk, NETLINK_ROUTE);
-    bool rc = true;
-
-    if (nl_send_auto(sk, msg) < 0)
+    do
     {
-        SWSS_LOG_ERROR("Netlink send message failed");
-        rc = false;
-    }
+        if (!sk)
+        {
+            SWSS_LOG_ERROR("Netlink socket null pointer");
+            break;
+        }
+
+        if ((err = nl_send_auto(sk, msg)) < 0)
+        {
+            SWSS_LOG_ERROR("Netlink send message failed, error '%s'", nl_geterror(err));
+            break;
+        }
+
+        rc = true;
+    } while(0);
 
     nlmsg_free(msg);
-    nl_socket_free(sk);
-
     return rc;
 }
 
@@ -47,7 +49,17 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME)
 {
+    int err = 0;
 
+    m_nl_sock = nl_socket_alloc();
+    if (!m_nl_sock)
+    {
+        SWSS_LOG_ERROR("Netlink socket alloc failed");
+    }
+    else if ((err = nl_connect(m_nl_sock, NETLINK_ROUTE)) < 0)
+    {
+        SWSS_LOG_ERROR("Netlink socket connect failed, error '%s'", nl_geterror(err));
+    }
 }
 
 bool NbrMgr::isIntfStateOk(const string &alias)
@@ -92,10 +104,23 @@ bool NbrMgr::setNeighbor(const string& alias, const IpAddress& ip, const MacAddr
 
     auto flags = (NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE);
 
-    nlmsg_put(msg, NL_AUTO_PORT, NL_AUTO_SEQ, RTM_NEWNEIGH, 0, flags);
+    struct nlmsghdr *hdr = nlmsg_put(msg, NL_AUTO_PORT, NL_AUTO_SEQ, RTM_NEWNEIGH, 0, flags);
+    if (!hdr)
+    {
+        SWSS_LOG_ERROR("Netlink message header alloc failed for '%s'", ip.to_string().c_str());
+        nlmsg_free(msg);
+        return false;
+    }
 
     struct ndmsg *nd_msg = static_cast<struct ndmsg *>
                            (nlmsg_reserve(msg, sizeof(struct ndmsg), NLMSG_ALIGNTO));
+    if (!nd_msg)
+    {
+        SWSS_LOG_ERROR("Netlink ndmsg reserve failed for '%s'", ip.to_string().c_str());
+        nlmsg_free(msg);
+        return false;
+    }
+
     memset(nd_msg, 0, sizeof(struct ndmsg));
 
     nd_msg->ndm_ifindex = if_nametoindex(alias.c_str());
@@ -104,6 +129,12 @@ bool NbrMgr::setNeighbor(const string& alias, const IpAddress& ip, const MacAddr
 
     struct rtattr *rta = static_cast<struct rtattr *>
                          (nlmsg_reserve(msg, sizeof(struct rtattr) + addr_len, NLMSG_ALIGNTO));
+    if (!rta)
+    {
+        SWSS_LOG_ERROR("Netlink rtattr (IP) failed for '%s'", ip.to_string().c_str());
+        nlmsg_free(msg);
+        return false;
+    }
 
     rta->rta_type = NDA_DST;
     rta->rta_len = static_cast<short>(RTA_LENGTH(addr_len));
@@ -143,13 +174,19 @@ bool NbrMgr::setNeighbor(const string& alias, const IpAddress& ip, const MacAddr
 
         struct rtattr *rta = static_cast<struct rtattr *>
                              (nlmsg_reserve(msg, sizeof(struct rtattr) + mac_len, NLMSG_ALIGNTO));
+        if (!rta)
+        {
+            SWSS_LOG_ERROR("Netlink rtattr (MAC) failed for '%s'", ip.to_string().c_str());
+            nlmsg_free(msg);
+            return false;
+        }
 
         rta->rta_type = NDA_LLADDR;
         rta->rta_len = static_cast<short>(RTA_LENGTH(mac_len));
         memcpy(RTA_DATA(rta), mac_addr, mac_len);
     }
 
-    return send_message(msg);
+    return send_message(m_nl_sock, msg);
 }
 
 void NbrMgr::doTask(Consumer &consumer)
