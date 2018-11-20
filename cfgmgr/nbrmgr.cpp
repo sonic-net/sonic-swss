@@ -13,12 +13,32 @@
 
 using namespace swss;
 
-const int IP4_ADDR_LEN  = 4;
-const int IP6_ADDR_LEN  = 16;
-const int NL_MSG_BUF_SZ = 512;
-
 #define VLAN_PREFIX "Vlan"
 #define LAG_PREFIX  "PortChannel"
+
+static bool send_message(struct nl_msg *msg)
+{
+    struct nl_sock *sk = nl_socket_alloc();
+    if (!sk)
+    {
+        SWSS_LOG_ERROR("Netlink socket alloc failed");
+        return false;
+    }
+
+    nl_connect(sk, NETLINK_ROUTE);
+    bool rc = true;
+
+    if (nl_send_auto(sk, msg) < 0)
+    {
+        SWSS_LOG_ERROR("Netlink send message failed");
+        rc = false;
+    }
+
+    nlmsg_free(msg);
+    nl_socket_free(sk);
+
+    return rc;
+}
 
 NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
@@ -59,77 +79,31 @@ bool NbrMgr::isIntfStateOk(const string &alias)
     return false;
 }
 
-bool NbrMgr::sendMsg(struct nlmsghdr *msg)
+bool NbrMgr::setNeighbor(const string& alias, const IpAddress& ip, const MacAddress& mac)
 {
     SWSS_LOG_ENTER();
 
-    int sk = socket(AF_NETLINK, SOCK_RAW, NETLINK_ROUTE);
-    if (sk < 0)
+    struct nl_msg *msg = nlmsg_alloc();
+    if (!msg)
     {
-        SWSS_LOG_ERROR("Socket create error");
+        SWSS_LOG_ERROR("Netlink message alloc failed for '%s'", ip.to_string().c_str());
         return false;
     }
 
-    struct sockaddr_nl nl_addr ;
-    memset(&nl_addr, 0, sizeof(nl_addr));
+    auto flags = (NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE);
 
-    nl_addr.nl_family = AF_NETLINK;
+    nlmsg_put(msg, NL_AUTO_PORT, NL_AUTO_SEQ, RTM_NEWNEIGH, 0, flags);
 
-    struct iovec iov[1] =
-    {
-        {
-          .iov_base = msg,
-          .iov_len = msg->nlmsg_len
-        }
-    };
-
-    struct msghdr msg_hdr =
-    {
-        .msg_name = &nl_addr,
-        .msg_namelen = sizeof(nl_addr),
-        .msg_iov = iov,
-        .msg_iovlen = 1,
-        .msg_control = NULL,
-        .msg_controllen = 0,
-        .msg_flags =0
-    };
-
-    if (sendmsg(sk, &msg_hdr, 0) != (msg->nlmsg_len))
-    {
-        SWSS_LOG_ERROR("Error sending message to kernel");
-        close(sk);
-        return false;
-    }
-
-    close(sk);
-
-    SWSS_LOG_INFO("Neighbor add msg sent to kernel");
-    return true;
-}
-
-bool NbrMgr::setNeighbor(const string& alias, IpAddress& ip, MacAddress& mac)
-{
-    SWSS_LOG_ENTER();
-
-    char m_buf[NL_MSG_BUF_SZ];
-    memset(m_buf, 0, sizeof(struct nlmsghdr));
-
-    auto alloc_fn = [&] (struct nlmsghdr *msg, uint32_t len) {
-        auto *tail = (void *) (((char*)msg) + NLMSG_ALIGN(msg->nlmsg_len));;
-        msg->nlmsg_len = NLMSG_ALIGN(msg->nlmsg_len) + RTA_ALIGN(len);
-        return tail;
-    };
-
-    struct nlmsghdr *nl_msg = (struct nlmsghdr *) alloc_fn((struct nlmsghdr *)m_buf, sizeof(struct nlmsghdr));
-    struct ndmsg *nd_msg = (struct ndmsg *) alloc_fn(nl_msg, sizeof(struct ndmsg));
-
+    struct ndmsg *nd_msg = static_cast<struct ndmsg *>
+                           (nlmsg_reserve(msg, sizeof(struct ndmsg), NLMSG_ALIGNTO));
     memset(nd_msg, 0, sizeof(struct ndmsg));
 
     nd_msg->ndm_ifindex = if_nametoindex(alias.c_str());
 
-    int addr_len = ip.isV4()?IP4_ADDR_LEN : IP6_ADDR_LEN;
+    auto addr_len = ip.isV4()? sizeof(struct in_addr) : sizeof(struct in6_addr);
 
-    struct rtattr *rta = (struct rtattr *) alloc_fn(nl_msg, uint32_t(RTA_LENGTH(addr_len)));
+    struct rtattr *rta = static_cast<struct rtattr *>
+                         (nlmsg_reserve(msg, sizeof(struct rtattr) + addr_len, NLMSG_ALIGNTO));
 
     rta->rta_type = NDA_DST;
     rta->rta_len = static_cast<short>(RTA_LENGTH(addr_len));
@@ -166,16 +140,16 @@ bool NbrMgr::setNeighbor(const string& alias, IpAddress& ip, MacAddress& mac)
 
         auto mac_len = ETHER_ADDR_LEN;
         auto mac_addr = mac.getMac();
-        struct rtattr *rta = (struct rtattr *) alloc_fn(nl_msg, uint32_t(RTA_LENGTH(mac_len)));
+
+        struct rtattr *rta = static_cast<struct rtattr *>
+                             (nlmsg_reserve(msg, sizeof(struct rtattr) + mac_len, NLMSG_ALIGNTO));
+
         rta->rta_type = NDA_LLADDR;
         rta->rta_len = static_cast<short>(RTA_LENGTH(mac_len));
         memcpy(RTA_DATA(rta), mac_addr, mac_len);
     }
 
-    nl_msg->nlmsg_flags = (NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE);
-    nl_msg->nlmsg_type = RTM_NEWNEIGH;
-
-    return sendMsg(nl_msg);
+    return send_message(msg);
 }
 
 void NbrMgr::doTask(Consumer &consumer)

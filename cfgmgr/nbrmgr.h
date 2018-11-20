@@ -22,8 +22,7 @@ public:
 
 private:
     bool isIntfStateOk(const string &alias);
-    bool setNeighbor(const string& alias, IpAddress& ip, MacAddress& mac);
-    bool sendMsg(struct nlmsghdr *msg);
+    bool setNeighbor(const string& alias, const IpAddress& ip, const MacAddress& mac);
 
     void doTask(Consumer &consumer);
 
