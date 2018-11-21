@@ -630,6 +630,35 @@ Equivalent RedisDB entry:
     12) "0"
     127.0.0.1:6379>
 
+### VXLAN\_TUNNEL\_MAP
+    ;Stores vxlan tunnel map configuration. Defines mapping between vxlan vni and vrf
+
+    key       = VXLAN_TUNNEL_MAP:tunnel_name:tunnel_map_name
+                                                ; tunnel_name is a reference to created vxlan tunnel
+                                                ; tunnel_map_name is an arbitrary name of the map
+    vni       = 1*8DIGIT                        ; vni id, defined for tunnel map
+    vrf       = vrf_name                        ; name of the vrf
+
+### VNET\_ROUTE\_TUNNEL_TABLE
+    ;Defines schema for VNet Route tunnel table attributes
+
+    key                        = VNET_ROUTE_TUNNEL_TABLE:vnet_name:prefix
+                                                ; Vnet route tunnel table with prefix
+    ; field                      value
+    endpoint                   = IP             ; Host VM IP address
+    mac_address                = 12HEXDIG       ; Inner dest mac in encapsulated packet (Optional)
+    vxlanid                    = 1*8DIGIT       ; VNI value in encapsulated packet (Optional)
+
+    ;value annotations
+    vnet_name                  = 1*16VCHAR
+
+### VNET\_ROUTE_TABLE
+    ;Defines schema for VNet Route table attributes
+    key                        = VNET_ROUTE_TABLE:vnet_name:prefix
+                                                ; Vnet route table with prefix
+    ;field                       value
+    nexthop                    = IP             ; Nexthop IP address (Optional)
+    ifname                     = ifname         ; Interface name
 
 ## Configuration DB schema
 
