@@ -27,6 +27,14 @@ class TestPortChannelAcl(object):
             tbl.set(lag + "|" + member, fvs)
             time.sleep(1)
 
+    def activate_port_channel_members(self, dvs, lag, members):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
+        fvs = swsscommon.FieldValuePairs([("status", "enabled")])
+
+        for member in members:
+            tbl.set(lag + ":" + member, fvs)
+            time.sleep(1)
+
     def remove_port_channel_members(self, dvs, lag, members):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
         for member in members:
@@ -59,7 +67,7 @@ class TestPortChannelAcl(object):
         tbl._del(table_name + "|" + rule_name, fvs)
         time.sleep(1)
 
-    def check_asic_table(self, dvs):
+    def check_asic_table_existed(self, dvs):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
         lag = tbl.getKeys()[0]
         (status, fvs) = tbl.get(lag)
@@ -106,6 +114,14 @@ class TestPortChannelAcl(object):
         (status, fvs) = tbl.get(table_id)
         assert status == True
 
+    def check_asic_table_absent(self, dvs):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
+        acl_tables = tbl.getKeys()
+        for key in dvs.asicdb.default_acl_tables:
+            assert key in acl_tables
+        acl_tables = [k for k in acl_tables if k not in dvs.asicdb.default_acl_tables]
+
+        assert len(acl_tables) == 0
 
     # Frist create port channel
     # Second create ACL table
@@ -119,7 +135,7 @@ class TestPortChannelAcl(object):
         self.create_acl_table(dvs, "LAG_ACL_TABLE", "PortChannel01")
 
         # check ASIC table
-        self.check_asic_table(dvs)
+        self.check_asic_table_existed(dvs)
 
         # remove ACL table
         self.remove_acl_table(dvs, "LAG_ACL_TABLE")
@@ -139,12 +155,38 @@ class TestPortChannelAcl(object):
         self.create_port_channel(dvs, "PortChannel01")
 
         # check ASIC table
-        self.check_asic_table(dvs)
+        self.check_asic_table_existed(dvs)
 
         # TODO: right now it is not supported to remove port before remove ACL
         # table. Will swap the order after having it supported
         # remove ACL table
         self.remove_acl_table(dvs, "LAG_ACL_TABLE")
+
+        # remove port channel
+        self.remove_port_channel(dvs, "PortChannel01")
+
+    # ACL table cannot be created upon a member port of a port channel
+    def test_AclOnPortChannelMember(self, dvs):
+        self.setup_db(dvs)
+
+        # create port channel
+        self.create_port_channel(dvs, "PortChannel01")
+
+        # add port channel member
+        self.add_port_channel_members(dvs, "PortChannel01", ["Ethernet0", "Ethernet4"])
+        self.activate_port_channel_members(dvs, "PortChannel01", ["Ethernet0", "Ethernet4"])
+
+        # create ACL table
+        self.create_acl_table(dvs, "LAG_ACL_TABLE", "Ethernet0")
+
+        # check ASIC table
+        self.check_asic_table_absent(dvs)
+
+        # remove_acl_table
+        self.remove_acl_table(dvs, "LAG_ACL_TABLE")
+
+        # remove port channel member
+        self.remove_port_channel_members(dvs, "PortChannel01", ["Ethernet0", "Ethernet4"])
 
         # remove port channel
         self.remove_port_channel(dvs, "PortChannel01")
