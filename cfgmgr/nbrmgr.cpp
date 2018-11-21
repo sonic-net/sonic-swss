@@ -204,6 +204,7 @@ void NbrMgr::doTask(Consumer &consumer)
         IpAddress ip(keys[1]);
         string op = kfvOp(t);
         MacAddress mac;
+        bool invalid_mac = false;
 
         for (auto idx : data)
         {
@@ -211,8 +212,23 @@ void NbrMgr::doTask(Consumer &consumer)
             const auto &value = fvValue(idx);
             if (field == "neigh")
             {
-                mac = value;
+                try
+                {
+                    mac = value;
+                }
+                catch (const std::invalid_argument& e)
+                {
+                    SWSS_LOG_ERROR("Invalid Mac addr '%s' for '%s'", value.c_str(), kfvKey(t).c_str());
+                    invalid_mac = true;
+                    break;
+                }
             }
+        }
+
+        if (invalid_mac)
+        {
+            it = consumer.m_toSync.erase(it);
+            continue;
         }
 
         if (op == SET_COMMAND)
