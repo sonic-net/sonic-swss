@@ -102,8 +102,8 @@ int main(int argc, char **argv)
 
     SWSS_LOG_ENTER();
 
-    WarmStart::initialize("orchagent");
-    WarmStart::checkWarmStart("orchagent");
+    WarmStart::initialize("orchagent", "swss");
+    WarmStart::checkWarmStart("orchagent", "swss");
 
     if (signal(SIGHUP, sighup_handler) == SIG_ERR)
     {

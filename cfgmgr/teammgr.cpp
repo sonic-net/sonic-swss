@@ -1,12 +1,19 @@
+#include <unistd.h>
+
 #include "exec.h"
 #include "teammgr.h"
 #include "logger.h"
 #include "shellcmd.h"
 #include "tokenize.h"
+#include "warm_restart.h"
 
 #include <algorithm>
 #include <sstream>
 #include <thread>
+
+#include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
 
 using namespace std;
 using namespace swss;
@@ -182,7 +189,7 @@ void TeamMgr::doLagMemberTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
 
-        auto tokens = tokenize(kfvKey(t), '|');
+        auto tokens = tokenize(kfvKey(t), config_db_key_delimiter);
         auto lag = tokens[0];
         auto member = tokens[1];
 
@@ -196,7 +203,11 @@ void TeamMgr::doLagMemberTask(Consumer &consumer)
                 continue;
             }
 
-            addLagMember(lag, member);
+            if (addLagMember(lag, member) == task_need_retry)
+            {
+                it++;
+                continue;
+            }
         }
         else if (op == DEL_COMMAND)
         {
@@ -205,6 +216,59 @@ void TeamMgr::doLagMemberTask(Consumer &consumer)
 
         it = consumer.m_toSync.erase(it);
     }
+}
+
+bool TeamMgr::checkPortIffUp(const string &port)
+{
+    SWSS_LOG_ENTER();
+
+    struct ifreq ifr;
+    memcpy(ifr.ifr_name, port.c_str(), strlen(port.c_str()));
+    ifr.ifr_name[strlen(port.c_str())] = 0;
+
+    int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+    if (fd == -1 || ioctl(fd, SIOCGIFFLAGS, &ifr) == -1)
+    {
+        SWSS_LOG_ERROR("Failed to get port %s flags", port.c_str());
+        return false;
+    }
+
+    SWSS_LOG_INFO("Get port %s flags %i", port.c_str(), ifr.ifr_flags);
+
+    return ifr.ifr_flags & IFF_UP;
+}
+
+bool TeamMgr::isPortEnslaved(const string &port)
+{
+    SWSS_LOG_ENTER();
+
+    struct stat buf;
+    string path = "/sys/class/net/" + port + "/master";
+
+    return lstat(path.c_str(), &buf) == 0;
+}
+
+bool TeamMgr::findPortMaster(string &master, const string &port)
+{
+    SWSS_LOG_ENTER();
+
+    vector<string> keys;
+    m_cfgLagMemberTable.getKeys(keys);
+
+    for (auto key: keys)
+    {
+        auto tokens = tokenize(key, config_db_key_delimiter);
+        auto lag = tokens[0];
+        auto member = tokens[1];
+
+        if (port == member)
+        {
+            master = lag;
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // When a port gets removed and created again, notification is triggered
@@ -226,21 +290,13 @@ void TeamMgr::doPortUpdateTask(Consumer &consumer)
         {
             SWSS_LOG_INFO("Received port %s state update", alias.c_str());
 
-            vector<string> keys;
-            m_cfgLagMemberTable.getKeys(keys);
-
-            for (auto key : keys)
+            string lag;
+            if (findPortMaster(lag, alias))
             {
-                auto tokens = tokenize(key, '|');
-
-                auto lag = tokens[0];
-                auto member = tokens[1];
-
-                // Find the master of the port
-                if (alias == member)
+                if (addLagMember(lag, alias) == task_need_retry)
                 {
-                    addLagMember(lag, alias);
-                    break;
+                    it++;
+                    continue;
                 }
             }
         }
@@ -291,7 +347,7 @@ bool TeamMgr::setLagMtu(const string &alias, const string &mtu)
 
     for (auto key : keys)
     {
-        auto tokens = tokenize(key, '|');
+        auto tokens = tokenize(key, config_db_key_delimiter);
         auto lag = tokens[0];
         auto member = tokens[1];
 
@@ -336,7 +392,15 @@ bool TeamMgr::addLag(const string &alias, int min_links, bool fallback)
     SWSS_LOG_INFO("Port channel %s teamd configuration: %s",
             alias.c_str(), conf.str().c_str());
 
-    cmd << TEAMD_CMD << " -r -t " << alias << " -c " << conf.str() << " -d";
+    string warmstart_flag = WarmStart::isWarmStart() ? " -w -o " : " -r ";
+    const string dump_path = "/var/warmboot/teamd/";
+
+    cmd << TEAMD_CMD
+        << warmstart_flag
+        << " -t " << alias
+        << " -c " << conf.str()
+        << " -L " << dump_path
+        << " -d";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     SWSS_LOG_NOTICE("Start port channel %s with teamd", alias.c_str());
@@ -362,9 +426,16 @@ bool TeamMgr::removeLag(const string &alias)
 // Once a port is enslaved into a port channel, the port's MTU will
 // be inherited from the master's MTU while the port's admin status
 // will still be controlled separately.
-bool TeamMgr::addLagMember(const string &lag, const string &member)
+task_process_status TeamMgr::addLagMember(const string &lag, const string &member)
 {
     SWSS_LOG_ENTER();
+
+    // If port is already enslaved, ignore this operation
+    // TODO: check the current master if it is the same as to be configured
+    if (isPortEnslaved(member))
+    {
+        return task_ignore;
+    }
 
     stringstream cmd;
     string res;
@@ -373,7 +444,29 @@ bool TeamMgr::addLagMember(const string &lag, const string &member)
     // ip link set dev <member> down;
     // teamdctl <port_channel_name> port add <member>;
     cmd << IP_CMD << " link set dev " << member << " down; ";
-    cmd << TEAMDCTL_CMD << " " << lag << " port add " << member << "; ";
+    cmd << TEAMDCTL_CMD << " " << lag << " port add " << member;
+
+    if (exec(cmd.str(), res) != 0)
+    {
+        // teamdctl port add command will fail when the member port is not
+        // set to admin status down; it is possible that some other processes
+        // or users (e.g. portmgrd) are executing the command to bring up the
+        // member port while adding this port into the port channel. This piece
+        // of code will check if the port is set to admin status up. If yes,
+        // it will retry to add the port into the port channel.
+        if (checkPortIffUp(member))
+        {
+            SWSS_LOG_INFO("Failed to add %s to port channel %s, retry...",
+                    member.c_str(), lag.c_str());
+            return task_need_retry;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to add %s to port channel %s",
+                    member.c_str(), lag.c_str());
+            return task_failed;
+        }
+    }
 
     vector<FieldValueTuple> fvs;
     m_cfgPortTable.get(member, fvs);
@@ -403,6 +496,7 @@ bool TeamMgr::addLagMember(const string &lag, const string &member)
     }
 
     // ip link set dev <member> [up|down]
+    cmd.str(string());
     cmd << IP_CMD << " link set dev " << member << " " << admin_status;
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
@@ -415,7 +509,7 @@ bool TeamMgr::addLagMember(const string &lag, const string &member)
 
     SWSS_LOG_NOTICE("Add %s to port channel %s", member.c_str(), lag.c_str());
 
-    return true;
+    return task_success;
 }
 
 // Once a port is removed from from the master, both the admin status and the

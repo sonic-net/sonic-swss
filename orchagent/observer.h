@@ -45,7 +45,6 @@ protected:
 
     virtual void notify(SubjectType type, void *cntx)
     {
-
         for (auto iter: m_observers)
         {
             iter->update(type, cntx);

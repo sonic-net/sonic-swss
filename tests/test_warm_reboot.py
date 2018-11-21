@@ -5,12 +5,14 @@ import time
 import json
 
 # Get restore count of all processes supporting warm restart
-def swss_get_RestoreCount(state_db):
+def swss_get_RestoreCount(dvs, state_db):
     restore_count = {}
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
     keys = warmtbl.getKeys()
     assert  len(keys) !=  0
     for key in keys:
+        if key not in dvs.swssd:
+            continue
         (status, fvs) = warmtbl.get(key)
         assert status == True
         for fv in fvs:
@@ -20,12 +22,14 @@ def swss_get_RestoreCount(state_db):
     return restore_count
 
 # function to check the restore count incremented by 1 for all processes supporting warm restart
-def swss_check_RestoreCount(state_db, restore_count):
+def swss_check_RestoreCount(dvs, state_db, restore_count):
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
     keys = warmtbl.getKeys()
     print(keys)
     assert  len(keys) > 0
     for key in keys:
+        if key not in dvs.swssd:
+            continue
         (status, fvs) = warmtbl.get(key)
         assert status == True
         for fv in fvs:
@@ -144,7 +148,7 @@ def test_PortSyncdWarmRestart(dvs, testlog):
     (status, fvs) = neighTbl.get("Ethernet20:11.0.0.10")
     assert status == True
 
-    restore_count = swss_get_RestoreCount(state_db)
+    restore_count = swss_get_RestoreCount(dvs, state_db)
 
     # restart portsyncd
     dvs.runcmd(['sh', '-c', 'pkill -x portsyncd'])
@@ -255,7 +259,7 @@ def test_VlanMgrdWarmRestart(dvs, testlog):
     (exitcode, bv_before) = dvs.runcmd("bridge vlan")
     print(bv_before)
 
-    restore_count = swss_get_RestoreCount(state_db)
+    restore_count = swss_get_RestoreCount(dvs, state_db)
 
     dvs.runcmd(['sh', '-c', 'pkill -x vlanmgrd'])
 
@@ -289,6 +293,12 @@ def stop_neighsyncd(dvs):
 def start_neighsyncd(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start neighsyncd'])
 
+def stop_restore_neighbors(dvs):
+    dvs.runcmd(['sh', '-c', 'pkill -x restore_neighbors'])
+
+def start_restore_neighbors(dvs):
+    dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
+
 def check_no_neighsyncd_timer(dvs):
     (exitcode, string) = dvs.runcmd(['sh', '-c', 'grep getWarmStartTimer /var/log/syslog | grep neighsyncd | grep invalid'])
     assert string.strip() != ""
@@ -297,13 +307,37 @@ def check_neighsyncd_timer(dvs, timer_value):
     (exitcode, num) = dvs.runcmd(['sh', '-c', "grep getWarmStartTimer /var/log/syslog | grep neighsyncd | tail -n 1 | rev | cut -d ' ' -f 1 | rev"])
     assert num.strip() == timer_value
 
+def check_redis_neigh_entries(dvs, neigh_tbl, number):
+    (exitcode, lb_output) = dvs.runcmd(['sh', '-c', "redis-cli keys NEIGH_TABLE:lo* | grep NEI | wc -l"])
+    lb_num = int(lb_output.strip())
+    assert len(neigh_tbl.getKeys()) == number + lb_num
+
+def check_kernel_reachable_neigh_num(dvs, number):
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "ip neigh show nud reachable| grep -v 'dev lo' | wc -l"])
+    neigh_num = int(output.strip())
+    assert neigh_num == number
+
+def check_kernel_reachable_v4_neigh_num(dvs, number):
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "ip -4 neigh show nud reachable | grep -v 'dev lo' | wc -l"])
+    neigh_num = int(output.strip())
+    assert neigh_num == number
+
+def check_kernel_reachable_v6_neigh_num(dvs, number):
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "ip -6 neigh show nud reachable | grep -v 'dev lo' | wc -l"])
+    neigh_num = int(output.strip())
+    assert neigh_num == number
+
+def kernel_restore_neighs_done(restoretbl):
+    keys = restoretbl.getKeys()
+    return (len(keys) > 0)
+
 # function to check neighbor entry reconciliation status written in syslog
 def check_syslog_for_neighbor_entry(dvs, marker, new_cnt, delete_cnt, iptype):
     # check reconciliation results (new or delete entries) for ipv4 and ipv6
     if iptype == "ipv4" or iptype == "ipv6":
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep neighsyncd | grep cache-state:NEW | grep -i %s | wc -l" % (marker, iptype)])
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep neighsyncd | grep cache-state:NEW | grep -i %s | grep -v 'lo:'| wc -l" % (marker, iptype)])
         assert num.strip() == str(new_cnt)
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep neighsyncd | grep -E \"cache-state:(DELETE|STALE)\" | grep -i %s | wc -l" % (marker, iptype)])
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep neighsyncd | grep -E \"cache-state:(DELETE|STALE)\" | grep -i %s | grep -v 'lo:' | wc -l" % (marker, iptype)])
         assert num.strip() == str(delete_cnt)
     else:
         assert "iptype is unknown" == ""
@@ -323,6 +357,12 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     # create neighbor entries (4 ipv4 and 4 ip6, two each on each interface) in linux kernel
     intfs = ["Ethernet24", "Ethernet28"]
+
+    for intf in intfs:
+        # set timeout to be the same as real HW
+        dvs.runcmd("sysctl -w net.ipv4.neigh.{}.base_reachable_time_ms=1800000".format(intf))
+        dvs.runcmd("sysctl -w net.ipv6.neigh.{}.base_reachable_time_ms=1800000".format(intf))
+
     #enable ipv6 on docker
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
 
@@ -338,10 +378,10 @@ def test_swss_neighbor_syncup(dvs, testlog):
     macs = ["00:00:00:00:24:02", "00:00:00:00:24:03", "00:00:00:00:28:02", "00:00:00:00:28:03"]
 
     for i in range(len(ips)):
-        dvs.runcmd("ip neigh add {} dev {} lladdr {}".format(ips[i], intfs[i%2], macs[i]))
+        dvs.runcmd("ip neigh add {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], macs[i]))
 
     for i in range(len(v6ips)):
-        dvs.runcmd("ip -6 neigh add {} dev {} lladdr {}".format(v6ips[i], intfs[i%2], macs[i]))
+        dvs.runcmd("ip -6 neigh add {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], macs[i]))
 
     time.sleep(1)
 
@@ -350,7 +390,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
     tbl = swsscommon.Table(db, "NEIGH_TABLE")
 
     for i in range(len(ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
         assert status == True
 
         for v in fvs:
@@ -360,7 +400,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 assert v[1] == "IPv4"
 
     for i in range(len(v6ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], v6ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
         assert status == True
 
         for v in fvs:
@@ -376,18 +416,20 @@ def test_swss_neighbor_syncup(dvs, testlog):
     #
 
     # get restore_count
-    restore_count = swss_get_RestoreCount(state_db)
+    restore_count = swss_get_RestoreCount(dvs, state_db)
 
     # stop neighsyncd and sairedis.rec
     stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
     marker = dvs.add_log_marker()
     pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
     start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
     time.sleep(10)
 
     # Check the neighbor entries are still in appDB correctly
     for i in range(len(ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
         assert status == True
 
         for v in fvs:
@@ -397,7 +439,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 assert v[1] == "IPv4"
 
     for i in range(len(v6ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], v6ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
         assert status == True
 
         for v in fvs:
@@ -425,28 +467,30 @@ def test_swss_neighbor_syncup(dvs, testlog):
     #       just that if we want to add the same neighbor again, use "change" instead of "add"
 
     # get restore_count
-    restore_count = swss_get_RestoreCount(state_db)
+    restore_count = swss_get_RestoreCount(dvs, state_db)
 
     # stop neighsyncd
     stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
     marker = dvs.add_log_marker()
 
     # delete even nummber of ipv4/ipv6 neighbor entries from each interface
     for i in range(0, len(ips), 2):
-        dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i%2]))
+        dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i/2]))
 
     for i in range(0, len(v6ips), 2):
-        dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i%2]))
+        dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i/2]))
 
     # start neighsyncd again
     start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
     time.sleep(10)
 
     # check ipv4 and ipv6 neighbors
     for i in range(len(ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
         #should not see deleted neighbor entries
-        if i %2 == 0:
+        if i % 2 == 0:
             assert status == False
             continue
         else:
@@ -460,9 +504,9 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 assert v[1] == "IPv4"
 
     for i in range(len(v6ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], v6ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
         #should not see deleted neighbor entries
-        if i %2 == 0:
+        if i % 2 == 0:
             assert status == False
             continue
         else:
@@ -490,16 +534,17 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     #
     # Testcase 4:
-    # Stop neighsyncd, add even nummber of ipv4/ipv6 neighbor entries to each interface again, 
+    # Stop neighsyncd, add even nummber of ipv4/ipv6 neighbor entries to each interface again,
     # Start neighsyncd
     # The neighsyncd is supposed to sync up the entries from kernel after warm restart
     # Check the timer is not retrieved from configDB since it is not configured
 
     # get restore_count
-    restore_count = swss_get_RestoreCount(state_db)
+    restore_count = swss_get_RestoreCount(dvs, state_db)
 
     # stop neighsyncd
     stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
     marker = dvs.add_log_marker()
 
     # add even nummber of ipv4/ipv6 neighbor entries to each interface
@@ -507,21 +552,22 @@ def test_swss_neighbor_syncup(dvs, testlog):
     for i in range(0, len(ips), 2):
         (rc, output) = dvs.runcmd(['sh', '-c', "ip -4 neigh | grep {}".format(ips[i])])
         print output
-        if rc == 0:
-            dvs.runcmd("ip neigh change {} dev {} lladdr {}".format(ips[i], intfs[i%2], macs[i]))
+        if output:
+            dvs.runcmd("ip neigh change {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], macs[i]))
         else:
-            dvs.runcmd("ip neigh add {} dev {} lladdr {}".format(ips[i], intfs[i%2], macs[i]))
+            dvs.runcmd("ip neigh add {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], macs[i]))
 
     for i in range(0, len(v6ips), 2):
         (rc, output) = dvs.runcmd(['sh', '-c', "ip -6 neigh | grep {}".format(v6ips[i])])
         print output
-        if rc == 0:
-            dvs.runcmd("ip -6 neigh change {} dev {} lladdr {}".format(v6ips[i], intfs[i%2], macs[i]))
+        if output:
+            dvs.runcmd("ip -6 neigh change {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], macs[i]))
         else:
-            dvs.runcmd("ip -6 neigh add {} dev {} lladdr {}".format(v6ips[i], intfs[i%2], macs[i]))
+            dvs.runcmd("ip -6 neigh add {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], macs[i]))
 
     # start neighsyncd again
     start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
     time.sleep(10)
 
     # no neighsyncd timer configured
@@ -529,7 +575,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
 
     # check ipv4 and ipv6 neighbors, should see all neighbors
     for i in range(len(ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
         assert status == True
         for v in fvs:
             if v[0] == "neigh":
@@ -538,7 +584,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 assert v[1] == "IPv4"
 
     for i in range(len(v6ips)):
-        (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], v6ips[i]))
+        (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
         assert status == True
         for v in fvs:
             if v[0] == "neigh":
@@ -561,7 +607,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
     #
     # Testcase 5:
     # Even number of ip4/6 neigbors updated with new mac.
-    # Odd number of ipv4/6 neighbors removed and added to different interfaces.
+    # Odd number of ipv4/6 neighbors removed
     # neighbor syncd should sync it up after warm restart
     # include the timer settings in this testcase
 
@@ -571,32 +617,32 @@ def test_swss_neighbor_syncup(dvs, testlog):
     dvs.runcmd("config warm_restart neighsyncd_timer {}".format(timer_value))
 
     # get restore_count
-    restore_count = swss_get_RestoreCount(state_db)
+    restore_count = swss_get_RestoreCount(dvs, state_db)
 
     # stop neighsyncd
     stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
     marker = dvs.add_log_marker()
 
     # Even number of ip4/6 neigbors updated with new mac.
-    # Odd number of ipv4/6 neighbors removed and added to different interfaces.
+    # Odd number of ipv4/6 neighbors removed
     newmacs = ["00:00:00:01:12:02", "00:00:00:01:12:03", "00:00:00:01:16:02", "00:00:00:01:16:03"]
 
     for i in range(len(ips)):
         if i % 2 == 0:
-            dvs.runcmd("ip neigh change {} dev {} lladdr {}".format(ips[i], intfs[i%2], newmacs[i]))
+            dvs.runcmd("ip neigh change {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], newmacs[i]))
         else:
-            dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i%2]))
-            dvs.runcmd("ip neigh add {} dev {} lladdr {}".format(ips[i], intfs[1-i%2], macs[i]))
+            dvs.runcmd("ip neigh del {} dev {}".format(ips[i], intfs[i/2]))
 
     for i in range(len(v6ips)):
         if i % 2 == 0:
-            dvs.runcmd("ip -6 neigh change {} dev {} lladdr {}".format(v6ips[i], intfs[i%2], newmacs[i]))
+            dvs.runcmd("ip -6 neigh change {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], newmacs[i]))
         else:
-            dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i%2]))
-            dvs.runcmd("ip -6 neigh add {} dev {} lladdr {}".format(v6ips[i], intfs[1-i%2], macs[i]))
+            dvs.runcmd("ip -6 neigh del {} dev {}".format(v6ips[i], intfs[i/2]))
 
     # start neighsyncd again
     start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
     time.sleep(10)
 
     # timer is not expired yet, state should be "restored"
@@ -609,7 +655,7 @@ def test_swss_neighbor_syncup(dvs, testlog):
     # check ipv4 and ipv6 neighbors, should see all neighbors with updated info
     for i in range(len(ips)):
         if i % 2 == 0:
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
             assert status == True
             for v in fvs:
                 if v[0] == "neigh":
@@ -617,17 +663,12 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 if v[0] == "family":
                     assert v[1] == "IPv4"
         else:
-            (status, fvs) = tbl.get("{}:{}".format(intfs[1-i%2], ips[i]))
-            assert status == True
-            for v in fvs:
-                if v[0] == "neigh":
-                    assert v[1] == macs[i]
-                if v[0] == "family":
-                    assert v[1] == "IPv4"
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], ips[i]))
+            assert status == False
 
     for i in range(len(v6ips)):
         if i % 2 == 0:
-            (status, fvs) = tbl.get("{}:{}".format(intfs[i%2], v6ips[i]))
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
             assert status == True
             for v in fvs:
                 if v[0] == "neigh":
@@ -635,23 +676,18 @@ def test_swss_neighbor_syncup(dvs, testlog):
                 if v[0] == "family":
                     assert v[1] == "IPv6"
         else:
-            (status, fvs) = tbl.get("{}:{}".format(intfs[1-i%2], v6ips[i]))
-            assert status == True
-            for v in fvs:
-                if v[0] == "neigh":
-                    assert v[1] == macs[i]
-                if v[0] == "family":
-                    assert v[1] == "IPv6"
+            (status, fvs) = tbl.get("{}:{}".format(intfs[i/2], v6ips[i]))
+            assert status == False
 
     time.sleep(2)
 
     # check syslog and asic db for activities
-    # 4 news, 2 deletes for ipv4 and ipv6 each
-    # 4 create, 4 set, 4 removes for neighbor in asic db
-    check_syslog_for_neighbor_entry(dvs, marker, 4, 2, "ipv4")
-    check_syslog_for_neighbor_entry(dvs, marker, 4, 2, "ipv6")
+    # 2 news, 2 deletes for ipv4 and ipv6 each
+    # 4 set, 4 removes for neighbor in asic db
+    check_syslog_for_neighbor_entry(dvs, marker, 2, 2, "ipv4")
+    check_syslog_for_neighbor_entry(dvs, marker, 2, 2, "ipv6")
     (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
-    assert nadd == 8
+    assert nadd == 4
     assert ndel == 4
 
     # check restore Count
@@ -704,6 +740,10 @@ def test_OrchagentWarmRestartReadyCheck(dvs, testlog):
     (exitcode, result) =  dvs.runcmd("/usr/bin/orchagent_restart_check -n -s -w 500")
     assert result == "RESTARTCHECK failed\n"
 
+    # Cleaning previously pushed route-entry to ease life of subsequent testcases.
+    ps._del("2.2.2.0/24")
+    time.sleep(1)
+
     # recover for test cases after this one.
     dvs.stop_swss()
     dvs.start_swss()
@@ -719,7 +759,7 @@ def test_swss_port_state_syncup(dvs, testlog):
 
     tbl = swsscommon.Table(appl_db, swsscommon.APP_PORT_TABLE_NAME)
 
-    restore_count = swss_get_RestoreCount(state_db)
+    restore_count = swss_get_RestoreCount(dvs, state_db)
 
     # update port admin state
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
@@ -766,7 +806,7 @@ def test_swss_port_state_syncup(dvs, testlog):
     dvs.start_swss()
     time.sleep(10)
 
-    swss_check_RestoreCount(state_db, restore_count)
+    swss_check_RestoreCount(dvs, state_db, restore_count)
 
     for i in [0, 1, 2]:
         (status, fvs) = tbl.get("Ethernet%d" % (i * 4))
@@ -780,3 +820,945 @@ def test_swss_port_state_syncup(dvs, testlog):
             assert oper_status == "down"
         else:
             assert oper_status == "up"
+    #clean up arp
+    dvs.runcmd("arp -d 10.0.0.1")
+    dvs.runcmd("arp -d 10.0.0.3")
+    dvs.runcmd("arp -d 10.0.0.5")
+
+
+#############################################################################
+#                                                                           #
+#                        Routing Warm-Restart Testing                       #
+#                                                                           #
+#############################################################################
+
+
+def set_restart_timer(dvs, db, app_name, value):
+    create_entry_tbl(
+        db,
+        swsscommon.CFG_WARM_RESTART_TABLE_NAME, app_name,
+        [
+            (app_name + "_timer", value),
+        ]
+    )
+
+
+# Temporary instruction to activate warm_restart. To be deleted once equivalent CLI
+# function is pushed to sonic-utils.
+def enable_warmrestart(dvs, db, app_name):
+    create_entry_tbl(
+        db,
+        swsscommon.CFG_WARM_RESTART_TABLE_NAME, app_name,
+        [
+            ("enable", "true"),
+        ]
+    )
+
+
+################################################################################
+#
+# Routing warm-restart testcases
+#
+################################################################################
+
+def test_routing_WarmRestart(dvs, testlog):
+
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+    # Restart-timer to utilize during the following testcases
+    restart_timer = 10
+
+
+    #############################################################################
+    #
+    # Baseline configuration
+    #
+    #############################################################################
+
+
+    # Defining create neighbor entries (4 ipv4 and 4 ip6, two each on each interface) in linux kernel
+    intfs = ["Ethernet0", "Ethernet4", "Ethernet8"]
+
+    # Enable ipv6 on docker
+    dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
+
+    dvs.runcmd("ip -4 addr add 111.0.0.1/24 dev {}".format(intfs[0]))
+    dvs.runcmd("ip -6 addr add 1110::1/64 dev {}".format(intfs[0]))
+    dvs.runcmd("ip link set {} up".format(intfs[0]))
+
+    dvs.runcmd("ip -4 addr add 122.0.0.1/24 dev {}".format(intfs[1]))
+    dvs.runcmd("ip -6 addr add 1220::1/64 dev {}".format(intfs[1]))
+    dvs.runcmd("ip link set {} up".format(intfs[1]))
+
+    dvs.runcmd("ip -4 addr add 133.0.0.1/24 dev {}".format(intfs[2]))
+    dvs.runcmd("ip -6 addr add 1330::1/64 dev {}".format(intfs[2]))
+    dvs.runcmd("ip link set {} up".format(intfs[2]))
+
+    time.sleep(1)
+
+    #
+    # Setting peer's ip-addresses and associated neighbor-entries
+    #
+    ips = ["111.0.0.2", "122.0.0.2", "133.0.0.2"]
+    v6ips = ["1110::2", "1220::2", "1330::2"]
+    macs = ["00:00:00:00:11:02", "00:00:00:00:12:02", "00:00:00:00:13:02"]
+
+    for i in range(len(ips)):
+        dvs.runcmd("ip neigh add {} dev {} lladdr {}".format(ips[i], intfs[i%2], macs[i]))
+
+    for i in range(len(v6ips)):
+        dvs.runcmd("ip -6 neigh add {} dev {} lladdr {}".format(v6ips[i], intfs[i%2], macs[i]))
+
+    time.sleep(1)
+
+    #
+    # Defining baseline IPv4 non-ecmp route-entries
+    #
+    dvs.runcmd("ip route add 192.168.1.100/32 nexthop via 111.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.200/32 nexthop via 122.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.300/32 nexthop via 133.0.0.2")
+
+    #
+    # Defining baseline IPv4 ecmp route-entries
+    #
+    dvs.runcmd("ip route add 192.168.1.1/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.2/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2")
+
+    #
+    # Defining baseline IPv6 non-ecmp route-entries
+    #
+    dvs.runcmd("ip -6 route add fc00:11:11::1/128 nexthop via 1110::2")
+    dvs.runcmd("ip -6 route add fc00:12:12::1/128 nexthop via 1220::2")
+    dvs.runcmd("ip -6 route add fc00:13:13::1/128 nexthop via 1330::2")
+
+    #
+    # Defining baseline IPv6 ecmp route-entries
+    #
+    dvs.runcmd("ip -6 route add fc00:1:1::1/128 nexthop via 1110::2 nexthop via 1220::2 nexthop via 1330::2")
+    dvs.runcmd("ip -6 route add fc00:2:2::1/128 nexthop via 1110::2 nexthop via 1220::2 nexthop via 1330::2")
+    dvs.runcmd("ip -6 route add fc00:3:3::1/128 nexthop via 1110::2 nexthop via 1220::2")
+
+    time.sleep(5)
+
+    # Enabling some extra logging for troubleshooting purposes
+    dvs.runcmd("swssloglevel -l INFO -c fpmsyncd")
+
+    # Subscribe to pubsub channels for routing-state associated to swss and sairedis dbs
+    pubsubAppDB  = dvs.SubscribeAppDbObject("ROUTE_TABLE")
+    pubsubAsicDB = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_ROUTE_ENTRY")
+
+
+    #############################################################################
+    #
+    # Testcase 1. Having routing-warm-reboot disabled, restart zebra and verify
+    #             that the traditional/cold-boot logic is followed.
+    #
+    #############################################################################
+
+    # Restart zebra
+    dvs.stop_zebra()
+    dvs.start_zebra()
+
+    time.sleep(5)
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "")
+
+    # Verify that multiple changes are seen in swss and sairedis logs as there's
+    # no warm-reboot logic in place.
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) != 0
+
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) != 0
+
+
+    #############################################################################
+    #
+    # Testcase 2. Restart zebra and make no control-plane changes.
+    #             For this and all subsequent test-cases routing-warm-reboot
+    #             feature will be kept enabled.
+    #
+    #############################################################################
+
+
+    # Enabling bgp warmrestart and setting restart timer.
+    # The following two instructions will be substituted by the commented ones
+    # once the later ones are added to sonic-utilities repo.
+    enable_warmrestart(dvs, conf_db, "bgp")
+    set_restart_timer(dvs, conf_db, "bgp", str(restart_timer))
+    #dvs.runcmd("config warm_restart enable bgp")
+    #dvs.runcmd("config warm_restart bgp_timer {}".format(restart_timer))
+
+    time.sleep(1)
+
+    # Restart zebra
+    dvs.stop_zebra()
+    dvs.start_zebra()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify swss changes -- none are expected this time
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 0 and len(delobjs) == 0
+
+    # Verify swss changes -- none are expected this time
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 0 and len(delobjs) == 0
+
+
+    #############################################################################
+    #
+    # Testcase 3. Restart zebra and add one new non-ecmp IPv4 prefix
+    #
+    #############################################################################
+
+    # Stop zebra
+    dvs.stop_zebra()
+
+    # Add new prefix
+    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+
+    # Start zebra
+    dvs.start_zebra()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify the changed prefix is seen in swss
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    rt_val = json.loads(addobjs[0]['vals'])
+    assert rt_key == "192.168.100.0/24"
+    assert rt_val == {"ifname": "Ethernet0", "nexthop": "111.0.0.2"}
+
+    # Verify the changed prefix is seen in sairedis
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    assert rt_key['dest'] == "192.168.100.0/24"
+
+
+    #############################################################################
+    #
+    # Testcase 4. Restart zebra and withdraw one non-ecmp IPv4 prefix
+    #
+    #############################################################################
+
+
+    # Stop zebra
+    dvs.stop_zebra()
+
+    # Delete prefix
+    dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+
+    # Start zebra
+    dvs.start_zebra()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify the changed prefix is seen in swss
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 0 and len(delobjs) == 1
+    rt_key = json.loads(delobjs[0]['key'])
+    assert rt_key == "192.168.100.0/24"
+
+    # Verify the changed prefix is seen in sairedis
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 0 and len(delobjs) == 1
+    rt_key = json.loads(delobjs[0]['key'])
+    assert rt_key['dest'] == "192.168.100.0/24"
+
+
+    #############################################################################
+    #
+    # Testcase 5. Restart zebra and add a new IPv4 ecmp-prefix
+    #
+    #############################################################################
+
+
+    # Stop zebra
+    dvs.stop_zebra()
+
+    # Add prefix
+    dvs.runcmd("ip route add 192.168.200.0/24 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
+    time.sleep(1)
+
+    # Start zebra
+    dvs.start_zebra()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify the changed prefix is seen in swss
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    rt_val = json.loads(addobjs[0]['vals'])
+    assert rt_key == "192.168.200.0/24"
+    assert rt_val == {"ifname": "Ethernet0,Ethernet4,Ethernet8", "nexthop": "111.0.0.2,122.0.0.2,133.0.0.2"}
+
+    # Verify the changed prefix is seen in sairedis
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    assert rt_key['dest'] == "192.168.200.0/24"
+
+
+    #############################################################################
+    #
+    # Testcase 6. Restart zebra and delete one existing IPv4 ecmp-prefix.
+    #
+    #############################################################################
+
+
+    # Stop zebra
+    dvs.stop_zebra()
+
+    # Delete prefix
+    dvs.runcmd("ip route del 192.168.200.0/24 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
+    time.sleep(1)
+
+    # Start zebra
+    dvs.start_zebra()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify the changed prefix is seen in swss
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 0 and len(delobjs) == 1
+    rt_key = json.loads(delobjs[0]['key'])
+    assert rt_key == "192.168.200.0/24"
+
+    # Verify the changed prefix is seen in sairedis
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 0 and len(delobjs) == 1
+    rt_key = json.loads(delobjs[0]['key'])
+    assert rt_key['dest'] == "192.168.200.0/24"
+
+
+    #############################################################################
+    #
+    # Testcase 7. Restart zebra and add one new path to an IPv4 ecmp-prefix
+    #
+    #############################################################################
+
+
+    # Stop zebra
+    dvs.stop_zebra()
+
+    # Add new path
+    dvs.runcmd("ip route del 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
+    time.sleep(1)
+
+    # Start zebra
+    dvs.start_zebra()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+     # Verify the changed prefix is seen in swss
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    rt_val = json.loads(addobjs[0]['vals'])
+    assert rt_key == "192.168.1.3"
+    assert rt_val == {"ifname": "Ethernet0,Ethernet4,Ethernet8", "nexthop": "111.0.0.2,122.0.0.2,133.0.0.2"}
+
+    # Verify the changed prefix is seen in sairedis
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    assert rt_key['dest'] == "192.168.1.3/32"
+
+
+    #############################################################################
+    #
+    # Testcase 8. Restart zebra and delete one ecmp-path from an IPv4 ecmp-prefix.
+    #
+    #############################################################################
+
+
+    # Stop zebra
+    dvs.stop_zebra()
+
+    # Delete ecmp-path
+    dvs.runcmd("ip route del 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2 nexthop via 133.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.3/32 nexthop via 111.0.0.2 nexthop via 122.0.0.2")
+    time.sleep(1)
+
+    # Start zebra
+    dvs.start_zebra()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+     # Verify the changed prefix is seen in swss
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    rt_val = json.loads(addobjs[0]['vals'])
+    assert rt_key == "192.168.1.3"
+    assert rt_val == {"ifname": "Ethernet0,Ethernet4", "nexthop": "111.0.0.2,122.0.0.2"}
+
+    # Verify the changed prefix is seen in sairedis
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    assert rt_key['dest'] == "192.168.1.3/32"
+
+
+    #############################################################################
+    #
+    # Testcase 9. Restart zebra and add one new non-ecmp IPv6 prefix
+    #
+    #############################################################################
+
+
+    # Stop zebra
+    dvs.stop_zebra()
+
+    # Add prefix
+    dvs.runcmd("ip -6 route add fc00:4:4::1/128 nexthop via 1110::2")
+    time.sleep(1)
+
+    # Start zebra
+    dvs.start_zebra()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify the changed prefix is seen in swss
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    rt_val = json.loads(addobjs[0]['vals'])
+    assert rt_key == "fc00:4:4::1"
+    assert rt_val == {"ifname": "Ethernet0", "nexthop": "1110::2"}
+
+    # Verify the changed prefix is seen in sairedis
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    assert rt_key['dest'] == "fc00:4:4::1/128"
+
+
+    #############################################################################
+    #
+    # Testcase 10. Restart zebra and withdraw one non-ecmp IPv6 prefix
+    #
+    #############################################################################
+
+    # Stop zebra
+    dvs.stop_zebra()
+
+    # Delete prefix
+    dvs.runcmd("ip -6 route del fc00:4:4::1/128 nexthop via 1110::2")
+    time.sleep(1)
+
+    # Start zebra
+    dvs.start_zebra()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify the changed prefix is seen in swss
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 0 and len(delobjs) == 1
+    rt_key = json.loads(delobjs[0]['key'])
+    assert rt_key == "fc00:4:4::1"
+
+    # Verify the changed prefix is seen in sairedis
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 0 and len(delobjs) == 1
+    rt_key = json.loads(delobjs[0]['key'])
+    assert rt_key['dest'] == "fc00:4:4::1/128"
+
+
+    #############################################################################
+    #
+    # Testcase 11. Restart fpmsyncd and make no control-plane changes.
+    #
+    #############################################################################
+
+
+    # Stop fpmsyncd
+    dvs.stop_fpmsyncd()
+
+    # Start fpmsyncd
+    dvs.start_fpmsyncd()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify swss changes -- none are expected this time
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 0 and len(delobjs) == 0
+
+    # Verify sairedis changes -- none are expected this time
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 0 and len(delobjs) == 0
+
+
+    #############################################################################
+    #
+    # Testcase 12. Restart fpmsyncd and add one new non-ecmp IPv4 prefix
+    #
+    #############################################################################
+
+
+    # Stop fpmsyncd
+    dvs.stop_fpmsyncd()
+
+    # Add new prefix
+    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+
+    # Start fpmsyncd
+    dvs.start_fpmsyncd()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify the changed prefix is seen in swss
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    rt_val = json.loads(addobjs[0]['vals'])
+    assert rt_key == "192.168.100.0/24"
+    assert rt_val == {"ifname": "Ethernet0", "nexthop": "111.0.0.2"}
+
+    # Verify the changed prefix is seen in sairedis
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    assert rt_key['dest'] == "192.168.100.0/24"
+
+
+    #############################################################################
+    #
+    # Testcase 13. Restart fpmsyncd and withdraw one non-ecmp IPv4 prefix
+    #
+    #############################################################################
+
+
+    # Stop fpmsyncd
+    dvs.stop_fpmsyncd()
+
+    # Delete prefix
+    dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+
+    # Start fpmsyncd
+    dvs.start_fpmsyncd()
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify the changed prefix is seen in swss
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 0 and len(delobjs) == 1
+    rt_key = json.loads(delobjs[0]['key'])
+    assert rt_key == "192.168.100.0/24"
+
+    # Verify the changed prefix is seen in sairedis
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 0 and len(delobjs) == 1
+    rt_key = json.loads(delobjs[0]['key'])
+    assert rt_key['dest'] == "192.168.100.0/24"
+
+
+    #############################################################################
+    #
+    # Testcase 14. Restart zebra and add/remove a new non-ecmp IPv4 prefix. As
+    #              the 'delete' instruction would arrive after the 'add' one, no
+    #              changes should be pushed down to SwSS.
+    #
+    #############################################################################
+
+
+    # Restart zebra
+    dvs.stop_zebra()
+    dvs.start_zebra()
+
+    # Add/delete new prefix
+    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+    dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify swss changes -- none are expected this time
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 0 and len(delobjs) == 0
+
+    # Verify swss changes -- none are expected this time
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 0 and len(delobjs) == 0
+
+
+    #############################################################################
+    #
+    # Testcase 15. Restart zebra and generate an add/remove/add for new non-ecmp
+    #              IPv4 prefix. Verify that only the second 'add' instruction is
+    #              honored and the corresponding update passed down to SwSS.
+    #
+    #############################################################################
+
+
+    # Restart zebra
+    dvs.stop_zebra()
+    dvs.start_zebra()
+
+    marker1 = dvs.add_log_marker("/var/log/swss/swss.rec")
+    marker2 = dvs.add_log_marker("/var/log/swss/sairedis.rec")
+
+    # Add/delete new prefix
+    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+    dvs.runcmd("ip route del 192.168.100.0/24 nexthop via 111.0.0.2")
+    time.sleep(1)
+    dvs.runcmd("ip route add 192.168.100.0/24 nexthop via 122.0.0.2")
+    time.sleep(1)
+
+    # Verify FSM
+    swss_app_check_warmstart_state(state_db, "bgp", "restored")
+    time.sleep(restart_timer + 1)
+    swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+    # Verify the changed prefix is seen in swss
+    (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    rt_val = json.loads(addobjs[0]['vals'])
+    assert rt_key == "192.168.100.0/24"
+    assert rt_val == {"ifname": "Ethernet4", "nexthop": "122.0.0.2"}
+
+    # Verify the changed prefix is seen in sairedis
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+    assert len(addobjs) == 1 and len(delobjs) == 0
+    rt_key = json.loads(addobjs[0]['key'])
+    assert rt_key['dest'] == "192.168.100.0/24"
+
+
+# 'ip neigh flush all' won't remove failed entries if number of neighs less than gc_threshold1
+# Also it takes time to remove them completly.
+# We use arp off/on to do it
+def flush_neigh_entries(dvs):
+    dvs.runcmd("ip link set group default arp off")
+    dvs.runcmd("ip link set group default arp on")
+
+def test_system_warmreboot_neighbor_syncup(dvs, testlog):
+
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+    #enable ipv6 on docker
+    dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
+
+    # flush all neighs first
+    flush_neigh_entries(dvs)
+    time.sleep(5)
+
+    dvs.runcmd("config warm_restart enable system")
+
+    # Test neighbors on NUM_INTF (e,g 8) interfaces
+    # Ethernet32/36/.../60, with ip: 32.0.0.1/24... 60.0.0.1/24
+    # ipv6: 3200::1/64...6000::1/64
+    # bring up the servers'interfaces and assign NUM_NEIGH_PER_INTF (e,g 128) ips per interface
+    # TBD: NUM_NEIGH_PER_INTF >= 128 ips will cause test framework to hang by default settings
+    # TBD: Need tune gc_thresh1/2/3 at host side of vs docker to support this.
+    NUM_INTF = 8
+    NUM_NEIGH_PER_INTF = 64 #128
+    NUM_OF_NEIGHS = (NUM_INTF*NUM_NEIGH_PER_INTF)
+    macs = []
+    for i in range(8, 8+NUM_INTF):
+        # set timeout to be the same as real HW
+        # set ip on server facing interfaces
+        # bring servers' interface up, save the macs
+        dvs.runcmd("sysctl -w net.ipv4.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
+        dvs.runcmd("sysctl -w net.ipv6.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
+        dvs.runcmd("ip addr flush dev Ethernet{}".format(i*4))
+        dvs.runcmd("ifconfig Ethernet{} {}.0.0.1/24 up".format(i*4, i*4))
+        dvs.runcmd("ip -6 addr add {}00::1/64 dev Ethernet{}".format(i*4,i*4))
+        dvs.servers[i].runcmd("ip link set up dev eth0")
+        dvs.servers[i].runcmd("ip addr flush dev eth0")
+        #result = dvs.servers[i].runcmd_output("ifconfig eth0 | grep HWaddr | awk '{print $NF}'")
+        result = dvs.servers[i].runcmd_output("cat /sys/class/net/eth0/address")
+        macs.append(result.strip())
+
+    #
+    # Testcase 1:
+    # Add neighbor entries on servers connecting to SONiC ports
+    # 128 ipv4 and 128 ipv6 on each server
+    # total: 1024 ipv4 and 1024 ipv6
+    # ping them to get the neighbor entries
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF):
+            dvs.servers[i].runcmd("ip addr add {}.0.0.{}/24 dev eth0".format(i*4, j+2))
+            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4,j+2))
+
+    time.sleep(1)
+
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF):
+            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+2)])
+            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+2)])
+
+    # Check the neighbor entries are inserted correctly
+    db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+    tbl = swsscommon.Table(db, "NEIGH_TABLE")
+
+    # number of neighbors should match what we configured
+    # ipv4/ipv6 entries and loopback
+    check_redis_neigh_entries(dvs, tbl, 2*NUM_OF_NEIGHS)
+
+    # All neighbor entries should match
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF):
+            (status, fvs) = tbl.get("Ethernet{}:{}.0.0.{}".format(i*4, i*4, j+2))
+            assert status == True
+            for v in fvs:
+                if v[0] == "family":
+                    assert v[1] == "IPv4"
+                if v[0] == "neigh":
+                    assert v[1] == macs[i-8]
+
+            (status, fvs) = tbl.get("Ethernet{}:{}00::{}".format(i*4, i*4, j+2))
+            assert status == True
+            for v in fvs:
+                if v[0] == "family":
+                    assert v[1] == "IPv6"
+                if v[0] == "neigh":
+                    assert v[1] == macs[i-8]
+
+    #
+    # Testcase 2:
+    # Stop neighsyncd, appDB entries should be reserved
+    # flush kernel neigh table to simulate warm reboot
+    # start neighsyncd, start restore_neighbors service to restore the neighbor table in kernel
+    # check all neighbors learned in kernel
+    # no changes should be there in syslog and sairedis.rec
+
+    # get restore_count
+    restore_count = swss_get_RestoreCount(dvs, state_db)
+
+    # stop neighsyncd and sairedis.rec
+    stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
+    time.sleep(3)
+    flush_neigh_entries(dvs)
+    time.sleep(3)
+
+    # check neighbors are gone
+    check_kernel_reachable_neigh_num(dvs, 0)
+
+    # start neighsyncd and restore_neighbors
+    marker = dvs.add_log_marker()
+    pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
+    start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
+
+    # should finish the store within 10 seconds
+    time.sleep(10)
+
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS)
+
+    # check syslog and sairedis.rec file for activities
+    check_syslog_for_neighbor_entry(dvs, marker, 0, 0, "ipv4")
+    check_syslog_for_neighbor_entry(dvs, marker, 0, 0, "ipv6")
+    (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
+    assert nadd == 0
+    assert ndel == 0
+
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
+
+    #
+    # Testcase 3:
+    # Stop neighsyncd, appDB entries should be reserved
+    # flush kernel neigh table to simulate warm reboot
+    # Remove half of ips of servers' interfaces, add new half of ips
+    # start neighsyncd, start restore_neighbors service to restore the neighbor table in kernel
+    # check all new neighbors learned in kernel
+    # no changes should be there in syslog and sairedis.rec
+
+    # get restore_count
+    restore_count = swss_get_RestoreCount(dvs, state_db)
+
+    # stop neighsyncd and sairedis.rec
+    stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
+
+    # Del half of the ips and a new half of the ips
+    # note: the first ipv4 can not be deleted only
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF/2):
+            dvs.servers[i].runcmd("ip addr del {}.0.0.{}/24 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF/2+2))
+            dvs.servers[i].runcmd("ip -6 addr del {}00::{}/64 dev eth0".format(i*4,j+NUM_NEIGH_PER_INTF/2+2))
+            dvs.servers[i].runcmd("ip addr add {}.0.0.{}/24 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF+2))
+            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4,j+NUM_NEIGH_PER_INTF+2))
+
+    flush_neigh_entries(dvs)
+    time.sleep(3)
+
+    # check neighbors are gone
+    check_kernel_reachable_neigh_num(dvs, 0)
+
+    # start neighsyncd and restore_neighbors
+    marker = dvs.add_log_marker()
+    start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
+
+    # should finish the store within 10 seconds
+    time.sleep(10)
+
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS)
+
+    # check syslog and sairedis.rec file for activities
+    check_syslog_for_neighbor_entry(dvs, marker, 0, 0, "ipv4")
+    check_syslog_for_neighbor_entry(dvs, marker, 0, 0, "ipv6")
+    (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
+    assert nadd == 0
+    assert ndel == 0
+
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
+
+    # Test case 4:
+    # ping the new ips, should get it into appDB
+    marker = dvs.add_log_marker()
+
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF/2):
+            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
+            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
+
+
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS+NUM_OF_NEIGHS/2)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS+NUM_OF_NEIGHS/2)
+    check_redis_neigh_entries(dvs, tbl, 2*(NUM_OF_NEIGHS+NUM_OF_NEIGHS/2))
+
+    (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
+    assert nadd == NUM_OF_NEIGHS #ipv4 and ipv6
+    assert ndel == 0
+
+    # Remove stale entries manually
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF/2):
+            dvs.runcmd(['sh', '-c', "ip neigh del {}.0.0.{} dev Ethernet{}".format(i*4,j+NUM_NEIGH_PER_INTF/2+2, i*4)])
+            dvs.runcmd(['sh', '-c', "ip -6 neigh del {}00::{} dev Ethernet{}".format(i*4,j+NUM_NEIGH_PER_INTF/2+2, i*4)])
+
+    time.sleep(5)
+
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS)
+    check_redis_neigh_entries(dvs, tbl, 2*NUM_OF_NEIGHS)
+
+    (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
+    assert nadd == 0
+    assert ndel == NUM_OF_NEIGHS #ipv4 and ipv6
+
+    #
+    # Testcase 5:
+    # Stop neighsyncd, appDB entries should be reserved
+    # flush kernel neigh table to simulate warm reboot
+    # keep half of the interface down
+    # start neighsyncd, start restore_neighbors service to restore the neighbor table in kernel
+    # check all new neighbors with interface up to be learned in kernel
+    # syslog/sai log should show half of the entries stale/deleted
+
+    # get restore_count
+    restore_count = swss_get_RestoreCount(dvs, state_db)
+
+    # stop neighsyncd and sairedis.rec
+    stop_neighsyncd(dvs)
+    del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
+    time.sleep(3)
+
+    flush_neigh_entries(dvs)
+    time.sleep(3)
+
+    # check neighbors are gone
+    check_kernel_reachable_neigh_num(dvs, 0)
+
+    # bring down half of the links
+    for i in range(8, 8+NUM_INTF/2):
+        dvs.runcmd("ip link set down dev Ethernet{}".format(i*4))
+
+    # start neighsyncd and restore_neighbors
+    marker = dvs.add_log_marker()
+    start_neighsyncd(dvs)
+    start_restore_neighbors(dvs)
+
+    # restore for up interfaces should be done within 10 seconds
+    time.sleep(10)
+
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS/2)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS/2)
+
+    restoretbl = swsscommon.Table(state_db, swsscommon.STATE_NEIGH_RESTORE_TABLE_NAME)
+
+    # waited 10 above already
+    i = 10
+    while (not kernel_restore_neighs_done(restoretbl)):
+        print "Waiting for kernel neighbors restore process done: {} seconds".format(i)
+        time.sleep(10)
+        i += 10
+
+    time.sleep(10)
+
+    # check syslog and sairedis.rec file for activities
+    check_syslog_for_neighbor_entry(dvs, marker, 0, NUM_OF_NEIGHS/2, "ipv4")
+    check_syslog_for_neighbor_entry(dvs, marker, 0, NUM_OF_NEIGHS/2, "ipv6")
+    (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
+    assert nadd == 0
+    assert ndel == NUM_OF_NEIGHS
+
+    # check restore Count
+    swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
+
+    # disable system warm restart
+    dvs.runcmd("config warm_restart disable system")
+

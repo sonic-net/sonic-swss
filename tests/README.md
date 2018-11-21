@@ -47,7 +47,7 @@ persists.
     ```
     docker run --privileged -id --name sw debian bash
     sudo ./create_vnet.sh sw
-    docker run --privileged -v /var/run/redis-vs:/var/run/redis --network container:sw -d --name vs docker-sonic-vs
+    docker run --privileged -v /var/run/redis-vs/sw:/var/run/redis --network container:sw -d --name vs docker-sonic-vs
     ```
 
 - Run test using the existing vs container

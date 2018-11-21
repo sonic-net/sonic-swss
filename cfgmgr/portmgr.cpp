@@ -82,22 +82,6 @@ void PortMgr::doTask(Consumer &consumer)
         string alias = kfvKey(t);
         string op = kfvOp(t);
 
-        // Skip port which is a member of a port channel
-        vector<string> keys;
-        m_cfgLagMemberTable.getKeys(keys);
-
-        for (auto key : keys)
-        {
-            auto tokens = tokenize(key, '|');
-            auto member = tokens[1];
-
-            if (alias == member)
-            {
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-        }
-
         if (op == SET_COMMAND)
         {
             if (!isPortStateOk(alias))

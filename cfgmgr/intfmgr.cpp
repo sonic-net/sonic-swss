@@ -110,11 +110,13 @@ void IntfMgr::doTask(Consumer &consumer)
             }
             setIntfIp(alias, "add", ip_prefix.to_string(), ip_prefix.isV4());
             m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");
+            SWSS_LOG_NOTICE("Add %s to %s", ip_prefix.to_string().c_str(), alias.c_str());
         }
         else if (op == DEL_COMMAND)
         {
             setIntfIp(alias, "del", ip_prefix.to_string(), ip_prefix.isV4());
             m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
+            SWSS_LOG_NOTICE("Remove %s from %s", ip_prefix.to_string().c_str(), alias.c_str());
         }
         else
         {
