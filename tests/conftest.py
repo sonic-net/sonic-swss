@@ -79,15 +79,18 @@ class ApplDbValidator(object):
         self.neighTbl = swsscommon.Table(appl_db, "NEIGH_TABLE")
 
     def __del__(self):
-        # Make sure no neighbors on vEthernet
-        keys = self.neighTbl.getKeys();
+        # Make sure no neighbors on physical interfaces
+        keys = self.neighTbl.getKeys()
         for key in keys:
-            assert not key.startswith("vEthernet")
+            m = re.match("eth(\d+)", key)
+            if not m:
+                continue
+            assert int(m.group(1)) > 0
 
 class VirtualServer(object):
     def __init__(self, ctn_name, pid, i):
         self.nsname = "%s-srv%d" % (ctn_name, i)
-        self.vifname = "vEthernet%d" % (i * 4)
+        self.pifname = "eth%d" % (i + 1)
         self.cleanup = True
 
         # create netns
@@ -97,9 +100,9 @@ class VirtualServer(object):
             ensure_system("ip netns add %s" % self.nsname)
 
             # create vpeer link
-            ensure_system("ip link add %s type veth peer name %s" % (self.nsname[0:12], self.vifname))
+            ensure_system("ip link add %s type veth peer name %s" % (self.nsname[0:12], self.pifname))
             ensure_system("ip link set %s netns %s" % (self.nsname[0:12], self.nsname))
-            ensure_system("ip link set %s netns %d" % (self.vifname, pid))
+            ensure_system("ip link set %s netns %d" % (self.pifname, pid))
 
             # bring up link in the virtual server
             ensure_system("ip netns exec %s ip link set dev %s name eth0" % (self.nsname, self.nsname[0:12]))
@@ -107,11 +110,11 @@ class VirtualServer(object):
             ensure_system("ip netns exec %s ethtool -K eth0 tx off" % (self.nsname))
 
             # bring up link in the virtual switch
-            ensure_system("nsenter -t %d -n ip link set dev %s up" % (pid, self.vifname))
+            ensure_system("nsenter -t %d -n ip link set dev %s up" % (pid, self.pifname))
 
-            # disable arp, so no neigh on vEthernet(s)
-            ensure_system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.vifname))
-            ensure_system("nsenter -t %d -n sysctl -w net.ipv6.conf.%s.disable_ipv6=1" % (pid, self.vifname))
+            # disable arp, so no neigh on physical interfaces
+            ensure_system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.pifname))
+            ensure_system("nsenter -t %d -n sysctl -w net.ipv6.conf.%s.disable_ipv6=1" % (pid, self.pifname))
 
     def destroy(self):
         if self.cleanup:
@@ -216,7 +219,7 @@ class DockerVirtualSwitch(object):
             # temp fix: remove them once they are moved to vs start.sh
             self.ctn.exec_run("sysctl -w net.ipv6.conf.default.disable_ipv6=0")
             for i in range(0, 128, 4):
-                self.ctn.exec_run("sysctl -w net.ipv6.conf.vEthernet%d.disable_ipv6=1" % i)
+                self.ctn.exec_run("sysctl -w net.ipv6.conf.eth%d.disable_ipv6=1" % (i + 1))
             self.check_ready()
             self.init_asicdb_validator()
             self.appldb = ApplDbValidator(self)
