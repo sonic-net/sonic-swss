@@ -134,6 +134,8 @@ class TestPortChannelAcl(object):
         # create ACL table
         self.create_acl_table(dvs, "LAG_ACL_TABLE", "PortChannel01")
 
+        time.sleep(1)
+
         # check ASIC table
         self.check_asic_table_existed(dvs)
 
@@ -153,6 +155,8 @@ class TestPortChannelAcl(object):
 
         # create port channel
         self.create_port_channel(dvs, "PortChannel01")
+
+        time.sleep(1)
 
         # check ASIC table
         self.check_asic_table_existed(dvs)
@@ -178,6 +182,8 @@ class TestPortChannelAcl(object):
 
         # create ACL table
         self.create_acl_table(dvs, "LAG_ACL_TABLE", "Ethernet0")
+
+        time.sleep(1)
 
         # check ASIC table
         self.check_asic_table_absent(dvs)

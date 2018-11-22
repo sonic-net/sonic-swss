@@ -70,8 +70,8 @@ class TestAdminStatus(object):
         self.check_admin_status(dvs, "Ethernet8", "up")
 
         # remove port channel members
-        self.remove_port_channel_members(dvs, "PortCHannel6",
+        self.remove_port_channel_members(dvs, "PortChannel6",
                 ["Ethernet0", "Ethernet4", "Ethernet8"])
 
         # remove port channel
-        self.remove_port_channel(dvs, "PortCHannel6")
+        self.remove_port_channel(dvs, "PortChannel6")

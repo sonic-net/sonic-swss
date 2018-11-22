@@ -191,6 +191,7 @@ class DockerVirtualSwitch(object):
 
             self.mount = "/var/run/redis-vs/{}".format(ctn_sw_name)
 
+            self.net_cleanup()
             self.restart()
         else:
             self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
@@ -278,6 +279,29 @@ class DockerVirtualSwitch(object):
                 raise ValueError(out)
 
             time.sleep(1)
+
+    def net_cleanup(self):
+        """clean up network, remove extra links"""
+
+        re_space = re.compile('\s+')
+
+        res = self.ctn.exec_run("ip link show")
+        try:
+            out = res.output
+        except AttributeError:
+            out = res
+        for l in out.split('\n'):
+            m = re.compile('^\d+').match(l)
+            if not m:
+                continue
+            fds = re_space.split(l)
+            if len(fds) > 1:
+                pname = fds[1].rstrip(":")
+                m = re.compile("(eth|lo|Bridge|Ethernet)").match(pname)
+                if not m:
+                    self.ctn.exec_run("ip link del {}".format(pname))
+                    print "remove extra link {}".format(pname)
+        return
 
     def restart(self):
         self.ctn.restart()
