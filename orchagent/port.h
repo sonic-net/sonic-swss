@@ -11,7 +11,7 @@ extern "C" {
 #include <map>
 
 #define DEFAULT_PORT_VLAN_ID    1
-#define DEFAULT_MTU              9100
+#define DEFAULT_MTU             1492
 
 namespace swss {
 
