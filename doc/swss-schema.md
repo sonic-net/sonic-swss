@@ -683,7 +683,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                             ; timer, fpmsyncd will execute the reconciliation logic to eliminate all the staled
                                             ; state from AppDB. This timer should match the BGP-GR restart-timer configured within
                                             ; the elected routing-stack.
-                                            ; Supported range: 1-9999.
+                                            ; Supported range: 1-3600.
 
 
 ### VXLAN\_TUNNEL
@@ -744,6 +744,11 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                                                  ; state collected in 'restored' phase. Examples:
                                                                  ; dynanic data like port state, neighbor, routes
                                                                  ; and so on.
+
+### NEIGH_RESTORE_TABLE
+    ;State for neighbor table restoring process during warm reboot
+    key                 = NEIGH_RESTORE_TABLE|Flags
+    restored            = "true" / "false" ; restored state
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?

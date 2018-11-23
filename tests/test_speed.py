@@ -28,16 +28,13 @@ class TestSpeedSet(object):
 
         buffer_profiles = cfg_buffer_profile_table.getKeys()
         expected_buffer_profiles_num = len(buffer_profiles)
-        # buffers.json used for the test defines 7 static profiles:
+        # buffers.json used for the test defines 4 static profiles:
         #    "ingress_lossless_profile"
         #    "ingress_lossy_profile"
         #    "egress_lossless_profile"
         #    "egress_lossy_profile"
-        #    "pg_lossy_profile"
-        #    "q_lossless_profile"
-        #    "q_lossy_profile"
         # check if they get the DB
-        assert expected_buffer_profiles_num == 7
+        assert expected_buffer_profiles_num == 4
         # and if they were successfully created on ASIC
         assert len(asic_profile_table.getKeys()) == expected_buffer_profiles_num
 

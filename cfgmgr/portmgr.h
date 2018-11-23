@@ -22,6 +22,8 @@ private:
     Table m_statePortTable;
     ProducerStateTable m_appPortTable;
 
+    set<string> m_portList;
+
     void doTask(Consumer &consumer);
     bool setPortMtu(const string &alias, const string &mtu);
     bool setPortAdminStatus(const string &alias, const bool up);

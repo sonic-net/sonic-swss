@@ -4,6 +4,8 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "netmsg.h"
+#include "warmRestartHelper.h"
+
 
 namespace swss {
 
@@ -16,10 +18,12 @@ public:
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
+    WarmStartHelper  m_warmStartHelper;
+
 private:
-    ProducerStateTable m_routeTable;
-    struct nl_cache *m_link_cache;
-    struct nl_sock *m_nl_sock;
+    ProducerStateTable  m_routeTable;
+    struct nl_cache    *m_link_cache;
+    struct nl_sock     *m_nl_sock;
 };
 
 }

@@ -79,15 +79,18 @@ class ApplDbValidator(object):
         self.neighTbl = swsscommon.Table(appl_db, "NEIGH_TABLE")
 
     def __del__(self):
-        # Make sure no neighbors on vEthernet
-        keys = self.neighTbl.getKeys();
+        # Make sure no neighbors on physical interfaces
+        keys = self.neighTbl.getKeys()
         for key in keys:
-            assert not key.startswith("vEthernet")
+            m = re.match("eth(\d+)", key)
+            if not m:
+                continue
+            assert int(m.group(1)) > 0
 
 class VirtualServer(object):
     def __init__(self, ctn_name, pid, i):
         self.nsname = "%s-srv%d" % (ctn_name, i)
-        self.vifname = "vEthernet%d" % (i * 4)
+        self.pifname = "eth%d" % (i + 1)
         self.cleanup = True
 
         # create netns
@@ -97,9 +100,9 @@ class VirtualServer(object):
             ensure_system("ip netns add %s" % self.nsname)
 
             # create vpeer link
-            ensure_system("ip link add %s type veth peer name %s" % (self.nsname[0:12], self.vifname))
+            ensure_system("ip link add %s type veth peer name %s" % (self.nsname[0:12], self.pifname))
             ensure_system("ip link set %s netns %s" % (self.nsname[0:12], self.nsname))
-            ensure_system("ip link set %s netns %d" % (self.vifname, pid))
+            ensure_system("ip link set %s netns %d" % (self.pifname, pid))
 
             # bring up link in the virtual server
             ensure_system("ip netns exec %s ip link set dev %s name eth0" % (self.nsname, self.nsname[0:12]))
@@ -107,11 +110,11 @@ class VirtualServer(object):
             ensure_system("ip netns exec %s ethtool -K eth0 tx off" % (self.nsname))
 
             # bring up link in the virtual switch
-            ensure_system("nsenter -t %d -n ip link set dev %s up" % (pid, self.vifname))
+            ensure_system("nsenter -t %d -n ip link set dev %s up" % (pid, self.pifname))
 
-            # disable arp, so no neigh on vEthernet(s)
-            ensure_system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.vifname))
-            ensure_system("nsenter -t %d -n sysctl -w net.ipv6.conf.%s.disable_ipv6=1" % (pid, self.vifname))
+            # disable arp, so no neigh on physical interfaces
+            ensure_system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.pifname))
+            ensure_system("nsenter -t %d -n sysctl -w net.ipv6.conf.%s.disable_ipv6=1" % (pid, self.pifname))
 
     def destroy(self):
         if self.cleanup:
@@ -134,6 +137,9 @@ class VirtualServer(object):
 
     def runcmd_async(self, cmd):
         return subprocess.Popen("ip netns exec %s %s" % (self.nsname, cmd), shell=True)
+
+    def runcmd_output(self, cmd):
+        return subprocess.check_output("ip netns exec %s %s" % (self.nsname, cmd), shell=True)
 
 class DockerVirtualSwitch(object):
     def __init__(self, name=None, keeptb=False):
@@ -184,6 +190,7 @@ class DockerVirtualSwitch(object):
 
             self.mount = "/var/run/redis-vs/{}".format(ctn_sw_name)
 
+            self.net_cleanup()
             self.restart()
         else:
             self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
@@ -212,7 +219,7 @@ class DockerVirtualSwitch(object):
             # temp fix: remove them once they are moved to vs start.sh
             self.ctn.exec_run("sysctl -w net.ipv6.conf.default.disable_ipv6=0")
             for i in range(0, 128, 4):
-                self.ctn.exec_run("sysctl -w net.ipv6.conf.vEthernet%d.disable_ipv6=1" % i)
+                self.ctn.exec_run("sysctl -w net.ipv6.conf.eth%d.disable_ipv6=1" % (i + 1))
             self.check_ready()
             self.init_asicdb_validator()
             self.appldb = ApplDbValidator(self)
@@ -272,6 +279,29 @@ class DockerVirtualSwitch(object):
 
             time.sleep(1)
 
+    def net_cleanup(self):
+        """clean up network, remove extra links"""
+
+        re_space = re.compile('\s+')
+
+        res = self.ctn.exec_run("ip link show")
+        try:
+            out = res.output
+        except AttributeError:
+            out = res
+        for l in out.split('\n'):
+            m = re.compile('^\d+').match(l)
+            if not m:
+                continue
+            fds = re_space.split(l)
+            if len(fds) > 1:
+                pname = fds[1].rstrip(":")
+                m = re.compile("(eth|lo|Bridge|Ethernet)").match(pname)
+                if not m:
+                    self.ctn.exec_run("ip link del {}".format(pname))
+                    print "remove extra link {}".format(pname)
+        return
+
     def restart(self):
         self.ctn.restart()
 
@@ -288,6 +318,26 @@ class DockerVirtualSwitch(object):
         for pname in self.swssd:
             cmd += "supervisorctl stop {}; ".format(pname)
         self.runcmd(['sh', '-c', cmd])
+
+    def start_zebra(dvs):
+        dvs.runcmd(['sh', '-c', 'supervisorctl start zebra'])
+
+        # Let's give zebra a chance to connect to FPM.
+        time.sleep(5)
+
+    def stop_zebra(dvs):
+        dvs.runcmd(['sh', '-c', 'pkill -x zebra'])
+        time.sleep(1)
+
+    def start_fpmsyncd(dvs):
+        dvs.runcmd(['sh', '-c', 'supervisorctl start fpmsyncd'])
+
+        # Let's give fpmsyncd a chance to connect to Zebra.
+        time.sleep(5)
+
+    def stop_fpmsyncd(dvs):
+        dvs.runcmd(['sh', '-c', 'pkill -x fpmsyncd'])
+        time.sleep(1)
 
     def init_asicdb_validator(self):
         self.asicdb = AsicDbValidator(self)
@@ -333,13 +383,18 @@ class DockerVirtualSwitch(object):
             raise RuntimeError("Failed to unpack the archive.")
         os.system("chmod a+r -R log")
 
-    def add_log_marker(self):
+    def add_log_marker(self, file=None):
         marker = "=== start marker {} ===".format(datetime.now().isoformat())
-        self.ctn.exec_run("logger {}".format(marker))
+
+        if file:
+            self.runcmd(['sh', '-c', "echo \"{}\" >> {}".format(marker, file)])
+        else:
+            self.ctn.exec_run("logger {}".format(marker))
+
         return marker
 
     def SubscribeAppDbObject(self, objpfx):
-        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APP_DB)
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APPL_DB)
         pubsub = r.pubsub()
         pubsub.psubscribe("__keyspace@0__:%s*" % objpfx)
         return pubsub
@@ -374,26 +429,40 @@ class DockerVirtualSwitch(object):
         return (nadd, ndel)
 
     def GetSubscribedAppDbObjects(self, pubsub, ignore=None, timeout=10):
-        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APP_DB)
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APPL_DB)
 
         addobjs = []
         delobjs = []
         idle = 0
+        prev_key = None
 
         while True and idle < timeout:
             message = pubsub.get_message()
             if message:
                 print message
                 key = message['channel'].split(':', 1)[1]
+                # In producer/consumer_state_table scenarios, every entry will
+                # show up twice for every push/pop operation, so skip the second
+                # one to avoid double counting.
+                if key != None and key == prev_key:
+                    continue
+                # Skip instructions with meaningless keys. To be extended in the
+                # future to other undesired keys.
+                if key == "ROUTE_TABLE_KEY_SET" or key == "ROUTE_TABLE_DEL_SET":
+                    continue
                 if ignore:
                     fds = message['channel'].split(':')
                     if fds[2] in ignore:
                         continue
+
                 if message['data'] == 'hset':
+                    (_, k) = key.split(':', 1)
                     value=r.hgetall(key)
-                    addobjs.append({'key':k, 'vals':value})
+                    addobjs.append({'key':json.dumps(k), 'vals':json.dumps(value)})
+                    prev_key = key
                 elif message['data'] == 'del':
-                    delobjs.append(key)
+                    (_, k) = key.split(':', 1)
+                    delobjs.append({'key':json.dumps(k)})
                 idle = 0
             else:
                 time.sleep(1)
@@ -423,7 +492,8 @@ class DockerVirtualSwitch(object):
                     (_, t, k) = key.split(':', 2)
                     addobjs.append({'type':t, 'key':k, 'vals':value})
                 elif message['data'] == 'del':
-                    delobjs.append(key)
+                    (_, t, k) = key.split(':', 2)
+                    delobjs.append({'key':k})
                 idle = 0
             else:
                 time.sleep(1)

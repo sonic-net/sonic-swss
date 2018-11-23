@@ -44,9 +44,11 @@ deps/
 ###############
 teamsyncd/teamsyncd
 fpmsyncd/fpmsyncd
+cfgmgr/buffermgrd
 cfgmgr/intfmgrd
+cfgmgr/portmgrd
+cfgmgr/teammgrd
 cfgmgr/vlanmgrd
-cfgmgr/buffermanager
 cfgmgr/vrfmgrd
 neighsyncd/neighsyncd
 portsyncd/portsyncd

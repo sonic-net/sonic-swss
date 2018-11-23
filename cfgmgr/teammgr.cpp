@@ -5,13 +5,15 @@
 #include "logger.h"
 #include "shellcmd.h"
 #include "tokenize.h"
+#include "warm_restart.h"
 
 #include <algorithm>
 #include <sstream>
 #include <thread>
 
-#include <sys/ioctl.h>
 #include <net/if.h>
+#include <sys/ioctl.h>
+#include <sys/stat.h>
 
 using namespace std;
 using namespace swss;
@@ -236,6 +238,16 @@ bool TeamMgr::checkPortIffUp(const string &port)
     return ifr.ifr_flags & IFF_UP;
 }
 
+bool TeamMgr::isPortEnslaved(const string &port)
+{
+    SWSS_LOG_ENTER();
+
+    struct stat buf;
+    string path = "/sys/class/net/" + port + "/master";
+
+    return lstat(path.c_str(), &buf) == 0;
+}
+
 bool TeamMgr::findPortMaster(string &master, const string &port)
 {
     SWSS_LOG_ENTER();
@@ -380,7 +392,15 @@ bool TeamMgr::addLag(const string &alias, int min_links, bool fallback)
     SWSS_LOG_INFO("Port channel %s teamd configuration: %s",
             alias.c_str(), conf.str().c_str());
 
-    cmd << TEAMD_CMD << " -r -t " << alias << " -c " << conf.str() << " -d";
+    string warmstart_flag = WarmStart::isWarmStart() ? " -w -o " : " -r ";
+    const string dump_path = "/var/warmboot/teamd/";
+
+    cmd << TEAMD_CMD
+        << warmstart_flag
+        << " -t " << alias
+        << " -c " << conf.str()
+        << " -L " << dump_path
+        << " -d";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     SWSS_LOG_NOTICE("Start port channel %s with teamd", alias.c_str());
@@ -409,6 +429,13 @@ bool TeamMgr::removeLag(const string &alias)
 task_process_status TeamMgr::addLagMember(const string &lag, const string &member)
 {
     SWSS_LOG_ENTER();
+
+    // If port is already enslaved, ignore this operation
+    // TODO: check the current master if it is the same as to be configured
+    if (isPortEnslaved(member))
+    {
+        return task_ignore;
+    }
 
     stringstream cmd;
     string res;
