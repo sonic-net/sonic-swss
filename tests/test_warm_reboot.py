@@ -803,7 +803,11 @@ def test_swss_port_state_syncup(dvs, testlog):
     dvs.servers[1].runcmd("ip link set up dev eth0") == 0
 
     time.sleep(5)
+    dbobjs =[(swsscommon.APPL_DB, swsscommon.APP_PORT_TABLE_NAME + ":*"), \
+        (swsscommon.STATE_DB, swsscommon.STATE_WARM_RESTART_TABLE_NAME + "|orchagent")]
+    pubsubDbs = dvs.SubscribeDbObjects(dbobjs)
     dvs.start_swss()
+    start_restore_neighbors(dvs)
     time.sleep(10)
 
     swss_check_RestoreCount(dvs, state_db, restore_count)
@@ -820,6 +824,33 @@ def test_swss_port_state_syncup(dvs, testlog):
             assert oper_status == "down"
         else:
             assert oper_status == "up"
+
+    # check the pubsub messages.
+    # No appDB port table operation should exist before orchagent state restored flag got set.
+    # appDB port table status sync up happens before WARM_RESTART_TABLE reconciled flag is set
+    # pubsubMessages is an ordered list of pubsub messages.
+    pubsubMessages = dvs.GetSubscribedMessages(pubsubDbs)
+
+    portOperStatusChanged = False
+    # number of times that WARM_RESTART_TABLE|orchagent key was set after the first
+    # appDB port table operation
+    orchStateCount = 0
+    for message in pubsubMessages:
+        print message
+        key = message['channel'].split(':', 1)[1]
+        print key
+        if message['data'] != 'hset' and message['data'] != 'del':
+            continue
+        if key.find(swsscommon.APP_PORT_TABLE_NAME)==0:
+           portOperStatusChanged = True
+        else:
+            # found one orchagent WARM_RESTART_TABLE operation after appDB port table change
+            if portOperStatusChanged == True:
+                orchStateCount += 1;
+
+    # Only WARM_RESTART_TABLE|orchagent state=reconciled operation may exist after port oper status change.
+    assert orchStateCount == 1
+
     #clean up arp
     dvs.runcmd("arp -d 10.0.0.1")
     dvs.runcmd("arp -d 10.0.0.3")

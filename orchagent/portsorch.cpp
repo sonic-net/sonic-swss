@@ -2290,35 +2290,30 @@ bool PortsOrch::initializePort(Port &p)
      * Create database port oper status as DOWN if attr missing
      * This status will be updated when receiving port_oper_status_notification.
      */
-    if (operStatus != "up")
-    {
-        vector<FieldValueTuple> vector;
-        FieldValueTuple tuple("oper_status", "down");
-        vector.push_back(tuple);
-        m_portTable->set(p.m_alias, vector);
-        p.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
-    }
-    else
+    p.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+    if (operStatus == "up")
     {
         p.m_oper_status = SAI_PORT_OPER_STATUS_UP;
     }
+    else if (operStatus.empty())
+    {
+        /* Fill oper_status in db with default value "down" */
+        m_portTable->hset(p.m_alias, "oper_status", "down");
+    }
 
     /*
-     * If oper_status is not empty, orchagent is doing warm start, restore hostif oper status.
+     * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
      */
-    if (!operStatus.empty())
-    {
-        sai_attribute_t attr;
-        attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
-        attr.value.booldata = (p.m_oper_status == SAI_PORT_OPER_STATUS_UP);
+    sai_attribute_t attr;
+    attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+    attr.value.booldata = (p.m_oper_status == SAI_PORT_OPER_STATUS_UP);
 
-        sai_status_t status = sai_hostif_api->set_hostif_attribute(p.m_hif_id, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_WARN("Failed to set operation status %s to host interface %s",
-                          operStatus.c_str(), p.m_alias.c_str());
-            return false;
-        }
+    sai_status_t status = sai_hostif_api->set_hostif_attribute(p.m_hif_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Failed to set operation status %s to host interface %s",
+                      operStatus.c_str(), p.m_alias.c_str());
+        return false;
     }
 
     return true;
