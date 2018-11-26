@@ -477,7 +477,7 @@ class VnetVxlanVrfTunnel(object):
         expected_attr = {
                         "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": self.vr_map[name].get('ing'),
                         "SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS": switch_mac,
-                        "SAI_ROUTER_INTERFACE_ATTR_MTU": "9100",
+                        "SAI_ROUTER_INTERFACE_ATTR_MTU": "1492",
                     }
 
         if vlan_oid:
@@ -485,6 +485,7 @@ class VnetVxlanVrfTunnel(object):
             expected_attr.update({'SAI_ROUTER_INTERFACE_ATTR_VLAN_ID': vlan_oid})
         else:
             expected_attr.update({'SAI_ROUTER_INTERFACE_ATTR_TYPE': 'SAI_ROUTER_INTERFACE_TYPE_PORT'})
+            expected_attr.update({'SAI_ROUTER_INTERFACE_ATTR_MTU': '9100'})
 
         new_rif = get_created_entry(asic_db, self.ASIC_RIF_TABLE, self.rifs)
         check_object(asic_db, self.ASIC_RIF_TABLE, new_rif, expected_attr)
