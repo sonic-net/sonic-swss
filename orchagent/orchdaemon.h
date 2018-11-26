@@ -25,6 +25,7 @@
 #include "vnetorch.h"
 #include "countercheckorch.h"
 #include "flexcounterorch.h"
+#include "watermarkorch.h"
 #include "directory.h"
 
 using namespace swss;

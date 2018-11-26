@@ -16,6 +16,8 @@ unordered_map<string, string> flexCounterGroupMap =
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
+    {"QUEUE_WATERMARK", QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"PG_WATERMARK", PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -75,6 +77,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     // Currently the counters are disabled by default
                     // The queue maps will be generated as soon as counters are enabled
                     gPortsOrch->generateQueueMap();
+                    gPortsOrch->generatePriorityGroupMap();
 
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);

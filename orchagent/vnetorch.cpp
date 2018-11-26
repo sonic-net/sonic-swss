@@ -11,11 +11,14 @@
 #include "portsorch.h"
 #include "request_parser.h"
 #include "vnetorch.h"
+#include "vxlanorch.h"
+#include "directory.h"
 #include "swssnet.h"
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_route_api_t* sai_route_api;
 extern sai_object_id_t gSwitchId;
+extern Directory<Orch*> gDirectory;
 extern PortsOrch *gPortsOrch;
 
 /*
@@ -23,10 +26,10 @@ extern PortsOrch *gPortsOrch;
  */
 std::vector<VR_TYPE> vr_cntxt;
 
-VNetVrfObject::VNetVrfObject(const std::string& name, set<string>& p_list, vector<sai_attribute_t>& attrs)
-             : VNetObject(p_list)
+VNetVrfObject::VNetVrfObject(const std::string& vnet, string& tunnel, set<string>& peer,
+                             vector<sai_attribute_t>& attrs) : VNetObject(tunnel, peer)
 {
-    vnet_name_ = name;
+    vnet_name_ = vnet;
     createObj(attrs);
 }
 
@@ -138,10 +141,10 @@ VNetVrfObject::~VNetVrfObject()
  */
 
 template <class T>
-std::unique_ptr<T> VNetOrch::createObject(const string& vnet_name, set<string>& plist,
+std::unique_ptr<T> VNetOrch::createObject(const string& vnet_name, string& tunnel, set<string>& plist,
                                           vector<sai_attribute_t>& attrs)
 {
-    std::unique_ptr<T> vnet_obj(new T(vnet_name, plist, attrs));
+    std::unique_ptr<T> vnet_obj(new T(vnet_name, tunnel, plist, attrs));
     return vnet_obj;
 }
 
@@ -168,6 +171,8 @@ bool VNetOrch::addOperation(const Request& request)
     vector<sai_attribute_t> attrs;
     set<string> peer_list = {};
     bool peer = false, create = false;
+    uint32_t vni=0;
+    string tunnel;
 
     for (const auto& name: request.getAttrFieldNames())
     {
@@ -182,6 +187,14 @@ bool VNetOrch::addOperation(const Request& request)
         {
             peer_list  = request.getAttrSet("peer_list");
             peer = true;
+        }
+        else if (name == "vni")
+        {
+            vni  = static_cast<sai_uint32_t>(request.getAttrUint("vni"));
+        }
+        else if (name == "vxlan_tunnel")
+        {
+            tunnel = request.getAttrString("vxlan_tunnel");
         }
         else
         {
@@ -199,11 +212,27 @@ bool VNetOrch::addOperation(const Request& request)
         auto it = vnet_table_.find(vnet_name);
         if (isVnetExecVrf())
         {
+            VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+            if (!vxlan_orch->isTunnelExists(tunnel))
+            {
+                SWSS_LOG_WARN("Vxlan tunnel '%s' doesn't exist", tunnel.c_str());
+                return false;
+            }
+
             if (it == std::end(vnet_table_))
             {
-                obj = createObject<VNetVrfObject>(vnet_name, peer_list, attrs);
+                obj = createObject<VNetVrfObject>(vnet_name, tunnel, peer_list, attrs);
                 create = true;
             }
+
+            if (!vxlan_orch->createVxlanTunnelMap(tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
+                                                  obj->getEncapMapId(), obj->getDecapMapId()))
+            {
+                SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
+                                vnet_name.c_str(), tunnel.c_str());
+            }
+
             SWSS_LOG_INFO("VNET '%s' was added ", vnet_name.c_str());
         }
         else
@@ -291,29 +320,34 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
     handler_map_.insert(handler_pair(APP_VNET_RT_TUNNEL_TABLE_NAME, &VNetRouteOrch::handleTunnel));
 }
 
-sai_object_id_t VNetRouteOrch::getNextHop(const string& vnet, IpAddress& ipAddr)
+sai_object_id_t VNetRouteOrch::getNextHop(const string& vnet, tunnelEndpoint& endp)
 {
     auto it = nh_tunnels_.find(vnet);
     if (it != nh_tunnels_.end())
     {
-        if (it->second.find(ipAddr) != it->second.end())
+        if (it->second.find(endp.ip) != it->second.end())
         {
-            return it->second.at(ipAddr);
+            return it->second.at(endp.ip);
         }
     }
 
     sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
+    auto tun_name = vnet_orch_->getTunnelName(vnet);
 
-    /*
-     * @FIXEME createNextHopTunnel(vnet, ipAddr, nh_id) , throw if failed
-     */
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-    nh_tunnels_[vnet].insert({ipAddr, nh_id});
+    nh_id = vxlan_orch->createNextHopTunnel(tun_name, endp.ip, endp.mac, endp.vni);
+    if (nh_id == SAI_NULL_OBJECT_ID)
+    {
+        throw std::runtime_error("NH Tunnel create failed for " + vnet + " ip " + endp.ip.to_string());
+    }
+
+    nh_tunnels_[vnet].insert({endp.ip, nh_id});
     return nh_id;
 }
 
 template<>
-bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix, IpAddress& endIp)
+bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix, tunnelEndpoint& endp)
 {
     SWSS_LOG_ENTER();
 
@@ -345,7 +379,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
     sai_ip_prefix_t pfx;
     copy(pfx, ipPrefix);
-    sai_object_id_t nh_id = getNextHop(vnet, endIp);
+    sai_object_id_t nh_id = getNextHop(vnet, endp);
 
     for (auto vr_id : vr_set)
     {
@@ -450,12 +484,22 @@ void VNetRouteOrch::handleTunnel(const Request& request)
     SWSS_LOG_ENTER();
 
     IpAddress ip;
+    MacAddress mac;
+    uint32_t vni = 0;
 
     for (const auto& name: request.getAttrFieldNames())
     {
         if (name == "endpoint")
         {
             ip = request.getAttrIP(name);
+        }
+        else if (name == "vni")
+        {
+            vni = static_cast<uint32_t>(request.getAttrUint(name));
+        }
+        else if (name == "mac_address")
+        {
+            mac = request.getAttrMacAddress(name);
         }
         else
         {
@@ -469,9 +513,10 @@ void VNetRouteOrch::handleTunnel(const Request& request)
 
     SWSS_LOG_INFO("VNET-RT '%s' add for endpoint %s", vnet_name.c_str(), ip_pfx.to_string().c_str());
 
+    tunnelEndpoint endp = { ip, mac, vni };
     if (vnet_orch_->isVnetExecVrf())
     {
-        if (!doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, ip))
+        if (!doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, endp))
         {
             throw std::runtime_error("Route add failed");
         }
