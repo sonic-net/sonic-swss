@@ -726,6 +726,11 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     ;Status: work in progress
 
     key             = WARM_RESTART_TABLE:process_name         ; process_name is a unique process identifier.
+                                                              ; with exception of 'warm-shutdown' operation.
+                                                              ; 'warm-shutdown' operation key is used to
+                                                              ; track warm shutdown stages and results.
+                                                              ; Added to this table to leverage the existing
+                                                              ; "show warm-restart state" command.
 
     restore_count   = 1*10DIGIT                               ; a value between 0 and 2147483647 to keep track
                                                               ; of the number of times that an application has
