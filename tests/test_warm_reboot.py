@@ -327,6 +327,22 @@ def check_kernel_reachable_v6_neigh_num(dvs, number):
     neigh_num = int(output.strip())
     assert neigh_num == number
 
+def check_kernel_stale_neigh_num(dvs, number):
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "ip neigh show nud stale | grep -v 'dev lo' | wc -l"])
+    neigh_num = int(output.strip())
+    assert neigh_num == number
+
+def check_kernel_stale_v4_neigh_num(dvs, number):
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "ip -4 neigh show nud stale | grep -v 'dev lo' | wc -l"])
+    neigh_num = int(output.strip())
+    assert neigh_num == number
+
+def check_kernel_stale_v6_neigh_num(dvs, number):
+    (exitcode, output) = dvs.runcmd(['sh', '-c', "ip -6 neigh show nud stale | grep -v 'dev lo' | wc -l"])
+    neigh_num = int(output.strip())
+    assert neigh_num == number
+
+
 def kernel_restore_neighs_done(restoretbl):
     keys = restoretbl.getKeys()
     return (len(keys) > 0)
@@ -1478,12 +1494,51 @@ def test_routing_WarmRestart(dvs, testlog):
     assert rt_key['dest'] == "192.168.100.0/24"
 
 
+# macros for number of interfaces and number of neighbors
+# TBD: NUM_NEIGH_PER_INTF >= 128 ips will cause test framework to hang by default kernel settings
+# TBD: Need tune gc_thresh1/2/3 at host side of vs docker to support this.
+NUM_INTF = 8
+NUM_NEIGH_PER_INTF = 16 #128
+NUM_OF_NEIGHS = (NUM_INTF*NUM_NEIGH_PER_INTF)
+
 # 'ip neigh flush all' won't remove failed entries if number of neighs less than gc_threshold1
 # Also it takes time to remove them completly.
 # We use arp off/on to do it
 def flush_neigh_entries(dvs):
     dvs.runcmd("ip link set group default arp off")
     dvs.runcmd("ip link set group default arp on")
+
+# Add neighbor entries on servers connecting to SONiC ports
+# ping them to get the neighbor entries
+def setup_initial_neighbors(dvs):
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF):
+            dvs.servers[i].runcmd("ip addr add {}.0.0.{}/24 dev eth0".format(i*4, j+2))
+            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4,j+2))
+
+    time.sleep(1)
+
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF):
+            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+2)])
+            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+2)])
+
+# Del half of the ips and a new half of the ips
+# note: the first ipv4 can not be deleted only
+def del_and_add_neighbors(dvs):
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF/2):
+            dvs.servers[i].runcmd("ip addr del {}.0.0.{}/24 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF/2+2))
+            dvs.servers[i].runcmd("ip -6 addr del {}00::{}/64 dev eth0".format(i*4,j+NUM_NEIGH_PER_INTF/2+2))
+            dvs.servers[i].runcmd("ip addr add {}.0.0.{}/24 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF+2))
+            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4,j+NUM_NEIGH_PER_INTF+2))
+
+#ping new IPs
+def ping_new_ips(dvs):
+    for i in range(8, 8+NUM_INTF):
+        for j in range(NUM_NEIGH_PER_INTF/2):
+            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
+            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
 
 def test_system_warmreboot_neighbor_syncup(dvs, testlog):
 
@@ -1504,11 +1559,6 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     # Ethernet32/36/.../60, with ip: 32.0.0.1/24... 60.0.0.1/24
     # ipv6: 3200::1/64...6000::1/64
     # bring up the servers'interfaces and assign NUM_NEIGH_PER_INTF (e,g 128) ips per interface
-    # TBD: NUM_NEIGH_PER_INTF >= 128 ips will cause test framework to hang by default settings
-    # TBD: Need tune gc_thresh1/2/3 at host side of vs docker to support this.
-    NUM_INTF = 8
-    NUM_NEIGH_PER_INTF = 64 #128
-    NUM_OF_NEIGHS = (NUM_INTF*NUM_NEIGH_PER_INTF)
     macs = []
     for i in range(8, 8+NUM_INTF):
         # set timeout to be the same as real HW
@@ -1526,21 +1576,8 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
 
     #
     # Testcase 1:
-    # Add neighbor entries on servers connecting to SONiC ports
-    # 128 ipv4 and 128 ipv6 on each server
-    # total: 1024 ipv4 and 1024 ipv6
-    # ping them to get the neighbor entries
-    for i in range(8, 8+NUM_INTF):
-        for j in range(NUM_NEIGH_PER_INTF):
-            dvs.servers[i].runcmd("ip addr add {}.0.0.{}/24 dev eth0".format(i*4, j+2))
-            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4,j+2))
-
-    time.sleep(1)
-
-    for i in range(8, 8+NUM_INTF):
-        for j in range(NUM_NEIGH_PER_INTF):
-            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+2)])
-            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+2)])
+    # Setup initial neigbors
+    setup_initial_neighbors(dvs)
 
     # Check the neighbor entries are inserted correctly
     db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
@@ -1627,15 +1664,9 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     # stop neighsyncd and sairedis.rec
     stop_neighsyncd(dvs)
     del_entry_tbl(state_db, "NEIGH_RESTORE_TABLE", "Flags")
+    time.sleep(3)
 
-    # Del half of the ips and a new half of the ips
-    # note: the first ipv4 can not be deleted only
-    for i in range(8, 8+NUM_INTF):
-        for j in range(NUM_NEIGH_PER_INTF/2):
-            dvs.servers[i].runcmd("ip addr del {}.0.0.{}/24 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF/2+2))
-            dvs.servers[i].runcmd("ip -6 addr del {}00::{}/64 dev eth0".format(i*4,j+NUM_NEIGH_PER_INTF/2+2))
-            dvs.servers[i].runcmd("ip addr add {}.0.0.{}/24 dev eth0".format(i*4, j+NUM_NEIGH_PER_INTF+2))
-            dvs.servers[i].runcmd("ip -6 addr add {}00::{}/64 dev eth0".format(i*4,j+NUM_NEIGH_PER_INTF+2))
+    del_and_add_neighbors(dvs)
 
     flush_neigh_entries(dvs)
     time.sleep(3)
@@ -1651,8 +1682,11 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     # should finish the store within 10 seconds
     time.sleep(10)
 
-    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS)
-    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS)
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS/2)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS/2)
+
+    check_kernel_stale_v4_neigh_num(dvs, NUM_OF_NEIGHS/2)
+    check_kernel_stale_v6_neigh_num(dvs, NUM_OF_NEIGHS/2)
 
     # check syslog and sairedis.rec file for activities
     check_syslog_for_neighbor_entry(dvs, marker, 0, 0, "ipv4")
@@ -1668,14 +1702,14 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     # ping the new ips, should get it into appDB
     marker = dvs.add_log_marker()
 
-    for i in range(8, 8+NUM_INTF):
-        for j in range(NUM_NEIGH_PER_INTF/2):
-            dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
-            dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
+    ping_new_ips(dvs)
 
+    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS)
+    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS)
 
-    check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS+NUM_OF_NEIGHS/2)
-    check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS+NUM_OF_NEIGHS/2)
+    check_kernel_stale_v4_neigh_num(dvs, NUM_OF_NEIGHS/2)
+    check_kernel_stale_v6_neigh_num(dvs, NUM_OF_NEIGHS/2)
+
     check_redis_neigh_entries(dvs, tbl, 2*(NUM_OF_NEIGHS+NUM_OF_NEIGHS/2))
 
     (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
@@ -1692,6 +1726,10 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
 
     check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS)
     check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS)
+
+    check_kernel_stale_v4_neigh_num(dvs, 0)
+    check_kernel_stale_v6_neigh_num(dvs, 0)
+
     check_redis_neigh_entries(dvs, tbl, 2*NUM_OF_NEIGHS)
 
     (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
