@@ -1864,7 +1864,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         int vlan_id;
         vlan_id = stoi(key.substr(4)); // FIXME: might raise exception
 
-        string vlan_alias, port_alias;
+        string vlan_alias;
         vlan_alias = VLAN_PREFIX + to_string(vlan_id);
         string op = kfvOp(t);
 
