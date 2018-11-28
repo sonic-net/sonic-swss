@@ -1870,6 +1870,16 @@ void PortsOrch::doVlanTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            // Retrieve attributes
+            uint32_t mtu = 0;
+            for (auto i : kfvFieldsValues(t))
+            {
+                if (fvField(i) == "mtu")
+                {
+                    mtu = (uint32_t)stoul(fvValue(i));
+                }
+            }
+
             /*
              * Only creation is supported for now.
              * We may add support for VLAN mac learning enable/disable,
@@ -1881,6 +1891,25 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 {
                     it++;
                     continue;
+                }
+            }
+
+            // Process attributes
+            Port l;
+            if (!getPort(vlan_alias, l))
+            {
+                SWSS_LOG_ERROR("Failed to get VLAN %s", vlan_alias.c_str());
+            }
+            else
+            {
+                if (mtu != 0)
+                {
+                    l.m_mtu = mtu;
+                    m_portList[vlan_alias] = l;
+                    if (l.m_rif_id)
+                    {
+                        gIntfsOrch->setRouterIntfsMtu(l);
+                    }
                 }
             }
 
@@ -2063,7 +2092,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
             }
             else
             {
-                if (mtu != 0 && l.m_rif_id)
+                if (mtu != 0)
                 {
                     l.m_mtu = mtu;
                     m_portList[alias] = l;
