@@ -2288,17 +2288,21 @@ bool PortsOrch::initializePort(Port &p)
 
     /**
      * Create database port oper status as DOWN if attr missing
-     * This status will be updated when receiving port_oper_status_notification.
+     * This status will be updated upon receiving port_oper_status_notification.
      */
-    p.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
     if (operStatus == "up")
     {
         p.m_oper_status = SAI_PORT_OPER_STATUS_UP;
     }
     else if (operStatus.empty())
     {
+        p.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
         /* Fill oper_status in db with default value "down" */
         m_portTable->hset(p.m_alias, "oper_status", "down");
+    }
+    else
+    {
+        p.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
     }
 
     /*
