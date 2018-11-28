@@ -1895,8 +1895,8 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             }
 
             // Process attributes
-            Port l;
-            if (!getPort(vlan_alias, l))
+            Port vl;
+            if (!getPort(vlan_alias, vl))
             {
                 SWSS_LOG_ERROR("Failed to get VLAN %s", vlan_alias.c_str());
             }
@@ -1904,11 +1904,11 @@ void PortsOrch::doVlanTask(Consumer &consumer)
             {
                 if (mtu != 0)
                 {
-                    l.m_mtu = mtu;
-                    m_portList[vlan_alias] = l;
-                    if (l.m_rif_id)
+                    vl.m_mtu = mtu;
+                    m_portList[vlan_alias] = vl;
+                    if (vl.m_rif_id)
                     {
-                        gIntfsOrch->setRouterIntfsMtu(l);
+                        gIntfsOrch->setRouterIntfsMtu(vl);
                     }
                 }
             }
