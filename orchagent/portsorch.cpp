@@ -1168,7 +1168,7 @@ bool PortsOrch::setPortAutoNeg(sai_object_id_t id, int an)
     return true;
 }
 
-bool PortsOrch::setHostIntfsOperStatus(Port& port, bool isUp)
+bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
 {
     SWSS_LOG_ENTER();
 
@@ -1190,7 +1190,7 @@ bool PortsOrch::setHostIntfsOperStatus(Port& port, bool isUp)
     return true;
 }
 
-void PortsOrch::updateDbPortOperStatus(Port& port, sai_port_oper_status_t status)
+void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const
 {
     SWSS_LOG_ENTER();
 
@@ -1198,7 +1198,6 @@ void PortsOrch::updateDbPortOperStatus(Port& port, sai_port_oper_status_t status
     FieldValueTuple tuple("oper_status", oper_status_strings.at(status));
     tuples.push_back(tuple);
     m_portTable->set(port.m_alias, tuples);
-    port.m_oper_status = status;
 }
 
 bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string fec_mode)
@@ -3106,6 +3105,8 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     }
 
     updateDbPortOperStatus(port, status);
+    port.m_oper_status = status;
+
     bool isUp = status == SAI_PORT_OPER_STATUS_UP;
     if (!setHostIntfsOperStatus(port, isUp))
     {
