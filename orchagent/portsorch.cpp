@@ -3077,20 +3077,18 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
 
             SWSS_LOG_NOTICE("Get port state change notification id:%lx status:%d", id, status);
 
-            auto it = find_if(begin(m_portList), end(m_portList),
-                    [id] (pair<const string, Port>& el)
-                    {
-                        return el.second.m_port_id == id;
-                    }
-            );
-            if (it == end(m_portList))
+            Port port;
+
+            if (!getPort(id, port))
             {
                 SWSS_LOG_ERROR("Failed to get port object for port id 0x%lx", id);
                 continue;
             }
 
-            Port& port = it->second;
             updatePortOperStatus(port, status);
+
+            /* update m_portList */
+            m_portList[port.m_alias] = port;
         }
 
         sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);
@@ -3109,7 +3107,11 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
 
     updateDbPortOperStatus(port, status);
     bool isUp = status == SAI_PORT_OPER_STATUS_UP;
-    setHostIntfsOperStatus(port, isUp);
+    if (!setHostIntfsOperStatus(port, isUp))
+    {
+        SWSS_LOG_ERROR("Failed to set host interface %s operational status %s", port.m_alias.c_str(),
+                isUp ? "up" : "down");
+    }
     if (!gNeighOrch->ifChangeInformNextHop(port.m_alias, isUp))
     {
         SWSS_LOG_WARN("Inform nexthop operation failed for interface %s", port.m_alias.c_str());
