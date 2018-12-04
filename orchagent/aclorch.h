@@ -22,6 +22,7 @@
 #define TABLE_DESCRIPTION "POLICY_DESC"
 #define TABLE_TYPE        "TYPE"
 #define TABLE_PORTS       "PORTS"
+#define TABLE_SERVICES    "SERVICES"
 
 #define TABLE_TYPE_L3        "L3"
 #define TABLE_TYPE_L3V6      "L3V6"
@@ -339,6 +340,8 @@ public:
     bool remove(string rule_id);
     // Remove all rules from the ACL table
     bool clear();
+    // Update table subject to changes
+    void update(SubjectType, void *);
 };
 
 template <class Iterable>
@@ -384,7 +387,6 @@ private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
     void doAclRuleTask(Consumer &consumer);
-    void doAclTablePortUpdateTask(Consumer &consumer);
     void doTask(SelectableTimer &timer);
     void init(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
 
@@ -396,14 +398,15 @@ private:
 
     bool processAclTableType(string type, acl_table_type_t &table_type);
     bool processAclTableStage(string stage, acl_stage_type_t &acl_stage);
-    bool processPorts(AclTable &aclTable, string portsList, std::function<void (sai_object_id_t)> inserter);
-    bool processPendingPort(AclTable &aclTable, string portAlias, std::function<void (sai_object_id_t)> inserter);
+    bool processAclTablePorts(string portList, AclTable &aclTable);
     bool validateAclTable(AclTable &aclTable);
     sai_status_t createDTelWatchListTables();
     sai_status_t deleteDTelWatchListTables();
 
     //vector <AclTable> m_AclTables;
-    map <sai_object_id_t, AclTable> m_AclTables;
+    map<sai_object_id_t, AclTable> m_AclTables;
+    // TODO: Move all ACL tables into one map: name -> instance
+    map<string, AclTable> m_ctrlAclTables;
 
     static mutex m_countersMutex;
     static condition_variable m_sleepGuard;

@@ -4,6 +4,7 @@
 #include "converter.h"
 #include "notifier.h"
 #include "notificationproducer.h"
+#include "macaddress.h"
 
 using namespace std;
 using namespace swss;
@@ -18,7 +19,9 @@ const map<string, sai_switch_attr_t> switch_attribute_map =
     {"fdb_multicast_miss_packet_action",    SAI_SWITCH_ATTR_FDB_MULTICAST_MISS_PACKET_ACTION},
     {"ecmp_hash_seed",                      SAI_SWITCH_ATTR_ECMP_DEFAULT_HASH_SEED},
     {"lag_hash_seed",                       SAI_SWITCH_ATTR_LAG_DEFAULT_HASH_SEED},
-    {"fdb_aging_time",                      SAI_SWITCH_ATTR_FDB_AGING_TIME}
+    {"fdb_aging_time",                      SAI_SWITCH_ATTR_FDB_AGING_TIME},
+    {"vxlan_port",                          SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT},
+    {"vxlan_router_mac",                    SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC}
 };
 
 const map<string, sai_packet_action_t> packet_action_map =
@@ -66,6 +69,7 @@ void SwitchOrch::doTask(Consumer &consumer)
                 sai_attribute_t attr;
                 attr.id = switch_attribute_map.at(attribute);
 
+                MacAddress mac_addr;
                 bool invalid_attr = false;
                 switch (attr.id)
                 {
@@ -88,6 +92,15 @@ void SwitchOrch::doTask(Consumer &consumer)
 
                     case SAI_SWITCH_ATTR_FDB_AGING_TIME:
                         attr.value.u32 = to_uint<uint32_t>(value);
+                        break;
+
+                    case SAI_SWITCH_ATTR_VXLAN_DEFAULT_PORT:
+                        attr.value.u16 = to_uint<uint16_t>(value);
+                        break;
+
+                    case SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC:
+                        mac_addr = value;
+                        memcpy(attr.value.mac, mac_addr.getMac(), sizeof(sai_mac_t));
                         break;
 
                     default:

@@ -14,10 +14,11 @@ const request_description_t vnet_request_description = {
     { REQ_T_STRING },
     {
         { "src_mac",       REQ_T_MAC_ADDRESS },
-        { "vnet_name",     REQ_T_STRING },
+        { "vxlan_tunnel",  REQ_T_STRING },
+        { "vni",           REQ_T_UINT },
         { "peer_list",     REQ_T_SET },
     },
-    { } // no mandatory attributes
+    { "vxlan_tunnel", "vni" } // mandatory attributes
 };
 
 enum class VNET_EXEC
@@ -34,7 +35,7 @@ enum class VR_TYPE
     VR_INVALID
 };
 
-using vrid_list_t = map<VR_TYPE, sai_object_id_t>;
+typedef map<VR_TYPE, sai_object_id_t> vrid_list_t;
 extern std::vector<VR_TYPE> vr_cntxt;
 
 class VNetRequest : public Request
@@ -46,10 +47,7 @@ public:
 class VNetObject
 {
 public:
-    VNetObject(set<string>& p_list)
-    {
-        peer_list_ = p_list;
-    }
+    VNetObject(string& tunName, set<string>& peer) : tunnel_(tunName), peer_list_(peer) { }
 
     virtual sai_object_id_t getEncapMapId() const = 0;
 
@@ -69,16 +67,22 @@ public:
         return peer_list_;
     }
 
+    string getTunnelName() const
+    {
+        return tunnel_;
+    }
+
     virtual ~VNetObject() {};
 
 private:
     set<string> peer_list_ = {};
+    string tunnel_;
 };
 
 class VNetVrfObject : public VNetObject
 {
 public:
-    VNetVrfObject(const std::string& name, set<string>& p_list, vector<sai_attribute_t>& attrs);
+    VNetVrfObject(const string& vnet, string& tunnel, set<string>& peer, vector<sai_attribute_t>& attrs);
 
     sai_object_id_t getVRidIngress() const;
 
@@ -112,7 +116,7 @@ private:
     vrid_list_t vr_ids_;
 };
 
-using VNetObject_T = std::unique_ptr<VNetObject>;
+typedef std::unique_ptr<VNetObject> VNetObject_T;
 typedef std::unordered_map<std::string, VNetObject_T> VNetTable;
 
 class VNetOrch : public Orch2
@@ -151,6 +155,11 @@ public:
         return vnet_table_.at(name)->getVRid();
     }
 
+    string getTunnelName(const std::string& name) const
+    {
+        return vnet_table_.at(name)->getTunnelName();
+    }
+
     bool isVnetExecVrf() const
     {
         return (vnet_exec_ == VNET_EXEC::VNET_EXEC_VRF);
@@ -166,7 +175,7 @@ private:
     virtual bool delOperation(const Request& request);
 
     template <class T>
-    std::unique_ptr<T> createObject(const string&, set<string>&, vector<sai_attribute_t>&);
+    std::unique_ptr<T> createObject(const string&, string&, set<string>&, vector<sai_attribute_t>&);
 
     VNetTable vnet_table_;
     VNetRequest request_;
@@ -177,8 +186,10 @@ private:
 const request_description_t vnet_route_description = {
     { REQ_T_STRING, REQ_T_IP_PREFIX },
     {
-        { "endpoint",   REQ_T_IP },
-        { "ifname",     REQ_T_STRING },
+        { "endpoint",    REQ_T_IP },
+        { "ifname",      REQ_T_STRING },
+        { "vni",         REQ_T_UINT },
+        { "mac_address", REQ_T_MAC_ADDRESS },
     },
     { }
 };
@@ -189,15 +200,23 @@ public:
     VNetRouteRequest() : Request(vnet_route_description, ':') { }
 };
 
-using NextHopMap = map<IpAddress, sai_object_id_t>;
-using NextHopTunnels = map<string, NextHopMap>;
+typedef map<IpAddress, sai_object_id_t> NextHopMap;
+typedef map<string, NextHopMap> NextHopTunnels;
+
+struct tunnelEndpoint
+{
+    IpAddress ip;
+    MacAddress mac;
+    uint32_t vni;
+};
 
 class VNetRouteOrch : public Orch2
 {
 public:
     VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *);
-    using handler_pair = pair<string, void (VNetRouteOrch::*) (const Request& )>;
-    using handler_map = map<string, void (VNetRouteOrch::*) (const Request& )>;
+
+    typedef pair<string, void (VNetRouteOrch::*) (const Request& )> handler_pair;
+    typedef map<string, void (VNetRouteOrch::*) (const Request& )> handler_map;
 
 private:
     virtual bool addOperation(const Request& request);
@@ -207,12 +226,12 @@ private:
     void handleTunnel(const Request&);
 
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, IpAddress& ipAddr);
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, tunnelEndpoint& endp);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, string& ifname);
 
-    sai_object_id_t getNextHop(const string& vnet, IpAddress& ipAddr);
+    sai_object_id_t getNextHop(const string& vnet, tunnelEndpoint& endp);
 
     VNetOrch *vnet_orch_;
     VNetRouteRequest request_;

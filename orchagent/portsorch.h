@@ -14,6 +14,8 @@
 #define VLAN_TAG_LEN 4
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
+#define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
+#define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
 
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
@@ -68,15 +70,18 @@ public:
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
     bool getAclBindPortId(string alias, sai_object_id_t &port_id);
 
-    bool setHostIntfsOperStatus(sai_object_id_t id, bool up);
-    void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
+    bool setHostIntfsOperStatus(const Port& port, bool up) const;
+    void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
     bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage = ACL_STAGE_INGRESS);
 
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
     bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
 
     void generateQueueMap();
+    void generatePriorityGroupMap();
+
     void refreshPortStatus();
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
@@ -84,11 +89,16 @@ private:
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
     unique_ptr<Table> m_queueTypeTable;
+    unique_ptr<Table> m_pgTable;
+    unique_ptr<Table> m_pgPortTable;
+    unique_ptr<Table> m_pgIndexTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
     std::string getQueueFlexCounterTableKey(std::string s);
+    std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPortFlexCounterTableKey(std::string s);
+    std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
 
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
@@ -160,15 +170,19 @@ private:
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 
     bool setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed);
-
-    bool getQueueType(sai_object_id_t queue_id, string &type);
+    
+    bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 
     bool m_isQueueMapGenerated = false;
     void generateQueueMapPerPort(const Port& port);
 
+    bool m_isPriorityGroupMapGenerated = false;
+    void generatePriorityGroupMapPerPort(const Port& port);
+
     bool setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
 
+    bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
 };
 #endif /* SWSS_PORTSORCH_H */

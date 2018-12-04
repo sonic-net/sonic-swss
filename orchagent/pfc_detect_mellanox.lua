@@ -71,6 +71,8 @@ for i = n, 1, -1 do
                         -- DEBUG CODE END.
                         (occupancy_bytes == 0 and packets - packets_last == 0 and (pfc_duration - pfc_duration_last) > poll_time * 0.8) then
                         if time_left <= poll_time then
+                            redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
+                            redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
                             redis.call('PUBLISH', 'PFC_WD', '["' .. KEYS[i] .. '","storm"]')
                             is_deadlock = true
                             time_left = detection_time
@@ -88,9 +90,10 @@ for i = n, 1, -1 do
             -- Save values for next run
                 redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'SAI_QUEUE_STAT_PACKETS_last', packets)
                 redis.call('HSET', counters_table_name .. ':' .. KEYS[i], 'PFC_WD_DETECTION_TIME_LEFT', time_left)
-                redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last', pfc_rx_packets)
-                redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
-                redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last', pfc_duration)
+                if is_deadlock == false then
+                    redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last', pfc_rx_packets)
+                    redis.call('HSET', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last', pfc_duration)
+                end
             end
         end
     end
