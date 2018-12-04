@@ -650,6 +650,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         vector<FieldValueTuple> fieldValues;
         fieldValues.emplace_back(QUEUE_PLUGIN_FIELD, detectSha + "," + restoreSha);
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, to_string(m_pollInterval));
+        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
         m_flexCounterGroupTable->set(PFC_WD_FLEX_COUNTER_GROUP, fieldValues);
     }
     catch (...)

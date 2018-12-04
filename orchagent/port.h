@@ -11,7 +11,12 @@ extern "C" {
 #include <map>
 
 #define DEFAULT_PORT_VLAN_ID    1
-#define DEFAULT_MTU              9100
+/*
+ * Default MTU is derived from SAI_PORT_ATTR_MTU (1514)
+ * Orchagent adds extra 22 bytes for Ethernet header and FCS,
+ * hence setting to 1492 (1514 - 22)
+ */
+#define DEFAULT_MTU             1492
 
 namespace swss {
 
@@ -80,7 +85,7 @@ public:
     sai_object_id_t     m_ingress_acl_table_group_id = 0;
     sai_object_id_t     m_egress_acl_table_group_id = 0;
     vlan_members_t      m_vlan_members;
-    sai_port_oper_status_t m_oper_status;
+    sai_port_oper_status_t m_oper_status = SAI_PORT_OPER_STATUS_UNKNOWN;
     std::set<std::string> m_members;
     std::vector<sai_object_id_t> m_queue_ids;
     std::vector<sai_object_id_t> m_priority_group_ids;

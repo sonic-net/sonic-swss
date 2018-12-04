@@ -501,6 +501,31 @@ class DockerVirtualSwitch(object):
 
         return (addobjs, delobjs)
 
+    def SubscribeDbObjects(self, dbobjs):
+        # assuming all the db object pairs are in the same db instance
+        r = redis.Redis(unix_socket_path=self.redis_sock)
+        pubsub = r.pubsub()
+        substr = ""
+        for db, obj in dbobjs:
+            pubsub.psubscribe("__keyspace@{}__:{}".format(db, obj))
+        return pubsub
+
+    def GetSubscribedMessages(self, pubsub, timeout=10):
+        messages = []
+        delobjs = []
+        idle = 0
+        prev_key = None
+
+        while True and idle < timeout:
+            message = pubsub.get_message()
+            if message:
+                messages.append(message)
+                idle = 0
+            else:
+                time.sleep(1)
+                idle += 1
+        return (messages)
+
     def get_map_iface_bridge_port_id(self, asic_db):
         port_id_2_iface = self.asicdb.portoidmap
         tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")

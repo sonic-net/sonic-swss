@@ -1051,10 +1051,14 @@ void AclRuleMirror::update(SubjectType type, void *cntx)
 
 bool AclTable::validate()
 {
-    // Control plane ACLs are handled by a separate process
-    if (type == ACL_TABLE_UNKNOWN || type == ACL_TABLE_CTRLPLANE) return false;
-    if (stage == ACL_STAGE_UNKNOWN) return false;
-    if (portSet.empty() && pendingPortSet.empty()) return false;
+    if (type == ACL_TABLE_CTRLPLANE)
+        return true;
+
+    if (type == ACL_TABLE_UNKNOWN || stage == ACL_STAGE_UNKNOWN)
+        return false;
+
+    if (portSet.empty() && pendingPortSet.empty())
+        return false;
 
     return true;
 }
@@ -1902,6 +1906,13 @@ bool AclOrch::addAclTable(AclTable &newTable, string table_id)
 {
     SWSS_LOG_ENTER();
 
+    if (newTable.type == ACL_TABLE_CTRLPLANE)
+    {
+        m_ctrlAclTables.emplace(table_id, newTable);
+        SWSS_LOG_NOTICE("Created control plane ACL table %s", newTable.id.c_str());
+        return true;
+    }
+
     sai_object_id_t table_oid = getTableById(table_id);
 
     if (table_oid != SAI_NULL_OBJECT_ID)
@@ -2048,6 +2059,11 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                        break;
                    }
                 }
+                else if (attr_name == TABLE_SERVICES)
+                {
+                    // TODO: validate control plane ACL table has this attribute
+                    continue;
+                }
                 else
                 {
                     SWSS_LOG_ERROR("Unknown table attribute '%s'", attr_name.c_str());
@@ -2055,6 +2071,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                     break;
                 }
             }
+
             // validate and create ACL Table
             if (bAllAttributesOk && newTable.validate())
             {
@@ -2107,10 +2124,18 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             shared_ptr<AclRule> newRule;
             sai_object_id_t table_oid = getTableById(table_id);
 
-            /* ACL table is not yet created */
+            /* ACL table is not yet created or ACL table is a control plane table */
             /* TODO: Remove ACL_TABLE_UNKNOWN as a table with this type cannot be successfully created */
             if (table_oid == SAI_NULL_OBJECT_ID || m_AclTables[table_oid].type == ACL_TABLE_UNKNOWN)
             {
+                /* Skip the control plane rules */
+                if (m_ctrlAclTables.find(table_id) != m_ctrlAclTables.end())
+                {
+                    SWSS_LOG_INFO("Skip control plane ACL rule %s", key.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
                 SWSS_LOG_INFO("Wait for ACL table %s to be created", table_id.c_str());
                 it++;
                 continue;
