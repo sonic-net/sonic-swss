@@ -165,15 +165,6 @@ def create_vlan_interface(dvs, vlan_name, ifname, vnet_name, ipaddr):
 
     time.sleep(1)
 
-    # create vlan interface in config db
-    create_entry_tbl(
-        conf_db,
-        "VLAN_INTERFACE", '|', vlan_name,
-        [
-          ("vnet_name", vnet_name),
-        ],
-    )
-
     #FIXME - This is created by IntfMgr
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     create_entry_pst(
