@@ -30,11 +30,18 @@ public:
 
     sai_object_id_t getRouterIntfsId(const string&);
 
+    const IntfsTable& getSyncdIntfses() { return m_syncdIntfses; }
+
     void increaseRouterIntfsRefCount(const string&);
     void decreaseRouterIntfsRefCount(const string&);
 
     bool setRouterIntfsMtu(Port &port);
     std::set<IpPrefix> getSubnetRoutes();
+    bool setIntf(Port&, sai_object_id_t, IpPrefix *);
+
+    void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
+    void removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
+
 private:
     VRFOrch *m_vrfOrch;
     IntfsTable m_syncdIntfses;
@@ -47,9 +54,6 @@ private:
 
     void addSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
     void removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
-
-    void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
-    void removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
 
     void addDirectedBroadcast(const Port &port, const IpAddress &ip_addr);
     void removeDirectedBroadcast(const Port &port, const IpAddress &ip_addr);

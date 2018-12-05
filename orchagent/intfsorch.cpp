@@ -100,6 +100,74 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
     return subnet_routes;
 }
 
+bool IntfsOrch::setIntf(Port& port, sai_object_id_t vrf_id, IpPrefix *ip_prefix)
+{
+    SWSS_LOG_ENTER();
+
+    auto alias = port.m_alias;
+    auto it_intfs = m_syncdIntfses.find(alias);
+    if (it_intfs == m_syncdIntfses.end())
+    {
+        if (addRouterIntfs(vrf_id, port))
+        {
+            IntfsEntry intfs_entry;
+            intfs_entry.ref_count = 0;
+            m_syncdIntfses[alias] = intfs_entry;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+
+    vrf_id = port.m_vr_id;
+    if (!ip_prefix || m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
+    {
+        /* Request to create router interface, no prefix present or Duplicate entry */
+        return true;
+    }
+
+    /* NOTE: Overlap checking is required to handle ifconfig weird behavior.
+     * When set IP address using ifconfig command it applies it in two stages.
+     * On stage one it sets IP address with netmask /8. On stage two it
+     * changes netmask to specified in command. As DB is async event to
+     * add IP address with original netmask may come before event to
+     * delete IP with netmask /8. To handle this we in case of overlap
+     * we should wait until entry with /8 netmask will be removed.
+     * Time frame between those event is quite small.*/
+    bool overlaps = false;
+    for (const auto &prefixIt: m_syncdIntfses[alias].ip_addresses)
+    {
+        if (prefixIt.isAddressInSubnet(ip_prefix->getIp()) ||
+                ip_prefix->isAddressInSubnet(prefixIt.getIp()))
+        {
+            overlaps = true;
+            SWSS_LOG_NOTICE("Router interface %s IP %s overlaps with %s.", port.m_alias.c_str(),
+                    prefixIt.to_string().c_str(), ip_prefix->to_string().c_str());
+            break;
+        }
+    }
+
+    if (overlaps)
+    {
+        /* Overlap of IP address network */
+        return false;
+    }
+
+    addIp2MeRoute(vrf_id, *ip_prefix);
+    addSubnetRoute(port, *ip_prefix);
+
+    if (port.m_type == Port::VLAN && ip_prefix->isV4())
+    {
+        addDirectedBroadcast(port, ip_prefix->getBroadcastIp());
+    }
+
+    m_syncdIntfses[alias].ip_addresses.insert(*ip_prefix);
+
+    return true;
+}
+
 void IntfsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -149,17 +217,16 @@ void IntfsOrch::doTask(Consumer &consumer)
         }
 
         sai_object_id_t vrf_id = gVirtualRouterId;
-        if (!vnet_name.empty())
-        {
-            VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
-            if (!vnet_orch->isVnetExists(vnet_name))
-            {
-                it++;
-                continue;
-            }
-            vrf_id = vnet_orch->getVRid(vnet_name);
-        }
-        else if (!vrf_name.empty())
+        /* if (!vnet_name.empty()) */
+        /* { */
+        /*     if (!vnet_orch->isVnetExists(vnet_name)) */
+        /*     { */
+        /*         it++; */
+        /*         continue; */
+        /*     } */
+        /*     vrf_id = vnet_orch->getVRid(vnet_name); */
+        /* } */
+        if (!vrf_name.empty())
         {
             if (m_vrfOrch->isVRFexists(vrf_name))
             {
@@ -218,6 +285,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
+            SWSS_LOG_ERROR("marianp alias %s", alias.c_str());
             // buffer configuration hasn't been applied yet, hold from intf config.
             if (!gBufferOrch->isPortReady(alias))
             {
@@ -225,67 +293,28 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
-            auto it_intfs = m_syncdIntfses.find(alias);
-            if (it_intfs == m_syncdIntfses.end())
+            if (!vnet_name.empty())
             {
-                if (addRouterIntfs(vrf_id, port))
-                {
-                    IntfsEntry intfs_entry;
-                    intfs_entry.ref_count = 0;
-                    m_syncdIntfses[alias] = intfs_entry;
-                }
-                else
+                VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
+                if (!vnet_orch->isVnetExists(vnet_name))
                 {
                     it++;
                     continue;
                 }
-            }
-
-            vrf_id = port.m_vr_id;
-            if (!ip_prefix_in_key || m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
-            {
-                /* Request to create router interface, no prefix present or Duplicate entry */
+                if (!vnet_orch->getVnetPtr(vnet_name)->addIntf(port, ip_prefix_in_key ? &ip_prefix : nullptr))
+                {
+                    it++;
+                    continue;
+                }
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
-
-            /* NOTE: Overlap checking is required to handle ifconfig weird behavior.
-             * When set IP address using ifconfig command it applies it in two stages.
-             * On stage one it sets IP address with netmask /8. On stage two it
-             * changes netmask to specified in command. As DB is async event to
-             * add IP address with original netmask may come before event to
-             * delete IP with netmask /8. To handle this we in case of overlap
-             * we should wait until entry with /8 netmask will be removed.
-             * Time frame between those event is quite small.*/
-            bool overlaps = false;
-            for (const auto &prefixIt: m_syncdIntfses[alias].ip_addresses)
+            else if (!setIntf(port, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr))
             {
-                if (prefixIt.isAddressInSubnet(ip_prefix.getIp()) ||
-                        ip_prefix.isAddressInSubnet(prefixIt.getIp()))
-                {
-                    overlaps = true;
-                    SWSS_LOG_NOTICE("Router interface %s IP %s overlaps with %s.", port.m_alias.c_str(),
-                            prefixIt.to_string().c_str(), ip_prefix.to_string().c_str());
-                    break;
-                }
-            }
-
-            if (overlaps)
-            {
-                /* Overlap of IP address network */
-                ++it;
+                it++;
                 continue;
             }
 
-            addSubnetRoute(port, ip_prefix);
-            addIp2MeRoute(vrf_id, ip_prefix);
-
-            if (port.m_type == Port::VLAN && ip_prefix.isV4())
-            {
-                addDirectedBroadcast(port, ip_prefix.getBroadcastIp());
-            }
-
-            m_syncdIntfses[alias].ip_addresses.insert(ip_prefix);
             it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
