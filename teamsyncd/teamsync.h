@@ -11,12 +11,18 @@
 #include "netmsg.h"
 #include <team.h>
 
+// seconds
+#define WR_PENDING_TIME 70
+
 namespace swss {
 
 class TeamSync : public NetMsg
 {
 public:
     TeamSync(DBConnector *db, DBConnector *stateDb, Select *select);
+
+    /* valid only in WR mode */
+    void applyState();
 
     /* Listen to RTM_NEWLINK, RTM_DELLINK to track team devices */
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
@@ -59,6 +65,9 @@ private:
     ProducerStateTable m_lagTable;
     ProducerStateTable m_lagMemberTable;
     Table m_stateLagTable;
+
+    bool m_warmstart;
+    std::unordered_map<std::string, std::vector<FieldValueTuple>> m_stateLagTablePreserved;
 
     /* Store selectables needed to be updated in doSelectableTask function */
     std::set<std::string> m_selectablesToAdd;
