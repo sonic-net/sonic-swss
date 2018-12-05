@@ -239,8 +239,12 @@ def test_VlanMgrdWarmRestart(dvs, testlog):
 
     time.sleep(1)
 
-    dvs.runcmd("ifconfig Vlan16 11.0.0.1/29 up")
-    dvs.runcmd("ifconfig Vlan20 11.0.0.9/29 up")
+    intf_tbl = swsscommon.Table(conf_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Vlan16|11.0.0.1/29", fvs)
+    intf_tbl.set("Vlan20|11.0.0.9/29", fvs)
+    dvs.runcmd("ifconfig Vlan16 up")
+    dvs.runcmd("ifconfig Vlan20 up")
 
     dvs.servers[4].runcmd("ifconfig eth0 11.0.0.2/29")
     dvs.servers[4].runcmd("ip route add default via 11.0.0.1")
