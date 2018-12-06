@@ -28,6 +28,7 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     {
         m_lagTable.create_temp_view();
         m_lagMemberTable.create_temp_view();
+        SWSS_LOG_NOTICE("Starting in warmstart mode");
     }
 }
 
@@ -57,6 +58,8 @@ void TeamSync::applyState()
     {
         return;
     }
+
+    SWSS_LOG_NOTICE("Applying state");
 
     m_lagTable.apply_temp_view();
     m_lagMemberTable.apply_temp_view();
