@@ -41,7 +41,7 @@ void usage()
 }
 
 void handlePortConfigFile(ProducerStateTable &p, string file, bool warm);
-void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm);
+bool handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm);
 void handleVlanIntfFile(string file);
 void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map);
 void checkPortInitDone(DBConnector *appl_db);
@@ -92,11 +92,14 @@ int main(int argc, char **argv)
         netlink.dumpRequest(RTM_GETLINK);
         cout << "Listen to link messages..." << endl;
 
-        if (!port_config_file.empty())
+        if (!handlePortConfigFromConfigDB(p, cfgDb, warm))
         {
-            handlePortConfigFile(p, port_config_file, warm);
-        } else {
-            handlePortConfigFromConfigDB(p, cfgDb, warm);
+            // if port config is missing in ConfigDB
+            // attempt to use port_config.ini
+            if (!port_config_file.empty())
+            {
+                handlePortConfigFile(p, port_config_file, warm);
+            }
         }
 
         s.addSelectable(&netlink);
@@ -175,7 +178,7 @@ static void notifyPortConfigDone(ProducerStateTable &p)
     p.set("PortConfigDone", attrs);
 }
 
-void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm)
+bool handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm)
 {
     cout << "Get port configuration from ConfigDB..." << endl;
 
@@ -183,6 +186,13 @@ void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
     std::vector<FieldValueTuple> ovalues;
     std::vector<string> keys;
     table.getKeys(keys);
+
+    if (keys.empty())
+    {
+        cout << "No port configuration in ConfigDB" << endl;
+        return false;
+    }
+
     for ( auto &k : keys )
     {
         table.get(k, ovalues);
@@ -202,6 +212,8 @@ void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
     {
         notifyPortConfigDone(p);
     }
+
+    return true;
 }
 
 void handlePortConfigFile(ProducerStateTable &p, string file, bool warm)
