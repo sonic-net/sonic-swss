@@ -1562,10 +1562,13 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     macs = []
     for i in range(8, 8+NUM_INTF):
         # set timeout to be the same as real HW
+        # set stale timer bigger to avoid testbed difference related timing issues.
         # set ip on server facing interfaces
         # bring servers' interface up, save the macs
         dvs.runcmd("sysctl -w net.ipv4.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
         dvs.runcmd("sysctl -w net.ipv6.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
+        dvs.runcmd("sysctl -w net.ipv4.neigh.Ethernet{}.gc_stale_time=180".format(i*4))
+        dvs.runcmd("sysctl -w net.ipv6.neigh.Ethernet{}.gc_stale_time=180".format(i*4))
         dvs.runcmd("ip addr flush dev Ethernet{}".format(i*4))
         dvs.runcmd("ifconfig Ethernet{} {}.0.0.1/24 up".format(i*4, i*4))
         dvs.runcmd("ip -6 addr add {}00::1/64 dev Ethernet{}".format(i*4,i*4))
