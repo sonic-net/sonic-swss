@@ -4,6 +4,7 @@
 #include <sys/socket.h>
 #include <linux/if.h>
 #include <netlink/route/link.h>
+#include <chrono>
 #include "logger.h"
 #include "netmsg.h"
 #include "dbconnector.h"
@@ -12,6 +13,7 @@
 #include "teamsync.h"
 
 using namespace std;
+using namespace std::chrono;
 using namespace swss;
 
 /* Taken from drivers/net/team/team.c */
@@ -21,15 +23,34 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_select(select),
     m_lagTable(db, APP_LAG_TABLE_NAME),
     m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME),
-    m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
-    m_warmstart(WarmStart::isWarmStart())
+    m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME)
 {
+    WarmStart::initialize("teamsyncd", "teamd");
+    WarmStart::checkWarmStart("teamsyncd", "teamd");
+    m_warmstart = WarmStart::isWarmStart();
+
     if (m_warmstart)
     {
+        m_start_time = steady_clock::now();
         m_lagTable.create_temp_view();
         m_lagMemberTable.create_temp_view();
         SWSS_LOG_NOTICE("Starting in warmstart mode");
     }
+}
+
+void TeamSync::periodic()
+{
+    if (m_warmstart)
+    {
+        auto diff = duration_cast<seconds>(steady_clock::now() - m_start_time);
+        if(diff.count() > WR_PENDING_TIME)
+        {
+            applyState();
+            m_warmstart = false; // apply state just once
+        }
+    }
+
+    doSelectableTask();
 }
 
 void TeamSync::doSelectableTask()
@@ -54,11 +75,6 @@ void TeamSync::doSelectableTask()
 
 void TeamSync::applyState()
 {
-    if (!m_warmstart)
-    {
-        return;
-    }
-
     SWSS_LOG_NOTICE("Applying state");
 
     m_lagTable.apply_temp_view();
@@ -70,9 +86,8 @@ void TeamSync::applyState()
         const auto &fvVector = it.second;
         m_stateLagTable.set(lagName, fvVector);
     }
-    m_stateLagTablePreserved.clear();
 
-    m_warmstart = false;
+    m_stateLagTablePreserved.clear();
 }
 
 void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
