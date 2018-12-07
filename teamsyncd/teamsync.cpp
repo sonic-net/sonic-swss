@@ -138,7 +138,7 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     fvVector.clear();
     FieldValueTuple s("state", "ok");
     fvVector.push_back(s);
-    if(m_warmstart)
+    if (m_warmstart)
     {
         m_stateLagTablePreserved[lagName] = fvVector;
     }
@@ -171,7 +171,7 @@ void TeamSync::removeLag(const string &lagName)
     if (m_teamSelectables.find(lagName) == m_teamSelectables.end())
         return;
 
-    if(m_warmstart)
+    if (m_warmstart)
     {
         m_stateLagTablePreserved.erase(lagName);
     }
