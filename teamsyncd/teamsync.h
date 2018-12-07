@@ -12,7 +12,7 @@
 #include <team.h>
 
 // seconds
-#define WR_PENDING_TIME 70
+const uint32_t DEFAULT_WR_PENDING_TIMEOUT = 70;
 
 using namespace std::chrono;
 
@@ -73,6 +73,7 @@ private:
     bool m_warmstart;
     std::unordered_map<std::string, std::vector<FieldValueTuple>> m_stateLagTablePreserved;
     steady_clock::time_point m_start_time;
+    uint32_t m_pending_timeout;
 
     /* Store selectables needed to be updated in doSelectableTask function */
     std::set<std::string> m_selectablesToAdd;

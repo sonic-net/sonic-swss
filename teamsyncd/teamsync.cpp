@@ -32,6 +32,8 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     if (m_warmstart)
     {
         m_start_time = steady_clock::now();
+        auto warmRestartIval = WarmStart::getWarmStartTimer("teamsyncd", "teamd");
+        m_pending_timeout = warmRestartIval ? warmRestartIval : DEFAULT_WR_PENDING_TIMEOUT;
         m_lagTable.create_temp_view();
         m_lagMemberTable.create_temp_view();
         SWSS_LOG_NOTICE("Starting in warmstart mode");
@@ -43,7 +45,7 @@ void TeamSync::periodic()
     if (m_warmstart)
     {
         auto diff = duration_cast<seconds>(steady_clock::now() - m_start_time);
-        if(diff.count() > WR_PENDING_TIME)
+        if(diff.count() > m_pending_timeout)
         {
             applyState();
             m_warmstart = false; // apply state just once
