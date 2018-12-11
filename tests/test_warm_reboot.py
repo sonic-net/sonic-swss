@@ -386,12 +386,12 @@ def test_swss_neighbor_syncup(dvs, testlog):
     config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     intf_tbl = swsscommon.Table(config_db, "INTERFACE")
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-    intf_tbl.set("Ethernet24|24.0.0.1/24", fvs)
-    intf_tbl.set("Ethernet28|28.0.0.9/24", fvs)
-    intf_tbl.set("Ethernet24|2400::1/64", fvs)
-    intf_tbl.set("Ethernet28|2800::1/64", fvs)
-    dvs.runcmd("ifconfig Ethernet24 up")
-    dvs.runcmd("ifconfig Ethernet28 up")
+    intf_tbl.set("{}|24.0.0.1/24".format(intfs[0]), fvs)
+    intf_tbl.set("{}|28.0.0.9/24".format(intfs[1]), fvs)
+    intf_tbl.set("{}|2400::1/64".format(intfs[0]), fvs)
+    intf_tbl.set("{}|2800::1/64".format(intfs[1]), fvs)
+    dvs.runcmd("ifconfig {} up".format(intfs[0]))
+    dvs.runcmd("ifconfig {} up".format(intfs[1]))
 
     ips = ["24.0.0.2", "24.0.0.3", "28.0.0.2", "28.0.0.3"]
     v6ips = ["2400::2", "2400::3", "2800::2", "2800::3"]
@@ -714,10 +714,10 @@ def test_swss_neighbor_syncup(dvs, testlog):
     # check restore Count
     swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
-    intf_tbl._del("Ethernet24|24.0.0.1/24")
-    intf_tbl._del("Ethernet28|28.0.0.9/24")
-    intf_tbl._del("Ethernet24|2400::1/64")
-    intf_tbl._del("Ethernet28|2800::1/64")
+    intf_tbl._del("{}|24.0.0.1/24".format(intfs[0]))
+    intf_tbl._del("{}|28.0.0.9/24".format(intfs[1]))
+    intf_tbl._del("{}|2400::1/64".format(intfs[0]))
+    intf_tbl._del("{}|2800::1/64".format(intfs[1]))
     time.sleep(2)
 
 
@@ -798,8 +798,7 @@ def test_swss_port_state_syncup(dvs, testlog):
     restore_count = swss_get_RestoreCount(dvs, state_db)
 
     # update port admin state
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    intf_tbl = swsscommon.Table(conf_db, "INTERFACE")
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
     intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
     intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
@@ -836,6 +835,10 @@ def test_swss_port_state_syncup(dvs, testlog):
     dvs.stop_swss()
     time.sleep(3)
 
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    intf_tbl._del("Ethernet4|10.0.0.2/31")
+    intf_tbl._del("Ethernet8|10.0.0.4/31")
+
     # flap the port oper status for Ethernet0, Ethernet4 and Ethernet8
     dvs.servers[0].runcmd("ip link set down dev eth0") == 0
     dvs.servers[1].runcmd("ip link set down dev eth0") == 0
@@ -853,6 +856,11 @@ def test_swss_port_state_syncup(dvs, testlog):
     time.sleep(10)
 
     swss_check_RestoreCount(dvs, state_db, restore_count)
+
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    intf_tbl.set("Ethernet8|10.0.0.4/31", fvs)
+    time.sleep(3)
 
     for i in [0, 1, 2]:
         (status, fvs) = tbl.get("Ethernet%d" % (i * 4))
@@ -962,16 +970,17 @@ def test_routing_WarmRestart(dvs, testlog):
     # Enable ipv6 on docker
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
 
-    dvs.runcmd("ip -4 addr add 111.0.0.1/24 dev {}".format(intfs[0]))
-    dvs.runcmd("ip -6 addr add 1110::1/64 dev {}".format(intfs[0]))
+    # Defining create neighbor entries (4 ipv4 and 4 ip6, two each on each interface) in linux kernel
+    intf_tbl = swsscommon.Table(conf_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("{}|111.0.0.1/24".format(intfs[0]), fvs)
+    intf_tbl.set("{}|1110::1/64".format(intfs[0]), fvs)
+    intf_tbl.set("{}|122.0.0.1/24".format(intfs[1]), fvs)
+    intf_tbl.set("{}|1220::1/64".format(intfs[1]), fvs)
+    intf_tbl.set("{}|133.0.0.1/24".format(intfs[2]), fvs)
+    intf_tbl.set("{}|1330::1/64".format(intfs[2]), fvs)
     dvs.runcmd("ip link set {} up".format(intfs[0]))
-
-    dvs.runcmd("ip -4 addr add 122.0.0.1/24 dev {}".format(intfs[1]))
-    dvs.runcmd("ip -6 addr add 1220::1/64 dev {}".format(intfs[1]))
     dvs.runcmd("ip link set {} up".format(intfs[1]))
-
-    dvs.runcmd("ip -4 addr add 133.0.0.1/24 dev {}".format(intfs[2]))
-    dvs.runcmd("ip -6 addr add 1330::1/64 dev {}".format(intfs[2]))
     dvs.runcmd("ip link set {} up".format(intfs[2]))
 
     time.sleep(1)
@@ -1556,6 +1565,14 @@ def test_routing_WarmRestart(dvs, testlog):
     rt_key = json.loads(addobjs[0]['key'])
     assert rt_key['dest'] == "192.168.100.0/24"
 
+    intf_tbl._del("{}|111.0.0.1/24".format(intfs[0]))
+    intf_tbl._del("{}|1110::1/64".format(intfs[0]))
+    intf_tbl._del("{}|122.0.0.1/24".format(intfs[1]))
+    intf_tbl._del("{}|1220::1/64".format(intfs[1]))
+    intf_tbl._del("{}|133.0.0.1/24".format(intfs[2]))
+    intf_tbl._del("{}|1330::1/64".format(intfs[2]))
+    time.sleep(2)
+
 
 # 'ip neigh flush all' won't remove failed entries if number of neighs less than gc_threshold1
 # Also it takes time to remove them completly.
@@ -1589,15 +1606,17 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     NUM_NEIGH_PER_INTF = 64 #128
     NUM_OF_NEIGHS = (NUM_INTF*NUM_NEIGH_PER_INTF)
     macs = []
+    intf_tbl = swsscommon.Table(conf_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
     for i in range(8, 8+NUM_INTF):
         # set timeout to be the same as real HW
         # set ip on server facing interfaces
         # bring servers' interface up, save the macs
         dvs.runcmd("sysctl -w net.ipv4.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
         dvs.runcmd("sysctl -w net.ipv6.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
-        dvs.runcmd("ip addr flush dev Ethernet{}".format(i*4))
-        dvs.runcmd("ifconfig Ethernet{} {}.0.0.1/24 up".format(i*4, i*4))
-        dvs.runcmd("ip -6 addr add {}00::1/64 dev Ethernet{}".format(i*4,i*4))
+        intf_tbl.set("Ethernet{}|{}.0.0.1/24".format(i*4, i*4), fvs)
+        intf_tbl.set("Ethernet{}|{}00::1/64".format(i*4, i*4), fvs)
+        dvs.runcmd("ip link set Ethernet{} up".format(i*4, i*4))
         dvs.servers[i].runcmd("ip link set up dev eth0")
         dvs.servers[i].runcmd("ip addr flush dev eth0")
         #result = dvs.servers[i].runcmd_output("ifconfig eth0 | grep HWaddr | awk '{print $NF}'")
@@ -1839,4 +1858,8 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
 
     # disable system warm restart
     dvs.runcmd("config warm_restart disable system")
+
+    for i in range(8, 8+NUM_INTF):
+        intf_tbl._del("Ethernet{}|{}.0.0.1/24".format(i*4, i*4))
+        intf_tbl._del("Ethernet{}|{}00::1/64".format(i*4, i*4))
 
