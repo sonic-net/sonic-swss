@@ -150,6 +150,9 @@ def test_CrmIpv4Route(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    time.sleep(2)
+
 
 def test_CrmIpv6Route(dvs, testlog):
 
@@ -210,6 +213,9 @@ def test_CrmIpv6Route(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    intf_tbl._del("Ethernet0|fc00::1/126")
+    time.sleep(2)
+
 
 def test_CrmIpv4Nexthop(dvs, testlog):
 
@@ -254,6 +260,9 @@ def test_CrmIpv4Nexthop(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    time.sleep(2)
 
 
 def test_CrmIpv6Nexthop(dvs, testlog):
@@ -304,6 +313,9 @@ def test_CrmIpv6Nexthop(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    intf_tbl._del("Ethernet0|fc00::1/126")
+    time.sleep(2)
+
 
 def test_CrmIpv4Neighbor(dvs, testlog):
 
@@ -348,6 +360,9 @@ def test_CrmIpv4Neighbor(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    time.sleep(2)
 
 
 def test_CrmIpv6Neighbor(dvs, testlog):
@@ -397,6 +412,9 @@ def test_CrmIpv6Neighbor(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    intf_tbl._del("Ethernet0|fc00::1/126")
+    time.sleep(2)
 
 
 def test_CrmNexthopGroup(dvs, testlog):
@@ -454,6 +472,10 @@ def test_CrmNexthopGroup(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    intf_tbl._del("Ethernet4|10.0.0.2/31")
+    time.sleep(2)
 
 
 def test_CrmNexthopGroupMember(dvs, testlog):
@@ -517,6 +539,10 @@ def test_CrmNexthopGroupMember(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    intf_tbl._del("Ethernet4|10.0.0.2/31")
+    time.sleep(2)
 
 
 def test_CrmAcl(dvs, testlog):
