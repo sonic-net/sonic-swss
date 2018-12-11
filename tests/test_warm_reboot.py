@@ -187,6 +187,10 @@ def test_PortSyncdWarmRestart(dvs, testlog):
 
     swss_app_check_RestoreCount_single(state_db, restore_count, "portsyncd")
 
+    intf_tbl._del("Ethernet16|11.0.0.1/29")
+    intf_tbl._del("Ethernet20|11.0.0.9/29")
+    time.sleep(2)
+
 
 def test_VlanMgrdWarmRestart(dvs, testlog):
 
@@ -295,6 +299,10 @@ def test_VlanMgrdWarmRestart(dvs, testlog):
     assert status == True
 
     swss_app_check_RestoreCount_single(state_db, restore_count, "vlanmgrd")
+
+    intf_tbl._del("Vlan16|11.0.0.1/29")
+    intf_tbl._del("Vlan20|11.0.0.9/29")
+    time.sleep(2)
 
 def stop_neighsyncd(dvs):
     dvs.runcmd(['sh', '-c', 'pkill -x neighsyncd'])
@@ -706,6 +714,12 @@ def test_swss_neighbor_syncup(dvs, testlog):
     # check restore Count
     swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
+    intf_tbl._del("Ethernet24|24.0.0.1/24")
+    intf_tbl._del("Ethernet28|28.0.0.9/24")
+    intf_tbl._del("Ethernet24|2400::1/64")
+    intf_tbl._del("Ethernet28|2800::1/64")
+    time.sleep(2)
+
 
 # TODO: The condition of warm restart readiness check is still under discussion.
 def test_OrchagentWarmRestartReadyCheck(dvs, testlog):
@@ -761,6 +775,10 @@ def test_OrchagentWarmRestartReadyCheck(dvs, testlog):
     # Cleaning previously pushed route-entry to ease life of subsequent testcases.
     ps._del("2.2.2.0/24")
     time.sleep(1)
+
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    intf_tbl._del("Ethernet4|10.0.0.2/31")
+    time.sleep(2)
 
     # recover for test cases after this one.
     dvs.stop_swss()
@@ -879,6 +897,11 @@ def test_swss_port_state_syncup(dvs, testlog):
     dvs.runcmd("arp -d 10.0.0.1")
     dvs.runcmd("arp -d 10.0.0.3")
     dvs.runcmd("arp -d 10.0.0.5")
+
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    intf_tbl._del("Ethernet4|10.0.0.2/31")
+    intf_tbl._del("Ethernet8|10.0.0.4/31")
+    time.sleep(2)
 
 
 #############################################################################
