@@ -832,12 +832,13 @@ def test_swss_port_state_syncup(dvs, testlog):
         else:
             assert oper_status == "down"
 
-    dvs.stop_swss()
-    time.sleep(3)
-
     intf_tbl._del("Ethernet0|10.0.0.0/31")
     intf_tbl._del("Ethernet4|10.0.0.2/31")
     intf_tbl._del("Ethernet8|10.0.0.4/31")
+    time.sleep(2)
+
+    dvs.stop_swss()
+    time.sleep(3)
 
     # flap the port oper status for Ethernet0, Ethernet4 and Ethernet8
     dvs.servers[0].runcmd("ip link set down dev eth0") == 0
