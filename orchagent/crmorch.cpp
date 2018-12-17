@@ -165,7 +165,8 @@ CrmOrch::CrmOrch(DBConnector *db, string tableName):
     // The CRM stats needs to be populated again
     m_countersCrmTable->del(CRM_COUNTERS_TABLE_KEY);
 
-    auto executor = new ExecutableTimer(m_timer.get(), this, "CRM_COUNTERS_POLL");
+    // Note: ExecutableTimer will hold m_timer pointer and release the object later
+    auto executor = new ExecutableTimer(m_timer, this, "CRM_COUNTERS_POLL");
     Orch::addExecutor(executor);
     m_timer->start();
 }
