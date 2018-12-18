@@ -9,6 +9,7 @@
 #include "observer.h"
 #include "macaddress.h"
 #include "producertable.h"
+#include "producerstatetable.h"
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
@@ -17,6 +18,7 @@
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
 
+#define VLAN_STATUS_INITIALIZED(admin_status) (!(admin_status).empty())
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
 
@@ -70,8 +72,8 @@ public:
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
     bool getAclBindPortId(string alias, sai_object_id_t &port_id);
 
-    bool setHostIntfsOperStatus(const Port& port, bool up) const;
-    void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
+    bool setHostIntfsOperStatus(sai_object_id_t id, bool up);
+    void updateDbPortOperStatus(sai_object_id_t id, sai_port_oper_status_t status);
     bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage = ACL_STAGE_INGRESS);
 
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
@@ -83,6 +85,9 @@ public:
     void refreshPortStatus();
 
 private:
+    Table m_appPortTable;
+    Table m_appVlanTable;
+    ProducerStateTable m_appVlanTableProducer;
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_queueTable;
@@ -141,6 +146,14 @@ private:
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
 
+    bool setHostVlanAdminState(int vlan_id, const string &admin_status);
+    string getPortOperStatus(string port_alias);
+    string updateLagStatus(Port &lag);
+    bool getLagByLagId(sai_object_id_t id, Port &lag);
+    bool updateVlanStatusByVid(int vlan_id);
+    bool updateVlanStatusByPort(sai_object_id_t id);
+
+
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
     bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
@@ -182,7 +195,6 @@ private:
     bool setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
 
-    bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
 };
 #endif /* SWSS_PORTSORCH_H */

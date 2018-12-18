@@ -29,6 +29,7 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME),
         m_appVlanTableProducer(appDb, APP_VLAN_TABLE_NAME),
+        m_appVlanTable(appDb, APP_VLAN_TABLE_NAME),
         m_appVlanMemberTableProducer(appDb, APP_VLAN_MEMBER_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
@@ -121,6 +122,94 @@ bool VlanMgr::removeHostVlan(int vlan_id)
 
     return true;
 }
+
+
+bool VlanMgr::updateVlanStatusInit(vector<FieldValueTuple> &fvVector, const int vlan_id)
+{
+    fvVector.push_back(make_pair("admin_status", "up"));
+    fvVector.push_back(make_pair("member_status", "down"));
+    fvVector.push_back(make_pair("real_status", "down"));
+    setHostVlanAdminState(vlan_id, "down");
+    return true;
+}
+
+
+bool VlanMgr::updateVlanStatusByAdmin(vector<FieldValueTuple> &fvVector, const int vlan_id, const string &admin_status)
+{
+    vector<FieldValueTuple> values;
+    string key = string("") + VLAN_PREFIX + std::to_string(vlan_id);
+     /*   init admin status from config_db 
+         fvVector is set by updateVlanStatusInit
+         fvVector[0] : admin_status
+         fvVector[1] : member_status
+         fvVector[2] : real_status
+    */
+    if (fvVector.size() > 0 && fvVector[0].first == "admin_status")
+    {
+        fvVector[0].second = admin_status;
+        SWSS_LOG_DEBUG("replace admin_status of init!");
+        return true;
+    }
+   /*Table appVlanTable(appDb, APP_VLAN_TABLE_NAME);*/
+    if (!m_appVlanTable.get(key, values))
+    {
+        SWSS_LOG_ERROR("failed read appVlanTable, key: %s", key.c_str());
+        return false;
+    }
+    string old_admin_status = "";
+    string member_status = "";
+    string old_real_status = "";
+
+    /*  get old status in app db */
+    for (FieldValueTuple i : values)
+    {
+        if (fvField(i) == "admin_status")
+        {
+            old_admin_status = fvValue(i);
+        }
+        else if (fvField(i) == "member_status")
+        {
+            member_status = fvValue(i);
+        }
+        else if (fvField(i) == "real_status")
+        {
+            old_real_status = fvValue(i);
+        }
+    }
+   /* admin status from user's config order
+       vlan status is initialized when vlan is created, nothing should be done before initializing     
+   */
+    if (VLAN_STATUS_INITIALIZED(old_admin_status))
+    {
+        if (admin_status == old_admin_status)
+        {
+            SWSS_LOG_DEBUG("admin_status not changed!");
+            return true;
+        }
+        else
+        {
+            fvVector.push_back(make_pair("admin_status", admin_status));
+            string real_status = (member_status == "up" && admin_status == "up") ? "up" : "down";
+            if (real_status == old_real_status)
+            {
+                SWSS_LOG_DEBUG("real_status not changed!");
+                return true;
+            }
+            else 
+            {
+                fvVector.push_back(make_pair("real_status", real_status));
+                setHostVlanAdminState(vlan_id, real_status);
+            }
+        }
+    }
+    else 
+    {
+        SWSS_LOG_ERROR("vlan status failed to init");
+        return false;
+    }
+    return true;
+}
+
 
 bool VlanMgr::setHostVlanAdminState(int vlan_id, const string &admin_status)
 {
@@ -267,6 +356,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             if (m_vlans.find(key) == m_vlans.end())
             {
                 addHostVlan(vlan_id);
+                updateVlanStatusInit(fvVector, vlan_id);
             }
 
             /* set up host env .... */
@@ -275,9 +365,12 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 /* Set vlan admin status */
                 if (fvField(i) == "admin_status")
                 {
+                    updateVlanStatusByAdmin(fvVector, vlan_id, fvValue(i));
+                    /*
                     admin_status = fvValue(i);
                     setHostVlanAdminState(vlan_id, admin_status);
                     fvVector.push_back(i);
+                    */
                 }
                 /* Set vlan mtu */
                 else if (fvField(i) == "mtu")
