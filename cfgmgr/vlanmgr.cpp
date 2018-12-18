@@ -6,6 +6,7 @@
 #include "exec.h"
 #include "tokenize.h"
 #include "shellcmd.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -14,7 +15,7 @@ using namespace swss;
 #define VLAN_PREFIX         "Vlan"
 #define LAG_PREFIX          "PortChannel"
 #define DEFAULT_VLAN_ID     "1"
-#define MAX_MTU             9100
+#define DEFAULT_MTU_STR     "9100"
 #define VLAN_HLEN            4
 
 extern MacAddress gMacAddress;
@@ -26,11 +27,26 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
+        m_stateVlanMemberTable(stateDb, STATE_VLAN_MEMBER_TABLE_NAME),
         m_appVlanTableProducer(appDb, APP_VLAN_TABLE_NAME),
         m_appVlanMemberTableProducer(appDb, APP_VLAN_MEMBER_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
 
+    if (WarmStart::isWarmStart())
+    {
+        const std::string cmds = std::string("")
+          + IP_CMD + " link show " + DOT1Q_BRIDGE_NAME + " 2>/dev/null";
+
+        std::string res;
+        int ret = swss::exec(cmds, res);
+        if (ret == 0)
+        {
+            // Don't reset vlan aware bridge upon swss docker warm restart.
+            SWSS_LOG_INFO("vlanmgrd warm start, skipping bridge create");
+            return;
+        }
+    }
     // Initialize Linux dot1q bridge and enable vlan filtering
     // The command should be generated as:
     // /bin/bash -c "/sbin/ip link del Bridge 2>/dev/null ;
@@ -153,13 +169,11 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
 
     // The command should be generated as:
     // /bin/bash -c "/sbin/ip link set {{port_alias}} master Bridge &&
-    //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}
-    //               /sbin/ip link set {{port_alias}} up mtu 9100"
+    //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}"
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
       + IP_CMD + " link set " + port_alias + " master " + DOT1Q_BRIDGE_NAME + " && "
-      + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + " && "
-      + IP_CMD + " link set " + port_alias + " up mtu " + std::to_string(MAX_MTU) + "\"";
+      + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + "\"";
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
@@ -172,17 +186,22 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
     SWSS_LOG_ENTER();
 
     // The command should be generated as:
-    // /bin/bash -c "/sbin/bridge vlan del vid {{vlan_id}} dev {{port_alias}} &&
-    //               /sbin/bridge vlan show dev {{port_alias}} | /bin/grep -q None &&
-    //               /sbin/ip link set {{port_alias}} nomaster"
+    // /bin/bash -c '/sbin/bridge vlan del vid {{vlan_id}} dev {{port_alias}} &&
+    //               ( /sbin/bridge vlan show dev {{port_alias}} | /bin/grep -q None;
+    //               ret=$?; if [ $ret -eq 0 ]; then
+    //               /sbin/ip link set {{port_alias}} nomaster;
+    //               elif [ $ret -eq 1 ]; then exit 0;
+    //               else exit $ret; fi )'
 
     // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
     const std::string cmds = std::string("")
-      + BASH_CMD + " -c \""
-      + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + port_alias + " && "
+      + BASH_CMD + " -c \'"
+      + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + port_alias + " && ( "
       + BRIDGE_CMD + " vlan show dev " + port_alias + " | "
-      + GREP_CMD + " -q None && "
-      + IP_CMD + " link set " + port_alias + " nomaster\"";
+      + GREP_CMD + " -q None; ret=$?; if [ $ret -eq 0 ]; then "
+      + IP_CMD + " link set " + port_alias + " nomaster; "
+      + "elif [ $ret -eq 1 ]; then exit 0; "
+      + "else exit $ret; fi )\'";
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
@@ -227,9 +246,22 @@ void VlanMgr::doVlanTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             string admin_status;
-            uint32_t mtu = 0;
+            string mtu = DEFAULT_MTU_STR;
             vector<FieldValueTuple> fvVector;
             string members;
+
+            /*
+             * Don't program vlan again if state is already set.
+             * will hit this for docker warm restart.
+             * Just set the internal data structure and remove the request.
+             */
+            if (isVlanStateOk(key))
+            {
+                m_vlans.insert(key);
+                it = consumer.m_toSync.erase(it);
+                SWSS_LOG_DEBUG("%s already created", kfvKey(t).c_str());
+                continue;
+            }
 
             /* Add host VLAN when it has not been created. */
             if (m_vlans.find(key) == m_vlans.end())
@@ -250,14 +282,13 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 /* Set vlan mtu */
                 else if (fvField(i) == "mtu")
                 {
-                    mtu = (uint32_t)stoul(fvValue(i));
+                    mtu = fvValue(i);
                     /*
                      * TODO: support host VLAN mtu setting.
                      * Host VLAN mtu should be set only after member configured
                      * and VLAN state is not UNKNOWN.
                      */
-                    SWSS_LOG_DEBUG("%s mtu %u: Host VLAN mtu setting to be supported.", key.c_str(), mtu);
-                    fvVector.push_back(i);
+                    SWSS_LOG_DEBUG("%s mtu %s: Host VLAN mtu setting to be supported.", key.c_str(), mtu.c_str());
                 }
                 else if (fvField(i) == "members@") {
                     members = fvValue(i);
@@ -269,6 +300,10 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 FieldValueTuple a("admin_status",  "up");
                 fvVector.push_back(a);
             }
+
+            FieldValueTuple m("mtu", mtu);
+            fvVector.push_back(m);
+
             m_appVlanTableProducer.set(key, fvVector);
             m_vlans.insert(key);
 
@@ -347,6 +382,18 @@ bool VlanMgr::isVlanStateOk(const string &alias)
         }
     }
     SWSS_LOG_DEBUG("%s is not ready", alias.c_str());
+    return false;
+}
+
+bool VlanMgr::isVlanMemberStateOk(const string &vlanMemberKey)
+{
+    vector<FieldValueTuple> temp;
+
+    if (m_stateVlanMemberTable.get(vlanMemberKey, temp))
+    {
+        SWSS_LOG_DEBUG("%s is ready", vlanMemberKey.c_str());
+        return true;
+    }
     return false;
 }
 
@@ -437,6 +484,13 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
        // TODO:  store port/lag/VLAN data in local data structure and perform more validations.
         if (op == SET_COMMAND)
         {
+             if (isVlanMemberStateOk(kfvKey(t)))
+             {
+                SWSS_LOG_DEBUG("%s already set", kfvKey(t).c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+             }
+
             /* Don't proceed if member port/lag is not ready yet */
             if (!isMemberStateOk(port_alias) || !isVlanStateOk(vlan_alias))
             {
@@ -469,24 +523,36 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
                 key += DEFAULT_KEY_SEPARATOR;
                 key += port_alias;
                 m_appVlanMemberTableProducer.set(key, kfvFieldsValues(t));
+
+                vector<FieldValueTuple> fvVector;
+                FieldValueTuple s("state", "ok");
+                fvVector.push_back(s);
+                m_stateVlanMemberTable.set(kfvKey(t), fvVector);
             }
-            it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
         {
-            removeHostVlanMember(vlan_id, port_alias);
-            key = VLAN_PREFIX + to_string(vlan_id);
-            key += DEFAULT_KEY_SEPARATOR;
-            key += port_alias;
-            m_appVlanMemberTableProducer.del(key);
+            if (isVlanMemberStateOk(kfvKey(t)))
+            {
+                removeHostVlanMember(vlan_id, port_alias);
+                key = VLAN_PREFIX + to_string(vlan_id);
+                key += DEFAULT_KEY_SEPARATOR;
+                key += port_alias;
+                m_appVlanMemberTableProducer.del(key);
+                m_stateVlanMemberTable.del(kfvKey(t));
+            }
+            else
+            {
+                SWSS_LOG_DEBUG("%s doesn't exist", kfvKey(t).c_str());
+            }
             SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, t)).c_str());
-            it = consumer.m_toSync.erase(it);
         }
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-            it = consumer.m_toSync.erase(it);
         }
+        /* Other than the case of member port/lag is not ready, no retry will be performed */
+        it = consumer.m_toSync.erase(it);
     }
 }
 

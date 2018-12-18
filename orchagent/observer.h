@@ -14,6 +14,8 @@ enum SubjectType
     SUBJECT_TYPE_LAG_MEMBER_CHANGE,
     SUBJECT_TYPE_VLAN_MEMBER_CHANGE,
     SUBJECT_TYPE_MIRROR_SESSION_CHANGE,
+    SUBJECT_TYPE_INT_SESSION_CHANGE,
+    SUBJECT_TYPE_PORT_CHANGE,
 };
 
 class Observer
@@ -43,7 +45,6 @@ protected:
 
     virtual void notify(SubjectType type, void *cntx)
     {
-
         for (auto iter: m_observers)
         {
             iter->update(type, cntx);

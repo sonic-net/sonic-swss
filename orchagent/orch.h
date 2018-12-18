@@ -30,9 +30,12 @@ const char ref_end             = ']';
 const char comma               = ',';
 const char range_specifier     = '-';
 const char config_db_key_delimiter = '|';
+const char state_db_key_delimiter  = '|';
 
 #define MLNX_PLATFORM_SUBSTRING "mellanox"
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
+#define BFN_PLATFORM_SUBSTRING  "barefoot"
+#define VS_PLATFORM_SUBSTRING   "vs"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
@@ -66,9 +69,10 @@ class Orch;
 class Executor : public Selectable
 {
 public:
-    Executor(Selectable *selectable, Orch *orch)
+    Executor(Selectable *selectable, Orch *orch, const string &name)
         : m_selectable(selectable)
         , m_orch(orch)
+        , m_name(name)
     {
     }
 
@@ -89,9 +93,17 @@ public:
     virtual void execute() { }
     virtual void drain() { }
 
+    virtual string getName() const
+    {
+        return m_name;
+    }
+
 protected:
     Selectable *m_selectable;
     Orch *m_orch;
+
+    // Name for Executor
+    string m_name;
 
     // Get the underlying selectable
     Selectable *getSelectable() const { return m_selectable; }
@@ -99,14 +111,14 @@ protected:
 
 class Consumer : public Executor {
 public:
-    Consumer(TableConsumable *select, Orch *orch)
-        : Executor(select, orch)
+    Consumer(ConsumerTableBase *select, Orch *orch, const string &name)
+        : Executor(select, orch, name)
     {
     }
 
-    TableConsumable *getConsumerTable() const
+    ConsumerTableBase *getConsumerTable() const
     {
-        return static_cast<TableConsumable *>(getSelectable());
+        return static_cast<ConsumerTableBase *>(getSelectable());
     }
 
     string getTableName() const
@@ -114,12 +126,26 @@ public:
         return getConsumerTable()->getTableName();
     }
 
+    int getDbId() const
+    {
+        return getConsumerTable()->getDbId();
+    }
+
+    string dumpTuple(KeyOpFieldsValuesTuple &tuple);
+    void dumpPendingTasks(vector<string> &ts);
+
+    size_t refillToSync();
+    size_t refillToSync(Table* table);
     void execute();
     void drain();
 
     /* Store the latest 'golden' status */
     // TODO: hide?
     SyncMap m_toSync;
+
+protected:
+    // Returns: the number of entries added to m_toSync
+    size_t addToSync(std::deque<KeyOpFieldsValuesTuple> &entries);
 };
 
 typedef map<string, std::shared_ptr<Executor>> ConsumerMap;
@@ -130,6 +156,7 @@ typedef enum
     field_not_found,
     multiple_instances,
     not_resolved,
+    empty,
     failure
 } ref_resolve_status;
 
@@ -147,8 +174,16 @@ public:
 
     vector<Selectable*> getSelectables();
 
+    // add the existing table data (left by warm reboot) to the consumer todo task list.
+    size_t addExistingData(Table *table);
+    size_t addExistingData(const string& tableName);
+
+    // Prepare for warm start if Redis contains valid input data
+    // otherwise fallback to cold start
+    virtual bool bake();
+
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
-    void doTask();
+    virtual void doTask();
 
     /* Run doTask against a specific executor */
     virtual void doTask(Consumer &consumer) = 0;
@@ -157,6 +192,8 @@ public:
 
     /* TODO: refactor recording */
     static void recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
+
+    void dumpPendingTasks(vector<string> &ts);
 protected:
     ConsumerMap m_consumerMap;
 
@@ -168,7 +205,7 @@ protected:
     ref_resolve_status resolveFieldRefArray(type_map&, const string&, KeyOpFieldsValuesTuple&, vector<sai_object_id_t>&);
 
     /* Note: consumer will be owned by this class */
-    void addExecutor(string executorName, Executor* executor);
+    void addExecutor(Executor* executor);
     Executor *getExecutor(string executorName);
 private:
     void addConsumer(DBConnector *db, string tableName, int pri = default_orch_pri);
@@ -181,6 +218,11 @@ class Orch2 : public Orch
 public:
     Orch2(DBConnector *db, const std::string& tableName, Request& request, int pri=default_orch_pri)
         : Orch(db, tableName, pri), request_(request)
+    {
+    }
+
+    Orch2(DBConnector *db, const vector<string> &tableNames, Request& request)
+        : Orch(db, tableNames), request_(request)
     {
     }
 

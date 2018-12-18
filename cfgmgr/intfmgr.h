@@ -19,9 +19,9 @@ public:
 private:
     ProducerStateTable m_appIntfTableProducer;
     Table m_cfgIntfTable, m_cfgVlanIntfTable;
-    Table m_statePortTable, m_stateLagTable, m_stateVlanTable;
+    Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateIntfTable;
 
-    bool setIntfIp(const string &alias, const string &opCmd, const string &ipPrefixStr);
+    bool setIntfIp(const string &alias, const string &opCmd, const string &ipPrefixStr, const bool ipv4 = true);
     void doTask(Consumer &consumer);
     bool isIntfStateOk(const string &alias);
 };

@@ -35,6 +35,8 @@ int main(int argc, char **argv)
             {
                 Selectable *temps;
                 s.select(&temps);
+
+                sync.doSelectableTask();
             }
         }
         catch (const std::exception& e)

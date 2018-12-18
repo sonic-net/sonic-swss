@@ -21,16 +21,25 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
+        m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME)
 {
 }
 
-bool IntfMgr::setIntfIp(const string &alias, const string &opCmd, const string &ipPrefixStr)
+bool IntfMgr::setIntfIp(const string &alias, const string &opCmd,
+                        const string &ipPrefixStr, const bool ipv4)
 {
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " address " << opCmd << " " << ipPrefixStr << " dev " << alias;;
+    if (ipv4)
+    {
+        cmd << IP_CMD << " address " << opCmd << " " << ipPrefixStr << " dev " << alias;
+    }
+    else
+    {
+        cmd << IP_CMD << " -6 address " << opCmd << " " << ipPrefixStr << " dev " << alias;
+    }
     int ret = swss::exec(cmd.str(), res);
     return (ret == 0);
 }
@@ -72,34 +81,24 @@ void IntfMgr::doTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
 
-        string keySeparator = CONFIGDB_KEY_SEPARATOR;
-        vector<string> keys = tokenize(kfvKey(t), keySeparator[0]);
+        vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter);
+
+        if (keys.size() != 2)
+        {
+            SWSS_LOG_ERROR("Invalid key %s", kfvKey(t).c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
         string alias(keys[0]);
-
-        if (alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
-        {
-            /* handle IP over vlan Only for now, skip the rest */
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
-
-        size_t pos = kfvKey(t).find(CONFIGDB_KEY_SEPARATOR);
-        if (pos == string::npos)
-        {
-            SWSS_LOG_DEBUG("Invalid key %s", kfvKey(t).c_str());
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
-        IpPrefix ip_prefix(kfvKey(t).substr(pos+1));
-
-        SWSS_LOG_DEBUG("intfs doTask: %s", (dumpTuple(consumer, t)).c_str());
+        IpPrefix ip_prefix(keys[1]);
 
         string op = kfvOp(t);
         if (op == SET_COMMAND)
         {
             /*
-             * Don't proceed if port/lag/VLAN is not ready yet.
-             * The pending task will be checked periodially and retried.
+             * Don't proceed if port/LAG/VLAN is not ready yet.
+             * The pending task will be checked periodically and retried.
              * TODO: Subscribe to stateDB for port/lag/VLAN state and retry
              * pending tasks immediately upon state change.
              */
@@ -109,18 +108,21 @@ void IntfMgr::doTask(Consumer &consumer)
                 it++;
                 continue;
             }
-            string opCmd("add");
-            string ipPrefixStr = ip_prefix.to_string();
-            setIntfIp(alias, opCmd, ipPrefixStr);
+            setIntfIp(alias, "add", ip_prefix.to_string(), ip_prefix.isV4());
+            m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");
+            SWSS_LOG_NOTICE("Add %s to %s", ip_prefix.to_string().c_str(), alias.c_str());
         }
         else if (op == DEL_COMMAND)
         {
-            string opCmd("del");
-            string ipPrefixStr = ip_prefix.to_string();
-            setIntfIp(alias, opCmd, ipPrefixStr);
+            setIntfIp(alias, "del", ip_prefix.to_string(), ip_prefix.isV4());
+            m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
+            SWSS_LOG_NOTICE("Remove %s from %s", ip_prefix.to_string().c_str(), alias.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Unknown operation: %s", op.c_str());
         }
 
         it = consumer.m_toSync.erase(it);
-        continue;
     }
 }

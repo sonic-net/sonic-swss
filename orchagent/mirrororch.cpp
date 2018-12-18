@@ -4,21 +4,26 @@
 #include <utility>
 #include <exception>
 
+#include "sai_serialize.h"
 #include "orch.h"
 #include "logger.h"
 #include "swssnet.h"
 #include "converter.h"
 #include "mirrororch.h"
 
-#define MIRROR_SESSION_STATUS           "status"
-#define MIRROR_SESSION_STATUS_ACTIVE    "active"
-#define MIRROR_SESSION_STATUS_INACTIVE  "inactive"
-#define MIRROR_SESSION_SRC_IP           "src_ip"
-#define MIRROR_SESSION_DST_IP           "dst_ip"
-#define MIRROR_SESSION_GRE_TYPE         "gre_type"
-#define MIRROR_SESSION_DSCP             "dscp"
-#define MIRROR_SESSION_TTL              "ttl"
-#define MIRROR_SESSION_QUEUE            "queue"
+#define MIRROR_SESSION_STATUS               "status"
+#define MIRROR_SESSION_STATUS_ACTIVE        "active"
+#define MIRROR_SESSION_STATUS_INACTIVE      "inactive"
+#define MIRROR_SESSION_SRC_IP               "src_ip"
+#define MIRROR_SESSION_DST_IP               "dst_ip"
+#define MIRROR_SESSION_GRE_TYPE             "gre_type"
+#define MIRROR_SESSION_DSCP                 "dscp"
+#define MIRROR_SESSION_TTL                  "ttl"
+#define MIRROR_SESSION_QUEUE                "queue"
+#define MIRROR_SESSION_DST_MAC_ADDRESS      "dst_mac"
+#define MIRROR_SESSION_MONITOR_PORT         "monitor_port"
+#define MIRROR_SESSION_ROUTE_PREFIX         "route_prefix"
+#define MIRROR_SESSION_VLAN_HEADER_VALID    "vlan_header_valid"
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
@@ -36,40 +41,32 @@ using namespace std::rel_ops;
 
 MirrorEntry::MirrorEntry(const string& platform) :
         status(false),
-        greType(0),
-        dscp(0),
-        ttl(0),
+        dscp(8),
+        ttl(255),
         queue(0),
-        addVLanTag(false),
         sessionId(0),
         refCount(0)
 {
-    nexthopInfo.resolved = false;
-    neighborInfo.resolved = false;
-
     if (platform == MLNX_PLATFORM_SUBSTRING)
     {
-        greType = 0x6558;
-        queue = 1;
+        greType = 0x8949;
     }
     else
     {
         greType = 0x88be;
-        queue = 0;
     }
 
-    dscp = 8;
-    ttl = 255;
+    nexthopInfo.prefix = IpPrefix("0.0.0.0/0");
 }
 
-MirrorOrch::MirrorOrch(TableConnector appDbConnector, TableConnector confDbConnector,
+MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbConnector,
         PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch) :
         Orch(confDbConnector.first, confDbConnector.second),
         m_portsOrch(portOrch),
         m_routeOrch(routeOrch),
         m_neighOrch(neighOrch),
         m_fdbOrch(fdbOrch),
-        m_mirrorTableProducer(appDbConnector.first, appDbConnector.second)
+        m_mirrorTable(stateDbConnector.first, stateDbConnector.second)
 {
     m_portsOrch->attach(this);
     m_neighOrch->attach(this);
@@ -127,7 +124,7 @@ bool MirrorOrch::sessionExists(const string& name)
     return m_syncdMirrors.find(name) != m_syncdMirrors.end();
 }
 
-bool MirrorOrch::getSessionState(const string& name, bool& state)
+bool MirrorOrch::getSessionStatus(const string& name, bool& state)
 {
     SWSS_LOG_ENTER();
 
@@ -194,7 +191,16 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
 {
     SWSS_LOG_ENTER();
 
-    MirrorEntry entry(getenv("platform"));
+    auto session = m_syncdMirrors.find(key);
+    if (session != m_syncdMirrors.end())
+    {
+        SWSS_LOG_NOTICE("Failed to create session, session %s already exists",
+                key.c_str());
+        return;
+    }
+
+    string platform = getenv("platform") ? getenv("platform") : "";
+    MirrorEntry entry(platform);
 
     for (auto i : data)
     {
@@ -251,27 +257,19 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
         }
     }
 
-    SWSS_LOG_INFO("Creating mirroring sessions %s\n", key.c_str());
-
-    auto session = m_syncdMirrors.find(key);
-    if (session != m_syncdMirrors.end())
-    {
-        SWSS_LOG_ERROR("Failed to create session. Session %s already exists.\n", key.c_str());
-        return;
-    }
-
     m_syncdMirrors.emplace(key, entry);
+
+    SWSS_LOG_NOTICE("Created mirror session %s", key.c_str());
 
     setSessionState(key, entry);
 
+    // Attach the destination IP to the routeOrch
     m_routeOrch->attach(this, entry.dstIp);
 }
 
 void MirrorOrch::deleteEntry(const string& name)
 {
     SWSS_LOG_ENTER();
-
-    SWSS_LOG_INFO("Deleting mirroring sessions %s\n", name.c_str());
 
     auto sessionIter = m_syncdMirrors.find(name);
     if (sessionIter == m_syncdMirrors.end())
@@ -295,119 +293,186 @@ void MirrorOrch::deleteEntry(const string& name)
     }
 
     m_syncdMirrors.erase(sessionIter);
+
+    SWSS_LOG_NOTICE("Removed mirror session %s", name.c_str());
 }
 
-bool MirrorOrch::setSessionState(const string& name, MirrorEntry& session)
+void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session, const string& attr)
 {
     SWSS_LOG_ENTER();
 
     SWSS_LOG_INFO("Setting mirroring sessions %s state\n", name.c_str());
 
     vector<FieldValueTuple> fvVector;
+    string value;
+    if (attr.empty() || attr == MIRROR_SESSION_STATUS)
+    {
+        value = session.status ? MIRROR_SESSION_STATUS_ACTIVE : MIRROR_SESSION_STATUS_INACTIVE;
+        fvVector.emplace_back(MIRROR_SESSION_STATUS, value);
+    }
 
-    string status = session.status ? MIRROR_SESSION_STATUS_ACTIVE : MIRROR_SESSION_STATUS_INACTIVE;
+    if (attr.empty() || attr == MIRROR_SESSION_MONITOR_PORT)
+    {
+        value = sai_serialize_object_id(session.neighborInfo.portId);
+        fvVector.emplace_back(MIRROR_SESSION_MONITOR_PORT, value);
+    }
 
-    FieldValueTuple t(MIRROR_SESSION_STATUS, status);
-    fvVector.push_back(t);
+    if (attr.empty() || attr == MIRROR_SESSION_DST_MAC_ADDRESS)
+    {
+        value = session.neighborInfo.mac.to_string();
+        fvVector.emplace_back(MIRROR_SESSION_DST_MAC_ADDRESS, value);
+    }
 
-    m_mirrorTableProducer.set(name, fvVector);
+    if (attr.empty() || attr == MIRROR_SESSION_ROUTE_PREFIX)
+    {
+        value = session.nexthopInfo.prefix.to_string();
+        fvVector.emplace_back(MIRROR_SESSION_ROUTE_PREFIX, value);
+    }
 
-    return true;
+    if (attr.empty() || attr == MIRROR_SESSION_VLAN_HEADER_VALID)
+    {
+        value = to_string(session.neighborInfo.port.m_type == Port::VLAN);
+        fvVector.emplace_back(MIRROR_SESSION_VLAN_HEADER_VALID, value);
+    }
+
+    m_mirrorTable.set(name, fvVector);
 }
 
 bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
 
-    NeighborEntry neighbor;
-    MacAddress mac;
-
-    assert(session.nexthopInfo.resolved);
-
-    SWSS_LOG_INFO("Getting neighbor info for %s session\n", name.c_str());
-
-    if (!m_neighOrch->getNeighborEntry(session.nexthopInfo.nexthop, neighbor, mac))
+    // 1) If session destination IP is directly connected, and the neighbor
+    //    information is retrieved successfully, then continue.
+    // 2) If session has next hop, and the next hop's neighbor information is
+    //    retrieved successfully, then continue.
+    // 3) Otherwise, return false.
+    if (!m_neighOrch->getNeighborEntry(session.dstIp,
+                session.neighborInfo.neighbor, session.neighborInfo.mac) &&
+            (session.nexthopInfo.nexthop.isZero() ||
+            !m_neighOrch->getNeighborEntry(session.nexthopInfo.nexthop,
+                session.neighborInfo.neighbor, session.neighborInfo.mac)))
     {
-        session.neighborInfo.resolved = false;
         return false;
     }
 
-    return getNeighborInfo(name, session, neighbor, mac);
+    SWSS_LOG_NOTICE("Mirror session %s neighbor is %s",
+            name.c_str(), session.neighborInfo.neighbor.alias.c_str());
+
+    // Get mirror session monitor port information
+    m_portsOrch->getPort(session.neighborInfo.neighbor.alias,
+            session.neighborInfo.port);
+
+    switch (session.neighborInfo.port.m_type)
+    {
+        case Port::PHY:
+        {
+            session.neighborInfo.portId = session.neighborInfo.port.m_port_id;
+            return true;
+        }
+        case Port::LAG:
+        {
+            if (session.neighborInfo.port.m_members.empty())
+            {
+                return false;
+            }
+
+            // Get the firt member of the LAG
+            Port member;
+            const auto& first_member_alias = *session.neighborInfo.port.m_members.begin();
+            m_portsOrch->getPort(first_member_alias, member);
+
+            session.neighborInfo.portId = member.m_port_id;
+            return true;
+        }
+        case Port::VLAN:
+        {
+            SWSS_LOG_NOTICE("vlan id is %d", session.neighborInfo.port.m_vlan_info.vlan_id);
+            Port member;
+            if (!m_fdbOrch->getPort(session.neighborInfo.mac, session.neighborInfo.port.m_vlan_info.vlan_id, member))
+            {
+                SWSS_LOG_NOTICE("Waiting to get FDB entry MAC %s under VLAN %s",
+                        session.neighborInfo.mac.to_string().c_str(),
+                        session.neighborInfo.port.m_alias.c_str());
+                return false;
+            }
+            else
+            {
+                // Update monitor port
+                session.neighborInfo.portId = member.m_port_id;
+                return true;
+            }
+        }
+        default:
+        {
+            return false;
+        }
+    }
 }
 
-bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session, const NeighborEntry& neighbor, const MacAddress& mac)
+bool MirrorOrch::updateSession(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_INFO("Getting neighbor info for %s session\n", name.c_str());
+    bool ret = true;
+    MirrorEntry old_session(session);
 
-    session.neighborInfo.resolved = false;
-    session.neighborInfo.neighbor = neighbor;
-    session.neighborInfo.mac = mac;
-
-    // Get port operation should not fail;
-    if (!m_portsOrch->getPort(session.neighborInfo.neighbor.alias, session.neighborInfo.port))
+    // Get neighbor information
+    if (getNeighborInfo(name, session))
     {
-        throw runtime_error("Failed to get port for " + session.neighborInfo.neighbor.alias + " alias");
-    }
-
-    if (session.neighborInfo.port.m_type == Port::VLAN)
-    {
-        session.neighborInfo.vlanId = session.neighborInfo.port.m_vlan_info.vlan_id;
-        session.neighborInfo.vlanOid = session.neighborInfo.port.m_vlan_info.vlan_oid;
-
-        Port member;
-        if (!m_fdbOrch->getPort(session.neighborInfo.mac, session.neighborInfo.vlanId, member))
+        // Update corresponding attributes
+        if (session.status)
         {
-            return false;
+            if (old_session.neighborInfo.port.m_type !=
+                    session.neighborInfo.port.m_type &&
+                (old_session.neighborInfo.port.m_type == Port::VLAN ||
+                 session.neighborInfo.port.m_type == Port::VLAN))
+            {
+                ret &= updateSessionType(name, session);
+            }
+
+            if (old_session.neighborInfo.mac !=
+                    session.neighborInfo.mac)
+            {
+                ret &= updateSessionDstMac(name, session);
+            }
+
+            if (old_session.neighborInfo.portId !=
+                    session.neighborInfo.portId)
+            {
+                ret &= updateSessionDstPort(name, session);
+            }
         }
-
-        session.neighborInfo.portId = member.m_port_id;
-        session.neighborInfo.resolved = true;
-
-        return true;
-    }
-    else if (session.neighborInfo.port.m_type == Port::LAG)
-    {
-        session.neighborInfo.vlanId = session.addVLanTag ? session.neighborInfo.port.m_port_vlan_id : 0;
-
-        if (session.neighborInfo.port.m_members.empty())
+        // Activate mirror session
+        else
         {
-            return false;
+            ret &= activateSession(name, session);
         }
-
-        const auto& firstMember = *session.neighborInfo.port.m_members.begin();
-        Port lagMember;
-        if (!m_portsOrch->getPort(firstMember, lagMember))
-        {
-            throw runtime_error("Failed to get port for " + firstMember + " alias");
-        }
-
-        session.neighborInfo.portId = lagMember.m_port_id;
-        session.neighborInfo.resolved = true;
     }
+    // Deactivate mirror session and wait for update
     else
     {
-        session.neighborInfo.portId = session.neighborInfo.port.m_port_id;
-        session.neighborInfo.vlanId = session.addVLanTag ? session.neighborInfo.port.m_port_vlan_id : 0;
-        session.neighborInfo.resolved = true;
+        if (session.status)
+        {
+            ret &= deactivateSession(name, session);
+        }
     }
 
-    return true;
+    return ret;
 }
 
 bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 {
-    sai_status_t status = SAI_STATUS_SUCCESS;
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
-    SWSS_LOG_INFO("Activating mirror session %s\n", name.c_str());
-
     assert(!session.status);
 
-    /* Some platforms don't support SAI_MIRROR_SESSION_ATTR_TC and only
-     * support global mirror session traffic class. */
+    // Some platforms don't support SAI_MIRROR_SESSION_ATTR_TC and only
+    // support global mirror session traffic class.
     if (session.queue != 0)
     {
         attr.id = SAI_MIRROR_SESSION_ATTR_TC;
@@ -415,7 +480,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         attrs.push_back(attr);
     }
 
-    attr.id =  SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+    attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
     attr.value.oid = session.neighborInfo.portId;
     attrs.push_back(attr);
 
@@ -423,19 +488,19 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
     attrs.push_back(attr);
 
-    /* Add the VLAN header when the packet is sent out from a VLAN */
-    if (session.neighborInfo.vlanId)
+    // Add the VLAN header when the packet is sent out from a VLAN
+    if (session.neighborInfo.port.m_type == Port::VLAN)
     {
         attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
         attr.value.booldata = true;
         attrs.push_back(attr);
 
-        attr.id =SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
         attr.value.u16 = ETH_P_8021Q;
         attrs.push_back(attr);
 
-        attr.id =SAI_MIRROR_SESSION_ATTR_VLAN_ID;
-        attr.value.u16 = session.neighborInfo.vlanId;
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_ID;
+        attr.value.u16 = session.neighborInfo.port.m_vlan_info.vlan_id;
         attrs.push_back(attr);
 
         attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_PRI;
@@ -451,70 +516,72 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
+    attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
     attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
     attrs.push_back(attr);
 
     // TOS value format is the following:
     // DSCP 6 bits | ECN 2 bits
-    attr.id =SAI_MIRROR_SESSION_ATTR_TOS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_TOS;
     attr.value.u16 = (uint16_t)(session.dscp << MIRROR_SESSION_DSCP_SHIFT);
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_TTL;
+    attr.id = SAI_MIRROR_SESSION_ATTR_TTL;
     attr.value.u8 = session.ttl;
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
     copy(attr.value.ipaddr, session.srcIp);
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
     copy(attr.value.ipaddr, session.dstIp);
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
     memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
     memcpy(attr.value.mac, session.neighborInfo.mac.getMac(), sizeof(sai_mac_t));
     attrs.push_back(attr);
 
-    attr.id =SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
+    attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
     attr.value.u16 = session.greType;
     attrs.push_back(attr);
 
-    session.status = true;
-
-    status = sai_mirror_api->create_mirror_session(&session.sessionId, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    status = sai_mirror_api->
+        create_mirror_session(&session.sessionId, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to activate mirroring session %s\n", name.c_str());
         session.status = false;
+
+        return false;
     }
 
-    if (!setSessionState(name, session))
-    {
-        throw runtime_error("Failed to test session state");
-    }
+    session.status = true;
+    setSessionState(name, session);
 
     MirrorSessionUpdate update = { name, true };
     notify(SUBJECT_TYPE_MIRROR_SESSION_CHANGE, static_cast<void *>(&update));
+
+    SWSS_LOG_NOTICE("Activate mirror session %s", name.c_str());
 
     return true;
 }
 
 bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
 {
-    SWSS_LOG_INFO("Deactivating mirror session %s\n", name.c_str());
+    SWSS_LOG_ENTER();
 
     assert(session.status);
 
     MirrorSessionUpdate update = { name, false };
     notify(SUBJECT_TYPE_MIRROR_SESSION_CHANGE, static_cast<void *>(&update));
 
-    sai_status_t status = sai_mirror_api->remove_mirror_session(session.sessionId);
+    sai_status_t status = sai_mirror_api->
+        remove_mirror_session(session.sessionId);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to deactivate mirroring session %s\n", name.c_str());
@@ -523,10 +590,10 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
 
     session.status = false;
 
-    if (!setSessionState(name, session))
-    {
-        throw runtime_error("Failed to test session state");
-    }
+    // Store whole state into StateDB, since it is far from that frequent it's durable
+    setSessionState(name, session);
+
+    SWSS_LOG_NOTICE("Deactive mirror session %s", name.c_str());
 
     return true;
 }
@@ -537,20 +604,22 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
 
     assert(session.sessionId != SAI_NULL_OBJECT_ID);
 
-    SWSS_LOG_INFO("Updating mirror session %s destination MAC address\n", name.c_str());
-
-    sai_status_t status = SAI_STATUS_SUCCESS;
     sai_attribute_t attr;
-
-    attr.id =SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
+    attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
     memcpy(attr.value.mac, session.neighborInfo.mac.getMac(), sizeof(sai_mac_t));
 
-    status = sai_mirror_api->set_mirror_session_attribute(session.sessionId, &attr);
+    sai_status_t status = sai_mirror_api->set_mirror_session_attribute(session.sessionId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to update mirroring session %s destination MAC address\n", name.c_str());
+        SWSS_LOG_ERROR("Failed to update mirror session %s destination MAC to %s, rv:%d",
+                name.c_str(), session.neighborInfo.mac.to_string().c_str(), status);
         return false;
     }
+
+    SWSS_LOG_NOTICE("Update mirror session %s destination MAC to %s",
+            name.c_str(), session.neighborInfo.mac.to_string().c_str());
+
+    setSessionState(name, session, MIRROR_SESSION_DST_MAC_ADDRESS);
 
     return true;
 }
@@ -561,175 +630,195 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
 
     assert(session.sessionId != SAI_NULL_OBJECT_ID);
 
-    SWSS_LOG_INFO("Updating mirror session %s destination port\n", name.c_str());
+    Port port;
+    m_portsOrch->getPort(session.neighborInfo.portId, port);
 
-    sai_status_t status = SAI_STATUS_SUCCESS;
     sai_attribute_t attr;
-
-    attr.id =  SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+    attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
     attr.value.oid = session.neighborInfo.portId;
 
-    status = sai_mirror_api->set_mirror_session_attribute(session.sessionId, &attr);
+    sai_status_t status = sai_mirror_api->
+        set_mirror_session_attribute(session.sessionId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to update mirroring session %s destination port\n", name.c_str());
+        SWSS_LOG_ERROR("Failed to update mirror session %s monitor port to %s, rv:%d",
+                name.c_str(), port.m_alias.c_str(), status);
         return false;
     }
+
+    SWSS_LOG_NOTICE("Update mirror session %s monitor port to %s",
+            name.c_str(), port.m_alias.c_str());
+
+    setSessionState(name, session, MIRROR_SESSION_MONITOR_PORT);
 
     return true;
 }
 
+bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+
+    if (session.neighborInfo.port.m_type == Port::VLAN)
+    {
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
+        attr.value.u16 = ETH_P_8021Q;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_ID;
+        attr.value.u16 = session.neighborInfo.port.m_vlan_info.vlan_id;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_PRI;
+        attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_PRI;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_CFI;
+        attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_CFI;
+        attrs.push_back(attr);
+    }
+    else
+    {
+        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
+        attr.value.booldata = false;
+        attrs.push_back(attr);
+    }
+
+    sai_status_t status;
+    for (auto attr : attrs)
+    {
+        status = sai_mirror_api->
+            set_mirror_session_attribute(session.sessionId, &attr);
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to update mirror session %s VLAN to %s, rv:%d",
+                    name.c_str(), session.neighborInfo.port.m_alias.c_str(), status);
+            return false;
+        }
+    }
+
+    SWSS_LOG_NOTICE("Update mirror session %s VLAN to %s",
+            name.c_str(), session.neighborInfo.port.m_alias.c_str());
+
+    setSessionState(name, session, MIRROR_SESSION_VLAN_HEADER_VALID);
+
+    return true;
+}
+
+// The function is called when SUBJECT_TYPE_NEXTHOP_CHANGE is received
+// This function will handle the case when the session's destination IP's
+// next hop changes.
 void MirrorOrch::updateNextHop(const NextHopUpdate& update)
 {
     SWSS_LOG_ENTER();
 
-    auto sessionIter = m_syncdMirrors.begin();
-    for (; sessionIter != m_syncdMirrors.end(); ++sessionIter)
+    for (auto it = m_syncdMirrors.begin(); it != m_syncdMirrors.end(); it++)
     {
-        if (!update.prefix.isAddressInSubnet(sessionIter->second.dstIp))
+        const auto& name = it->first;
+        auto& session = it->second;
+
+        // Check if mirror session's destination IP is the update's destination IP
+        if (session.dstIp != update.destination)
         {
             continue;
         }
 
-        const auto& name = sessionIter->first;
-        auto& session = sessionIter->second;
-
-        SWSS_LOG_INFO("Updating mirror session %s next hop\n", name.c_str());
-
-        if (session.nexthopInfo.resolved)
-        {
-            // Check for ECMP route next hop update. If route prefix is the same
-            // and current next hop is still in next hop group - do nothing.
-            if (session.nexthopInfo.prefix == update.prefix && update.nexthopGroup.getIpAddresses().count(session.nexthopInfo.nexthop))
-            {
-                continue;
-            }
-        }
-
-        session.nexthopInfo.nexthop = *update.nexthopGroup.getIpAddresses().begin();
         session.nexthopInfo.prefix = update.prefix;
-        session.nexthopInfo.resolved = true;
 
-        // Get neighbor
-        if (!getNeighborInfo(name, session))
+        setSessionState(name, session, MIRROR_SESSION_ROUTE_PREFIX);
+
+        // This is the ECMP scenario that the new next hop group contains the previous
+        // next hop. There is no need to update this session's monitor port.
+        if (update.nexthopGroup != IpAddresses() &&
+                update.nexthopGroup.getIpAddresses().count(session.nexthopInfo.nexthop))
+
         {
-            // Next hop changed. New neighbor is not resolved. Remove session.
-            if (session.status)
-            {
-                deactivateSession(name, session);
-            }
             continue;
         }
 
-        if (session.status)
-        {
-            if (!updateSessionDstMac(name, session))
-            {
-                continue;
-            }
+        SWSS_LOG_NOTICE("Updating mirror session %s with route %s",
+                name.c_str(), update.prefix.to_string().c_str());
 
-            if (!updateSessionDstPort(name, session))
-            {
-                continue;
-            }
+        if (update.nexthopGroup != IpAddresses())
+        {
+            session.nexthopInfo.nexthop = *update.nexthopGroup.getIpAddresses().begin();
         }
         else
         {
-            if (!activateSession(name, session))
-            {
-                continue;
-            }
+            session.nexthopInfo.nexthop = IpAddress();
         }
+
+        // Resolve the neighbor of the new next hop
+        updateSession(name, session);
     }
 }
 
+// The function is called when SUBJECT_TYPE_NEIGH_CHANGE is received.
+// This function will handle the case when the neighbor is created or removed.
 void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
 {
     SWSS_LOG_ENTER();
 
-    auto sessionIter = m_syncdMirrors.begin();
-    for (; sessionIter != m_syncdMirrors.end(); ++sessionIter)
+    for (auto it = m_syncdMirrors.begin(); it != m_syncdMirrors.end(); it++)
     {
-        if (!sessionIter->second.nexthopInfo.resolved)
+        const auto& name = it->first;
+        auto& session = it->second;
+
+        // Check if the session's destination IP matches the neighbor's update IP
+        // or if the session's next hop IP matches the neighbor's update IP
+        if (session.dstIp != update.entry.ip_address &&
+                session.nexthopInfo.nexthop != update.entry.ip_address)
         {
             continue;
         }
 
-        // It is possible to have few sessions that points to one next hop
-        if (sessionIter->second.nexthopInfo.nexthop != update.entry.ip_address)
-        {
-            continue;
-        }
+        SWSS_LOG_NOTICE("Updating mirror session %s with neighbor %s",
+                name.c_str(), update.entry.alias.c_str());
 
-        SWSS_LOG_INFO("Updating neighbor info %s %s\n", update.entry.ip_address.to_string().c_str(), update.entry.alias.c_str());
-
-        const auto& name = sessionIter->first;
-        auto& session = sessionIter->second;
-
-        if (update.add)
-        {
-            if (!getNeighborInfo(name, session, update.entry, update.mac))
-            {
-                if (session.status)
-                {
-                    deactivateSession(name, session);
-                }
-               continue;
-            }
-
-            if (session.status)
-            {
-                if (!updateSessionDstMac(name, session))
-                {
-                    continue;
-                }
-
-                if (!updateSessionDstPort(name, session))
-                {
-                    continue;
-                }
-            }
-            else
-            {
-                activateSession(name, session);
-            }
-        }
-        else if (session.status)
-        {
-            deactivateSession(name, session);
-            session.neighborInfo.resolved = false;
-        }
+        updateSession(name, session);
     }
 }
 
+// The function is called when SUBJECT_TYPE_FDB_CHANGE is received.
+// This function will handle the case when new FDB enty is learned/added in the VLAN,
+// or when the old FDB entry gets removed. Only when the neighbor is VLAN will the case
+// be handled.
 void MirrorOrch::updateFdb(const FdbUpdate& update)
 {
     SWSS_LOG_ENTER();
 
-    auto sessionIter = m_syncdMirrors.begin();
-    for (; sessionIter != m_syncdMirrors.end(); ++sessionIter)
+    for (auto it = m_syncdMirrors.begin(); it != m_syncdMirrors.end(); it++)
     {
-        if (!sessionIter->second.neighborInfo.resolved ||
-                sessionIter->second.neighborInfo.port.m_type != Port::VLAN)
+        const auto& name = it->first;
+        auto& session = it->second;
+
+        // Check the following three conditions:
+        // 1) mirror session is pointing to a VLAN
+        // 2) the VLAN matches the FDB notification VLAN ID
+        // 3) the destination MAC matches the FDB notifaction MAC
+        if (session.neighborInfo.port.m_type != Port::VLAN ||
+                session.neighborInfo.port.m_vlan_info.vlan_oid != update.entry.bv_id ||
+                session.neighborInfo.mac != update.entry.mac)
         {
             continue;
         }
 
-        // It is possible to have few session that points to one FDB entry
-        if (sessionIter->second.neighborInfo.mac != update.entry.mac ||
-                sessionIter->second.neighborInfo.vlanOid != update.entry.bv_id)
-        {
-            continue;
-        }
+        SWSS_LOG_NOTICE("Updating mirror session %s with monitor port %s",
+                name.c_str(), update.port.m_alias.c_str());
 
-        const auto& name = sessionIter->first;
-        auto& session = sessionIter->second;
-
+        // Get the new monitor port
         if (update.add)
         {
             if (session.status)
             {
-                // update port if changed
+                // Update port if changed
                 if (session.neighborInfo.portId != update.port.m_port_id)
                 {
                     session.neighborInfo.portId = update.port.m_port_id;
@@ -738,14 +827,12 @@ void MirrorOrch::updateFdb(const FdbUpdate& update)
             }
             else
             {
-                //activate session
-                session.neighborInfo.resolved = true;
-                session.neighborInfo.mac = update.entry.mac;
+                // Activate session
                 session.neighborInfo.portId = update.port.m_port_id;
-
                 activateSession(name, session);
             }
         }
+        // Remvoe the monitor port
         else
         {
             deactivateSession(name, session);
@@ -757,72 +844,56 @@ void MirrorOrch::updateFdb(const FdbUpdate& update)
 void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
 {
     SWSS_LOG_ENTER();
-    auto sessionIter = m_syncdMirrors.begin();
-    for (; sessionIter != m_syncdMirrors.end(); ++sessionIter)
+
+    for (auto it = m_syncdMirrors.begin(); it != m_syncdMirrors.end(); it++)
     {
-        if (!sessionIter->second.neighborInfo.resolved)
+        const auto& name = it->first;
+        auto& session = it->second;
+
+        // Check the following two conditions:
+        // 1) the neighbor is LAG
+        // 2) the neighbor LAG matches the update LAG
+        if (session.neighborInfo.port.m_type != Port::LAG ||
+                session.neighborInfo.port != update.lag)
         {
             continue;
         }
-
-        if (sessionIter->second.neighborInfo.port.m_type != Port::LAG)
-        {
-            continue;
-        }
-
-        // It is possible to have few session that points to one LAG member
-        if (sessionIter->second.neighborInfo.port != update.lag || sessionIter->second.neighborInfo.portId != update.member.m_port_id)
-        {
-            continue;
-        }
-
-        const auto& name = sessionIter->first;
-        auto& session = sessionIter->second;
 
         if (update.add)
         {
-            // We interesting only in first LAG member
-            if (update.lag.m_members.size() > 1)
+            // Activate mirror session if it was deactivated due to the reason
+            // that previously there was no member in the LAG. If the mirror
+            // session is already activated, no further action is needed.
+            if (!session.status)
             {
-                continue;
+                assert(!update.lag.m_members.empty());
+                const string& member_name = *update.lag.m_members.begin();
+                Port member;
+                m_portsOrch->getPort(member_name, member);
+
+                session.neighborInfo.portId = member.m_port_id;
+                activateSession(name, session);
             }
-
-            const string& memberName = *update.lag.m_members.begin();
-            Port member;
-            if (!m_portsOrch->getPort(memberName, member))
-            {
-                SWSS_LOG_ERROR("Failed to get port for %s alias\n", memberName.c_str());
-                assert(false);
-            }
-
-            session.neighborInfo.portId = member.m_port_id;
-
-            activateSession(name, session);
         }
         else
         {
-            // If LAG is empty deactivate session
+            // If LAG is empty, deactivate session
             if (update.lag.m_members.empty())
             {
                 deactivateSession(name, session);
                 session.neighborInfo.portId = SAI_OBJECT_TYPE_NULL;
-
-                continue;
             }
-
-            // Get another LAG member and update session
-            const string& memberName = *update.lag.m_members.begin();
-
-            Port member;
-            if (!m_portsOrch->getPort(memberName, member))
+            // Switch to a new member of the LAG
+            else
             {
-                SWSS_LOG_ERROR("Failed to get port for %s alias\n", memberName.c_str());
-                assert(false);
+                const string& member_name = *update.lag.m_members.begin();
+                Port member;
+                m_portsOrch->getPort(member_name, member);
+
+                session.neighborInfo.portId = member.m_port_id;
+                // The destination MAC remains the same
+                updateSessionDstPort(name, session);
             }
-
-            session.neighborInfo.portId = member.m_port_id;
-
-            updateSessionDstPort(name, session);
         }
     }
 }
@@ -837,32 +908,25 @@ void MirrorOrch::updateVlanMember(const VlanMemberUpdate& update)
         return;
     }
 
-    auto sessionIter = m_syncdMirrors.begin();
-    for (; sessionIter != m_syncdMirrors.end(); ++sessionIter)
+    for (auto it = m_syncdMirrors.begin(); it != m_syncdMirrors.end(); it++)
     {
-        if (!sessionIter->second.neighborInfo.resolved)
+        const auto& name = it->first;
+        auto& session = it->second;
+
+        // Check the following three conditions:
+        // 1) mirror session is pointing to a VLAN
+        // 2) the VLAN matches the update VLAN
+        // 3) the monitor port matches the update VLAN member
+        if (session.neighborInfo.port.m_type != Port::VLAN ||
+                session.neighborInfo.port != update.vlan ||
+                session.neighborInfo.portId != update.member.m_port_id)
         {
             continue;
         }
-
-        if (sessionIter->second.neighborInfo.port.m_type != Port::VLAN)
-        {
-            continue;
-        }
-
-        // It is possible to have few session that points to one VLAN member
-        if (sessionIter->second.neighborInfo.port != update.vlan || 
-                sessionIter->second.neighborInfo.portId != update.member.m_port_id)
-        {
-            continue;
-        }
-
-        const auto& name = sessionIter->first;
-        auto& session = sessionIter->second;
 
         // Deactivate session. Wait for FDB event to activate session
-        deactivateSession(name, session);
         session.neighborInfo.portId = SAI_OBJECT_TYPE_NULL;
+        deactivateSession(name, session);
     }
 }
 

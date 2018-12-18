@@ -13,6 +13,7 @@
 #include "producerstatetable.h"
 #include "vlanmgr.h"
 #include "shellcmd.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -55,6 +56,9 @@ int main(int argc, char **argv)
         DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+
+        WarmStart::initialize("vlanmgrd", "swss");
+        WarmStart::checkWarmStart("vlanmgrd", "swss");
 
         /*
          * swss service starts after interfaces-config.service which will have

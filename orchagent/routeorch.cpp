@@ -12,6 +12,7 @@ extern sai_route_api_t*             sai_route_api;
 extern sai_switch_api_t*            sai_switch_api;
 
 extern PortsOrch *gPortsOrch;
+extern IntfsOrch *gIntfsOrch;
 extern CrmOrch *gCrmOrch;
 
 /* Default maximum number of next hop groups */
@@ -119,30 +120,49 @@ void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_INFO("Attaching next hop observer for %s destination IP\n", dstAddr.to_string().c_str());
-
     auto observerEntry = m_nextHopObservers.find(dstAddr);
 
+    /* Create a new observer entry if no current observer is observing this
+     * IP address */
     if (observerEntry == m_nextHopObservers.end())
     {
         m_nextHopObservers.emplace(dstAddr, NextHopObserverEntry());
         observerEntry = m_nextHopObservers.find(dstAddr);
 
+        /* Find the prefixes that cover the destination IP */
         for (auto route : m_syncdRoutes)
         {
             if (route.first.isAddressInSubnet(dstAddr))
             {
-                observerEntry->second.routeTable.emplace(route.first, route.second);
+                SWSS_LOG_NOTICE("route%s", route.first.to_string().c_str());
+                observerEntry->second.routeTable.emplace(
+                        route.first, route.second);
+            }
+        }
+
+        /* Find the subnets that cover the destination IP
+         * The next hop of the subnet routes is left empty */
+        for (auto prefix : gIntfsOrch->getSubnetRoutes())
+        {
+            if (prefix.isAddressInSubnet(dstAddr))
+            {
+                observerEntry->second.routeTable.emplace(
+                        prefix, IpAddresses());
             }
         }
     }
 
     observerEntry->second.observers.push_back(observer);
 
+    SWSS_LOG_NOTICE("Attached next hop observer of route %s for destination IP %s",
+            observerEntry->second.routeTable.rbegin()->first.to_string().c_str(),
+            dstAddr.to_string().c_str());
+
+    // Trigger next hop change for the first time the observer is attached
     auto route = observerEntry->second.routeTable.rbegin();
     if (route != observerEntry->second.routeTable.rend())
     {
-        NextHopUpdate update = { route->first, route->second };
+        NextHopUpdate update = { dstAddr, route->first, route->second };
         observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, static_cast<void *>(&update));
     }
 }
@@ -387,7 +407,7 @@ void RouteOrch::notifyNextHopChangeObservers(IpPrefix prefix, IpAddresses nextho
         if (add)
         {
             bool update_required = false;
-            NextHopUpdate update = { prefix, nexthops };
+            NextHopUpdate update = { entry.first, prefix, nexthops };
 
             /* Table should not be empty. Default route should always exists. */
             assert(!entry.second.routeTable.empty());
@@ -438,7 +458,7 @@ void RouteOrch::notifyNextHopChangeObservers(IpPrefix prefix, IpAddresses nextho
                     assert(!entry.second.routeTable.empty());
 
                     auto route = entry.second.routeTable.rbegin();
-                    NextHopUpdate update = { route->first, route->second };
+                    NextHopUpdate update = { entry.first, route->first, route->second };
 
                     for (auto observer : entry.second.observers)
                     {
@@ -515,7 +535,6 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
 
     vector<sai_object_id_t> next_hop_ids;
     set<IpAddress> next_hop_set = ipAddresses.getIpAddresses();
-    sai_object_id_t next_hop_id;
     std::map<sai_object_id_t, IpAddress> nhopgroup_members_set;
 
     /* Assert each IP address exists in m_syncdNextHops table,
@@ -564,6 +583,11 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
 
     for (auto nhid: next_hop_ids)
     {
+        // skip next hop group member create for neighbor from down port
+        if (m_neighOrch->isNextHopFlagSet(nhopgroup_members_set[nhid], NHFLAGS_IFDOWN)) {
+            continue;
+        }
+
         // Create a next hop group member
         vector<sai_attribute_t> nhgm_attrs;
 
@@ -608,21 +632,6 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
     next_hop_group_entry.ref_count = 0;
     m_syncdNextHopGroups[ipAddresses] = next_hop_group_entry;
 
-    for (auto nhop : next_hop_set) {
-        if (!m_neighOrch->isNextHopFlagSet(nhop, NHFLAGS_IFDOWN)) {
-            continue;
-        }
-
-        next_hop_id = next_hop_group_entry.nhopgroup_members[nhop];
-        status = sai_next_hop_group_api->remove_next_hop_group_member(next_hop_id);
-
-        if (status != SAI_STATUS_SUCCESS) {
-            SWSS_LOG_ERROR("Failed to remove next hop group member %lx: %d\n",
-                           next_hop_id, status);
-        }
-
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
-    }
 
     return true;
 }
@@ -651,6 +660,8 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
 
         if (m_neighOrch->isNextHopFlagSet(nhop->first, NHFLAGS_IFDOWN))
         {
+            SWSS_LOG_WARN("NHFLAGS_IFDOWN set for next hop group member %s with next_hop_id %lx",
+                           nhop->first.to_string().c_str(), nhop->second);
             nhop = next_hop_group_entry->second.nhopgroup_members.erase(nhop);
             continue;
         }
@@ -964,5 +975,6 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
         /* Notify about the route next hop removal */
         notifyNextHopChangeObservers(ipPrefix, IpAddresses(), false);
     }
+
     return true;
 }

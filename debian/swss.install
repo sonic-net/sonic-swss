@@ -6,3 +6,4 @@ swssconfig/sample/th.64ports.buffers.json etc/swss/config.d
 swssconfig/sample/th.64ports.qos.json etc/swss/config.d
 swssconfig/sample/th2.118ports.buffers.json etc/swss/config.d
 swssconfig/sample/th2.118ports.qos.json etc/swss/config.d
+neighsyncd/restore_neighbors.py usr/bin

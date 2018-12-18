@@ -9,7 +9,6 @@
 #include "notifier.h"
 #include "redisclient.h"
 
-#define PFC_WD_FLEX_COUNTER_GROUP       "PFC_WD"
 #define PFC_WD_GLOBAL                   "GLOBAL"
 #define PFC_WD_ACTION                   "action"
 #define PFC_WD_DETECTION_TIME           "detection_time"
@@ -352,12 +351,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
     m_bigRedSwitchFlag =  true;
     // Write to database that each queue enables BIG_RED_SWITCH
     auto allPorts = gPortsOrch->getAllPorts();
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
 
     for (auto &it: allPorts)
     {
         Port port = it.second;
+        uint8_t pfcMask = 0;
 
         if (port.m_type != Port::PHY)
         {
@@ -365,15 +363,12 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             continue;
         }
 
-        // use portorch api to get lossless tc in future.
-        sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
             return;
         }
 
-        uint8_t pfcMask = attr.value.u8;
         for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
         {
             sai_object_id_t queueId = port.m_queue_ids[i];
@@ -404,21 +399,20 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
     for (auto & it: allPorts)
     {
         Port port = it.second;
+        uint8_t pfcMask = 0;
+
         if (port.m_type != Port::PHY)
         {
             SWSS_LOG_INFO("Skip non-phy port %s", port.m_alias.c_str());
             continue;
         }
 
-        // use portorch api to get lossless tc in future after asym PFC is available.
-        sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
         {
-            SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
             return;
         }
 
-        uint8_t pfcMask = attr.value.u8;
         for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
         {
             if ((pfcMask & (1 << i)) == 0)
@@ -457,18 +451,15 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+    uint8_t pfcMask = 0;
 
-    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
     {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+        SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
         return;
     }
 
     set<uint8_t> losslessTc;
-    uint8_t pfcMask = attr.value.u8;
     for (uint8_t i = 0; i < PFC_WD_TC_MAX; i++)
     {
         if ((pfcMask & (1 << i)) == 0)
@@ -620,7 +611,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         vector<string> &tableNames,
         const vector<sai_port_stat_t> &portStatIds,
         const vector<sai_queue_stat_t> &queueStatIds,
-        const vector<sai_queue_attr_t> &queueAttrIds, 
+        const vector<sai_queue_attr_t> &queueAttrIds,
         int pollInterval):
     PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
     m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
@@ -659,6 +650,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         vector<FieldValueTuple> fieldValues;
         fieldValues.emplace_back(QUEUE_PLUGIN_FIELD, detectSha + "," + restoreSha);
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, to_string(m_pollInterval));
+        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
         m_flexCounterGroupTable->set(PFC_WD_FLEX_COUNTER_GROUP, fieldValues);
     }
     catch (...)
@@ -669,13 +661,13 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     auto consumer = new swss::NotificationConsumer(
             PfcWdSwOrch<DropHandler, ForwardHandler>::getCountersDb().get(),
             "PFC_WD");
-    auto wdNotification = new Notifier(consumer, this);
-    Orch::addExecutor("PFC_WD", wdNotification);
+    auto wdNotification = new Notifier(consumer, this, "PFC_WD");
+    Orch::addExecutor(wdNotification);
 
     auto interv = timespec { .tv_sec = COUNTER_CHECK_POLL_TIMEOUT_SEC, .tv_nsec = 0 };
     auto timer = new SelectableTimer(interv);
-    auto executor = new ExecutableTimer(timer, this);
-    Orch::addExecutor("PFC_WD_COUNTERS_POLL", executor);
+    auto executor = new ExecutableTimer(timer, this, "PFC_WD_COUNTERS_POLL");
+    Orch::addExecutor(executor);
     timer->start();
 }
 

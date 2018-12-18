@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir) -I $(FPM_PATH)
+INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I $(FPM_PATH)
 
 bin_PROGRAMS = fpmsyncd
 
@@ -8,9 +8,8 @@ else
 DBGFLAGS = -g
 endif
 
-fpmsyncd_SOURCES = fpmsyncd.cpp fpmlink.cpp routesync.cpp
+fpmsyncd_SOURCES = fpmsyncd.cpp fpmlink.cpp routesync.cpp $(top_srcdir)/warmrestart/warmRestartHelper.cpp $(top_srcdir)/warmrestart/warmRestartHelper.h
 
 fpmsyncd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 fpmsyncd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)
 fpmsyncd_LDADD = -lnl-3 -lnl-route-3 -lswsscommon
-
