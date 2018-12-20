@@ -42,7 +42,11 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
     {
         cmd << IP_CMD << " -6 address " << opCmd << " " << ipPrefixStr << " dev " << alias;
     }
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
 }
 
 void IntfMgr::setIntfVrf(const string &alias, const string vrfName)
