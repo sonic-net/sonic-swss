@@ -11,6 +11,8 @@
 
 namespace swss {
 
+#define VLAN_STATUS_INITIALIZED(admin_status) (!(admin_status).empty())
+
 class VlanMgr : public Orch
 {
 public:
@@ -22,6 +24,7 @@ private:
     Table m_cfgVlanTable, m_cfgVlanMemberTable;
     Table m_statePortTable, m_stateLagTable;
     Table m_stateVlanTable, m_stateVlanMemberTable;
+    Table m_appVlanTable;
     std::set<std::string> m_vlans;
 
     void doTask(Consumer &consumer);
@@ -31,6 +34,10 @@ private:
 
     bool addHostVlan(int vlan_id);
     bool removeHostVlan(int vlan_id);
+
+	bool updateVlanStatusInit(vector<FieldValueTuple> &fvVector, const int vlan_id);
+    bool updateVlanStatusByAdmin(vector<FieldValueTuple> &fvVector, const int vlan_id, const string &admin_status);
+
     bool setHostVlanAdminState(int vlan_id, const string &admin_status);
     bool setHostVlanMtu(int vlan_id, uint32_t mtu);
     bool addHostVlanMember(int vlan_id, const string &port_alias, const string& tagging_mode);
