@@ -3,6 +3,7 @@ import os
 import re
 import time
 import json
+import pytest
 
 # Get restore count of all processes supporting warm restart
 def swss_get_RestoreCount(dvs, state_db):
