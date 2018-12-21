@@ -1,3 +1,5 @@
+#include "exec.h"
+#include "../cfgmgr/shellcmd.h"
 #include "portsorch.h"
 #include "intfsorch.h"
 #include "bufferorch.h"
