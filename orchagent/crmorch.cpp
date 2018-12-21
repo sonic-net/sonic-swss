@@ -161,7 +161,8 @@ CrmOrch::CrmOrch(DBConnector *db, string tableName):
         m_resourcesMap.emplace(res.first, CrmResourceEntry(res.second, CRM_THRESHOLD_TYPE_DEFAULT, CRM_THRESHOLD_LOW_DEFAULT, CRM_THRESHOLD_HIGH_DEFAULT));
     }
 
-    auto executor = new ExecutableTimer(m_timer.get(), this);
+    // Note: ExecutableTimer will hold m_timer pointer and release the object later
+    auto executor = new ExecutableTimer(m_timer, this);
     Orch::addExecutor("CRM_COUNTERS_POLL", executor);
     m_timer->start();
 }
