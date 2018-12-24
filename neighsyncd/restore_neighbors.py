@@ -129,7 +129,7 @@ def set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac):
             dst=dst_ip,
             lladdr=dmac,
             ifindex=intf_idx,
-            state=ndmsg.states['reachable'])
+            state=ndmsg.states['stale'])
     # If neigh exists, log it but no exception raise, other exceptions, raise
     except NetlinkError as e:
         if e[0] == errno.EEXIST:
