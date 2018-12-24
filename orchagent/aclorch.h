@@ -191,7 +191,7 @@ public:
         return m_counterOid;
     }
 
-    static shared_ptr<AclRule> makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
+    static shared_ptr<AclRule> makeShared(acl_table_type_t type, acl_stage_type_t stage, AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
     virtual ~AclRule() {}
 
 protected:
@@ -251,7 +251,7 @@ public:
 class AclRuleMirror: public AclRule
 {
 public:
-    AclRuleMirror(AclOrch *m_pAclOrch, MirrorOrch *m_pMirrorOrch, string rule, string table, acl_table_type_t type);
+    AclRuleMirror(AclOrch *m_pAclOrch, acl_stage_type_t stage, MirrorOrch *m_pMirrorOrch, string rule, string table, acl_table_type_t type);
     bool validateAddAction(string attr_name, string attr_value);
     bool validateAddMatch(string attr_name, string attr_value);
     bool validate();
@@ -263,6 +263,7 @@ public:
 protected:
     bool m_state;
     string m_sessionName;
+    acl_stage_type_t m_tableStage;
     AclRuleCounters counters;
     MirrorOrch *m_pMirrorOrch;
 };
