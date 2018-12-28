@@ -3,7 +3,6 @@ import os
 import re
 import time
 import json
-import pytest
 
 # Get restore count of all processes supporting warm restart
 def swss_get_RestoreCount(dvs, state_db):
@@ -965,8 +964,6 @@ def enable_warmrestart(dvs, db, app_name):
 #
 ################################################################################
 
-# TODO: Please fix this test case. Here temporarily skip to unblock other pull requests
-@pytest.mark.skip(reason="Suspected unstable test code")
 def test_routing_WarmRestart(dvs, testlog):
 
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
