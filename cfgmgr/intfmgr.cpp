@@ -13,6 +13,7 @@ using namespace swss;
 
 #define VLAN_PREFIX         "Vlan"
 #define LAG_PREFIX          "PortChannel"
+#define LOOPBACK_PREFIX     "Loopback"
 #define VNET_PREFIX         "Vnet"
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
@@ -98,6 +99,10 @@ bool IntfMgr::isIntfStateOk(const string &alias)
         SWSS_LOG_DEBUG("Port %s is ready", alias.c_str());
         return true;
     }
+    else if (!alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
+    {
+        return true;
+    }
 
     return false;
 }
@@ -110,6 +115,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
     string alias(keys[0]);
     string vrf_name = "";
+    bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
 
     for (auto idx : data)
     {
@@ -135,13 +141,29 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             return false;
         }
 
-        setIntfVrf(alias, vrf_name);
-        m_appIntfTableProducer.set(alias, data);
+        // Set Interface VRF except for lo
+        if (!is_lo)
+        {
+            setIntfVrf(alias, vrf_name);
+            m_appIntfTableProducer.set(alias, data);
+        }
+        else
+        {
+            m_appIntfTableProducer.set("lo", data);
+        }
     }
     else if (op == DEL_COMMAND)
     {
-        setIntfVrf(alias, "");
-        m_appIntfTableProducer.del(alias);
+        // Set Interface VRF except for lo
+        if (!is_lo)
+        {
+            setIntfVrf(alias, "");
+            m_appIntfTableProducer.del(alias);
+        }
+        else
+        {
+            m_appIntfTableProducer.del("lo");
+        }
     }
     else
     {
@@ -159,7 +181,8 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 
     string alias(keys[0]);
     IpPrefix ip_prefix(keys[1]);
-    string appKey = keys[0] + ":" + keys[1];
+    bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
+    string appKey = (is_lo ? "lo" : keys[0]) + ":" + keys[1];
 
     if (op == SET_COMMAND)
     {
@@ -173,7 +196,11 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
             return false;
         }
 
-        setIntfIp(alias, "add", ip_prefix.to_string(), ip_prefix.isV4());
+        // Set Interface IP except for lo
+        if (!is_lo)
+        {
+            setIntfIp(alias, "add", ip_prefix.to_string(), ip_prefix.isV4());
+        }
 
         std::vector<FieldValueTuple> fvVector;
         FieldValueTuple f("family", ip_prefix.isV4() ? IPV4_NAME : IPV6_NAME);
@@ -186,7 +213,11 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     }
     else if (op == DEL_COMMAND)
     {
-        setIntfIp(alias, "del", ip_prefix.to_string(), ip_prefix.isV4());
+        // Set Interface IP except for lo
+        if (!is_lo)
+        {
+            setIntfIp(alias, "del", ip_prefix.to_string(), ip_prefix.isV4());
+        }
         m_appIntfTableProducer.del(appKey);
         m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
     }
