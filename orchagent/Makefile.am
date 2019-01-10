@@ -9,7 +9,6 @@ dist_swss_DATA = \
 		 pfc_detect_broadcom.lua \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
-		 pfc_restore.lua
 		 pfc_restore.lua \
 		 watermark_queue.lua \
 		 watermark_pg.lua
