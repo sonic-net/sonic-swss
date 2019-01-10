@@ -33,8 +33,9 @@ logger.addHandler(logging.NullHandler())
 # timeout the restore process in 1 min if not finished
 # This is mostly to wait for interfaces to be created and up after system warm-reboot
 # and this process is started by supervisord in swss docker.
-# It would be good to keep that time below routing reconciliation time-out.
-TIME_OUT = 60
+# It would be good to keep that time consistent routing reconciliation time-out, here
+# we are upstream, we shouldn't give up before down stream.
+TIME_OUT = 120
 
 # every 5 seconds to check interfaces states
 CHECK_INTERVAL = 5
