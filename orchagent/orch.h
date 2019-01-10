@@ -30,6 +30,7 @@ const char ref_end             = ']';
 const char comma               = ',';
 const char range_specifier     = '-';
 const char config_db_key_delimiter = '|';
+const char state_db_key_delimiter  = '|';
 
 #define MLNX_PLATFORM_SUBSTRING "mellanox"
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
@@ -183,7 +184,7 @@ public:
     virtual bool bake();
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
-    void doTask();
+    virtual void doTask();
 
     /* Run doTask against a specific executor */
     virtual void doTask(Consumer &consumer) = 0;
@@ -218,6 +219,11 @@ class Orch2 : public Orch
 public:
     Orch2(DBConnector *db, const std::string& tableName, Request& request, int pri=default_orch_pri)
         : Orch(db, tableName, pri), request_(request)
+    {
+    }
+
+    Orch2(DBConnector *db, const vector<string> &tableNames, Request& request)
+        : Orch(db, tableNames), request_(request)
     {
     }
 

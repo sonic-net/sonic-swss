@@ -321,23 +321,18 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+    uint8_t pfcMask = 0;
 
-    sai_status_t status = sai_port_api->get_port_attribute(port, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (!gPortsOrch->getPortPfc(port, &pfcMask))
     {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port 0x%lx: %d", port, status);
+        SWSS_LOG_ERROR("Failed to get PFC mask on port 0x%lx", port);
     }
 
-    uint8_t pfcMask = attr.value.u8;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
-    attr.value.u8 = static_cast<uint8_t>(pfcMask & ~(1 << queueId));
+    pfcMask = static_cast<uint8_t>(pfcMask & ~(1 << queueId));
 
-    status = sai_port_api->set_port_attribute(port, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (!gPortsOrch->setPortPfc(port, pfcMask))
     {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port 0x%lx: %d", port, status);
+        SWSS_LOG_ERROR("Failed to set PFC mask on port 0x%lx", port);
     }
 }
 
@@ -345,25 +340,18 @@ PfcWdLossyHandler::~PfcWdLossyHandler(void)
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
+    uint8_t pfcMask = 0;
 
-    sai_status_t status = sai_port_api->get_port_attribute(getPort(), 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (!gPortsOrch->getPortPfc(getPort(), &pfcMask))
     {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port 0x%lx: %d", getPort(), status);
-        return;
+        SWSS_LOG_ERROR("Failed to get PFC mask on port 0x%lx", getPort());
     }
 
-    uint8_t pfcMask = attr.value.u8;
-    attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
-    attr.value.u8 = static_cast<uint8_t>(pfcMask | (1 << getQueueId()));
+    pfcMask = static_cast<uint8_t>(pfcMask | (1 << getQueueId()));
 
-    status = sai_port_api->set_port_attribute(getPort(), &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (!gPortsOrch->setPortPfc(getPort(), pfcMask))
     {
-        SWSS_LOG_ERROR("Failed to set PFC mask on port 0x%lx: %d", getPort(), status);
-        return;
+        SWSS_LOG_ERROR("Failed to set PFC mask on port 0x%lx", getPort());
     }
 }
 

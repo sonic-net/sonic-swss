@@ -2,7 +2,7 @@ from swsscommon import swsscommon
 import time
 import os
 
-def test_PortAutoNeg(dvs):
+def test_PortAutoNeg(dvs, testlog):
 
     db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
 

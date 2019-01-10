@@ -20,7 +20,7 @@
 /*
  * Contains session data specified by user in config file
  * and data required for MAC address and port resolution
- * */
+ */
 struct MirrorEntry
 {
     bool status;
@@ -30,27 +30,23 @@ struct MirrorEntry
     uint8_t dscp;
     uint8_t ttl;
     uint8_t queue;
-    bool addVLanTag;
 
     struct
     {
-        bool resolved;
-        IpAddress nexthop;
         IpPrefix prefix;
+        IpAddress nexthop;
     } nexthopInfo;
 
     struct
     {
-        bool resolved;
         NeighborEntry neighbor;
         MacAddress mac;
         Port port;
-        sai_vlan_id_t vlanId;
-        sai_object_id_t vlanOid;
         sai_object_id_t portId;
     } neighborInfo;
 
     sai_object_id_t sessionId;
+
     int64_t refCount;
 
     MirrorEntry(const string& platform);
@@ -73,7 +69,7 @@ public:
 
     void update(SubjectType, void *);
     bool sessionExists(const string&);
-    bool getSessionState(const string&, bool&);
+    bool getSessionStatus(const string&, bool&);
     bool getSessionOid(const string&, sai_object_id_t&);
     bool increaseRefCount(const string&);
     bool decreaseRefCount(const string&);
@@ -84,7 +80,7 @@ private:
     NeighOrch *m_neighOrch;
     FdbOrch *m_fdbOrch;
 
-    Table m_mirrorTableProducer;
+    Table m_mirrorTable;
 
     MirrorTable m_syncdMirrors;
 
@@ -93,11 +89,17 @@ private:
 
     bool activateSession(const string&, MirrorEntry&);
     bool deactivateSession(const string&, MirrorEntry&);
+    bool updateSession(const string&, MirrorEntry&);
     bool updateSessionDstMac(const string&, MirrorEntry&);
     bool updateSessionDstPort(const string&, MirrorEntry&);
-    bool setSessionState(const string&, MirrorEntry&);
+    bool updateSessionType(const string&, MirrorEntry&);
+
+    /*
+     * Store mirror session state in StateDB
+     * attr is the field name will be stored, if empty then all fields will be stored
+     */
+    void setSessionState(const std::string& name, const MirrorEntry& session, const std::string& attr = "");
     bool getNeighborInfo(const string&, MirrorEntry&);
-    bool getNeighborInfo(const string&, MirrorEntry&, const NeighborEntry&, const MacAddress&);
 
     void updateNextHop(const NextHopUpdate&);
     void updateNeighbor(const NeighborUpdate&);

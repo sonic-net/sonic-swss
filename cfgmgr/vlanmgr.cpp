@@ -15,7 +15,7 @@ using namespace swss;
 #define VLAN_PREFIX         "Vlan"
 #define LAG_PREFIX          "PortChannel"
 #define DEFAULT_VLAN_ID     "1"
-#define MAX_MTU             9100
+#define DEFAULT_MTU_STR     "9100"
 #define VLAN_HLEN            4
 
 extern MacAddress gMacAddress;
@@ -169,13 +169,11 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
 
     // The command should be generated as:
     // /bin/bash -c "/sbin/ip link set {{port_alias}} master Bridge &&
-    //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}
-    //               /sbin/ip link set {{port_alias}} up mtu 9100"
+    //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}"
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
       + IP_CMD + " link set " + port_alias + " master " + DOT1Q_BRIDGE_NAME + " && "
-      + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + " && "
-      + IP_CMD + " link set " + port_alias + " up mtu " + std::to_string(MAX_MTU) + "\"";
+      + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + "\"";
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
@@ -248,7 +246,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             string admin_status;
-            uint32_t mtu = 0;
+            string mtu = DEFAULT_MTU_STR;
             vector<FieldValueTuple> fvVector;
             string members;
 
@@ -284,14 +282,13 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 /* Set vlan mtu */
                 else if (fvField(i) == "mtu")
                 {
-                    mtu = (uint32_t)stoul(fvValue(i));
+                    mtu = fvValue(i);
                     /*
                      * TODO: support host VLAN mtu setting.
                      * Host VLAN mtu should be set only after member configured
                      * and VLAN state is not UNKNOWN.
                      */
-                    SWSS_LOG_DEBUG("%s mtu %u: Host VLAN mtu setting to be supported.", key.c_str(), mtu);
-                    fvVector.push_back(i);
+                    SWSS_LOG_DEBUG("%s mtu %s: Host VLAN mtu setting to be supported.", key.c_str(), mtu.c_str());
                 }
                 else if (fvField(i) == "members@") {
                     members = fvValue(i);
@@ -303,6 +300,10 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 FieldValueTuple a("admin_status",  "up");
                 fvVector.push_back(a);
             }
+
+            FieldValueTuple m("mtu", mtu);
+            fvVector.push_back(m);
+
             m_appVlanTableProducer.set(key, fvVector);
             m_vlans.insert(key);
 

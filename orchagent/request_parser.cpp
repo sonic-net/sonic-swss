@@ -4,11 +4,11 @@
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
-#include <set>
 #include <exception>
 
 #include "sai.h"
 #include "macaddress.h"
+#include "ipaddress.h"
 #include "orch.h"
 #include "request_parser.h"
 
@@ -87,6 +87,15 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
             case REQ_T_MAC_ADDRESS:
                 key_item_mac_addresses_[i] = parseMacAddress(key_items[i]);
                 break;
+            case REQ_T_IP:
+                key_item_ip_addresses_[i] = parseIpAddress(key_items[i]);
+                break;
+            case REQ_T_IP_PREFIX:
+                key_item_ip_prefix_[i] = parseIpPrefix(key_items[i]);
+                break;
+            case REQ_T_UINT:
+                key_item_uint_[i] = parseUint(key_items[i]);
+                break;
             default:
                 throw std::logic_error(std::string("Not implemented key type parser. Key '")
                                      + full_key_
@@ -128,6 +137,18 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
                 break;
             case REQ_T_PACKET_ACTION:
                 attr_item_packet_actions_[fvField(*i)] = parsePacketAction(fvValue(*i));
+                break;
+            case REQ_T_VLAN:
+                attr_item_vlan_[fvField(*i)] = parseVlan(fvValue(*i));
+                break;
+            case REQ_T_IP:
+                attr_item_ip_[fvField(*i)] = parseIpAddress(fvValue(*i));
+                break;
+            case REQ_T_UINT:
+                attr_item_uint_[fvField(*i)] = parseUint(fvValue(*i));
+                break;
+            case REQ_T_SET:
+                attr_item_set_[fvField(*i)] = parseSet(fvValue(*i));
                 break;
             default:
                 throw std::logic_error(std::string("Not implemented attribute type parser for attribute:") + fvField(*i));
@@ -176,6 +197,101 @@ MacAddress Request::parseMacAddress(const std::string& str)
     }
 
     return MacAddress(mac);
+}
+
+IpAddress Request::parseIpAddress(const std::string& str)
+{
+    try
+    {
+        IpAddress addr(str);
+        return addr;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid ip address: ") + str);
+    }
+}
+
+IpPrefix Request::parseIpPrefix(const std::string& str)
+{
+    try
+    {
+        IpPrefix pfx(str);
+        return pfx;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid ip prefix: ") + str);
+    }
+}
+
+set<string> Request::parseSet(const std::string& str)
+{
+    try
+    {
+        set<string> str_set;
+        string substr;
+        std::istringstream iss(str);
+        while (getline(iss, substr, ','))
+        {
+            str_set.insert(substr);
+        }
+        return str_set;
+    }
+    catch (std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid string set"));
+    }
+}
+
+uint64_t Request::parseUint(const std::string& str)
+{
+    try
+    {
+        uint64_t ret = std::stoul(str);
+        return ret;
+    }
+    catch(std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid unsigned integer: ") + str);
+    }
+    catch(std::out_of_range& _)
+    {
+        throw std::invalid_argument(std::string("Out of range unsigned integer: ") + str);
+    }
+}
+
+uint16_t Request::parseVlan(const std::string& str)
+{
+    uint16_t ret = 0;
+
+    const auto vlan_prefix = std::string("Vlan");
+    const auto prefix_len = vlan_prefix.length();
+
+    if (str.substr(0, prefix_len) != vlan_prefix)
+    {
+        throw std::invalid_argument(std::string("Invalid vlan interface: ") + str);
+    }
+
+    try
+    {
+        ret = static_cast<uint16_t>(std::stoul(str.substr(prefix_len)));
+    }
+    catch(std::invalid_argument& _)
+    {
+        throw std::invalid_argument(std::string("Invalid vlan id: ") + str);
+    }
+    catch(std::out_of_range& _)
+    {
+        throw std::invalid_argument(std::string("Out of range vlan id: ") + str);
+    }
+
+    if (ret == 0 || ret > 4094)
+    {
+        throw std::invalid_argument(std::string("Out of range vlan id: ") + str);
+    }
+
+    return ret;
 }
 
 sai_packet_action_t Request::parsePacketAction(const std::string& str)

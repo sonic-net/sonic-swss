@@ -11,6 +11,11 @@
 #include "netmsg.h"
 #include <team.h>
 
+// seconds
+const uint32_t DEFAULT_WR_PENDING_TIMEOUT = 70;
+
+using namespace std::chrono;
+
 namespace swss {
 
 class TeamSync : public NetMsg
@@ -18,10 +23,9 @@ class TeamSync : public NetMsg
 public:
     TeamSync(DBConnector *db, DBConnector *stateDb, Select *select);
 
-    /*
-     * Listens to RTM_NEWLINK and RTM_DELLINK to undestand if there is a new
-     * team device
-     */
+    void periodic();
+
+    /* Listen to RTM_NEWLINK, RTM_DELLINK to track team devices */
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
     class TeamPortSync : public Selectable
@@ -35,6 +39,8 @@ public:
         int getFd() override;
         void readData() override;
 
+        /* member_name -> enabled|disabled */
+        std::map<std::string, bool> m_lagMembers;
     protected:
         int onChange();
         static int teamdHandler(struct team_handle *th, void *arg,
@@ -45,20 +51,34 @@ public:
         struct team_handle *m_team;
         std::string m_lagName;
         int m_ifindex;
-        std::map<std::string, bool> m_lagMembers; /* map[ifname] = status (enabled|disabled) */
     };
 
 protected:
     void addLag(const std::string &lagName, int ifindex, bool admin_state,
-                bool oper_state, unsigned int mtu);
+                bool oper_state);
     void removeLag(const std::string &lagName);
+
+    /* valid only in WR mode */
+    void applyState();
+
+    /* Handle all selectables add/removal events */
+    void doSelectableTask();
 
 private:
     Select *m_select;
     ProducerStateTable m_lagTable;
     ProducerStateTable m_lagMemberTable;
     Table m_stateLagTable;
-    std::map<std::string, std::shared_ptr<TeamPortSync> > m_teamPorts;
+
+    bool m_warmstart;
+    std::unordered_map<std::string, std::vector<FieldValueTuple>> m_stateLagTablePreserved;
+    steady_clock::time_point m_start_time;
+    uint32_t m_pending_timeout;
+
+    /* Store selectables needed to be updated in doSelectableTask function */
+    std::set<std::string> m_selectablesToAdd;
+    std::set<std::string> m_selectablesToRemove;
+    std::map<std::string, std::shared_ptr<TeamPortSync> > m_teamSelectables;
 };
 
 }

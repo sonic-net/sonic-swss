@@ -29,6 +29,10 @@ def delete_entry_tbl(db, table, key):
     tbl._del(key)
     time.sleep(1)
 
+def delete_entry_pst(db, table, key):
+    tbl = swsscommon.ProducerStateTable(db, table)
+    tbl._del(key)
+    time.sleep(1)
 
 def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
@@ -59,7 +63,7 @@ def is_vrf_attributes_correct(db, table, key, expected_attributes):
                                                    (value, name, expected_attributes[name])
 
 
-def vrf_create(asic_db, conf_db, vrf_name, attributes, expected_attributes):
+def vrf_create(asic_db, appl_db, vrf_name, attributes, expected_attributes):
     # check that the vrf wasn't exist before
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 1, "The initial state is incorrect"
 
@@ -71,7 +75,7 @@ def vrf_create(asic_db, conf_db, vrf_name, attributes, expected_attributes):
         attributes = [('empty', 'empty')]
 
     # create the VRF entry in Config DB
-    create_entry_tbl(conf_db, "VRF", vrf_name, attributes)
+    create_entry_pst(appl_db, "VRF_TABLE", vrf_name, attributes)
 
     # check that the vrf entry was created
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 2, "The vrf wasn't created"
@@ -95,9 +99,9 @@ def vrf_create(asic_db, conf_db, vrf_name, attributes, expected_attributes):
     return state
 
 
-def vrf_remove(asic_db, conf_db, vrf_name, state):
+def vrf_remove(asic_db, appl_db, vrf_name, state):
     # delete the created vrf entry
-    delete_entry_tbl(conf_db, "VRF", vrf_name)
+    delete_entry_pst(appl_db, "VRF_TABLE", vrf_name)
 
     # check that the vrf entry was removed
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER") == 1, "The vrf wasn't removed"
@@ -106,9 +110,9 @@ def vrf_remove(asic_db, conf_db, vrf_name, state):
     assert state['initial_entries'] == entries(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"), "The incorrect entry was removed"
 
 
-def vrf_update(asic_db, conf_db, vrf_name, attributes, expected_attributes, state):
+def vrf_update(asic_db, appl_db, vrf_name, attributes, expected_attributes, state):
     # update the VRF entry in Config DB
-    create_entry_tbl(conf_db, "VRF", vrf_name, attributes)
+    create_entry_pst(appl_db, "VRF_TABLE", vrf_name, attributes)
 
     # check correctness of the created attributes
     is_vrf_attributes_correct(
@@ -147,9 +151,9 @@ def packet_action_gen():
     return r[0], r[1]
 
 
-def test_VRFOrch_Comprehensive(dvs):
+def test_VRFOrch_Comprehensive(dvs, testlog):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
     attributes = [
         ('v4',            'SAI_VIRTUAL_ROUTER_ATTR_ADMIN_V4_STATE',                     boolean_gen),
@@ -174,22 +178,22 @@ def test_VRFOrch_Comprehensive(dvs):
                 req_attr.append((attributes[an][0], req_res))
                 exp_attr[attributes[an][1]] = exp_res
             bmask <<= 1
-        state = vrf_create(asic_db, conf_db, vrf_name, req_attr, exp_attr)
-        vrf_remove(asic_db, conf_db, vrf_name, state)
+        state = vrf_create(asic_db, appl_db, vrf_name, req_attr, exp_attr)
+        vrf_remove(asic_db, appl_db, vrf_name, state)
 
 
-def test_VRFOrch(dvs):
+def test_VRFOrch(dvs, testlog):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    state = vrf_create(asic_db, conf_db, "vrf0",
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    state = vrf_create(asic_db, appl_db, "vrf0",
         [
         ],
         {
         }
     )
-    vrf_remove(asic_db, conf_db, "vrf0", state)
+    vrf_remove(asic_db, appl_db, "vrf0", state)
 
-    state = vrf_create(asic_db, conf_db, "vrf1",
+    state = vrf_create(asic_db, appl_db, "vrf1",
         [
             ('v4', 'true'),
             ('src_mac', '02:04:06:07:08:09'),
@@ -199,11 +203,11 @@ def test_VRFOrch(dvs):
             'SAI_VIRTUAL_ROUTER_ATTR_SRC_MAC_ADDRESS': '02:04:06:07:08:09',
         }
     )
-    vrf_remove(asic_db, conf_db, "vrf1", state)
+    vrf_remove(asic_db, appl_db, "vrf1", state)
 
-def test_VRFOrch_Update(dvs):
+def test_VRFOrch_Update(dvs, testlog):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
 
     attributes = [
         ('v4',            'SAI_VIRTUAL_ROUTER_ATTR_ADMIN_V4_STATE',                     boolean_gen),
@@ -216,7 +220,7 @@ def test_VRFOrch_Update(dvs):
 
     random.seed(int(time.clock()))
 
-    state = vrf_create(asic_db, conf_db, "vrf_a",
+    state = vrf_create(asic_db, appl_db, "vrf_a",
         [
         ],
         {
@@ -230,6 +234,6 @@ def test_VRFOrch_Update(dvs):
         req_res, exp_res = attr[2]()
         req_attr.append((attr[0], req_res))
         exp_attr[attr[1]] = exp_res
-        vrf_update(asic_db, conf_db, "vrf_a", req_attr, exp_attr, state)
+        vrf_update(asic_db, appl_db, "vrf_a", req_attr, exp_attr, state)
 
-    vrf_remove(asic_db, conf_db, "vrf_a", state)
+    vrf_remove(asic_db, appl_db, "vrf_a", state)

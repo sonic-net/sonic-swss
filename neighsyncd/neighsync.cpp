@@ -11,13 +11,30 @@
 #include "linkcache.h"
 
 #include "neighsync.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
 
-NeighSync::NeighSync(DBConnector *db) :
-    m_neighTable(db, APP_NEIGH_TABLE_NAME)
+NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb) :
+    m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
+    m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
+    m_AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", &m_neighTable, DEFAULT_NEIGHSYNC_WARMSTART_TIMER)
 {
+}
+
+// Check if neighbor table is restored in kernel
+bool NeighSync::isNeighRestoreDone()
+{
+    string value;
+
+    m_stateNeighRestoreTable.hget("Flags", "restored", value);
+    if (value == "true")
+    {
+        SWSS_LOG_NOTICE("neighbor table restore to kernel is done");
+        return true;
+    }
+    return false;
 }
 
 void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
@@ -52,18 +69,33 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ipStr;
 
     int state = rtnl_neigh_get_state(neigh);
+    bool delete_key = false;
     if ((nlmsg_type == RTM_DELNEIGH) || (state == NUD_INCOMPLETE) ||
         (state == NUD_FAILED))
     {
-        m_neighTable.del(key);
-        return;
+	    delete_key = true;
     }
 
     nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
+
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple f("family", family);
     FieldValueTuple nh("neigh", macStr);
     fvVector.push_back(nh);
     fvVector.push_back(f);
-    m_neighTable.set(key, fvVector);
+
+    // If warmstart is in progress, we take all netlink changes into the cache map
+    if (m_AppRestartAssist.isWarmStartInProgress())
+    {
+        m_AppRestartAssist.insertToMap(key, fvVector, delete_key);
+    }
+    else
+    {
+        if (delete_key == true)
+        {
+            m_neighTable.del(key);
+            return;
+        }
+        m_neighTable.set(key, fvVector);
+    }
 }

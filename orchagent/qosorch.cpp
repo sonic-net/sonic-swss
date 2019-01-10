@@ -1348,16 +1348,11 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
 
         if (pfc_enable)
         {
-            sai_attribute_t attr;
-            attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL;
-            attr.value.u8 = pfc_enable;
-
-            sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-            if (status != SAI_STATUS_SUCCESS)
+            if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable))
             {
-                SWSS_LOG_ERROR("Failed to apply PFC bits 0x%x to port %s, rv:%d",
-                               pfc_enable, port_name.c_str(), status);
+                SWSS_LOG_ERROR("Failed to apply PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
             }
+
             SWSS_LOG_INFO("Applied PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
         }
     }

@@ -9,22 +9,25 @@ Schema data is defined in ABNF [RFC5234](https://tools.ietf.org/html/rfc5234) sy
 ## Application DB schema
 
 ### PORT_TABLE
-Stores information for physical switch ports managed by the switch chip.  device_names are defined in [port_config.ini](../portsyncd/port_config.ini).  Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE.   See INTF_TABLE.
+Stores information for physical switch ports managed by the switch chip. Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE. See INTF_TABLE.
 
     ;Defines layer 2 ports
     ;In SONiC, Data is loaded from configuration file by portsyncd
-    ;Status: Mandatory
-    port_table_key      = PORT_TABLE:ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
-    device_name         = 1*64VCHAR     ; must be unique across PORT,INTF,VLAN,LAG TABLES and must map to PORT_TABLE.name
-    admin_status        = BIT           ; is the port enabled (1) or disabled (0)
-    oper_status         = BIT           ; physical status up (1) or down (0) of the link attached to this port
+    key                 = PORT_TABLE:ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    admin_status        = "down" / "up"        ; admin status
+    oper_status         = "down" / "up"        ; oper status
     lanes               = list of lanes ; (need format spec???)
-    ifname              = 1*64VCHAR     ; name of the port, must be unique
     mac                 = 12HEXDIG      ;
+    alias               = 1*64VCHAR     ; alias name of the port used by LLDP and SNMP, must be unique
+    description         = 1*64VCHAR     ; port description
+    speed               = 1*6DIGIT      ; port line speed in Mbps
+    mtu                 = 1*4DIGIT      ; port MTU
+    fec                 = 1*64VCHAR     ; port fec mode
+    autoneg             = BIT           ; auto-negotiation mode
 
     ;QOS Mappings
-    map_dscp_to_tc  = ref_hash_key_reference
-    map_tc_to_queue = ref_hash_key_reference
+    map_dscp_to_tc      = ref_hash_key_reference
+    map_tc_to_queue     = ref_hash_key_reference
 
     Example:
     127.0.0.1:6379> hgetall PORT_TABLE:ETHERNET4
@@ -35,7 +38,7 @@ Stores information for physical switch ports managed by the switch chip.  device
 
 ---------------------------------------------
 ### INTF_TABLE
-intfsyncd manages this table.  In SONiC, CPU (management) and logical ports (vlan, loopback, LAG) are declared in /etc/network/interface and loaded into the INTF_TABLE.
+cfgmgrd manages this table.  In SONiC, CPU (management) and logical ports (vlan, loopback, LAG) are declared in /etc/network/interface and /etc/sonic/config_db.json and loaded into the INTF_TABLE.
 
 IP prefixes are formatted according to [RFC5954](https://tools.ietf.org/html/rfc5954) with a prefix length appended to the end
 
@@ -627,42 +630,171 @@ Equivalent RedisDB entry:
     12) "0"
     127.0.0.1:6379>
 
+### VXLAN\_TUNNEL\_MAP
+    ;Stores vxlan tunnel map configuration. Defines mapping between vxlan vni and vrf
+
+    key       = VXLAN_TUNNEL_MAP:tunnel_name:tunnel_map_name
+                                                ; tunnel_name is a reference to created vxlan tunnel
+                                                ; tunnel_map_name is an arbitrary name of the map
+    vni       = 1*8DIGIT                        ; vni id, defined for tunnel map
+    vrf       = vrf_name                        ; name of the vrf
+
+### VNET\_ROUTE\_TUNNEL_TABLE
+    ;Defines schema for VNet Route tunnel table attributes
+
+    key                        = VNET_ROUTE_TUNNEL_TABLE:vnet_name:prefix
+                                                ; Vnet route tunnel table with prefix
+    ; field                      value
+    endpoint                   = IP             ; Host VM IP address
+    mac_address                = 12HEXDIG       ; Inner dest mac in encapsulated packet (Optional)
+    vxlanid                    = 1*8DIGIT       ; VNI value in encapsulated packet (Optional)
+
+    ;value annotations
+    vnet_name                  = 1*16VCHAR
+
+### VNET\_ROUTE_TABLE
+    ;Defines schema for VNet Route table attributes
+    key                        = VNET_ROUTE_TABLE:vnet_name:prefix
+                                                ; Vnet route table with prefix
+    ;field                       value
+    nexthop                    = IP             ; Nexthop IP address (Optional)
+    ifname                     = ifname         ; Interface name
 
 ## Configuration DB schema
+
+### PORT_TABLE
+Stores information for physical switch ports managed by the switch chip. Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE. See MGMT_PORT.
+
+    ;Configuration for layer 2 ports
+    key                 = PORT|ifname   ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    admin_status        = "down" / "up" ; admin status
+    lanes               = list of lanes ; (need format spec???)
+    mac                 = 12HEXDIG      ;
+    alias               = 1*64VCHAR     ; alias name of the port used by LLDP and SNMP, must be unique
+    description         = 1*64VCHAR     ; port description
+    speed               = 1*6DIGIT      ; port line speed in Mbps
+    mtu                 = 1*4DIGIT      ; port MTU
+    fec                 = 1*64VCHAR     ; port fec mode
+    autoneg             = BIT           ; auto-negotiation mode
+
+### MGMT_PORT_TABLE
+    ;Configuration for management port, including at least one key
+    key                 = MGMT_PORT|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    admin_status        = "down" / "up" ; admin status
+    mac                 = 12HEXDIG      ;
+    alias               = 1*64VCHAR     ; alias name of the port used by LLDP and SNMP, must be unique
+    description         = 1*64VCHAR     ; port description
+    speed               = 1*6DIGIT      ; port line speed in Mbps
+    mtu                 = 1*4DIGIT      ; port MTU
+    fec                 = 1*64VCHAR     ; port fec mode
+    autoneg             = BIT           ; auto-negotiation mode
 
 ### WARM\_RESTART
     ;Stores system warm start configuration
     ;Status: work in progress
 
-    key             = WARM_RESTART:name         ; name is the name of SONiC docker or "system" for global configuration.
+    key                 = WARM_RESTART:name ; name is the name of SONiC docker or "system" for global configuration.
 
-    enable          = "true" / "false"          ; Default value as false.
-                                                ; If "system" warm start knob is true, docker level knob will be ignored.
-                                                ; If "system" warm start knob is false, docker level knob takes effect.
+    enable              = "true" / "false"  ; Default value as false.
+                                            ; If "system" warm start knob is true, docker level knob will be ignored.
+                                            ; If "system" warm start knob is false, docker level knob takes effect.
 
-    timer_name      = 1*255VCHAR,               ; timer_name is the name of warm start timer for the whole system or the specific docker,
-                                                ; Ex. "neighbor_timer", "bgp_timer". The name should not contain "," character.
-                                                ; There could be more than one timer in a docker or the system, separated by ",".
+    neighsyncd_timer    = 1*4DIGIT          ; neighsyncd_timer is the timer used for neighsyncd during the warm restart.
+                                            ; Timer is started after we restored the neighborTable to internal data structures.
+                                            ; neighborsyncd then starts to read all linux kernel entries and mark the entries in
+                                            ; the data structures accordingly. Once the timer is expired, we will do reconciliation
+                                            ; and push the delta to appDB
+                                            ; Valid value is 1-9999. 0 is invalid.
 
-    timer_duration  = 1*4DIGIT,                 ; timer duration, in seconds. Separated by "," if there are more than on timer.
+    bgp_timer           = 1*4DIGIT          ; bgp_timer holds the time interval utilized by fpmsyncd during warm-restart episodes.
+                                            ; During this interval fpmsyncd will recover all the routing state previously pushed to
+                                            ; AppDB, as well as all the new state coming from zebra/bgpd. Upon expiration of this
+                                            ; timer, fpmsyncd will execute the reconciliation logic to eliminate all the staled
+                                            ; state from AppDB. This timer should match the BGP-GR restart-timer configured within
+                                            ; the elected routing-stack.
+                                            ; Supported range: 1-3600.
 
+    teamsyncd_timer     = 1*4DIGIT          ; teamsyncd_timer holds the time interval utilized by teamsyncd during warm-restart episodes.
+                                            ; The timer is started when teamsyncd starts. During the timer interval teamsyncd 
+                                            ; will preserver all LAG interface changes, but it will not apply them. The changes 
+                                            ; will only be applied when the timer expired. During the changes application the stale
+                                            ; LAG entries will be removed, the new LAG entries will be created.
+                                            ; Supported range: 1-9999. 0 is invalid
+
+
+### VXLAN\_TUNNEL
+Stores vxlan tunnels configuration
+Status: ready
+
+    key       = VXLAN_TUNNEL:name               ; name is an arbitrary name of vxlan tunnel
+    src_ip    = ipv4_address                    ; tunnel source IP address. Mandatory
+    dst_ip    = ipv4_address                    ; tunnel destination IP address. Optional. When this attribute is omitted or equal to "0.0.0.0"
+                                                ; the created tunnel will be P2MP. Otherwise the created tunnel will be P2P
+
+### VXLAN\_TUNNEL\_MAP
+Stores vxlan tunnel map configuration. Defines mapping between vxlan vni and vlan interface
+Status: ready
+
+    key       = VXLAN_TUNNEL_MAP:tunnel_name:tunnel_map_name
+                                                ; tunnel_name is a reference to created vxlan tunnel
+                                                ; tunnel_map_name is an arbitrary name of the map
+    vni       = uint24                          ; vni id, defined for tunnel map
+    vlan      = "Vlan"vlan_id                   ; name of the existing vlan interface
+
+### NEIGH_TABLE
+    ; Stores the neighbors. Defines static configuration of neighbor entries. If mac address is not specified, implementation shall resolve the mac-address for the neighbor IP.
+    key           = NEIGH|PORT_TABLE.name / VLAN_INTF_TABLE.name / LAG_INTF_TABLE.name|prefix
+    neigh         = 12HEXDIG         ; mac address of the neighbor (optional)
+    family        = "IPv4" / "IPv6"  ; address family
 
 ## State DB schema
+
+### PORT_TABLE
+Stores information for physical switch ports managed by the switch chip. Ports to the CPU (ie: management port) and logical ports (loopback) are not declared in the PORT_TABLE. See MGMT_PORT.
+
+    ;State for layer 2 ports
+    key                 = PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    oper_status         = "down" / "up" ; oper status
+    state               = "" / "ok"     ; port created successfully
+
+### MGMT_PORT_TABLE
+    ;State for management port, including at least one key
+    key                 = MGMT_PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
+    oper_status         = "down" / "up" ; oper status
 
 ### WARM\_RESTART\_TABLE
     ;Stores application and orchdameon warm start status
     ;Status: work in progress
 
     key             = WARM_RESTART_TABLE:process_name         ; process_name is a unique process identifier.
-    restart_count   = 1*10DIGIT                               ; a number between 0 and 2147483647,
-                                                              ; count of warm start times.
+                                                              ; with exception of 'warm-shutdown' operation.
+                                                              ; 'warm-shutdown' operation key is used to
+                                                              ; track warm shutdown stages and results.
+                                                              ; Added to this table to leverage the existing
+                                                              ; "show warm-restart state" command.
 
-    state           = "init" / "restored" / "reconciled"      ; init: process init with warm start enabled.
-                                                              ; restored: process restored to the previous
-                                                              ; state using saved data.
-                                                              ; reconciled: process reconciled with up to date
-                                                              ; dynanic data like port state, neighbor, routes
-                                                              ; and so on.
+    restore_count   = 1*10DIGIT                               ; a value between 0 and 2147483647 to keep track
+                                                              ; of the number of times that an application has
+                                                              ; 'restored' its state from its associated redis
+                                                              ; data-store; which is equivalent to the number
+                                                              ; of times an application has iterated through
+                                                              ; a warm-restart cycle.
+
+    state           = "initialized" / "restored" / "reconciled"  ; initialized: initial FSM state for processes
+                                                                 ; with warm-restart capabilities turned on.
+                                                                 ;
+                                                                 ; restored: process restored the state previously
+                                                                 ; uploaded to redis data-stores.
+                                                                 ;
+                                                                 ; reconciled: process reconciled 'old' and 'new'
+                                                                 ; state collected in 'restored' phase. Examples:
+                                                                 ; dynanic data like port state, neighbor, routes
+                                                                 ; and so on.
+
+### NEIGH_RESTORE_TABLE
+    ;State for neighbor table restoring process during warm reboot
+    key                 = NEIGH_RESTORE_TABLE|Flags
+    restored            = "true" / "false" ; restored state
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?
@@ -670,6 +802,3 @@ What configuration files should we have?  Do apps, orch agent each need separate
 [port_config.ini](https://github.com/stcheng/swss/blob/mock/portsyncd/port_config.ini) - defines physical port information
 
 portsyncd reads from port_config.ini and updates PORT_TABLE in APP_DB
-
-All other apps (intfsyncd) read from PORT_TABLE in APP_DB
-

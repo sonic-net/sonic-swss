@@ -4,7 +4,7 @@ import time
 import os
 
 class TestPort(object):
-    def test_PortMtu(self, dvs):
+    def test_PortMtu(self, dvs, testlog):
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
@@ -23,7 +23,7 @@ class TestPort(object):
             if fv[0] == "mtu":
                 assert fv[1] == "9100"
 
-def test_PortNotification(dvs):
+def test_PortNotification(dvs, testlog):
 
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up") == 0
     dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up") == 0
@@ -66,7 +66,7 @@ def test_PortNotification(dvs):
 
     assert oper_status == "up"
 
-def test_PortFec(dvs):
+def test_PortFec(dvs, testlog):
 
     dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up") == 0
     dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up") == 0

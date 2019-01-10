@@ -1,4 +1,3 @@
-#include <string>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -11,12 +10,16 @@
 using namespace std;
 using namespace swss;
 
+/* Port default admin status is down */
+#define DEFAULT_ADMIN_STATUS_STR    "down"
+#define DEFAULT_MTU_STR             "9100"
+
 PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
-        m_cfgLagTable(cfgDb, CFG_LAG_TABLE_NAME),
+        m_cfgLagMemberTable(cfgDb, CFG_LAG_MEMBER_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
-        m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME)
+        m_appPortTable(appDb, APP_PORT_TABLE_NAME)
 {
 }
 
@@ -25,8 +28,18 @@ bool PortMgr::setPortMtu(const string &alias, const string &mtu)
     stringstream cmd;
     string res;
 
+    // ip link set dev <port_name> mtu <mtu>
     cmd << IP_CMD << " link set dev " << alias << " mtu " << mtu;
-    return exec(cmd.str(), res) == 0;
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    // Set the port MTU in application database to update both
+    // the port MTU and possibly the port based router interface MTU
+    vector<FieldValueTuple> fvs;
+    FieldValueTuple fv("mtu", mtu);
+    fvs.push_back(fv);
+    m_appPortTable.set(alias, fvs);
+
+    return true;
 }
 
 bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
@@ -34,29 +47,26 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
     stringstream cmd;
     string res;
 
+    // ip link set dev <port_name> [up|down]
     cmd << IP_CMD << " link set dev " << alias << (up ? " up" : " down");
-    return exec(cmd.str(), res) == 0;
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    vector<FieldValueTuple> fvs;
+    FieldValueTuple fv("admin_status", (up ? "up" : "down"));
+    fvs.push_back(fv);
+    m_appPortTable.set(alias, fvs);
+
+    return true;
 }
 
-bool PortMgr::isPortStateOk(const string &table, const string &alias)
+bool PortMgr::isPortStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
 
-    if (table == CFG_PORT_TABLE_NAME)
+    if (m_statePortTable.get(alias, temp))
     {
-        if (m_statePortTable.get(alias, temp))
-        {
-            SWSS_LOG_INFO("Port %s is ready", alias.c_str());
-            return true;
-        }
-    }
-    else if (table == CFG_LAG_TABLE_NAME)
-    {
-        if (m_stateLagTable.get(alias, temp))
-        {
-            SWSS_LOG_INFO("Lag %s is ready", alias.c_str());
-            return true;
-        }
+        SWSS_LOG_INFO("Port %s is ready", alias.c_str());
+        return true;
     }
 
     return false;
@@ -78,29 +88,50 @@ void PortMgr::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            if (!isPortStateOk(table, alias))
+            if (!isPortStateOk(alias))
             {
-                SWSS_LOG_INFO("Port %s is not ready, pending", alias.c_str());
+                SWSS_LOG_INFO("Port %s is not ready, pending...", alias.c_str());
                 it++;
                 continue;
+            }
+
+            string admin_status, mtu;
+
+            bool configured = (m_portList.find(alias) != m_portList.end());
+
+            /* If this is the first time we set port settings
+             * assign default admin status and mtu
+             */
+            if (!configured)
+            {
+                admin_status = DEFAULT_ADMIN_STATUS_STR;
+                mtu = DEFAULT_MTU_STR;
+
+                m_portList.insert(alias);
             }
 
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
                 {
-                    auto mtu = fvValue(i);
-                    setPortMtu(alias, mtu);
-                    SWSS_LOG_NOTICE("Configure %s MTU to %s",
-                                    alias.c_str(), mtu.c_str());
+                    mtu = fvValue(i);
                 }
                 else if (fvField(i) == "admin_status")
                 {
-                    auto status = fvValue(i);
-                    setPortAdminStatus(alias, status == "up");
-                    SWSS_LOG_NOTICE("Configure %s %s",
-                            alias.c_str(), status.c_str());
+                    admin_status = fvValue(i);
                 }
+            }
+
+            if (!mtu.empty())
+            {
+                setPortMtu(alias, mtu);
+                SWSS_LOG_NOTICE("Configure %s MTU to %s", alias.c_str(), mtu.c_str());
+            }
+
+            if (!admin_status.empty())
+            {
+                setPortAdminStatus(alias, admin_status == "up");
+                SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
             }
         }
 

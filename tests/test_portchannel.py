@@ -3,7 +3,7 @@ import time
 import re
 import json
 
-def test_PortChannel(dvs):
+def test_PortChannel(dvs, testlog):
 
     # create port channel
     db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
@@ -20,16 +20,14 @@ def test_PortChannel(dvs):
 
     time.sleep(1)
 
-    # check asic db table
+    # check asic db
     asicdb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
     lagtbl = swsscommon.Table(asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
-
     lags = lagtbl.getKeys()
     assert len(lags) == 1
 
     lagmtbl = swsscommon.Table(asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
-
     lagms = lagmtbl.getKeys()
     assert len(lagms) == 1
 
@@ -41,3 +39,20 @@ def test_PortChannel(dvs):
             assert dvs.asicdb.portoidmap[fv[1]] == "Ethernet0"
         else:
             assert False
+
+    # remove port channel member
+    ps = swsscommon.ProducerStateTable(db, "LAG_MEMBER_TABLE")
+    ps._del("PortChannel0001:Ethernet0")
+
+    # remove port channel
+    ps = swsscommon.ProducerStateTable(db, "LAG_TABLE")
+    ps._del("PortChannel0001")
+
+    time.sleep(1)
+
+    # check asic db
+    lags = lagtbl.getKeys()
+    assert len(lags) == 0
+
+    lagms = lagmtbl.getKeys()
+    assert len(lagms) == 0

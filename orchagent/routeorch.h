@@ -26,6 +26,7 @@ struct NextHopGroupEntry
 
 struct NextHopUpdate
 {
+    IpAddress destination;
     IpPrefix prefix;
     IpAddresses nexthopGroup;
 };
@@ -66,6 +67,7 @@ public:
     bool validnexthopinNextHopGroup(const IpAddress &);
     bool invalidnexthopinNextHopGroup(const IpAddress &);
 
+    void notifyNextHopChangeObservers(IpPrefix, IpAddresses, bool);
 private:
     NeighOrch *m_neighOrch;
 
@@ -83,8 +85,6 @@ private:
     bool removeRoute(IpPrefix);
 
     void doTask(Consumer& consumer);
-
-    void notifyNextHopChangeObservers(IpPrefix, IpAddresses, bool);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

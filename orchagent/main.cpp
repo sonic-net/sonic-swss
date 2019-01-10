@@ -101,7 +101,9 @@ int main(int argc, char **argv)
     swss::Logger::linkToDbNative("orchagent");
 
     SWSS_LOG_ENTER();
-    WarmStart::checkWarmStart("orchagent");
+
+    WarmStart::initialize("orchagent", "swss");
+    WarmStart::checkWarmStart("orchagent", "swss");
 
     if (signal(SIGHUP, sighup_handler) == SIG_ERR)
     {
@@ -281,6 +283,10 @@ int main(int argc, char **argv)
             exit(EXIT_FAILURE);
         }
 
+        /*
+        * In syncd view comparison solution, apply view has been sent
+        * immediately after restore is done
+        */
         if (!WarmStart::isWarmStart())
         {
             syncd_apply_view();

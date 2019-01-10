@@ -163,7 +163,7 @@ class TestTunnelBase(object):
 class TestDecapTunnel(TestTunnelBase):
     """ Tests for decap tunnel creation and removal """
 
-    def test_TunnelDecap_v4(self, dvs):
+    def test_TunnelDecap_v4(self, dvs, testlog):
         """ test IPv4 tunnel creation """
 
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -177,7 +177,7 @@ class TestDecapTunnel(TestTunnelBase):
                                    ecn_mode="standard", ttl_mode="pipe")
         self.remove_and_test_tunnel(db, asicdb, "IPINIPv4Decap")
 
-    def test_TunnelDecap_v6(self, dvs):
+    def test_TunnelDecap_v6(self, dvs, testlog):
         """ test IPv6 tunnel creation """
 
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -195,7 +195,7 @@ class TestDecapTunnel(TestTunnelBase):
 class TestSymmetricTunnel(TestTunnelBase):
     """ Tests for symmetric tunnel creation and removal """
 
-    def test_TunnelSymmetric_v4(self, dvs):
+    def test_TunnelSymmetric_v4(self, dvs, testlog):
         """ test IPv4 tunnel creation """
 
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -210,7 +210,7 @@ class TestSymmetricTunnel(TestTunnelBase):
                                    ecn_mode="copy_from_outer", ttl_mode="uniform")
         self.remove_and_test_tunnel(db, asicdb, "IPINIPv4Symmetric")
 
-    def test_TunnelSymmetric_v6(self, dvs):
+    def test_TunnelSymmetric_v6(self, dvs, testlog):
         """ test IPv6 tunnel creation """
 
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)

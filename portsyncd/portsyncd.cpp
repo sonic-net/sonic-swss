@@ -6,6 +6,7 @@
 #include <set>
 #include <map>
 #include <list>
+#include <sys/stat.h>
 #include "dbconnector.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -14,6 +15,7 @@
 #include "portsyncd/linksync.h"
 #include "subscriberstatetable.h"
 #include "exec.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -38,10 +40,11 @@ void usage()
     cout << "                           use configDB data if not specified" << endl;
 }
 
-void handlePortConfigFile(ProducerStateTable &p, string file);
-void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb);
+void handlePortConfigFile(ProducerStateTable &p, string file, bool warm);
+void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm);
 void handleVlanIntfFile(string file);
 void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map);
+void checkPortInitDone(DBConnector *appl_db);
 
 int main(int argc, char **argv)
 {
@@ -72,6 +75,10 @@ int main(int argc, char **argv)
     ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
     SubscriberStateTable portCfg(&cfgDb, CFG_PORT_TABLE_NAME);
 
+    WarmStart::initialize("portsyncd", "swss");
+    WarmStart::checkWarmStart("portsyncd", "swss");
+    const bool warm = WarmStart::isWarmStart();
+
     LinkSync sync(&appl_db, &state_db);
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
@@ -82,17 +89,19 @@ int main(int argc, char **argv)
         Select s;
 
         netlink.registerGroup(RTNLGRP_LINK);
+        netlink.dumpRequest(RTM_GETLINK);
         cout << "Listen to link messages..." << endl;
 
         if (!port_config_file.empty())
         {
-            handlePortConfigFile(p, port_config_file);
+            handlePortConfigFile(p, port_config_file, warm);
         } else {
-            handlePortConfigFromConfigDB(p, cfgDb);
+            handlePortConfigFromConfigDB(p, cfgDb, warm);
         }
 
         s.addSelectable(&netlink);
         s.addSelectable(&portCfg);
+
         while (true)
         {
             Selectable *temps;
@@ -119,6 +128,7 @@ int main(int argc, char **argv)
                     FieldValueTuple finish_notice("lanes", "0");
                     vector<FieldValueTuple> attrs = { finish_notice };
                     p.set("PortInitDone", attrs);
+                    SWSS_LOG_NOTICE("PortInitDone");
 
                     g_init = true;
                 }
@@ -165,7 +175,7 @@ static void notifyPortConfigDone(ProducerStateTable &p)
     p.set("PortConfigDone", attrs);
 }
 
-void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb)
+void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm)
 {
     cout << "Get port configuration from ConfigDB..." << endl;
 
@@ -182,13 +192,19 @@ void handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb)
             FieldValueTuple attr(v.first, v.second);
             attrs.push_back(attr);
         }
-        p.set(k, attrs);
+        if (!warm)
+        {
+            p.set(k, attrs);
+        }
         g_portSet.insert(k);
     }
-    notifyPortConfigDone(p);
+    if (!warm)
+    {
+        notifyPortConfigDone(p);
+    }
 }
 
-void handlePortConfigFile(ProducerStateTable &p, string file)
+void handlePortConfigFile(ProducerStateTable &p, string file, bool warm)
 {
     cout << "Read port configuration file..." << endl;
 
@@ -228,49 +244,55 @@ void handlePortConfigFile(ProducerStateTable &p, string file)
             iss >> entry[column];
         }
 
-        /* If port has no alias, then use its name as alias */
-        string alias;
-        if ((entry.find("alias") != entry.end()) && (entry["alias"] != ""))
+        if (!warm)
         {
-            alias = entry["alias"];
+            /* If port has no alias, then use its name as alias */
+            string alias;
+            if ((entry.find("alias") != entry.end()) && (entry["alias"] != ""))
+            {
+                alias = entry["alias"];
+            }
+            else
+            {
+                alias = entry["name"];
+            }
+
+            FieldValueTuple lanes_attr("lanes", entry["lanes"]);
+            FieldValueTuple alias_attr("alias", alias);
+
+            vector<FieldValueTuple> attrs;
+            attrs.push_back(lanes_attr);
+            attrs.push_back(alias_attr);
+
+            if ((entry.find("speed") != entry.end()) && (entry["speed"] != ""))
+            {
+                FieldValueTuple speed_attr("speed", entry["speed"]);
+                attrs.push_back(speed_attr);
+            }
+
+            if ((entry.find("autoneg") != entry.end()) && (entry["autoneg"] != ""))
+            {
+                FieldValueTuple autoneg_attr("autoneg", entry["autoneg"]);
+                attrs.push_back(autoneg_attr);
+            }
+
+            if ((entry.find("fec") != entry.end()) && (entry["fec"] != ""))
+            {
+                FieldValueTuple fec_attr("fec", entry["fec"]);
+                attrs.push_back(fec_attr);
+            }
+
+            p.set(entry["name"], attrs);
         }
-        else
-        {
-            alias = entry["name"];
-        }
-
-        FieldValueTuple lanes_attr("lanes", entry["lanes"]);
-        FieldValueTuple alias_attr("alias", alias);
-
-        vector<FieldValueTuple> attrs;
-        attrs.push_back(lanes_attr);
-        attrs.push_back(alias_attr);
-
-        if ((entry.find("speed") != entry.end()) && (entry["speed"] != ""))
-        {
-            FieldValueTuple speed_attr("speed", entry["speed"]);
-            attrs.push_back(speed_attr);
-        }
-
-        if ((entry.find("autoneg") != entry.end()) && (entry["autoneg"] != ""))
-        {
-            FieldValueTuple autoneg_attr("autoneg", entry["autoneg"]);
-            attrs.push_back(autoneg_attr);
-        }
-
-        if ((entry.find("fec") != entry.end()) && (entry["fec"] != ""))
-        {
-            FieldValueTuple fec_attr("fec", entry["fec"]);
-            attrs.push_back(fec_attr);
-        }
-
-        p.set(entry["name"], attrs);
 
         g_portSet.insert(entry["name"]);
     }
 
     infile.close();
-    notifyPortConfigDone(p);
+    if (!warm)
+    {
+        notifyPortConfigDone(p);
+    }
 }
 
 void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map)

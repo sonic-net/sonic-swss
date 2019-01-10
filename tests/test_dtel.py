@@ -6,7 +6,7 @@ import re
 import json
 
 class TestDtel(object):
-    def test_DtelGlobalAttribs(self, dvs):
+    def test_DtelGlobalAttribs(self, dvs, testlog):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -86,7 +86,7 @@ class TestDtel(object):
         tbl._del("QUEUE_REPORT")
         tbl._del("SINK_PORT_LIST")
     
-    def test_DtelReportSessionAttribs(self, dvs):
+    def test_DtelReportSessionAttribs(self, dvs, testlog):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -127,7 +127,7 @@ class TestDtel(object):
 
         tbl._del("RS-1")
 
-    def test_DtelINTSessionAttribs(self, dvs):
+    def test_DtelINTSessionAttribs(self, dvs, testlog):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -171,7 +171,7 @@ class TestDtel(object):
 
         tbl._del("INT-1")
 
-    def test_DtelQueueReportAttribs(self, dvs):
+    def test_DtelQueueReportAttribs(self, dvs, testlog):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -212,7 +212,7 @@ class TestDtel(object):
         tbl._del("Ethernet0|0")
     
 
-    def test_DtelEventAttribs(self, dvs):
+    def test_DtelEventAttribs(self, dvs, testlog):
     
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)

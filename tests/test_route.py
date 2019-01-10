@@ -4,10 +4,15 @@ import re
 import time
 import json
 
-def test_RouteAdd(dvs):
+def test_RouteAdd(dvs, testlog):
 
-    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
-    dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
+    dvs.runcmd("ifconfig Ethernet4 up")
 
     dvs.servers[0].runcmd("ifconfig eth0 10.0.0.1/31")
     dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
@@ -22,23 +27,16 @@ def test_RouteAdd(dvs):
     ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
     fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
 
-    ps.set("2.2.2.0/24", fvs)
+    pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_ROUTE_ENTRY")
 
-    time.sleep(1)
+    ps.set("2.2.2.0/24", fvs)
 
     # check if route was propagated to ASIC DB
 
-    db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+    (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsub)
 
-    tbl = swsscommon.Table(db, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+    assert len(addobjs) == 1
 
-    keys = tbl.getKeys()
+    rt_key = json.loads(addobjs[0]['key'])
 
-    found_route = False
-    for k in keys:
-        rt_key = json.loads(k)
-
-        if rt_key['dest'] == "2.2.2.0/24":
-            found_route = True
-
-    assert found_route
+    assert rt_key['dest'] == "2.2.2.0/24"
