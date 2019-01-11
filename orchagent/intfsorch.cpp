@@ -275,13 +275,6 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
-            // buffer configuration hasn't been applied yet, hold from intf config.
-            if (!gBufferOrch->isPortReady(alias))
-            {
-                it++;
-                continue;
-            }
-
             if (!vnet_name.empty())
             {
                 VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();

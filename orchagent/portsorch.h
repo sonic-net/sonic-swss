@@ -56,6 +56,7 @@ public:
     PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames);
 
     bool isInitDone();
+    bool isPortCreated();
 
     map<string, Port>& getAllPorts();
     bool bake() override;
@@ -117,6 +118,8 @@ private:
     map<set<int>, tuple<string, uint32_t, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
 
+    unordered_set<string> m_pendingPortSet;
+
     NotificationConsumer* m_portStatusNotificationConsumer;
 
     void doTask(Consumer &consumer);
@@ -170,7 +173,7 @@ private:
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 
     bool setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed);
-    
+
     bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 
     bool m_isQueueMapGenerated = false;

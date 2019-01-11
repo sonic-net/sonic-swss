@@ -387,8 +387,15 @@ void PortsOrch::removeDefaultBridgePorts()
 
 bool PortsOrch::isInitDone()
 {
+    return m_initDone && m_pendingPortSet.empty();
+}
+
+/* Upon receiving PortInitDone, all the configured ports have been created*/
+bool PortsOrch::isPortCreated()
+{
     return m_initDone;
 }
+
 
 map<string, Port>& PortsOrch::getAllPorts()
 {
@@ -1626,8 +1633,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
             if (!gBufferOrch->isPortReady(alias))
             {
                 // buffer configuration hasn't been applied yet. save it for future retry
+                m_pendingPortSet.emplace(alias);
                 it++;
                 continue;
+            }
+            else
+            {
+                m_pendingPortSet.erase(alias);
             }
 
             Port p;
