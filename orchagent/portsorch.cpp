@@ -784,7 +784,7 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
 
         setPort(port.m_alias, port);
 
-        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, ingress ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS, SAI_ACL_BIND_POINT_TYPE_PORT);
+        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, ingress ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS, bind_type);
 
         switch (port.m_type)
         {
@@ -1258,13 +1258,14 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
         notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
     }
 
+
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove port %lx, rv:%d", port_id, status);
         return false;
     }
-
+    removeAclTableGroup(p);
     SWSS_LOG_NOTICE("Remove port %lx", port_id);
 
     return true;
@@ -2601,6 +2602,8 @@ bool PortsOrch::removeVlan(Port vlan)
         return false;
     }
 
+    removeAclTableGroup(vlan);
+
     SWSS_LOG_NOTICE("Remove VLAN %s vid:%hu", vlan.m_alias.c_str(),
             vlan.m_vlan_info.vlan_id);
 
@@ -2776,6 +2779,8 @@ bool PortsOrch::removeLag(Port lag)
         SWSS_LOG_ERROR("Failed to remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
         return false;
     }
+
+    removeAclTableGroup(lag);
 
     SWSS_LOG_NOTICE("Remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
 
@@ -3174,6 +3179,49 @@ bool PortsOrch::getPortOperStatus(const Port& port, sai_port_oper_status_t& stat
 
     status = static_cast<sai_port_oper_status_t>(attr.value.u32);
 
+    return true;
+}
+
+bool PortsOrch::removeAclTableGroup(const Port &p)
+{
+    sai_acl_bind_point_type_t bind_type;
+    switch (p.m_type)
+    {
+        case Port::PHY:
+            bind_type = SAI_ACL_BIND_POINT_TYPE_PORT;
+            break;
+        case Port::LAG:
+            bind_type = SAI_ACL_BIND_POINT_TYPE_LAG;
+            break;
+        case Port::VLAN:
+            bind_type = SAI_ACL_BIND_POINT_TYPE_VLAN;
+            break;
+        default:
+            // Dealing with port, lag and vlan for now.
+            return true;
+    }
+    sai_status_t ret;
+    if (p.m_ingress_acl_table_group_id != 0)
+    {
+        ret = sai_acl_api->remove_acl_table_group(p.m_ingress_acl_table_group_id);
+        if (ret != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove ingress acl table group for %s", p.m_alias.c_str());
+            return false;
+        }
+        gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, SAI_ACL_STAGE_INGRESS, bind_type, p.m_ingress_acl_table_group_id);
+    }
+
+    if (p.m_egress_acl_table_group_id != 0)
+    {
+        ret = sai_acl_api->remove_acl_table_group(p.m_egress_acl_table_group_id);
+        if (ret != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove egress acl table group for %s", p.m_alias.c_str());
+            return false;
+        }
+        gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, SAI_ACL_STAGE_EGRESS, bind_type, p.m_egress_acl_table_group_id);
+    }
     return true;
 }
 

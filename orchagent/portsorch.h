@@ -81,7 +81,7 @@ public:
     void generatePriorityGroupMap();
 
     void refreshPortStatus();
-
+    bool removeAclTableGroup(const Port &p);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
