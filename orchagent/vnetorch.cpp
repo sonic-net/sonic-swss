@@ -24,6 +24,7 @@ extern sai_object_id_t gSwitchId;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gVirtualRouterId;
+extern IntfsOrch *gIntfsOrch;
 
 /*
  * VRF Modeling and VNetVrf class definitions
@@ -144,6 +145,19 @@ bool VNetVrfObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
             break;
         }
     }
+    return true;
+}
+
+bool VNetVrfObject::addIntf(Port& port, IpPrefix *prefix)
+{
+    if (!gIntfsOrch->setIntf(port, getVRidIngress(), nullptr))
+    {
+        return false;
+    }
+
+    gIntfsOrch->addIp2MeRoute(gVirtualRouterId, *prefix);
+    gIntfsOrch->addSubnetRoute(port, *prefix);
+
     return true;
 }
 

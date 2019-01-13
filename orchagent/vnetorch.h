@@ -139,6 +139,8 @@ public:
 
     virtual bool addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp);
 
+    virtual bool addIntf(Port& port, IpPrefix *prefix);
+
     bool createObj();
 
     virtual bool updateObj(const VNetInfo& vnetInfo);

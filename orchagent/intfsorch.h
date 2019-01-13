@@ -42,6 +42,9 @@ public:
     void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
     void removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
 
+    void addSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
+    void removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
+
 private:
     VRFOrch *m_vrfOrch;
     IntfsTable m_syncdIntfses;
@@ -51,9 +54,6 @@ private:
 
     bool addRouterIntfs(sai_object_id_t vrf_id, Port &port);
     bool removeRouterIntfs(Port &port);
-
-    void addSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
-    void removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
 
     void addDirectedBroadcast(const Port &port, const IpAddress &ip_addr);
     void removeDirectedBroadcast(const Port &port, const IpAddress &ip_addr);
