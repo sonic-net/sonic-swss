@@ -6,6 +6,7 @@
 #include "shellcmd.h"
 #include "tokenize.h"
 #include "warm_restart.h"
+#include "portmgr.h"
 
 #include <algorithm>
 #include <sstream>
@@ -18,8 +19,6 @@
 using namespace std;
 using namespace swss;
 
-#define DEFAULT_ADMIN_STATUS_STR    "up"
-#define DEFAULT_MTU_STR             "9100"
 
 TeamMgr::TeamMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
         const vector<TableConnector> &tables) :
@@ -471,7 +470,7 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
     vector<FieldValueTuple> fvs;
     m_cfgPortTable.get(member, fvs);
 
-    // Get the member admin status (by default up)
+    // Get the member admin status
     auto it = find_if(fvs.begin(), fvs.end(), [](const FieldValueTuple &fv) {
             return fv.first == "admin_status";
             });
@@ -501,9 +500,7 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     fvs.clear();
-    FieldValueTuple fv("admin_status", admin_status);
-    fvs.push_back(fv);
-    fv = FieldValueTuple("mtu", mtu);
+    FieldValueTuple fv("mtu", mtu);
     fvs.push_back(fv);
     m_appPortTable.set(member, fvs);
 
