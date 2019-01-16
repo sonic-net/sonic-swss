@@ -731,6 +731,10 @@ def test_swss_neighbor_syncup(dvs, testlog):
     # check restore Count
     swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
+    # post-cleanup
+    dvs.runcmd("ip -s neigh flush all")
+    dvs.runcmd("ip -6 -s neigh flush all")
+
     intf_tbl._del("{}|24.0.0.1/24".format(intfs[0]))
     intf_tbl._del("{}|28.0.0.9/24".format(intfs[1]))
     intf_tbl._del("{}|2400::1/64".format(intfs[0]))
@@ -741,8 +745,6 @@ def test_swss_neighbor_syncup(dvs, testlog):
 # TODO: The condition of warm restart readiness check is still under discussion.
 def test_OrchagentWarmRestartReadyCheck(dvs, testlog):
 
-    # do a pre-cleanup
-    dvs.runcmd("ip -s -s neigh flush all")
     time.sleep(1)
 
     dvs.runcmd("config warm_restart enable swss")
