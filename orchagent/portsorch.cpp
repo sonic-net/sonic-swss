@@ -1258,7 +1258,6 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
         notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
     }
 
-
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
