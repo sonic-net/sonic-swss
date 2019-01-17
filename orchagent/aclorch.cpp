@@ -216,11 +216,13 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if (attr_name == MATCH_IP_TYPE)
         {
-            if (!processIpType(attr_value, value.aclfield.data.s32))
+            if (!processIpType(attr_value, value.aclfield.data.u32))
             {
                 SWSS_LOG_ERROR("Invalid IP type %s", attr_value.c_str());
                 return false;
             }
+
+            value.aclfield.mask.u32 = 0xFFFFFFFF;
         }
         else if (attr_name == MATCH_TCP_FLAGS)
         {
@@ -363,7 +365,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
     return true;
 }
 
-bool AclRule::processIpType(string type, sai_int32_t &ip_type)
+bool AclRule::processIpType(string type, sai_uint32_t &ip_type)
 {
     SWSS_LOG_ENTER();
 
