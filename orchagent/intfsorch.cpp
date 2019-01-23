@@ -163,6 +163,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
         addDirectedBroadcast(port, ip_prefix->getBroadcastIp());
     }
 
+    m_syncdIntfses[alias].ip_addresses.insert(*ip_prefix);
     return true;
 }
 
@@ -304,7 +305,6 @@ void IntfsOrch::doTask(Consumer &consumer)
                 }
             }
 
-            m_syncdIntfses[alias].ip_addresses.insert(ip_prefix);
             it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
