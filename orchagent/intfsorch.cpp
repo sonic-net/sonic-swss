@@ -490,7 +490,6 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
 
     const auto id = sai_serialize_object_id(port.m_rif_id);
     removeRifFromFlexCounter(id, port.m_alias);
-    // m_rifsToRemove.push_back(port);
 
     sai_status_t status = sai_router_intfs_api->remove_router_interface(port.m_rif_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -734,7 +733,6 @@ void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
 {
     SWSS_LOG_ENTER();
     /* remove it from COUNTERS_DB maps */
-
     m_rifNameTable->hdel("", name);
     m_rifTypeTable->hdel("", id);
 
@@ -798,11 +796,4 @@ void IntfsOrch::doTask(SelectableTimer &timer)
             ++it;
         }
     }
-    
-    // for (auto it = m_rifsToRemove.begin(); it != m_rifsToRemove.end();)
-    // {
-    //     const auto id = sai_serialize_object_id(it->m_rif_id);
-    //     removeRifFromFlexCounter(id, it->m_alias);
-    //     it = m_rifsToRemove.erase(it);
-    // }
 }
