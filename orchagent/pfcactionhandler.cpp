@@ -368,13 +368,13 @@ bool PfcWdLossyHandler::getHwCounters(PfcWdHwStats& counters)
 {
     SWSS_LOG_ENTER();
 
-    static const vector<sai_queue_stat_t> queueStatIds =
+    static const vector<sai_stat_id_t> queueStatIds =
     {
         SAI_QUEUE_STAT_PACKETS,
         SAI_QUEUE_STAT_DROPPED_PACKETS,
     };
 
-    static const vector<sai_ingress_priority_group_stat_t> pgStatIds =
+    static const vector<sai_stat_id_t> pgStatIds =
     {
         SAI_INGRESS_PRIORITY_GROUP_STAT_PACKETS,
         SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS,
