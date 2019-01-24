@@ -17,6 +17,7 @@ const request_description_t vnet_request_description = {
         { "vxlan_tunnel",  REQ_T_STRING },
         { "vni",           REQ_T_UINT },
         { "peer_list",     REQ_T_SET },
+        { "guid",          REQ_T_STRING },
     },
     { "vxlan_tunnel", "vni" } // mandatory attributes
 };
@@ -47,7 +48,7 @@ public:
 class VNetObject
 {
 public:
-    VNetObject(string& tunName, set<string>& peer) : tunnel_(tunName), peer_list_(peer) { }
+    VNetObject(string& tunName, set<string>& peer, uint32_t vni) : tunnel_(tunName), peer_list_(peer), vni_(vni) { }
 
     virtual sai_object_id_t getEncapMapId() const = 0;
 
@@ -72,17 +73,32 @@ public:
         return tunnel_;
     }
 
+    uint32_t getVni() const
+    {
+        return vni_;
+    }
+
     virtual ~VNetObject() {};
 
 private:
     set<string> peer_list_ = {};
     string tunnel_;
+    uint32_t vni_;
 };
+
+struct tunnelEndpoint
+{
+    IpAddress ip;
+    MacAddress mac;
+    uint32_t vni;
+};
+
+typedef std::map<IpPrefix, tunnelEndpoint> RouteMap;
 
 class VNetVrfObject : public VNetObject
 {
 public:
-    VNetVrfObject(const string& vnet, string& tunnel, set<string>& peer, vector<sai_attribute_t>& attrs);
+    VNetVrfObject(const string& vnet, string& tunnel, set<string>& peer, uint32_t vni, vector<sai_attribute_t>& attrs);
 
     sai_object_id_t getVRidIngress() const;
 
@@ -109,11 +125,20 @@ public:
 
     bool updateObj(vector<sai_attribute_t>&);
 
+    bool addRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp);
+    bool removeRoute(IpPrefix& ipPrefix);
+    size_t getRouteCount() const;
+
+    sai_object_id_t getNextHop(tunnelEndpoint& endp);
+    bool removeNextHop(tunnelEndpoint& endp);
+
     ~VNetVrfObject();
 
 private:
     string vnet_name_;
     vrid_list_t vr_ids_;
+
+    RouteMap routes_;
 };
 
 typedef std::unique_ptr<VNetObject> VNetObject_T;
@@ -175,7 +200,7 @@ private:
     virtual bool delOperation(const Request& request);
 
     template <class T>
-    std::unique_ptr<T> createObject(const string&, string&, set<string>&, vector<sai_attribute_t>&);
+    std::unique_ptr<T> createObject(const string&, string&, set<string>&, uint32_t, vector<sai_attribute_t>&);
 
     VNetTable vnet_table_;
     VNetRequest request_;
@@ -200,16 +225,6 @@ public:
     VNetRouteRequest() : Request(vnet_route_description, ':') { }
 };
 
-typedef map<IpAddress, sai_object_id_t> NextHopMap;
-typedef map<string, NextHopMap> NextHopTunnels;
-
-struct tunnelEndpoint
-{
-    IpAddress ip;
-    MacAddress mac;
-    uint32_t vni;
-};
-
 class VNetRouteOrch : public Orch2
 {
 public:
@@ -226,17 +241,14 @@ private:
     void handleTunnel(const Request&);
 
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, tunnelEndpoint& endp);
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, tunnelEndpoint& endp, string& op);
 
     template<typename T>
-    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, string& ifname);
-
-    sai_object_id_t getNextHop(const string& vnet, tunnelEndpoint& endp);
+    bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, string& ifname, string& op);
 
     VNetOrch *vnet_orch_;
     VNetRouteRequest request_;
     handler_map handler_map_;
-    NextHopTunnels nh_tunnels_;
 };
 
 #endif // __VNETORCH_H
