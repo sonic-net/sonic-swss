@@ -196,10 +196,13 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
             return false;
         }
 
-        // Set Interface IP except for lo
         if (!is_lo)
         {
             setIntfIp(alias, "add", ip_prefix.to_string(), ip_prefix.isV4());
+        }
+        else
+        {
+            setIntfIp("lo", "add", ip_prefix.to_string(), ip_prefix.isV4());
         }
 
         std::vector<FieldValueTuple> fvVector;
@@ -213,10 +216,13 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     }
     else if (op == DEL_COMMAND)
     {
-        // Set Interface IP except for lo
         if (!is_lo)
         {
             setIntfIp(alias, "del", ip_prefix.to_string(), ip_prefix.isV4());
+        }
+        else
+        {
+            setIntfIp("lo", "del", ip_prefix.to_string(), ip_prefix.isV4());
         }
         m_appIntfTableProducer.del(appKey);
         m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
