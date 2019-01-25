@@ -23,7 +23,7 @@ class TestMirror(object):
         else:
             tbl_name = "PORT"
         tbl = swsscommon.Table(self.cdb, tbl_name)
-        fvs = swsscommon.FieldValuePairs([("admin_status", admin_status)])
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up")])
         tbl.set(interface, fvs)
         time.sleep(1)
 
@@ -680,12 +680,11 @@ class TestMirror(object):
         self.remove_mirror_session(session)
 
 
-    def create_acl_table(self, table, interfaces, stage = "INGRESS"):
+    def create_acl_table(self, table, interfaces):
         tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
         fvs = swsscommon.FieldValuePairs([("policy_desc", "mirror_test"),
-                                              ("type", "mirror"),
-                                              ("ports", ",".join(interfaces)),
-                                              ("stage", stage)])
+                                          ("type", "mirror"),
+                                          ("ports", ",".join(interfaces))])
         tbl.set(table, fvs)
         time.sleep(1)
 
@@ -697,20 +696,12 @@ class TestMirror(object):
     def create_mirror_acl_dscp_rule(self, table, rule, dscp, session):
         tbl = swsscommon.Table(self.cdb, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1000"),
-                                          ("MIRROR_ACTION", session),
+                                          ("mirror_action", session),
                                           ("DSCP", dscp)])
         tbl.set(table + "|" + rule, fvs)
         time.sleep(1)
 
-    def create_mirror_acl_tcp_flag_rule(self, table, rule, tcp_flag, session):
-        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
-        fvs = swsscommon.FieldValuePairs([("priority", "1000"),
-                                          ("MIRROR_ACTION", session),
-                                          ("TCP_FLAGS", tcp_flag)])
-        tbl.set(table + "|" + rule, fvs)
-        time.sleep(1)
-
-    def remove_mirror_acl_rule(self, table, rule):
+    def remove_mirror_acl_dscp_rule(self, table, rule):
         tbl = swsscommon.Table(self.cdb, "ACL_RULE")
         tbl._del(table + "|" + rule)
         time.sleep(1)
@@ -762,7 +753,7 @@ class TestMirror(object):
                 assert fv[1] == "1:" + mirror_session_oid
 
         # remove acl rule
-        self.remove_mirror_acl_rule(acl_table, acl_rule)
+        self.remove_mirror_acl_dscp_rule(acl_table, acl_rule)
 
         # create acl rule with dscp value 16/16
         self.create_mirror_acl_dscp_rule(acl_table, acl_rule, "16/16", session)
@@ -781,7 +772,7 @@ class TestMirror(object):
                 assert fv[1] == "1:" + mirror_session_oid
 
         # remove acl rule
-        self.remove_mirror_acl_rule(acl_table, acl_rule)
+        self.remove_mirror_acl_dscp_rule(acl_table, acl_rule)
 
         # remove acl table
         self.remove_acl_table(acl_table)
@@ -798,75 +789,3 @@ class TestMirror(object):
         self.remove_neighbor("Ethernet32", "20.0.0.1")
         self.remove_ip_address("Ethernet32", "20.0.0.0/31")
         self.set_interface_status("Ethernet32", "down")
-
-    def test_EgressAclBindMirror(self, dvs, testlog):
-        """
-        This test tests Egress ACL associated with mirror session with TCP flag value/mask
-        """
-        self.setup_db(dvs)
-
-        session = "MIRROR_SESSION"
-        acl_table = "EGRESS_MIRROR_TABLE"
-        acl_rule = "MIRROR_RULE"
-
-        # create port channel; create port channel member; bring up
-        self.create_port_channel(dvs, "080")
-        self.create_port_channel_member("080", "Ethernet32")
-        self.set_interface_status("PortChannel080", "up")
-        self.set_interface_status("Ethernet32", "up")
-
-        # add ip address to port channel 080; create neighbor to port channel 080
-        self.add_ip_address("PortChannel080", "200.0.0.0/31")
-        self.add_neighbor("PortChannel080", "200.0.0.1", "12:10:08:06:04:02")
-
-        # add route
-        self.add_route(dvs, "2.2.2.2", "200.0.0.1")
-
-        # create mirror session
-        self.create_mirror_session(session, "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
-        assert self.get_mirror_session_state(session)["status"] == "active"
-
-        # assert mirror session in asic database
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
-        assert len(tbl.getKeys()) == 1
-        mirror_session_oid = tbl.getKeys()[0]
-
-        # create acl table
-        self.create_acl_table(acl_table, ["Ethernet0", "Ethernet4"], "EGRESS")
-
-        # create acl rule with TCP flag value/mask 48
-        self.create_mirror_acl_tcp_flag_rule(acl_table, acl_rule, "0x07/0x3f", session)
-
-        # assert acl rule is created
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
-        rule_entries = [k for k in tbl.getKeys() if k not in dvs.asicdb.default_acl_entries]
-        assert len(rule_entries) == 1
-
-        (status, fvs) = tbl.get(rule_entries[0])
-        assert status == True
-        for fv in fvs:
-            if fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS":
-                assert fv[1] == "7&mask:0x3f"
-            if fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS":
-                assert fv[1] == "1:" + mirror_session_oid
-
-        # remove acl rule
-        self.remove_mirror_acl_rule(acl_table, acl_rule)
-
-        # remove acl table
-        self.remove_acl_table(acl_table)
-
-        # remove mirror session
-        self.remove_mirror_session(session)
-
-        # assert no mirror session in asic database
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
-        assert len(tbl.getKeys()) == 0
-
-        # remove route; remove neighbor; remove ip; bring down port
-        self.remove_route(dvs, "2.2.2.2")
-        self.remove_neighbor("PortChannel080", "200.0.0.1")
-        self.remove_ip_address("PortChannel080", "200.0.0.0/31")
-        self.set_interface_status("PortChannel080", "down")
-        self.set_interface_status("Ethernet32", "down")
-

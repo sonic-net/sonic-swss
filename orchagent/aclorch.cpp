@@ -550,7 +550,7 @@ AclRuleCounters AclRule::getCounters()
     return AclRuleCounters(counter_attr[0].value.u64, counter_attr[1].value.u64);
 }
 
-shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, acl_stage_type_t stage, AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data)
+shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple& data)
 {
     string action;
     bool action_found = false;
@@ -585,7 +585,7 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, acl_stage_type_t 
     /* Mirror rules can exist in both tables*/
     if (action == ACTION_MIRROR_ACTION)
     {
-        return make_shared<AclRuleMirror>(acl, stage, mirror, rule, table, type);
+        return make_shared<AclRuleMirror>(acl, mirror, rule, table, type);
     }
     /* L3 rules can exist only in L3 table */
     else if (type == ACL_TABLE_L3)
@@ -901,10 +901,9 @@ bool AclRuleL3V6::validateAddMatch(string attr_name, string attr_value)
 }
 
 
-AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, acl_stage_type_t stage, MirrorOrch *mirror, string rule, string table, acl_table_type_t type) :
+AclRuleMirror::AclRuleMirror(AclOrch *aclOrch, MirrorOrch *mirror, string rule, string table, acl_table_type_t type) :
         AclRule(aclOrch, rule, table, type),
         m_state(false),
-        m_tableStage(stage),
         m_pMirrorOrch(mirror)
 {
 }
@@ -987,19 +986,7 @@ bool AclRuleMirror::create()
     value.aclaction.parameter.objlist.count = 1;
 
     m_actions.clear();
-    if (m_tableStage == ACL_STAGE_INGRESS)
-    {   
-        m_actions[SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS] = value;
-    }
-    else if (m_tableStage == ACL_STAGE_EGRESS)
-    {
-        m_actions[SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS] = value;
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Unknown ACL table stage: %d", m_tableStage);
-        return false;
-    }
+    m_actions[SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS] = value;
 
     if (!AclRule::create())
     {
@@ -2151,7 +2138,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
                 continue;
             }
 
-            newRule = AclRule::makeShared(m_AclTables[table_oid].type, m_AclTables[table_oid].stage, this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t);
+            newRule = AclRule::makeShared(m_AclTables[table_oid].type, this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t);
 
             for (const auto& itr : kfvFieldsValues(t))
             {
