@@ -162,7 +162,7 @@ void VrfMgr::doTask(Consumer &consumer)
             m_stateVrfTable.set(vrfName, fvVector);
 
             SWSS_LOG_NOTICE("Created vrf netdev %s", vrfName.c_str());
-            if (consumer.getTableName() == APP_VRF_TABLE_NAME)
+            if (consumer.getTableName() == CFG_VRF_TABLE_NAME)
             {
                 m_appVrfTableProducer.set(vrfName, kfvFieldsValues(t));
             }
@@ -180,7 +180,7 @@ void VrfMgr::doTask(Consumer &consumer)
 
             m_stateVrfTable.del(vrfName);
 
-            if (consumer.getTableName() == APP_VRF_TABLE_NAME)
+            if (consumer.getTableName() == CFG_VRF_TABLE_NAME)
             {
                 m_appVrfTableProducer.del(vrfName);
             }

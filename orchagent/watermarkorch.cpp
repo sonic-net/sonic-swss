@@ -158,9 +158,13 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    if (m_pg_ids.empty() or m_multicast_queue_ids.empty() or m_unicast_queue_ids.empty())
+    if (m_pg_ids.empty())
     {
         init_pg_ids();
+    }
+
+    if (m_multicast_queue_ids.empty() and m_unicast_queue_ids.empty())
+    {
         init_queue_ids();
     }
 

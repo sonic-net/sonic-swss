@@ -37,7 +37,7 @@ private:
     void doLagMemberTask(Consumer &consumer);
     void doPortUpdateTask(Consumer &consumer);
 
-    bool addLag(const string &alias, int min_links, bool fall_back);
+    task_process_status addLag(const string &alias, int min_links, bool fall_back);
     bool removeLag(const string &alias);
     task_process_status addLagMember(const string &lag, const string &member);
     bool removeLagMember(const string &lag, const string &member);

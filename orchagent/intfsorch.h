@@ -35,6 +35,7 @@ public:
 
     bool setRouterIntfsMtu(Port &port);
     std::set<IpPrefix> getSubnetRoutes();
+    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr);
 private:
     VRFOrch *m_vrfOrch;
     IntfsTable m_syncdIntfses;
