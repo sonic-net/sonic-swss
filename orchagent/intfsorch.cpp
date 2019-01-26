@@ -282,6 +282,13 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
+            if (port.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_ERROR("Router Intfs config on vlan member %s is not allowed", alias.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
             if (!vnet_name.empty())
             {
                 VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();

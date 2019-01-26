@@ -1972,6 +1972,13 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
             continue;
         }
 
+        if (port.m_rif_id)
+        {
+            SWSS_LOG_ERROR("Vlan config on router interface %s is not allowed", port.m_alias.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
         if (op == SET_COMMAND)
         {
             string tagging_mode = "untagged";
@@ -1998,10 +2005,15 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                 continue;
             }
 
-            if (addBridgePort(port) && addVlanMember(vlan, port, tagging_mode))
-                it = consumer.m_toSync.erase(it);
-            else
-                it++;
+            if (addBridgePort(port))
+            {
+                addVlanMember(vlan, port, tagging_mode);
+            }
+            /*
+             * Failure in addBridgePort and addVlanMember is no-recoverable.
+             * Erase the vlan member task in both success and failure scenarios.
+             */
+            it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
         {
