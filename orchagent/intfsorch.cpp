@@ -160,7 +160,12 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
 
     if (port.m_type == Port::VLAN && ip_prefix->isV4())
     {
-        addDirectedBroadcast(port, ip_prefix->getBroadcastIp());
+        /* For /31 IPv4 subnets, there is no broadcast address, hence don't
+         * add a net directed broadcast route specific neighbor entry */
+        if (ip_prefix->getMaskLength() != 31)
+        {
+            addDirectedBroadcast(port, ip_prefix->getBroadcastIp());
+        }
     }
 
     m_syncdIntfses[alias].ip_addresses.insert(*ip_prefix);
@@ -346,7 +351,12 @@ void IntfsOrch::doTask(Consumer &consumer)
                     removeIp2MeRoute(vrf_id, ip_prefix);
                     if(port.m_type == Port::VLAN && ip_prefix.isV4())
                     {
-                        removeDirectedBroadcast(port, ip_prefix.getBroadcastIp());
+                        /* For /31 IPv4 subnets, there is no net directed broadcast route
+                         * specific neighbor entry that was added */
+                        if (ip_prefix.getMaskLength() != 31)
+                        {
+                            removeDirectedBroadcast(port, ip_prefix.getBroadcastIp());
+                        }
                     }
 
                     m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
