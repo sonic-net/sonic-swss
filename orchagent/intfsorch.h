@@ -52,8 +52,8 @@ private:
     void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
     void removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
 
-    void addDirectedBroadcast(const Port &port, const IpAddress &ip_addr);
-    void removeDirectedBroadcast(const Port &port, const IpAddress &ip_addr);
+    void addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
+    void removeDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
 };
 
 #endif /* SWSS_INTFSORCH_H */
