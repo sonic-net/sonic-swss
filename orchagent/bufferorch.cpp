@@ -671,7 +671,7 @@ void BufferOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortCreated())
+    if (!gPortsOrch->isInitDone())
     {
         return;
     }

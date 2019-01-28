@@ -144,7 +144,7 @@ bool OrchDaemon::init()
 
     /*
      * The order of the orch list is important for state restore of warm start and
-     * the queued processing in m_toSync map after gPortsOrch->isInitDone() is set.
+     * the queued processing in m_toSync map after gPortsOrch->isPortReady() is set.
      *
      * For the multiple consumers in ports_tables, tasks for LAG_TABLE is processed before VLAN_TABLE
      * when iterating ConsumerMap.
