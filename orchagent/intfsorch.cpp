@@ -630,9 +630,9 @@ void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix
     sai_neighbor_entry_t neighbor_entry;
     IpAddress ip_addr;
 
-    /* For /31 and /32 v4 subnets, there is no broadcast address, hence don't
+    /* If not IPv4 subnet or if /31 or /32 subnet, there is no broadcast address, hence don't
      * add a broadcast route. */
-    if ((ip_prefix.isV4()) && (ip_prefix.getMaskLength() > 30))
+    if (!(ip_prefix.isV4()) || (ip_prefix.getMaskLength() > 30))
     {
       return;
     }
@@ -663,8 +663,8 @@ void IntfsOrch::removeDirectedBroadcast(const Port &port, const IpPrefix &ip_pre
     sai_neighbor_entry_t neighbor_entry;
     IpAddress ip_addr;
 
-    /* For /31 and /32 v4 subnets, there is no broadcast address */
-    if ((ip_prefix.isV4()) && (ip_prefix.getMaskLength() > 30))
+    /* If not IPv4 subnet or if /31 or /32 subnet, there is no broadcast address */
+    if (!(ip_prefix.isV4()) || (ip_prefix.getMaskLength() > 30))
     {
         return;
     }
