@@ -1,5 +1,3 @@
-#include <unistd.h>
-
 #include "exec.h"
 #include "teammgr.h"
 #include "logger.h"
@@ -160,7 +158,12 @@ void TeamMgr::doLagTask(Consumer &consumer)
 
             if (m_lagList.find(alias) == m_lagList.end())
             {
-                addLag(alias, min_links, fallback);
+                if (addLag(alias, min_links, fallback) == task_need_retry)
+                {
+                    it++;
+                    continue;
+                }
+
                 m_lagList.insert(alias);
             }
 
@@ -363,7 +366,7 @@ bool TeamMgr::setLagMtu(const string &alias, const string &mtu)
     return true;
 }
 
-bool TeamMgr::addLag(const string &alias, int min_links, bool fallback)
+task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback)
 {
     SWSS_LOG_ENTER();
 
@@ -400,12 +403,18 @@ bool TeamMgr::addLag(const string &alias, int min_links, bool fallback)
         << " -t " << alias
         << " -c " << conf.str()
         << " -L " << dump_path
-        << " -d";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+        << " -g -d";
+
+    if (exec(cmd.str(), res) != 0)
+    {
+        SWSS_LOG_INFO("Failed to start port channel %s with teamd, retry...",
+                alias.c_str());
+        return task_need_retry;
+    }
 
     SWSS_LOG_NOTICE("Start port channel %s with teamd", alias.c_str());
 
-    return true;
+    return task_success;
 }
 
 bool TeamMgr::removeLag(const string &alias)

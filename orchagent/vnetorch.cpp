@@ -14,12 +14,14 @@
 #include "vxlanorch.h"
 #include "directory.h"
 #include "swssnet.h"
+#include "intfsorch.h"
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_route_api_t* sai_route_api;
 extern sai_object_id_t gSwitchId;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch *gPortsOrch;
+extern IntfsOrch *gIntfsOrch;
 
 /*
  * VRF Modeling and VNetVrf class definitions
@@ -163,6 +165,26 @@ VNetOrch::VNetOrch(DBConnector *db, const std::string& tableName, VNET_EXEC op)
     }
 }
 
+bool VNetOrch::setIntf(const string& alias, const string vnet_name, const IpPrefix *prefix)
+{
+    SWSS_LOG_ENTER();
+
+    if (isVnetExecVrf())
+    {
+        if (!isVnetExists(vnet_name))
+        {
+            SWSS_LOG_WARN("VNET %s doesn't exist", vnet_name.c_str());
+            return false;
+        }
+
+        auto *vnet_obj = getTypePtr<VNetVrfObject>(vnet_name);
+        sai_object_id_t vrf_id = vnet_obj->getVRidIngress();
+
+        return gIntfsOrch->setIntf(alias, vrf_id, prefix);
+    }
+
+    return false;
+}
 bool VNetOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
@@ -226,8 +248,9 @@ bool VNetOrch::addOperation(const Request& request)
                 create = true;
             }
 
+            VNetVrfObject *vrfObj = dynamic_cast<VNetVrfObject*>(obj.get());
             if (!vxlan_orch->createVxlanTunnelMap(tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
-                                                  obj->getEncapMapId(), obj->getDecapMapId()))
+                                                  vrfObj->getEncapMapId(), vrfObj->getDecapMapId()))
             {
                 SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
                                 vnet_name.c_str(), tunnel.c_str());

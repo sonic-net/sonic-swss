@@ -2380,7 +2380,8 @@ bool PortsOrch::initializePort(Port &port)
     /*
      * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
      */
-    if (!setHostIntfsOperStatus(port, port.m_oper_status))
+    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
+    if (!setHostIntfsOperStatus(port, isUp))
     {
         SWSS_LOG_WARN("Failed to set operation status %s to host interface %s",
                       operStatus.c_str(), port.m_alias.c_str());
