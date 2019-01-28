@@ -158,7 +158,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     addSubnetRoute(port, *ip_prefix);
     addIp2MeRoute(vrf_id, *ip_prefix);
 
-    if (port.m_type == Port::VLAN && ip_prefix->isV4())
+    if (port.m_type == Port::VLAN)
     {
         addDirectedBroadcast(port, *ip_prefix);
     }
@@ -345,7 +345,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                     removeSubnetRoute(port, ip_prefix);
                     removeIp2MeRoute(vrf_id, ip_prefix);
 
-                    if(port.m_type == Port::VLAN && ip_prefix.isV4())
+                    if(port.m_type == Port::VLAN)
                     {
                         removeDirectedBroadcast(port, ip_prefix);
                     }
@@ -630,9 +630,9 @@ void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix
     sai_neighbor_entry_t neighbor_entry;
     IpAddress ip_addr;
 
-    /* For /31 v4 subnets, there is no broadcast address, hence don't
+    /* For /31 and /32 v4 subnets, there is no broadcast address, hence don't
      * add a broadcast route. */
-    if (ip_prefix.getMaskLength() == 31)
+    if ((ip_prefix.isV4()) && (ip_prefix.getMaskLength() > 30))
     {
       return;
     }
@@ -663,8 +663,8 @@ void IntfsOrch::removeDirectedBroadcast(const Port &port, const IpPrefix &ip_pre
     sai_neighbor_entry_t neighbor_entry;
     IpAddress ip_addr;
 
-    /* For /31 v4 subnets, there is no broadcast address */
-    if (ip_prefix.getMaskLength() == 31)
+    /* For /31 and /32 v4 subnets, there is no broadcast address */
+    if ((ip_prefix.isV4()) && (ip_prefix.getMaskLength() > 30))
     {
         return;
     }
