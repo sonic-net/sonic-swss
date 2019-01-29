@@ -50,8 +50,6 @@ struct nh_key_t
         }
         return true;
     }
-
-
 };
 
 struct nh_key_hash

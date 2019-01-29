@@ -328,7 +328,7 @@ bool VNetOrch::addOperation(const Request& request)
         }
         else
         {
-            SWSS_LOG_WARN("Logic error: Unknown attribute: %s", name.c_str());
+            SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
             continue;
         }
     }
@@ -581,14 +581,15 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         return true;
     }
 
+    bool subnet = (!nh.ips.getSize())?true:false;
+
     Port port;
-    if ((!gPortsOrch->getPort(nh.ifname, port) || (port.m_rif_id == SAI_NULL_OBJECT_ID)))
+    if (subnet && (!gPortsOrch->getPort(nh.ifname, port) || (port.m_rif_id == SAI_NULL_OBJECT_ID)))
     {
         SWSS_LOG_WARN("Port/RIF %s doesn't exist", nh.ifname.c_str());
         return false;
     }
 
-    bool subnet = (nh.ip.isZero())?true:false;
     set<sai_object_id_t> vr_set;
     auto& peer_list = vnet_orch_->getPeerList(vnet);
     auto vr_id = vrf_obj->getVRidIngress();
@@ -629,17 +630,31 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
     sai_ip_prefix_t pfx;
     copy(pfx, ipPrefix);
-    sai_object_id_t nh_id=port.m_rif_id;
+    sai_object_id_t nh_id=SAI_NULL_OBJECT_ID;
 
-    if (!subnet && gNeighOrch->hasNextHop(nh.ip))
+    if (subnet)
     {
-        nh_id = gNeighOrch->getNextHopId(nh.ip);
+        nh_id = port.m_rif_id;
     }
-    else if (!subnet)
+    else if (nh.ips.getSize() == 1)
     {
-        SWSS_LOG_INFO("Failed to get next hop %s for %s",
-                       nh.ip.to_string().c_str(), ipPrefix.to_string().c_str());
-        return false;
+        IpAddress ip_address(nh.ips.to_string());
+        if (gNeighOrch->hasNextHop(ip_address))
+        {
+            nh_id = gNeighOrch->getNextHopId(ip_address);
+        }
+        else
+        {
+            SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                           ip_address.to_string().c_str(), ipPrefix.to_string().c_str());
+            return false;
+        }
+    }
+    else
+    {
+        // FIXME - Handle ECMP routes
+        SWSS_LOG_WARN("VNET ECMP NHs not implemented for '%s'", ipPrefix.to_string().c_str());
+        return true;
     }
 
     for (auto vr_id : vr_set)
@@ -672,7 +687,7 @@ void VNetRouteOrch::handleRoutes(const Request& request)
 {
     SWSS_LOG_ENTER();
 
-    IpAddress ip("0.0.0.0");
+    IpAddresses ip_addresses;
     string ifname = "";
 
     for (const auto& name: request.getAttrFieldNames())
@@ -683,19 +698,20 @@ void VNetRouteOrch::handleRoutes(const Request& request)
         }
         else if (name == "nexthop")
         {
-            ip = request.getAttrIP(name);
+            auto ipstr = request.getAttrString(name);
+            ip_addresses = IpAddresses(ipstr);
         }
         else
         {
-            SWSS_LOG_WARN("Logic error: Unknown attribute: %s", name.c_str());
-            return;
+            SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
+            continue;
         }
     }
 
     const std::string& vnet_name = request.getKeyString(0);
     auto ip_pfx = request.getKeyIpPrefix(1);
     auto op = request.getOperation();
-    nextHop nh = { ip, ifname };
+    nextHop nh = { ip_addresses, ifname };
 
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for ip %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
@@ -733,8 +749,8 @@ void VNetRouteOrch::handleTunnel(const Request& request)
         }
         else
         {
-            SWSS_LOG_WARN("Logic error: Unknown attribute: %s", name.c_str());
-            return;
+            SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
+            continue;
         }
     }
 

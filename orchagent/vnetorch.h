@@ -7,6 +7,7 @@
 #include <algorithm>
 
 #include "request_parser.h"
+#include "ipaddresses.h"
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -89,7 +90,7 @@ struct tunnelEndpoint
 
 struct nextHop
 {
-    IpAddress ip;
+    IpAddresses ips;
     string ifname;
 };
 
@@ -206,7 +207,7 @@ const request_description_t vnet_route_description = {
     {
         { "endpoint",    REQ_T_IP },
         { "ifname",      REQ_T_STRING },
-        { "nexthop",     REQ_T_IP },
+        { "nexthop",     REQ_T_STRING },
         { "vni",         REQ_T_UINT },
         { "mac_address", REQ_T_MAC_ADDRESS },
     },

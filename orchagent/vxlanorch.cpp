@@ -159,7 +159,7 @@ void remove_tunnel_map_entry(sai_object_id_t obj_id)
 {
     sai_status_t status = SAI_STATUS_SUCCESS;
 
-    if (obj_id== SAI_NULL_OBJECT_ID)
+    if (obj_id != SAI_NULL_OBJECT_ID)
     {
         status = sai_tunnel_api->remove_tunnel_map_entry(obj_id);
     }
