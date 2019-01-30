@@ -84,6 +84,9 @@ private:
     bool addRoute(IpPrefix, IpAddresses);
     bool removeRoute(IpPrefix);
 
+    std::string getLinkLocalEui64Addr(void);
+    void        addLinkLocalRouteToMe(sai_object_id_t vrf_id);
+
     void doTask(Consumer& consumer);
 };
 

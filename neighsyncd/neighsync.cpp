@@ -60,9 +60,7 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ":";
 
     nl_addr2str(rtnl_neigh_get_dst(neigh), ipStr, MAX_ADDR_SIZE);
-    /* Ignore IPv6 link-local addresses as neighbors */
-    if (family == IPV6_NAME && IN6_IS_ADDR_LINKLOCAL(nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh))))
-        return;
+
     /* Ignore IPv6 multicast link-local addresses as neighbors */
     if (family == IPV6_NAME && IN6_IS_ADDR_MC_LINKLOCAL(nl_addr_get_binary_addr(rtnl_neigh_get_dst(neigh))))
         return;
