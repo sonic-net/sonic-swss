@@ -44,6 +44,13 @@ public:
     VNetRequest() : Request(vnet_request_description, ':') { }
 };
 
+struct tunnelEndpoint
+{
+    IpAddress ip;
+    MacAddress mac;
+    uint32_t vni;
+};
+
 class VNetObject
 {
 public:
@@ -108,6 +115,55 @@ public:
 private:
     string vnet_name_;
     vrid_list_t vr_ids_;
+};
+
+struct VnetBridgeInfo
+{
+    sai_object_id_t bridge_id;
+    sai_object_id_t bridge_port_rif_id;
+    sai_object_id_t bridge_port_tunnel_id;
+    sai_object_id_t rif_id;
+};
+
+class VNetBitmapObject: public VNetObject
+{
+public:
+    VNetBitmapObject(const string& vnet, string& tunnel, set<string>& peer, vector<sai_attribute_t>& attrs);
+
+    virtual bool addIntf(const string& alias, const IpPrefix *prefix);
+
+    virtual bool addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp);
+
+    bool updateObj(vector<sai_attribute_t>&);
+
+    void setVni(uint32_t vni);
+
+    virtual ~VNetBitmapObject() {}
+
+private:
+    static uint32_t getFreeBitmapId(const string& name);
+
+    static uint32_t getBitmapId(const string& name);
+
+    static void recycleBitmapId(uint32_t id);
+
+    static uint32_t getFreeTunnelRouteTableOffset();
+
+    static void recycleTunnelRouteTableOffset(uint32_t offset);
+
+    static VnetBridgeInfo getBridgeInfoByVni(uint32_t vni, string tunnelName);
+
+    static uint32_t getFreeNeighbor(void);
+
+    static uint32_t vnetBitmap_;
+    static map<string, uint32_t> vnetIds_;
+    static set<uint32_t> tunnelOffsets_;
+    static map<uint32_t, VnetBridgeInfo> bridgeInfoMap_;
+    static map<MacAddress, sai_fdb_entry_t> fdbMap_;
+    static map<MacAddress, sai_neighbor_entry_t> neighMap_;
+
+    uint32_t vnet_id_;
+    uint32_t vni_;
 };
 
 typedef std::unique_ptr<VNetObject> VNetObject_T;
@@ -182,13 +238,6 @@ public:
 
 typedef map<IpAddress, sai_object_id_t> NextHopMap;
 typedef map<string, NextHopMap> NextHopTunnels;
-
-struct tunnelEndpoint
-{
-    IpAddress ip;
-    MacAddress mac;
-    uint32_t vni;
-};
 
 class VNetRouteOrch : public Orch2
 {

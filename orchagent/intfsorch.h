@@ -36,9 +36,19 @@ public:
     bool setRouterIntfsMtu(Port &port);
     std::set<IpPrefix> getSubnetRoutes();
     bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr);
+
+    void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
+    void removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
+
+    const IntfsTable& getSyncdIntfses(void)
+    {
+        return m_syncdIntfses;
+    }
+
 private:
     VRFOrch *m_vrfOrch;
     IntfsTable m_syncdIntfses;
+    map<string, string> m_vnetInfses;
     void doTask(Consumer &consumer);
 
     int getRouterIntfsRefCount(const string&);
@@ -48,9 +58,6 @@ private:
 
     void addSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
     void removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
-
-    void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
-    void removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
 
     void addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
     void removeDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
