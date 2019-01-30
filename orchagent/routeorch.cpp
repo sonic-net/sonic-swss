@@ -177,14 +177,7 @@ void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id)
                        linklocal_prefix.getIp().to_string().c_str(), status);
     }
 
-    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
-    }
-    else
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
-    }
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
 
     SWSS_LOG_NOTICE("Created link local ipv6 host route  %s to cpu", linklocal_prefix.to_string().c_str());
 }
