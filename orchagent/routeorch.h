@@ -15,6 +15,11 @@
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
 
+/* Length of the Interface Id value in EUI64 format */
+#define EUI64_INTF_ID_LEN 8
+
+#define IP6_ADDR_STR_LEN  40
+
 typedef std::map<IpAddress, sai_object_id_t> NextHopGroupMembers;
 
 struct NextHopGroupEntry
