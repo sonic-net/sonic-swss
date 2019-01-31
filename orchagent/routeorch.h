@@ -18,8 +18,6 @@
 /* Length of the Interface Id value in EUI64 format */
 #define EUI64_INTF_ID_LEN 8
 
-#define IP6_ADDR_STR_LEN  40
-
 typedef std::map<IpAddress, sai_object_id_t> NextHopGroupMembers;
 
 struct NextHopGroupEntry
@@ -90,7 +88,7 @@ private:
     bool removeRoute(IpPrefix);
 
     std::string getLinkLocalEui64Addr(void);
-    void        addLinkLocalRouteToMe(sai_object_id_t vrf_id);
+    void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
 
     void doTask(Consumer& consumer);
 };
