@@ -14,14 +14,12 @@
 using namespace std;
 using namespace swss;
 
-#define APP_VNET_ROUTE_TABLE_NAME "VNET_ROUTE_TABLE"
-#define APP_VNET_TUNNEL_TABLE_NAME "VNET_ROUTE_TUNNEL_TABLE"
 #define VXLAN_IF_NAME_PREFIX "brvxlan"
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),             
-    m_vnet_routeTable(pipeline, APP_VNET_ROUTE_TABLE_NAME, true),
-    m_vnet_tunnelTable(pipeline, APP_VNET_TUNNEL_TABLE_NAME, true),
+    m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
+    m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
     m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp")
 {
     m_nl_sock = nl_socket_alloc();
@@ -225,7 +223,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj)
 
         m_vnet_tunnelTable.set(vnet_dip, fvVector);
         SWSS_LOG_DEBUG("%s set msg: %s %s\n", 
-                       APP_VNET_TUNNEL_TABLE_NAME, vnet_dip.c_str(), gw_ips.c_str());
+                       APP_VNET_RT_TUNNEL_TABLE_NAME, vnet_dip.c_str(), gw_ips.c_str());
         return;
     }
     /* Regular VNET route */ 
@@ -241,12 +239,12 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj)
             FieldValueTuple nh("nexthop", gw_ips);
             fvVector.push_back(nh);        
             SWSS_LOG_DEBUG("%s set msg: %s %s %s\n", 
-                           APP_VNET_ROUTE_TABLE_NAME, vnet_dip.c_str(), if_names.c_str(), gw_ips.c_str());
+                           APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), if_names.c_str(), gw_ips.c_str());
         } 
         else 
         {
             SWSS_LOG_DEBUG("%s set msg: %s %s\n", 
-                           APP_VNET_ROUTE_TABLE_NAME, vnet_dip.c_str(), if_names.c_str());
+                           APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), if_names.c_str());
         }
 
         m_vnet_routeTable.set(vnet_dip, fvVector);
