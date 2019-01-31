@@ -63,18 +63,19 @@ class TestEgressAclTable(object):
         assert set(port_groups) == set(acl_table_groups)
 
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
-        (status, fvs) = tbl.get(port_groups[0])
-        assert status == True
-        assert len(fvs) == 3
-        for fv in fvs:
-            if fv[0] == "SAI_ACL_TABLE_GROUP_ATTR_ACL_STAGE":
-                assert fv[1] == "SAI_ACL_STAGE_EGRESS"
-            elif fv[0] == "SAI_ACL_TABLE_GROUP_ATTR_ACL_BIND_POINT_TYPE_LIST":
-                assert fv[1] == "1:SAI_ACL_BIND_POINT_TYPE_PORT"
-            elif fv[0] == "SAI_ACL_TABLE_GROUP_ATTR_TYPE":
-                assert fv[1] == "SAI_ACL_TABLE_GROUP_TYPE_PARALLEL"
-            else:
-                assert False
+        for port_group in port_groups:
+            (status, fvs) = tbl.get(port_group)
+            assert status == True
+            assert len(fvs) == 3
+            for fv in fvs:
+                if fv[0] == "SAI_ACL_TABLE_GROUP_ATTR_ACL_STAGE":
+                    assert fv[1] == "SAI_ACL_STAGE_EGRESS"
+                elif fv[0] == "SAI_ACL_TABLE_GROUP_ATTR_ACL_BIND_POINT_TYPE_LIST":
+                    assert fv[1] == "1:SAI_ACL_BIND_POINT_TYPE_PORT"
+                elif fv[0] == "SAI_ACL_TABLE_GROUP_ATTR_TYPE":
+                    assert fv[1] == "SAI_ACL_TABLE_GROUP_TYPE_PARALLEL"
+                else:
+                    assert False
 
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER")
         member = tbl.getKeys()[0]
@@ -83,7 +84,7 @@ class TestEgressAclTable(object):
         assert len(fvs) == 3
         for fv in fvs:
             if fv[0] == "SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID":
-                assert port_groups[0] == fv[1]
+                assert fv[1] in port_groups 
             elif fv[0] == "SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID":
                 table_id = fv[1]
             elif fv[0] == "SAI_ACL_TABLE_GROUP_MEMBER_ATTR_PRIORITY":
