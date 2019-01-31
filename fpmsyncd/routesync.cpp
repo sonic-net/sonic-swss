@@ -128,12 +128,12 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj)
     }
 
     /* Get nexthop lists */
-    string gw_ips = getNextHopGw(route_obj);
-    string if_names = getNextHopIf(route_obj);
+    string nexthops = getNextHopGw(route_obj);
+    string ifnames = getNextHopIf(route_obj);
 
     vector<FieldValueTuple> fvVector;
-    FieldValueTuple nh("nexthop", gw_ips);
-    FieldValueTuple idx("ifname", if_names);
+    FieldValueTuple nh("nexthop", nexthops);
+    FieldValueTuple idx("ifname", ifnames);
 
     fvVector.push_back(nh);
     fvVector.push_back(idx);
@@ -142,7 +142,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj)
     {
         m_routeTable.set(destipprefix, fvVector);
         SWSS_LOG_DEBUG("RouteTable set msg: %s %s %s\n",
-                       destipprefix, gw_ips.c_str(), if_names.c_str());
+                       destipprefix, nexthops.c_str(), ifnames.c_str());
     }
 
     /*
@@ -152,7 +152,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj)
     else
     {
         SWSS_LOG_INFO("Warm-Restart mode: RouteTable set msg: %s %s %s\n",
-                      destipprefix, gw_ips.c_str(), if_names.c_str());
+                      destipprefix, nexthops.c_str(), ifnames.c_str());
 
         const KeyOpFieldsValuesTuple kfv = std::make_tuple(destipprefix,
                                                            SET_COMMAND,
@@ -212,41 +212,41 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj)
     }
 
     /* Get nexthop lists */
-    string gw_ips = getNextHopGw(route_obj);
-    string if_names = getNextHopIf(route_obj);
+    string nexthops = getNextHopGw(route_obj);
+    string ifnames = getNextHopIf(route_obj);
 
     /* If the the first interface name starts with VXLAN_IF_NAME_PREFIX,
        the route is a VXLAN tunnel route. */
-    if (if_names.find(VXLAN_IF_NAME_PREFIX) == 0)
+    if (ifnames.find(VXLAN_IF_NAME_PREFIX) == 0)
     {
         vector<FieldValueTuple> fvVector;
-        FieldValueTuple ep("endpoint", gw_ips);
+        FieldValueTuple ep("endpoint", nexthops);
         fvVector.push_back(ep);
 
         m_vnet_tunnelTable.set(vnet_dip, fvVector);
         SWSS_LOG_DEBUG("%s set msg: %s %s\n", 
-                       APP_VNET_RT_TUNNEL_TABLE_NAME, vnet_dip.c_str(), gw_ips.c_str());
+                       APP_VNET_RT_TUNNEL_TABLE_NAME, vnet_dip.c_str(), nexthops.c_str());
         return;
     }
     /* Regular VNET route */ 
     else 
     {
         vector<FieldValueTuple> fvVector;
-        FieldValueTuple idx("ifname", if_names);
+        FieldValueTuple idx("ifname", ifnames);
         fvVector.push_back(idx);
 
-        /* If the route has at least one next hop gateway */ 
-        if (gw_ips.length() + 1 > (unsigned int)rtnl_route_get_nnexthops(route_obj)) 
+        /* If the route has at least one next hop gateway, e.g., nexthops does not only have ',' */ 
+        if (nexthops.length() + 1 > (unsigned int)rtnl_route_get_nnexthops(route_obj)) 
         {
-            FieldValueTuple nh("nexthop", gw_ips);
+            FieldValueTuple nh("nexthop", nexthops);
             fvVector.push_back(nh);        
             SWSS_LOG_DEBUG("%s set msg: %s %s %s\n", 
-                           APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), if_names.c_str(), gw_ips.c_str());
+                           APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), ifnames.c_str(), nexthops.c_str());
         } 
         else 
         {
             SWSS_LOG_DEBUG("%s set msg: %s %s\n", 
-                           APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), if_names.c_str());
+                           APP_VNET_RT_TABLE_NAME, vnet_dip.c_str(), ifnames.c_str());
         }
 
         m_vnet_routeTable.set(vnet_dip, fvVector);
