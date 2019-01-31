@@ -252,9 +252,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     /* Get port hardware lane info */
     for (i = 0; i < m_portCount; i++)
     {
-        sai_uint32_t lanes[4] = { 0,0,0,0 };
+        sai_uint32_t lanes[8] = { 0,0,0,0,0,0,0,0 };
         attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-        attr.value.u32list.count = 4;
+        attr.value.u32list.count = 8;
         attr.value.u32list.list = lanes;
 
         status = sai_port_api->get_port_attribute(port_list[i], 1, &attr);
@@ -266,7 +266,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
 
         set<int> tmp_lane_set;
         for (j = 0; j < attr.value.u32list.count; j++)
+        {
             tmp_lane_set.insert(attr.value.u32list.list[j]);
+        }
 
         string tmp_lane_str = "";
         for (auto s : tmp_lane_set)
