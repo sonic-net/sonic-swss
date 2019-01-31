@@ -140,7 +140,7 @@ std::string RouteOrch::getLinkLocalEui64Addr(void)
     eui64_interface_id[6] = gmac[4];
     eui64_interface_id[7] = gmac[5];
 
-    snprintf(ipv6_ll_addr, IP6_ADDR_STR_LEN, "fe80::%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+    snprintf(ipv6_ll_addr, INET6_ADDRSTRLEN, "fe80::%02x%02x:%02x%02x:%02x%02x:%02x%02x",
              eui64_interface_id[0], eui64_interface_id[1], eui64_interface_id[2],
              eui64_interface_id[3], eui64_interface_id[4], eui64_interface_id[5],
              eui64_interface_id[6], eui64_interface_id[7]);
