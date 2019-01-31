@@ -84,6 +84,7 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     fvVector.push_back(nh);
     fvVector.push_back(f);
 
+    // If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist.isWarmStartInProgress())
     {
         m_AppRestartAssist.insertToMap(key, fvVector, delete_key);

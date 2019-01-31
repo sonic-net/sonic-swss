@@ -100,7 +100,11 @@ def test_CrmFdbEntry(dvs, testlog):
 
 def test_CrmIpv4Route(dvs, testlog):
 
-    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
 
     dvs.runcmd("crm config polling interval 1")
 
@@ -146,6 +150,9 @@ def test_CrmIpv4Route(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    time.sleep(2)
+
 
 def test_CrmIpv6Route(dvs, testlog):
 
@@ -153,7 +160,11 @@ def test_CrmIpv6Route(dvs, testlog):
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
     time.sleep(2)
 
-    dvs.runcmd("ifconfig Ethernet0 inet6 add fc00::1/126 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|fc00::1/126", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
 
     dvs.servers[0].runcmd("ifconfig eth0 inet6 add fc00::2/126")
     dvs.servers[0].runcmd("ip -6 route add default via fc00::1")
@@ -202,10 +213,17 @@ def test_CrmIpv6Route(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    intf_tbl._del("Ethernet0|fc00::1/126")
+    time.sleep(2)
+
 
 def test_CrmIpv4Nexthop(dvs, testlog):
 
-    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
 
     dvs.runcmd("crm config polling interval 1")
 
@@ -243,6 +261,9 @@ def test_CrmIpv4Nexthop(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    time.sleep(2)
+
 
 def test_CrmIpv6Nexthop(dvs, testlog):
 
@@ -250,7 +271,11 @@ def test_CrmIpv6Nexthop(dvs, testlog):
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
     time.sleep(2)
 
-    dvs.runcmd("ifconfig Ethernet0 inet6 add fc00::1/126 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|fc00::1/126", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
 
     dvs.runcmd("crm config polling interval 1")
 
@@ -288,10 +313,17 @@ def test_CrmIpv6Nexthop(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    intf_tbl._del("Ethernet0|fc00::1/126")
+    time.sleep(2)
+
 
 def test_CrmIpv4Neighbor(dvs, testlog):
 
-    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
 
     dvs.runcmd("crm config polling interval 1")
 
@@ -329,6 +361,9 @@ def test_CrmIpv4Neighbor(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    time.sleep(2)
+
 
 def test_CrmIpv6Neighbor(dvs, testlog):
 
@@ -336,7 +371,11 @@ def test_CrmIpv6Neighbor(dvs, testlog):
     dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
     time.sleep(2)
 
-    dvs.runcmd("ifconfig Ethernet0 inet6 add fc00::1/126 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|fc00::1/126", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
 
     dvs.runcmd("crm config polling interval 1")
 
@@ -374,11 +413,19 @@ def test_CrmIpv6Neighbor(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    intf_tbl._del("Ethernet0|fc00::1/126")
+    time.sleep(2)
+
 
 def test_CrmNexthopGroup(dvs, testlog):
 
-    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
-    dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
+    dvs.runcmd("ifconfig Ethernet4 up")
 
     dvs.runcmd("crm config polling interval 1")
 
@@ -426,6 +473,10 @@ def test_CrmNexthopGroup(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    intf_tbl._del("Ethernet4|10.0.0.2/31")
+    time.sleep(2)
+
 
 def test_CrmNexthopGroupMember(dvs, testlog):
 
@@ -435,8 +486,13 @@ def test_CrmNexthopGroupMember(dvs, testlog):
     dvs.servers[0].runcmd("ip link set up dev eth0") == 0
     dvs.servers[1].runcmd("ip link set up dev eth0") == 0
 
-    dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up")
-    dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up")
+    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    dvs.runcmd("ifconfig Ethernet0 up")
+    dvs.runcmd("ifconfig Ethernet4 up")
 
     dvs.runcmd("crm config polling interval 1")
 
@@ -483,6 +539,10 @@ def test_CrmNexthopGroupMember(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    intf_tbl._del("Ethernet0|10.0.0.0/31")
+    intf_tbl._del("Ethernet4|10.0.0.2/31")
+    time.sleep(2)
 
 
 def test_CrmAcl(dvs, testlog):

@@ -55,6 +55,7 @@ class PortsOrch : public Orch, public Subject
 public:
     PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames);
 
+    bool isPortReady();
     bool isInitDone();
 
     map<string, Port>& getAllPorts();
@@ -81,7 +82,7 @@ public:
     void generatePriorityGroupMap();
 
     void refreshPortStatus();
-
+    bool removeAclTableGroup(const Port &p);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
@@ -116,6 +117,8 @@ private:
     map<set<int>, sai_object_id_t> m_portListLaneMap;
     map<set<int>, tuple<string, uint32_t, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
+
+    unordered_set<string> m_pendingPortSet;
 
     NotificationConsumer* m_portStatusNotificationConsumer;
 
@@ -170,7 +173,7 @@ private:
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 
     bool setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed);
-    
+
     bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 
     bool m_isQueueMapGenerated = false;

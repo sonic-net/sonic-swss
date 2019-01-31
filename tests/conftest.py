@@ -147,7 +147,6 @@ class DockerVirtualSwitch(object):
                        'rsyslogd']
         self.swssd = ['orchagent',
                       'intfmgrd',
-                      'intfsyncd',
                       'neighsyncd',
                       'portsyncd',
                       'vlanmgrd',
