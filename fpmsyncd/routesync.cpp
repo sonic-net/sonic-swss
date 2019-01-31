@@ -43,11 +43,13 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     unsigned int table_index = rtnl_route_get_table(route_obj);
     
     /* Default routing table. This line may have problems. */
-    if (table_index == RT_TABLE_UNSPEC) {
+    if (table_index == RT_TABLE_UNSPEC) 
+    {
         onRouteMsg(nlmsg_type, obj);
-
+    } 
     /* VNET route */
-    } else {
+    else 
+    {
         onVnetRouteMsg(nlmsg_type, obj);
     }
 }
