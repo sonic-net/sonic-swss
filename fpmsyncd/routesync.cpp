@@ -184,7 +184,8 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj)
     /* If we cannot get the VRF name */
     if (!getIfName(vrf_index, vrf_name, IFNAMSIZ))
     {
-        strcpy(vrf_name, "unknown");            
+        SWSS_LOG_INFO("Fail to get the VRF name (table ID %u)\n", vrf_index);
+        return;         
     }
 
     /* vrf name = vnet name */
