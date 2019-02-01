@@ -166,12 +166,6 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj)
 {
     struct rtnl_route *route_obj = (struct rtnl_route *)obj;  
 
-    /* Only support unicast for VNET routes now. Will update this part in the future */
-    if (rtnl_route_get_type(route_obj) != RTN_UNICAST) {
-        SWSS_LOG_INFO("We only support UNICAST for vnet routes\n");
-        return;
-    }
-
     /* Get the destination IP prefix */
     struct nl_addr *dip = rtnl_route_get_dst(route_obj);
     char destipprefix[MAX_ADDR_SIZE + 1] = {0};
@@ -203,6 +197,26 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj)
     {
         SWSS_LOG_INFO("Unknown message-type: %d for %s\n", nlmsg_type, vnet_dip.c_str());
         return;
+    }
+
+    switch (rtnl_route_get_type(route_obj))
+    {
+        case RTN_UNICAST:
+            break;
+
+        /* We may support blackhole in the future */
+        case RTN_BLACKHOLE:
+            SWSS_LOG_INFO("Blackhole route is supported yet (%s)\n", vnet_dip.c_str());
+            return;
+
+        case RTN_MULTICAST:
+        case RTN_BROADCAST:
+        case RTN_LOCAL:
+            SWSS_LOG_INFO("BUM routes aren't supported yet (%s)\n", vnet_dip.c_str());
+            return;
+
+        default:
+            return;
     }
 
     struct nl_list_head *nhs = rtnl_route_get_nexthops(route_obj);
