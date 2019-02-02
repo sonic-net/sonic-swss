@@ -30,8 +30,8 @@ extern NeighOrch *gNeighOrch;
  */
 std::vector<VR_TYPE> vr_cntxt;
 
-VNetVrfObject::VNetVrfObject(const std::string& vnet, string& tunnel, set<string>& peer, uint32_t vni,
-                             vector<sai_attribute_t>& attrs) : VNetObject(tunnel, peer, vni)
+VNetVrfObject::VNetVrfObject(const std::string& vnet, const VNetInfo& vnetInfo,
+                             vector<sai_attribute_t>& attrs) : VNetObject(vnetInfo)
 {
     vnet_name_ = vnet;
     createObj(attrs);
@@ -251,10 +251,10 @@ VNetVrfObject::~VNetVrfObject()
  */
 
 template <class T>
-std::unique_ptr<T> VNetOrch::createObject(const string& vnet_name, string& tunnel, set<string>& plist,
-                                          uint32_t vni, vector<sai_attribute_t>& attrs)
+std::unique_ptr<T> VNetOrch::createObject(const string& vnet_name, const VNetInfo& vnet_info,
+                                          vector<sai_attribute_t>& attrs)
 {
-    std::unique_ptr<T> vnet_obj(new T(vnet_name, tunnel, plist, vni, attrs));
+    std::unique_ptr<T> vnet_obj(new T(vnet_name, vnet_info, attrs));
     return vnet_obj;
 }
 
@@ -352,7 +352,8 @@ bool VNetOrch::addOperation(const Request& request)
 
             if (it == std::end(vnet_table_))
             {
-                obj = createObject<VNetVrfObject>(vnet_name, tunnel, peer_list, vni, attrs);
+                VNetInfo vnet_info = { tunnel, vni, peer_list };
+                obj = createObject<VNetVrfObject>(vnet_name, vnet_info, attrs);
                 create = true;
             }
 

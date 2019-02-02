@@ -37,6 +37,13 @@ enum class VR_TYPE
     VR_INVALID
 };
 
+struct VNetInfo
+{
+    string tunnel;
+    uint32_t vni;
+    set<string> peers;
+};
+
 typedef map<VR_TYPE, sai_object_id_t> vrid_list_t;
 extern std::vector<VR_TYPE> vr_cntxt;
 
@@ -49,7 +56,11 @@ public:
 class VNetObject
 {
 public:
-    VNetObject(string& tunName, set<string>& peer, uint32_t vni) : tunnel_(tunName), peer_list_(peer), vni_(vni) { }
+    VNetObject(const VNetInfo& vnetInfo) :
+               tunnel_(vnetInfo.tunnel),
+               peer_list_(vnetInfo.peers),
+               vni_(vnetInfo.vni)
+               { }
 
     virtual bool updateObj(vector<sai_attribute_t>&) = 0;
 
@@ -100,7 +111,7 @@ typedef std::map<IpPrefix, nextHop> RouteMap;
 class VNetVrfObject : public VNetObject
 {
 public:
-    VNetVrfObject(const string& vnet, string& tunnel, set<string>& peer, uint32_t vni, vector<sai_attribute_t>& attrs);
+    VNetVrfObject(const string& vnet, const VNetInfo& vnetInfo, vector<sai_attribute_t>& attrs);
 
     sai_object_id_t getVRidIngress() const;
 
@@ -194,7 +205,7 @@ private:
     virtual bool delOperation(const Request& request);
 
     template <class T>
-    std::unique_ptr<T> createObject(const string&, string&, set<string>&, uint32_t, vector<sai_attribute_t>&);
+    std::unique_ptr<T> createObject(const string&, const VNetInfo&, vector<sai_attribute_t>&);
 
     VNetTable vnet_table_;
     VNetRequest request_;
