@@ -104,17 +104,13 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
 
     SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
 
-    /* All the interfaces have the same MAC address and hence the same
-     * auto-generated link-local ipv6 address with eui64 interface-id.
-     * Hence add a single /128 route entry for the link-local interface
-     * address pointing to the CPU port.
-     */
+    /* Add fe80::/10 subnet route to forward all link-local packets
+     * destined to us, to CPU */
+    IpPrefix default_link_local_prefix("fe80::/10");
 
-    IpPrefix linklocal_prefix = getLinkLocalEui64Addr();
+    addLinkLocalRouteToMe(gVirtualRouterId, default_link_local_prefix);
 
-    addLinkLocalRouteToMe(gVirtualRouterId, linklocal_prefix);
-
-    /* TODO: Add the link-local /128 route to cpu in every VRF created from
+    /* TODO: Add the link-local fe80::/10 route to cpu in every VRF created from
      * vrforch::addOperation. */
 }
 
@@ -155,7 +151,8 @@ void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal
     sai_route_entry_t unicast_route_entry;
     unicast_route_entry.switch_id = gSwitchId;
     unicast_route_entry.vr_id = vrf_id;
-    copy(unicast_route_entry.destination, linklocal_prefix.getIp());
+    copy(unicast_route_entry.destination, linklocal_prefix);
+    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -181,7 +178,7 @@ void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
 
-    SWSS_LOG_NOTICE("Created link local ipv6 host route  %s to cpu", linklocal_prefix.to_string().c_str());
+    SWSS_LOG_NOTICE("Created link local ipv6 route  %s to cpu", linklocal_prefix.to_string().c_str());
 }
 
 bool RouteOrch::hasNextHopGroup(const IpAddresses& ipAddresses) const
