@@ -195,6 +195,17 @@ bool handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
 
     for ( auto &k : keys )
     {
+        // if any port doesn't have lanes data, return false and try from PortConfigFile
+        std::string lanes;
+        if (!table.hget(k, "lanes", lanes))
+        {
+            cout << "To use port configuration file, no port lanes configuration in ConfigDB for " << k << endl;
+            return false;
+        }
+    }
+
+    for ( auto &k : keys )
+    {
         table.get(k, ovalues);
         vector<FieldValueTuple> attrs;
         for ( auto &v : ovalues )
