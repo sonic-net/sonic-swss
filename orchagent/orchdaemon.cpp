@@ -148,7 +148,12 @@ bool OrchDaemon::init()
         CFG_DTEL_EVENT_TABLE_NAME
     };
 
-    WatermarkOrch *wm_orch = new WatermarkOrch(m_configDb, CFG_WATERMARK_TABLE_NAME);
+    vector<string> wm_tables = {
+        CFG_WATERMARK_TABLE_NAME,
+        CFG_FLEX_COUNTER_TABLE_NAME
+    };
+
+    WatermarkOrch *wm_orch = new WatermarkOrch(m_configDb, wm_tables);
 
     /*
      * The order of the orch list is important for state restore of warm start and

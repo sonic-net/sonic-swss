@@ -11,7 +11,7 @@
 class WatermarkOrch : public Orch
 {
 public:
-    WatermarkOrch(DBConnector *db, const std::string tableName);
+    WatermarkOrch(DBConnector *db, const vector<string> &tables);
     virtual ~WatermarkOrch(void);
 
     void doTask(Consumer &consumer);
@@ -20,6 +20,9 @@ public:
 
     void init_pg_ids();
     void init_queue_ids();
+
+    void handleWmConfigUpdate(const std::string &key, const std::vector<FieldValueTuple> &fvt);
+    void handleFcConfigUpdate(const std::string &key, const std::vector<FieldValueTuple> &fvt);
 
     void clearSingleWm(Table *table, string wm_name, vector<sai_object_id_t> &obj_ids);
 
@@ -34,6 +37,8 @@ public:
     }
 
 private:
+    bool m_isTimerEnabled = false;
+
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<DBConnector> m_appDb = nullptr;
     shared_ptr<Table> m_countersTable = nullptr;

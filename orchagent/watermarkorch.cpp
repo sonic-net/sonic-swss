@@ -14,8 +14,8 @@
 extern PortsOrch *gPortsOrch;
 
 
-WatermarkOrch::WatermarkOrch(DBConnector *db, const string tableName):
-    Orch(db, tableName)
+WatermarkOrch::WatermarkOrch(DBConnector *db, const vector<string> &tables):
+    Orch(db, tables)
 {
     SWSS_LOG_ENTER();
 
@@ -36,7 +36,6 @@ WatermarkOrch::WatermarkOrch(DBConnector *db, const string tableName):
     m_telemetryTimer = new SelectableTimer(intervT);
     auto executorT = new ExecutableTimer(m_telemetryTimer, this, "WM_TELEMETRY_TIMER");
     Orch::addExecutor(executorT);
-    m_telemetryTimer->start();
 
     m_telemetryInterval = DEFAULT_TELEMETRY_INTERVAL;
 }
@@ -66,19 +65,13 @@ void WatermarkOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            if (key == "TELEMETRY_INTERVAL")
+            if (consumer.getTableName() == CFG_WATERMARK_TABLE_NAME)
             {
-                for (std::pair<std::basic_string<char>, std::basic_string<char> > i: fvt)
-                {
-                    if (i.first == "interval")
-                    {
-                        m_telemetryInterval = to_uint<uint32_t>(i.second.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_WARN("Unsupported key: %s", i.first.c_str());
-                    }
-                }
+                handleWmConfigUpdate(key, fvt);
+            }
+            else if (consumer.getTableName() == CFG_FLEX_COUNTER_TABLE_NAME)
+            {
+                handleFcConfigUpdate(key, fvt);
             }
         }
         else if (op == DEL_COMMAND)
@@ -91,6 +84,44 @@ void WatermarkOrch::doTask(Consumer &consumer)
         }
 
         consumer.m_toSync.erase(it++);
+    }
+}
+
+void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vector<FieldValueTuple> &fvt)
+{
+    if (key == "TELEMETRY_INTERVAL")
+    {
+        for (std::pair<std::basic_string<char>, std::basic_string<char> > i: fvt)
+        {
+            if (i.first == "interval")
+            {
+                m_telemetryInterval = to_uint<uint32_t>(i.second.c_str());
+            }
+            else
+            {
+                SWSS_LOG_WARN("Unsupported key: %s", i.first.c_str());
+            }
+        }
+    }
+}
+
+void WatermarkOrch::handleFcConfigUpdate(const std::string &key, const std::vector<FieldValueTuple> &fvt)
+{
+    if (key == "QUEUE_WATERMARK" || key == "PG_WATERMARK")
+    {
+        for (std::pair<std::basic_string<char>, std::basic_string<char> > i: fvt)
+        {
+            if (i.first == "FLEX_COUNTER_STATUS" && i.second == "enable" && m_isTimerEnabled == false)
+            {
+                m_telemetryTimer->start();
+                m_isTimerEnabled = true;
+            }
+            else if (i.first == "FLEX_COUNTER_STATUS" && i.second == "disable" && m_isTimerEnabled == true)
+            {
+                /* no need to stop timer here - it won't be reset after end of this interval */
+                m_isTimerEnabled = false;
+            }
+        }
     }
 }
 
@@ -170,16 +201,20 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
 
     if (&timer == m_telemetryTimer)
     {
-        /* If the interval was changed */
-        auto intervT = timespec { .tv_sec = m_telemetryInterval , .tv_nsec = 0 };
-        m_telemetryTimer->setInterval(intervT);
-        m_telemetryTimer->reset();
+        /* Timer is only running when the watermark polling is on                         *
+         * if it is disabled we will not restart the timer at the end of current interval */
+        if (m_isTimerEnabled)
+        {
+            auto intervT = timespec { .tv_sec = m_telemetryInterval , .tv_nsec = 0 };
+            m_telemetryTimer->setInterval(intervT);
+            m_telemetryTimer->reset();
+        }
 
         clearSingleWm(m_periodicWatermarkTable.get(), "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES", m_pg_ids);
         clearSingleWm(m_periodicWatermarkTable.get(), "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES", m_pg_ids);
         clearSingleWm(m_periodicWatermarkTable.get(), "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_unicast_queue_ids);
         clearSingleWm(m_periodicWatermarkTable.get(), "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_multicast_queue_ids);
-        SWSS_LOG_INFO("Periodic watermark cleared by timer!");
+        SWSS_LOG_DEBUG("Periodic watermark cleared by timer!");
     }
 }
 
