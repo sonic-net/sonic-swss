@@ -385,10 +385,17 @@ void PortsOrch::removeDefaultBridgePorts()
     SWSS_LOG_NOTICE("Remove bridge ports from default 1Q bridge");
 }
 
+bool PortsOrch::isPortReady()
+{
+    return m_initDone && m_pendingPortSet.empty();
+}
+
+/* Upon receiving PortInitDone, all the configured ports have been created*/
 bool PortsOrch::isInitDone()
 {
     return m_initDone;
 }
+
 
 map<string, Port>& PortsOrch::getAllPorts()
 {
@@ -1626,8 +1633,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
             if (!gBufferOrch->isPortReady(alias))
             {
                 // buffer configuration hasn't been applied yet. save it for future retry
+                m_pendingPortSet.emplace(alias);
                 it++;
                 continue;
+            }
+            else
+            {
+                m_pendingPortSet.erase(alias);
             }
 
             Port p;
@@ -2233,7 +2245,7 @@ void PortsOrch::doTask(Consumer &consumer)
     else
     {
         /* Wait for all ports to be initialized */
-        if (!isInitDone())
+        if (!isPortReady())
         {
             return;
         }
@@ -3051,7 +3063,7 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
     SWSS_LOG_ENTER();
 
     /* Wait for all ports to be initialized */
-    if (!isInitDone())
+    if (!isPortReady())
     {
         return;
     }

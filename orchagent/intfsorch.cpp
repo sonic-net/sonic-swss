@@ -104,7 +104,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isPortReady())
     {
         return;
     }
@@ -214,13 +214,6 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (!gPortsOrch->getPort(alias, port))
             {
                 /* TODO: Resolve the dependency relationship and add ref_count to port */
-                it++;
-                continue;
-            }
-
-            // buffer configuration hasn't been applied yet, hold from intf config.
-            if (!gBufferOrch->isPortReady(alias))
-            {
                 it++;
                 continue;
             }
