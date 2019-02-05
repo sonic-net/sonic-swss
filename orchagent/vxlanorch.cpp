@@ -401,7 +401,7 @@ std::pair<sai_object_id_t, sai_object_id_t> VxlanTunnel::getMapperEntry(uint32_t
     return std::make_pair(SAI_NULL_OBJECT_ID, SAI_NULL_OBJECT_ID);
 }
 
-void VxlanTunnel::updateNHTunnel(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nh_id)
+void VxlanTunnel::updateNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nh_id)
 {
     auto key = nh_key_t(ipAddr, macAddress, vni);
 
@@ -413,7 +413,7 @@ void VxlanTunnel::updateNHTunnel(IpAddress& ipAddr, MacAddress macAddress, uint3
     }
 }
 
-sai_object_id_t VxlanTunnel::getNHTunnel(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni) const
+sai_object_id_t VxlanTunnel::getNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni) const
 {
     auto key = nh_key_t(ipAddr, macAddress, vni);
 
@@ -426,19 +426,19 @@ sai_object_id_t VxlanTunnel::getNHTunnel(IpAddress& ipAddr, MacAddress macAddres
     return nh_tunnels_.at(key).nh_id;
 }
 
-void VxlanTunnel::incNHTunnelRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni)
+void VxlanTunnel::incNextHopRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni)
 {
     auto key = nh_key_t(ipAddr, macAddress, vni);
     nh_tunnels_[key].ref_count ++;
 }
 
-void VxlanTunnel::decNHTunnelRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni)
+void VxlanTunnel::decNextHopRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni)
 {
     auto key = nh_key_t(ipAddr, macAddress, vni);
     nh_tunnels_[key].ref_count --;
 }
 
-bool VxlanTunnel::removeNHTunnel(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni)
+bool VxlanTunnel::removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni)
 {
     auto key = nh_key_t(ipAddr, macAddress, vni);
 
@@ -485,9 +485,9 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAd
     auto tunnel_obj = getVxlanTunnel(tunnelName);
     sai_object_id_t nh_id, tunnel_id = tunnel_obj->getTunnelId();
 
-    if ((nh_id = tunnel_obj->getNHTunnel(ipAddr, macAddress, vni)) != SAI_NULL_OBJECT_ID)
+    if ((nh_id = tunnel_obj->getNextHop(ipAddr, macAddress, vni)) != SAI_NULL_OBJECT_ID)
     {
-        tunnel_obj->incNHTunnelRefCount(ipAddr, macAddress, vni);
+        tunnel_obj->incNextHopRefCount(ipAddr, macAddress, vni);
         return nh_id;
     }
 
@@ -508,7 +508,7 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAd
     }
 
     //Store the nh tunnel id
-    tunnel_obj->updateNHTunnel(ipAddr, macAddress, vni, nh_id);
+    tunnel_obj->updateNextHop(ipAddr, macAddress, vni, nh_id);
 
     SWSS_LOG_INFO("NH vxlan tunnel was created for %s, id 0x%lx", tunnelName.c_str(), nh_id);
     return nh_id;
@@ -528,7 +528,7 @@ VxlanTunnelOrch::removeNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAd
     auto tunnel_obj = getVxlanTunnel(tunnelName);
 
     //Delete request for the nh tunnel id
-    return tunnel_obj->removeNHTunnel(ipAddr, macAddress, vni);
+    return tunnel_obj->removeNextHop(ipAddr, macAddress, vni);
 }
 
 bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t map, uint32_t vni,

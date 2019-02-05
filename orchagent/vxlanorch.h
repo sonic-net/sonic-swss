@@ -104,12 +104,12 @@ public:
         return ids_.tunnel_encap_id;
     }
 
-    void updateNHTunnel(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nh_id);
-    bool removeNHTunnel(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
-    sai_object_id_t getNHTunnel(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni) const;
+    void updateNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nhId);
+    bool removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
+    sai_object_id_t getNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni) const;
 
-    void incNHTunnelRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
-    void decNHTunnelRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
+    void incNextHopRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
+    void decNextHopRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
 
 private:
     string tunnel_name_;

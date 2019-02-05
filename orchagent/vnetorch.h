@@ -143,11 +143,11 @@ public:
     bool removeRoute(IpPrefix& ipPrefix);
 
     size_t getRouteCount() const;
-    bool getRouteNH(IpPrefix& ipPrefix, nextHop& nh);
+    bool getRouteNextHop(IpPrefix& ipPrefix, nextHop& nh);
     bool hasRoute(IpPrefix& ipPrefix);
 
-    sai_object_id_t getNextHop(tunnelEndpoint& endp);
-    bool removeNextHop(tunnelEndpoint& endp);
+    sai_object_id_t getTunnelNextHop(tunnelEndpoint& endp);
+    bool removeTunnelNextHop(tunnelEndpoint& endp);
 
     ~VNetVrfObject();
 
@@ -167,7 +167,7 @@ class VNetOrch : public Orch2
 public:
     VNetOrch(DBConnector *db, const std::string&, VNET_EXEC op = VNET_EXEC::VNET_EXEC_VRF);
 
-    bool setIntf(const string& alias, const string vnet_name, const IpPrefix *prefix = nullptr);
+    bool setIntf(const string& alias, const string name, const IpPrefix *prefix = nullptr);
 
     bool isVnetExists(const std::string& name) const
     {
@@ -236,15 +236,15 @@ class VNetRouteOrch : public Orch2
 public:
     VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *);
 
-    typedef pair<string, void (VNetRouteOrch::*) (const Request& )> handler_pair;
-    typedef map<string, void (VNetRouteOrch::*) (const Request& )> handler_map;
+    typedef pair<string, bool (VNetRouteOrch::*) (const Request& )> handler_pair;
+    typedef map<string, bool (VNetRouteOrch::*) (const Request& )> handler_map;
 
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    void handleRoutes(const Request&);
-    void handleTunnel(const Request&);
+    bool handleRoutes(const Request&);
+    bool handleTunnel(const Request&);
 
     template<typename T>
     bool doRouteTask(const string& vnet, IpPrefix& ipPrefix, tunnelEndpoint& endp, string& op);
