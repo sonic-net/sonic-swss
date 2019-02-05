@@ -35,7 +35,7 @@ logger.addHandler(logging.NullHandler())
 # and this process is started by supervisord in swss docker.
 # It would be good to keep that time consistent routing reconciliation time-out, here
 # we are upstream, we shouldn't give up before down stream.
-TIME_OUT = 120
+TIME_OUT = 110
 
 # every 5 seconds to check interfaces states
 CHECK_INTERVAL = 5
@@ -191,12 +191,12 @@ def set_statedb_neigh_restore_done():
 # The interfaces' states were checked in a loop with an interval (CHECK_INTERVAL)
 # The function will timeout in case interfaces' states never meet the condition
 # after some time (TIME_OUT).
-def restore_update_kernel_neighbors(intf_neigh_map):
+def restore_update_kernel_neighbors(intf_neigh_map, timeout=TIME_OUT):
     # create object for netlink calls to kernel
     ipclass = IPRoute()
     mtime = monotonic.time.time
     start_time = mtime()
-    while (mtime() - start_time) < TIME_OUT:
+    while (mtime() - start_time) < timeout:
         for intf, family_neigh_map in intf_neigh_map.items():
             # only try to restore to kernel when link is up
             if is_intf_oper_state_up(intf):
@@ -240,6 +240,10 @@ def main():
     warmstart.initialize("neighsyncd", "swss")
     warmstart.checkWarmStart("neighsyncd", "swss", False)
 
+    timeout = warmstart.getWarmStartTimer("bgp", "bgp")
+    if timeout <= 0:
+        timeout = TIME_OUT
+
     # if swss or system warm reboot not enabled, don't run
     if not warmstart.isWarmStart():
         print "restore_neighbors service is skipped as warm restart not enabled"
@@ -259,7 +263,7 @@ def main():
         sys.exit(1)
 
     try:
-        restore_update_kernel_neighbors(intf_neigh_map)
+        restore_update_kernel_neighbors(intf_neigh_map, timeout)
     except Exception as e:
         logger.exception(str(e))
         sys.exit(1)

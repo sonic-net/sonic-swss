@@ -14,7 +14,7 @@
  * service to finish, should be longer than the restore_neighbors timeout value (120)
  * This should not happen, if happens, system is in a unknown state, we should exit.
  */
-#define RESTORE_NEIGH_WAIT_TIME_OUT 130
+#define RESTORE_NEIGH_WAIT_TIME_OUT 180
 
 namespace swss {
 
