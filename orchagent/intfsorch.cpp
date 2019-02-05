@@ -282,7 +282,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 
             if (port.m_type == Port::VLAN && ip_prefix.isV4())
             {
-                addDirectedBroadcast(port, ip_prefix.getBroadcastIp());
+                addDirectedBroadcast(port, ip_prefix);
             }
 
             m_syncdIntfses[alias].ip_addresses.insert(ip_prefix);
