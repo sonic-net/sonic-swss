@@ -159,8 +159,8 @@ private:
     static map<string, uint32_t> vnetIds_;
     static set<uint32_t> tunnelOffsets_;
     static map<uint32_t, VnetBridgeInfo> bridgeInfoMap_;
-    static map<MacAddress, sai_fdb_entry_t> fdbMap_;
-    static map<MacAddress, sai_neighbor_entry_t> neighMap_;
+    static map<tuple<MacAddress, sai_object_id_t>, sai_fdb_entry_t> fdbMap_;
+    static map<tuple<MacAddress, sai_object_id_t>, sai_neighbor_entry_t> neighMap_;
 
     uint32_t vnet_id_;
     uint32_t vni_;

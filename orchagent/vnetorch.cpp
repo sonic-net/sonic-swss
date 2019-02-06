@@ -155,8 +155,8 @@ uint32_t VNetBitmapObject::vnetBitmap_ = 0;
 set<uint32_t> VNetBitmapObject::tunnelOffsets_;
 map<string, uint32_t> VNetBitmapObject::vnetIds_;
 map<uint32_t, VnetBridgeInfo> VNetBitmapObject::bridgeInfoMap_;
-map<MacAddress, sai_fdb_entry_t> VNetBitmapObject::fdbMap_;
-map<MacAddress, sai_neighbor_entry_t> VNetBitmapObject::neighMap_;
+map<tuple<MacAddress, sai_object_id_t>, sai_fdb_entry_t> VNetBitmapObject::fdbMap_;
+map<tuple<MacAddress, sai_object_id_t>, sai_neighbor_entry_t> VNetBitmapObject::neighMap_;
 
 VNetBitmapObject::VNetBitmapObject(const string& vnet, string& tunnel, set<string>& peer, vector<sai_attribute_t>& attrs) :
     VNetObject(tunnel, peer)
@@ -550,7 +550,9 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
         peerBitmap |= getBitmapId(peer);
     }
 
-    if (fdbMap_.find(mac) == fdbMap_.end())
+    auto macBridge = make_tuple(mac, bInfo.bridge_id);
+
+    if (fdbMap_.find(macBridge) == fdbMap_.end())
     {
         /* FDB entry to the tunnel */
         vector<sai_attribute_t> fdb_attrs;
@@ -583,12 +585,12 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
             throw std::runtime_error("VNet route creation failed");
         }
 
-        fdbMap_.emplace(mac, fdbEntry);
+        fdbMap_.emplace(macBridge, fdbEntry);
     }
 
     /* Fake neighbor */
     sai_neighbor_entry_t neigh;
-    if (neighMap_.find(mac) == neighMap_.end())
+    if (neighMap_.find(macBridge) == neighMap_.end())
     {
         vector<sai_attribute_t> n_attrs;
         neigh.switch_id = gSwitchId;
@@ -610,11 +612,11 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
             throw std::runtime_error("VNet route creation failed");
         }
 
-        neighMap_.emplace(mac, neigh);
+        neighMap_.emplace(macBridge, neigh);
     }
     else
     {
-        neigh = neighMap_.at(mac);
+        neigh = neighMap_.at(macBridge);
     }
 
     /* Nexthop */
