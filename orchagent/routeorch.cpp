@@ -104,6 +104,15 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
 
     SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
 
+    /* All the interfaces have the same MAC address and hence the same
+     * auto-generated link-local ipv6 address with eui64 interface-id.
+     * Hence add a single /128 route entry for the link-local interface
+     * address pointing to the CPU port.
+     */
+    IpPrefix linklocal_prefix = getLinkLocalEui64Addr();
+
+    addLinkLocalRouteToMe(gVirtualRouterId, linklocal_prefix);
+
     /* Add fe80::/10 subnet route to forward all link-local packets
      * destined to us, to CPU */
     IpPrefix default_link_local_prefix("fe80::/10");
@@ -171,9 +180,9 @@ void RouteOrch::addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal
     sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create link local ipv6 host route %s to cpu, rv:%d",
+        SWSS_LOG_ERROR("Failed to create link local ipv6 route %s to cpu, rv:%d",
                        linklocal_prefix.getIp().to_string().c_str(), status);
-        throw runtime_error("Failed to create link local ipv6 host route to cpu.");
+        throw runtime_error("Failed to create link local ipv6 route to cpu.");
     }
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
