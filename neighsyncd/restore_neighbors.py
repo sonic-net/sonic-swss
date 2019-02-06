@@ -30,12 +30,12 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 logger.addHandler(logging.NullHandler())
 
-# timeout the restore process in 1 min if not finished
+# timeout the restore process in 110 seconds if not finished
 # This is mostly to wait for interfaces to be created and up after system warm-reboot
 # and this process is started by supervisord in swss docker.
-# It would be good to keep that time consistent routing reconciliation time-out, here
-# we are upstream, we shouldn't give up before down stream.
-TIME_OUT = 110
+# There had been devices taking close to 70 seconds to complete restoration, setting
+# default timeout to 110 seconds.
+DEF_TIME_OUT = 110
 
 # every 5 seconds to check interfaces states
 CHECK_INTERVAL = 5
@@ -190,8 +190,8 @@ def set_statedb_neigh_restore_done():
 # Once all the entries are restored, this function is returned.
 # The interfaces' states were checked in a loop with an interval (CHECK_INTERVAL)
 # The function will timeout in case interfaces' states never meet the condition
-# after some time (TIME_OUT).
-def restore_update_kernel_neighbors(intf_neigh_map, timeout=TIME_OUT):
+# after some time (DEF_TIME_OUT).
+def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
     # create object for netlink calls to kernel
     ipclass = IPRoute()
     mtime = monotonic.time.time
@@ -240,10 +240,6 @@ def main():
     warmstart.initialize("neighsyncd", "swss")
     warmstart.checkWarmStart("neighsyncd", "swss", False)
 
-    timeout = warmstart.getWarmStartTimer("bgp", "bgp")
-    if timeout <= 0:
-        timeout = TIME_OUT
-
     # if swss or system warm reboot not enabled, don't run
     if not warmstart.isWarmStart():
         print "restore_neighbors service is skipped as warm restart not enabled"
@@ -263,7 +259,7 @@ def main():
         sys.exit(1)
 
     try:
-        restore_update_kernel_neighbors(intf_neigh_map, timeout)
+        restore_update_kernel_neighbors(intf_neigh_map)
     except Exception as e:
         logger.exception(str(e))
         sys.exit(1)
