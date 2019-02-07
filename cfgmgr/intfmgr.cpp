@@ -15,6 +15,7 @@ using namespace swss;
 #define LAG_PREFIX          "PortChannel"
 #define LOOPBACK_PREFIX     "Loopback"
 #define VNET_PREFIX         "Vnet"
+#define VRF_PREFIX          "Vrf"
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
@@ -86,7 +87,8 @@ bool IntfMgr::isIntfStateOk(const string &alias)
             return true;
         }
     }
-    else if (!alias.compare(0, strlen(VNET_PREFIX), VNET_PREFIX))
+    else if (!alias.compare(0, strlen(VNET_PREFIX), VNET_PREFIX) ||
+             !alias.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
     {
         if (m_stateVrfTable.get(alias, temp))
         {
@@ -113,19 +115,19 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 {
     SWSS_LOG_ENTER();
 
+    /* Possible key permutations:
+     * INTERFACE_NAME
+     * INTERFACE_NAME|VRF(VNET)_NAME
+     */
     string alias(keys[0]);
     string vrf_name = "";
-    bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
-
-    for (auto idx : data)
+    if (keys.size() == 2)
     {
-        const auto &field = fvField(idx);
-        const auto &value = fvValue(idx);
-        if (field == "vnet_name" || field == "vrf_name")
-        {
-            vrf_name = value;
-        }
+        vrf_name = keys[1];
     }
+    string appKey = vrf_name.empty() ? alias : alias + ":" + vrf_name;
+
+    bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
 
     if (op == SET_COMMAND)
     {
@@ -145,7 +147,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         if (!is_lo)
         {
             setIntfVrf(alias, vrf_name);
-            m_appIntfTableProducer.set(alias, data);
+            m_appIntfTableProducer.set(appKey, data);
         }
         else
         {
@@ -158,7 +160,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         if (!is_lo)
         {
             setIntfVrf(alias, "");
-            m_appIntfTableProducer.del(alias);
+            m_appIntfTableProducer.del(appKey);
         }
         else
         {
@@ -179,10 +181,18 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 {
     SWSS_LOG_ENTER();
 
+    /* Possible key permutations:
+     * INTERFACE_NAME|IP_ADDRESS
+     * INTERFACE_NAME|VRF(VNET)_NAME|IP_ADDRESS
+     */
     string alias(keys[0]);
-    IpPrefix ip_prefix(keys[1]);
+    IpPrefix ip_prefix(keys.back());
     bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
-    string appKey = (is_lo ? "lo" : keys[0]) + ":" + keys[1];
+    string appKey = (is_lo ? "lo" : keys[0]);
+    for (size_t i = 1; i < keys.size(); i++)
+    {
+        appKey += ":" + keys[i];
+    }
 
     if (op == SET_COMMAND)
     {
@@ -238,6 +248,12 @@ void IntfMgr::doTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
 
+        /* Possible key permutations:
+         * INTERFACE_NAME
+         * INTERFACE_NAME|VRF(VNET)_NAME
+         * INTERFACE_NAME|IP_ADDRESS
+         * INTERFACE_NAME|VRF(VNET)_NAME|IP_ADDRESS
+         */
         vector<string> keys = tokenize(kfvKey(t), config_db_key_delimiter);
         const vector<FieldValueTuple>& data = kfvFieldsValues(t);
         string op = kfvOp(t);
@@ -251,6 +267,26 @@ void IntfMgr::doTask(Consumer &consumer)
             }
         }
         else if (keys.size() == 2)
+        {
+            if (!keys[1].compare(0, strlen(VNET_PREFIX), VNET_PREFIX) ||
+                !keys[1].compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+            {
+                if (!doIntfGeneralTask(keys, data, op))
+                {
+                    it++;
+                    continue;
+                }
+            }
+            else
+            {
+                if (!doIntfAddrTask(keys, data, op))
+                {
+                    it++;
+                    continue;
+                }
+            }
+        }
+        else if (keys.size() == 3)
         {
             if (!doIntfAddrTask(keys, data, op))
             {

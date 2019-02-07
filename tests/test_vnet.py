@@ -168,9 +168,9 @@ def create_vlan_interface(dvs, vlan_name, ifname, vnet_name, ipaddr):
     # create vlan interface in config db
     create_entry_tbl(
         conf_db,
-        "VLAN_INTERFACE", '|', vlan_name,
+        "VLAN_INTERFACE", '|', '%s|%s' % (vlan_name, vnet_name),
         [
-          ("vnet_name", vnet_name),
+          ("NULL", "NULL"),
         ],
     )
 
@@ -178,16 +178,16 @@ def create_vlan_interface(dvs, vlan_name, ifname, vnet_name, ipaddr):
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     create_entry_pst(
         app_db,
-        "INTF_TABLE", ':', vlan_name,
+        "INTF_TABLE", ':', '%s:%s' % (vlan_name, vnet_name),
         [
-            ("vnet_name", vnet_name),
+            ("NULL", "NULL"),
         ],
     )
     time.sleep(2)
 
     create_entry_tbl(
         conf_db,
-        "VLAN_INTERFACE", '|', "%s|%s" % (vlan_name, ipaddr),
+        "VLAN_INTERFACE", '|', "%s|%s|%s" % (vlan_name, vnet_name, ipaddr),
         [
           ("family", "IPv4"),
         ],
@@ -206,9 +206,9 @@ def create_phy_interface(dvs, ifname, vnet_name, ipaddr):
     # create vlan interface in config db
     create_entry_tbl(
         conf_db,
-        "INTERFACE", '|', ifname,
+        "INTERFACE", '|', '%s|%s' % (ifname, vnet_name),
         [
-          ("vnet_name", vnet_name),
+          ("NULL", "NULL"),
         ],
     )
 
@@ -216,16 +216,16 @@ def create_phy_interface(dvs, ifname, vnet_name, ipaddr):
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     create_entry_pst(
         app_db,
-        "INTF_TABLE", ':', ifname,
+        "INTF_TABLE", ':', '%s:%s' % (ifname, vnet_name),
         [
-            ("vnet_name", vnet_name),
+            ("NULL", "NULL"),
         ],
     )
     time.sleep(2)
 
     create_entry_tbl(
         conf_db,
-        "INTERFACE", '|', "%s|%s" % (ifname, ipaddr),
+        "INTERFACE", '|', "%s|%s|%s" % (ifname, vnet_name, ipaddr),
         [
           ("family", "IPv4"),
         ],

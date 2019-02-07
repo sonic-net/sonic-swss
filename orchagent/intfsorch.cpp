@@ -15,6 +15,9 @@
 #include "directory.h"
 #include "vnetorch.h"
 
+#define VNET_PREFIX "Vnet"
+#define VRF_PREFIX  "Vrf"
+
 extern sai_object_id_t gVirtualRouterId;
 extern Directory<Orch*> gDirectory;
 
@@ -181,31 +184,39 @@ void IntfsOrch::doTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
 
+        /* Possible key permutations:
+         * INTERFACE_NAME
+         * INTERFACE_NAME:VRF(VNET)_NAME
+         * INTERFACE_NAME:IP_ADDRESS
+         * INTERFACE_NAME:VRF(VNET)_NAME:IP_ADDRESS
+         */
         vector<string> keys = tokenize(kfvKey(t), ':');
         string alias(keys[0]);
         IpPrefix ip_prefix;
         bool ip_prefix_in_key = false;
-
-        if (keys.size() > 1)
-        {
-            ip_prefix = kfvKey(t).substr(kfvKey(t).find(':')+1);
-            ip_prefix_in_key = true;
-        }
-
         const vector<FieldValueTuple>& data = kfvFieldsValues(t);
         string vrf_name = "", vnet_name = "";
 
-        for (auto idx : data)
+        if (keys.size() > 1)
         {
-            const auto &field = fvField(idx);
-            const auto &value = fvValue(idx);
-            if (field == "vrf_name")
+            if (!keys[1].compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
             {
-                vrf_name = value;
-            }
-            else if (field == "vnet_name")
+                vrf_name = keys[1];
+                if (keys.size() > 2)
+                {
+                    ip_prefix = kfvKey(t).substr(kfvKey(t).find(':')+1).substr(kfvKey(t).find(':')+1);                                                                                                        ip_prefix_in_key = true;
+                }                                                                                                                                                                                     }
+            else if (!keys[1].compare(0, strlen(VNET_PREFIX), VNET_PREFIX))
             {
-                vnet_name = value;
+                vnet_name = keys[1];
+                if (keys.size() > 2)
+                {
+                    ip_prefix = kfvKey(t).substr(kfvKey(t).find(':')+1).substr(kfvKey(t).find(':')+1);
+                    ip_prefix_in_key = true;                                                                                                                                                              }
+            }                                                                                                                                                                                         else
+            {
+                ip_prefix = kfvKey(t).substr(kfvKey(t).find(':')+1);
+                ip_prefix_in_key = true;
             }
         }
 
