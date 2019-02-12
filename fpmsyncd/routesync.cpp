@@ -47,7 +47,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     {
         onRouteMsg(nlmsg_type, obj);
     } 
-    /* VNET route */
+    /* VNET route. We will handle VRF routes in the future. */
     else 
     {
         onVnetRouteMsg(nlmsg_type, obj);
