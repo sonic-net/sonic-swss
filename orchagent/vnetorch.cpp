@@ -15,6 +15,8 @@
 #include "directory.h"
 #include "swssnet.h"
 #include "intfsorch.h"
+#include "neighorch.h"
+#include "crmorch.h"
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_route_api_t* sai_route_api;
@@ -22,14 +24,16 @@ extern sai_object_id_t gSwitchId;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch *gPortsOrch;
 extern IntfsOrch *gIntfsOrch;
+extern NeighOrch *gNeighOrch;
+extern CrmOrch *gCrmOrch;
 
 /*
  * VRF Modeling and VNetVrf class definitions
  */
 std::vector<VR_TYPE> vr_cntxt;
 
-VNetVrfObject::VNetVrfObject(const std::string& vnet, string& tunnel, set<string>& peer,
-                             vector<sai_attribute_t>& attrs) : VNetObject(tunnel, peer)
+VNetVrfObject::VNetVrfObject(const std::string& vnet, const VNetInfo& vnetInfo,
+                             vector<sai_attribute_t>& attrs) : VNetObject(vnetInfo)
 {
     vnet_name_ = vnet;
     createObj(attrs);
@@ -122,6 +126,113 @@ bool VNetVrfObject::updateObj(vector<sai_attribute_t>& attrs)
     return true;
 }
 
+bool VNetVrfObject::hasRoute(IpPrefix& ipPrefix)
+{
+    if ((routes_.find(ipPrefix) != routes_.end()) || (tunnels_.find(ipPrefix) != tunnels_.end()))
+    {
+        return true;
+    }
+
+    return false;
+}
+
+bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
+{
+    if (hasRoute(ipPrefix))
+    {
+        SWSS_LOG_INFO("VNET route '%s' exists", ipPrefix.to_string().c_str());
+        return false;
+    }
+
+    tunnels_[ipPrefix] = endp;
+    return true;
+}
+
+bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
+{
+    if (hasRoute(ipPrefix))
+    {
+        SWSS_LOG_INFO("VNET route '%s' exists", ipPrefix.to_string().c_str());
+        return false;
+    }
+
+    routes_[ipPrefix] = nh;
+    return true;
+}
+
+bool VNetVrfObject::removeRoute(IpPrefix& ipPrefix)
+{
+    if (!hasRoute(ipPrefix))
+    {
+        SWSS_LOG_INFO("VNET route '%s' does'nt exist", ipPrefix.to_string().c_str());
+        return false;
+    }
+    /*
+     * Remove nexthop tunnel object before removing route
+     */
+
+    if (tunnels_.find(ipPrefix) != tunnels_.end())
+    {
+        auto endp = tunnels_.at(ipPrefix);
+        removeTunnelNextHop(endp);
+        tunnels_.erase(ipPrefix);
+    }
+    else
+    {
+        routes_.erase(ipPrefix);
+    }
+    return true;
+}
+
+size_t VNetVrfObject::getRouteCount() const
+{
+    return (routes_.size() + tunnels_.size());
+}
+
+bool VNetVrfObject::getRouteNextHop(IpPrefix& ipPrefix, nextHop& nh)
+{
+    if (!hasRoute(ipPrefix))
+    {
+        SWSS_LOG_INFO("VNET route '%s' does'nt exist", ipPrefix.to_string().c_str());
+        return false;
+    }
+
+    nh = routes_.at(ipPrefix);
+    return true;
+}
+
+sai_object_id_t VNetVrfObject::getTunnelNextHop(tunnelEndpoint& endp)
+{
+    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
+    auto tun_name = getTunnelName();
+
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+    nh_id = vxlan_orch->createNextHopTunnel(tun_name, endp.ip, endp.mac, endp.vni);
+    if (nh_id == SAI_NULL_OBJECT_ID)
+    {
+        throw std::runtime_error("NH Tunnel create failed for " + vnet_name_ + " ip " + endp.ip.to_string());
+    }
+
+    return nh_id;
+}
+
+bool VNetVrfObject::removeTunnelNextHop(tunnelEndpoint& endp)
+{
+    auto tun_name = getTunnelName();
+
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+    if (!vxlan_orch->removeNextHopTunnel(tun_name, endp.ip, endp.mac, endp.vni))
+    {
+        SWSS_LOG_ERROR("VNET %s Tunnel NextHop remove failed for '%s'",
+                        vnet_name_.c_str(), endp.ip.to_string().c_str());
+        return false;
+    }
+
+    return true;
+}
+
 VNetVrfObject::~VNetVrfObject()
 {
     set<sai_object_id_t> vr_ent = getVRids();
@@ -143,10 +254,10 @@ VNetVrfObject::~VNetVrfObject()
  */
 
 template <class T>
-std::unique_ptr<T> VNetOrch::createObject(const string& vnet_name, string& tunnel, set<string>& plist,
+std::unique_ptr<T> VNetOrch::createObject(const string& vnet_name, const VNetInfo& vnet_info,
                                           vector<sai_attribute_t>& attrs)
 {
-    std::unique_ptr<T> vnet_obj(new T(vnet_name, tunnel, plist, attrs));
+    std::unique_ptr<T> vnet_obj(new T(vnet_name, vnet_info, attrs));
     return vnet_obj;
 }
 
@@ -165,19 +276,19 @@ VNetOrch::VNetOrch(DBConnector *db, const std::string& tableName, VNET_EXEC op)
     }
 }
 
-bool VNetOrch::setIntf(const string& alias, const string vnet_name, const IpPrefix *prefix)
+bool VNetOrch::setIntf(const string& alias, const string name, const IpPrefix *prefix)
 {
     SWSS_LOG_ENTER();
 
     if (isVnetExecVrf())
     {
-        if (!isVnetExists(vnet_name))
+        if (!isVnetExists(name))
         {
-            SWSS_LOG_WARN("VNET %s doesn't exist", vnet_name.c_str());
+            SWSS_LOG_WARN("VNET %s doesn't exist", name.c_str());
             return false;
         }
 
-        auto *vnet_obj = getTypePtr<VNetVrfObject>(vnet_name);
+        auto *vnet_obj = getTypePtr<VNetVrfObject>(name);
         sai_object_id_t vrf_id = vnet_obj->getVRidIngress();
 
         return gIntfsOrch->setIntf(alias, vrf_id, prefix);
@@ -220,7 +331,7 @@ bool VNetOrch::addOperation(const Request& request)
         }
         else
         {
-            SWSS_LOG_WARN("Logic error: Unknown attribute: %s", name.c_str());
+            SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
             continue;
         }
     }
@@ -244,13 +355,14 @@ bool VNetOrch::addOperation(const Request& request)
 
             if (it == std::end(vnet_table_))
             {
-                obj = createObject<VNetVrfObject>(vnet_name, tunnel, peer_list, attrs);
+                VNetInfo vnet_info = { tunnel, vni, peer_list };
+                obj = createObject<VNetVrfObject>(vnet_name, vnet_info, attrs);
                 create = true;
             }
 
-            VNetVrfObject *vrfObj = dynamic_cast<VNetVrfObject*>(obj.get());
+            VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(obj.get());
             if (!vxlan_orch->createVxlanTunnelMap(tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
-                                                  vrfObj->getEncapMapId(), vrfObj->getDecapMapId()))
+                                                  vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId()))
             {
                 SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
                                 vnet_name.c_str(), tunnel.c_str());
@@ -302,15 +414,73 @@ bool VNetOrch::delOperation(const Request& request)
         return true;
     }
 
+    SWSS_LOG_INFO("VNET '%s' del request", vnet_name.c_str());
+
+    try
+    {
+        auto it = vnet_table_.find(vnet_name);
+        if (isVnetExecVrf())
+        {
+            VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+            VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(it->second.get());
+
+            if (vrf_obj->getRouteCount())
+            {
+                SWSS_LOG_ERROR("VNET '%s': Routes are still present", vnet_name.c_str());
+                return false;
+            }
+
+            if (!vxlan_orch->removeVxlanTunnelMap(vrf_obj->getTunnelName(), vrf_obj->getVni()))
+            {
+                SWSS_LOG_ERROR("VNET '%s' map delete failed", vnet_name.c_str());
+                return false;
+            }
+        }
+        else
+        {
+            // BRIDGE Handling
+        }
+    }
+    catch(std::runtime_error& _)
+    {
+        SWSS_LOG_ERROR("VNET del operation error for %s: error %s ", vnet_name.c_str(), _.what());
+        return false;
+    }
+
     vnet_table_.erase(vnet_name);
 
-    SWSS_LOG_INFO("VNET '%s' del request", vnet_name.c_str());
     return true;
 }
 
 /*
  * Vnet Route Handling
  */
+
+static bool del_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx)
+{
+    sai_route_entry_t route_entry;
+    route_entry.vr_id = vr_id;
+    route_entry.switch_id = gSwitchId;
+    route_entry.destination = ip_pfx;
+
+    sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("SAI Failed to remove route");
+        return false;
+    }
+
+    if (route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
+
+    return true;
+}
 
 static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object_id_t nh_id)
 {
@@ -331,6 +501,15 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
         return false;
     }
 
+    if (route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
+
     return true;
 }
 
@@ -343,34 +522,9 @@ VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOr
     handler_map_.insert(handler_pair(APP_VNET_RT_TUNNEL_TABLE_NAME, &VNetRouteOrch::handleTunnel));
 }
 
-sai_object_id_t VNetRouteOrch::getNextHop(const string& vnet, tunnelEndpoint& endp)
-{
-    auto it = nh_tunnels_.find(vnet);
-    if (it != nh_tunnels_.end())
-    {
-        if (it->second.find(endp.ip) != it->second.end())
-        {
-            return it->second.at(endp.ip);
-        }
-    }
-
-    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
-    auto tun_name = vnet_orch_->getTunnelName(vnet);
-
-    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
-
-    nh_id = vxlan_orch->createNextHopTunnel(tun_name, endp.ip, endp.mac, endp.vni);
-    if (nh_id == SAI_NULL_OBJECT_ID)
-    {
-        throw std::runtime_error("NH Tunnel create failed for " + vnet + " ip " + endp.ip.to_string());
-    }
-
-    nh_tunnels_[vnet].insert({endp.ip, nh_id});
-    return nh_id;
-}
-
 template<>
-bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix, tunnelEndpoint& endp)
+bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
+                                               tunnelEndpoint& endp, string& op)
 {
     SWSS_LOG_ENTER();
 
@@ -400,23 +554,40 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         l_fn(peer);
     }
 
+    auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
     sai_ip_prefix_t pfx;
     copy(pfx, ipPrefix);
-    sai_object_id_t nh_id = getNextHop(vnet, endp);
+    sai_object_id_t nh_id = (op == SET_COMMAND)?vrf_obj->getTunnelNextHop(endp):SAI_NULL_OBJECT_ID;
 
     for (auto vr_id : vr_set)
     {
-        if(!add_route(vr_id, pfx, nh_id))
+        if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
         {
-            SWSS_LOG_ERROR("Route add failed for %s", ipPrefix.to_string().c_str());
-            break;
+            SWSS_LOG_ERROR("Route add failed for %s, vr_id '0x%lx", ipPrefix.to_string().c_str(), vr_id);
+            return false;
+        }
+        else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
+        {
+            SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%lx", ipPrefix.to_string().c_str(), vr_id);
+            return false;
         }
     }
+
+    if (op == SET_COMMAND)
+    {
+        vrf_obj->addRoute(ipPrefix, endp);
+    }
+    else
+    {
+        vrf_obj->removeRoute(ipPrefix);
+    }
+
     return true;
 }
 
 template<>
-bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix, string& ifname)
+bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipPrefix,
+                                               nextHop& nh, string& op)
 {
     SWSS_LOG_ENTER();
 
@@ -426,17 +597,43 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         return false;
     }
 
-    Port p;
-    if (!gPortsOrch->getPort(ifname, p) || (p.m_rif_id == SAI_NULL_OBJECT_ID))
+    auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
+    if (op == DEL_COMMAND && !vrf_obj->getRouteNextHop(ipPrefix, nh))
     {
-        SWSS_LOG_WARN("Port/RIF %s doesn't exist", ifname.c_str());
+        SWSS_LOG_WARN("VNET %s, Route %s get NH failed", vnet.c_str(), ipPrefix.to_string().c_str());
+        return true;
+    }
+
+    bool is_subnet = (!nh.ips.getSize())?true:false;
+
+    Port port;
+    if (is_subnet && (!gPortsOrch->getPort(nh.ifname, port) || (port.m_rif_id == SAI_NULL_OBJECT_ID)))
+    {
+        SWSS_LOG_WARN("Port/RIF %s doesn't exist", nh.ifname.c_str());
         return false;
     }
 
     set<sai_object_id_t> vr_set;
     auto& peer_list = vnet_orch_->getPeerList(vnet);
-    auto *vnet_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
-    vr_set.insert(vnet_obj->getVRidEgress());
+    auto vr_id = vrf_obj->getVRidIngress();
+
+    /*
+     * If RIF doesn't belong to this VRF, and if it is a replicated subnet
+     * route for the peering VRF, Only install in ingress VRF.
+     */
+
+    if (!is_subnet)
+    {
+        vr_set = vrf_obj->getVRids();
+    }
+    else if (vr_id == port.m_vr_id)
+    {
+        vr_set.insert(vrf_obj->getVRidEgress());
+    }
+    else
+    {
+        vr_set.insert(vr_id);
+    }
 
     auto l_fn = [&] (const string& vnet) {
         auto *vnet_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
@@ -456,23 +653,64 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
     sai_ip_prefix_t pfx;
     copy(pfx, ipPrefix);
+    sai_object_id_t nh_id=SAI_NULL_OBJECT_ID;
+
+    if (is_subnet)
+    {
+        nh_id = port.m_rif_id;
+    }
+    else if (nh.ips.getSize() == 1)
+    {
+        IpAddress ip_address(nh.ips.to_string());
+        if (gNeighOrch->hasNextHop(ip_address))
+        {
+            nh_id = gNeighOrch->getNextHopId(ip_address);
+        }
+        else
+        {
+            SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                           ip_address.to_string().c_str(), ipPrefix.to_string().c_str());
+            return false;
+        }
+    }
+    else
+    {
+        // FIXME - Handle ECMP routes
+        SWSS_LOG_WARN("VNET ECMP NHs not implemented for '%s'", ipPrefix.to_string().c_str());
+        return true;
+    }
 
     for (auto vr_id : vr_set)
     {
-        if(!add_route(vr_id, pfx, p.m_rif_id ))
+        if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
         {
             SWSS_LOG_ERROR("Route add failed for %s", ipPrefix.to_string().c_str());
             break;
         }
+        else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
+        {
+            SWSS_LOG_ERROR("Route del failed for %s", ipPrefix.to_string().c_str());
+            break;
+        }
+    }
+
+    if (op == SET_COMMAND)
+    {
+        vrf_obj->addRoute(ipPrefix, nh);
+    }
+    else
+    {
+        vrf_obj->removeRoute(ipPrefix);
     }
 
     return true;
 }
 
-void VNetRouteOrch::handleRoutes(const Request& request)
+bool VNetRouteOrch::handleRoutes(const Request& request)
 {
     SWSS_LOG_ENTER();
 
+    IpAddresses ip_addresses;
     string ifname = "";
 
     for (const auto& name: request.getAttrFieldNames())
@@ -481,28 +719,35 @@ void VNetRouteOrch::handleRoutes(const Request& request)
         {
             ifname = request.getAttrString(name);
         }
+        else if (name == "nexthop")
+        {
+            auto ipstr = request.getAttrString(name);
+            ip_addresses = IpAddresses(ipstr);
+        }
         else
         {
-            SWSS_LOG_WARN("Logic error: Unknown attribute: %s", name.c_str());
-            return;
+            SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
+            continue;
         }
     }
 
     const std::string& vnet_name = request.getKeyString(0);
     auto ip_pfx = request.getKeyIpPrefix(1);
+    auto op = request.getOperation();
+    nextHop nh = { ip_addresses, ifname };
 
-    SWSS_LOG_INFO("VNET-RT '%s' add for ip %s", vnet_name.c_str(), ip_pfx.to_string().c_str());
+    SWSS_LOG_INFO("VNET-RT '%s' op '%s' for ip %s", vnet_name.c_str(),
+                   op.c_str(), ip_pfx.to_string().c_str());
 
     if (vnet_orch_->isVnetExecVrf())
     {
-        if (!doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, ifname))
-        {
-            throw std::runtime_error("Route add failed");
-        }
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nh, op);
     }
+
+    return true;
 }
 
-void VNetRouteOrch::handleTunnel(const Request& request)
+bool VNetRouteOrch::handleTunnel(const Request& request)
 {
     SWSS_LOG_ENTER();
 
@@ -526,24 +771,26 @@ void VNetRouteOrch::handleTunnel(const Request& request)
         }
         else
         {
-            SWSS_LOG_WARN("Logic error: Unknown attribute: %s", name.c_str());
-            return;
+            SWSS_LOG_INFO("Unknown attribute: %s", name.c_str());
+            continue;
         }
     }
 
     const std::string& vnet_name = request.getKeyString(0);
     auto ip_pfx = request.getKeyIpPrefix(1);
+    auto op = request.getOperation();
 
-    SWSS_LOG_INFO("VNET-RT '%s' add for endpoint %s", vnet_name.c_str(), ip_pfx.to_string().c_str());
+    SWSS_LOG_INFO("VNET-RT '%s' op '%s' for pfx %s", vnet_name.c_str(),
+                   op.c_str(), ip_pfx.to_string().c_str());
 
     tunnelEndpoint endp = { ip, mac, vni };
+
     if (vnet_orch_->isVnetExecVrf())
     {
-        if (!doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, endp))
-        {
-            throw std::runtime_error("Route add failed");
-        }
+        return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, endp, op);
     }
+
+    return true;
 }
 
 bool VNetRouteOrch::addOperation(const Request& request)
@@ -559,12 +806,12 @@ bool VNetRouteOrch::addOperation(const Request& request)
             return true;
         }
 
-        (this->*(handler_map_[tn]))(request);
+        return ((this->*(handler_map_[tn]))(request));
     }
     catch(std::runtime_error& _)
     {
         SWSS_LOG_ERROR("VNET add operation error %s ", _.what());
-        return false;
+        return true;
     }
 
     return true;
@@ -574,7 +821,22 @@ bool VNetRouteOrch::delOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_ERROR("DEL operation is not implemented");
+    try
+    {
+        auto& tn = request.getTableName();
+        if (handler_map_.find(tn) == handler_map_.end())
+        {
+            SWSS_LOG_ERROR(" %s handler is not initialized", tn.c_str());
+            return true;
+        }
+
+        return ((this->*(handler_map_[tn]))(request));
+    }
+    catch(std::runtime_error& _)
+    {
+        SWSS_LOG_ERROR("VNET del operation error %s ", _.what());
+        return true;
+    }
 
     return true;
 }
