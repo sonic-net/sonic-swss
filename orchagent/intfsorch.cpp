@@ -777,7 +777,7 @@ void IntfsOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_DEBUG("Registering %ld new intfs, deleting %ld ", m_rifsToAdd.size(), m_rifsToRemove.size());
+    SWSS_LOG_DEBUG("Registering %ld new intfs", m_rifsToAdd.size());
     string value;
     for (auto it = m_rifsToAdd.begin(); it != m_rifsToAdd.end(); )
     {
