@@ -48,7 +48,6 @@ private:
 
     SelectableTimer* m_updateMapsTimer = nullptr;
     std::vector<Port> m_rifsToAdd;
-    std::vector<Port> m_rifsToRemove;
 
     VRFOrch *m_vrfOrch;
     IntfsTable m_syncdIntfses;

@@ -54,13 +54,11 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
     /* Initialize DB connectors */ 
     m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
     m_flex_db = shared_ptr<DBConnector>(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
-    // m_state_db = shared_ptr<DBConnector>(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
     m_asic_db = shared_ptr<DBConnector>(new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
     /* Initialize COUNTER_DB tables */
     m_rifNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_NAME_MAP));
     m_rifTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_TYPE_MAP));
 
-    // m_stateInterfaceTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_INTERFACE_TABLE_NAME));
     m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
     auto intervT = timespec { .tv_sec = UPDATE_MAPS_SEC , .tv_nsec = 0 };
     m_updateMapsTimer = new SelectableTimer(intervT);
@@ -779,16 +777,12 @@ void IntfsOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("Registering %ld new intfs, deleting %ld ", m_rifsToAdd.size(), m_rifsToRemove.size());
+    SWSS_LOG_DEBUG("Registering %ld new intfs, deleting %ld ", m_rifsToAdd.size(), m_rifsToRemove.size());
     string value;
-    for (auto it = m_rifsToAdd.begin(); it != m_rifsToAdd.end(); ++it)
-    {
-        SWSS_LOG_NOTICE("Registering begin -> %s ", it->m_alias.c_str());
-    }
     for (auto it = m_rifsToAdd.begin(); it != m_rifsToAdd.end(); )
     {
         const auto id = sai_serialize_object_id(it->m_rif_id);
-        SWSS_LOG_NOTICE("Registering %s, id %s", it->m_alias.c_str(), id.c_str());
+        SWSS_LOG_INFO("Registering %s, id %s", it->m_alias.c_str(), id.c_str());
         std::string type;
         switch(it->m_type)
         {
@@ -806,7 +800,7 @@ void IntfsOrch::doTask(SelectableTimer &timer)
         }
         if (m_vidToRidTable->hget("", id, value))
         {
-            SWSS_LOG_NOTICE("Registering %s it is ready", it->m_alias.c_str());
+            SWSS_LOG_INFO("Registering %s it is ready", it->m_alias.c_str());
             addRifToFlexCounter(id, it->m_alias, type);
             it = m_rifsToAdd.erase(it);
         }
