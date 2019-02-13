@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <unordered_map>
 #include <set>
 #include <memory>
 #include "request_parser.h"
@@ -26,6 +27,50 @@ struct tunnel_ids_t
     sai_object_id_t tunnel_term_id;
 };
 
+struct nh_key_t
+{
+    IpAddress ip_addr;
+    MacAddress mac_address;
+    uint32_t vni=0;
+
+    nh_key_t() = default;
+
+    nh_key_t(IpAddress ipAddr, MacAddress macAddress=MacAddress(), uint32_t vnId=0)
+    {
+        ip_addr = ipAddr;
+        mac_address = macAddress;
+        vni = vnId;
+    };
+
+    bool operator== (const nh_key_t& rhs) const
+    {
+        if (!(ip_addr == rhs.ip_addr) || mac_address != rhs.mac_address || vni != rhs.vni)
+        {
+            return false;
+        }
+        return true;
+    }
+};
+
+struct nh_key_hash
+{
+    size_t operator() (const nh_key_t& key) const
+    {
+        stringstream ss;
+        ss << key.ip_addr.to_string() << key.mac_address.to_string() << std::to_string(key.vni);
+        return std::hash<std::string>() (ss.str());
+    }
+};
+
+struct nh_tunnel_t
+{
+    sai_object_id_t nh_id;
+    int             ref_count;
+};
+
+typedef std::map<uint32_t, std::pair<sai_object_id_t, sai_object_id_t>> TunnelMapEntries;
+typedef std::unordered_map<nh_key_t, nh_tunnel_t, nh_key_hash> TunnelNHs;
+
 class VxlanTunnel
 {
 public:
@@ -40,6 +85,9 @@ public:
     bool createTunnel(MAP_T encap, MAP_T decap);
     sai_object_id_t addEncapMapperEntry(sai_object_id_t obj, uint32_t vni);
     sai_object_id_t addDecapMapperEntry(sai_object_id_t obj, uint32_t vni);
+
+    void insertMapperEntry(sai_object_id_t encap, sai_object_id_t decap, uint32_t vni);
+    std::pair<sai_object_id_t, sai_object_id_t> getMapperEntry(uint32_t vni);
 
     sai_object_id_t getTunnelId() const
     {
@@ -56,12 +104,22 @@ public:
         return ids_.tunnel_encap_id;
     }
 
+    void updateNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nhId);
+    bool removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
+    sai_object_id_t getNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni) const;
+
+    void incNextHopRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
+    void decNextHopRefCount(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
+
 private:
     string tunnel_name_;
     bool active_ = false;
 
     tunnel_ids_t ids_;
     std::pair<MAP_T, MAP_T> tunnel_map_ = { MAP_T::MAP_TO_INVALID, MAP_T::MAP_TO_INVALID };
+
+    TunnelMapEntries tunnel_map_entries_;
+    TunnelNHs nh_tunnels_;
 
     IpAddress src_ip_;
     IpAddress dst_ip_ = 0x0;
@@ -110,8 +168,13 @@ public:
     bool createVxlanTunnelMap(string tunnelName, tunnel_map_type_t mapType, uint32_t vni,
                               sai_object_id_t encap, sai_object_id_t decap);
 
+    bool removeVxlanTunnelMap(string tunnelName, uint32_t vni);
+
     sai_object_id_t
     createNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni=0);
+
+    bool
+    removeNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAddress macAddress, uint32_t vni=0);
 
 private:
     virtual bool addOperation(const Request& request);

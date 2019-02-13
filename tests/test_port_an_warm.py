@@ -12,9 +12,9 @@ def test_PortAutoNeg_warm(dvs, testlog):
     ctbl = swsscommon.Table(cdb, "PORT")
     stbl = swsscommon.Table(sdb, "PORT_TABLE")
 
-    # set autoneg = false and speed = 1000
+    # set autoneg = true and speed = 1000
     fvs = swsscommon.FieldValuePairs([("autoneg","1"), ("speed", "1000")])
-    tbl.set("Ethernet0", fvs)
+    ctbl.set("Ethernet0", fvs)
 
     time.sleep(1)
 
@@ -35,7 +35,7 @@ def test_PortAutoNeg_warm(dvs, testlog):
     # set speed = 100
     fvs = swsscommon.FieldValuePairs([("speed", "100")])
 
-    tbl.set("Ethernet0", fvs)
+    ctbl.set("Ethernet0", fvs)
 
     time.sleep(1)
 

@@ -10,10 +10,6 @@
 using namespace std;
 using namespace swss;
 
-/* Port default admin status is down */
-#define DEFAULT_ADMIN_STATUS_STR    "down"
-#define DEFAULT_MTU_STR             "9100"
-
 PortMgr::PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgPortTable(cfgDb, CFG_PORT_TABLE_NAME),
