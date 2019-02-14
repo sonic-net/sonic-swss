@@ -140,7 +140,7 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         break;
 
     case SAI_FDB_EVENT_AGED:
-    case SAI_FDB_EVENT_MOVE:
+    /*case SAI_FDB_EVENT_MOVE:*/
         update.add = false;
         storeFdbEntryState(update);
 
@@ -192,6 +192,10 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
             SWSS_LOG_ERROR("FdbOrch notification: not supported flush fdb action, port_id = 0x%lx, bv_id = 0x%lx.", bridge_port_id, entry->bv_id);
         }
         break;
+
+     case SAI_FDB_EVENT_MOVE:
+	 	SWSS_LOG_NOTICE("FdbOrch notification: mac %s was moved bv_id 0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id);
+	 break;
     }
 
     return;
@@ -434,7 +438,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
 bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const string& type)
 {
     SWSS_LOG_ENTER();
-
+#if 0
     if (m_entries.count(entry) != 0) // we already have such entries
     {
         // FIXME: should we check that the entry are moving to another port?
@@ -442,7 +446,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
         SWSS_LOG_ERROR("FDB entry already exists. mac=%s bv_id=0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
         return true;
     }
-
+#endif
     sai_fdb_entry_t fdb_entry;
 
     fdb_entry.switch_id = gSwitchId;
@@ -482,6 +486,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
     attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     attrs.push_back(attr);
+
+    if (m_entries.count(entry) != 0) // we already have such entries
+    {
+        removeFdbEntry(entry);
+    }
 
     sai_status_t status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
