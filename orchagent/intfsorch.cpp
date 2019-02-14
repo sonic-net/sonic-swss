@@ -155,6 +155,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
         return false;
     }
 
+    vrf_id = port.m_vr_id;
     addSubnetRoute(port, *ip_prefix);
     addIp2MeRoute(vrf_id, *ip_prefix);
 
@@ -171,7 +172,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isPortReady())
     {
         return;
     }
@@ -271,13 +272,6 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (!gPortsOrch->getPort(alias, port))
             {
                 /* TODO: Resolve the dependency relationship and add ref_count to port */
-                it++;
-                continue;
-            }
-
-            // buffer configuration hasn't been applied yet, hold from intf config.
-            if (!gBufferOrch->isPortReady(alias))
-            {
                 it++;
                 continue;
             }
