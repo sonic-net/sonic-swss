@@ -559,11 +559,14 @@ class VnetVxlanVrfTunnel(object):
 
 class TestVnetOrch(object):
 
+    def get_vnet_obj(self):
+        return VnetVxlanVrfTunnel()
+
     '''
     Test 1 - Create Vlan Interface, Tunnel and Vnet
     '''
     def test_vnet_orch_1(self, dvs, testlog):
-        vnet_obj = VnetVxlanVrfTunnel()
+        vnet_obj = self.get_vnet_obj()
 
         tunnel_name = 'tunnel_1'
 
@@ -612,7 +615,7 @@ class TestVnetOrch(object):
     Test 2 - Two VNets, One HSMs per VNet
     '''
     def test_vnet_orch_2(self, dvs, testlog):
-        vnet_obj = VnetVxlanVrfTunnel()
+        vnet_obj = self.get_vnet_obj()
 
         tunnel_name = 'tunnel_2'
 
@@ -665,7 +668,7 @@ class TestVnetOrch(object):
     Test 3 - Two VNets, One HSMs per VNet, Peering
     '''
     def test_vnet_orch_3(self, dvs, testlog):
-        vnet_obj = VnetVxlanVrfTunnel()
+        vnet_obj = self.get_vnet_obj()
 
         tunnel_name = 'tunnel_3'
 
@@ -673,15 +676,15 @@ class TestVnetOrch(object):
 
         create_vxlan_tunnel(dvs, tunnel_name, '7.7.7.7')
 
-        create_vnet_entry(dvs, 'Vnet_10', tunnel_name, '1111', "Vnet_20")
+        create_vnet_entry(dvs, 'Vnet_10', tunnel_name, '3333', "Vnet_20")
 
         vnet_obj.check_vnet_entry(dvs, 'Vnet_10', ['Vnet_20'])
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_10', '1111')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_10', '3333')
 
-        create_vnet_entry(dvs, 'Vnet_20', tunnel_name, '2222', "Vnet_10")
+        create_vnet_entry(dvs, 'Vnet_20', tunnel_name, '4444', "Vnet_10")
 
         vnet_obj.check_vnet_entry(dvs, 'Vnet_20', ['Vnet_10'])
-        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_20', '2222')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_20', '4444')
 
         tun_id = vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '7.7.7.7')
 
