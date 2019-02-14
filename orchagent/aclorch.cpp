@@ -1168,6 +1168,13 @@ bool AclTable::create()
         table_attrs.push_back(attr);
     }
 
+    if (type == ACL_TABLE_L3)
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+    }
+
     sai_status_t status = sai_acl_api->create_acl_table(&m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
 
     if (status == SAI_STATUS_SUCCESS)
@@ -1883,12 +1890,12 @@ void AclOrch::doTask(Consumer &consumer)
 
     string table_name = consumer.getTableName();
 
-    if (table_name == CFG_ACL_TABLE_NAME)
+    if (table_name == CFG_ACL_TABLE_NAME || table_name == APP_ACL_TABLE_NAME)
     {
         unique_lock<mutex> lock(m_countersMutex);
         doAclTableTask(consumer);
     }
-    else if (table_name == CFG_ACL_RULE_TABLE_NAME)
+    else if (table_name == CFG_ACL_RULE_TABLE_NAME || table_name == APP_ACL_RULE_TABLE_NAME)
     {
         unique_lock<mutex> lock(m_countersMutex);
         doAclRuleTask(consumer);
