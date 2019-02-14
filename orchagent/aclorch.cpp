@@ -184,7 +184,23 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                     SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
                     return false;
                 }
-                m_inPorts.push_back(port.m_port_id);
+                if (port.m_type == Port::PHY)
+                {
+                    m_inPorts.push_back(port.m_port_id);
+                }
+                else if (port.m_type == Port::LAG)
+                {
+                    m_inPorts.push_back(port.m_lag_id); 
+                }
+                else if (port.m_type == Port::VLAN)
+                {
+                    m_inPorts.push_back(port.m_vlan_info.vlan_oid); 
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Wrong in port type ACL rule.");
+                    return false;
+                }
             }
 
             value.aclfield.data.objlist.count = static_cast<uint32_t>(m_inPorts.size());
@@ -208,7 +224,23 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                     SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
                     return false;
                 }
-                m_outPorts.push_back(port.m_port_id);
+                if (port.m_type == Port::PHY)
+                {
+                    m_outPorts.push_back(port.m_port_id);
+                }
+                else if (port.m_type == Port::LAG)
+                {
+                    m_outPorts.push_back(port.m_lag_id); 
+                }
+                else if (port.m_type == Port::VLAN)
+                {
+                    m_outPorts.push_back(port.m_vlan_info.vlan_oid); 
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Wrong out port type ACL rule.");
+                    return false;
+                }
             }
 
             value.aclfield.data.objlist.count = static_cast<uint32_t>(m_outPorts.size());
@@ -1168,6 +1200,13 @@ bool AclTable::create()
         table_attrs.push_back(attr);
     }
 
+    if (type == ACL_TABLE_L3)
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+    }
+    
     sai_status_t status = sai_acl_api->create_acl_table(&m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
 
     if (status == SAI_STATUS_SUCCESS)
