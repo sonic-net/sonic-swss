@@ -1,4 +1,4 @@
-SUBDIRS = fpmsyncd neighsyncd portsyncd orchagent swssconfig cfgmgr
+SUBDIRS = fpmsyncd neighsyncd portsyncd mclagsyncd orchagent swssconfig cfgmgr
 
 if HAVE_LIBTEAM
 SUBDIRS += teamsyncd
