@@ -275,7 +275,6 @@ int main(int argc, char **argv)
 
     auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
 
-    try
     {
         if (!orchDaemon->init())
         {
@@ -293,14 +292,6 @@ int main(int argc, char **argv)
         }
 
         orchDaemon->start();
-    }
-    catch (char const *e)
-    {
-        SWSS_LOG_ERROR("Exception: %s", e);
-    }
-    catch (exception& e)
-    {
-        SWSS_LOG_ERROR("Failed due to exception: %s", e.what());
     }
 
     return 0;
