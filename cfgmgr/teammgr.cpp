@@ -376,7 +376,7 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
     conf << "'{\"device\":\"" << alias << "\","
          << "\"hwaddr\":\"" << m_mac.to_string() << "\","
          << "\"runner\":{"
-         << "\"active\":\"true\","
+         << "\"active\":true,"
          << "\"name\":\"lacp\"";
 
     if (min_links != 0)
@@ -386,7 +386,7 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
 
     if (fallback)
     {
-        conf << ",\"fallback\":\"true\"";
+        conf << ",\"fallback\":true";
     }
 
     conf << "}}'";
