@@ -49,7 +49,7 @@ struct NextHopObserverEntry
 class RouteOrch : public Orch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch);
+    RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, IntfsOrch *intfsOrch);
 
     bool hasNextHopGroup(const IpAddresses&) const;
     sai_object_id_t getNextHopGroupId(const IpAddresses&);
@@ -70,7 +70,7 @@ public:
     void notifyNextHopChangeObservers(IpPrefix, IpAddresses, bool);
 private:
     NeighOrch *m_neighOrch;
-
+    IntfsOrch *m_intfsOrch;
     int m_nextHopGroupCount;
     int m_maxNextHopGroupCount;
     bool m_resync;
@@ -81,6 +81,8 @@ private:
     NextHopObserverTable m_nextHopObservers;
 
     void addTempRoute(IpPrefix, IpAddresses);
+    void addBlackHoleRoute(IpPrefix);
+    bool addSubnetRoute(string&, IpPrefix);
     bool addRoute(IpPrefix, IpAddresses);
     bool removeRoute(IpPrefix);
 

@@ -21,9 +21,10 @@ extern CrmOrch *gCrmOrch;
 
 const int routeorch_pri = 5;
 
-RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
+RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, IntfsOrch *intfsOrch) :
         Orch(db, tableName, routeorch_pri),
         m_neighOrch(neighOrch),
+        m_intfsOrch(intfsOrch),
         m_nextHopGroupCount(0),
         m_resync(false)
 {
@@ -336,13 +337,6 @@ void RouteOrch::doTask(Consumer& consumer)
                     alias = fvValue(i);
             }
 
-            // TODO: set to blackhold if nexthop is empty?
-            if (ip_addresses.getSize() == 0)
-            {
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-
             // TODO: cannot trust m_portsOrch->getPortIdByAlias because sometimes alias is empty
             // TODO: need to split aliases with ',' and verify the next hops?
             if (alias == "eth0" || alias == "lo" || alias == "docker0")
@@ -359,6 +353,45 @@ void RouteOrch::doTask(Consumer& consumer)
                 else
                     it = consumer.m_toSync.erase(it);
                 continue;
+            }
+
+            // TODO: set to blackhold if nexthop is empty?
+            if (ip_addresses.getSize() == 0)
+            {
+                /*no nexthop ipaddresses recorded, we can not assign whether it is duplicate, so just remove it.
+                although i think the commander should remove it first*/
+                if (m_syncdRoutes.find(ip_prefix) != m_syncdRoutes.end())
+                {
+                    if (!removeRoute(ip_prefix))
+                    {
+                        it++;
+                        continue;                    
+                    }
+                }
+                if (alias=="")  /*blackhole*/
+                {
+                    addBlackHoleRoute(ip_prefix);
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+                /*direct connected, why move it here from intfsOrch? intfsOrch add it by address configured, 
+                  but routes from fpmsyncd got data from routing protocol, which can refer to the state of interfaces.
+                  add subnet route even when the interface is down will result in a wrong situation, route with same prefix
+                  from route protocol will be refused to added to asic*/
+                else if (m_intfsOrch->isPrefixSubnet(ip_prefix, alias))
+                {
+                    if (addSubnetRoute(alias, ip_prefix))
+                        it = consumer.m_toSync.erase(it);
+                    else
+                        it++;
+                    continue;
+                }
+                // TODO: maybe route with P2P output-interface(i.e. tunnel), but now we have not deal with it
+                else 
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
             }
 
             if (m_syncdRoutes.find(ip_prefix) == m_syncdRoutes.end() || m_syncdRoutes[ip_prefix] != ip_addresses)
@@ -694,6 +727,80 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
     }
     m_syncdNextHopGroups.erase(ipAddresses);
 
+    return true;
+}
+
+void RouteOrch::addBlackHoleRoute(IpPrefix ipPrefix)
+{
+    sai_route_entry_t unicast_route_entry;
+    unicast_route_entry.vr_id = gVirtualRouterId;
+    unicast_route_entry.switch_id = gSwitchId;
+    copy(unicast_route_entry.destination, ipPrefix);
+    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
+    sai_attribute_t attr;
+
+    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_DROP;
+
+    sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create blackhole route");
+        throw runtime_error("Failed to create blackhole route");
+    }
+
+    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
+    m_syncdRoutes[ipPrefix] = IpAddresses();
+}
+
+bool RouteOrch::addSubnetRoute(string &alias, IpPrefix ipPrefix)
+{
+    sai_route_entry_t unicast_route_entry;
+    unicast_route_entry.switch_id = gSwitchId;
+    unicast_route_entry.vr_id = gVirtualRouterId;
+    copy(unicast_route_entry.destination, ipPrefix);
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
+    if (rif_id == SAI_NULL_OBJECT_ID)
+        return false;
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+
+    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    attr.value.oid = rif_id;
+    attrs.push_back(attr);
+
+    sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create subnet route to %s from %s, rv:%d",
+                       ipPrefix.to_string().c_str(), alias.c_str(), status);
+        throw runtime_error("Failed to create subnet route.");
+    }
+
+    SWSS_LOG_NOTICE("Create subnet route to %s from %s",
+                    ipPrefix.to_string().c_str(), alias.c_str());
+
+    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
+    
+    m_syncdRoutes[ipPrefix] = IpAddresses();
     return true;
 }
 

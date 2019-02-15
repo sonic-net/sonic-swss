@@ -36,12 +36,42 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
     SWSS_LOG_ENTER();
 }
 
+std::string IntfsOrch::getRouterIntfsByIpaddress(sai_object_id_t vr_id, const IpAddress &ip)
+{
+    /*if IntfsEntry have vr_id field, we should skip the intfs without same vr_id, perhaps switch_id if support more?*/
+    if (vr_id != gVirtualRouterId)
+        return std::string();
+    for (const auto &it_intfs: m_syncdIntfses)
+    {
+        for (const auto &prefixIt: it_intfs.second.ip_addresses)
+        {
+            if (prefixIt.isAddressInSubnet(ip))
+            {
+                return it_intfs.first;
+            }
+        }
+    }     
+    return std::string();
+}
+
 sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
 {
     Port port;
     gPortsOrch->getPort(alias, port);
-    assert(port.m_rif_id);
+    /* assert(port.m_rif_id);*/
     return port.m_rif_id;
+}
+
+bool IntfsOrch::isPrefixSubnet(const IpPrefix &ip_prefix, const string& alias)
+{
+    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+        return false;
+    for (const auto &prefixIt: m_syncdIntfses[alias].ip_addresses)
+    {
+        if (prefixIt.getSubnet() == ip_prefix)
+            return true;
+    }
+    return false;
 }
 
 void IntfsOrch::increaseRouterIntfsRefCount(const string &alias)
@@ -60,6 +90,84 @@ void IntfsOrch::decreaseRouterIntfsRefCount(const string &alias)
     m_syncdIntfses[alias].ref_count--;
     SWSS_LOG_DEBUG("Router interface %s ref count is decreased to %d",
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
+}
+
+// This function parses a string to a binary mac address (uint8_t[6])
+// The string should contain mac address only. No spaces are allowed.
+// The mac address separators could be either ':' or '-'
+bool parseMacString(const string& str_mac, uint8_t* bin_mac)
+{
+    if (bin_mac == NULL)
+    {
+        return false;
+    }
+
+    if (str_mac.length() != 17)
+    {
+        return false;
+    }
+
+    const char* ptr_mac = str_mac.c_str();
+
+    // first check that all mac address separators are equal to each other
+    // 2, 5, 8, 11, and 14 are MAC address separator positions
+    if (!(ptr_mac[2]  == ptr_mac[5]
+       && ptr_mac[5]  == ptr_mac[8]
+       && ptr_mac[8]  == ptr_mac[11]
+       && ptr_mac[11] == ptr_mac[14]))
+    {
+        return false;
+    }
+
+    // then check that the first separator is equal to ':' or '-'
+    if (ptr_mac[2] != ':' && ptr_mac[2] != '-')
+    {
+        return false;
+    }
+
+    for(int i = 0; i < ETHER_ADDR_LEN; ++i)
+    {
+        int left  = i * 3;    // left  digit position of hexadecimal number
+        int right = left + 1; // right digit position of hexadecimal number
+
+        if (ptr_mac[left] >= '0' && ptr_mac[left] <= '9')
+        {
+            bin_mac[i] = static_cast<uint8_t>(ptr_mac[left] - '0');
+        }
+        else if (ptr_mac[left] >= 'A' && ptr_mac[left] <= 'F')
+        {
+            bin_mac[i] = static_cast<uint8_t>(ptr_mac[left] - 'A' + 0x0a);
+        }
+        else if (ptr_mac[left] >= 'a' && ptr_mac[left] <= 'f')
+        {
+            bin_mac[i] = static_cast<uint8_t>(ptr_mac[left] - 'a' + 0x0a);
+        }
+        else
+        {
+            return false;
+        }
+
+        bin_mac[i] = static_cast<uint8_t>(bin_mac[i] << 4);
+
+        if (ptr_mac[right] >= '0' && ptr_mac[right] <= '9')
+        {
+            bin_mac[i] |= static_cast<uint8_t>(ptr_mac[right] - '0');
+        }
+        else if (ptr_mac[right] >= 'A' && ptr_mac[right] <= 'F')
+        {
+            bin_mac[i] |= static_cast<uint8_t>(ptr_mac[right] - 'A' + 0x0a);
+        }
+        else if (ptr_mac[right] >= 'a' && ptr_mac[right] <= 'f')
+        {
+            bin_mac[i] |= static_cast<uint8_t>(ptr_mac[right] - 'a' + 0x0a);
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 bool IntfsOrch::setRouterIntfsMtu(Port &port)
@@ -156,7 +264,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     }
 
     vrf_id = port.m_vr_id;
-    addSubnetRoute(port, *ip_prefix);
+    /*addSubnetRoute(port, *ip_prefix);*/
     addIp2MeRoute(vrf_id, *ip_prefix);
 
     if (port.m_type == Port::VLAN)
@@ -181,6 +289,7 @@ void IntfsOrch::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
+        int attr_set = 0;
 
         vector<string> keys = tokenize(kfvKey(t), ':');
         string alias(keys[0]);
@@ -276,6 +385,52 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
+            auto it_intfs = m_syncdIntfses.find(alias);
+            if (it_intfs != m_syncdIntfses.end())
+            {
+                for (auto i : kfvFieldsValues(t))
+                {
+                    /* Get mac information and update mac of the interface*/
+                    if (fvField(i) == "mac_addr")
+                    {
+                        sai_attribute_t attr;
+                        string mac_str;
+                        uint8_t mac[6];
+
+                        attr_set = 1;
+
+                        mac_str = fvValue(i);
+
+                        if (!parseMacString(mac_str, mac))
+                        {
+                            SWSS_LOG_ERROR("Set router interface mac %s for port %s failed, mac is invalid",
+                                                         mac_str.c_str(), port.m_alias.c_str());
+                        }
+                        
+                        attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+                        memcpy(attr.value.mac, mac, sizeof(sai_mac_t));
+
+                        sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
+                        if (status != SAI_STATUS_SUCCESS)
+                        {
+                            SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, rv:%d",
+                                                         mac_str.c_str(), port.m_alias.c_str(), status);
+                        }
+                        else
+                        {
+                            SWSS_LOG_NOTICE("Set router interface mac %s for port %s success",
+                                                          mac_str.c_str(), port.m_alias.c_str());
+                        }
+                    }
+                }
+
+                if(attr_set == 1)
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+            }
+
             if (!vnet_name.empty())
             {
                 VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
@@ -336,7 +491,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             {
                 if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
                 {
-                    removeSubnetRoute(port, ip_prefix);
+                    /*removeSubnetRoute(port, ip_prefix);*/
                     removeIp2MeRoute(vrf_id, ip_prefix);
 
                     if(port.m_type == Port::VLAN)
@@ -477,6 +632,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     return true;
 }
 
+#if 0
 void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
 {
     sai_route_entry_t unicast_route_entry;
@@ -551,6 +707,7 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
 
     gRouteOrch->notifyNextHopChangeObservers(ip_prefix, IpAddresses(), false);
 }
+#endif
 
 void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
 {

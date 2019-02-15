@@ -29,7 +29,8 @@ public:
     IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch);
 
     sai_object_id_t getRouterIntfsId(const string&);
-
+    std::string getRouterIntfsByIpaddress(sai_object_id_t, const IpAddress&);
+    bool isPrefixSubnet(const IpPrefix&, const string& );
     void increaseRouterIntfsRefCount(const string&);
     void decreaseRouterIntfsRefCount(const string&);
 
@@ -46,8 +47,8 @@ private:
     bool addRouterIntfs(sai_object_id_t vrf_id, Port &port);
     bool removeRouterIntfs(Port &port);
 
-    void addSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
-    void removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
+    /*void addSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
+    void removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix);*/
 
     void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
     void removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
