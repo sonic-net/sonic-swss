@@ -37,6 +37,7 @@ class TestMirror(object):
         tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
         tbl.set(interface + "|" + ip, fvs)
+        tbl.set(interface, fvs)
         time.sleep(1)
 
     def remove_ip_address(self, interface, ip):
@@ -48,6 +49,7 @@ class TestMirror(object):
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         tbl._del(interface + "|" + ip)
+        tbl._del(interface)
         time.sleep(1)
 
     def add_neighbor(self, interface, ip, mac):
