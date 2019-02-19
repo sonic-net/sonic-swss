@@ -692,6 +692,29 @@ class DockerVirtualSwitch(object):
         tbl.set(interface + "|" + ip, fvs)
         time.sleep(1)
 
+    def remove_ip_address(self, interface, ip):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        tbl._del(interface + "|" + ip);
+        time.sleep(1)
+
+    def set_mtu(self, interface, mtu):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN"
+        else:
+            tbl_name = "PORT"
+        tbl = swsscommon.Table(self.cdb, tble_name)
+        fvs = swsscommon.FieldValuePairs([("mtu", mtu)])
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
     def add_neighbor(self, interface, ip, mac):
         tbl = swsscommon.ProducerStateTable(self.pdb, "NEIGH_TABLE")
         fvs = swsscommon.FieldValuePairs([("neigh", mac),

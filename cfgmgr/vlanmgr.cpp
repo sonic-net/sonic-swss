@@ -255,7 +255,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
              * will hit this for docker warm restart.
              * Just set the internal data structure and remove the request.
              */
-            if (isVlanStateOk(key))
+            if (isVlanStateOk(key) && m_vlans.find(key) == m_vlans.end())
             {
                 m_vlans.insert(key);
                 it = consumer.m_toSync.erase(it);
