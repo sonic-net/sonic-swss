@@ -57,12 +57,18 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
 {
     const FdbEntry& entry = update.entry;
     const Port& port = update.port;
-    sai_vlan_id_t vlan_id = port.m_port_vlan_id;
     const MacAddress& mac = entry.mac;
     string portName = port.m_alias;
+    Port vlan;
+
+    if (!m_portsOrch->getPort(entry.bv_id, vlan))
+    {
+        SWSS_LOG_NOTICE("FdbOrch notification: Failed to locate vlan port from bv_id 0x%lx", entry.bv_id);
+        return false;
+    }
 
     // ref: https://github.com/Azure/sonic-swss/blob/master/doc/swss-schema.md#fdb_table
-    string key = "Vlan" + to_string(vlan_id) + ":" + mac.to_string();
+    string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + mac.to_string();
 
     if (update.add)
     {

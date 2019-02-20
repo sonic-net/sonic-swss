@@ -678,6 +678,12 @@ class DockerVirtualSwitch(object):
         tbl._del("Vlan" + vlan + "|" + interface)
         time.sleep(1)
 
+    def create_vlan_member_tagged(self, vlan, interface):
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("tagging_mode", "tagged")])
+        tbl.set("Vlan" + vlan + "|" + interface, fvs)
+        time.sleep(1)
+
     def set_interface_status(self, interface, admin_status):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL"

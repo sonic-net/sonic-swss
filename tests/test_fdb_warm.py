@@ -40,6 +40,17 @@ def test_fdb_notifications(dvs, testlog):
     dvs.create_vlan_member("6", "Ethernet64")
     dvs.create_vlan_member("6", "Ethernet68")
 
+    # Put Ethernet72 and Ethernet76 into vlan 7 in untagged mode, they will have pvid of 7
+    # and into vlan8 in tagged mode
+    dvs.create_vlan("7")
+    dvs.create_vlan_member("7", "Ethernet72")
+    dvs.create_vlan_member("7", "Ethernet76")
+
+    dvs.create_vlan("8")
+    dvs.create_vlan_member_tagged("8", "Ethernet72")
+    dvs.create_vlan_member_tagged("8", "Ethernet76")
+
+
     # Get mapping between interface name and its bridge port_id
     time.sleep(2)
     iface_2_bridge_port_id = dvs.get_map_iface_bridge_port_id(dvs.adb)
@@ -54,6 +65,16 @@ def test_fdb_notifications(dvs, testlog):
         [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")])
     assert ok, str(extra)
 
+    ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
+        iface_2_bridge_port_id["Ethernet72"],
+        [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")])
+    assert ok, str(extra)
+
+    ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
+        iface_2_bridge_port_id["Ethernet76"],
+        [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")])
+    assert ok, str(extra)
+
     # check fdb aging attr
     ok, extra = dvs.all_table_entry_has_no(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_SWITCH',
         ".*",
@@ -62,18 +83,36 @@ def test_fdb_notifications(dvs, testlog):
     # bring up vlan and member
     dvs.set_interface_status("Vlan6", "up")
     dvs.add_ip_address("Vlan6", "6.6.6.1/24")
+    dvs.add_ip_address("Vlan8", "8.8.8.1/24")
     dvs.set_interface_status("Ethernet64", "up")
     dvs.set_interface_status("Ethernet68", "up")
+    dvs.set_interface_status("Ethernet72", "up")
+    dvs.set_interface_status("Ethernet76", "up")
     dvs.servers[16].runcmd("ifconfig eth0 6.6.6.6/24 up")
     dvs.servers[16].runcmd("ip route add default via 6.6.6.1")
     dvs.servers[17].runcmd("ifconfig eth0 6.6.6.7/24 up")
     dvs.servers[17].runcmd("ip route add default via 6.6.6.1")
+
+    dvs.servers[18].runcmd("vconfig add eth0 8")
+    dvs.servers[18].runcmd("ifconfig eth0.8 8.8.8.6/24 up")
+    dvs.servers[18].runcmd("ip route add default via 8.8.8.1")
+
+    dvs.servers[19].runcmd("vconfig add eth0 8")
+    dvs.servers[19].runcmd("ifconfig eth0.8 8.8.8.7/24 up")
+    dvs.servers[19].runcmd("ip route add default via 8.8.8.1")
 
     # get neighbor and arp entry
     time.sleep(2)
     rc = dvs.servers[16].runcmd("ping -c 1 6.6.6.7")
     assert rc == 0
     rc = dvs.servers[17].runcmd("ping -c 1 6.6.6.6")
+    assert rc == 0
+
+    # get neighbor and arp entry
+    time.sleep(2)
+    rc = dvs.servers[18].runcmd("ping -c 1 8.8.8.7")
+    assert rc == 0
+    rc = dvs.servers[19].runcmd("ping -c 1 8.8.8.6")
     assert rc == 0
 
 
@@ -93,9 +132,24 @@ def test_fdb_notifications(dvs, testlog):
     )
     assert ok, str(extra)
 
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                    [],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+                     ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet72"]),
+                    ]
+    )
+    assert ok, str(extra)
+    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                    [],
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+                     ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet76"]),
+                    ]
+    )
+    assert ok, str(extra)
+
     time.sleep(2)
     counter_inserted = dvs.getCrmCounterValue('STATS', 'crm_stats_fdb_entry_used')
-    assert counter_inserted - counter_before == 2
+    assert counter_inserted - counter_before == 4
 
     # check that the FDB entries were inserted into State DB
     ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
@@ -108,6 +162,22 @@ def test_fdb_notifications(dvs, testlog):
     ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
                     "Vlan6:*",
                     [("port", "Ethernet68"),
+                     ("type", "dynamic"),
+                    ]
+    )
+    assert ok, str(extra)
+
+    # check that the FDB entries were inserted into State DB, Vlan8 while not Vlan7(untagged) in the key
+    ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
+                    "Vlan8:.*",
+                    [("port", "Ethernet72"),
+                     ("type", "dynamic"),
+                    ]
+    )
+    assert ok, str(extra)
+    ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
+                    "Vlan8:*",
+                    [("port", "Ethernet76"),
                      ("type", "dynamic"),
                     ]
     )
@@ -160,6 +230,22 @@ def test_fdb_notifications(dvs, testlog):
         )
         assert ok, str(extra)
 
+        # check that the FDB entries were inserted into ASIC DB
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet72"]),
+                        ]
+        )
+        assert ok, str(extra)
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [],
+                        [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
+                         ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet76"]),
+                        ]
+        )
+        assert ok, str(extra)
+
         # check FDB learning mode
         ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
             iface_2_bridge_port_id["Ethernet64"],
@@ -167,6 +253,15 @@ def test_fdb_notifications(dvs, testlog):
         assert ok, str(extra)
         ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
             iface_2_bridge_port_id["Ethernet68"],
+            [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")])
+        assert ok, str(extra)
+
+        ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
+            iface_2_bridge_port_id["Ethernet72"],
+            [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")])
+        assert ok, str(extra)
+        ok, extra = dvs.is_table_entry_exists(dvs.adb, 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT',
+            iface_2_bridge_port_id["Ethernet76"],
             [("SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE", "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")])
         assert ok, str(extra)
 

@@ -542,6 +542,25 @@ bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
     return true;
 }
 
+bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_ADMIN_STATE;
+
+    sai_status_t status = sai_port_api->get_port_attribute(id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get admin status for port pid:%lx", id);
+        return false;
+    }
+
+    up = attr.value.booldata;
+
+    return true;
+}
+
 bool PortsOrch::setPortMtu(sai_object_id_t id, sai_uint32_t mtu)
 {
     SWSS_LOG_ENTER();
@@ -1731,45 +1750,43 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                     else
                     {
-                        sai_uint32_t current_speed;
-
                         if (!isSpeedSupported(alias, p.m_port_id, speed))
                         {
                             it++;
                             continue;
                         }
 
-                        if (getPortSpeed(p.m_port_id, current_speed))
+                        if (p.m_admin_state_up)
                         {
-                            if (speed != current_speed)
+                            /* Bring port down before applying speed */
+                            if (!setPortAdminStatus(p.m_port_id, false))
                             {
-                                if (setPortAdminStatus(p.m_port_id, false))
-                                {
-                                    if (setPortSpeed(p.m_port_id, speed))
-                                    {
-                                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
-                                    }
-                                    else
-                                    {
-                                        SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
-                                        it++;
-                                        continue;
-                                    }
-                                }
-                                else
-                                {
-                                    SWSS_LOG_ERROR("Failed to set port admin status DOWN to set speed");
-                                    it++;
-                                    continue;
-                                }
+                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set speed", alias.c_str());
+                                it++;
+                                continue;
+                            }
+
+                            p.m_admin_state_up = false;
+                            m_portList[alias] = p;
+
+                            if (!setPortSpeed(p.m_port_id, speed))
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                                it++;
+                                continue;
                             }
                         }
                         else
                         {
-                            SWSS_LOG_ERROR("Failed to get current speed for port %s", alias.c_str());
-                            it++;
-                            continue;
+                            /* Port is already down, setting speed */
+                            if (!setPortSpeed(p.m_port_id, speed))
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                                it++;
+                                continue;
+                            }
                         }
+                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
                     }
                     m_portList[alias].m_speed = speed;
                 }
@@ -1789,20 +1806,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s MTU to %u", alias.c_str(), mtu);
-                        it++;
-                        continue;
-                    }
-                }
-
-                if (!admin_status.empty())
-                {
-                    if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
-                    {
-                        SWSS_LOG_NOTICE("Set port %s admin status to %s", alias.c_str(), admin_status.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
                         it++;
                         continue;
                     }
@@ -1844,6 +1847,23 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s asymmetric PFC to %s", alias.c_str(), pfc_asym.c_str());
+                        it++;
+                        continue;
+                    }
+                }
+
+                /* Last step set port admin status */
+                if (!admin_status.empty() && (p.m_admin_state_up != (admin_status == "up")))
+                {
+                    if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
+                    {
+                        p.m_admin_state_up = (admin_status == "up");
+                        m_portList[alias] = p;
+                        SWSS_LOG_NOTICE("Set port %s admin status to %s", alias.c_str(), admin_status.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
                         it++;
                         continue;
                     }
@@ -2410,6 +2430,20 @@ bool PortsOrch::initializePort(Port &port)
     else
     {
         port.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+    }
+
+    /* initialize port admin status */
+    if (!getPortAdminStatus(port.m_port_id, port.m_admin_state_up))
+    {
+        SWSS_LOG_ERROR("Failed to get initial port admin status %s", port.m_alias.c_str());
+        return false;
+    }
+
+    /* initialize port admin speed */
+    if (!getPortSpeed(port.m_port_id, port.m_speed))
+    {
+        SWSS_LOG_ERROR("Failed to get initial port admin speed %d", port.m_speed);
+        return false;
     }
 
     /*
