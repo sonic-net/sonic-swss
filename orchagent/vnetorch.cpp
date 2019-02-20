@@ -401,8 +401,6 @@ VnetBridgeInfo VNetBitmapObject::getBridgeInfoByVni(uint32_t vni, string tunnelN
         throw std::runtime_error("vni creation failed");
     }
 
-    SWSS_LOG_NOTICE("Created RIF");
-
     vector<sai_attribute_t> bpr_attrs;
 
     attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
