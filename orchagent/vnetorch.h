@@ -5,9 +5,14 @@
 #include <set>
 #include <unordered_map>
 #include <algorithm>
+#include <bitset>
 
 #include "request_parser.h"
 #include "ipaddresses.h"
+
+#define VNET_BITMAP_SIZE 32
+#define VNET_TUNNEL_SIZE 512
+#define VNET_NEIGHBOR_MAX 0xffff
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -176,7 +181,7 @@ public:
 
     virtual bool addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp);
 
-    void setVni(uint32_t vni);
+    void setVniInfo(uint32_t vni);
 
     bool updateObj(vector<sai_attribute_t>&);
 
@@ -197,15 +202,14 @@ private:
 
     static uint32_t getFreeNeighbor(void);
 
-    static uint32_t vnetBitmap_;
+    static std::bitset<VNET_BITMAP_SIZE> vnetBitmap_;
     static map<string, uint32_t> vnetIds_;
-    static set<uint32_t> tunnelOffsets_;
+    static std::bitset<VNET_TUNNEL_SIZE> tunnelOffsets_;
     static map<uint32_t, VnetBridgeInfo> bridgeInfoMap_;
     static map<tuple<MacAddress, sai_object_id_t>, sai_fdb_entry_t> fdbMap_;
     static map<tuple<MacAddress, sai_object_id_t>, sai_neighbor_entry_t> neighMap_;
 
     uint32_t vnet_id_;
-    uint32_t vni_;
 };
 
 typedef std::unique_ptr<VNetObject> VNetObject_T;
@@ -279,9 +283,6 @@ class VNetRouteRequest : public Request
 public:
     VNetRouteRequest() : Request(vnet_route_description, ':') { }
 };
-
-typedef map<IpAddress, sai_object_id_t> NextHopMap;
-typedef map<string, NextHopMap> NextHopTunnels;
 
 class VNetRouteOrch : public Orch2
 {

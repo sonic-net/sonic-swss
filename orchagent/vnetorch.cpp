@@ -19,8 +19,6 @@
 #include "neighorch.h"
 #include "crmorch.h"
 
-#define VNET_BITMAP_SIZE 32
-
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_route_api_t* sai_route_api;
 extern sai_bridge_api_t* sai_bridge_api;
@@ -262,8 +260,8 @@ VNetVrfObject::~VNetVrfObject()
 /*
  * Bitmap based VNET class definition
  */
-uint32_t VNetBitmapObject::vnetBitmap_ = 0;
-set<uint32_t> VNetBitmapObject::tunnelOffsets_;
+std::bitset<VNET_BITMAP_SIZE> VNetBitmapObject::vnetBitmap_;
+std::bitset<VNET_TUNNEL_SIZE> VNetBitmapObject::tunnelOffsets_;
 map<string, uint32_t> VNetBitmapObject::vnetIds_;
 map<uint32_t, VnetBridgeInfo> VNetBitmapObject::bridgeInfoMap_;
 map<tuple<MacAddress, sai_object_id_t>, sai_fdb_entry_t> VNetBitmapObject::fdbMap_;
@@ -274,7 +272,7 @@ VNetBitmapObject::VNetBitmapObject(const std::string& vnet, const VNetInfo& vnet
 {
     SWSS_LOG_ENTER();
 
-    setVni(vnetInfo.vni);
+    setVniInfo(vnetInfo.vni);
 
     vnet_id_ = getFreeBitmapId(vnet);
 }
@@ -290,12 +288,12 @@ uint32_t VNetBitmapObject::getFreeBitmapId(const string& vnet)
 {
     SWSS_LOG_ENTER();
 
-    for (uint32_t i = 0; i < VNET_BITMAP_SIZE; i++)
+    for (uint32_t i = 0; i < vnetBitmap_.size(); i++)
     {
         uint32_t id = 1 << i;
-        if ((id & vnetBitmap_) == 0)
+        if (vnetBitmap_[i] == false)
         {
-            vnetBitmap_ |= id;
+            vnetBitmap_[i] = true;
             vnetIds_.emplace(vnet, id);
             return id;
         }
@@ -327,11 +325,11 @@ uint32_t VNetBitmapObject::getFreeTunnelRouteTableOffset()
 {
     SWSS_LOG_ENTER();
 
-    for (uint32_t i = 0; i < 256; i++)
+    for (uint32_t i = 0; i < tunnelOffsets_.size(); i++)
     {
-        if (tunnelOffsets_.count(i) == 0)
+        if (tunnelOffsets_[i] == false)
         {
-            tunnelOffsets_.insert(i);
+            tunnelOffsets_[i] = true;
             return i;
         }
     }
@@ -343,7 +341,7 @@ void VNetBitmapObject::recycleTunnelRouteTableOffset(uint32_t offset)
 {
     SWSS_LOG_ENTER();
 
-    tunnelOffsets_.erase(offset);
+    tunnelOffsets_[offset] = false;
 }
 
 VnetBridgeInfo VNetBitmapObject::getBridgeInfoByVni(uint32_t vni, string tunnelName)
@@ -480,13 +478,12 @@ VnetBridgeInfo VNetBitmapObject::getBridgeInfoByVni(uint32_t vni, string tunnelN
     return std::move(info);
 }
 
-void VNetBitmapObject::setVni(uint32_t vni)
+void VNetBitmapObject::setVniInfo(uint32_t vni)
 {
-    vni_ = vni;
     sai_attribute_t attr;
     vector<sai_attribute_t> vnet_attrs;
     sai_object_id_t vnetTableEntryId;
-    auto info = getBridgeInfoByVni(vni_, getTunnelName());
+    auto info = getBridgeInfoByVni(getVni(), getTunnelName());
 
     attr.id = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ATTR_ACTION;
     attr.value.s32 = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ACTION_SET_METADATA;
@@ -623,16 +620,14 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
 
 uint32_t VNetBitmapObject::getFreeNeighbor(void)
 {
-    const uint32_t neighborRangeStart = 0xa9fe0000;
     static set<uint32_t> neighbors;
 
-    for (uint32_t i = 0; i < 0xffff; i++)
+    for (uint32_t i = 0; i < VNET_NEIGHBOR_MAX; i++)
     {
-        uint32_t neigh = neighborRangeStart + i;
-        if (neighbors.count(neigh) == 0)
+        if (neighbors.count(i) == 0)
         {
-            neighbors.insert(neigh);
-            return neigh;
+            neighbors.insert(i);
+            return i;
         }
     }
 
@@ -648,7 +643,7 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
     sai_attribute_t attr;
     sai_object_id_t tunnelRouteTableEntryId;
     auto& peer_list = getPeerList();
-    auto bInfo = getBridgeInfoByVni(endp.vni == 0 ? vni_ : endp.vni, getTunnelName());
+    auto bInfo = getBridgeInfoByVni(endp.vni == 0 ? getVni() : endp.vni, getTunnelName());
     uint32_t peerBitmap = vnet_id_;
     MacAddress mac = endp.mac ? endp.mac : gVxlanMacAddress;
 
@@ -834,14 +829,14 @@ bool VNetOrch::setIntf(const string& alias, const string name, const IpPrefix *p
 {
     SWSS_LOG_ENTER();
 
+    if (!isVnetExists(name))
+    {
+        SWSS_LOG_WARN("VNET %s doesn't exist", name.c_str());
+        return false;
+    }
+
     if (isVnetExecVrf())
     {
-        if (!isVnetExists(name))
-        {
-            SWSS_LOG_WARN("VNET %s doesn't exist", name.c_str());
-            return false;
-        }
-
         auto *vnet_obj = getTypePtr<VNetVrfObject>(name);
         sai_object_id_t vrf_id = vnet_obj->getVRidIngress();
 
@@ -849,12 +844,6 @@ bool VNetOrch::setIntf(const string& alias, const string name, const IpPrefix *p
     }
     else
     {
-        if (!isVnetExists(name))
-        {
-            SWSS_LOG_WARN("VNET %s doesn't exist", name.c_str());
-            return false;
-        }
-
         auto *vnet_obj = getTypePtr<VNetBitmapObject>(name);
         return vnet_obj->addIntf(alias, prefix);
     }
