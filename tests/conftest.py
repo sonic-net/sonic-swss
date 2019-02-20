@@ -662,10 +662,20 @@ class DockerVirtualSwitch(object):
         tbl.set("Vlan" + vlan, fvs)
         time.sleep(1)
 
+    def remove_vlan(self, vlan):
+        tbl = swsscommon.Table(self.cdb, "VLAN")
+        tbl._del("Vlan" + vlan)
+        time.sleep(1)
+
     def create_vlan_member(self, vlan, interface):
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
         fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
         tbl.set("Vlan" + vlan + "|" + interface, fvs)
+        time.sleep(1)
+
+    def remove_vlan_member(self, vlan, interface):
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        tbl._del("Vlan" + vlan + "|" + interface)
         time.sleep(1)
 
     def set_interface_status(self, interface, admin_status):
@@ -676,7 +686,7 @@ class DockerVirtualSwitch(object):
         else:
             tbl_name = "PORT"
         tbl = swsscommon.Table(self.cdb, tbl_name)
-        fvs = swsscommon.FieldValuePairs([("admin_status", "up")])
+        fvs = swsscommon.FieldValuePairs([("admin_status", admin_status)])
         tbl.set(interface, fvs)
         time.sleep(1)
 
@@ -710,7 +720,7 @@ class DockerVirtualSwitch(object):
             tbl_name = "VLAN"
         else:
             tbl_name = "PORT"
-        tbl = swsscommon.Table(self.cdb, tble_name)
+        tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("mtu", mtu)])
         tbl.set(interface, fvs)
         time.sleep(1)
