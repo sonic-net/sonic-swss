@@ -24,6 +24,9 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     mtu                 = 1*4DIGIT      ; port MTU
     fec                 = 1*64VCHAR     ; port fec mode
     autoneg             = BIT           ; auto-negotiation mode
+    preemphasis         = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
+    idriver             = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
+    ipredriver          = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
 
     ;QOS Mappings
     map_dscp_to_tc      = ref_hash_key_reference
