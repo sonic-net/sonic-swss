@@ -1415,8 +1415,8 @@ bool PortsOrch::bake()
     vector<FieldValueTuple> tuples;
     string value;
     bool foundPortConfigDone = m_portTable->hget("PortConfigDone", "count", value);
-    unsigned long portCount = stoul(value);
-    SWSS_LOG_NOTICE("foundPortConfigDone = %d, portCount = %lu, m_portCount = %u", foundPortConfigDone, portCount, m_portCount);
+    unsigned long portCount;
+    SWSS_LOG_NOTICE("foundPortConfigDone = %d", foundPortConfigDone);
 
     bool foundPortInitDone = m_portTable->get("PortInitDone", tuples);
     SWSS_LOG_NOTICE("foundPortInitDone = %d", foundPortInitDone);
@@ -1432,6 +1432,8 @@ bool PortsOrch::bake()
         return false;
     }
 
+    portCount = stoul(value);
+    SWSS_LOG_NOTICE("portCount = %lu, m_portCount = %u", portCount, m_portCount);
     if (portCount != keys.size() - 2)
     {
         // Invalid port table
