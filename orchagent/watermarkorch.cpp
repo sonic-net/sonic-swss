@@ -36,8 +36,6 @@ WatermarkOrch::WatermarkOrch(DBConnector *db, const vector<string> &tables):
     m_telemetryTimer = new SelectableTimer(intervT);
     auto executorT = new ExecutableTimer(m_telemetryTimer, this, "WM_TELEMETRY_TIMER");
     Orch::addExecutor(executorT);
-
-    m_telemetryInterval = DEFAULT_TELEMETRY_INTERVAL;
 }
 
 WatermarkOrch::~WatermarkOrch()
@@ -95,7 +93,9 @@ void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vect
         {
             if (i.first == "interval")
             {
-                m_telemetryInterval = to_uint<uint32_t>(i.second.c_str());
+                auto intervT = timespec { .tv_sec = to_uint<uint32_t>(i.second.c_str()) , .tv_nsec = 0 };
+                m_telemetryTimer->setInterval(intervT);
+
             }
             else
             {
@@ -205,8 +205,6 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
          * if it is disabled we will not restart the timer at the end of current interval */
         if (m_isTimerEnabled)
         {
-            auto intervT = timespec { .tv_sec = m_telemetryInterval , .tv_nsec = 0 };
-            m_telemetryTimer->setInterval(intervT);
             m_telemetryTimer->reset();
         }
 

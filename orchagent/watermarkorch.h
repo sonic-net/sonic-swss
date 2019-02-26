@@ -52,8 +52,6 @@ private:
     vector<sai_object_id_t> m_unicast_queue_ids;
     vector<sai_object_id_t> m_multicast_queue_ids;
     vector<sai_object_id_t> m_pg_ids;
-
-    int m_telemetryInterval;
 };
 
 #endif // WATERMARKORCH_H
