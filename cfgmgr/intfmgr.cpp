@@ -204,8 +204,18 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 
         std::vector<FieldValueTuple> fvVector;
         FieldValueTuple f("family", ip_prefix.isV4() ? IPV4_NAME : IPV6_NAME);
-        FieldValueTuple s("scope", "global");
-        fvVector.push_back(s);
+
+        if (ip_prefix.getIp().getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
+        {
+            FieldValueTuple s("scope", "local");
+            fvVector.push_back(s);
+        }
+        else
+        {
+            FieldValueTuple s("scope", "global");
+            fvVector.push_back(s);
+        }
+
         fvVector.push_back(f);
 
         m_appIntfTableProducer.set(appKey, fvVector);

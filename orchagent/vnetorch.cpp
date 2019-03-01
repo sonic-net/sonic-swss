@@ -536,7 +536,13 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
 
     if (gIntfsOrch->getSyncdIntfses().find(alias) == gIntfsOrch->getSyncdIntfses().end())
     {
-        if (!gIntfsOrch->setIntf(alias, gVirtualRouterId, nullptr))
+        Port port;
+        /* Cannot locate interface */
+        if (!gPortsOrch->getPort(alias, port))
+        {
+            return false;
+        }
+        if (!gIntfsOrch->createIntf(port, gVirtualRouterId, nullptr))
         {
             return false;
         }
@@ -894,7 +900,7 @@ VNetOrch::VNetOrch(DBConnector *db, const std::string& tableName, VNET_EXEC op)
     }
 }
 
-bool VNetOrch::setIntf(const string& alias, const string name, const IpPrefix *prefix)
+bool VNetOrch::createIntf(Port &port, const string name, const IpPrefix *prefix)
 {
     SWSS_LOG_ENTER();
 
@@ -909,16 +915,17 @@ bool VNetOrch::setIntf(const string& alias, const string name, const IpPrefix *p
         auto *vnet_obj = getTypePtr<VNetVrfObject>(name);
         sai_object_id_t vrf_id = vnet_obj->getVRidIngress();
 
-        return gIntfsOrch->setIntf(alias, vrf_id, prefix);
+        return gIntfsOrch->createIntf(port, vrf_id, prefix);
     }
     else
     {
         auto *vnet_obj = getTypePtr<VNetBitmapObject>(name);
-        return vnet_obj->addIntf(alias, prefix);
+        return vnet_obj->addIntf(port.m_alias, prefix);
     }
 
     return false;
 }
+
 bool VNetOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();

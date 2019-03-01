@@ -222,7 +222,7 @@ class VNetOrch : public Orch2
 public:
     VNetOrch(DBConnector *db, const std::string&, VNET_EXEC op = VNET_EXEC::VNET_EXEC_VRF);
 
-    bool setIntf(const string& alias, const string name, const IpPrefix *prefix = nullptr);
+    bool createIntf(Port &port, const string name, const IpPrefix *prefix = nullptr);
 
     bool isVnetExists(const std::string& name) const
     {

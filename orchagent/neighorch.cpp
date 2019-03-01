@@ -321,6 +321,23 @@ void NeighOrch::doTask(Consumer &consumer)
 
         IpAddress ip_address(key.substr(found+1));
 
+        /*
+         * When dealing with link-scope addresses we will not create nor remove
+         * neighbor-entries. This is motivated by a SAI implementation constrain,
+         * that prevents the creation of more than one host-route to the same
+         * ip-address through different intfs. This if-statement should be
+         * eliminated the moment this issue is fixed in SAI implementations.
+         */
+        if (ip_address.getAddrScope() == IpAddress::AddrScope::LINK_SCOPE)
+        {
+            SWSS_LOG_DEBUG("Skipping adding/removing neighbor entries for "
+                           "link-local neighbor %s on intf %s",
+                           ip_address.to_string().c_str(),
+                           alias.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
+
         NeighborEntry neighbor_entry = { ip_address, alias };
 
         if (op == SET_COMMAND)

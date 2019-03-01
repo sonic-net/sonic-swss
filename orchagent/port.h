@@ -48,8 +48,12 @@ public:
     } ;
 
     Port() {};
+
     Port(std::string alias, Type type) :
             m_alias(alias), m_type(type) {};
+
+    Port(std::string alias, Type type, sai_object_id_t vrf_id) :
+    m_alias(alias), m_type(type), m_vr_id(vrf_id) {};
 
     inline bool operator<(const Port &o) const
     {
