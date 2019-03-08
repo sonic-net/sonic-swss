@@ -2768,6 +2768,12 @@ bool PortsOrch::addLag(string lag_alias)
     PortUpdate update = { lag, true };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
+    /* Add lag name map to counter table */
+    FieldValueTuple tuple(lag_alias, sai_serialize_object_id(lag_id));
+    vector<FieldValueTuple> fields;
+    fields.push_back(tuple);
+    m_counterTable->set("", fields); 
+
     return true;
 }
 
@@ -2797,6 +2803,8 @@ bool PortsOrch::removeLag(Port lag)
     removeAclTableGroup(lag);
 
     SWSS_LOG_NOTICE("Remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
+   
+    m_counterTable->del(lag.m_alias); 
 
     m_portList.erase(lag.m_alias);
 
