@@ -674,6 +674,16 @@ class DockerVirtualSwitch(object):
         tbl.set("Vlan" + vlan + "|" + interface, fvs)
         time.sleep(1)
 
+    def remove_vlan_member(self, vlan, interface):
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        tbl._del("Vlan" + vlan + "|" + interface)
+        time.sleep(1)
+
+    def remove_vlan(self, vlan):
+        tbl = swsscommon.Table(self.cdb, "VLAN")
+        tbl._del("Vlan" + vlan)
+        time.sleep(1)
+
     def set_interface_status(self, interface, admin_status):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL"
