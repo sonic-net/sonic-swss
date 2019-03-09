@@ -170,7 +170,7 @@ def test_fdb_notifications(dvs, testlog):
     # 6 FDB entries wil be created in total
     assert counter_inserted - counter_before == 6
 
-    # check that the FDB entries were inserted into State DB
+    # check that the FDB entries were inserted into State DB for Ethernet64, Ethernet68 with Vlan6
     ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
                     "Vlan6:.*",
                     [("port", "Ethernet64"),
@@ -186,7 +186,8 @@ def test_fdb_notifications(dvs, testlog):
     )
     assert ok, str(extra)
 
-    # check that the FDB entries were inserted into State DB, Vlan8 while not Vlan7(untagged) in the key
+    # check that the FDB entries were inserted into State DB,
+    # Vlan7(untagged) in the key for Ethernet72, Ethernet76
     ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
                     "Vlan7:.*",
                     [("port", "Ethernet72"),
@@ -202,7 +203,8 @@ def test_fdb_notifications(dvs, testlog):
     )
     assert ok, str(extra)
 
-    # check that the FDB entries were inserted into State DB, Vlan8 while not Vlan7(untagged) in the key
+    # check that the FDB entries were inserted into State DB,
+    # Vlan8 (tagged) in the key for Ethernet72, Ethernet76
     ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
                     "Vlan8:.*",
                     [("port", "Ethernet72"),
@@ -212,22 +214,6 @@ def test_fdb_notifications(dvs, testlog):
     assert ok, str(extra)
     ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
                     "Vlan8:*",
-                    [("port", "Ethernet76"),
-                     ("type", "dynamic"),
-                    ]
-    )
-    assert ok, str(extra)
-
-    # check that the FDB entries were inserted into State DB, Vlan8 while not Vlan7(untagged) in the key
-    ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
-                    "Vlan7:.*",
-                    [("port", "Ethernet72"),
-                     ("type", "dynamic"),
-                    ]
-    )
-    assert ok, str(extra)
-    ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
-                    "Vlan7:*",
                     [("port", "Ethernet76"),
                      ("type", "dynamic"),
                     ]
