@@ -82,8 +82,13 @@ def test_fdb_notifications(dvs, testlog):
 
     # bring up vlan and member
     dvs.set_interface_status("Vlan6", "up")
+    dvs.set_interface_status("Vlan7", "up")
+    dvs.set_interface_status("Vlan8", "up")
+
     dvs.add_ip_address("Vlan6", "6.6.6.1/24")
+    dvs.add_ip_address("Vlan7", "7.7.7.1/24")
     dvs.add_ip_address("Vlan8", "8.8.8.1/24")
+
     dvs.set_interface_status("Ethernet64", "up")
     dvs.set_interface_status("Ethernet68", "up")
     dvs.set_interface_status("Ethernet72", "up")
@@ -101,6 +106,11 @@ def test_fdb_notifications(dvs, testlog):
     dvs.servers[19].runcmd("ifconfig eth0.8 8.8.8.7/24 up")
     dvs.servers[19].runcmd("ip route add default via 8.8.8.1")
 
+    dvs.servers[18].runcmd("ifconfig eth0 7.7.7.6/24 up")
+    dvs.servers[18].runcmd("ip route add default via 7.7.7.1")
+    dvs.servers[19].runcmd("ifconfig eth0 7.7.7.7/24 up")
+    dvs.servers[19].runcmd("ip route add default via 7.7.7.1")
+
     # get neighbor and arp entry
     time.sleep(2)
     rc = dvs.servers[16].runcmd("ping -c 1 6.6.6.7")
@@ -115,6 +125,11 @@ def test_fdb_notifications(dvs, testlog):
     rc = dvs.servers[19].runcmd("ping -c 1 8.8.8.6")
     assert rc == 0
 
+    time.sleep(2)
+    rc = dvs.servers[18].runcmd("ping -c 1 -I 7.7.7.6 7.7.7.7")
+    assert rc == 0
+    rc = dvs.servers[19].runcmd("ping -c 1 -I 7.7.7.7 7.7.7.6")
+    assert rc == 0
 
     # check that the FDB entries were inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
@@ -149,7 +164,11 @@ def test_fdb_notifications(dvs, testlog):
 
     time.sleep(2)
     counter_inserted = dvs.getCrmCounterValue('STATS', 'crm_stats_fdb_entry_used')
-    assert counter_inserted - counter_before == 4
+    # vlan 6: Ethernet64, Ethernet68;
+    # vlan 7: Ethernet72, Ethernet76;
+    # vlan 8 (tagged): Ethernet72, Ethernet76;
+    # 6 FDB entries wil be created in total
+    assert counter_inserted - counter_before == 6
 
     # check that the FDB entries were inserted into State DB
     ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
@@ -169,6 +188,22 @@ def test_fdb_notifications(dvs, testlog):
 
     # check that the FDB entries were inserted into State DB, Vlan8 while not Vlan7(untagged) in the key
     ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
+                    "Vlan7:.*",
+                    [("port", "Ethernet72"),
+                     ("type", "dynamic"),
+                    ]
+    )
+    assert ok, str(extra)
+    ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
+                    "Vlan7:*",
+                    [("port", "Ethernet76"),
+                     ("type", "dynamic"),
+                    ]
+    )
+    assert ok, str(extra)
+
+    # check that the FDB entries were inserted into State DB, Vlan8 while not Vlan7(untagged) in the key
+    ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
                     "Vlan8:.*",
                     [("port", "Ethernet72"),
                      ("type", "dynamic"),
@@ -177,6 +212,22 @@ def test_fdb_notifications(dvs, testlog):
     assert ok, str(extra)
     ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
                     "Vlan8:*",
+                    [("port", "Ethernet76"),
+                     ("type", "dynamic"),
+                    ]
+    )
+    assert ok, str(extra)
+
+    # check that the FDB entries were inserted into State DB, Vlan8 while not Vlan7(untagged) in the key
+    ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
+                    "Vlan7:.*",
+                    [("port", "Ethernet72"),
+                     ("type", "dynamic"),
+                    ]
+    )
+    assert ok, str(extra)
+    ok, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
+                    "Vlan7:*",
                     [("port", "Ethernet76"),
                      ("type", "dynamic"),
                     ]
