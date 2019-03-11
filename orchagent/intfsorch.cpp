@@ -181,6 +181,10 @@ void IntfsOrch::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
+        MacAddress mac;
+        int mac_attr_set;
+
+        mac_attr_set = 0;
 
         vector<string> keys = tokenize(kfvKey(t), ':');
         string alias(keys[0]);
@@ -207,6 +211,12 @@ void IntfsOrch::doTask(Consumer &consumer)
             else if (field == "vnet_name")
             {
                 vnet_name = value;
+            }
+            else if (field == "mac_addr")
+            {
+                mac_attr_set = 1;
+
+                mac = MacAddress(value);
             }
         }
 
@@ -296,6 +306,31 @@ void IntfsOrch::doTask(Consumer &consumer)
                 {
                     it++;
                     continue;
+                }
+            }
+
+            if (mac_attr_set == 1)
+            {
+                auto it_intfs = m_syncdIntfses.find(alias);
+                if (it_intfs != m_syncdIntfses.end())
+                {
+                /* Get mac information and update mac of the interface*/
+                    sai_attribute_t attr;
+
+                    attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+                    memcpy(attr.value.mac, mac.getMac(), sizeof(sai_mac_t));
+
+                    sai_status_t status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &attr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, rv:%d",
+                                                     mac.to_string().c_str(), port.m_alias.c_str(), status);
+                    }
+                    else
+                    {
+                        SWSS_LOG_NOTICE("Set router interface mac %s for port %s success",
+                                                      mac.to_string().c_str(), port.m_alias.c_str());
+                    }
                 }
             }
 
