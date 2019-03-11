@@ -6,6 +6,7 @@
 #include <exception>
 
 #include "sai.h"
+#include "saiextensions.h"
 #include "macaddress.h"
 #include "orch.h"
 #include "portsorch.h"
@@ -20,12 +21,19 @@
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_route_api_t* sai_route_api;
+extern sai_bridge_api_t* sai_bridge_api;
+extern sai_router_interface_api_t* sai_router_intfs_api;
+extern sai_fdb_api_t* sai_fdb_api;
+extern sai_neighbor_api_t* sai_neighbor_api;
+extern sai_next_hop_api_t* sai_next_hop_api;
+extern sai_bmtor_api_t* sai_bmtor_api;
 extern sai_object_id_t gSwitchId;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch *gPortsOrch;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
+extern MacAddress gVxlanMacAddress;
 
 /*
  * VRF Modeling and VNetVrf class definitions
@@ -250,6 +258,650 @@ VNetVrfObject::~VNetVrfObject()
 }
 
 /*
+ * Bitmap based VNET class definition
+ */
+std::bitset<VNET_BITMAP_SIZE> VNetBitmapObject::vnetBitmap_;
+std::bitset<VNET_TUNNEL_SIZE> VNetBitmapObject::tunnelOffsets_;
+map<string, uint32_t> VNetBitmapObject::vnetIds_;
+map<uint32_t, VnetBridgeInfo> VNetBitmapObject::bridgeInfoMap_;
+map<tuple<MacAddress, sai_object_id_t>, sai_fdb_entry_t> VNetBitmapObject::fdbMap_;
+map<tuple<MacAddress, sai_object_id_t>, sai_neighbor_entry_t> VNetBitmapObject::neighMap_;
+
+VNetBitmapObject::VNetBitmapObject(const std::string& vnet, const VNetInfo& vnetInfo,
+                             vector<sai_attribute_t>& attrs) : VNetObject(vnetInfo)
+{
+    SWSS_LOG_ENTER();
+
+    setVniInfo(vnetInfo.vni);
+
+    vnet_id_ = getFreeBitmapId(vnet);
+}
+
+bool VNetBitmapObject::updateObj(vector<sai_attribute_t>&)
+{
+    SWSS_LOG_ENTER();
+
+    return false;
+}
+
+uint32_t VNetBitmapObject::getFreeBitmapId(const string& vnet)
+{
+    SWSS_LOG_ENTER();
+
+    for (uint32_t i = 0; i < vnetBitmap_.size(); i++)
+    {
+        uint32_t id = 1 << i;
+        if (vnetBitmap_[i] == false)
+        {
+            vnetBitmap_[i] = true;
+            vnetIds_.emplace(vnet, id);
+            return id;
+        }
+    }
+
+    return 0;
+}
+
+uint32_t VNetBitmapObject::getBitmapId(const string& vnet)
+{
+    SWSS_LOG_ENTER();
+
+    if (vnetIds_.find(vnet) == vnetIds_.end())
+    {
+        return 0;
+    }
+
+    return vnetIds_[vnet];
+}
+
+void VNetBitmapObject::recycleBitmapId(uint32_t id)
+{
+    SWSS_LOG_ENTER();
+
+    vnetBitmap_ &= ~id;
+}
+
+uint32_t VNetBitmapObject::getFreeTunnelRouteTableOffset()
+{
+    SWSS_LOG_ENTER();
+
+    for (uint32_t i = 0; i < tunnelOffsets_.size(); i++)
+    {
+        if (tunnelOffsets_[i] == false)
+        {
+            tunnelOffsets_[i] = true;
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+void VNetBitmapObject::recycleTunnelRouteTableOffset(uint32_t offset)
+{
+    SWSS_LOG_ENTER();
+
+    tunnelOffsets_[offset] = false;
+}
+
+VnetBridgeInfo VNetBitmapObject::getBridgeInfoByVni(uint32_t vni, string tunnelName)
+{
+    SWSS_LOG_ENTER();
+
+    if (bridgeInfoMap_.find(vni) != bridgeInfoMap_.end())
+    {
+        return std::move(bridgeInfoMap_.at(vni));
+    }
+
+    sai_status_t status;
+    VnetBridgeInfo info;
+    sai_attribute_t attr;
+    vector<sai_attribute_t> bridge_attrs;
+    attr.id = SAI_BRIDGE_ATTR_TYPE;
+    attr.value.s32 = SAI_BRIDGE_TYPE_1D;
+    bridge_attrs.push_back(attr);
+
+    status = sai_bridge_api->create_bridge(
+            &info.bridge_id,
+            gSwitchId,
+            (uint32_t)bridge_attrs.size(),
+            bridge_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create bridge for vni %u", vni);
+        throw std::runtime_error("vni creation failed");
+    }
+
+    vector<sai_attribute_t> rif_attrs;
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+    attr.value.oid = gVirtualRouterId;
+    rif_attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+    memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+    rif_attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+    attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_BRIDGE;
+    rif_attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_BRIDGE_ID;
+    attr.value.oid = info.bridge_id;
+    rif_attrs.push_back(attr);
+
+    status = sai_router_intfs_api->create_router_interface(
+            &info.rif_id,
+            gSwitchId,
+            (uint32_t)rif_attrs.size(),
+            rif_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create rif for vni %u", vni);
+        throw std::runtime_error("vni creation failed");
+    }
+
+    vector<sai_attribute_t> bpr_attrs;
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+    attr.value.s32 = SAI_BRIDGE_PORT_TYPE_1D_ROUTER;
+    bpr_attrs.push_back(attr);
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_RIF_ID;
+    attr.value.oid = info.rif_id;
+    bpr_attrs.push_back(attr);
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_BRIDGE_ID;
+    attr.value.oid = info.bridge_id;
+    bpr_attrs.push_back(attr);
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+    attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
+    bpr_attrs.push_back(attr);
+
+    status = sai_bridge_api->create_bridge_port(
+            &info.bridge_port_rif_id,
+            gSwitchId,
+            (uint32_t)bpr_attrs.size(),
+            bpr_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create rif bridge port for vni %u", vni);
+        throw std::runtime_error("vni creation failed");
+    }
+
+    vector<sai_attribute_t> bpt_attrs;
+    auto* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+    auto *tunnel = vxlan_orch->getVxlanTunnel(tunnelName);
+    if (!tunnel->isActive())
+    {
+        tunnel->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE);
+    }
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+    attr.value.s32 = SAI_BRIDGE_PORT_TYPE_TUNNEL;
+    bpt_attrs.push_back(attr);
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_BRIDGE_ID;
+    attr.value.oid = info.bridge_id;
+    bpt_attrs.push_back(attr);
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+    attr.value.booldata = true;
+    bpt_attrs.push_back(attr);
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_TUNNEL_ID;
+    attr.value.oid = tunnel->getTunnelId();
+    bpt_attrs.push_back(attr);
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+    attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
+    bpt_attrs.push_back(attr);
+
+    status = sai_bridge_api->create_bridge_port(
+            &info.bridge_port_tunnel_id,
+            gSwitchId,
+            (uint32_t)bpt_attrs.size(),
+            bpt_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create tunnel bridge port for vni %u", vni);
+        throw std::runtime_error("vni creation failed");
+    }
+
+    tunnel->addEncapMapperEntry(info.bridge_id, vni);
+
+    bridgeInfoMap_.emplace(vni, info);
+
+    return std::move(info);
+}
+
+void VNetBitmapObject::setVniInfo(uint32_t vni)
+{
+    sai_attribute_t attr;
+    vector<sai_attribute_t> vnet_attrs;
+    sai_object_id_t vnetTableEntryId;
+    auto info = getBridgeInfoByVni(getVni(), getTunnelName());
+
+    attr.id = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ATTR_ACTION;
+    attr.value.s32 = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ACTION_SET_METADATA;
+    vnet_attrs.push_back(attr);
+
+    attr.id = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ATTR_ROUTER_INTERFACE_KEY;
+    attr.value.oid = info.rif_id;
+    vnet_attrs.push_back(attr);
+
+    attr.id = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ATTR_IN_RIF_METADATA;
+    attr.value.u32 = vnet_id_;
+    vnet_attrs.push_back(attr);
+
+    sai_status_t status = sai_bmtor_api->create_table_bitmap_classification_entry(
+            &vnetTableEntryId,
+            gSwitchId,
+            (uint32_t)vnet_attrs.size(),
+            vnet_attrs.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create VNET table entry, SAI rc: %d", status);
+        throw std::runtime_error("VNet interface creation failed");
+    }
+}
+
+bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> vnet_attrs;
+    vector<sai_attribute_t> route_attrs;
+    sai_status_t status;
+    uint32_t peerBitmap = vnet_id_;
+
+    if (prefix && !prefix->isV4())
+    {
+        return false;
+    }
+
+    for (const auto& vnet : getPeerList())
+    {
+        uint32_t id = getBitmapId(vnet);
+        if (id == 0)
+        {
+            SWSS_LOG_WARN("Peer vnet %s not ready", vnet.c_str());
+            return false;
+        }
+        peerBitmap |= id;
+    }
+
+    if (gIntfsOrch->getSyncdIntfses().find(alias) == gIntfsOrch->getSyncdIntfses().end())
+    {
+        if (!gIntfsOrch->setIntf(alias, gVirtualRouterId, nullptr))
+        {
+            return false;
+        }
+
+        sai_object_id_t vnetTableEntryId;
+
+        attr.id = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ATTR_ACTION;
+        attr.value.s32 = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ACTION_SET_METADATA;
+        vnet_attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ATTR_ROUTER_INTERFACE_KEY;
+        attr.value.oid = gIntfsOrch->getRouterIntfsId(alias);
+        vnet_attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ATTR_IN_RIF_METADATA;
+        attr.value.u32 = vnet_id_;
+        vnet_attrs.push_back(attr);
+
+        status = sai_bmtor_api->create_table_bitmap_classification_entry(
+                &vnetTableEntryId,
+                gSwitchId,
+                (uint32_t)vnet_attrs.size(),
+                vnet_attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create VNET table entry, SAI rc: %d", status);
+            throw std::runtime_error("VNet interface creation failed");
+        }
+    }
+
+    if (prefix)
+    {
+        sai_object_id_t tunnelRouteTableEntryId;
+        sai_ip_prefix_t saiPrefix;
+        copy(saiPrefix, *prefix);
+
+        gIntfsOrch->addIp2MeRoute(gVirtualRouterId, *prefix);
+
+        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_ACTION;
+        attr.value.s32 = SAI_TABLE_BITMAP_ROUTER_ENTRY_ACTION_TO_LOCAL;
+        route_attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_PRIORITY;
+        attr.value.u32 = getFreeTunnelRouteTableOffset();
+        route_attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_IN_RIF_METADATA_KEY;
+        attr.value.u64 = 0;
+        route_attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_IN_RIF_METADATA_MASK;
+        attr.value.u64 = ~peerBitmap;
+        route_attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_DST_IP_KEY;
+        attr.value.ipprefix = saiPrefix;
+        route_attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_ROUTER_INTERFACE;
+        attr.value.oid = gIntfsOrch->getRouterIntfsId(alias);
+        route_attrs.push_back(attr);
+
+        status = sai_bmtor_api->create_table_bitmap_router_entry(
+                &tunnelRouteTableEntryId,
+                gSwitchId,
+                (uint32_t)route_attrs.size(),
+                route_attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create local VNET route entry, SAI rc: %d", status);
+            throw std::runtime_error("VNet interface creation failed");
+        }
+    }
+
+    return true;
+}
+
+uint32_t VNetBitmapObject::getFreeNeighbor(void)
+{
+    static set<uint32_t> neighbors;
+
+    for (uint32_t i = 0; i < VNET_NEIGHBOR_MAX; i++)
+    {
+        if (neighbors.count(i) == 0)
+        {
+            neighbors.insert(i);
+            return i;
+        }
+    }
+
+    SWSS_LOG_ERROR("No neighbors left");
+    throw std::runtime_error("VNet route creation failed");
+}
+
+bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+    sai_attribute_t attr;
+    sai_object_id_t tunnelRouteTableEntryId;
+    auto& peer_list = getPeerList();
+    auto bInfo = getBridgeInfoByVni(endp.vni == 0 ? getVni() : endp.vni, getTunnelName());
+    uint32_t peerBitmap = vnet_id_;
+    MacAddress mac = endp.mac ? endp.mac : gVxlanMacAddress;
+
+    VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
+    for (auto peer : peer_list)
+    {
+        if (!vnet_orch->isVnetExists(peer))
+        {
+            SWSS_LOG_INFO("Peer VNET %s not yet created", peer.c_str());
+            return false;
+        }
+        peerBitmap |= getBitmapId(peer);
+    }
+
+    auto macBridge = make_tuple(mac, bInfo.bridge_id);
+
+    if (fdbMap_.find(macBridge) == fdbMap_.end())
+    {
+        /* FDB entry to the tunnel */
+        vector<sai_attribute_t> fdb_attrs;
+        sai_ip_address_t underlayAddr;
+        copy(underlayAddr, endp.ip);
+        sai_fdb_entry_t fdbEntry;
+        fdbEntry.switch_id = gSwitchId;
+        mac.getMac(fdbEntry.mac_address);
+        fdbEntry.bv_id = bInfo.bridge_id;
+
+        attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
+        attr.value.s32 = SAI_FDB_ENTRY_TYPE_STATIC;
+        fdb_attrs.push_back(attr);
+
+        attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
+        attr.value.oid = bInfo.bridge_port_tunnel_id;
+        fdb_attrs.push_back(attr);
+
+        attr.id = SAI_FDB_ENTRY_ATTR_ENDPOINT_IP;
+        attr.value.ipaddr = underlayAddr;
+        fdb_attrs.push_back(attr);
+
+        status = sai_fdb_api->create_fdb_entry(
+                &fdbEntry,
+                (uint32_t)fdb_attrs.size(),
+                fdb_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create fdb entry for tunnel, SAI rc: %d", status);
+            throw std::runtime_error("VNet route creation failed");
+        }
+
+        fdbMap_.emplace(macBridge, fdbEntry);
+    }
+
+    /* Fake neighbor */
+    sai_neighbor_entry_t neigh;
+    if (neighMap_.find(macBridge) == neighMap_.end())
+    {
+        vector<sai_attribute_t> n_attrs;
+        neigh.switch_id = gSwitchId;
+        neigh.rif_id = bInfo.rif_id;
+        neigh.ip_address.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
+        neigh.ip_address.addr.ip4 = htonl(getFreeNeighbor());
+
+        attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
+        mac.getMac(attr.value.mac);
+        n_attrs.push_back(attr);
+
+        status = sai_neighbor_api->create_neighbor_entry(
+                &neigh,
+                (uint32_t)n_attrs.size(),
+                n_attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create neighbor entry for tunnel, SAI rc: %d", status);
+            throw std::runtime_error("VNet route creation failed");
+        }
+
+        neighMap_.emplace(macBridge, neigh);
+    }
+    else
+    {
+        neigh = neighMap_.at(macBridge);
+    }
+
+    /* Nexthop */
+    vector<sai_attribute_t> nh_attrs;
+    sai_object_id_t nexthopId;
+
+    attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+    attr.value.s32 = SAI_NEXT_HOP_TYPE_IP;
+    nh_attrs.push_back(attr);
+
+    attr.id = SAI_NEXT_HOP_ATTR_IP;
+    attr.value.ipaddr = neigh.ip_address;
+    nh_attrs.push_back(attr);
+
+    attr.id = SAI_NEXT_HOP_ATTR_ROUTER_INTERFACE_ID;
+    attr.value.oid = bInfo.rif_id;
+    nh_attrs.push_back(attr);
+
+    status = sai_next_hop_api->create_next_hop(
+            &nexthopId,
+            gSwitchId,
+            (uint32_t)nh_attrs.size(),
+            nh_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create nexthop for tunnel, SAI rc: %d", status);
+        throw std::runtime_error("VNet route creation failed");
+    }
+
+    /* Tunnel route */
+    vector<sai_attribute_t> tr_attrs;
+    sai_ip_prefix_t pfx;
+    copy(pfx, ipPrefix);
+
+    attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_ACTION;
+    attr.value.s32 = SAI_TABLE_BITMAP_ROUTER_ENTRY_ACTION_TO_NEXTHOP;
+    tr_attrs.push_back(attr);
+
+    attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_PRIORITY;
+    attr.value.u32 = getFreeTunnelRouteTableOffset();
+    tr_attrs.push_back(attr);
+
+    attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_IN_RIF_METADATA_KEY;
+    attr.value.u64 = 0;
+    tr_attrs.push_back(attr);
+
+    attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_IN_RIF_METADATA_MASK;
+    attr.value.u64 = ~peerBitmap;
+    tr_attrs.push_back(attr);
+
+    attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_DST_IP_KEY;
+    attr.value.ipprefix = pfx;
+    tr_attrs.push_back(attr);
+
+    attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_NEXT_HOP;
+    attr.value.oid = nexthopId;
+    tr_attrs.push_back(attr);
+
+    status = sai_bmtor_api->create_table_bitmap_router_entry(
+            &tunnelRouteTableEntryId,
+            gSwitchId,
+            (uint32_t)tr_attrs.size(),
+            tr_attrs.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create local VNET route entry, SAI rc: %d", status);
+        throw std::runtime_error("VNet route creation failed");
+    }
+
+    return true;
+}
+
+bool VNetBitmapObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+    sai_ip_prefix_t pfx;
+    sai_object_id_t tunnelRouteTableEntryId;
+    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
+    uint32_t peerBitmap = vnet_id_;
+    Port port;
+
+    bool is_subnet = (!nh.ips.getSize()) ? true : false;
+
+    if (is_subnet && (!gPortsOrch->getPort(nh.ifname, port) || (port.m_rif_id == SAI_NULL_OBJECT_ID)))
+    {
+        SWSS_LOG_WARN("Port/RIF %s doesn't exist", nh.ifname.c_str());
+        return false;
+    }
+
+    for (const auto& vnet : getPeerList())
+    {
+        uint32_t id = getBitmapId(vnet);
+        if (id == 0)
+        {
+            SWSS_LOG_WARN("Peer vnet %s not ready", vnet.c_str());
+            return false;
+        }
+        peerBitmap |= id;
+    }
+
+    /* Local route */
+    copy(pfx, ipPrefix);
+
+    if (is_subnet)
+    {
+        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_ACTION;
+        attr.value.s32 = SAI_TABLE_BITMAP_ROUTER_ENTRY_ACTION_TO_LOCAL;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_ROUTER_INTERFACE;
+        attr.value.oid = port.m_rif_id;
+        attrs.push_back(attr);
+    }
+    else if (nh.ips.getSize() == 1)
+    {
+        IpAddress ip_address(nh.ips.to_string());
+        if (gNeighOrch->hasNextHop(ip_address))
+        {
+            nh_id = gNeighOrch->getNextHopId(ip_address);
+        }
+        else
+        {
+            SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                          ip_address.to_string().c_str(), ipPrefix.to_string().c_str());
+            return false;
+        }
+
+        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_ACTION;
+        attr.value.s32 = SAI_TABLE_BITMAP_ROUTER_ENTRY_ACTION_TO_NEXTHOP;
+        attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_NEXT_HOP;
+        attr.value.oid = nh_id;
+        attrs.push_back(attr);
+    }
+    else
+    {
+        /* FIXME - Handle ECMP routes */
+        SWSS_LOG_WARN("VNET ECMP NHs not implemented for '%s'", ipPrefix.to_string().c_str());
+        return true;
+    }
+
+    attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_PRIORITY;
+    attr.value.u32 = getFreeTunnelRouteTableOffset();
+    attrs.push_back(attr);
+
+    attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_IN_RIF_METADATA_KEY;
+    attr.value.u64 = 0;
+    attrs.push_back(attr);
+
+    attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_IN_RIF_METADATA_MASK;
+    attr.value.u64 = ~peerBitmap;
+    attrs.push_back(attr);
+
+    attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_DST_IP_KEY;
+    attr.value.ipprefix = pfx;
+    attrs.push_back(attr);
+
+    status = sai_bmtor_api->create_table_bitmap_router_entry(
+            &tunnelRouteTableEntryId,
+            gSwitchId,
+            (uint32_t)attrs.size(),
+            attrs.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create local VNET route entry, SAI rc: %d", status);
+        throw std::runtime_error("VNet route creation failed");
+    }
+
+    return true;
+}
+
+/*
  * VNet Orch class definitions
  */
 
@@ -280,18 +932,23 @@ bool VNetOrch::setIntf(const string& alias, const string name, const IpPrefix *p
 {
     SWSS_LOG_ENTER();
 
+    if (!isVnetExists(name))
+    {
+        SWSS_LOG_WARN("VNET %s doesn't exist", name.c_str());
+        return false;
+    }
+
     if (isVnetExecVrf())
     {
-        if (!isVnetExists(name))
-        {
-            SWSS_LOG_WARN("VNET %s doesn't exist", name.c_str());
-            return false;
-        }
-
         auto *vnet_obj = getTypePtr<VNetVrfObject>(name);
         sai_object_id_t vrf_id = vnet_obj->getVRidIngress();
 
         return gIntfsOrch->setIntf(alias, vrf_id, prefix);
+    }
+    else
+    {
+        auto *vnet_obj = getTypePtr<VNetBitmapObject>(name);
+        return vnet_obj->addIntf(alias, prefix);
     }
 
     return false;
@@ -372,7 +1029,20 @@ bool VNetOrch::addOperation(const Request& request)
         }
         else
         {
-            // BRIDGE Handling
+            VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+            if (!vxlan_orch->isTunnelExists(tunnel))
+            {
+                SWSS_LOG_WARN("Vxlan tunnel '%s' doesn't exist", tunnel.c_str());
+                return false;
+            }
+
+            if (it == std::end(vnet_table_))
+            {
+                VNetInfo vnet_info = { tunnel, vni, peer_list };
+                obj = createObject<VNetBitmapObject>(vnet_name, vnet_info, attrs);
+                create = true;
+            }
         }
 
         if (create)
@@ -706,6 +1376,48 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     return true;
 }
 
+template<>
+bool VNetRouteOrch::doRouteTask<VNetBitmapObject>(const string& vnet, IpPrefix& ipPrefix, tunnelEndpoint& endp, string& op)
+{
+    SWSS_LOG_ENTER();
+
+    if (!vnet_orch_->isVnetExists(vnet))
+    {
+        SWSS_LOG_WARN("VNET %s doesn't exist", vnet.c_str());
+        return false;
+    }
+
+    auto *vnet_obj = vnet_orch_->getTypePtr<VNetBitmapObject>(vnet);
+
+    if (op == SET_COMMAND)
+    {
+        return vnet_obj->addTunnelRoute(ipPrefix, endp);
+    }
+
+    return true;
+}
+
+template<>
+bool VNetRouteOrch::doRouteTask<VNetBitmapObject>(const string& vnet, IpPrefix& ipPrefix, nextHop& nh, string& op)
+{
+    SWSS_LOG_ENTER();
+
+    if (!vnet_orch_->isVnetExists(vnet))
+    {
+        SWSS_LOG_WARN("VNET %s doesn't exist", vnet.c_str());
+        return false;
+    }
+
+    auto *vnet_obj = vnet_orch_->getTypePtr<VNetBitmapObject>(vnet);
+
+    if (op == SET_COMMAND)
+    {
+        return vnet_obj->addRoute(ipPrefix, nh);
+    }
+
+    return true;
+}
+
 bool VNetRouteOrch::handleRoutes(const Request& request)
 {
     SWSS_LOG_ENTER();
@@ -742,6 +1454,10 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
     if (vnet_orch_->isVnetExecVrf())
     {
         return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, nh, op);
+    }
+    else
+    {
+        return doRouteTask<VNetBitmapObject>(vnet_name, ip_pfx, nh, op);
     }
 
     return true;
@@ -788,6 +1504,10 @@ bool VNetRouteOrch::handleTunnel(const Request& request)
     if (vnet_orch_->isVnetExecVrf())
     {
         return doRouteTask<VNetVrfObject>(vnet_name, ip_pfx, endp, op);
+    }
+    else
+    {
+        return doRouteTask<VNetBitmapObject>(vnet_name, ip_pfx, endp, op);
     }
 
     return true;

@@ -11,6 +11,7 @@ using namespace swss;
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
+extern MacAddress gVxlanMacAddress;
 
 const map<string, sai_switch_attr_t> switch_attribute_map =
 {
@@ -100,6 +101,7 @@ void SwitchOrch::doTask(Consumer &consumer)
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC:
                         mac_addr = value;
+                        gVxlanMacAddress = mac_addr;
                         memcpy(attr.value.mac, mac_addr.getMac(), sizeof(sai_mac_t));
                         break;
 

@@ -948,19 +948,6 @@ def set_restart_timer(dvs, db, app_name, value):
         ]
     )
 
-
-# Temporary instruction to activate warm_restart. To be deleted once equivalent CLI
-# function is pushed to sonic-utils.
-def enable_warmrestart(dvs, db, app_name):
-    create_entry_tbl(
-        db,
-        swsscommon.CFG_WARM_RESTART_TABLE_NAME, app_name,
-        [
-            ("enable", "true"),
-        ]
-    )
-
-
 ################################################################################
 #
 # Routing warm-restart testcases
@@ -1096,10 +1083,9 @@ def test_routing_WarmRestart(dvs, testlog):
     # Enabling bgp warmrestart and setting restart timer.
     # The following two instructions will be substituted by the commented ones
     # once the later ones are added to sonic-utilities repo.
-    enable_warmrestart(dvs, conf_db, "bgp")
-    set_restart_timer(dvs, conf_db, "bgp", str(restart_timer))
-    #dvs.runcmd("config warm_restart enable bgp")
-    #dvs.runcmd("config warm_restart bgp_timer {}".format(restart_timer))
+
+    dvs.runcmd("config warm_restart enable bgp")
+    dvs.runcmd("config warm_restart bgp_timer {}".format(restart_timer))
 
     time.sleep(1)
 
