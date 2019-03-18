@@ -36,8 +36,14 @@ public:
         return m_countersDb;
     }
 
+    bool isTimerEnabled()
+    {
+        return m_qWmEnabled || m_pgWmEnabled;
+    }
+
 private:
-    bool m_isTimerEnabled = false;
+    bool m_qWmEnabled = false;
+    bool m_pgWmEnabled = false;
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<DBConnector> m_appDb = nullptr;

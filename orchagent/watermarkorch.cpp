@@ -107,20 +107,26 @@ void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vect
 
 void WatermarkOrch::handleFcConfigUpdate(const std::string &key, const std::vector<FieldValueTuple> &fvt)
 {
+
     if (key == "QUEUE_WATERMARK" || key == "PG_WATERMARK")
     {
         for (std::pair<std::basic_string<char>, std::basic_string<char> > i: fvt)
         {
-            if (i.first == "FLEX_COUNTER_STATUS" && i.second == "enable" && m_isTimerEnabled == false)
+            if (i.first == "FLEX_COUNTER_STATUS")
             {
-                m_telemetryTimer->start();
-                m_isTimerEnabled = true;
+                if (key == "QUEUE_WATERMARK")
+                {
+                    m_qWmEnabled = (i.second == "enable");
+                }
+                else if (key == "PG_WATERMARK")
+                {
+                    m_pgWmEnabled = (i.second == "enable");
+                }
             }
-            else if (i.first == "FLEX_COUNTER_STATUS" && i.second == "disable" && m_isTimerEnabled == true)
-            {
-                /* no need to stop timer here - it won't be reset after end of this interval */
-                m_isTimerEnabled = false;
-            }
+        }
+        if (isTimerEnabled())
+        {
+            m_telemetryTimer->start();
         }
     }
 }
@@ -203,7 +209,7 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
     {
         /* Timer is only running when the watermark polling is on                         *
          * if it is disabled we will not restart the timer at the end of current interval */
-        if (m_isTimerEnabled)
+        if (isTimerEnabled())
         {
             m_telemetryTimer->reset();
         }
