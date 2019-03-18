@@ -58,7 +58,11 @@ void VxlanMgr::doTask(Consumer &consumer)
     const string & table_name = consumer.getTableName();
     if (table_name == CFG_VNET_TABLE_NAME)
     {
-        doVnetTask(consumer);
+        doVnetTableTask(consumer);
+    }
+    else if (table_name == CFG_VXLAN_TUNNEL_TABLE_NAME)
+    {
+        doVxlanTableTask(consumer);
     }
     else
     {
@@ -67,54 +71,105 @@ void VxlanMgr::doTask(Consumer &consumer)
     }
 }
 
-void VxlanMgr::doVnetTask(Consumer &consumer)
+void VxlanMgr::doVnetTableTask(Consumer &consumer)
 {
+    SWSS_LOG_ENTER();
+
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
         auto t = it->second;
         const std::string & op = kfvOp(t);
-        const std::string & vnetName = kfvKey(t);
-        for (auto i : kfvFieldsValues(t))
+        if (op == SET_COMMAND)
         {
-            const std::string & field = fvField(i);
-            const std::string & value = fvValue(i);
-            if (field == VXLAN_TUNNEL)
+            if ( ! doVxlanCreateTask(t))
             {
-                if (op == SET_COMMAND)
-                {
-                    // If the VRF(Vnet is a special VRF) has been created
-                    if (! isVrfStateOk(vnetName))
-                    {
-                        ++it;
-                        continue;
-                    }
-                    VxlanInfo info;
-                    if (! getVxlanInfo(vnetName, info))
-                    {
-                        ++it;
-                        continue;
-                    }
-                    createVxlan(info);
-                }
-                else if (op == DEL_COMMAND)
-                {
-                    VxlanInfo info;
-                    info[VNET] = vnetName;
-                    info[VXLAN_TUNNEL] = value;
-                    info[BRIDGE] = std::string("") + VXLAN_IF_NAME_PREFIX
-                                        // IFNAMSIZ include '\0', so need minus one
-                                        + value.substr(0, IFNAMSIZ - strlen(VXLAN_IF_NAME_PREFIX) - 1);
-                    deleteVxlan(info);
-                }
-                else
-                {
-                    SWSS_LOG_ERROR("Unknown command %s ", op.c_str());
-                }
+                ++it;
+                continue;
             }
-            it = consumer.m_toSync.erase(it);
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+void VxlanMgr::doVxlanTableTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        auto t = it->second;
+        const std::string & op = kfvOp(t);
+        if (op == DEL_COMMAND)
+        {
+            if (! doVxlanDeleteTask(t))
+            {
+                ++it;
+                continue;
+            }
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
+{
+    SWSS_LOG_ENTER();
+
+    const std::string & vnetName = kfvKey(t);
+    const std::string & op = kfvOp(t);
+    for (auto i : kfvFieldsValues(t))
+    {
+        const std::string & field = fvField(i);
+        const std::string & value = fvValue(i);
+        if (field == VXLAN_TUNNEL)
+        {
+            if (op == SET_COMMAND)
+            {
+                // If the VRF(Vnet is a special VRF) has been created
+                if (! isVrfStateOk(vnetName))
+                {
+                    return false;
+                }
+                VxlanInfo info;
+                if (! getVxlanInfo(vnetName, info))
+                {
+                    return false;
+                }
+                createVxlan(info);
+                return true;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Unknown command %s ", op.c_str());
+                return true;
+            }
         }
     }
+    return true;
+}
+
+bool VxlanMgr::doVxlanDeleteTask(const KeyOpFieldsValuesTuple & t)
+{
+    SWSS_LOG_ENTER();
+
+    const std::string & vxlan_tunnel = kfvKey(t);
+    const std::string & op = kfvOp(t);
+
+    if (op == DEL_COMMAND)
+    {
+        VxlanInfo info;
+        info[VXLAN_TUNNEL] = vxlan_tunnel;
+        info[BRIDGE] = std::string("") + VXLAN_IF_NAME_PREFIX
+                            // IFNAMSIZ include '\0', so need minus one
+                            + vxlan_tunnel.substr(0, IFNAMSIZ - strlen(VXLAN_IF_NAME_PREFIX) - 1);
+        deleteVxlan(info);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Unknown command %s ", op.c_str());
+    }
+    return true;
 }
 
 bool VxlanMgr::isVrfStateOk(const std::string & vrfName)
@@ -189,7 +244,11 @@ bool VxlanMgr::getVxlanInfo(const std::string & vnetName, VxlanInfo & info)
     return true;
 }
 
-static bool execCommand(const std::string & format, const swss::VxlanMgr::VxlanInfo & info, std::string & res)
+
+#define RET_SUCCESS 0
+#define RET_FILE_EXISTS 512
+
+static int execCommand(const std::string & format, const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
 	std::string command = format;
     // Extract the {{args}} from format
@@ -205,7 +264,8 @@ static bool execCommand(const std::string & format, const swss::VxlanMgr::VxlanI
 		}
 		command = std::string(result.prefix()) + it->second + std::string(result.suffix());
 	}
-    return swss::exec(std::string() + BASH_CMD + " -c \"" + command + "\"", res) == 0;
+
+    return swss::exec(std::string() + BASH_CMD + " -c \"" + command + "\"", res);
 }
 
 void VxlanMgr::createVxlan(VxlanInfo & info)
@@ -213,12 +273,11 @@ void VxlanMgr::createVxlan(VxlanInfo & info)
     SWSS_LOG_ENTER();
     
     std::string res;
+    int ret = 0;
 
+    ret = execCommand( CMD_CREATE_VXLAN, info, res);
     // Create Vxlan
-    if ( ! execCommand(
-        CMD_CREATE_VXLAN,
-        info,
-        res))
+    if ( ret != RET_SUCCESS && ret != RET_FILE_EXISTS)
     {
         SWSS_LOG_WARN(
             "Failed to create vxlan %s (vni: %s, source ip %s)",
@@ -229,7 +288,8 @@ void VxlanMgr::createVxlan(VxlanInfo & info)
     }
 
     // Up Vxlan
-    if ( ! execCommand(CMD_UP_VXLAN, info, res))
+    ret = execCommand(CMD_UP_VXLAN, info, res);
+    if ( ret != RET_SUCCESS )
     {
         execCommand(CMD_DELETE_VXLAN, info, res);
         SWSS_LOG_WARN(
@@ -239,7 +299,8 @@ void VxlanMgr::createVxlan(VxlanInfo & info)
     }
 
     // Create bridge
-    if ( ! execCommand(CMD_CREATE_BRIDGE, info, res))
+    ret = execCommand(CMD_CREATE_BRIDGE, info, res);
+    if ( ret != RET_SUCCESS && ret != RET_FILE_EXISTS )
     {
         execCommand(CMD_DELETE_VXLAN, info, res);
         SWSS_LOG_WARN(
@@ -249,19 +310,11 @@ void VxlanMgr::createVxlan(VxlanInfo & info)
     }
 
     // Add vxlan into bridge
-    if ( ! execCommand(CMD_ADD_VXLAN_INTO_BRIDGE, info, res))
-    {
-        execCommand(CMD_DELETE_BRIDGE, info, res);
-        execCommand(CMD_DELETE_VXLAN, info, res);
-        SWSS_LOG_WARN(
-            "Fail to add %s into %s",
-            info[VXLAN_TUNNEL].c_str(),
-            info[BRIDGE].c_str());
-        return ;
-    }
+    execCommand(CMD_ADD_VXLAN_INTO_BRIDGE, info, res);
 
     // Attach bridge to vnet
-    if ( ! execCommand(CMD_ATTACH_BRIDGE_TO_VNET, info, res))
+    ret = execCommand(CMD_ATTACH_BRIDGE_TO_VNET, info, res);
+    if ( ret != RET_SUCCESS )
     {
         execCommand(CMD_DELETE_VXLAN_FROM_BRIDGE, info, res);
         execCommand(CMD_DELETE_BRIDGE, info, res);
@@ -275,7 +328,8 @@ void VxlanMgr::createVxlan(VxlanInfo & info)
     }
 
     // Up bridge
-    if ( ! execCommand(CMD_UP_BRIDGE, info, res))
+    ret = execCommand(CMD_UP_BRIDGE, info, res);
+    if ( ret != RET_SUCCESS )
     {
         execCommand(CMD_DETACH_BRIDGE_FROM_VXLAN, info, res);
         execCommand(CMD_DELETE_VXLAN_FROM_BRIDGE, info, res);
@@ -292,7 +346,6 @@ void VxlanMgr::createVxlan(VxlanInfo & info)
     m_appVxlanTableProducer.set(info[VXLAN_TUNNEL], fvVector);
 
     SWSS_LOG_NOTICE("Create vxlan %s", info[VXLAN_TUNNEL].c_str());
-
 }
 
 void VxlanMgr::deleteVxlan(VxlanInfo & info)
@@ -307,7 +360,7 @@ void VxlanMgr::deleteVxlan(VxlanInfo & info)
     execCommand(CMD_DELETE_VXLAN, info, res);
 
     m_appVxlanTableProducer.del(info[VXLAN_TUNNEL]);
-
+    SWSS_LOG_NOTICE("Delete vxlan %s", info[VXLAN_TUNNEL].c_str());
 }
 
 

@@ -20,7 +20,10 @@ public:
     typedef std::map<std::string, std::string> VxlanInfo;
 private:
     void doTask(Consumer &consumer);
-    void doVnetTask(Consumer &consumer);
+    void doVnetTableTask(Consumer &consumer);
+    void doVxlanTableTask(Consumer &consumer);
+    bool doVxlanCreateTask(const KeyOpFieldsValuesTuple & t);
+    bool doVxlanDeleteTask(const KeyOpFieldsValuesTuple & t);
 
     /*
      * Query the state of vrf by STATE_VRF_TABLE
