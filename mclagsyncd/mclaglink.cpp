@@ -267,13 +267,13 @@ void mclagsyncd_set_port_isolate(RedisClient *p_redisClient_2_cfg, ProducerState
              isolate_src_port.c_str(), isolate_dst_port.c_str());  
 
     /*First create ACL table*/
-    FieldValueTuple desc_attr("POLICY_DESC","Mclag egress port isolate acl");
+    FieldValueTuple desc_attr("policy_desc","Mclag egress port isolate acl");
     acl_attrs.push_back(desc_attr);
 
-    FieldValueTuple type_attr("TYPE","L3");
+    FieldValueTuple type_attr("type","L3");
     acl_attrs.push_back(type_attr);
 
-    FieldValueTuple port_attr("PORTS",isolate_src_port);
+    FieldValueTuple port_attr("ports",isolate_src_port);
     acl_attrs.push_back(port_attr);
 
     p_redisClient_2_cfg->hmset(acl_key, acl_attrs.begin(), acl_attrs.end());
