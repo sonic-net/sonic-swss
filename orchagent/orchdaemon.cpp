@@ -77,7 +77,15 @@ bool OrchDaemon::init()
             APP_VNET_RT_TABLE_NAME,
             APP_VNET_RT_TUNNEL_TABLE_NAME
     };
-    VNetOrch *vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+    VNetOrch *vnet_orch;
+    if (platform == MLNX_PLATFORM_SUBSTRING)
+    {
+        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME, VNET_EXEC::VNET_EXEC_BRIDGE);
+    }
+    else
+    {
+        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+    }
     gDirectory.set(vnet_orch);
     VNetRouteOrch *vnet_rt_orch = new VNetRouteOrch(m_applDb, vnet_tables, vnet_orch);
     gDirectory.set(vnet_rt_orch);

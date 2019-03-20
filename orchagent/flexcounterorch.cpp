@@ -10,6 +10,7 @@
 extern sai_port_api_t *sai_port_api;
 
 extern PortsOrch *gPortsOrch;
+extern IntfsOrch *gIntfsOrch;
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -18,6 +19,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
     {"QUEUE_WATERMARK", QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PG_WATERMARK", PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
@@ -78,6 +80,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     // The queue maps will be generated as soon as counters are enabled
                     gPortsOrch->generateQueueMap();
                     gPortsOrch->generatePriorityGroupMap();
+                    gIntfsOrch->generateInterfaceMap();
 
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
