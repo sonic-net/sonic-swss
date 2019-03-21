@@ -251,7 +251,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             string members;
 
             /*
-             * If state is already set for this vlan, but it doesn't exit in m_vlans set,
+             * If state is already set for this vlan, but it doesn't exist in m_vlans set,
              * just add it to m_vlans set and remove the request to skip disrupting Linux vlan.
              * Will hit this scenario for docker warm restart.
              *
