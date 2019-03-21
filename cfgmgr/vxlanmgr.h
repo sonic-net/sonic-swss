@@ -21,7 +21,6 @@ public:
 private:
     void doTask(Consumer &consumer);
     void doVnetTableTask(Consumer &consumer);
-    void doVxlanTableTask(Consumer &consumer);
     bool doVxlanCreateTask(const KeyOpFieldsValuesTuple & t);
     bool doVxlanDeleteTask(const KeyOpFieldsValuesTuple & t);
 
@@ -32,6 +31,7 @@ private:
      *  false: the vrf hasn't been created
      */
     bool isVrfStateOk(const std::string & vrfName);
+    bool isVxlanStateOk(const std::string & vxlanName);
     /*
      * Get Vxlan information(vnet Name, vni, src_ip) by querying 
      * CFG_VXLAN_TUNNEL_TABLE and CFG_VNET_TABLE
@@ -41,15 +41,20 @@ private:
      */
     bool getVxlanInfo(const std::string & vnetName, VxlanInfo & info);
 
-    void createVxlan(VxlanInfo & info);
-    void deleteVxlan(VxlanInfo & info);
+
+    void createVxlan(const VxlanInfo & info);
+    void deleteVxlan(const VxlanInfo & info);
 
 
-    ProducerStateTable m_appVxlanTableProducer;
+    ProducerStateTable m_appVxlanTunnelTableProducer;
     Table m_cfgVxlanTunnelTable;
     Table m_cfgVnetTable;
     Table m_stateVrfTable;
+    Table m_stateVxlanTable;
 
+    // Record how many vxlan refers this tunnel
+    std::map<std::string, long> m_vxlanTunnelReferenceCount;
+    std::map<std::string, VxlanInfo> m_vnetVxlanInfoMapping;
 };
 
 }
