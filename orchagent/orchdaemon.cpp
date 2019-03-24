@@ -77,7 +77,15 @@ bool OrchDaemon::init()
             APP_VNET_RT_TABLE_NAME,
             APP_VNET_RT_TUNNEL_TABLE_NAME
     };
-    VNetOrch *vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+    VNetOrch *vnet_orch;
+    if (platform == MLNX_PLATFORM_SUBSTRING)
+    {
+        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME, VNET_EXEC::VNET_EXEC_BRIDGE);
+    }
+    else
+    {
+        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+    }
     gDirectory.set(vnet_orch);
     VNetRouteOrch *vnet_rt_orch = new VNetRouteOrch(m_applDb, vnet_tables, vnet_orch);
     gDirectory.set(vnet_rt_orch);
@@ -144,7 +152,7 @@ bool OrchDaemon::init()
 
     /*
      * The order of the orch list is important for state restore of warm start and
-     * the queued processing in m_toSync map after gPortsOrch->isInitDone() is set.
+     * the queued processing in m_toSync map after gPortsOrch->isPortReady() is set.
      *
      * For the multiple consumers in ports_tables, tasks for LAG_TABLE is processed before VLAN_TABLE
      * when iterating ConsumerMap.
@@ -413,21 +421,19 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     }
 
     /*
-     * Three iterations are needed.
+     * Four iterations are needed.
      *
-     * First iteration: Orch(s) which do not have dependency on port table,
-     *   gBufferOrch, gPortsOrch(Port table and VLAN table),
-     *   and orch(s) which have dependency on Port but processed after it.
+     * First iteration: switchorch, Port init/hostif create part of portorch.
      *
-     * Second iteration: gBufferOrch (has inter-dependency with gPortsOrch),
-     *   remaining attributes on port table for gPortsOrch,
-     *   gIntfsOrch which has dependency on both gBufferOrch and port table of gPortsOrch.
-     *   LAG_TABLE in gPortsOrch.
+     * Second iteratoin: gBufferOrch which requires port created,
+     *   then port speed/mtu/fec_mode/pfc_asym/admin_status config.
      *
-     * Third iteration: Drain remaining data that are out of order like LAG_MEMBER_TABLE and
+     * Third iteration: other orch(s) which wait for port init done.
+     *
+     * Fourth iteration: Drain remaining data that are out of order like LAG_MEMBER_TABLE and
      * VLAN_MEMBER_TABLE since they were checked before LAG_TABLE and VLAN_TABLE within gPortsOrch.
      */
-    for (auto it = 0; it < 3; it++)
+    for (auto it = 0; it < 4; it++)
     {
         for (Orch *o : m_orchList)
         {

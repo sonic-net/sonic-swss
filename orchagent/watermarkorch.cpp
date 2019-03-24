@@ -50,7 +50,7 @@ void WatermarkOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isPortReady())
     {
         return;
     }
@@ -96,7 +96,7 @@ void WatermarkOrch::doTask(Consumer &consumer)
 
 void WatermarkOrch::doTask(NotificationConsumer &consumer)
 {
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isPortReady())
     {
         return;
     }
