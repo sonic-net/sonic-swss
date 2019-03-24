@@ -2068,7 +2068,7 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
                 addVlanMember(vlan, port, tagging_mode);
             }
             /*
-             * Failure in addBridgePort and addVlanMember is no-recoverable.
+             * Failure in addBridgePort and addVlanMember is non-recoverable.
              * Erase the vlan member task in both success and failure scenarios.
              */
             it = consumer.m_toSync.erase(it);
