@@ -20,9 +20,12 @@ public:
     typedef std::map<std::string, std::string> VxlanInfo;
 private:
     void doTask(Consumer &consumer);
-    void doVnetTableTask(Consumer &consumer);
+
     bool doVxlanCreateTask(const KeyOpFieldsValuesTuple & t);
     bool doVxlanDeleteTask(const KeyOpFieldsValuesTuple & t);
+
+    bool doVxlanTunnelCreateTask(const KeyOpFieldsValuesTuple & t);
+    bool doVxlanTunnelDeleteTask(const KeyOpFieldsValuesTuple & t);
 
     /*
      * Query the state of vrf by STATE_VRF_TABLE
@@ -53,7 +56,6 @@ private:
     Table m_stateVxlanTable;
 
     // Record how many vxlan refers this tunnel
-    std::map<std::string, long> m_vxlanTunnelReferenceCount;
     std::map<std::string, VxlanInfo> m_vnetVxlanInfoMapping;
 };
 
