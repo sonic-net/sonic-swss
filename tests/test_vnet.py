@@ -744,8 +744,16 @@ class VnetBitmapVxlanTunnel(object):
         self.vnet_bitmap_class_ids.update(new_bitmap_class_id)
 
     def check_vnet_local_routes(self, dvs, name):
-        # TODO: Implement once support of local vnet_bitmap_route_ids is added for "bitmap" VNET implementation
-        pass
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        expected_attr = {
+                            "SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_ACTION": "SAI_TABLE_BITMAP_ROUTER_ENTRY_ACTION_TO_LOCAL"
+                        }
+
+        new_bitmap_route = get_created_entries(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, self.vnet_bitmap_route_ids, 1)
+        check_object(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, new_bitmap_route[0], expected_attr)
+
+        self.vnet_bitmap_route_ids.update(new_bitmap_route)
 
     def check_vnet_routes(self, dvs, name, endpoint, tunnel, mac="", vni=0):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
