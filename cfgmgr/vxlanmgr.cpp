@@ -58,6 +58,7 @@ static std::string getBridgeName(const swss::VxlanMgr::VxlanInfo & info)
 VxlanMgr::VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<std::string> &tables) :
         Orch(cfgDb, tables),
         m_appVxlanTunnelTableProducer(appDb, APP_VXLAN_TUNNEL_TABLE_NAME),
+        m_appVxlanTunnelMapTableProducer(appDb, APP_VXLAN_TUNNEL_MAP_TABLE_NAME),
         m_cfgVxlanTunnelTable(cfgDb, CFG_VXLAN_TUNNEL_TABLE_NAME),
         m_cfgVnetTable(cfgDb, CFG_VNET_TABLE_NAME),
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
@@ -79,25 +80,49 @@ void VxlanMgr::doTask(Consumer &consumer)
             auto t = it->second;
             const std::string & op = kfvOp(t);
 
-            if (op == SET_COMMAND && table_name == CFG_VNET_TABLE_NAME)
+            if (op == SET_COMMAND)
             {
-                task_result = doVxlanCreateTask(t);
+                if (table_name == CFG_VNET_TABLE_NAME)
+                {
+                    task_result = doVxlanCreateTask(t);
+                }
+                else if (table_name == CFG_VXLAN_TUNNEL_TABLE_NAME)
+                {
+                    task_result = doVxlanTunnelCreateTask(t);
+                }
+                else if (table_name == CFG_VXLAN_TUNNEL_MAP_TABLE_NAME)
+                {
+                    task_result = doVxlanTunnelMapCreateTask(t);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Unknown table : %s", table_name.c_str());
+                    throw runtime_error("VxlanMgr doTask failure.");
+                }
             }
-            else if (op == SET_COMMAND && table_name == CFG_VXLAN_TUNNEL_TABLE_NAME)
+            else if (op == DEL_COMMAND)
             {
-                task_result = doVxlanTunnelCreateTask(t);
-            }
-            else if (op == DEL_COMMAND && table_name == CFG_VNET_TABLE_NAME)
-            {
-                task_result = doVxlanDeleteTask(t);
-            }
-            else if (op == DEL_COMMAND && table_name == CFG_VXLAN_TUNNEL_TABLE_NAME)
-            {
-                task_result = doVxlanTunnelDeleteTask(t);
+                if (table_name == CFG_VNET_TABLE_NAME)
+                {
+                    task_result = doVxlanDeleteTask(t);
+                }
+                else if (table_name == CFG_VXLAN_TUNNEL_TABLE_NAME)
+                {
+                    task_result = doVxlanTunnelDeleteTask(t);
+                }
+                else if (table_name == CFG_VXLAN_TUNNEL_MAP_TABLE_NAME)
+                {
+                    task_result = doVxlanTunnelMapDeleteTask(t);
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Unknown table : %s", table_name.c_str());
+                    throw runtime_error("VxlanMgr doTask failure.");
+                }
             }
             else
             {
-                SWSS_LOG_ERROR("Unknown task (table : %s, command : %s) ", table_name.c_str(), op.c_str());
+                SWSS_LOG_ERROR("Unknown command : %s", op.c_str());
                 throw runtime_error("VxlanMgr doTask failure.");
             }
 
@@ -123,42 +148,33 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     SWSS_LOG_ENTER();
 
     const std::string & vnetName = kfvKey(t);
-    const std::string & op = kfvOp(t);
     for (auto i : kfvFieldsValues(t))
     {
         const std::string & field = fvField(i);
         if (field == VXLAN_TUNNEL)
         {
-            if (op == SET_COMMAND)
+            // If the VRF(Vnet is a special VRF) has been created
+            if (! isVrfStateOk(vnetName))
             {
-                // If the VRF(Vnet is a special VRF) has been created
-                if (! isVrfStateOk(vnetName))
-                {
-                    return false;
-                }
-                VxlanInfo info;
-                if (! getVxlanInfo(vnetName, info))
-                {
-                    return false;
-                }
-                // If the VXLAN has been created
-                if ( isVxlanStateOk(info.at(VXLAN)))
-                {
-                    SWSS_LOG_WARN("Vxlan %s was created ", info.at(VXLAN).c_str());
-                }
-                else
-                {
-                    createVxlan(info);
-                }
-
-                m_vnetVxlanInfoMapping[info.at(VNET)] = info;
-                return true;
+                return false;
+            }
+            VxlanInfo info;
+            if (! getVxlanInfo(vnetName, info))
+            {
+                return false;
+            }
+            // If the VXLAN has been created
+            if ( isVxlanStateOk(info.at(VXLAN)))
+            {
+                SWSS_LOG_WARN("Vxlan %s was created ", info.at(VXLAN).c_str());
             }
             else
             {
-                SWSS_LOG_ERROR("Unknown command %s ", op.c_str());
-                throw std::runtime_error("Unknown command " + op);
+                createVxlan(info);
             }
+            SWSS_LOG_NOTICE("Create vxlan %s", info.at(VXLAN).c_str());
+            m_vnetVxlanInfoMapping[info.at(VNET)] = info;
+            return true;
         }
     }
     return true;
@@ -169,32 +185,25 @@ bool VxlanMgr::doVxlanDeleteTask(const KeyOpFieldsValuesTuple & t)
     SWSS_LOG_ENTER();
 
     const std::string & vnetName = kfvKey(t);
-    const std::string & op = kfvOp(t);
-
-    if (op == DEL_COMMAND)
+    auto it = m_vnetVxlanInfoMapping.find(vnetName);
+    if ( it == m_vnetVxlanInfoMapping.end())
     {
-        auto it = m_vnetVxlanInfoMapping.find(vnetName);
-        if ( it == m_vnetVxlanInfoMapping.end())
-        {
-            SWSS_LOG_WARN("Vxlan(Vnet %s) hasn't been created ", vnetName.c_str());
-            return true;
-        }
-        if (isVxlanStateOk(it->second.at(VXLAN)))
-        {
-            deleteVxlan(it->second);
-        }
-        else
-        {
-            SWSS_LOG_WARN("Vxlan %s hasn't been created ", it->second.at(VXLAN).c_str());
-        }
-
-        m_vnetVxlanInfoMapping.erase(it);
+        SWSS_LOG_WARN("Vxlan(Vnet %s) hasn't been created ", vnetName.c_str());
+        return true;
+    }
+    
+    const VxlanInfo & info = it->second;
+    if (isVxlanStateOk(info.at(VXLAN)))
+    {
+        deleteVxlan(info);
     }
     else
     {
-        SWSS_LOG_ERROR("Unknown command %s ", op.c_str());
-        throw std::runtime_error("Unknown command " + op);
+        SWSS_LOG_WARN("Vxlan %s hasn't been created ", info.at(VXLAN).c_str());
     }
+
+    SWSS_LOG_NOTICE("Delete vxlan %s", info.at(VXLAN).c_str());
+    m_vnetVxlanInfoMapping.erase(it);
     return true;
 }
 
@@ -203,16 +212,7 @@ bool VxlanMgr::doVxlanTunnelCreateTask(const KeyOpFieldsValuesTuple & t)
     SWSS_LOG_ENTER();
 
     const std::string & vxlanTunnelName = kfvKey(t);
-    const std::string & op = kfvOp(t);
-    if (op == SET_COMMAND)
-    {
-        m_appVxlanTunnelTableProducer.set(vxlanTunnelName, kfvFieldsValues(t));
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Unknown command %s ", op.c_str());
-        throw std::runtime_error("Unknown command " + op);
-    }
+    m_appVxlanTunnelTableProducer.set(vxlanTunnelName, kfvFieldsValues(t));
 
     SWSS_LOG_NOTICE("Create vxlan tunnel %s", vxlanTunnelName.c_str());
     return true;
@@ -223,18 +223,33 @@ bool VxlanMgr::doVxlanTunnelDeleteTask(const KeyOpFieldsValuesTuple & t)
     SWSS_LOG_ENTER();
 
     const std::string & vxlanTunnelName = kfvKey(t);
-    const std::string & op = kfvOp(t);
-    if (op == DEL_COMMAND)
-    {
-        m_appVxlanTunnelTableProducer.del(vxlanTunnelName);
-    }
-    else
-    {
-        SWSS_LOG_ERROR("Unknown command %s ", op.c_str());
-        throw std::runtime_error("Unknown command " + op);
-    }
+    m_appVxlanTunnelTableProducer.del(vxlanTunnelName);
 
     SWSS_LOG_NOTICE("Delete vxlan tunnel %s", vxlanTunnelName.c_str());
+    return true;
+}
+
+bool VxlanMgr::doVxlanTunnelMapCreateTask(const KeyOpFieldsValuesTuple & t)
+{
+    SWSS_LOG_ENTER();
+
+    std::string vxlanTunnelMapName = kfvKey(t);
+    std::replace(vxlanTunnelMapName.begin(), vxlanTunnelMapName.end(), config_db_key_delimiter, delimiter);
+    m_appVxlanTunnelMapTableProducer.set(vxlanTunnelMapName, kfvFieldsValues(t));
+
+    SWSS_LOG_NOTICE("Create vxlan tunnel map %s", vxlanTunnelMapName.c_str());
+    return true;
+}
+
+bool VxlanMgr::doVxlanTunnelMapDeleteTask(const KeyOpFieldsValuesTuple & t)
+{
+    SWSS_LOG_ENTER();
+
+    std::string vxlanTunnelMapName = kfvKey(t);
+    std::replace(vxlanTunnelMapName.begin(), vxlanTunnelMapName.end(), config_db_key_delimiter, delimiter);
+    m_appVxlanTunnelMapTableProducer.del(vxlanTunnelMapName);
+
+    SWSS_LOG_NOTICE("Delete vxlan tunnel map %s", vxlanTunnelMapName.c_str());
     return true;
 }
 
@@ -430,8 +445,6 @@ void VxlanMgr::createVxlan(const VxlanInfo & info)
 
     fvVector.emplace_back("state", "ok");
     m_stateVxlanTable.set(info.at(VXLAN), fvVector);
-
-    SWSS_LOG_NOTICE("Create vxlan %s", info.at(VXLAN).c_str());
 }
 
 void VxlanMgr::deleteVxlan(const VxlanInfo & info)
@@ -446,8 +459,6 @@ void VxlanMgr::deleteVxlan(const VxlanInfo & info)
     execCommand(CMD_DELETE_VXLAN, info, res);
 
     m_stateVxlanTable.del(info.at(VXLAN));
-
-    SWSS_LOG_NOTICE("Delete vxlan %s", info.at(VXLAN).c_str());
 
 }
 

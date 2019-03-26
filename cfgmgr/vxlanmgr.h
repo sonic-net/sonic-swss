@@ -27,6 +27,9 @@ private:
     bool doVxlanTunnelCreateTask(const KeyOpFieldsValuesTuple & t);
     bool doVxlanTunnelDeleteTask(const KeyOpFieldsValuesTuple & t);
 
+    bool doVxlanTunnelMapCreateTask(const KeyOpFieldsValuesTuple & t);
+    bool doVxlanTunnelMapDeleteTask(const KeyOpFieldsValuesTuple & t);
+
     /*
      * Query the state of vrf by STATE_VRF_TABLE
      * Return
@@ -50,6 +53,7 @@ private:
 
 
     ProducerStateTable m_appVxlanTunnelTableProducer;
+    ProducerStateTable m_appVxlanTunnelMapTableProducer;
     Table m_cfgVxlanTunnelTable;
     Table m_cfgVnetTable;
     Table m_stateVrfTable;

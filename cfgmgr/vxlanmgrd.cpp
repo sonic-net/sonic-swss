@@ -52,6 +52,7 @@ int main(int argc, char **argv)
         vector<std::string> cfg_vnet_tables = {
             CFG_VNET_TABLE_NAME,
             CFG_VXLAN_TUNNEL_TABLE_NAME,
+            CFG_VXLAN_TUNNEL_MAP_TABLE_NAME,
         };
 
         VxlanMgr vxlanmgr(&cfgDb, &appDb, &stateDb, cfg_vnet_tables);
