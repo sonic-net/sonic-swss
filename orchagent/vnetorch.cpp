@@ -640,12 +640,18 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
 
     if (gIntfsOrch->getSyncdIntfses().find(alias) == gIntfsOrch->getSyncdIntfses().end())
     {
+        if (intfMap_.find(alias) != intfMap_.end())
+        {
+            SWSS_LOG_ERROR("VNET '%s' interface '%s' already exists", getVnetName().c_str(), alias.c_str());
+            throw std::runtime_error("VNET interface creation failed");
+        }
+
         if (!gIntfsOrch->setIntf(alias, gVirtualRouterId, nullptr))
         {
             return false;
         }
 
-        sai_object_id_t vnetTableEntryId;
+        VnetIntfInfo intfInfo;
 
         attr.id = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ATTR_ACTION;
         attr.value.s32 = SAI_TABLE_BITMAP_CLASSIFICATION_ENTRY_ACTION_SET_METADATA;
@@ -660,7 +666,7 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
         vnet_attrs.push_back(attr);
 
         status = sai_bmtor_api->create_table_bitmap_classification_entry(
-                &vnetTableEntryId,
+                &intfInfo.vnetTableEntryId,
                 gSwitchId,
                 (uint32_t)vnet_attrs.size(),
                 vnet_attrs.data());
@@ -670,11 +676,23 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
             SWSS_LOG_ERROR("Failed to create VNET table entry, SAI rc: %d", status);
             throw std::runtime_error("VNet interface creation failed");
         }
+
+        intfMap_.emplace(alias, intfInfo);
     }
 
     if (prefix)
     {
-        sai_object_id_t tunnelRouteTableEntryId;
+        auto& intf = intfMap_.at(alias);
+
+        if (intf.pfxMap.find(*prefix) != intf.pfxMap.end())
+        {
+            SWSS_LOG_WARN("VNET '%s' interface '%s' prefix '%s' already exists",
+                    getVnetName().c_str(), alias.c_str(), prefix->getIp().to_string().c_str());
+            return true;
+        }
+
+        RouteInfo intfPfxInfo;
+
         sai_ip_prefix_t saiPrefix;
         copy(saiPrefix, *prefix);
 
@@ -684,8 +702,9 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
         attr.value.s32 = SAI_TABLE_BITMAP_ROUTER_ENTRY_ACTION_TO_LOCAL;
         route_attrs.push_back(attr);
 
+        intfPfxInfo.offset = getFreeTunnelRouteTableOffset();
         attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_PRIORITY;
-        attr.value.u32 = getFreeTunnelRouteTableOffset();
+        attr.value.u32 = intfPfxInfo.offset;
         route_attrs.push_back(attr);
 
         attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_IN_RIF_METADATA_KEY;
@@ -705,7 +724,7 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
         route_attrs.push_back(attr);
 
         status = sai_bmtor_api->create_table_bitmap_router_entry(
-                &tunnelRouteTableEntryId,
+                &intfPfxInfo.routeTableEntryId,
                 gSwitchId,
                 (uint32_t)route_attrs.size(),
                 route_attrs.data());
@@ -714,6 +733,73 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
         {
             SWSS_LOG_ERROR("Failed to create local VNET route entry, SAI rc: %d", status);
             throw std::runtime_error("VNet interface creation failed");
+        }
+
+        intf.pfxMap.emplace(*prefix, intfPfxInfo);
+    }
+
+    return true;
+}
+
+bool VNetBitmapObject::removeIntf(const string& alias, const IpPrefix *prefix)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status;
+
+    if (intfMap_.find(alias) == intfMap_.end())
+    {
+        SWSS_LOG_ERROR("VNET '%s' interface '%s' doesn't exist", getVnetName().c_str(), alias.c_str());
+        return false;
+    }
+
+    auto& intf = intfMap_.at(alias);
+
+    if (prefix)
+    {
+        if (intf.pfxMap.find(*prefix) == intf.pfxMap.end())
+        {
+            SWSS_LOG_ERROR("VNET '%s' interface '%s' prefix '%s' doesn't exist",
+                    getVnetName().c_str(), alias.c_str(), prefix->getIp().to_string().c_str());
+            return false;
+        }
+
+        auto& pfx = intf.pfxMap.at(*prefix);
+
+        status = sai_bmtor_api->remove_table_bitmap_router_entry(pfx.routeTableEntryId);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove VNET local route entry, SAI rc: %d", status);
+            throw std::runtime_error("VNET interface removal failed");
+        }
+
+        gIntfsOrch->removeIp2MeRoute(gVirtualRouterId, *prefix);
+
+        recycleTunnelRouteTableOffset(pfx.offset);
+
+        intf.pfxMap.erase(*prefix);
+    }
+
+    if (intf.pfxMap.size() == 0)
+    {
+        if (gIntfsOrch->getSyncdIntfses().find(alias) == gIntfsOrch->getSyncdIntfses().end())
+        {
+            SWSS_LOG_ERROR("VNET '%s' interface '%s' doesn't exist", getVnetName().c_str(), alias.c_str());
+            return false;
+        }
+
+        status = sai_bmtor_api->remove_table_bitmap_classification_entry(intf.vnetTableEntryId);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove VNET table entry, SAI rc: %d", status);
+            throw std::runtime_error("VNET interface removal failed");
+        }
+
+        intfMap_.erase(alias);
+
+        if (!gIntfsOrch->removeIntf(alias, gVirtualRouterId, nullptr))
+        {
+            return false;
         }
     }
 
@@ -1164,6 +1250,33 @@ bool VNetOrch::setIntf(const string& alias, const string name, const IpPrefix *p
 
     return false;
 }
+
+bool VNetOrch::delIntf(const string& alias, const string name, const IpPrefix *prefix)
+{
+    SWSS_LOG_ENTER();
+
+    if (!isVnetExists(name))
+    {
+        SWSS_LOG_WARN("VNET %s doesn't exist", name.c_str());
+        return false;
+    }
+
+    if (isVnetExecVrf())
+    {
+        auto *vnet_obj = getTypePtr<VNetVrfObject>(name);
+        sai_object_id_t vrf_id = vnet_obj->getVRidIngress();
+
+        return gIntfsOrch->removeIntf(alias, vrf_id, prefix);
+    }
+    else
+    {
+        auto *vnet_obj = getTypePtr<VNetBitmapObject>(name);
+        return vnet_obj->removeIntf(alias, prefix);
+    }
+
+    return true;
+}
+
 bool VNetOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();

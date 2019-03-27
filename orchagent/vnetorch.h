@@ -195,12 +195,19 @@ struct RouteInfo
     uint32_t offset;
 };
 
+struct VnetIntfInfo
+{
+    sai_object_id_t vnetTableEntryId;
+    map<IpPrefix, RouteInfo> pfxMap;
+};
+
 class VNetBitmapObject: public VNetObject
 {
 public:
     VNetBitmapObject(const string& vnet, const VNetInfo& vnetInfo, vector<sai_attribute_t>& attrs);
 
     bool addIntf(const string& alias, const IpPrefix *prefix);
+    bool removeIntf(const string& alias, const IpPrefix *prefix);
 
     bool addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp);
     bool removeTunnelRoute(IpPrefix& ipPrefix);
@@ -247,6 +254,7 @@ private:
 
     map<IpPrefix, RouteInfo> routeMap_;
     map<IpPrefix, TunnelRouteInfo> tunnelRouteMap_;
+    map<string, VnetIntfInfo> intfMap_;
 
     uint32_t vnet_id_;
     string vnet_name_;
@@ -262,6 +270,7 @@ public:
     VNetOrch(DBConnector *db, const std::string&, VNET_EXEC op = VNET_EXEC::VNET_EXEC_VRF);
 
     bool setIntf(const string& alias, const string name, const IpPrefix *prefix = nullptr);
+    bool delIntf(const string& alias, const string name, const IpPrefix *prefix = nullptr);
 
     bool isVnetExists(const std::string& name) const
     {
