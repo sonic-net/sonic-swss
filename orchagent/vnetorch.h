@@ -96,7 +96,7 @@ public:
         return vni_;
     }
 
-    virtual ~VNetObject() {};
+    virtual ~VNetObject() noexcept(false) {};
 
 private:
     set<string> peer_list_ = {};
