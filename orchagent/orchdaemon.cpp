@@ -297,6 +297,44 @@ bool OrchDaemon::init()
                     queueAttrIds,
                     PFC_WD_POLL_MSECS));
     }
+    else if (platform == BFN_PLATFORM_SUBSTRING)
+    {
+        static const vector<sai_port_stat_t> portStatIds =
+        {
+            SAI_PORT_STAT_PFC_0_RX_PAUSE_DURATION,
+            SAI_PORT_STAT_PFC_1_RX_PAUSE_DURATION,
+            SAI_PORT_STAT_PFC_2_RX_PAUSE_DURATION,
+            SAI_PORT_STAT_PFC_3_RX_PAUSE_DURATION,
+            SAI_PORT_STAT_PFC_4_RX_PAUSE_DURATION,
+            SAI_PORT_STAT_PFC_5_RX_PAUSE_DURATION,
+            SAI_PORT_STAT_PFC_6_RX_PAUSE_DURATION,
+            SAI_PORT_STAT_PFC_7_RX_PAUSE_DURATION,
+            SAI_PORT_STAT_PFC_0_RX_PKTS,
+            SAI_PORT_STAT_PFC_1_RX_PKTS,
+            SAI_PORT_STAT_PFC_2_RX_PKTS,
+            SAI_PORT_STAT_PFC_3_RX_PKTS,
+            SAI_PORT_STAT_PFC_4_RX_PKTS,
+            SAI_PORT_STAT_PFC_5_RX_PKTS,
+            SAI_PORT_STAT_PFC_6_RX_PKTS,
+            SAI_PORT_STAT_PFC_7_RX_PKTS,
+        };
+
+        static const vector<sai_queue_stat_t> queueStatIds =
+        {
+            SAI_QUEUE_STAT_PACKETS,
+            SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
+        };
+
+        static const vector<sai_queue_attr_t> queueAttrIds;
+
+        m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
+                    m_configDb,
+                    pfc_wd_tables,
+                    portStatIds,
+                    queueStatIds,
+                    queueAttrIds,
+                    PFC_WD_POLL_MSECS));
+    }
 
     m_orchList.push_back(&CounterCheckOrch::getInstance(m_configDb));
 
