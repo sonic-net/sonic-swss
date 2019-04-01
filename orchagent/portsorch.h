@@ -55,6 +55,7 @@ class PortsOrch : public Orch, public Subject
 public:
     PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames);
 
+    bool isPortReady();
     bool isInitDone();
 
     map<string, Port>& getAllPorts();
@@ -72,6 +73,7 @@ public:
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
+    bool createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &group_oid, acl_stage_type_t acl_stage = ACL_STAGE_EGRESS);
     bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage = ACL_STAGE_INGRESS);
 
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
@@ -81,7 +83,7 @@ public:
     void generatePriorityGroupMap();
 
     void refreshPortStatus();
-
+    bool removeAclTableGroup(const Port &p);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
@@ -116,6 +118,8 @@ private:
     map<set<int>, sai_object_id_t> m_portListLaneMap;
     map<set<int>, tuple<string, uint32_t, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
+
+    unordered_set<string> m_pendingPortSet;
 
     NotificationConsumer* m_portStatusNotificationConsumer;
 
@@ -157,6 +161,7 @@ private:
     bool initPort(const string &alias, const set<int> &lane_set);
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);
+    bool getPortAdminStatus(sai_object_id_t id, bool& up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
@@ -170,7 +175,7 @@ private:
     bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
 
     bool setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed);
-    
+
     bool getQueueTypeAndIndex(sai_object_id_t queue_id, string &type, uint8_t &index);
 
     bool m_isQueueMapGenerated = false;

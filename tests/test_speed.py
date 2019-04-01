@@ -16,7 +16,8 @@ import os
 class TestSpeedSet(object):
     num_ports = 32
     def test_SpeedAndBufferSet(self, dvs, testlog):
-        speed_list = ['50000', '25000', '40000', '10000', '100000']
+        configured_speed_list = ['40000']
+        speed_list = ['10000', '25000', '40000', '50000', '100000']
 
         cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
@@ -28,11 +29,11 @@ class TestSpeedSet(object):
 
         buffer_profiles = cfg_buffer_profile_table.getKeys()
         expected_buffer_profiles_num = len(buffer_profiles)
-        # buffers.json used for the test defines 4 static profiles:
-        #    "ingress_lossless_profile"
+        # buffers_config.j2 used for the test defines 3 static profiles and 1 dynamic profiles:
         #    "ingress_lossy_profile"
         #    "egress_lossless_profile"
         #    "egress_lossy_profile"
+        #    "pg_lossless_40000_300m_profile"
         # check if they get the DB
         assert expected_buffer_profiles_num == 4
         # and if they were successfully created on ASIC
@@ -61,7 +62,10 @@ class TestSpeedSet(object):
             assert num_set == self.num_ports
 
             # check number of created profiles
-            expected_buffer_profiles_num += 1  # new speed should add new PG profile
+            if speed not in configured_speed_list:
+                expected_buffer_profiles_num += 1  # new speed should add new PG profile
+                configured_speed_list.append(speed)
+
             current_buffer_profiles = cfg_buffer_profile_table.getKeys()
             assert len(current_buffer_profiles) == expected_buffer_profiles_num
             # make sure the same number of profiles are created on ASIC

@@ -41,8 +41,8 @@ extern BufferOrch *gBufferOrch;
 #define DEFAULT_VLAN_ID     1
 #define PORT_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 #define QUEUE_FLEX_STAT_COUNTER_POLL_MSECS "10000"
-#define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "1000"
-#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "1000"
+#define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
+#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
 
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
@@ -252,9 +252,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     /* Get port hardware lane info */
     for (i = 0; i < m_portCount; i++)
     {
-        sai_uint32_t lanes[4] = { 0,0,0,0 };
+        sai_uint32_t lanes[8] = { 0,0,0,0,0,0,0,0 };
         attr.id = SAI_PORT_ATTR_HW_LANE_LIST;
-        attr.value.u32list.count = 4;
+        attr.value.u32list.count = 8;
         attr.value.u32list.list = lanes;
 
         status = sai_port_api->get_port_attribute(port_list[i], 1, &attr);
@@ -266,7 +266,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
 
         set<int> tmp_lane_set;
         for (j = 0; j < attr.value.u32list.count; j++)
+        {
             tmp_lane_set.insert(attr.value.u32list.list[j]);
+        }
 
         string tmp_lane_str = "";
         for (auto s : tmp_lane_set)
@@ -385,10 +387,17 @@ void PortsOrch::removeDefaultBridgePorts()
     SWSS_LOG_NOTICE("Remove bridge ports from default 1Q bridge");
 }
 
+bool PortsOrch::isPortReady()
+{
+    return m_initDone && m_pendingPortSet.empty();
+}
+
+/* Upon receiving PortInitDone, all the configured ports have been created*/
 bool PortsOrch::isInitDone()
 {
     return m_initDone;
 }
+
 
 map<string, Port>& PortsOrch::getAllPorts()
 {
@@ -530,6 +539,25 @@ bool PortsOrch::setPortAdminStatus(sai_object_id_t id, bool up)
     }
     SWSS_LOG_INFO("Set admin status %s to port pid:%lx",
                     up ? "UP" : "DOWN", id);
+    return true;
+}
+
+bool PortsOrch::getPortAdminStatus(sai_object_id_t id, bool &up)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_ADMIN_STATE;
+
+    sai_status_t status = sai_port_api->get_port_attribute(id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get admin status for port pid:%lx", id);
+        return false;
+    }
+
+    up = attr.value.booldata;
+
     return true;
 }
 
@@ -697,18 +725,15 @@ bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
     return true;
 }
 
-bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage)
+bool PortsOrch::createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &group_oid, acl_stage_type_t acl_stage)
 {
     SWSS_LOG_ENTER();
 
     if (acl_stage == ACL_STAGE_UNKNOWN)
     {
-        SWSS_LOG_ERROR("Unknown ACL stage for ACL table %lx", table_oid);
+        SWSS_LOG_ERROR("unknown ACL stage for table group creation");
         return false;
     }
-
-    sai_status_t status;
-    sai_object_id_t groupOid;
 
     Port port;
     if (!getPort(id, port))
@@ -717,15 +742,16 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
         return false;
     }
 
-    if (acl_stage == ACL_STAGE_INGRESS && port.m_ingress_acl_table_group_id != 0)
+    sai_status_t status;
+    if ((acl_stage == ACL_STAGE_INGRESS) && (port.m_ingress_acl_table_group_id != 0))
     {
-        groupOid = port.m_ingress_acl_table_group_id;
+        group_oid = port.m_ingress_acl_table_group_id;
     }
-    else if (acl_stage == ACL_STAGE_EGRESS && port.m_egress_acl_table_group_id != 0)
+    else if ((acl_stage == ACL_STAGE_EGRESS) && (port.m_egress_acl_table_group_id != 0))
     {
-        groupOid = port.m_egress_acl_table_group_id;
+        group_oid = port.m_egress_acl_table_group_id;
     }
-    // If port ACL table group does not exist, create one
+    // Port ACL table group does not exist, create one
     else if (acl_stage == ACL_STAGE_INGRESS or acl_stage == ACL_STAGE_EGRESS)
     {
         bool ingress = acl_stage == ACL_STAGE_INGRESS ? true : false;
@@ -766,7 +792,7 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
         group_attr.value.s32 = SAI_ACL_TABLE_GROUP_TYPE_PARALLEL;
         group_attrs.push_back(group_attr);
 
-        status = sai_acl_api->create_acl_table_group(&groupOid, gSwitchId, (uint32_t)group_attrs.size(), group_attrs.data());
+        status = sai_acl_api->create_acl_table_group(&group_oid, gSwitchId, (uint32_t)group_attrs.size(), group_attrs.data());
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create ACL table group, rv:%d", status);
@@ -775,16 +801,16 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
 
         if (ingress)
         {
-            port.m_ingress_acl_table_group_id = groupOid;
+            port.m_ingress_acl_table_group_id = group_oid;
         }
         else
         {
-            port.m_egress_acl_table_group_id = groupOid;
+            port.m_egress_acl_table_group_id = group_oid;
         }
 
         setPort(port.m_alias, port);
 
-        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, ingress ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS, SAI_ACL_BIND_POINT_TYPE_PORT);
+        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, ingress ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS, bind_type);
 
         switch (port.m_type)
         {
@@ -793,14 +819,14 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
                 // Bind this ACL group to physical port
                 sai_attribute_t port_attr;
                 port_attr.id = ingress ? SAI_PORT_ATTR_INGRESS_ACL : SAI_PORT_ATTR_EGRESS_ACL;
-                port_attr.value.oid = groupOid;
+                port_attr.value.oid = group_oid;
 
                 status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to bind port %s to ACL table group %lx, rv:%d",
-                            port.m_alias.c_str(), groupOid, status);
-                    return status;
+                            port.m_alias.c_str(), group_oid, status);
+                    return false;
                 }
                 break;
             }
@@ -809,14 +835,14 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
                 // Bind this ACL group to LAG
                 sai_attribute_t lag_attr;
                 lag_attr.id = ingress ? SAI_LAG_ATTR_INGRESS_ACL : SAI_LAG_ATTR_EGRESS_ACL;
-                lag_attr.value.oid = groupOid;
+                lag_attr.value.oid = group_oid;
 
                 status = sai_lag_api->set_lag_attribute(port.m_lag_id, &lag_attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to bind LAG %s to ACL table group %lx, rv:%d",
-                            port.m_alias.c_str(), groupOid, status);
-                    return status;
+                            port.m_alias.c_str(), group_oid, status);
+                    return false;
                 }
                 break;
             }
@@ -825,25 +851,48 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
                 // Bind this ACL group to VLAN
                 sai_attribute_t vlan_attr;
                 vlan_attr.id = ingress ? SAI_VLAN_ATTR_INGRESS_ACL : SAI_VLAN_ATTR_EGRESS_ACL;
-                vlan_attr.value.oid = groupOid;
+                vlan_attr.value.oid = group_oid;
 
                 status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &vlan_attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to bind VLAN %s to ACL table group %lx, rv:%d",
-                            port.m_alias.c_str(), groupOid, status);
-                    return status;
+                            port.m_alias.c_str(), group_oid, status);
+                    return false;
                 }
                 break;
             }
             default:
             {
                 SWSS_LOG_ERROR("Failed to bind %s port with type %d", port.m_alias.c_str(), port.m_type);
-                return SAI_STATUS_FAILURE;
+                return false;
             }
         }
 
         SWSS_LOG_NOTICE("Create ACL table group and bind port %s to it", port.m_alias.c_str());
+    }
+
+    return true;
+}
+
+bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage)
+{
+    SWSS_LOG_ENTER();
+
+    if (table_oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Invalid ACL table %lx", table_oid);
+        return false;
+    }
+
+    sai_status_t status;
+    sai_object_id_t groupOid;
+
+    // Create an ACL table group and bind to port
+    if (!createBindAclTableGroup(id, groupOid, acl_stage))
+    {
+        SWSS_LOG_ERROR("Fail to create or bind to port %lx ACL table group", id);
+        return false;
     }
 
     // Create an ACL group member with table_oid and groupOid
@@ -865,8 +914,8 @@ bool PortsOrch::bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_
     status = sai_acl_api->create_acl_table_group_member(&group_member_oid, gSwitchId, (uint32_t)member_attrs.size(), member_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create member in ACL table group %lx for ACL table group %lx, rv:%d",
-                table_oid, groupOid, status);
+        SWSS_LOG_ERROR("Failed to create member in ACL table group %lx for ACL table %lx, rv:%d",
+                groupOid, table_oid, status);
         return false;
     }
 
@@ -1264,7 +1313,7 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
         SWSS_LOG_ERROR("Failed to remove port %lx, rv:%d", port_id, status);
         return false;
     }
-
+    removeAclTableGroup(p);
     SWSS_LOG_NOTICE("Remove port %lx", port_id);
 
     return true;
@@ -1366,8 +1415,8 @@ bool PortsOrch::bake()
     vector<FieldValueTuple> tuples;
     string value;
     bool foundPortConfigDone = m_portTable->hget("PortConfigDone", "count", value);
-    unsigned long portCount = stoul(value);
-    SWSS_LOG_NOTICE("foundPortConfigDone = %d, portCount = %lu, m_portCount = %u", foundPortConfigDone, portCount, m_portCount);
+    unsigned long portCount;
+    SWSS_LOG_NOTICE("foundPortConfigDone = %d", foundPortConfigDone);
 
     bool foundPortInitDone = m_portTable->get("PortInitDone", tuples);
     SWSS_LOG_NOTICE("foundPortInitDone = %d", foundPortInitDone);
@@ -1383,6 +1432,8 @@ bool PortsOrch::bake()
         return false;
     }
 
+    portCount = stoul(value);
+    SWSS_LOG_NOTICE("portCount = %lu, m_portCount = %u", portCount, m_portCount);
     if (portCount != keys.size() - 2)
     {
         // Invalid port table
@@ -1626,8 +1677,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
             if (!gBufferOrch->isPortReady(alias))
             {
                 // buffer configuration hasn't been applied yet. save it for future retry
+                m_pendingPortSet.emplace(alias);
                 it++;
                 continue;
+            }
+            else
+            {
+                m_pendingPortSet.erase(alias);
             }
 
             Port p;
@@ -1696,47 +1752,46 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                     else
                     {
-                        sai_uint32_t current_speed;
-
                         if (!isSpeedSupported(alias, p.m_port_id, speed))
                         {
                             it++;
                             continue;
                         }
 
-                        if (getPortSpeed(p.m_port_id, current_speed))
+                        if (p.m_admin_state_up)
                         {
-                            if (speed != current_speed)
+                            /* Bring port down before applying speed */
+                            if (!setPortAdminStatus(p.m_port_id, false))
                             {
-                                if (setPortAdminStatus(p.m_port_id, false))
-                                {
-                                    if (setPortSpeed(p.m_port_id, speed))
-                                    {
-                                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
-                                    }
-                                    else
-                                    {
-                                        SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
-                                        it++;
-                                        continue;
-                                    }
-                                }
-                                else
-                                {
-                                    SWSS_LOG_ERROR("Failed to set port admin status DOWN to set speed");
-                                    it++;
-                                    continue;
-                                }
+                                SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set speed", alias.c_str());
+                                it++;
+                                continue;
+                            }
+
+                            p.m_admin_state_up = false;
+                            m_portList[alias] = p;
+
+                            if (!setPortSpeed(p.m_port_id, speed))
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                                it++;
+                                continue;
                             }
                         }
                         else
                         {
-                            SWSS_LOG_ERROR("Failed to get current speed for port %s", alias.c_str());
-                            it++;
-                            continue;
+                            /* Port is already down, setting speed */
+                            if (!setPortSpeed(p.m_port_id, speed))
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s speed to %u", alias.c_str(), speed);
+                                it++;
+                                continue;
+                            }
                         }
+                        SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
                     }
-                    m_portList[alias].m_speed = speed;
+                    p.m_speed = speed;
+                    m_portList[alias] = p;
                 }
 
                 if (mtu != 0 && mtu != p.m_mtu)
@@ -1754,20 +1809,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s MTU to %u", alias.c_str(), mtu);
-                        it++;
-                        continue;
-                    }
-                }
-
-                if (!admin_status.empty())
-                {
-                    if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
-                    {
-                        SWSS_LOG_NOTICE("Set port %s admin status to %s", alias.c_str(), admin_status.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
                         it++;
                         continue;
                     }
@@ -1809,6 +1850,23 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s asymmetric PFC to %s", alias.c_str(), pfc_asym.c_str());
+                        it++;
+                        continue;
+                    }
+                }
+
+                /* Last step set port admin status */
+                if (!admin_status.empty() && (p.m_admin_state_up != (admin_status == "up")))
+                {
+                    if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
+                    {
+                        p.m_admin_state_up = (admin_status == "up");
+                        m_portList[alias] = p;
+                        SWSS_LOG_NOTICE("Set port %s admin status to %s", alias.c_str(), admin_status.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s admin status to %s", alias.c_str(), admin_status.c_str());
                         it++;
                         continue;
                     }
@@ -2233,7 +2291,7 @@ void PortsOrch::doTask(Consumer &consumer)
     else
     {
         /* Wait for all ports to be initialized */
-        if (!isInitDone())
+        if (!isPortReady())
         {
             return;
         }
@@ -2377,10 +2435,25 @@ bool PortsOrch::initializePort(Port &port)
         port.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
     }
 
+    /* initialize port admin status */
+    if (!getPortAdminStatus(port.m_port_id, port.m_admin_state_up))
+    {
+        SWSS_LOG_ERROR("Failed to get initial port admin status %s", port.m_alias.c_str());
+        return false;
+    }
+
+    /* initialize port admin speed */
+    if (!getPortSpeed(port.m_port_id, port.m_speed))
+    {
+        SWSS_LOG_ERROR("Failed to get initial port admin speed %d", port.m_speed);
+        return false;
+    }
+
     /*
      * always initialize Port SAI_HOSTIF_ATTR_OPER_STATUS based on oper_status value in appDB.
      */
-    if (!setHostIntfsOperStatus(port, port.m_oper_status))
+    bool isUp = port.m_oper_status == SAI_PORT_OPER_STATUS_UP;
+    if (!setHostIntfsOperStatus(port, isUp))
     {
         SWSS_LOG_WARN("Failed to set operation status %s to host interface %s",
                       operStatus.c_str(), port.m_alias.c_str());
@@ -2601,6 +2674,8 @@ bool PortsOrch::removeVlan(Port vlan)
         return false;
     }
 
+    removeAclTableGroup(vlan);
+
     SWSS_LOG_NOTICE("Remove VLAN %s vid:%hu", vlan.m_alias.c_str(),
             vlan.m_vlan_info.vlan_id);
 
@@ -2776,6 +2851,8 @@ bool PortsOrch::removeLag(Port lag)
         SWSS_LOG_ERROR("Failed to remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
         return false;
     }
+
+    removeAclTableGroup(lag);
 
     SWSS_LOG_NOTICE("Remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
 
@@ -3046,7 +3123,7 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
     SWSS_LOG_ENTER();
 
     /* Wait for all ports to be initialized */
-    if (!isInitDone())
+    if (!isPortReady())
     {
         return;
     }
@@ -3174,6 +3251,49 @@ bool PortsOrch::getPortOperStatus(const Port& port, sai_port_oper_status_t& stat
 
     status = static_cast<sai_port_oper_status_t>(attr.value.u32);
 
+    return true;
+}
+
+bool PortsOrch::removeAclTableGroup(const Port &p)
+{
+    sai_acl_bind_point_type_t bind_type;
+    switch (p.m_type)
+    {
+        case Port::PHY:
+            bind_type = SAI_ACL_BIND_POINT_TYPE_PORT;
+            break;
+        case Port::LAG:
+            bind_type = SAI_ACL_BIND_POINT_TYPE_LAG;
+            break;
+        case Port::VLAN:
+            bind_type = SAI_ACL_BIND_POINT_TYPE_VLAN;
+            break;
+        default:
+            // Dealing with port, lag and vlan for now.
+            return true;
+    }
+    sai_status_t ret;
+    if (p.m_ingress_acl_table_group_id != 0)
+    {
+        ret = sai_acl_api->remove_acl_table_group(p.m_ingress_acl_table_group_id);
+        if (ret != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove ingress acl table group for %s", p.m_alias.c_str());
+            return false;
+        }
+        gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, SAI_ACL_STAGE_INGRESS, bind_type, p.m_ingress_acl_table_group_id);
+    }
+
+    if (p.m_egress_acl_table_group_id != 0)
+    {
+        ret = sai_acl_api->remove_acl_table_group(p.m_egress_acl_table_group_id);
+        if (ret != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove egress acl table group for %s", p.m_alias.c_str());
+            return false;
+        }
+        gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, SAI_ACL_STAGE_EGRESS, bind_type, p.m_egress_acl_table_group_id);
+    }
     return true;
 }
 

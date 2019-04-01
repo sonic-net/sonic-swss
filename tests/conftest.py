@@ -147,7 +147,6 @@ class DockerVirtualSwitch(object):
                        'rsyslogd']
         self.swssd = ['orchagent',
                       'intfmgrd',
-                      'intfsyncd',
                       'neighsyncd',
                       'portsyncd',
                       'vlanmgrd',
@@ -667,6 +666,22 @@ class DockerVirtualSwitch(object):
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
         fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
         tbl.set("Vlan" + vlan + "|" + interface, fvs)
+        time.sleep(1)
+
+    def create_vlan_member_tagged(self, vlan, interface):
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("tagging_mode", "tagged")])
+        tbl.set("Vlan" + vlan + "|" + interface, fvs)
+        time.sleep(1)
+
+    def remove_vlan_member(self, vlan, interface):
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        tbl._del("Vlan" + vlan + "|" + interface)
+        time.sleep(1)
+
+    def remove_vlan(self, vlan):
+        tbl = swsscommon.Table(self.cdb, "VLAN")
+        tbl._del("Vlan" + vlan)
         time.sleep(1)
 
     def set_interface_status(self, interface, admin_status):

@@ -10,6 +10,10 @@
 
 namespace swss {
 
+/* Port default admin status is down */
+#define DEFAULT_ADMIN_STATUS_STR    "down"
+#define DEFAULT_MTU_STR             "9100"
+
 class PortMgr : public Orch
 {
 public:

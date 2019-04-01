@@ -387,3 +387,77 @@ class TestLagRouterInterfaceIpv4(object):
 
         # remove port channel
         self.remove_port_channel(dvs, "PortChannel002")
+
+class TestLoopbackRouterInterface(object):
+    def setup_db(self, dvs):
+        self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+    def createLoIntf(self, interface, ip):
+        tbl = swsscommon.Table(self.cdb, "LOOPBACK_INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(interface + "|" + ip, fvs)
+        time.sleep(1)
+
+    def removeLoIntf(self, interface, ip):
+        tbl = swsscommon.Table(self.cdb, "LOOPBACK_INTERFACE")
+        tbl._del(interface + "|" + ip);
+        time.sleep(1)
+
+    def test_InterfacesCreateRemove(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # Create loopback interfaces
+        self.createLoIntf("Loopback0", "10.1.0.1/32")
+        self.createLoIntf("Loopback1", "10.1.0.2/32")
+
+        # Check configuration database
+        tbl = swsscommon.Table(self.cdb, "LOOPBACK_INTERFACE")
+        intf_entries = tbl.getKeys()
+
+        assert len(intf_entries) == 2
+        assert "Loopback0|10.1.0.1/32" in intf_entries
+        assert "Loopback1|10.1.0.2/32" in intf_entries
+
+        # Check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:lo")
+        intf_entries = tbl.getKeys()
+
+        assert len(intf_entries) == 2
+        assert "10.1.0.1/32" in intf_entries
+        assert "10.1.0.2/32" in intf_entries
+
+        # Check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.1.0.1/32":
+                lo0_ip2me_found = True
+            if route["dest"] == "10.1.0.2/32":
+                lo1_ip2me_found = True
+
+        assert lo0_ip2me_found and lo1_ip2me_found
+
+        # Remove lopback interfaces
+        self.removeLoIntf("Loopback0", "10.1.0.1/32")
+        self.removeLoIntf("Loopback1", "10.1.0.2/32")
+
+        # Check configuration database
+        tbl = swsscommon.Table(self.cdb, "LOOPBACK_INTERFACE")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # Check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:lo")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # Check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.1.0.1/32":
+                assert False
+            if route["dest"] == "10.1.0.2/32":
+                assert False

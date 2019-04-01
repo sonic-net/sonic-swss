@@ -90,7 +90,7 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, string alias)
     // flag Should be set on it.
     // This scenario may happen under race condition where buffered neighbor event
     // is processed after incoming port is down.
-    if (p.m_oper_status != SAI_PORT_OPER_STATUS_UP)
+    if (p.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
     {
         if (setNextHopFlag(ipAddress, NHFLAGS_IFDOWN) == false)
         {
@@ -275,7 +275,7 @@ void NeighOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isPortReady())
     {
         return;
     }

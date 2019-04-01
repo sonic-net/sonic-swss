@@ -50,7 +50,7 @@ void WatermarkOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isPortReady())
     {
         return;
     }
@@ -96,7 +96,7 @@ void WatermarkOrch::doTask(Consumer &consumer)
 
 void WatermarkOrch::doTask(NotificationConsumer &consumer)
 {
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isPortReady())
     {
         return;
     }
@@ -107,41 +107,50 @@ void WatermarkOrch::doTask(NotificationConsumer &consumer)
 
     consumer.pop(op, data, values);
 
-    if(&consumer == m_clearNotificationConsumer){
-        string wm_name = "";
-        vector<sai_object_id_t> &obj_ids = m_pg_ids;
-        if(data == CLEAR_PG_HEADROOM_REQUEST)
-        {
-            wm_name = "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES";
-            obj_ids = m_pg_ids;
-        }
-        else if(data == CLEAR_PG_SHARED_REQUEST)
-        {
-            wm_name = "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES";
-            obj_ids = m_pg_ids;
-        }
-        else if(data == CLEAR_QUEUE_SHARED_UNI_REQUEST)
-        {
-            wm_name = "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES";
-            obj_ids = m_unicast_queue_ids;
-        }
-        else if(data == CLEAR_QUEUE_SHARED_MULTI_REQUEST)
-        {
-            wm_name = "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES";
-            obj_ids = m_multicast_queue_ids;
-        }
-        if(op == "USER")
-        {
-            clearSingleWm(m_userWatermarkTable.get(), wm_name, obj_ids);
-        }
-        else if (op == "PERSISTENT")
-        {
-            clearSingleWm(m_persistentWatermarkTable.get(), wm_name, obj_ids);
-        }
-        else
-        {
-            SWSS_LOG_WARN("Unknown watermark clear request op: %s", op.c_str());
-        }
+    Table * table = NULL;
+
+    if (op == "PERSISTENT")
+    {
+        table = m_persistentWatermarkTable.get();
+    }
+    else if (op == "USER")
+    {
+        table = m_userWatermarkTable.get();
+    }
+    else
+    {
+        SWSS_LOG_WARN("Unknown watermark clear request op: %s", op.c_str());
+        return;
+    }
+
+    if(data == CLEAR_PG_HEADROOM_REQUEST)
+    {
+        clearSingleWm(table,
+        "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES",
+        m_pg_ids);
+    }
+    else if(data == CLEAR_PG_SHARED_REQUEST)
+    {
+        clearSingleWm(table,
+        "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES",
+        m_pg_ids);
+    }
+    else if(data == CLEAR_QUEUE_SHARED_UNI_REQUEST)
+    {
+        clearSingleWm(table,
+        "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
+        m_unicast_queue_ids);
+    }
+    else if(data == CLEAR_QUEUE_SHARED_MULTI_REQUEST)
+    {
+        clearSingleWm(table,
+        "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
+        m_multicast_queue_ids);
+    }
+    else
+    {
+        SWSS_LOG_WARN("Unknown watermark clear request data: %s", data.c_str());
+        return;
     }
 }
 
@@ -149,9 +158,13 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    if (m_pg_ids.empty() or m_multicast_queue_ids.empty() or m_unicast_queue_ids.empty())
+    if (m_pg_ids.empty())
     {
         init_pg_ids();
+    }
+
+    if (m_multicast_queue_ids.empty() and m_unicast_queue_ids.empty())
+    {
         init_queue_ids();
     }
 
@@ -162,14 +175,12 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
         m_telemetryTimer->setInterval(intervT);
         m_telemetryTimer->reset();
 
-        /* TODO: replace with removing all PG and queue entries? */
         clearSingleWm(m_periodicWatermarkTable.get(), "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES", m_pg_ids);
         clearSingleWm(m_periodicWatermarkTable.get(), "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES", m_pg_ids);
         clearSingleWm(m_periodicWatermarkTable.get(), "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_unicast_queue_ids);
         clearSingleWm(m_periodicWatermarkTable.get(), "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_multicast_queue_ids);
         SWSS_LOG_INFO("Periodic watermark cleared by timer!");
     }
-
 }
 
 void WatermarkOrch::init_pg_ids()
@@ -220,5 +231,3 @@ void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_objec
         table->set(sai_serialize_object_id(id), vfvt);
     }
 }
-
-

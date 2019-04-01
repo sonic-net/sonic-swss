@@ -38,7 +38,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
 
 ---------------------------------------------
 ### INTF_TABLE
-intfsyncd manages this table.  In SONiC, CPU (management) and logical ports (vlan, loopback, LAG) are declared in /etc/network/interface and loaded into the INTF_TABLE.
+cfgmgrd manages this table.  In SONiC, CPU (management) and logical ports (vlan, loopback, LAG) are declared in /etc/network/interface and /etc/sonic/config_db.json and loaded into the INTF_TABLE.
 
 IP prefixes are formatted according to [RFC5954](https://tools.ietf.org/html/rfc5954) with a prefix length appended to the end
 
@@ -695,10 +695,6 @@ Stores information for physical switch ports managed by the switch chip. Ports t
 
     key                 = WARM_RESTART:name ; name is the name of SONiC docker or "system" for global configuration.
 
-    enable              = "true" / "false"  ; Default value as false.
-                                            ; If "system" warm start knob is true, docker level knob will be ignored.
-                                            ; If "system" warm start knob is false, docker level knob takes effect.
-
     neighsyncd_timer    = 1*4DIGIT          ; neighsyncd_timer is the timer used for neighsyncd during the warm restart.
                                             ; Timer is started after we restored the neighborTable to internal data structures.
                                             ; neighborsyncd then starts to read all linux kernel entries and mark the entries in
@@ -713,6 +709,13 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                             ; state from AppDB. This timer should match the BGP-GR restart-timer configured within
                                             ; the elected routing-stack.
                                             ; Supported range: 1-3600.
+
+    teamsyncd_timer     = 1*4DIGIT          ; teamsyncd_timer holds the time interval utilized by teamsyncd during warm-restart episodes.
+                                            ; The timer is started when teamsyncd starts. During the timer interval teamsyncd
+                                            ; will preserver all LAG interface changes, but it will not apply them. The changes
+                                            ; will only be applied when the timer expired. During the changes application the stale
+                                            ; LAG entries will be removed, the new LAG entries will be created.
+                                            ; Supported range: 1-9999. 0 is invalid
 
 
 ### VXLAN\_TUNNEL
@@ -755,6 +758,17 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     key                 = MGMT_PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
     oper_status         = "down" / "up" ; oper status
 
+### WARM\_RESTART\_ENABLE\_TABLE
+    ;Stores system warm start and docker warm start enable/disable configuration
+    ;The configuration is persistent across warm reboot but not cold reboot.
+    ;Status: work in progress
+
+    key                 = WARM_RESTART_ENABLE_TABLE:name ; name is the name of SONiC docker or "system" for global configuration.
+
+    enable              = "true" / "false"  ; Default value as false.
+                                            ; If "system" warm start knob is true, docker level knob will be ignored.
+                                            ; If "system" warm start knob is false, docker level knob takes effect.
+
 ### WARM\_RESTART\_TABLE
     ;Stores application and orchdameon warm start status
     ;Status: work in progress
@@ -795,5 +809,3 @@ What configuration files should we have?  Do apps, orch agent each need separate
 [port_config.ini](https://github.com/stcheng/swss/blob/mock/portsyncd/port_config.ini) - defines physical port information
 
 portsyncd reads from port_config.ini and updates PORT_TABLE in APP_DB
-
-All other apps (intfsyncd) read from PORT_TABLE in APP_DB

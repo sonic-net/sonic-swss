@@ -122,7 +122,7 @@ inline string trim(const std::string& str, const std::string& whitespace = " \t"
     return str.substr(strBegin, strRange);
 }
 
-AclRule::AclRule(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
+AclRule::AclRule(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
         m_pAclOrch(aclOrch),
         m_id(rule),
         m_tableId(table),
@@ -130,7 +130,8 @@ AclRule::AclRule(AclOrch *aclOrch, string rule, string table, acl_table_type_t t
         m_tableOid(SAI_NULL_OBJECT_ID),
         m_ruleOid(SAI_NULL_OBJECT_ID),
         m_counterOid(SAI_NULL_OBJECT_ID),
-        m_priority(0)
+        m_priority(0),
+        m_createCounter(createCounter)
 {
     m_tableOid = aclOrch->getTableById(m_tableId);
 }
@@ -393,7 +394,7 @@ bool AclRule::create()
     sai_attribute_t attr;
     sai_status_t status;
 
-    if (!createCounter())
+    if (m_createCounter && !createCounter())
     {
         return false;
     }
@@ -414,10 +415,13 @@ bool AclRule::create()
     rule_attrs.push_back(attr);
 
     // add reference to the counter
-    attr.id = SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
-    attr.value.aclaction.parameter.oid = m_counterOid;
-    attr.value.aclaction.enable = true;
-    rule_attrs.push_back(attr);
+    if (m_createCounter)
+    {
+        attr.id = SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
+        attr.value.aclaction.parameter.oid = m_counterOid;
+        attr.value.aclaction.enable = true;
+        rule_attrs.push_back(attr);
+    }
 
     // store matches
     for (auto it : m_matches)
@@ -528,7 +532,10 @@ bool AclRule::remove()
     decreaseNextHopRefCount();
 
     res = removeRanges();
-    res &= removeCounter();
+    if (m_createCounter)
+    {
+        res &= removeCounter();
+    }
 
     return res;
 }
@@ -536,6 +543,11 @@ bool AclRule::remove()
 AclRuleCounters AclRule::getCounters()
 {
     SWSS_LOG_ENTER();
+
+    if (!m_createCounter)
+    {
+        return AclRuleCounters();
+    }
 
     sai_attribute_t counter_attr[2];
     counter_attr[0].id = SAI_ACL_COUNTER_ATTR_PACKETS;
@@ -693,8 +705,8 @@ bool AclRule::removeCounter()
     return true;
 }
 
-AclRuleL3::AclRuleL3(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
-        AclRule(aclOrch, rule, table, type)
+AclRuleL3::AclRuleL3(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
+        AclRule(aclOrch, rule, table, type, createCounter)
 {
 }
 
@@ -862,8 +874,8 @@ void AclRuleL3::update(SubjectType, void *)
 }
 
 
-AclRulePfcwd::AclRulePfcwd(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
-        AclRuleL3(aclOrch, rule, table, type)
+AclRulePfcwd::AclRulePfcwd(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
+        AclRuleL3(aclOrch, rule, table, type, createCounter)
 {
 }
 
@@ -1151,17 +1163,16 @@ bool AclTable::create()
     attr.value.booldata = true;
     table_attrs.push_back(attr);
 
-    if (stage == ACL_STAGE_INGRESS)
-    {
-        int32_t range_types_list[] = { SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE };
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE;
-        attr.value.s32list.count = (uint32_t)(sizeof(range_types_list) / sizeof(range_types_list[0]));
-        attr.value.s32list.list = range_types_list;
-        table_attrs.push_back(attr);
-    }
+    int32_t range_types_list[] = { SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE, SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE };
+    attr.id = SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE;
+    attr.value.s32list.count = (uint32_t)(sizeof(range_types_list) / sizeof(range_types_list[0]));
+    attr.value.s32list.list = range_types_list;
+    table_attrs.push_back(attr);
 
+    sai_acl_stage_t acl_stage;
     attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
-    attr.value.s32 = stage == ACL_STAGE_INGRESS ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
+    acl_stage = (stage == ACL_STAGE_INGRESS) ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
+    attr.value.s32 = acl_stage;
     table_attrs.push_back(attr);
 
     if (type == ACL_TABLE_MIRROR)
@@ -1175,7 +1186,7 @@ bool AclTable::create()
 
     if (status == SAI_STATUS_SUCCESS)
     {
-        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t) attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
+        gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, acl_stage, SAI_ACL_BIND_POINT_TYPE_PORT);
     }
 
     return status == SAI_STATUS_SUCCESS;
@@ -1879,7 +1890,7 @@ void AclOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isPortReady())
     {
         return;
     }
@@ -1957,11 +1968,11 @@ bool AclOrch::removeAclTable(string table_id)
 
     if (deleteUnbindAclTable(table_oid) == SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_NOTICE("Successfully deleted ACL table %s", table_id.c_str());
-        m_AclTables.erase(table_oid);
-
         sai_acl_stage_t stage = (m_AclTables[table_oid].stage == ACL_STAGE_INGRESS) ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
         gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, stage, SAI_ACL_BIND_POINT_TYPE_PORT, table_oid);
+
+        SWSS_LOG_NOTICE("Successfully deleted ACL table %s", table_id.c_str());
+        m_AclTables.erase(table_oid);
 
         return true;
     }

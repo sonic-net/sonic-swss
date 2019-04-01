@@ -127,15 +127,22 @@ class TestPortChannelAcl(object):
     # Second create ACL table
     def test_PortChannelAfterAcl(self, dvs):
         self.setup_db(dvs)
+        dvs.runcmd("crm config polling interval 1")
+        time.sleep(2)
 
+        used_counter = dvs.getCrmCounterValue('ACL_STATS:INGRESS:LAG', 'crm_stats_acl_group_used')
         # create port channel
         self.create_port_channel(dvs, "PortChannel01")
 
         # create ACL table
         self.create_acl_table(dvs, "LAG_ACL_TABLE", "PortChannel01")
 
-        time.sleep(1)
+        time.sleep(2)
 
+        new_used_counter = dvs.getCrmCounterValue('ACL_STATS:INGRESS:LAG', 'crm_stats_acl_group_used')
+        if used_counter is None:
+            used_counter = 0
+        assert new_used_counter - used_counter == 1
         # check ASIC table
         self.check_asic_table_existed(dvs)
 
@@ -144,6 +151,14 @@ class TestPortChannelAcl(object):
 
         # remove port channel
         self.remove_port_channel(dvs, "PortChannel01")
+
+        time.sleep(2)
+        new_new_used_counter = dvs.getCrmCounterValue('ACL_STATS:INGRESS:LAG', 'crm_stats_acl_group_used')
+        if new_new_used_counter is None:
+            new_new_used_counter = 0
+        assert new_used_counter - new_new_used_counter == 1
+        # slow down crm polling
+        dvs.runcmd("crm config polling interval 10000")
 
     # Frist create ACL table
     # Second create port channel

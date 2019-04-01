@@ -3,12 +3,13 @@
 """"
 Description: restore_neighbors.py -- restoring neighbor table into kernel during system warm reboot.
     The script is started by supervisord in swss docker when the docker is started.
-    If does not do anything in case warm restart is not enabled.
+    It does not do anything in case neither system nor swss warm restart is enabled.
+    In case swss warm restart enabled only, it sets the stateDB flag so neighsyncd can continue
+    the reconciation process.
     In case system warm reboot is enabled, it will try to restore the neighbor table into kernel
-    through netlink API calls and update the neigh table by sending arp/ns requests to all neighbor
-    entries, then it sets the stateDB flag for neighsyncd to continue the reconciliation process.
-    In case docker restart enabled only, it sets the stateDB flag so neighsyncd can follow
-    the same logic.
+    through netlink API calls and update the neighbor table in kernel by sending arp/ns requests
+    to all neighbor entries, then it sets the stateDB flag for neighsyncd to continue the
+    reconciliation process.
 """
 
 import sys
@@ -29,12 +30,14 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 logger.addHandler(logging.NullHandler())
 
-# timeout the restore process in 1 min if not finished
-# This is mostly to wait for interfaces to be created and up after warm-reboot
-# It would be good to keep that below routing reconciliation time-out.
-TIME_OUT = 60
+# timeout the restore process in 110 seconds if not finished
+# This is mostly to wait for interfaces to be created and up after system warm-reboot
+# and this process is started by supervisord in swss docker.
+# There had been devices taking close to 70 seconds to complete restoration, setting
+# default timeout to 110 seconds.
+DEF_TIME_OUT = 110
 
-# every 5 seconds to check interfaces state
+# every 5 seconds to check interfaces states
 CHECK_INTERVAL = 5
 
 ip_family = {"IPv4": AF_INET, "IPv6": AF_INET6}
@@ -86,7 +89,14 @@ def read_neigh_table_to_maps():
     db.connect(db.APPL_DB, False)
 
     intf_neigh_map = {}
-
+    # Key format: "NEIGH_TABLE:intf-name:ipv4/ipv6", examples below:
+    # "NEIGH_TABLE:Ethernet122:100.1.1.200"
+    # "NEIGH_TABLE:Ethernet122:fe80::2e0:ecff:fe3b:d6ac"
+    # Value format:
+    # 1) "neigh"
+    # 2) "00:22:33:44:55:cc"
+    # 3) "family"
+    # 4) "IPv4" or "IPv6"
     keys = db.keys(db.APPL_DB, 'NEIGH_TABLE:*')
     keys = [] if keys is None else keys
     for key in keys:
@@ -105,6 +115,11 @@ def read_neigh_table_to_maps():
         if family not in ip_family:
             raise RuntimeError('Neigh table format is incorrect')
 
+        # build map like this:
+        #       { intf1 -> { { family1 -> [[ip1, mac1], [ip2, mac2] ...] }
+        #                    { family2 -> [[ipM, macM], [ipN, macN] ...] } },
+        #         intfX -> {...}
+        #       }
         ip_mac_pair = []
         ip_mac_pair.append(dst_ip)
         ip_mac_pair.append(dmac)
@@ -123,13 +138,17 @@ def set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac):
         return
 
     family_af_inet = ip_family[family]
+    # Add neighbor to kernel with "stale" state, we will send arp/ns packet later
+    # so if the neighbor is active, it will become "reachable", otherwise, it will
+    # stay at "stale" state and get aged out by kernel.
     try :
         ipclass.neigh('add',
             family=family_af_inet,
             dst=dst_ip,
             lladdr=dmac,
             ifindex=intf_idx,
-            state=ndmsg.states['reachable'])
+            state=ndmsg.states['stale'])
+
     # If neigh exists, log it but no exception raise, other exceptions, raise
     except NetlinkError as e:
         if e[0] == errno.EEXIST:
@@ -162,12 +181,22 @@ def set_statedb_neigh_restore_done():
     db.close(db.STATE_DB)
     return
 
-def restore_update_kernel_neighbors(intf_neigh_map):
+# This function is to restore the kernel neighbors based on the saved neighbor map
+# It iterates through the map, and work on interface by interface basis.
+# If the interface is operational up and has IP configured per IP family,
+# it will restore the neighbors per family.
+# The restoring process is done by setting the neighbors in kernel from saved entries
+# first, then sending arp/nd packets to update the neighbors.
+# Once all the entries are restored, this function is returned.
+# The interfaces' states were checked in a loop with an interval (CHECK_INTERVAL)
+# The function will timeout in case interfaces' states never meet the condition
+# after some time (DEF_TIME_OUT).
+def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
     # create object for netlink calls to kernel
     ipclass = IPRoute()
     mtime = monotonic.time.time
     start_time = mtime()
-    while (mtime() - start_time) < TIME_OUT:
+    while (mtime() - start_time) < timeout:
         for intf, family_neigh_map in intf_neigh_map.items():
             # only try to restore to kernel when link is up
             if is_intf_oper_state_up(intf):
@@ -186,8 +215,7 @@ def restore_update_kernel_neighbors(intf_neigh_map):
                             # use netlink to set neighbor entries
                             set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac)
 
-                            # best effort to update kernel neigh info
-                            # this will be updated by arp_update later too
+                            # sending arp/ns packet to update kernel neigh info
                             s.send(build_arp_ns_pkt(family, src_mac, src_ip, dst_ip))
                         # delete this family on the intf
                         del intf_neigh_map[intf][family]
@@ -207,7 +235,7 @@ def main():
 
     print "restore_neighbors service is started"
 
-    # Use warmstart python binding
+    # Use warmstart python binding to check warmstart information
     warmstart = swsscommon.WarmStart()
     warmstart.initialize("neighsyncd", "swss")
     warmstart.checkWarmStart("neighsyncd", "swss", False)
@@ -217,7 +245,7 @@ def main():
         print "restore_neighbors service is skipped as warm restart not enabled"
         return
 
-    # swss restart not system warm reboot
+    # swss restart not system warm reboot, set statedb directly
     if not warmstart.isSystemWarmRebootEnabled():
         set_statedb_neigh_restore_done()
         print "restore_neighbors service is done as system warm reboot not enabled"
