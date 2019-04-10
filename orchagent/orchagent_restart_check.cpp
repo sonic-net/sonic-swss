@@ -21,6 +21,8 @@ void printUsage()
     std::cout << "        Skip pending task dependency check for orchagent" << std::endl;
     std::cout << "    -w --waitTime" << std::endl;
     std::cout << "        Wait time for response from orchagent, in milliseconds. Default value: 1000" << std::endl;
+    std::cout << "    -r --retryCount" << std::endl;
+    std::cout << "        Number of retries for the request to orchagent. Default value: 0" << std::endl;
     std::cout << "    -h --help:" << std::endl;
     std::cout << "        Print out this message" << std::endl;
 }
@@ -48,14 +50,16 @@ int main(int argc, char **argv)
     std::string noFreeze            = "fasle";
     /* Default wait time is 1000 millisecond */
     int waitTime = 1000;
+    int retryCount = 0;
 
-    const char* const optstring = "nsw:";
+    const char* const optstring = "nsw:r:";
     while(true)
     {
         static struct option long_options[] =
         {
             { "noFreeze",                no_argument,       0, 'n' },
             { "skipPendingTaskCheck",    no_argument,       0, 's' },
+            { "retryCount",              required_argument, 0, 'r' },
             { "waitTime",                required_argument, 0, 'w' }
         };
 
@@ -82,6 +86,10 @@ int main(int argc, char **argv)
                 SWSS_LOG_NOTICE("Wait time for response from orchagent set to %s milliseconds", optarg);
                 waitTime = atoi(optarg);
                 break;
+            case 'r':
+                SWSS_LOG_NOTICE("Number of retries for the request to orchagent is set to %s", optarg);
+                retryCount = atoi(optarg);
+                break;
             case 'h':
                 printUsage();
                 exit(EXIT_SUCCESS);
@@ -103,42 +111,50 @@ int main(int argc, char **argv)
     // Will listen for the reply on "RESTARTCHECKREPLY" channel
     swss::NotificationConsumer restartQueryReply(&db, "RESTARTCHECKREPLY");
 
+    swss::Select s;
+    s.addSelectable(&restartQueryReply);
+    swss::Selectable *sel;
+
     std::vector<swss::FieldValueTuple> values;
     values.emplace_back("NoFreeze", noFreeze);
     values.emplace_back("SkipPendingTaskCheck", skipPendingTaskCheck);
     std::string op = "orchagent";
-    SWSS_LOG_NOTICE("requested %s to do warm restart state check", op.c_str());
-    restartQuery.send(op, op, values);
 
+    int retries = 0;
 
-    swss::Select s;
-    s.addSelectable(&restartQueryReply);
-    swss::Selectable *sel;
-    std::string op_ret, data;
-    values.clear();
-    int result = s.select(&sel, waitTime);
-    if (result == swss::Select::OBJECT)
+    while (retries <= retryCount)
     {
-        restartQueryReply.pop(op_ret, data, values);
-        if (data == "READY")
+        SWSS_LOG_NOTICE("requested %s to do warm restart state check, retry count: %d", op.c_str(), retries);
+        restartQuery.send(op, op, values);
+
+        std::string op_ret, data;
+        std::vector<swss::FieldValueTuple> values_ret;
+        int result = s.select(&sel, waitTime);
+        if (result == swss::Select::OBJECT)
         {
-            SWSS_LOG_NOTICE("RESTARTCHECK success, %s is frozen and ready for warm restart", op_ret.c_str());
-            std::cout << "RESTARTCHECK succeeded" << std::endl;
-            return EXIT_SUCCESS;
+            restartQueryReply.pop(op_ret, data, values_ret);
+            if (data == "READY")
+            {
+                SWSS_LOG_NOTICE("RESTARTCHECK success, %s is frozen and ready for warm restart", op_ret.c_str());
+                std::cout << "RESTARTCHECK succeeded" << std::endl;
+                return EXIT_SUCCESS;
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("RESTARTCHECK failed, %s is not ready for warm restart with status %s",
+                        op_ret.c_str(), data.c_str());
+            }
+        }
+        else if (result == swss::Select::TIMEOUT)
+        {
+            SWSS_LOG_NOTICE("RESTARTCHECK for %s timed out", op_ret.c_str());
         }
         else
         {
-            SWSS_LOG_NOTICE("RESTARTCHECK failed, %s is not ready for warm restart with status %s",
-                    op_ret.c_str(), data.c_str());
+            SWSS_LOG_NOTICE("RESTARTCHECK for %s error", op_ret.c_str());
         }
-    }
-    else if (result == swss::Select::TIMEOUT)
-    {
-        SWSS_LOG_NOTICE("RESTARTCHECK for %s timed out", op_ret.c_str());
-    }
-    else
-    {
-        SWSS_LOG_NOTICE("RESTARTCHECK for %s error", op_ret.c_str());
+        retries++;
+        values_ret.clear();
     }
     std::cout << "RESTARTCHECK failed" << std::endl;
     return EXIT_FAILURE;
