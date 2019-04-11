@@ -41,7 +41,7 @@ using namespace swss;
 #define CMD_DELETE_VXLAN IP_CMD " link del dev {{" VXLAN "}}"
 #define CMD_DELETE_VXLAN_FROM_BRIDGE BRCTL_CMD " delif {{" BRIDGE "}} {{" VXLAN "}}"
 #define CMD_DELETE_BRIDGE IP_CMD " link del {{" BRIDGE "}}"
-#define CMD_DETACH_BRIDGE_FROM_VXLAN IP_CMD " link set dev {{" BRIDGE "}} nomaster"
+#define CMD_DETACH_BRIDGE_FROM_VNET IP_CMD " link set dev {{" BRIDGE "}} nomaster"
 
 static std::string getVxlanName(const swss::VxlanMgr::VxlanInfo & info)
 {
@@ -431,7 +431,7 @@ void VxlanMgr::createVxlan(const VxlanInfo & info)
     ret = execCommand(CMD_UP_BRIDGE, info, res);
     if ( ret != RET_SUCCESS )
     {
-        execCommand(CMD_DETACH_BRIDGE_FROM_VXLAN, info, res);
+        execCommand(CMD_DETACH_BRIDGE_FROM_VNET, info, res);
         execCommand(CMD_DELETE_VXLAN_FROM_BRIDGE, info, res);
         execCommand(CMD_DELETE_BRIDGE, info, res);
         execCommand(CMD_DELETE_VXLAN, info, res);
@@ -453,7 +453,7 @@ void VxlanMgr::deleteVxlan(const VxlanInfo & info)
 
     std::string res;
 
-    execCommand(CMD_DETACH_BRIDGE_FROM_VXLAN, info, res);
+    execCommand(CMD_DETACH_BRIDGE_FROM_VNET, info, res);
     execCommand(CMD_DELETE_VXLAN_FROM_BRIDGE, info, res);
     execCommand(CMD_DELETE_BRIDGE, info, res);
     execCommand(CMD_DELETE_VXLAN, info, res);
