@@ -20,7 +20,8 @@ using namespace std;
 using namespace swss;
 
 // Need be moved to swss-commom
-#define VXLAN_IF_NAME_PREFIX "brvxlan"
+#define VXLAN_IF_NAME_PREFIX "Vxlan"
+#define VXLAN_BR_NAME_PREFIX "Brvxlan"
 
 // Fields name
 #define SOURCE_IP "src_ip"
@@ -45,14 +46,12 @@ using namespace swss;
 
 static std::string getVxlanName(const swss::VxlanMgr::VxlanInfo & info)
 {
-    return info.at(VXLAN_TUNNEL) + info.at(VNI);
+    return std::string("") + VXLAN_IF_NAME_PREFIX + info.at(VNI);
 }
 
 static std::string getBridgeName(const swss::VxlanMgr::VxlanInfo & info)
 {
-    return std::string("") + VXLAN_IF_NAME_PREFIX
-                   // IFNAMSIZ include '\0', so need minus one
-                   + info.at(VXLAN).substr(0, IFNAMSIZ - strlen(VXLAN_IF_NAME_PREFIX) - 1);
+    return std::string("") + VXLAN_BR_NAME_PREFIX + info.at(VNI);
 }
 
 VxlanMgr::VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<std::string> &tables) :
