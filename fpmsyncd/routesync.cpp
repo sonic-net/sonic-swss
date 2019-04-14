@@ -14,7 +14,8 @@
 using namespace std;
 using namespace swss;
 
-#define VXLAN_IF_NAME_PREFIX "brvxlan"
+#define VXLAN_BR_NAME_PREFIX    "Brvxlan"
+#define VNET_PREFIX             "Vnet"
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
@@ -39,22 +40,31 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
-    /* Get the index of routing table */
-    unsigned int table_index = rtnl_route_get_table(route_obj);
+    /* Get the index of the master device */
+    unsigned int master_index = rtnl_route_get_table(route_obj);
+    char master_name[IFNAMSIZ] = {0};
 
-    /* Default routing table. This line may have problems. */
-    if (table_index == RT_TABLE_UNSPEC)
+    /* Get the name of the master device */
+    getIfName(master_index, master_name, IFNAMSIZ);
+    
+    /* If the master device name starts with VNET_PREFIX, it is a VNET route.
+       The VNET name is exactly the name of the associated master device. */
+    if (string(master_name).find(VNET_PREFIX) == 0)
     {
-        onRouteMsg(nlmsg_type, obj);
+        onVnetRouteMsg(nlmsg_type, obj, string(master_name));
     }
-    /* VNET route. We will handle VRF routes in the future. */
+    /* Otherwise, it is a regular route (include VRF route). */
     else
     {
-        onVnetRouteMsg(nlmsg_type, obj);
-    }
+        onRouteMsg(nlmsg_type, obj);
+    } 
 }
 
-/* Handle regular route (without vnet) */
+/* 
+ * Handle regular route (include VRF route) 
+ * @arg nlmsg_type      Netlink message type
+ * @arg obj             Netlink object
+ */
 void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj)
 {
     struct rtnl_route *route_obj = (struct rtnl_route *)obj;
@@ -161,8 +171,13 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj)
     }
 }
 
-/* Handle vnet route */
-void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj)
+/* 
+ * Handle vnet route 
+ * @arg nlmsg_type      Netlink message type
+ * @arg obj             Netlink object
+ * @arg vnet            Vnet name
+ */     
+void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vnet)
 {
     struct rtnl_route *route_obj = (struct rtnl_route *)obj;
 
@@ -171,19 +186,7 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj)
     char destipprefix[MAX_ADDR_SIZE + 1] = {0};
     nl_addr2str(dip, destipprefix, MAX_ADDR_SIZE);
 
-    /* Get VRF index and VRF name */
-    unsigned int vrf_index = rtnl_route_get_table(route_obj);
-    char vrf_name[IFNAMSIZ] = {0};
-
-    /* If we cannot get the VRF name */
-    if (!getIfName(vrf_index, vrf_name, IFNAMSIZ))
-    {
-        SWSS_LOG_INFO("Fail to get the VRF name (table ID %u)", vrf_index);
-        return;
-    }
-
-    /* vrf name = vnet name */
-    string vnet_dip =  vrf_name + string(":") + destipprefix;
+    string vnet_dip =  vnet + string(":") + destipprefix;
     SWSS_LOG_DEBUG("Receive new vnet route message %s", vnet_dip.c_str());
 
     if (nlmsg_type == RTM_DELROUTE)
@@ -230,9 +233,9 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj)
     string nexthops = getNextHopGw(route_obj);
     string ifnames = getNextHopIf(route_obj);
 
-    /* If the the first interface name starts with VXLAN_IF_NAME_PREFIX,
+    /* If the the first interface name starts with VXLAN_BR_NAME_PREFIX,
        the route is a VXLAN tunnel route. */
-    if (ifnames.find(VXLAN_IF_NAME_PREFIX) == 0)
+    if (ifnames.find(VXLAN_BR_NAME_PREFIX) == 0)
     {
         vector<FieldValueTuple> fvVector;
         FieldValueTuple ep("endpoint", nexthops);
