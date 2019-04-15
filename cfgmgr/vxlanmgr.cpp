@@ -169,7 +169,11 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
             }
             else
             {
-                createVxlan(info);
+                if ( ! createVxlan(info))
+                {
+                    SWSS_LOG_ERROR("Cannot create vxlan %s", info.at(VXLAN).c_str());
+                    return false;
+                }
             }
             SWSS_LOG_NOTICE("Create vxlan %s", info.at(VXLAN).c_str());
             m_vnetVxlanInfoMapping[info.at(VNET)] = info;
@@ -194,7 +198,12 @@ bool VxlanMgr::doVxlanDeleteTask(const KeyOpFieldsValuesTuple & t)
     const VxlanInfo & info = it->second;
     if (isVxlanStateOk(info.at(VXLAN)))
     {
-        deleteVxlan(info);
+        if ( ! deleteVxlan(info))
+        {
+
+            SWSS_LOG_ERROR("Cannot delete vxlan %s", info.at(VXLAN).c_str());
+            return false;
+        }
     }
     else
     {
@@ -357,7 +366,7 @@ static int execCommand(const std::string & format, const swss::VxlanMgr::VxlanIn
     return swss::exec(std::string() + BASH_CMD + " -c \"" + command + "\"", res);
 }
 
-void VxlanMgr::createVxlan(const VxlanInfo & info)
+bool VxlanMgr::createVxlan(const VxlanInfo & info)
 {
     SWSS_LOG_ENTER();
     
@@ -373,7 +382,7 @@ void VxlanMgr::createVxlan(const VxlanInfo & info)
             info.at(VXLAN).c_str(),
             info.at(VNI).c_str(),
             info.at(SOURCE_IP).c_str());
-        return ;
+        return false;
     }
 
     // Up Vxlan
@@ -384,7 +393,7 @@ void VxlanMgr::createVxlan(const VxlanInfo & info)
         SWSS_LOG_WARN(
             "Fail to up vxlan %s",
             info.at(VXLAN).c_str());
-        return ;
+        return false;
     }
 
     // Create bridge
@@ -395,7 +404,7 @@ void VxlanMgr::createVxlan(const VxlanInfo & info)
         SWSS_LOG_WARN(
             "Fail to create bridge %s",
             info.at(BRIDGE).c_str());
-        return ;
+        return false;
     }
 
     // Add vxlan into bridge
@@ -408,7 +417,7 @@ void VxlanMgr::createVxlan(const VxlanInfo & info)
             "Fail to add %s into %s",
             info.at(VXLAN).c_str(),
             info.at(BRIDGE).c_str());
-        return ;
+        return false;
     }
 
     // Attach bridge to vnet
@@ -422,7 +431,7 @@ void VxlanMgr::createVxlan(const VxlanInfo & info)
             "Fail to set %s master %s",
             info.at(BRIDGE).c_str(),
             info.at(VNET).c_str());
-        return ;
+        return false;
        
     }
 
@@ -437,16 +446,17 @@ void VxlanMgr::createVxlan(const VxlanInfo & info)
         SWSS_LOG_WARN(
             "Fail to up bridge %s",
             info.at(BRIDGE).c_str());
-        return;
+        return false;
     }
 
     std::vector<FieldValueTuple> fvVector;
 
     fvVector.emplace_back("state", "ok");
     m_stateVxlanTable.set(info.at(VXLAN), fvVector);
+    return true;
 }
 
-void VxlanMgr::deleteVxlan(const VxlanInfo & info)
+bool VxlanMgr::deleteVxlan(const VxlanInfo & info)
 {
     SWSS_LOG_ENTER();
 
@@ -459,6 +469,7 @@ void VxlanMgr::deleteVxlan(const VxlanInfo & info)
 
     m_stateVxlanTable.del(info.at(VXLAN));
 
+    return true;
 }
 
 

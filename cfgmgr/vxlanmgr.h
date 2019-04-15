@@ -48,8 +48,8 @@ private:
     bool getVxlanInfo(const std::string & vnetName, VxlanInfo & info);
 
 
-    void createVxlan(const VxlanInfo & info);
-    void deleteVxlan(const VxlanInfo & info);
+    bool createVxlan(const VxlanInfo & info);
+    bool deleteVxlan(const VxlanInfo & info);
 
 
     ProducerStateTable m_appVxlanTunnelTableProducer;
