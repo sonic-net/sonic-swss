@@ -599,3 +599,24 @@ def test_CrmAcl(dvs, testlog):
     table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
     assert table_used_counter == 0
 
+def test_CrmAclGroup(dvs, testlog):
+    
+    db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+    dvs.runcmd("crm config polling interval 1")
+    bind_ports = ["Ethernet0", "Ethernet4", "Ethernet8"]
+
+    # create ACL table
+    tbl = swsscommon.Table(db, "ACL_TABLE")
+    fvs = swsscommon.FieldValuePairs([("policy_desc", "testv6"), ("type", "L3V6"), ("ports", ",".join(bind_ports))])
+    tbl.set("test-aclv6", fvs)
+
+    time.sleep(2)
+    atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
+    entry_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_group_used')
+    assert entry_used_counter == 3
+
+    # remove ACL table
+    tbl._del("test-aclv6")
+    time.sleep(2)
