@@ -51,7 +51,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
 {
     SWSS_LOG_ENTER();
 
-    /* Initialize DB connectors */ 
+    /* Initialize DB connectors */
     m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
     m_flex_db = shared_ptr<DBConnector>(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
     m_asic_db = shared_ptr<DBConnector>(new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
@@ -138,35 +138,43 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
     return subnet_routes;
 }
 
-bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix)
+bool IntfsOrch::createIntf(Port            &port,
+                           sai_object_id_t  vrf_id,
+                           const IpPrefix  *ip_prefix)
 {
     SWSS_LOG_ENTER();
 
-    Port port;
-    gPortsOrch->getPort(alias, port);
+    string alias = port.m_alias;
 
     auto it_intfs = m_syncdIntfses.find(alias);
     if (it_intfs == m_syncdIntfses.end())
     {
-        if (addRouterIntfs(vrf_id, port))
+        if (alias != "lo")
         {
-            IntfsEntry intfs_entry;
-            intfs_entry.ref_count = 0;
-            m_syncdIntfses[alias] = intfs_entry;
-        }
-        else
-        {
-            return false;
+            if (!addRouterIntfs(vrf_id, port))
+            {
+                return false;
+            }
         }
     }
 
+    /*
+     * Return here if no prefix is present or if we are dealing with a duplicated
+     * address being added over the same interface.
+     */
     if (!ip_prefix || m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
     {
-        /* Request to create router interface, no prefix present or Duplicate entry */
         return true;
     }
 
-    /* NOTE: Overlap checking is required to handle ifconfig weird behavior.
+    /*
+     * TODO: Remove this overlap-prevention logic which only purposes is to
+     * tackle 'ifconfig' special behavior. SONiC interface configuration is
+     * now only possible through CLI/configDB, so there's no point in having
+     * this code here. I'm not removing it myself due to the existence of
+     * a few python UTs that are still relying on 'ifconfig' execution.
+     *
+     * NOTE: Overlap checking is required to handle ifconfig weird behavior.
      * When set IP address using ifconfig command it applies it in two stages.
      * On stage one it sets IP address with netmask /8. On stage two it
      * changes netmask to specified in command. As DB is async event to
@@ -181,7 +189,8 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
                 ip_prefix->isAddressInSubnet(prefixIt.getIp()))
         {
             overlaps = true;
-            SWSS_LOG_NOTICE("Router interface %s IP %s overlaps with %s.", port.m_alias.c_str(),
+            SWSS_LOG_NOTICE("Router interface %s IP %s overlaps with %s.",
+                            port.m_alias.c_str(),
                     prefixIt.to_string().c_str(), ip_prefix->to_string().c_str());
             break;
         }
@@ -193,17 +202,346 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
         return false;
     }
 
-    vrf_id = port.m_vr_id;
-    addSubnetRoute(port, *ip_prefix);
-    addIp2MeRoute(vrf_id, *ip_prefix);
-
-    if (port.m_type == Port::VLAN)
-    {
-        addDirectedBroadcast(port, *ip_prefix);
-    }
+    /* Creating intfRoutes associated to this interface being defined */
+    createIntfRoutes(IntfRouteEntry(*ip_prefix, alias), port);
 
     m_syncdIntfses[alias].ip_addresses.insert(*ip_prefix);
+
     return true;
+}
+
+bool IntfsOrch::deleteIntf(Port            &port,
+                           sai_object_id_t  vrf_id,
+                           const IpPrefix  *ip_prefix)
+{
+    SWSS_LOG_ENTER();
+
+    string alias = port.m_alias;
+
+    if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
+    {
+        if (m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
+        {
+            deleteIntfRoutes(IntfRouteEntry(*ip_prefix, alias), port);
+            m_syncdIntfses[alias].ip_addresses.erase(*ip_prefix);
+        }
+
+        /* Remove router interface that no IP addresses are associated with */
+        if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+        {
+            if (alias != "lo")
+            {
+                if (!removeRouterIntfs(port))
+                {
+                    return false;
+                }
+            }
+
+            m_syncdIntfses.erase(alias);
+        }
+    }
+
+    return true;
+}
+
+void IntfsOrch::createIntfRoutes(const IntfRouteEntry &ifRoute,
+                                 const Port           &port)
+{
+    SWSS_LOG_ENTER();
+
+    /*
+     * Each newly create interface requires the insertion of two routes in the
+     * system: a subnet route and an ip2me one.
+     */
+    IntfRouteEntry ifSubnetRoute(ifRoute.prefix.getSubnet(),
+                                 ifRoute.ifName,
+                                 "subnet");
+    IntfRouteEntry ifIp2meRoute(getIp2mePrefix(ifRoute.prefix),
+                                ifRoute.ifName,
+                                "ip2me");
+
+    /*
+     * There are two scenarios in which we want to skip the addition of an
+     * interface-subnet route:
+     *
+     * - When dealing with a full-mask interface address (i.e /32 or /128)
+     * - When the port associated to the interface is declared as LOOPBACK
+     */
+    bool subnetOverlap = false, ip2meOverlap = false, skipSubnet = false;
+
+    if (ifSubnetRoute == ifIp2meRoute || port.m_type == Port::LOOPBACK)
+    {
+        skipSubnet = true;
+    }
+
+    if (!skipSubnet)
+    {
+        subnetOverlap = trackIntfRouteOverlap(ifSubnetRoute);
+    }
+    ip2meOverlap = trackIntfRouteOverlap(ifIp2meRoute);
+
+    /* Based on above results, proceed to create routes identified as unique. */
+    if (subnetOverlap)
+    {
+        if (!ip2meOverlap)
+        {
+            addIp2MeRoute(port.m_vr_id, ifIp2meRoute.prefix);
+        }
+    }
+    else /* !subnetOverlap */
+    {
+        if (!skipSubnet)
+        {
+            if (!ip2meOverlap)
+            {
+                addSubnetRoute(port, ifSubnetRoute.prefix);
+                addIp2MeRoute(port.m_vr_id, ifIp2meRoute.prefix);
+            }
+            else
+            {
+                addSubnetRoute(port, ifSubnetRoute.prefix);
+            }
+        }
+        else
+        {
+            if (!ip2meOverlap)
+            {
+                addIp2MeRoute(port.m_vr_id, ifIp2meRoute.prefix);
+            }
+        }
+    }
+
+    /*
+     * A directed-broadcast route is expected in vlan-ipv4 scenarios where the
+     * subnet-length of the associated interface-address is shorter than 30 bits.
+     * If these conditions are met, and there's no overlap with an existing
+     * interface, proceed to create a bcast route.
+     */
+    if (port.m_type == Port::VLAN &&
+        ifRoute.prefix.isV4() &&
+        ifRoute.prefix.getMaskLength() <= 30)
+    {
+        IntfRouteEntry ifBcastRoute(getBcastPrefix(ifRoute.prefix),
+                                    ifRoute.ifName,
+                                    "bcast");
+
+        bool bcastOverlap = trackIntfRouteOverlap(ifBcastRoute);
+        if (!bcastOverlap)
+        {
+            addDirectedBroadcast(port, ifBcastRoute.prefix);
+        }
+    }
+}
+
+/*
+ * Method's goal is to track/record any potential overlap between the interfaces
+ * configured in the system, and alert caller of such an incident.
+ */
+bool IntfsOrch::trackIntfRouteOverlap(const IntfRouteEntry &ifRoute)
+{
+    SWSS_LOG_ENTER();
+
+    string ifRouteStr = ifRoute.prefix.to_string();
+
+    auto iterIfRoute = m_intfRoutes.find(ifRouteStr);
+    if (iterIfRoute == m_intfRoutes.end())
+    {
+        m_intfRoutes[ifRouteStr].push_back(ifRoute);
+        return false;
+    }
+
+    auto listIfRoutes = iterIfRoute->second;
+
+    for (auto &curIfRoute : listIfRoutes)
+    {
+        if (curIfRoute.prefix == ifRoute.prefix)
+        {
+            SWSS_LOG_ERROR("New %s route %s for interface %s overlaps with "
+                           "existing route %s for interface %s. "
+                           "Skipping...",
+                           ifRoute.type.c_str(),
+                           ifRouteStr.c_str(),
+                           ifRoute.ifName.c_str(),
+                           curIfRoute.prefix.to_string().c_str(),
+                           curIfRoute.ifName.c_str());
+
+            iterIfRoute->second.push_back(ifRoute);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void IntfsOrch::deleteIntfRoutes(const IntfRouteEntry &ifRoute,
+                                 const Port           &port)
+{
+    SWSS_LOG_ENTER();
+
+    IntfRouteEntry ifSubnetRoute(ifRoute.prefix.getSubnet(),
+                                 ifRoute.ifName,
+                                 "subnet");
+    IntfRouteEntry ifIp2meRoute(getIp2mePrefix(ifRoute.prefix),
+                                ifRoute.ifName,
+                                "ip2me");
+
+    /*
+     * As we did for route creation case, we will skip the deletion of the subnet
+     * route in two scenarios:
+     *
+     * - When dealing with a full-mask interface address (i.e /32 or /128)
+     * - When the port associated to the interface is declared as LOOPBACK
+     */
+    bool skipSubnet = false;
+    if (ifSubnetRoute == ifIp2meRoute || port.m_type == Port::LOOPBACK)
+    {
+        skipSubnet = true;
+    }
+
+    if (!skipSubnet)
+    {
+        deleteIntfRoute(ifSubnetRoute, port);
+    }
+    deleteIntfRoute(ifIp2meRoute, port);
+
+    /*
+     * Remove directed-bcast route if applicable. See addIntfRoutes() case for
+     * more details.
+     */
+    if (port.m_type == Port::VLAN &&
+        ifRoute.prefix.isV4() &&
+        ifRoute.prefix.getMaskLength() <= 30)
+    {
+        IntfRouteEntry ifBcastRoute(getBcastPrefix(ifRoute.prefix),
+                                    ifRoute.ifName,
+                                    "bcast");
+
+        deleteIntfRoute(ifBcastRoute, port);
+    }
+}
+
+void IntfsOrch::deleteIntfRoute(const IntfRouteEntry &ifRoute, const Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    string ifRouteStr = ifRoute.prefix.to_string();
+
+    /* Return if there's no matching ifRoute in the map */
+    if (!m_intfRoutes.count(ifRouteStr))
+    {
+        return;
+    }
+
+    /*
+     * Obtain the list of routeEntries associated to this ifRoute, and iterate
+     * through it looking for the matching entry (x) to eliminate. We are dealing
+     * with two cases here:
+     *
+     * 1) If (x) is at the front of the list, then (x) is the 'active' route,
+     * meaning the one that got pushed down to hw. In this case we will need to
+     * 'resurrect' other (if any) overlapping routeEntry.
+     *
+     * 2) If (x) is at any other position in the list, then we will simply
+     * eliminate it from the global hashmap, as there's no notion of this route
+     * anywhere else.
+     */
+    auto list = m_intfRoutes[ifRouteStr];
+
+    for (auto it = list.begin(); it != list.end(); ++it)
+    {
+        if (it->ifName == ifRoute.ifName)
+        {
+            /* Case 1) */
+            if (it == list.begin())
+            {
+                SWSS_LOG_NOTICE("Eliminating active %s route %s from "
+                                "interface %s",
+                                it->type.c_str(),
+                                it->prefix.to_string().c_str(),
+                                it->ifName.c_str());
+
+                if (it->type == "subnet")
+                {
+                    removeSubnetRoute(port, ifRoute.prefix);
+                }
+                else if (it->type == "ip2me")
+                {
+                    removeIp2MeRoute(port.m_vr_id, ifRoute.prefix);
+                }
+                else if (it->type == "bcast")
+                {
+                    removeDirectedBroadcast(port, ifRoute.prefix);
+                }
+
+                /*
+                 * Notice that the resurrection-order is vital here. We must
+                 * necessarily pick the oldest entry in the list (next element),
+                 * in order to keep full consistency with kernel's tie-breaking
+                 * logic.
+                 */
+                auto itNext = next(it);
+                if (itNext != list.end())
+                {
+                    resurrectIntfRoute(*itNext);
+                }
+                list.pop_front();
+            }
+            /* Case 2) */
+            else
+            {
+                SWSS_LOG_NOTICE("Eliminating overlapped %s route %s from "
+                                "interface %s",
+                                it->type.c_str(),
+                                it->prefix.to_string().c_str(),
+                                it->ifName.c_str());
+                list.erase(it);
+            }
+
+            m_intfRoutes[ifRouteStr] = list;
+
+            if (!list.size())
+            {
+                m_intfRoutes.erase(ifRouteStr);
+            }
+
+            break;
+        }
+    }
+}
+
+void IntfsOrch::resurrectIntfRoute(const IntfRouteEntry &ifRoute)
+{
+    SWSS_LOG_ENTER();
+
+    /* Obtain intf's associated port */
+    Port port;
+    if (!gPortsOrch->getPort(ifRoute.ifName, port))
+    {
+        SWSS_LOG_NOTICE("Missing port associated to ip-address %s being "
+                        "resurrected on interface %s ",
+                        ifRoute.prefix.to_string().c_str(),
+                        ifRoute.ifName.c_str());
+        return;
+    }
+
+    SWSS_LOG_NOTICE("Resurrecting overlapped %s route %s from interface %s ",
+                    ifRoute.type.c_str(),
+                    ifRoute.prefix.to_string().c_str(),
+                    ifRoute.ifName.c_str());
+
+    /* Kicking off resurrection process */
+    if (ifRoute.type == "subnet")
+    {
+        addSubnetRoute(port, ifRoute.prefix);
+    }
+    else if (ifRoute.type == "ip2me")
+    {
+        addIp2MeRoute(port.m_vr_id, ifRoute.prefix);
+    }
+    else if (ifRoute.type == "bcast")
+    {
+        addDirectedBroadcast(port, ifRoute.prefix);
+    }
 }
 
 void IntfsOrch::doTask(Consumer &consumer)
@@ -276,30 +614,13 @@ void IntfsOrch::doTask(Consumer &consumer)
                     continue;
                 }
 
-                bool addIp2Me = false;
-                // set request for lo may come after warm start restore.
-                // It is also to prevent dupicate set requests in normal running case.
-                auto it_intfs = m_syncdIntfses.find(alias);
-                if (it_intfs == m_syncdIntfses.end())
+                Port port = Port(alias, Port::LOOPBACK, vrf_id);
+                if (!createIntf(port,
+                                vrf_id,
+                                ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
-                    IntfsEntry intfs_entry;
-
-                    intfs_entry.ref_count = 0;
-                    intfs_entry.ip_addresses.insert(ip_prefix);
-                    m_syncdIntfses[alias] = intfs_entry;
-                    addIp2Me = true;
-                }
-                else
-                {
-                     if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix) == 0)
-                     {
-                        m_syncdIntfses[alias].ip_addresses.insert(ip_prefix);
-                        addIp2Me = true;
-                     }
-                }
-                if (addIp2Me)
-                {
-                    addIp2MeRoute(vrf_id, ip_prefix);
+                    it++;
+                    continue;
                 }
 
                 it = consumer.m_toSync.erase(it);
@@ -327,7 +648,8 @@ void IntfsOrch::doTask(Consumer &consumer)
                     it++;
                     continue;
                 }
-                if (!vnet_orch->setIntf(alias, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr))
+
+                if (!vnet_orch->createIntf(port, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
                     it++;
                     continue;
@@ -340,7 +662,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else
             {
-                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr))
+                if (!createIntf(port, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
                     it++;
                     continue;
@@ -349,22 +671,16 @@ void IntfsOrch::doTask(Consumer &consumer)
 
             it = consumer.m_toSync.erase(it);
         }
+
         else if (op == DEL_COMMAND)
         {
             if (alias == "lo")
             {
-                // TODO: handle case for which lo is not in default vrf gVirtualRouterId
-                if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
+                Port port = Port(alias, Port::LOOPBACK, vrf_id);
+                if (!deleteIntf(port, vrf_id, &ip_prefix))
                 {
-                    if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
-                    {
-                        m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
-                        removeIp2MeRoute(vrf_id, ip_prefix);
-                    }
-                    if (m_syncdIntfses[alias].ip_addresses.size() == 0)
-                    {
-                        m_syncdIntfses.erase(alias);
-                    }
+                    it++;
+                    continue;
                 }
 
                 it = consumer.m_toSync.erase(it);
@@ -380,40 +696,14 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
 
             vrf_id = port.m_vr_id;
-            if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
+
+            if (!deleteIntf(port, vrf_id, &ip_prefix))
             {
-                if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
-                {
-                    removeSubnetRoute(port, ip_prefix);
-                    removeIp2MeRoute(vrf_id, ip_prefix);
-
-                    if(port.m_type == Port::VLAN)
-                    {
-                        removeDirectedBroadcast(port, ip_prefix);
-                    }
-
-                    m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
-                }
-
-                /* Remove router interface that no IP addresses are associated with */
-                if (m_syncdIntfses[alias].ip_addresses.size() == 0)
-                {
-                    if (removeRouterIntfs(port))
-                    {
-                        m_syncdIntfses.erase(alias);
-                        it = consumer.m_toSync.erase(it);
-                    }
-                    else
-                        it++;
-                }
-                else
-                {
-                    it = consumer.m_toSync.erase(it);
-                }
+                it++;
+                continue;
             }
-            else
-                /* Cannot locate the interface */
-                it = consumer.m_toSync.erase(it);
+
+            it = consumer.m_toSync.erase(it);
         }
     }
 }
@@ -676,13 +966,12 @@ void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix
     sai_neighbor_entry_t neighbor_entry;
     IpAddress ip_addr;
 
-    /* If not IPv4 subnet or if /31 or /32 subnet, there is no broadcast address, hence don't
-     * add a broadcast route. */
-    if (!(ip_prefix.isV4()) || (ip_prefix.getMaskLength() > 30))
+    /* Return if not an IPv4 subnet */
+    if (!ip_prefix.isV4())
     {
       return;
     }
-    ip_addr =  ip_prefix.getBroadcastIp();
+    ip_addr = ip_prefix.getIp();
 
     neighbor_entry.rif_id = port.m_rif_id;
     neighbor_entry.switch_id = gSwitchId;
@@ -709,12 +998,12 @@ void IntfsOrch::removeDirectedBroadcast(const Port &port, const IpPrefix &ip_pre
     sai_neighbor_entry_t neighbor_entry;
     IpAddress ip_addr;
 
-    /* If not IPv4 subnet or if /31 or /32 subnet, there is no broadcast address */
-    if (!(ip_prefix.isV4()) || (ip_prefix.getMaskLength() > 30))
+    /* Return if not an IPv4 subnet */
+    if (!ip_prefix.isV4())
     {
         return;
     }
-    ip_addr =  ip_prefix.getBroadcastIp();
+    ip_addr = ip_prefix.getIp();
 
     neighbor_entry.rif_id = port.m_rif_id;
     neighbor_entry.switch_id = gSwitchId;
@@ -810,17 +1099,17 @@ void IntfsOrch::doTask(SelectableTimer &timer)
         std::string type;
         switch(it->m_type)
         {
-            case Port::PHY:
-            case Port::LAG:
-                type = "SAI_ROUTER_INTERFACE_TYPE_PORT";
-                break;
-            case Port::VLAN:
-                type = "SAI_ROUTER_INTERFACE_TYPE_VLAN";
-                break;
-            default:
-                SWSS_LOG_ERROR("Unsupported port type: %d", it->m_type);
-                type = "";
-                break;
+          case Port::PHY:
+          case Port::LAG:
+            type = "SAI_ROUTER_INTERFACE_TYPE_PORT";
+            break;
+          case Port::VLAN:
+            type = "SAI_ROUTER_INTERFACE_TYPE_VLAN";
+            break;
+          default:
+            SWSS_LOG_ERROR("Unsupported port type: %d", it->m_type);
+            type = "";
+            break;
         }
         if (m_vidToRidTable->hget("", id, value))
         {
@@ -833,4 +1122,26 @@ void IntfsOrch::doTask(SelectableTimer &timer)
             ++it;
         }
     }
+}
+
+/*
+ * Helper functions. Perhaps to be moved to a more appropriate location (e.g.
+ * IpPrefix class).
+ */
+IpPrefix IntfsOrch::getIp2mePrefix(const IpPrefix &ip_prefix)
+{
+    string newRoutePrefixStr = ip_prefix.isV4() ?
+        ip_prefix.getIp().to_string() + "/32" :
+        ip_prefix.getIp().to_string() + "/128";
+
+    return (IpPrefix(newRoutePrefixStr));
+}
+
+IpPrefix IntfsOrch::getBcastPrefix(const IpPrefix &ip_prefix)
+{
+    string newRoutePrefixStr = ip_prefix.isV4() ?
+        ip_prefix.getBroadcastIp().to_string() + "/32" :
+        ip_prefix.getBroadcastIp().to_string() + "/128";
+
+    return (IpPrefix(newRoutePrefixStr));
 }
