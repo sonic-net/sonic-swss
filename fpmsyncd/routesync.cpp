@@ -57,7 +57,7 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     else
     {
         onRouteMsg(nlmsg_type, obj);
-    } 
+    }
 }
 
 /* 
