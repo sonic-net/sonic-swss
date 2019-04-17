@@ -262,10 +262,12 @@ VNetVrfObject::~VNetVrfObject()
  */
 std::bitset<VNET_BITMAP_SIZE> VNetBitmapObject::vnetBitmap_;
 std::bitset<VNET_TUNNEL_SIZE> VNetBitmapObject::tunnelOffsets_;
+std::bitset<VNET_TUNNEL_SIZE> VNetBitmapObject::tunnelIdOffsets_;
 map<string, uint32_t> VNetBitmapObject::vnetIds_;
 map<uint32_t, VnetBridgeInfo> VNetBitmapObject::bridgeInfoMap_;
 map<tuple<MacAddress, sai_object_id_t>, sai_fdb_entry_t> VNetBitmapObject::fdbMap_;
 map<tuple<MacAddress, sai_object_id_t>, sai_neighbor_entry_t> VNetBitmapObject::neighMap_;
+map<tuple<IpAddress, sai_object_id_t>, uint16_t> VNetBitmapObject::endpointMap_;
 
 VNetBitmapObject::VNetBitmapObject(const std::string& vnet, const VNetInfo& vnetInfo,
                              vector<sai_attribute_t>& attrs) : VNetObject(vnetInfo)
@@ -342,6 +344,29 @@ void VNetBitmapObject::recycleTunnelRouteTableOffset(uint32_t offset)
     SWSS_LOG_ENTER();
 
     tunnelOffsets_[offset] = false;
+}
+
+uint16_t VNetBitmapObject::getFreeTunnelId()
+{
+    SWSS_LOG_ENTER();
+
+    for (uint16_t i = 1; i < tunnelIdOffsets_.size(); i++)
+    {
+        if (tunnelIdOffsets_[i] == false)
+        {
+            tunnelIdOffsets_[i] = true;
+            return i;
+        }
+    }
+
+    return 0;
+}
+
+void VNetBitmapObject::recycleTunnelId(uint16_t offset)
+{
+    SWSS_LOG_ENTER();
+
+    tunnelIdOffsets_[offset] = false;
 }
 
 VnetBridgeInfo VNetBitmapObject::getBridgeInfoByVni(uint32_t vni, string tunnelName)
@@ -644,6 +669,8 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
     auto bInfo = getBridgeInfoByVni(endp.vni == 0 ? getVni() : endp.vni, getTunnelName());
     uint32_t peerBitmap = vnet_id_;
     MacAddress mac = endp.mac ? endp.mac : gVxlanMacAddress;
+    sai_ip_address_t underlayAddr;
+    copy(underlayAddr, endp.ip);
 
     VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
     for (auto peer : peer_list)
@@ -662,8 +689,6 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
     {
         /* FDB entry to the tunnel */
         vector<sai_attribute_t> fdb_attrs;
-        sai_ip_address_t underlayAddr;
-        copy(underlayAddr, endp.ip);
         sai_fdb_entry_t fdbEntry;
         fdbEntry.switch_id = gSwitchId;
         mac.getMac(fdbEntry.mac_address);
@@ -674,11 +699,11 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
         fdb_attrs.push_back(attr);
 
         attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
-        attr.value.oid = bInfo.bridge_port_tunnel_id;
+        attr.value.oid = bInfo.bridge_port_rif_id;
         fdb_attrs.push_back(attr);
 
-        attr.id = SAI_FDB_ENTRY_ATTR_ENDPOINT_IP;
-        attr.value.ipaddr = underlayAddr;
+        attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
+        attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
         fdb_attrs.push_back(attr);
 
         status = sai_fdb_api->create_fdb_entry(
@@ -752,6 +777,52 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
         throw std::runtime_error("VNet route creation failed");
     }
 
+    /* Tunnel endpoint */
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+    auto *tunnel = vxlan_orch->getVxlanTunnel(getTunnelName());
+    auto endpoint = make_tuple(endp.ip, tunnel->getTunnelId());
+    uint16_t tunnelIndex = 0;
+    if (endpointMap_.find(endpoint) == endpointMap_.end())
+    {
+        tunnelIndex = getFreeTunnelId();
+        vector<sai_attribute_t> vxlan_attrs;
+
+        sai_object_id_t tunnelL3VxlanEntryId;
+        attr.id = SAI_TABLE_L3_VXLAN_ENTRY_ATTR_ACTION;
+        attr.value.s32 = SAI_TABLE_L3_VXLAN_ENTRY_ACTION_TUNNEL_ENCAP;
+        vxlan_attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_L3_VXLAN_ENTRY_ATTR_METADATA_KEY;
+        attr.value.u16 = tunnelIndex;
+        vxlan_attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_L3_VXLAN_ENTRY_ATTR_UNDERLAY_DIP;
+        attr.value.ipaddr = underlayAddr;
+        vxlan_attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_L3_VXLAN_ENTRY_ATTR_TUNNEL_ID;
+        attr.value.oid = tunnel->getTunnelId();
+        vxlan_attrs.push_back(attr);
+
+        status = sai_bmtor_api->create_table_l3_vxlan_entry(
+                &tunnelL3VxlanEntryId,
+                gSwitchId,
+                (uint32_t)vxlan_attrs.size(),
+                vxlan_attrs.data());
+
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create L3 VXLAN entry, SAI rc: %d", status);
+            throw std::runtime_error("VNet route creation failed");
+        }
+
+        endpointMap_.emplace(endpoint, tunnelIndex);
+    }
+    else
+    {
+        tunnelIndex = endpointMap_.at(endpoint);
+    }
+
     /* Tunnel route */
     vector<sai_attribute_t> tr_attrs;
     sai_ip_prefix_t pfx;
@@ -779,6 +850,10 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
 
     attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_NEXT_HOP;
     attr.value.oid = nexthopId;
+    tr_attrs.push_back(attr);
+
+    attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_TUNNEL_INDEX;
+    attr.value.u16 = tunnelIndex;
     tr_attrs.push_back(attr);
 
     status = sai_bmtor_api->create_table_bitmap_router_entry(
@@ -862,6 +937,11 @@ bool VNetBitmapObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
         attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_NEXT_HOP;
         attr.value.oid = nh_id;
         attrs.push_back(attr);
+
+        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_TUNNEL_INDEX;
+        attr.value.u16 = 0;
+        attrs.push_back(attr);
+
     }
     else
     {

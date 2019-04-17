@@ -200,6 +200,10 @@ private:
 
     static void recycleTunnelRouteTableOffset(uint32_t offset);
 
+    static uint16_t getFreeTunnelId();
+
+    static void recycleTunnelId(uint16_t offset);
+
     static VnetBridgeInfo getBridgeInfoByVni(uint32_t vni, string tunnelName);
 
     static uint32_t getFreeNeighbor(void);
@@ -207,9 +211,11 @@ private:
     static std::bitset<VNET_BITMAP_SIZE> vnetBitmap_;
     static map<string, uint32_t> vnetIds_;
     static std::bitset<VNET_TUNNEL_SIZE> tunnelOffsets_;
+    static std::bitset<VNET_TUNNEL_SIZE> tunnelIdOffsets_;
     static map<uint32_t, VnetBridgeInfo> bridgeInfoMap_;
     static map<tuple<MacAddress, sai_object_id_t>, sai_fdb_entry_t> fdbMap_;
     static map<tuple<MacAddress, sai_object_id_t>, sai_neighbor_entry_t> neighMap_;
+    static map<tuple<IpAddress, sai_object_id_t>, uint16_t> endpointMap_;
 
     uint32_t vnet_id_;
 };
