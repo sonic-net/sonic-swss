@@ -643,7 +643,7 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
         if (intfMap_.find(alias) != intfMap_.end())
         {
             SWSS_LOG_ERROR("VNET '%s' interface '%s' already exists", getVnetName().c_str(), alias.c_str());
-            throw std::runtime_error("VNET interface creation failed");
+            return false;
         }
 
         if (!gIntfsOrch->setIntf(alias, gVirtualRouterId, nullptr))
@@ -761,7 +761,7 @@ bool VNetBitmapObject::removeIntf(const string& alias, const IpPrefix *prefix)
         {
             SWSS_LOG_ERROR("VNET '%s' interface '%s' prefix '%s' doesn't exist",
                     getVnetName().c_str(), alias.c_str(), prefix->getIp().to_string().c_str());
-            return false;
+            return true;
         }
 
         auto& pfx = intf.pfxMap.at(*prefix);
@@ -782,12 +782,6 @@ bool VNetBitmapObject::removeIntf(const string& alias, const IpPrefix *prefix)
 
     if (intf.pfxMap.size() == 0)
     {
-        if (gIntfsOrch->getSyncdIntfses().find(alias) == gIntfsOrch->getSyncdIntfses().end())
-        {
-            SWSS_LOG_ERROR("VNET '%s' interface '%s' doesn't exist", getVnetName().c_str(), alias.c_str());
-            return false;
-        }
-
         status = sai_bmtor_api->remove_table_bitmap_classification_entry(intf.vnetTableEntryId);
         if (status != SAI_STATUS_SUCCESS)
         {

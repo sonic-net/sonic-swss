@@ -216,11 +216,6 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
         return false;
     }
 
-    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
-    {
-        return false;
-    }
-
     if (ip_prefix && m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
     {
         removeSubnetRoute(port, *ip_prefix);
