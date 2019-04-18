@@ -87,6 +87,7 @@ void WatermarkOrch::doTask(Consumer &consumer)
 
 void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vector<FieldValueTuple> &fvt)
 {
+    SWSS_LOG_ENTER();    
     if (key == "TELEMETRY_INTERVAL")
     {
         for (std::pair<std::basic_string<char>, std::basic_string<char> > i: fvt)
@@ -107,35 +108,48 @@ void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vect
 
 void WatermarkOrch::handleFcConfigUpdate(const std::string &key, const std::vector<FieldValueTuple> &fvt)
 {
-
+    SWSS_LOG_ENTER();
+    uint8_t prevStatus = m_wmStatus;
     if (key == "QUEUE_WATERMARK" || key == "PG_WATERMARK")
     {
         for (std::pair<std::basic_string<char>, std::basic_string<char> > i: fvt)
         {
             if (i.first == "FLEX_COUNTER_STATUS")
             {
-                if (key == "QUEUE_WATERMARK")
+                if (i.second == "enable")
                 {
-                    m_qWmEnabled = (i.second == "enable");
+                    m_wmStatus = (uint8_t) (m_wmStatus | groupToMask.at(key));
                 }
-                else if (key == "PG_WATERMARK")
+                else if (i.second == "disable")
                 {
-                    m_pgWmEnabled = (i.second == "enable");
+                    m_wmStatus = (uint8_t) (m_wmStatus & ~(groupToMask.at(key)));
                 }
             }
         }
-        if (isTimerEnabled())
+        if (!prevStatus && m_wmStatus)
         {
             m_telemetryTimer->start();
         }
+    SWSS_LOG_DEBUG("Status of WMs: %u", m_wmStatus);
     }
 }
 
 void WatermarkOrch::doTask(NotificationConsumer &consumer)
 {
+    SWSS_LOG_ENTER();
     if (!gPortsOrch->isPortReady())
     {
         return;
+    }
+
+    if (m_pg_ids.empty())
+    {
+        init_pg_ids();
+    }
+
+    if (m_multicast_queue_ids.empty() and m_unicast_queue_ids.empty())
+    {
+        init_queue_ids();
     }
 
     std::string op;
@@ -207,11 +221,9 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
 
     if (&timer == m_telemetryTimer)
     {
-        /* Timer is only running when the watermark polling is on                         *
-         * if it is disabled we will not restart the timer at the end of current interval */
-        if (isTimerEnabled())
+        if (!m_wmStatus)
         {
-            m_telemetryTimer->reset();
+            m_telemetryTimer->stop();
         }
 
         clearSingleWm(m_periodicWatermarkTable.get(), "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES", m_pg_ids);

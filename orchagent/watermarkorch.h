@@ -1,12 +1,22 @@
 #ifndef WATERMARKORCH_H
 #define WATERMARKORCH_H
 
+#include <map>
+
 #include "orch.h"
 #include "port.h"
 
 #include "notificationconsumer.h"
 #include "timer.h"
 
+const uint8_t queue_wm_status_mask = 1 << 0;
+const uint8_t pg_wm_status_mask = 1 << 1;
+
+static const map<string, const uint8_t> groupToMask =
+{
+    { "QUEUE_WATERMARK",     queue_wm_status_mask },
+    { "PG_WATERMARK",        pg_wm_status_mask }
+};
 
 class WatermarkOrch : public Orch
 {
@@ -36,14 +46,13 @@ public:
         return m_countersDb;
     }
 
-    bool isTimerEnabled()
-    {
-        return m_qWmEnabled || m_pgWmEnabled;
-    }
-
 private:
-    bool m_qWmEnabled = false;
-    bool m_pgWmEnabled = false;
+    /*
+    [7-2] - unused
+    [1] - pg wm status
+    [0] - queue wm status (least significant bit) 
+    */
+    uint8_t m_wmStatus = 0;
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<DBConnector> m_appDb = nullptr;
