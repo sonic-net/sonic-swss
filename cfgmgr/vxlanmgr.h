@@ -17,7 +17,16 @@ public:
     VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<std::string> &tableNames);
     using Orch::doTask;
 
-     typedef std::map<std::string, std::string> VxlanInfo;
+    typedef struct VxlanInfo
+    {
+        std::string m_vxlanTunnel;
+        std::string m_sourceIp;
+        std::string m_vnet;
+        std::string m_vni;
+        std::string m_vxlan;
+        std::string m_vxlanIf;
+    } VxlanInfo;
+
 private:
     void doTask(Consumer &consumer);
 
@@ -38,15 +47,6 @@ private:
     */
     bool isVrfStateOk(const std::string & vrfName);
     bool isVxlanStateOk(const std::string & vxlanName);
-    /*
-    * Get Vxlan information(vnet Name, vni, src_ip) by querying 
-    * CFG_VXLAN_TUNNEL_TABLE and CFG_VNET_TABLE
-    * Return
-    *  true: all information can be got successfully.
-    *  false: missing some information
-    */
-    bool getVxlanInfo(const std::string & vnetName, VxlanInfo & info);
-
 
     bool createVxlan(const VxlanInfo & info);
     bool deleteVxlan(const VxlanInfo & info);
@@ -55,7 +55,18 @@ private:
     ProducerStateTable m_appVxlanTunnelTable,m_appVxlanTunnelMapTable;
     Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable;
 
-    std::map<std::string, VxlanInfo> m_vnetVxlanInfoMapping;
+    /*
+    * Vxlan Tunnel Cache
+    * Key: tunnel name
+    * Value: Field Value pairs of vxlan tunnel
+    */
+    std::map<std::string, std::vector<FieldValueTuple> > m_vxlanTunnelCache;
+    /*
+    * Vnet Cache
+    * Key: Vnet name
+    * Value: Vxlan information of this vnet
+    */
+    std::map<std::string, VxlanInfo> m_vnetCache;
 };
 
 }
