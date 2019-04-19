@@ -95,6 +95,16 @@ def test_CrmFdbEntry(dvs, testlog):
 
     assert new_avail_counter == avail_counter
 
+
+    dvs.runcmd("crm config polling interval 2")
+    dvs.runcmd("crm config thresholds fdb high 90")
+    dvs.runcmd("crm config thresholds fdb type free")
+    time.sleep(2)
+
+    fileaString = dvs.runcmd("cat /var/log/syslog")
+    idPosition = fileaString[1].find("FDB_ENTRY THRESHOLD_EXCEEDED for TH_FREE")
+    assert idPosition != -1
+
     # enable ipv6 on server 2
     dvs.servers[2].runcmd("sysctl -w net.ipv6.conf.eth0.disable_ipv6=0")
 
@@ -149,6 +159,15 @@ def test_CrmIpv4Route(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    dvs.runcmd("crm config polling interval 2")
+    dvs.runcmd("crm config thresholds ipv4 route high 90")
+    dvs.runcmd("crm config thresholds ipv4 route type free")
+    time.sleep(2)
+
+    fileaString = dvs.runcmd_output("cat /var/log/syslog")
+    idPosition = fileaString.find("IPV4_ROUTE THRESHOLD_EXCEEDED for TH_FREE")
+    assert idPosition != -1
 
     intf_tbl._del("Ethernet0|10.0.0.0/31")
     time.sleep(2)
@@ -213,6 +232,15 @@ def test_CrmIpv6Route(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    dvs.runcmd("crm config polling interval 2")
+    dvs.runcmd("crm config thresholds ipv6 route high 90")
+    dvs.runcmd("crm config thresholds ipv6 route type free")
+    time.sleep(2)
+
+    fileaString = dvs.runcmd("cat /var/log/syslog")
+    idPosition = fileaString[1].find("IPV6_ROUTE THRESHOLD_EXCEEDED for TH_FREE")
+    assert idPosition != -1
+
     intf_tbl._del("Ethernet0|fc00::1/126")
     time.sleep(2)
 
@@ -260,6 +288,15 @@ def test_CrmIpv4Nexthop(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    dvs.runcmd("crm config polling interval 2")
+    dvs.runcmd("crm config thresholds ipv4 nexthop high 90")
+    dvs.runcmd("crm config thresholds ipv4 nexthop type free")
+    time.sleep(2)
+
+    fileaString = dvs.runcmd("cat /var/log/syslog")
+    idPosition = fileaString[1].find("IPV4_NEXTHOP THRESHOLD_EXCEEDED for TH_FREE")
+    assert idPosition != -1
 
     intf_tbl._del("Ethernet0|10.0.0.0/31")
     time.sleep(2)
@@ -313,6 +350,15 @@ def test_CrmIpv6Nexthop(dvs, testlog):
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
 
+    dvs.runcmd("crm config polling interval 2")
+    dvs.runcmd("crm config thresholds ipv6 nexthop high 90")
+    dvs.runcmd("crm config thresholds ipv6 nexthop type free")
+    time.sleep(2)
+
+    fileaString = dvs.runcmd("cat /var/log/syslog")
+    idPosition = fileaString[1].find("IPV6_NEXTHOP THRESHOLD_EXCEEDED for TH_FREE")
+    assert idPosition != -1
+
     intf_tbl._del("Ethernet0|fc00::1/126")
     time.sleep(2)
 
@@ -360,6 +406,15 @@ def test_CrmIpv4Neighbor(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    dvs.runcmd("crm config polling interval 2")
+    dvs.runcmd("crm config thresholds ipv4 neighbor high 90")
+    dvs.runcmd("crm config thresholds ipv4 neighbor type free")
+    time.sleep(2)
+
+    fileaString = dvs.runcmd("cat /var/log/syslog")
+    idPosition = fileaString[1].find("IPV4_NEIGHBOR THRESHOLD_EXCEEDED for TH_FREE")
+    assert idPosition != -1
 
     intf_tbl._del("Ethernet0|10.0.0.0/31")
     time.sleep(2)
@@ -412,6 +467,16 @@ def test_CrmIpv6Neighbor(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    dvs.runcmd("crm config polling interval 2")
+    dvs.runcmd("crm config thresholds ipv6 neighbor high 90")
+    dvs.runcmd("crm config thresholds ipv6 neighbor type free")
+    time.sleep(2)
+
+    fileaString = dvs.runcmd("cat /var/log/syslog")
+    idPosition = fileaString[1].find("IPV6_NEIGHBOR THRESHOLD_EXCEEDED for TH_FREE")
+    assert idPosition != -1
+
 
     intf_tbl._del("Ethernet0|fc00::1/126")
     time.sleep(2)
@@ -472,6 +537,15 @@ def test_CrmNexthopGroup(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    dvs.runcmd("crm config polling interval 2")
+    dvs.runcmd("crm config thresholds nexthop group member high 90")
+    dvs.runcmd("crm config thresholds nexthop group object type free")
+    time.sleep(2)
+
+    fileaString = dvs.runcmd("cat /var/log/syslog")
+    idPosition = fileaString[1].find("NEXTHOP_GROUP THRESHOLD_EXCEEDED for TH_FREE")
+    assert idPosition != -1
 
     intf_tbl._del("Ethernet0|10.0.0.0/31")
     intf_tbl._del("Ethernet4|10.0.0.2/31")
@@ -539,6 +613,15 @@ def test_CrmNexthopGroupMember(dvs, testlog):
 
     assert new_used_counter == used_counter
     assert new_avail_counter == avail_counter
+
+    dvs.runcmd("crm config polling interval 2")
+    dvs.runcmd("crm config thresholds nexthop group member high 90")
+    dvs.runcmd("crm config thresholds nexthop group member type free")
+    time.sleep(2)
+
+    fileaString = dvs.runcmd("cat /var/log/syslog")
+    idPosition = fileaString[1].find("NEXTHOP_GROUP_MEMBER THRESHOLD_EXCEEDED for TH_FREE")
+    assert idPosition != -1
 
     intf_tbl._del("Ethernet0|10.0.0.0/31")
     intf_tbl._del("Ethernet4|10.0.0.2/31")
