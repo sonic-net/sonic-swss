@@ -14,7 +14,7 @@
 using namespace std;
 using namespace swss;
 
-#define VXLAN_BR_NAME_PREFIX    "Brvxlan"
+#define VXLAN_IF_NAME_PREFIX    "Brvxlan"
 #define VNET_PREFIX             "Vnet"
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
@@ -233,9 +233,9 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
     string nexthops = getNextHopGw(route_obj);
     string ifnames = getNextHopIf(route_obj);
 
-    /* If the the first interface name starts with VXLAN_BR_NAME_PREFIX,
+    /* If the the first interface name starts with VXLAN_IF_NAME_PREFIX,
        the route is a VXLAN tunnel route. */
-    if (ifnames.find(VXLAN_BR_NAME_PREFIX) == 0)
+    if (ifnames.find(VXLAN_IF_NAME_PREFIX) == 0)
     {
         vector<FieldValueTuple> fvVector;
         FieldValueTuple ep("endpoint", nexthops);
