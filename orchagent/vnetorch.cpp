@@ -271,10 +271,10 @@ VNetBitmapObject::VNetBitmapObject(const std::string& vnet, const VNetInfo& vnet
 {
     SWSS_LOG_ENTER();
 
-    setVniInfo(vnetInfo.vni);
-
     vnet_id_ = getFreeBitmapId(vnet);
     vnet_name_ = vnet;
+
+    setVniInfo(vnetInfo.vni);
 }
 
 bool VNetBitmapObject::updateObj(vector<sai_attribute_t>&)
