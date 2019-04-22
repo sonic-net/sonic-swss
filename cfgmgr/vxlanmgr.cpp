@@ -244,11 +244,10 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     }
 
     // If all information of vnet has been set
-    if (info.m_vnet.empty() 
-     || info.m_vxlanTunnel.empty() 
+    if (info.m_vxlanTunnel.empty() 
      || info.m_vni.empty())
     {
-        SWSS_LOG_DEBUG("Vnet information is incomplete");
+        SWSS_LOG_DEBUG("Vnet %s information is incomplete", info.m_vnet.c_str());
         // if the information is incomplete, just ignore this message
         // because all information will be sent if the information was
         // completely set.
@@ -259,10 +258,19 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     auto it = m_vxlanTunnelCache.find(info.m_vxlanTunnel);
     if (it == m_vxlanTunnelCache.end())
     {
-        SWSS_LOG_DEBUG("Vxlan tunnel has been created");
+        SWSS_LOG_DEBUG("Vxlan tunnel %s has not been created", info.m_vxlanTunnel.c_str());
         // Suspend this message util the vxlan tunnel is created
         return false;
     }
+
+    // If the VRF(Vnet is a special VRF) has been created
+    if (!isVrfStateOk(info.m_vnet))
+    {
+        SWSS_LOG_DEBUG("Vrf %s has not been created", info.m_vnet.c_str());
+        // Suspend this message util the vrf is created
+        return false;
+    }
+
     auto sourceIp = std::find_if(
         it->second.begin(),
         it->second.end(),
@@ -271,17 +279,9 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     {
         info.m_sourceIp = sourceIp->second;
     }
-
-    // If the VRF(Vnet is a special VRF) has been created
-    if (!isVrfStateOk(info.m_vnet))
-    {
-        SWSS_LOG_DEBUG("");
-        // Suspend this message util the vrf is created
-        return false;
-    }
-
     info.m_vxlan = getVxlanName(info);
     info.m_vxlanIf = getVxlanIfName(info);
+
     // If this vxlan has been created
     if (isVxlanStateOk(info.m_vxlan))
     {
@@ -322,7 +322,7 @@ bool VxlanMgr::doVxlanDeleteTask(const KeyOpFieldsValuesTuple & t)
         if ( ! deleteVxlan(info))
         {
             SWSS_LOG_ERROR("Cannot delete vxlan %s", info.m_vxlan.c_str());
-            return true;
+            return false;
         }
     }
     else
