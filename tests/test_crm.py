@@ -165,7 +165,7 @@ def test_CrmIpv4Route(dvs, testlog):
     dvs.runcmd("crm config thresholds ipv4 route type free")
     time.sleep(2)
 
-    fileaString = dvs.runcmd_output("cat /var/log/syslog")
+    fileaString = dvs.runcmd("cat /var/log/syslog")
     idPosition = fileaString.find("IPV4_ROUTE THRESHOLD_EXCEEDED for TH_FREE")
     assert idPosition != -1
 
