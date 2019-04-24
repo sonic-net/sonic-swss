@@ -787,25 +787,25 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
         tunnelIndex = getFreeTunnelId();
         vector<sai_attribute_t> vxlan_attrs;
 
-        sai_object_id_t tunnelL3VxlanEntryId;
-        attr.id = SAI_TABLE_L3_VXLAN_ENTRY_ATTR_ACTION;
-        attr.value.s32 = SAI_TABLE_L3_VXLAN_ENTRY_ACTION_TUNNEL_ENCAP;
+        sai_object_id_t tunnelMetaEntryId;
+        attr.id = SAI_TABLE_META_TUNNEL_ENTRY_ATTR_ACTION;
+        attr.value.s32 = SAI_TABLE_META_TUNNEL_ENTRY_ACTION_TUNNEL_ENCAP;
         vxlan_attrs.push_back(attr);
 
-        attr.id = SAI_TABLE_L3_VXLAN_ENTRY_ATTR_METADATA_KEY;
+        attr.id = SAI_TABLE_META_TUNNEL_ENTRY_ATTR_METADATA_KEY;
         attr.value.u16 = tunnelIndex;
         vxlan_attrs.push_back(attr);
 
-        attr.id = SAI_TABLE_L3_VXLAN_ENTRY_ATTR_UNDERLAY_DIP;
+        attr.id = SAI_TABLE_META_TUNNEL_ENTRY_ATTR_UNDERLAY_DIP;
         attr.value.ipaddr = underlayAddr;
         vxlan_attrs.push_back(attr);
 
-        attr.id = SAI_TABLE_L3_VXLAN_ENTRY_ATTR_TUNNEL_ID;
+        attr.id = SAI_TABLE_META_TUNNEL_ENTRY_ATTR_TUNNEL_ID;
         attr.value.oid = tunnel->getTunnelId();
         vxlan_attrs.push_back(attr);
 
-        status = sai_bmtor_api->create_table_l3_vxlan_entry(
-                &tunnelL3VxlanEntryId,
+        status = sai_bmtor_api->create_table_meta_tunnel_entry(
+                &tunnelMetaEntryId,
                 gSwitchId,
                 (uint32_t)vxlan_attrs.size(),
                 vxlan_attrs.data());
