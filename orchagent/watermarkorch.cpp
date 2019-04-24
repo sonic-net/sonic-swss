@@ -96,7 +96,8 @@ void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vect
             {
                 auto intervT = timespec { .tv_sec = to_uint<uint32_t>(i.second.c_str()) , .tv_nsec = 0 };
                 m_telemetryTimer->setInterval(intervT);
-
+                // reset the timer interval when current timer expires
+                m_timerChanged = true;
             }
             else
             {
@@ -221,6 +222,11 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
 
     if (&timer == m_telemetryTimer)
     {
+        if (m_timerChanged)
+        {
+            m_telemetryTimer->reset();
+            m_timerChanged = false;
+        }
         if (!m_wmStatus)
         {
             m_telemetryTimer->stop();

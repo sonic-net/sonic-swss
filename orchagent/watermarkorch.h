@@ -53,6 +53,7 @@ private:
     [0] - queue wm status (least significant bit) 
     */
     uint8_t m_wmStatus = 0;
+    bool m_timerChanged = false;
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
     shared_ptr<DBConnector> m_appDb = nullptr;
