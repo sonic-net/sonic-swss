@@ -103,9 +103,9 @@ class BgpStateCheck():
                 if "gracefulRestartInfo" in neig_status[neighstr]:
                     if "endOfRibRecv" in neig_status[neighstr]["gracefulRestartInfo"]:
                         eor_info = neig_status[neighstr]["gracefulRestartInfo"]["endOfRibRecv"]
-                        if is_ipv4 and "IPv4 Unicast" in eor_info and eor_info["IPv4 Unicast"] == "true":
+                        if is_ipv4 and "IPv4 Unicast" in eor_info and eor_info["IPv4 Unicast"] == True:
                             eor_received = True
-                        elif not is_ipv4 and "IPv6 Unicast" in eor_info and eor_info["IPv6 Unicast"] == "true":
+                        elif not is_ipv4 and "IPv6 Unicast" in eor_info and eor_info["IPv6 Unicast"] == True:
                             eor_received = True
                 if eor_received:
                     syslog.syslog('BGP eor received for neighbors: {}'.format(neigh))
