@@ -39,6 +39,7 @@ private:
     bool isVlanStateOk(const string &alias);
     bool isVlanMacOk();
     bool isVlanMemberStateOk(const string &vlanMemberKey);
+    bool vlanIdToInt(const string vid_str, int *vid);
 };
 
 }

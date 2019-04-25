@@ -35,6 +35,10 @@ class TestVlan(object):
         tbl._del("Vlan" + vlan + "|" + interface)
         time.sleep(1)
 
+    def check_syslog(self, dvs, marker, err_log, vlan_str, expected_cnt):
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep vlanmgrd | grep \"%s\" | grep -i \"%s\" | wc -l" % (marker, err_log, vlan_str)])
+        assert num.strip() == str(expected_cnt)
+
     def test_VlanAddRemove(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -186,3 +190,62 @@ class TestVlan(object):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
         assert len(vlan_entries) == 0
+
+    @pytest.mark.parametrize("test_input, expected", [
+        (["Vla",  "2"], 0),
+        (["VLAN", "3"], 0),
+        (["vlan", "4"], 0),
+    ])
+    def test_AddVlanMemberWithIncorrectKeyPrefix(self, dvs, testlog, test_input, expected):
+        self.setup_db(dvs)
+        marker = dvs.add_log_marker()
+        vlan_prefix = test_input[0]
+        vlan = test_input[1]
+
+        # add vlan member
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
+        tbl.set(vlan_prefix + vlan + "|" + "Ethernet0", fvs)
+        time.sleep(1)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        vlan_member_entries = tbl.getKeys()
+        assert len(vlan_member_entries) == expected
+
+        if len(vlan_member_entries) == 0:
+            # check error log
+            self.check_syslog(dvs, marker, "Invalid key format. No 'Vlan' prefix:", vlan_prefix + vlan, 1)
+        else:
+            #remove vlan member
+            self.remove_vlan_member(vlan, "Ethernet0")
+
+    @pytest.mark.parametrize("test_input, expected", [
+        (["Vlan", "abc"], 0),
+        (["Vlan", "a3"],  0),
+        (["Vlan", ""],    0),
+    ])
+    def test_AddVlanMemberWithIncorrectValueType(self, dvs, testlog, test_input, expected):
+        self.setup_db(dvs)
+        marker = dvs.add_log_marker()
+        vlan_prefix = test_input[0]
+        vlan = test_input[1]
+
+        # add vlan member
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
+        tbl.set(vlan_prefix + vlan + "|" + "Ethernet0", fvs)
+        time.sleep(1)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        vlan_member_entries = tbl.getKeys()
+        assert len(vlan_member_entries) == expected
+
+        if len(vlan_member_entries) == 0:
+            # check error log
+            self.check_syslog(dvs, marker, "Invalid key format. Not a number after 'Vlan' prefix:",
+                vlan_prefix + vlan + "|" + "Ethernet0", 1)
+        else:
+            #remove vlan member
+            self.remove_vlan_member(vlan, "Ethernet0")

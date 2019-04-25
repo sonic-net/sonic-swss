@@ -238,7 +238,12 @@ void VlanMgr::doVlanTask(Consumer &consumer)
         }
 
         int vlan_id;
-        vlan_id = stoi(key.substr(4));
+        if (!vlanIdToInt(key.substr(4), &vlan_id))
+        {
+            SWSS_LOG_ERROR("Invalid key format. Not a number after 'Vlan' prefix: %s", key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
 
         string vlan_alias, port_alias;
         string op = kfvOp(t);
@@ -369,6 +374,21 @@ bool VlanMgr::isMemberStateOk(const string &alias)
     return false;
 }
 
+bool VlanMgr::vlanIdToInt(const string vid_str, int *vid)
+{
+    try
+    {
+        *vid = stoi(vid_str);
+    }
+    catch (...)
+    {
+        *vid = 0;
+        return false;
+    }
+
+    return true;
+}
+
 bool VlanMgr::isVlanStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
@@ -467,7 +487,12 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
         string vlan_alias, port_alias;
         if (found != string::npos)
         {
-            vlan_id = stoi(key.substr(0, found));
+            if (!vlanIdToInt(key.substr(0, found), &vlan_id))
+            {
+                SWSS_LOG_ERROR("Invalid key format. Not a number after 'Vlan' prefix: %s", kfvKey(t).c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
             port_alias = key.substr(found+1);
         }
         else
