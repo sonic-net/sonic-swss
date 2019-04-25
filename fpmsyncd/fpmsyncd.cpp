@@ -18,6 +18,30 @@ using namespace swss;
  */
 const uint32_t DEFAULT_ROUTING_RESTART_INTERVAL = 120;
 
+// Wait 3 seconds after detecting EOIU reached state
+// TODO: support eoiu hold interval config
+const uint32_t DEFAULT_EOIU_HOLD_INTERVAL = 3;
+
+// Check if eoiu state reached by both ipv4 and ipv6
+static bool eoiuFlagsSet(Table &bgpStateTable)
+{
+    string value;
+
+    bgpStateTable.hget("IPv4|eoiu", "state", value);
+    if (value != "reached")
+    {
+        SWSS_LOG_DEBUG("IPv4|eoiu state: %s", value.c_str());
+        return false;
+    }
+    bgpStateTable.hget("IPv6|eoiu", "state", value);
+    if (value != "reached")
+    {
+        SWSS_LOG_DEBUG("IPv6|eoiu state: %s", value.c_str());
+        return false;
+    }
+    SWSS_LOG_NOTICE("Warm-Restart bgp eoiu reached for both ipv4 and ipv6");
+    return true;
+}
 
 int main(int argc, char **argv)
 {
@@ -25,6 +49,9 @@ int main(int argc, char **argv)
     DBConnector db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     RedisPipeline pipeline(&db);
     RouteSync sync(&pipeline);
+
+    DBConnector stateDb(STATE_DB, 0);
+    Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
@@ -36,7 +63,10 @@ int main(int argc, char **argv)
             FpmLink fpm;
             Select s;
             SelectableTimer warmStartTimer(timespec{0, 0});
-
+            // Before eoiu flags detected, check them periodically. It also stop upon detection of reconciliation done.
+            SelectableTimer eoiuCheckTimer(timespec{0, 0});
+            // After eoiu flags are detected, start a hold timer before starting reconciliation.
+            SelectableTimer eoiuHoldTimer(timespec{0, 0});
             /*
              * Pipeline should be flushed right away to deal with state pending
              * from previous try/catch iterations.
@@ -69,7 +99,14 @@ int main(int argc, char **argv)
                 {
                     warmStartTimer.start();
                     s.addSelectable(&warmStartTimer);
+                    SWSS_LOG_NOTICE("Warm-Restart timer started.");
                 }
+
+                // Also start periodic eoiu check timer, first wait 5 seconds, then check every 1 second
+                eoiuCheckTimer.setInterval(timespec{5, 0});
+                eoiuCheckTimer.start();
+                s.addSelectable(&eoiuCheckTimer);
+                SWSS_LOG_NOTICE("Warm-Restart eoiuCheckTimer timer started.");
             }
 
             while (true)
@@ -80,18 +117,53 @@ int main(int argc, char **argv)
                 s.select(&temps);
 
                 /*
-                 * Upon expiration of the warm-restart timer, proceed to run the
-                 * reconciliation process and remove warm-restart timer from
+                 * Upon expiration of the warm-restart timer or eoiu Hold Timer, proceed to run the
+                 * reconciliation process if not done yet and remove the timer from
                  * select() loop.
+                 * Note:  route reconciliation always succeeds, it will not be done twice.
                  */
-                if (warmStartEnabled && temps == &warmStartTimer)
+                if (temps == &warmStartTimer || temps == &eoiuHoldTimer)
                 {
-                    SWSS_LOG_NOTICE("Warm-Restart timer expired.");
-                    sync.m_warmStartHelper.reconcile();
-                    s.removeSelectable(&warmStartTimer);
-
+                    if (temps == &warmStartTimer)
+                    {
+                        SWSS_LOG_NOTICE("Warm-Restart timer expired.");
+                    }
+                    else
+                    {
+                        SWSS_LOG_NOTICE("Warm-Restart EOIU hold timer expired.");
+                    }
+                    if (sync.m_warmStartHelper.inProgress())
+                    {
+                        sync.m_warmStartHelper.reconcile();
+                        SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
+                    }
+                    // remove the one-shot timer.
+                    s.removeSelectable(temps);
                     pipeline.flush();
                     SWSS_LOG_DEBUG("Pipeline flushed");
+                }
+                else if (temps == &eoiuCheckTimer)
+                {
+                    if (sync.m_warmStartHelper.inProgress())
+                    {
+                        if (eoiuFlagsSet(bgpStateTable))
+                        {
+                            eoiuHoldTimer.setInterval(timespec{DEFAULT_EOIU_HOLD_INTERVAL, 0});
+                            eoiuHoldTimer.start();
+                            s.addSelectable(&eoiuHoldTimer);
+                            SWSS_LOG_NOTICE("Warm-Restart started EOIU hold timer which is to expire in %d seconds.", DEFAULT_EOIU_HOLD_INTERVAL);
+                            s.removeSelectable(&eoiuCheckTimer);
+                            continue;
+                        }
+                        eoiuCheckTimer.setInterval(timespec{1, 0});
+                        // re-start eoiu check timer
+                        eoiuCheckTimer.start();
+                        SWSS_LOG_DEBUG("Warm-Restart eoiuCheckTimer restarted");
+                    }
+                    else
+                    {
+                        s.removeSelectable(&eoiuCheckTimer);
+                    }
                 }
                 else if (!warmStartEnabled || sync.m_warmStartHelper.isReconciled())
                 {

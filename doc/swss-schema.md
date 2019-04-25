@@ -809,7 +809,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     ;Stores application and orchdameon warm start status
     ;Status: work in progress
 
-    key             = WARM_RESTART_TABLE:process_name         ; process_name is a unique process identifier.
+    key             = WARM_RESTART_TABLE|process_name         ; process_name is a unique process identifier.
                                                               ; with exception of 'warm-shutdown' operation.
                                                               ; 'warm-shutdown' operation key is used to
                                                               ; track warm shutdown stages and results.
@@ -838,6 +838,18 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     ;State for neighbor table restoring process during warm reboot
     key                 = NEIGH_RESTORE_TABLE|Flags
     restored            = "true" / "false" ; restored state
+
+### BGP\_STATE\_TABLE
+    ;Stores bgp status
+    ;Status: work in progress
+
+    key             = WARM_RESTART_TABLE|family|eoiu             ; family = "IPv4" / "IPv6"  ; address family.
+
+    state           = "unknown" / "reached" / "consumed"         ; unknown: eoiu state not fetched yet.
+                                                                 ; reached: bgp eoiu done.
+                                                                 ;
+                                                                 ; consumed: the reached state has been consumed by application.
+
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?
