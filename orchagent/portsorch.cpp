@@ -826,7 +826,7 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &gro
                 {
                     SWSS_LOG_ERROR("Failed to bind port %s to ACL table group %lx, rv:%d",
                             port.m_alias.c_str(), group_oid, status);
-                    return status;
+                    return false;
                 }
                 break;
             }
@@ -842,7 +842,7 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &gro
                 {
                     SWSS_LOG_ERROR("Failed to bind LAG %s to ACL table group %lx, rv:%d",
                             port.m_alias.c_str(), group_oid, status);
-                    return status;
+                    return false;
                 }
                 break;
             }
@@ -858,18 +858,18 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &gro
                 {
                     SWSS_LOG_ERROR("Failed to bind VLAN %s to ACL table group %lx, rv:%d",
                             port.m_alias.c_str(), group_oid, status);
-                    return status;
+                    return false;
                 }
                 break;
             }
             default:
             {
                 SWSS_LOG_ERROR("Failed to bind %s port with type %d", port.m_alias.c_str(), port.m_type);
-                return SAI_STATUS_FAILURE;
+                return false;
             }
         }
 
-        SWSS_LOG_NOTICE("Create ACL table group and bind port %s to it", port.m_alias.c_str());
+        SWSS_LOG_NOTICE("Create %s ACL table group and bind port %s to it", ingress ? "ingress" : "egress", port.m_alias.c_str());
     }
 
     return true;

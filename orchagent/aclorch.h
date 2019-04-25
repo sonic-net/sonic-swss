@@ -159,7 +159,7 @@ struct AclRuleCounters
 class AclRule
 {
 public:
-    AclRule(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type);
+    AclRule(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = true);
     virtual bool validateAddPriority(string attr_name, string attr_value);
     virtual bool validateAddMatch(string attr_name, string attr_value);
     virtual bool validateAddAction(string attr_name, string attr_value) = 0;
@@ -218,12 +218,15 @@ protected:
 
     vector<sai_object_id_t> m_inPorts;
     vector<sai_object_id_t> m_outPorts;
+
+private:
+    bool m_createCounter;
 };
 
 class AclRuleL3: public AclRule
 {
 public:
-    AclRuleL3(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type);
+    AclRuleL3(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = true);
 
     bool validateAddAction(string attr_name, string attr_value);
     bool validateAddMatch(string attr_name, string attr_value);
@@ -243,7 +246,7 @@ public:
 class AclRulePfcwd: public AclRuleL3
 {
 public:
-    AclRulePfcwd(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type);
+    AclRulePfcwd(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = false);
     bool validateAddMatch(string attr_name, string attr_value);
 };
 

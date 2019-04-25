@@ -82,7 +82,7 @@ create_tunnel_map(MAP_T map_t)
 
     if (map_t == MAP_T::MAP_TO_INVALID)
     {
-        SWSS_LOG_ERROR("Invalid map type %d", map_t);
+        SWSS_LOG_ERROR("Invalid map type %d", static_cast<int>(map_t));
         return SAI_NULL_OBJECT_ID;
     }
 

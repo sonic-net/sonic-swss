@@ -122,7 +122,7 @@ inline string trim(const std::string& str, const std::string& whitespace = " \t"
     return str.substr(strBegin, strRange);
 }
 
-AclRule::AclRule(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
+AclRule::AclRule(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
         m_pAclOrch(aclOrch),
         m_id(rule),
         m_tableId(table),
@@ -130,7 +130,8 @@ AclRule::AclRule(AclOrch *aclOrch, string rule, string table, acl_table_type_t t
         m_tableOid(SAI_NULL_OBJECT_ID),
         m_ruleOid(SAI_NULL_OBJECT_ID),
         m_counterOid(SAI_NULL_OBJECT_ID),
-        m_priority(0)
+        m_priority(0),
+        m_createCounter(createCounter)
 {
     m_tableOid = aclOrch->getTableById(m_tableId);
 }
@@ -393,7 +394,7 @@ bool AclRule::create()
     sai_attribute_t attr;
     sai_status_t status;
 
-    if (!createCounter())
+    if (m_createCounter && !createCounter())
     {
         return false;
     }
@@ -414,10 +415,13 @@ bool AclRule::create()
     rule_attrs.push_back(attr);
 
     // add reference to the counter
-    attr.id = SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
-    attr.value.aclaction.parameter.oid = m_counterOid;
-    attr.value.aclaction.enable = true;
-    rule_attrs.push_back(attr);
+    if (m_createCounter)
+    {
+        attr.id = SAI_ACL_ENTRY_ATTR_ACTION_COUNTER;
+        attr.value.aclaction.parameter.oid = m_counterOid;
+        attr.value.aclaction.enable = true;
+        rule_attrs.push_back(attr);
+    }
 
     // store matches
     for (auto it : m_matches)
@@ -528,7 +532,10 @@ bool AclRule::remove()
     decreaseNextHopRefCount();
 
     res = removeRanges();
-    res &= removeCounter();
+    if (m_createCounter)
+    {
+        res &= removeCounter();
+    }
 
     return res;
 }
@@ -536,6 +543,11 @@ bool AclRule::remove()
 AclRuleCounters AclRule::getCounters()
 {
     SWSS_LOG_ENTER();
+
+    if (!m_createCounter)
+    {
+        return AclRuleCounters();
+    }
 
     sai_attribute_t counter_attr[2];
     counter_attr[0].id = SAI_ACL_COUNTER_ATTR_PACKETS;
@@ -693,8 +705,8 @@ bool AclRule::removeCounter()
     return true;
 }
 
-AclRuleL3::AclRuleL3(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
-        AclRule(aclOrch, rule, table, type)
+AclRuleL3::AclRuleL3(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
+        AclRule(aclOrch, rule, table, type, createCounter)
 {
 }
 
@@ -862,8 +874,8 @@ void AclRuleL3::update(SubjectType, void *)
 }
 
 
-AclRulePfcwd::AclRulePfcwd(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
-        AclRuleL3(aclOrch, rule, table, type)
+AclRulePfcwd::AclRulePfcwd(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
+        AclRuleL3(aclOrch, rule, table, type, createCounter)
 {
 }
 

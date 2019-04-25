@@ -28,7 +28,7 @@ const map<CrmResourceType, string> crmResTypeNameMap =
     { CrmResourceType::CRM_IPV4_NEXTHOP, "IPV4_NEXTHOP" },
     { CrmResourceType::CRM_IPV6_NEXTHOP, "IPV6_NEXTHOP" },
     { CrmResourceType::CRM_IPV4_NEIGHBOR, "IPV4_NEIGHBOR" },
-    { CrmResourceType::CRM_IPV6_NEIGHBOR, "IPV6_Neighbor" },
+    { CrmResourceType::CRM_IPV6_NEIGHBOR, "IPV6_NEIGHBOR" },
     { CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER, "NEXTHOP_GROUP_MEMBER" },
     { CrmResourceType::CRM_NEXTHOP_GROUP, "NEXTHOP_GROUP" },
     { CrmResourceType::CRM_ACL_TABLE, "ACL_TABLE" },
