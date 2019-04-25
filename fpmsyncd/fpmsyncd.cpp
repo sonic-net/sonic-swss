@@ -50,7 +50,7 @@ int main(int argc, char **argv)
     RedisPipeline pipeline(&db);
     RouteSync sync(&pipeline);
 
-    DBConnector stateDb(STATE_DB, 0);
+    DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
