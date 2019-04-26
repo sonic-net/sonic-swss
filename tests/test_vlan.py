@@ -35,8 +35,8 @@ class TestVlan(object):
         tbl._del("Vlan" + vlan + "|" + interface)
         time.sleep(1)
 
-    def check_syslog(self, dvs, marker, err_log, vlan_str, expected_cnt):
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep vlanmgrd | grep \"%s\" | grep -i %s | wc -l" % (marker, err_log, vlan_str)])
+    def check_syslog(self, dvs, marker, err_log, expected_str, expected_cnt):
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep vlanmgrd | grep \"%s\" | grep -i \"%s\" | wc -l" % (marker, err_log, expected_str)])
         assert num.strip() == str(expected_cnt)
 
     def test_VlanAddRemove(self, dvs, testlog):
@@ -251,3 +251,69 @@ class TestVlan(object):
             #remove vlan
             self.remove_vlan(vlan)
 
+    @pytest.mark.parametrize("test_input, expected", [
+        (["tagging_mode", "untagged"],        [1, "SAI_VLAN_TAGGING_MODE_UNTAGGED"]),
+        (["tagging_mode", "tagged"],          [1, "SAI_VLAN_TAGGING_MODE_TAGGED"]),
+        (["tagging_mode", "priority_tagged"], [1, "SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED"]),
+        (["tagging_mode", "unexpected_mode"], [0, ""]),
+        (["no_tag_mode",  ""],                [1, "SAI_VLAN_TAGGING_MODE_UNTAGGED"]),
+    ])
+    def test_VlanMemberTaggingMode(self, dvs, testlog, test_input, expected):
+        self.setup_db(dvs)
+        tagging_mode_prefix = test_input[0]
+        tagging_mode = test_input[1]
+        marker = dvs.add_log_marker()
+        vlan = "2"
+
+        # create vlan
+        self.create_vlan(vlan)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        # add vlan member
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        fvs = swsscommon.FieldValuePairs([(tagging_mode_prefix, tagging_mode)])
+        tbl.set("Vlan" + vlan + "|" + "Ethernet0", fvs)
+        time.sleep(1)
+
+        # check asic database
+        bridge_port_map = {}
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+        bridge_port_entries = tbl.getKeys()
+        for key in bridge_port_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_BRIDGE_PORT_ATTR_PORT_ID":
+                    bridge_port_map[key] = fv[1]
+
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        vlan_member_entries = tbl.getKeys()
+        assert len(vlan_member_entries) == expected[0]
+
+        if len(vlan_member_entries) == 1:
+            (status, fvs) = tbl.get(vlan_member_entries[0])
+            assert status == True
+            assert len(fvs) == 3
+            for fv in fvs:
+                if fv[0] == "SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE":
+                    assert fv[1] == expected[1]
+                elif fv[0] == "SAI_VLAN_MEMBER_ATTR_VLAN_ID":
+                    assert fv[1] == vlan_oid
+                elif fv[0] == "SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID":
+                    assert dvs.asicdb.portoidmap[bridge_port_map[fv[1]]] == "Ethernet0"
+                else:
+                    assert False
+        else:
+            # check error log
+            self.check_syslog(dvs, marker, "Wrong tagging_mode", test_input, 1)
+
+        # remove vlan member
+        self.remove_vlan_member(vlan, "Ethernet0")
+
+        # remove vlan
+        self.remove_vlan(vlan)
