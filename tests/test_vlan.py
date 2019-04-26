@@ -251,16 +251,16 @@ class TestVlan(object):
             #remove vlan
             self.remove_vlan(vlan)
 
-    @pytest.mark.parametrize("xtest_input, expected", [
+    @pytest.mark.parametrize("test_input, expected", [
         (["Vla",  "2"], 0),
         (["VLAN", "3"], 0),
         (["vlan", "4"], 0),
     ])
-    def test_AddVlanMemberWithIncorrectKeyPrefix(self, dvs, testlog, xtest_input, expected):
+    def test_AddVlanMemberWithIncorrectKeyPrefix(self, dvs, testlog, test_input, expected):
         self.setup_db(dvs)
         marker = dvs.add_log_marker()
-        vlan_prefix = xtest_input[0]
-        vlan = xtest_input[1]
+        vlan_prefix = test_input[0]
+        vlan = test_input[1]
 
         # add vlan member
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
@@ -280,16 +280,16 @@ class TestVlan(object):
             #remove vlan member
             self.remove_vlan_member(vlan, "Ethernet0")
 
-    @pytest.mark.parametrize("xtest_input, expected", [
+    @pytest.mark.parametrize("test_input, expected", [
         (["Vlan", "abc"], 0),
         (["Vlan", "a3"],  0),
         (["Vlan", ""],    0),
     ])
-    def test_AddVlanMemberWithIncorrectValueType(self, dvs, testlog, xtest_input, expected):
+    def test_AddVlanMemberWithIncorrectValueType(self, dvs, testlog, test_input, expected):
         self.setup_db(dvs)
         marker = dvs.add_log_marker()
-        vlan_prefix = xtest_input[0]
-        vlan = xtest_input[1]
+        vlan_prefix = test_input[0]
+        vlan = test_input[1]
 
         # add vlan member
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
