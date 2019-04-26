@@ -25,17 +25,18 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME),
     m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME)
 {
-    WarmStart::initialize("teamsyncd", "teamd");
-    WarmStart::checkWarmStart("teamsyncd", "teamd");
+    WarmStart::initialize(TEAMSYNCD_APP_NAME, "teamd");
+    WarmStart::checkWarmStart(TEAMSYNCD_APP_NAME, "teamd");
     m_warmstart = WarmStart::isWarmStart();
 
     if (m_warmstart)
     {
         m_start_time = steady_clock::now();
-        auto warmRestartIval = WarmStart::getWarmStartTimer("teamsyncd", "teamd");
+        auto warmRestartIval = WarmStart::getWarmStartTimer(TEAMSYNCD_APP_NAME, "teamd");
         m_pending_timeout = warmRestartIval ? warmRestartIval : DEFAULT_WR_PENDING_TIMEOUT;
         m_lagTable.create_temp_view();
         m_lagMemberTable.create_temp_view();
+        WarmStart::setWarmStartState(TEAMSYNCD_APP_NAME, WarmStart::INITIALIZED);
         SWSS_LOG_NOTICE("Starting in warmstart mode");
     }
 }
@@ -49,6 +50,7 @@ void TeamSync::periodic()
         {
             applyState();
             m_warmstart = false; // apply state just once
+            WarmStart::setWarmStartState(TEAMSYNCD_APP_NAME, WarmStart::RECONCILED);
         }
     }
 

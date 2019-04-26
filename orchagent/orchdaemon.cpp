@@ -98,9 +98,9 @@ bool OrchDaemon::init()
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
-    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_configDb, CFG_VXLAN_TUNNEL_TABLE_NAME);
+    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_orch);
-    VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_configDb, CFG_VXLAN_TUNNEL_MAP_TABLE_NAME);
+    VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_applDb, APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_map_orch);
     VxlanVrfMapOrch *vxlan_vrf_orch = new VxlanVrfMapOrch(m_applDb, APP_VXLAN_VRF_TABLE_NAME);
     gDirectory.set(vxlan_vrf_orch);
