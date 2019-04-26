@@ -246,18 +246,17 @@ class TestVlan(object):
 
         if len(vlan_entries) == 0:
             # check error log
-            self.check_syslog(dvs, marker, "Invalid key format. Not a number after \'Vlan\' prefix:", vlan_prefix+vlan, 1)
+            self.check_syslog(dvs, marker, "Invalid key format. Not a number after 'Vlan' prefix:", vlan_prefix+vlan, 1)
         else:
             #remove vlan
             self.remove_vlan(vlan)
-
 
     @pytest.mark.parametrize("xtest_input, expected", [
         (["Vla",  "2"], 0),
         (["VLAN", "3"], 0),
         (["vlan", "4"], 0),
     ])
-    def xtest_AddVlanMemberWithIncorrectKeyPrefix(self, dvs, testlog, xtest_input, expected):
+    def test_AddVlanMemberWithIncorrectKeyPrefix(self, dvs, testlog, xtest_input, expected):
         self.setup_db(dvs)
         marker = dvs.add_log_marker()
         vlan_prefix = xtest_input[0]
@@ -286,7 +285,7 @@ class TestVlan(object):
         (["Vlan", "a3"],  0),
         (["Vlan", ""],    0),
     ])
-    def xtest_AddVlanMemberWithIncorrectValueType(self, dvs, testlog, xtest_input, expected):
+    def test_AddVlanMemberWithIncorrectValueType(self, dvs, testlog, xtest_input, expected):
         self.setup_db(dvs)
         marker = dvs.add_log_marker()
         vlan_prefix = xtest_input[0]
