@@ -29,8 +29,6 @@ private:
     ProducerStateTable  m_vnet_routeTable;
     /* vnet vxlan tunnel table */  
     ProducerStateTable  m_vnet_tunnelTable; 
-    struct nl_cache    *m_link_cache;
-    struct nl_sock     *m_nl_sock;
 
     /* Handle regular route (include VRF route) */
     void onRouteMsg(int nlmsg_type, struct nl_object *obj);
