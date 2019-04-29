@@ -23,7 +23,6 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
     m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp")
 {
-
 }
 
 void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
