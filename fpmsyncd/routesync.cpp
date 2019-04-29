@@ -21,8 +21,12 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
-    m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp")
+    m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
+    m_nl_sock(NULL), m_link_cache(NULL)
 {
+    m_nl_sock = nl_socket_alloc();
+    nl_connect(m_nl_sock, NETLINK_ROUTE);
+    rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 }
 
 void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
@@ -278,59 +282,24 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
  */
 bool RouteSync::getIfName(int if_index, char *if_name, size_t name_len)
 {
-    struct nl_sock *sk = NULL;
-    struct nl_cache *cache = NULL;
-    int err;
-
     if (!if_name || name_len == 0)
     {
         return false;
     }
 
     memset(if_name, 0, name_len);
-    
-    sk = nl_socket_alloc();
-    if (!sk) 
-    {
-        SWSS_LOG_ERROR("Unable to allocate netlink socket");
-        return false;
-    }
-
-    err = nl_connect(sk, NETLINK_ROUTE);
-    if (err < 0)
-    {
-        SWSS_LOG_ERROR("Unable to connect netlink socket: %s", nl_geterror(err));
-        nl_socket_free(sk);
-        return false;
-    }
-
-    err = rtnl_link_alloc_cache(sk, AF_UNSPEC, &cache);
-    if (err < 0)
-    {
-        SWSS_LOG_ERROR("Unable to allocate link cache: %s", nl_geterror(err));
-        nl_close(sk);
-        nl_socket_free(sk);
-        return false;
-    }
 
     /* Cannot get interface name. Possibly the interface gets re-created. */
-    if (!rtnl_link_i2name(cache, if_index, if_name, name_len))
+    if (!rtnl_link_i2name(m_link_cache, if_index, if_name, name_len))
     {
         /* Trying to refill cache */
-        nl_cache_refill(sk, cache);
-
-        if (!rtnl_link_i2name(cache, if_index, if_name, name_len))
+        nl_cache_refill(m_nl_sock, m_link_cache);
+        if (!rtnl_link_i2name(m_link_cache, if_index, if_name, name_len))
         {
-            nl_cache_free(cache);
-            nl_close(sk);
-            nl_socket_free(sk);
             return false;
         }
     }
 
-    nl_cache_free(cache);
-    nl_close(sk);
-    nl_socket_free(sk);
     return true;
 }
 
