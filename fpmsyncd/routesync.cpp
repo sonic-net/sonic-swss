@@ -316,16 +316,8 @@ bool RouteSync::getIfName(int if_index, char *if_name, size_t name_len)
     /* Cannot get interface name. Possibly the interface gets re-created. */
     if (!rtnl_link_i2name(cache, if_index, if_name, name_len))
     {
-        /* Re-allocate netlink cache */
-        nl_cache_free(cache);
-        err = rtnl_link_alloc_cache(sk, AF_UNSPEC, &cache);
-        if (err < 0)
-        {
-            SWSS_LOG_ERROR("Unable to allocate link cache: %s", nl_geterror(err));
-            nl_close(sk);
-            nl_socket_free(sk);
-            return false;
-        }
+        /* Trying to refill cache */
+        nl_cache_refill(sk, cache);
 
         if (!rtnl_link_i2name(cache, if_index, if_name, name_len))
         {
