@@ -46,6 +46,10 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_IP_TYPE,           SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE },
     { MATCH_DSCP,              SAI_ACL_ENTRY_ATTR_FIELD_DSCP },
     { MATCH_TC,                SAI_ACL_ENTRY_ATTR_FIELD_TC },
+    { MATCH_ICMP_TYPE,         SAI_ACL_ENTRY_ATTR_FIELD_ICMP_TYPE },
+    { MATCH_ICMP_CODE,         SAI_ACL_ENTRY_ATTR_FIELD_ICMP_CODE },
+    { MATCH_ICMPV6_TYPE,       SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_TYPE },
+    { MATCH_ICMPV6_CODE,       SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_CODE },
     { MATCH_L4_SRC_PORT_RANGE, (sai_acl_entry_attr_t)SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE },
     { MATCH_L4_DST_PORT_RANGE, (sai_acl_entry_attr_t)SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE },
     { MATCH_TUNNEL_VNI,        SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI },
@@ -330,6 +334,12 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             }
         }
         else if (attr_name == MATCH_TC)
+        {
+            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
+            value.aclfield.mask.u8 = 0xFF;
+        }
+        else if (attr_name == MATCH_ICMP_TYPE || attr_name == MATCH_ICMP_CODE ||
+                attr_name == MATCH_ICMPV6_TYPE || attr_name == MATCH_ICMPV6_CODE)
         {
             value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
             value.aclfield.mask.u8 = 0xFF;
@@ -850,12 +860,19 @@ bool AclRuleL3::validateAddMatch(string attr_name, string attr_value)
 {
     if (attr_name == MATCH_DSCP)
     {
-        SWSS_LOG_ERROR("DSCP match is not supported for the tables of type L3");
+        SWSS_LOG_ERROR("DSCP match is not supported for table type L3");
         return false;
     }
+
     if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
     {
-        SWSS_LOG_ERROR("IPv6 address match is not supported for the tables of type L3");
+        SWSS_LOG_ERROR("IPv6 address match is not supported for table type L3");
+        return false;
+    }
+
+    if (attr_name == MATCH_ICMPV6_TYPE || attr_name == MATCH_ICMPV6_CODE)
+    {
+        SWSS_LOG_ERROR("ICMPv6 match is not supported for table type L3");
         return false;
     }
 
@@ -906,12 +923,19 @@ bool AclRuleL3V6::validateAddMatch(string attr_name, string attr_value)
 {
     if (attr_name == MATCH_DSCP)
     {
-        SWSS_LOG_ERROR("DSCP match is not supported for the tables of type L3V6");
+        SWSS_LOG_ERROR("DSCP match is not supported for table type L3V6");
         return false;
     }
+
     if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
     {
-        SWSS_LOG_ERROR("IPv4 address match is not supported for the tables of type L3V6");
+        SWSS_LOG_ERROR("IPv4 address match is not supported for table type L3V6");
+        return false;
+    }
+
+    if (attr_name == MATCH_ICMP_TYPE || attr_name == MATCH_ICMP_CODE)
+    {
+        SWSS_LOG_ERROR("ICMPv4 match is not supported for table type L3V6");
         return false;
     }
 
@@ -956,21 +980,28 @@ bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
 
     /*
      * Type of Tables and Supported Match Types (Configuration)
-     * |--------------------------------------------------|
-     * |    Match Type    | TABLE_MIRROR | TABLE_MIRRORV6 |
-     * |--------------------------------------------------|
-     * | MATCH_SRC_IP     |      √       |                |
-     * | MATCH_DST_IP     |      √       |                |
-     * |--------------------------------------------------|
-     * | MATCH_SRC_IPV6   |              |       √        |
-     * | MATCH_DST_IPV6   |              |       √        |
-     * |--------------------------------------------------|
-     * | MARTCH_ETHERTYPE |      √       |                |
-     * |--------------------------------------------------|
+     * |---------------------------------------------------|
+     * |    Match Type     | TABLE_MIRROR | TABLE_MIRRORV6 |
+     * |---------------------------------------------------|
+     * | MATCH_SRC_IP      |      √       |                |
+     * | MATCH_DST_IP      |      √       |                |
+     * |---------------------------------------------------|
+     * | MATCH_ICMP_TYPE   |      √       |                |
+     * | MATCH_ICMP_CODE   |      √       |                |
+     * |---------------------------------------------------|
+     * | MATCH_ICMPV6_TYPE |              |       √        |
+     * | MATCH_ICMPV6_CODE |              |       √        |
+     * |---------------------------------------------------|
+     * | MATCH_SRC_IPV6    |              |       √        |
+     * | MATCH_DST_IPV6    |              |       √        |
+     * |---------------------------------------------------|
+     * | MARTCH_ETHERTYPE  |      √       |                |
+     * |---------------------------------------------------|
      */
 
     if (m_tableType == ACL_TABLE_MIRROR &&
-            (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6))
+            (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6 ||
+             attr_name == MATCH_ICMPV6_TYPE || attr_name == MATCH_ICMPV6_CODE))
     {
         SWSS_LOG_ERROR("%s match is not supported for the table of type MIRROR",
                 attr_name.c_str());
@@ -978,9 +1009,11 @@ bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
     }
 
     if (m_tableType == ACL_TABLE_MIRRORV6 &&
-            (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_ETHER_TYPE))
+            (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP ||
+             attr_name == MATCH_ICMP_TYPE || attr_name == MATCH_ICMP_CODE ||
+             attr_name == MATCH_ETHER_TYPE))
     {
-        SWSS_LOG_ERROR("%s match is not supported for the table of type MIRRORV6",
+        SWSS_LOG_ERROR("%s match is not supported for the table of type MIRRORv6",
                 attr_name.c_str());
         return false;
     }
@@ -1172,19 +1205,25 @@ bool AclTable::create()
 
     /*
      * Type of Tables and Supported Match Types (ASIC database)
-     * |-----------------------------------------------------------------|
-     * |                  | TABLE_MIRROR | TABLE_MIRROR | TABLE_MIRRORV6 |
-     * |    Match Type    |----------------------------------------------|
-     * |                  |   combined   |          separated            |
-     * |-----------------------------------------------------------------|
-     * | MATCH_SRC_IP     |      √       |      √       |                |
-     * | MATCH_DST_IP     |      √       |      √       |                |
-     * |-----------------------------------------------------------------|
-     * | MATCH_SRC_IPV6   |      √       |              |       √        |
-     * | MATCH_DST_IPV6   |      √       |              |       √        |
-     * |-----------------------------------------------------------------|
-     * | MARTCH_ETHERTYPE |      √       |      √       |                |
-     * |-----------------------------------------------------------------|
+     * |------------------------------------------------------------------|
+     * |                   | TABLE_MIRROR | TABLE_MIRROR | TABLE_MIRRORV6 |
+     * |    Match Type     |----------------------------------------------|
+     * |                   |   combined   |          separated            |
+     * |------------------------------------------------------------------|
+     * | MATCH_SRC_IP      |      √       |      √       |                |
+     * | MATCH_DST_IP      |      √       |      √       |                |
+     * |------------------------------------------------------------------|
+     * | MATCH_ICMP_TYPE   |      √       |      √       |                |
+     * | MATCH_ICMP_CODE   |      √       |      √       |                |
+     * |------------------------------------------------------------------|
+     * | MATCH_SRC_IPV6    |      √       |              |       √        |
+     * | MATCH_DST_IPV6    |      √       |              |       √        |
+     * |------------------------------------------------------------------|
+     * | MATCH_ICMPV6_TYPE |      √       |             |        √        |
+     * | MATCH_ICMPV6_CODE |      √       |             |        √        |
+     * |------------------------------------------------------------------|
+     * | MARTCH_ETHERTYPE  |      √       |      √       |                |
+     * |------------------------------------------------------------------|
      */
 
     if (type == ACL_TABLE_MIRROR)
@@ -1194,6 +1233,14 @@ bool AclTable::create()
         table_attrs.push_back(attr);
 
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IP;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
 
@@ -1208,6 +1255,14 @@ bool AclTable::create()
             attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6;
             attr.value.booldata = true;
             table_attrs.push_back(attr);
+
+            attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE;
+            attr.value.booldata = true;
+            table_attrs.push_back(attr);
+
+            attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE;
+            attr.value.booldata = true;
+            table_attrs.push_back(attr);
         }
     }
     else if (type == ACL_TABLE_L3V6 || type == ACL_TABLE_MIRRORV6) // v6 only
@@ -1219,6 +1274,14 @@ bool AclTable::create()
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
     }
     else // v4 only
     {
@@ -1227,6 +1290,14 @@ bool AclTable::create()
         table_attrs.push_back(attr);
 
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IP;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
     }
