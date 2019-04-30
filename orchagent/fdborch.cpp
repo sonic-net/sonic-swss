@@ -10,12 +10,18 @@
 #include "crmorch.h"
 #include "notifier.h"
 #include "sai_serialize.h"
+#include "directory.h"
+#include "vxlanorch.h"
+#include "swssnet.h"
+
+using namespace swss;
 
 extern sai_fdb_api_t    *sai_fdb_api;
 
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
 extern CrmOrch *        gCrmOrch;
+extern Directory<Orch*> gDirectory;
 
 const int fdborch_pri = 20;
 
@@ -440,7 +446,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
 bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const string& type)
 {
     SWSS_LOG_ENTER();
-
+#if 0
     if (m_entries.count(entry) != 0) // we already have such entries
     {
         // FIXME: should we check that the entry are moving to another port?
@@ -448,7 +454,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
         SWSS_LOG_ERROR("FDB entry already exists. mac=%s bv_id=0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
         return true;
     }
-
+#endif
     sai_fdb_entry_t fdb_entry;
 
     fdb_entry.switch_id = gSwitchId;
@@ -456,22 +462,52 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     fdb_entry.bv_id = entry.bv_id;
 
     Port port;
-    /* Retry until port is created */
-    if (!m_portsOrch->getPort(port_name, port))
+    sai_object_id_t bridge_port_id = SAI_NULL_OBJECT_ID;
+    VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+    VxlanTunnel *tunnel_obj = NULL;
+    if(strncmp(port_name.c_str(),"VTT",3) == 0)
     {
-        SWSS_LOG_DEBUG("Saving a fdb entry until port %s becomes active", port_name.c_str());
-        saved_fdb_entries[port_name].push_back({entry, type});
+        /* Retry until tunnel is created */
+        if (!tunnel_orch->isTunnelExists(port_name))
+        {
+            SWSS_LOG_WARN("Vxlan tunnel '%s' doesn't exist", port_name.c_str());
+            return true;
+        }
 
-        return true;
+        tunnel_obj = tunnel_orch->getVxlanTunnel(port_name);
+
+        bridge_port_id = tunnel_obj->getBridgePortId();
+
+        /* Retry until tunnel bridge port is created */
+        if (!bridge_port_id)
+        {
+            SWSS_LOG_WARN("Vxlan tunnel '%s' bridge port doesn't exist", port_name.c_str());
+            return true;
+        }
+        else
+        {
+            SWSS_LOG_NOTICE("Get tunnel bridge port id is %lu", bridge_port_id);
+        }
     }
-
-    /* Retry until port is added to the VLAN */
-    if (!port.m_bridge_port_id)
+    else
     {
-        SWSS_LOG_DEBUG("Saving a fdb entry until port %s has got a bridge port ID", port_name.c_str());
-        saved_fdb_entries[port_name].push_back({entry, type});
+        /* Retry until port is created */
+        if (!m_portsOrch->getPort(port_name, port))
+        {
+            SWSS_LOG_DEBUG("Saving a fdb entry until port %s becomes active", port_name.c_str());
+            saved_fdb_entries[port_name].push_back({entry, type});
 
-        return true;
+            return true;
+        }
+
+        /* Retry until port is added to the VLAN */
+        if (!port.m_bridge_port_id)
+        {
+            SWSS_LOG_DEBUG("Saving a fdb entry until port %s has got a bridge port ID", port_name.c_str());
+            saved_fdb_entries[port_name].push_back({entry, type});
+
+            return true;
+        }
     }
 
     sai_attribute_t attr;
@@ -482,12 +518,35 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     attrs.push_back(attr);
 
     attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
-    attr.value.oid = port.m_bridge_port_id;
-    attrs.push_back(attr);
+    if(strncmp(port_name.c_str(),"VTT",3) != 0)
+    {
+        attr.value.oid = port.m_bridge_port_id;
+        attrs.push_back(attr);
+    }
+    else
+    {
+        attr.value.oid = bridge_port_id;
+        attrs.push_back(attr);
+
+        if(tunnel_obj)
+        {
+            attr.id = SAI_FDB_ENTRY_ATTR_ENDPOINT_IP;
+            swss::copy(attr.value.ipaddr, tunnel_obj->getDstIp());
+            attrs.push_back(attr);
+            char buf[INET6_ADDRSTRLEN];
+            inet_ntop(AF_INET, &attr.value.ipaddr.addr.ip4, buf, INET_ADDRSTRLEN);
+            SWSS_LOG_NOTICE("Create tunnel SAI_FDB_ENTRY_ATTR_ENDPOINT_IP %s, family %d", buf, attr.value.ipaddr.addr_family);
+        }
+    }
 
     attr.id = SAI_FDB_ENTRY_ATTR_PACKET_ACTION;
     attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     attrs.push_back(attr);
+
+    if (m_entries.count(entry) != 0) // we already have such entries
+    {
+        removeFdbEntry(entry);
+    }
 
     sai_status_t status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -503,10 +562,14 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
 
-    FdbUpdate update = {entry, port, true};
-    for (auto observer: m_observers)
+    /*TBD: Vxlan tunnel is not in portlist, here skip observer, refine later*/
+    if(strncmp(port_name.c_str(),"VTT",3) != 0)
     {
-        observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+        FdbUpdate update = {entry, port, true};
+        for (auto observer: m_observers)
+        {
+            observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+        }
     }
 
     return true;
@@ -541,12 +604,18 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
     gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
 
     Port port;
-    m_portsOrch->getPortByBridgePortId(entry.bv_id, port);
+    bool res = false;
 
-    FdbUpdate update = {entry, port, false};
-    for (auto observer: m_observers)
+    res = m_portsOrch->getPortByBridgePortId(entry.bv_id, port);
+
+    /*TBD: Vxlan tunnel is not in portlist, here skip observer, refine later*/
+    if(res == true)
     {
-        observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+        FdbUpdate update = {entry, port, false};
+        for (auto observer: m_observers)
+        {
+            observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+        }
     }
 
     return true;
