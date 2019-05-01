@@ -59,7 +59,7 @@ void PfcWdActionHandler::initCounters(void)
     // a storm signal. This can happen when there is a true new storm or
     // when there is an existing storm ongoing before warm-reboot. In the latter case,
     // we treat the storm as an old storm. In particular,
-    // we do not increment the detectCount so as to clutch the
+    // we do not increment the detectCount so as to clamp the
     // gap between detectCount and restoreCount by 1 at maximum
     if (!(wdQueueStats.detectCount > wdQueueStats.restoreCount))
     {
