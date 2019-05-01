@@ -55,13 +55,22 @@ void PfcWdActionHandler::initCounters(void)
     }
 
     auto wdQueueStats = getQueueStats(m_countersTable, sai_serialize_object_id(m_queue));
-    wdQueueStats.detectCount++;
-    wdQueueStats.operational = false;
+    // initCounters() is called when the event channel receives
+    // a storm signal. This can happen when there is a true new storm or
+    // when there is an existing storm ongoing before warm-reboot. In the latter case,
+    // we treat the storm as an old storm. In particular,
+    // we do not increment the detectCount so as to clutch the
+    // gap between detectCount and restoreCount by 1 at maximum
+    if (!(wdQueueStats.detectCount > wdQueueStats.restoreCount))
+    {
+        wdQueueStats.detectCount++;
 
-    wdQueueStats.txPktLast = 0;
-    wdQueueStats.txDropPktLast = 0;
-    wdQueueStats.rxPktLast = 0;
-    wdQueueStats.rxDropPktLast = 0;
+        wdQueueStats.txPktLast = 0;
+        wdQueueStats.txDropPktLast = 0;
+        wdQueueStats.rxPktLast = 0;
+        wdQueueStats.rxDropPktLast = 0;
+    }
+    wdQueueStats.operational = false;
 
     updateWdCounters(sai_serialize_object_id(m_queue), wdQueueStats);
 }
