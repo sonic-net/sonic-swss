@@ -188,8 +188,9 @@ class TestWatermark(object):
 
         # clear pg shared watermark, and verify that headroom watermark and persistent watermarks are not affected
 
-        dvs.runcmd("sonic-clear priority-group watermark shared")
-
+        exitcode, output = dvs.runcmd("sonic-clear priority-group watermark shared")
+        time.sleep(1)
+        assert exitcode == 0, "CLI failure: %s" % output
         # make sure it cleared
         self.verify_value(dvs, self.pgs, WmTables.user, SaiWmStats.pg_shared, "0")
 
@@ -201,7 +202,9 @@ class TestWatermark(object):
 
         # clear queue unicast persistent watermark, and verify that multicast watermark and user watermarks are not affected
 
-        dvs.runcmd("sonic-clear queue persistent-watermark unicast")
+        exitcode, output = dvs.runcmd("sonic-clear queue persistent-watermark unicast")
+        time.sleep(1)
+        assert exitcode == 0, "CLI failure: %s" % output
 
         # make sure it cleared
         self.verify_value(dvs, self.uc_q, WmTables.persistent, SaiWmStats.queue_shared, "0")
