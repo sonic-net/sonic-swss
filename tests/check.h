@@ -7,7 +7,7 @@
 #include "saiattributelist.h"
 
 struct Check {
-    static bool AttrListEq(sai_object_type_t objecttype, const std::vector<sai_attribute_t>& act_attr_list, /*const*/ SaiAttributeList& exp_attr_list)
+    static bool AttrListEq(sai_object_type_t objecttype, const std::vector<sai_attribute_t>& act_attr_list, SaiAttributeList& exp_attr_list)
     {
         if (act_attr_list.size() != exp_attr_list.get_attr_count()) {
             return false;
@@ -27,36 +27,37 @@ struct Check {
                     if (meta_act) {
                         std::cerr << "AttrListEq failed\n";
                         std::cerr << "Actual:   " << meta_act->attridname << "\n";
-                        std::cerr << "Expected: " << meta->attridname << "\n";        
+                        std::cerr << "Expected: " << meta->attridname << "\n";
                     }
                 }
 
                 continue;
             }
 
-            char act_buf[0x4000];
-            char exp_buf[0x4000];
+            const int MAX_BUF_SIZE = 0x4000;
+            std::string act_str;
+            std::string exp_str;
 
-            auto act_len = sai_serialize_attribute_value(act_buf, meta, &act_attr_list[i].value);
-            auto exp_len = sai_serialize_attribute_value(exp_buf, meta, &exp_attr_list.get_attr_list()[i].value);
+            act_str.reserve(MAX_BUF_SIZE);
+            exp_str.reserve(MAX_BUF_SIZE);
 
-            // auto act = sai_serialize_attr_value(*meta, act_attr_list[i].value, false);
-            // auto exp = sai_serialize_attr_value(*meta, &exp_attr_list.get_attr_list()[i].value, false);
+            auto act_len = sai_serialize_attribute_value(&act_str[0], meta, &act_attr_list[i].value);
+            auto exp_len = sai_serialize_attribute_value(&exp_str[0], meta, &exp_attr_list.get_attr_list()[i].value);
 
-            assert(act_len < sizeof(act_buf));
-            assert(exp_len < sizeof(exp_buf));
+            assert(act_len < act_str.size());
+            assert(act_len < exp_str.size());
 
             if (act_len != exp_len) {
-                std::cout << "AttrListEq failed\n";
-                std::cout << "Actual:   " << act_buf << "\n";
-                std::cout << "Expected: " << exp_buf << "\n";
+                std::cerr << "AttrListEq failed\n";
+                std::cerr << "Actual:   " << act_str << "\n";
+                std::cerr << "Expected: " << exp_str << "\n";
                 return false;
             }
 
-            if (strcmp(act_buf, exp_buf) != 0) {
-                std::cout << "AttrListEq failed\n";
-                std::cout << "Actual:   " << act_buf << "\n";
-                std::cout << "Expected: " << exp_buf << "\n";
+            if (act_str != exp_str) {
+                std::cerr << "AttrListEq failed\n";
+                std::cerr << "Actual:   " << act_str << "\n";
+                std::cerr << "Expected: " << exp_str << "\n";
                 return false;
             }
         }
