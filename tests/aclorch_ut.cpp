@@ -23,7 +23,7 @@ namespace nsAclOrchTest {
 
 using namespace std;
 
-static size_t consumerAddToSync(Consumer* consumer, const std::deque<KeyOpFieldsValuesTuple>& entries)
+static size_t consumerAddToSync(Consumer* consumer, const deque<KeyOpFieldsValuesTuple>& entries)
 {
     /* Nothing popped */
     if (entries.empty()) {
@@ -66,7 +66,7 @@ static size_t consumerAddToSync(Consumer* consumer, const std::deque<KeyOpFields
 }
 
 struct AclTestBase : public ::testing::Test {
-    std::vector<int32_t*> m_s32list_pool;
+    vector<int32_t*> m_s32list_pool;
 
     virtual ~AclTestBase()
     {
@@ -81,14 +81,14 @@ struct AclTest : public AclTestBase {
     struct CreateAclResult {
         bool ret_val;
 
-        std::vector<sai_attribute_t> attr_list;
+        vector<sai_attribute_t> attr_list;
     };
 
-    std::shared_ptr<swss::DBConnector> m_config_db;
+    shared_ptr<swss::DBConnector> m_config_db;
 
     AclTest()
     {
-        m_config_db = std::make_shared<swss::DBConnector>(CONFIG_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
+        m_config_db = make_shared<swss::DBConnector>(CONFIG_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
     }
 
     void SetUp() override
@@ -103,17 +103,17 @@ struct AclTest : public AclTestBase {
         gCrmOrch = nullptr;
     }
 
-    std::shared_ptr<CreateAclResult> createAclTable(AclTable& acl)
+    shared_ptr<CreateAclResult> createAclTable(AclTable& acl)
     {
         assert(sai_acl_api == nullptr);
 
         sai_acl_api = new sai_acl_api_t();
-        auto sai_acl = std::shared_ptr<sai_acl_api_t>(sai_acl_api, [](sai_acl_api_t* p) {
+        auto sai_acl = shared_ptr<sai_acl_api_t>(sai_acl_api, [](sai_acl_api_t* p) {
             delete p;
             sai_acl_api = nullptr;
         });
 
-        auto ret = std::make_shared<CreateAclResult>();
+        auto ret = make_shared<CreateAclResult>();
 
         auto spy = SpyOn<SAI_API_ACL, SAI_OBJECT_TYPE_ACL_TABLE>(&sai_acl_api->create_acl_table);
         spy->callFake([&](sai_object_id_t* oid, sai_object_id_t, uint32_t attr_count, const sai_attribute_t* attr_list) -> sai_status_t {
@@ -136,7 +136,7 @@ TEST_F(AclTest, Create_L3_Acl_Table)
 
     ASSERT_TRUE(res->ret_val == true);
 
-    auto v = std::vector<swss::FieldValueTuple>(
+    auto v = vector<swss::FieldValueTuple>(
         { { "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" },
             { "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" },
             { "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true" },
@@ -182,9 +182,9 @@ struct MockAclOrch {
         return m_aclOrch;
     }
 
-    void doAclTableTask(const std::deque<KeyOpFieldsValuesTuple>& entries)
+    void doAclTableTask(const deque<KeyOpFieldsValuesTuple>& entries)
     {
-        auto consumer = std::unique_ptr<Consumer>(new Consumer(
+        auto consumer = unique_ptr<Consumer>(new Consumer(
             new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_TABLE_NAME));
 
         consumerAddToSync(consumer.get(), entries);
@@ -192,9 +192,9 @@ struct MockAclOrch {
         static_cast<Orch*>(m_aclOrch)->doTask(*consumer);
     }
 
-    void doAclRuleTask(const std::deque<KeyOpFieldsValuesTuple>& entries)
+    void doAclRuleTask(const deque<KeyOpFieldsValuesTuple>& entries)
     {
-        auto consumer = std::unique_ptr<Consumer>(new Consumer(
+        auto consumer = unique_ptr<Consumer>(new Consumer(
             new swss::ConsumerStateTable(config_db, CFG_ACL_RULE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_RULE_TABLE_NAME));
 
         consumerAddToSync(consumer.get(), entries);
@@ -215,26 +215,26 @@ struct MockAclOrch {
 
 struct AclOrchTest : public AclTest {
 
-    std::shared_ptr<swss::DBConnector> m_app_db;
-    std::shared_ptr<swss::DBConnector> m_config_db;
-    std::shared_ptr<swss::DBConnector> m_state_db;
+    shared_ptr<swss::DBConnector> m_app_db;
+    shared_ptr<swss::DBConnector> m_config_db;
+    shared_ptr<swss::DBConnector> m_state_db;
 
     AclOrchTest()
     {
         // FIXME: move out from constructor
-        m_app_db = std::make_shared<swss::DBConnector>(APPL_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
-        m_config_db = std::make_shared<swss::DBConnector>(CONFIG_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
-        m_state_db = std::make_shared<swss::DBConnector>(STATE_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
+        m_app_db = make_shared<swss::DBConnector>(APPL_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
+        m_config_db = make_shared<swss::DBConnector>(CONFIG_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
+        m_state_db = make_shared<swss::DBConnector>(STATE_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
     }
 
-    static std::map<std::string, std::string> gProfileMap;
-    static std::map<std::string, std::string>::iterator gProfileIter;
+    static map<string, string> gProfileMap;
+    static map<string, string>::iterator gProfileIter;
 
     static const char* profile_get_value(
         sai_switch_profile_id_t profile_id,
         const char* variable)
     {
-        std::map<std::string, std::string>::const_iterator it = gProfileMap.find(variable);
+        map<string, string>::const_iterator it = gProfileMap.find(variable);
         if (it == gProfileMap.end()) {
             return NULL;
         }
@@ -359,7 +359,7 @@ struct AclOrchTest : public AclTest {
         gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession,
             gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch);
 
-        auto consumer = std::unique_ptr<Consumer>(new Consumer(
+        auto consumer = unique_ptr<Consumer>(new Consumer(
             new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));
 
         consumerAddToSync(consumer.get(), { { "PortInitDone", EMPTY_PREFIX, { { "", "" } } } });
@@ -402,15 +402,15 @@ struct AclOrchTest : public AclTest {
         sai_route_api = nullptr;
     }
 
-    std::shared_ptr<MockAclOrch> createAclOrch()
+    shared_ptr<MockAclOrch> createAclOrch()
     {
-        return std::make_shared<MockAclOrch>(m_config_db.get(), m_state_db.get(), gPortsOrch, gMirrorOrch,
+        return make_shared<MockAclOrch>(m_config_db.get(), m_state_db.get(), gPortsOrch, gMirrorOrch,
             gNeighOrch, gRouteOrch);
     }
 
-    std::shared_ptr<SaiAttributeList> getAclTableAttributeList(sai_object_type_t objecttype, const AclTable& acl_table)
+    shared_ptr<SaiAttributeList> getAclTableAttributeList(sai_object_type_t objecttype, const AclTable& acl_table)
     {
-        std::vector<swss::FieldValueTuple> fields;
+        vector<swss::FieldValueTuple> fields;
 
         fields.push_back({ "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" });
         fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" });
@@ -445,12 +445,12 @@ struct AclOrchTest : public AclTest {
             assert(false);
         }
 
-        return std::shared_ptr<SaiAttributeList>(new SaiAttributeList(objecttype, fields, false));
+        return shared_ptr<SaiAttributeList>(new SaiAttributeList(objecttype, fields, false));
     }
 
-    std::shared_ptr<SaiAttributeList> getAclRuleAttributeList(sai_object_type_t objecttype, const AclRule& acl_rule, sai_object_id_t acl_table_oid, const AclTable& acl_table)
+    shared_ptr<SaiAttributeList> getAclRuleAttributeList(sai_object_type_t objecttype, const AclRule& acl_rule, sai_object_id_t acl_table_oid, const AclTable& acl_table)
     {
-        std::vector<swss::FieldValueTuple> fields;
+        vector<swss::FieldValueTuple> fields;
 
         auto table_id = sai_serialize_object_id(acl_table_oid);
         auto counter_id = sai_serialize_object_id(const_cast<AclRule&>(acl_rule).getCounterOid()); // FIXME: getcounterOid() should be const
@@ -473,10 +473,10 @@ struct AclOrchTest : public AclTest {
             assert(false);
         }
 
-        return std::shared_ptr<SaiAttributeList>(new SaiAttributeList(objecttype, fields, false));
+        return shared_ptr<SaiAttributeList>(new SaiAttributeList(objecttype, fields, false));
     }
 
-    bool validateAclRule(const std::string acl_rule_sid, const AclRule& acl_rule, sai_object_id_t acl_table_oid, const AclTable& acl_table)
+    bool validateAclRule(const string acl_rule_sid, const AclRule& acl_rule, sai_object_id_t acl_table_oid, const AclTable& acl_table)
     {
         sai_object_type_t objecttype = SAI_OBJECT_TYPE_ACL_ENTRY;
         auto exp_attrlist_2 = getAclRuleAttributeList(objecttype, acl_rule, acl_table_oid, acl_table);
@@ -486,7 +486,7 @@ struct AclOrchTest : public AclTest {
         {
             auto& exp_attrlist = *exp_attrlist_2;
 
-            std::vector<sai_attribute_t> act_attr;
+            vector<sai_attribute_t> act_attr;
 
             for (uint32_t i = 0; i < exp_attrlist.get_attr_count(); ++i) {
                 const auto attr = exp_attrlist.get_attr_list()[i];
@@ -509,7 +509,7 @@ struct AclOrchTest : public AclTest {
                     break;
 
                 default:
-                    std::cout << "";
+                    cout << "";
                     ;
                 }
 
@@ -538,7 +538,7 @@ struct AclOrchTest : public AclTest {
         {
             auto& exp_attrlist = *exp_attrlist_2;
 
-            std::vector<sai_attribute_t> act_attr;
+            vector<sai_attribute_t> act_attr;
 
             for (uint32_t i = 0; i < exp_attrlist.get_attr_count(); ++i) {
                 const auto attr = exp_attrlist.get_attr_list()[i];
@@ -561,7 +561,7 @@ struct AclOrchTest : public AclTest {
                     break;
 
                 default:
-                    std::cout << "";
+                    cout << "";
                     ;
                 }
 
@@ -646,7 +646,7 @@ struct AclOrchTest : public AclTest {
         return true;
     }
 
-    bool validateAclTableByConfOp(const AclTable& acl_table, const std::vector<swss::FieldValueTuple>& values)
+    bool validateAclTableByConfOp(const AclTable& acl_table, const vector<swss::FieldValueTuple>& values)
     {
         for (const auto& fv : values) {
             if (fv.first == TABLE_DESCRIPTION) {
@@ -682,7 +682,7 @@ struct AclOrchTest : public AclTest {
         return true;
     }
 
-    bool validateAclRuleAction(const AclRule& acl_rule, const std::string& attr_name, const std::string& attr_value)
+    bool validateAclRuleAction(const AclRule& acl_rule, const string& attr_name, const string& attr_value)
     {
         const auto& rule_actions = Portal::AclRuleInternal::getActions(&acl_rule);
 
@@ -716,7 +716,7 @@ struct AclOrchTest : public AclTest {
         return true;
     }
 
-    bool validateAclRuleMatch(const AclRule& acl_rule, const std::string& attr_name, const std::string& attr_value)
+    bool validateAclRuleMatch(const AclRule& acl_rule, const string& attr_name, const string& attr_value)
     {
         const auto& rule_matches = Portal::AclRuleInternal::getMatches(&acl_rule);
 
@@ -734,7 +734,7 @@ struct AclOrchTest : public AclTest {
 
             char mask[20];
             sai_serialize_ip4(mask, it_field->second.aclfield.mask.ip4);
-            if (std::string(mask) != "255.255.255.255") {
+            if (string(mask) != "255.255.255.255") {
                 return false;
             }
         } else if (attr_name == MATCH_SRC_IPV6) {
@@ -751,7 +751,7 @@ struct AclOrchTest : public AclTest {
 
             char mask[46];
             sai_serialize_ip6(mask, it_field->second.aclfield.mask.ip6);
-            if (std::string(mask) != "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff") {
+            if (string(mask) != "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff") {
                 return false;
             }
 
@@ -763,7 +763,7 @@ struct AclOrchTest : public AclTest {
         return true;
     }
 
-    bool validateAclRuleByConfOp(const AclRule& acl_rule, const std::vector<swss::FieldValueTuple>& values)
+    bool validateAclRuleByConfOp(const AclRule& acl_rule, const vector<swss::FieldValueTuple>& values)
     {
         for (const auto& fv : values) {
             auto attr_name = fv.first;
@@ -786,57 +786,8 @@ struct AclOrchTest : public AclTest {
     }
 };
 
-std::map<std::string, std::string> AclOrchTest::gProfileMap;
-std::map<std::string, std::string>::iterator AclOrchTest::gProfileIter = AclOrchTest::gProfileMap.begin();
-
-// AclTable::create
-// validate the attribute list of each type {L3, L3V6 ....}, gCrmOrch will increase if create success
-
-// AclTable::... not function to handler remove just call sai
-
-// AclRule::create
-// validate the attribute list will eq matchs + SAI_ACL_ENTRY_ATTR_TABLE_ID + SAI_ACL_ENTRY_ATTR_PRIORITY + SAI_ACL_ENTRY_ATTR_ACTION_COUNTER
-// support SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE
-// call sai_acl_api->create_acl_entry to create and incCrmAclTableUsedCounter
-
-// AclTable::remove => remove rule, that will call AclRule::remove => sai_acl_api->remove_acl_entry
-
-//
-// doAclTableTask
-//
-// using op=set_command to create acl table
-//      passing TABLE_DESCRIPTION / TABLE_TYPE / TABLE_PORTS / TABLE_STAGE to create acl_table
-//          TABLE_TYPE / TABLE_PORTS / TABLE_STAGE is required
-//      ignore if command include TABLE_SERVICES that is for COPP only
-//      type = ACL_TABLE_CTRLPLANE <= what's that ?
-//      if acl_table_is exist => remove then create new
-//      if op successed, the acl will be create in m_AclTables (ref: AclTable::create) and lower layer (SAI, ref: sai->create_acl_table), and bind to ports (TABLE_PORTS ? aclTable.ports)
-//
-// using op=del_command to delete acl table
-//      if acl_table_id is not exist => do nothing
-//      if acl_table_id will be remove from internal table and sai, (unbind port before remove)
-//
-// unknow op will be ignored
-//
-//
-// PS: m_AclTables keep controlplan acl too
-//
-// doAclRuleTask
-//
-// using op=set_command to create acl rule
-//    ignore is acl_id is Skip the control plane rules
-//    using AclRule::makeShared to create tmpl rule object
-//    fill priority / match / action then add rule to acl table (ref: AclTable::add() and AclRule::create())
-//                    (json to matchs and action convert)
-//
-// using op=del_command to delete acl rule
-//
-// unknow op will be ignored
-//
-
-//
-// The order will be doAclTableTask => doAclRuleTask => AclTable => AclRule ....
-//
+map<string, string> AclOrchTest::gProfileMap;
+map<string, string>::iterator AclOrchTest::gProfileIter = AclOrchTest::gProfileMap.begin();
 
 // When received ACL table SET_COMMAND, orchagent can create corresponding ACL.
 // When received ACL table DEL_COMMAND, orchagent can delete corresponding ACL.
@@ -851,9 +802,9 @@ TEST_F(AclOrchTest, ACL_Creation_and_Destorying)
 
     for (const auto& acl_table_type : { TABLE_TYPE_L3, TABLE_TYPE_L3V6 }) {
         for (const auto& acl_table_stage : { TABLE_INGRESS, TABLE_EGRESS }) {
-            std::string acl_table_id = "acl_table_1";
+            string acl_table_id = "acl_table_1";
 
-            auto kvfAclTable = std::deque<KeyOpFieldsValuesTuple>(
+            auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
                 { { acl_table_id,
                     SET_COMMAND,
                     { { TABLE_DESCRIPTION, "filter source IP" },
@@ -879,7 +830,7 @@ TEST_F(AclOrchTest, ACL_Creation_and_Destorying)
 
             // delete acl table ...
 
-            kvfAclTable = std::deque<KeyOpFieldsValuesTuple>(
+            kvfAclTable = deque<KeyOpFieldsValuesTuple>(
                 { { acl_table_id,
                     DEL_COMMAND,
                     {} } });
@@ -902,12 +853,12 @@ TEST_F(AclOrchTest, ACL_Creation_and_Destorying)
 //
 TEST_F(AclOrchTest, L3Acl_Matches_Actions)
 {
-    std::string acl_table_id = "acl_table_1";
-    std::string acl_rule_id = "acl_rule_1";
+    string acl_table_id = "acl_table_1";
+    string acl_rule_id = "acl_rule_1";
 
     auto orch = createAclOrch();
 
-    auto kvfAclTable = std::deque<KeyOpFieldsValuesTuple>(
+    auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
         { { acl_table_id,
             SET_COMMAND,
             { { TABLE_DESCRIPTION, "filter source IP" },
@@ -937,7 +888,7 @@ TEST_F(AclOrchTest, L3Acl_Matches_Actions)
     // add rule ...
     for (const auto& acl_rule_pkg_action : { PACKET_ACTION_FORWARD, PACKET_ACTION_DROP }) {
 
-        auto kvfAclRule = std::deque<KeyOpFieldsValuesTuple>({ { acl_table_id + "|" + acl_rule_id,
+        auto kvfAclRule = deque<KeyOpFieldsValuesTuple>({ { acl_table_id + "|" + acl_rule_id,
             SET_COMMAND,
             { { ACTION_PACKET_ACTION, acl_rule_pkg_action },
 
@@ -969,7 +920,7 @@ TEST_F(AclOrchTest, L3Acl_Matches_Actions)
 
         // delete acl rule ...
 
-        kvfAclRule = std::deque<KeyOpFieldsValuesTuple>({ { acl_table_id + "|" + acl_rule_id,
+        kvfAclRule = deque<KeyOpFieldsValuesTuple>({ { acl_table_id + "|" + acl_rule_id,
             DEL_COMMAND,
             {} } });
 
@@ -991,12 +942,12 @@ TEST_F(AclOrchTest, L3Acl_Matches_Actions)
 //
 TEST_F(AclOrchTest, L3V6Acl_Matches_Actions)
 {
-    std::string acl_table_id = "acl_table_1";
-    std::string acl_rule_id = "acl_rule_1";
+    string acl_table_id = "acl_table_1";
+    string acl_rule_id = "acl_rule_1";
 
     auto orch = createAclOrch();
 
-    auto kvfAclTable = std::deque<KeyOpFieldsValuesTuple>(
+    auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
         { { acl_table_id,
             SET_COMMAND,
             { { TABLE_DESCRIPTION, "filter source IP" },
@@ -1026,7 +977,7 @@ TEST_F(AclOrchTest, L3V6Acl_Matches_Actions)
     // add rule ...
     for (const auto& acl_rule_pkg_action : { PACKET_ACTION_FORWARD, PACKET_ACTION_DROP }) {
 
-        auto kvfAclRule = std::deque<KeyOpFieldsValuesTuple>({ { acl_table_id + "|" + acl_rule_id,
+        auto kvfAclRule = deque<KeyOpFieldsValuesTuple>({ { acl_table_id + "|" + acl_rule_id,
             SET_COMMAND,
             { { ACTION_PACKET_ACTION, acl_rule_pkg_action },
 
@@ -1058,7 +1009,7 @@ TEST_F(AclOrchTest, L3V6Acl_Matches_Actions)
 
         // delete acl rule ...
 
-        kvfAclRule = std::deque<KeyOpFieldsValuesTuple>({ { acl_table_id + "|" + acl_rule_id,
+        kvfAclRule = deque<KeyOpFieldsValuesTuple>({ { acl_table_id + "|" + acl_rule_id,
             DEL_COMMAND,
             {} } });
 
