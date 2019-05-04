@@ -95,24 +95,22 @@ struct AclTest : public AclTestBase {
     {
         assert(gCrmOrch == nullptr);
         gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
+
+        assert(sai_acl_api == nullptr);
+        sai_acl_api = new sai_acl_api_t();
     }
 
     void TearDown() override
     {
         delete gCrmOrch;
         gCrmOrch = nullptr;
+
+        delete sai_acl_api;
+        sai_acl_api = nullptr;
     }
 
     shared_ptr<CreateAclResult> createAclTable(AclTable& acl)
     {
-        assert(sai_acl_api == nullptr);
-
-        sai_acl_api = new sai_acl_api_t();
-        auto sai_acl = shared_ptr<sai_acl_api_t>(sai_acl_api, [](sai_acl_api_t* p) {
-            delete p;
-            sai_acl_api = nullptr;
-        });
-
         auto ret = make_shared<CreateAclResult>();
 
         auto spy = SpyOn<SAI_API_ACL, SAI_OBJECT_TYPE_ACL_TABLE>(&sai_acl_api->create_acl_table);

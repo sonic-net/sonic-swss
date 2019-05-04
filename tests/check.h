@@ -20,7 +20,7 @@ struct Check {
             assert(meta != nullptr);
 
             // The following id can not serialize, check id only
-            if (id == SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE) {
+            if (id == SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE || id == SAI_ACL_BIND_POINT_TYPE_PORT || id == SAI_ACL_BIND_POINT_TYPE_LAG) {
                 if (id != act_attr_list[i].id) {
                     auto meta_act = sai_metadata_get_attr_metadata(objecttype, act_attr_list[i].id);
 
