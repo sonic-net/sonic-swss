@@ -74,12 +74,46 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
     m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
 }
 
+std::string IntfsOrch::getRouterIntfsByIpaddress(const IpAddress &ip)
+{
+    for (const auto &it_intfs: m_syncdIntfses)
+    {
+        for (const auto &prefixIt: it_intfs.second.ip_addresses)
+        {
+            if (prefixIt.isAddressInSubnet(ip))
+            {
+                return it_intfs.first;
+            }
+        }
+    }     
+    return std::string();
+}
+
 sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
 {
     Port port;
     gPortsOrch->getPort(alias, port);
-    assert(port.m_rif_id);
+    /* assert(port.m_rif_id);*/
     return port.m_rif_id;
+}
+
+sai_object_id_t IntfsOrch::getVrId(const string &alias)
+{
+    Port port;
+    gPortsOrch->getPort(alias, port);
+    return port.m_vr_id;
+}
+
+bool IntfsOrch::isPrefixSubnet(const IpPrefix &ip_prefix, const string& alias)
+{
+    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+        return false;
+    for (const auto &prefixIt: m_syncdIntfses[alias].ip_addresses)
+    {
+        if (prefixIt.getSubnet() == ip_prefix)
+            return true;
+    }
+    return false;
 }
 
 void IntfsOrch::increaseRouterIntfsRefCount(const string &alias)
@@ -194,7 +228,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     }
 
     vrf_id = port.m_vr_id;
-    addSubnetRoute(port, *ip_prefix);
+    /*addSubnetRoute(port, *ip_prefix);*/
     addIp2MeRoute(vrf_id, *ip_prefix);
 
     if (port.m_type == Port::VLAN)
@@ -218,7 +252,7 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
 
     if (ip_prefix && m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
     {
-        removeSubnetRoute(port, *ip_prefix);
+        gRouteOrch->intfsRemoveUpdate(alias, *ip_prefix);
         removeIp2MeRoute(vrf_id, *ip_prefix);
 
         if(port.m_type == Port::VLAN)
@@ -578,6 +612,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     return true;
 }
 
+#if 0
 void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
 {
     sai_route_entry_t unicast_route_entry;
@@ -652,6 +687,7 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
 
     gRouteOrch->notifyNextHopChangeObservers(ip_prefix, IpAddresses(), false);
 }
+#endif
 
 void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
 {

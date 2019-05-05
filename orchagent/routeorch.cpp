@@ -4,6 +4,8 @@
 #include "swssnet.h"
 #include "crmorch.h"
 
+using namespace swss;
+
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
 
@@ -12,7 +14,6 @@ extern sai_route_api_t*             sai_route_api;
 extern sai_switch_api_t*            sai_switch_api;
 
 extern PortsOrch *gPortsOrch;
-extern IntfsOrch *gIntfsOrch;
 extern CrmOrch *gCrmOrch;
 
 /* Default maximum number of next hop groups */
@@ -21,9 +22,10 @@ extern CrmOrch *gCrmOrch;
 
 const int routeorch_pri = 5;
 
-RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
+RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, IntfsOrch *intfsOrch) :
         Orch(db, tableName, routeorch_pri),
         m_neighOrch(neighOrch),
+        m_intfsOrch(intfsOrch),
         m_nextHopGroupCount(0),
         m_resync(false)
 {
@@ -337,29 +339,54 @@ void RouteOrch::doTask(Consumer& consumer)
                     alias = fvValue(i);
             }
 
-            // TODO: set to blackhold if nexthop is empty?
-            if (ip_addresses.getSize() == 0)
-            {
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
-
             // TODO: cannot trust m_portsOrch->getPortIdByAlias because sometimes alias is empty
             // TODO: need to split aliases with ',' and verify the next hops?
             if (alias == "eth0" || alias == "lo" || alias == "docker0")
             {
                 /* If any existing routes are updated to point to the
                  * above interfaces, remove them from the ASIC. */
-                if (m_syncdRoutes.find(ip_prefix) != m_syncdRoutes.end())
+                if (removeRoute(ip_prefix))
+                    it = consumer.m_toSync.erase(it);
+                else
+                    it++;
+                continue;
+            }
+
+            // TODO: set to blackhole if nexthop is empty?
+            if (ip_addresses.getSize() == 0)
+            {
+                /*no nexthop ipaddresses recorded, we can not assign whether it is duplicate, so just remove it.
+                although i think the commander should remove it first*/
+
+                if (!removeRoute(ip_prefix))
                 {
-                    if (removeRoute(ip_prefix))
+                    it++;
+                    continue;                    
+                }
+
+                if (alias=="")  /*blackhole*/
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+                /*direct connected, why move it here from intfsOrch? intfsOrch add it by address configure, 
+                  but routes from fpmsyncd got data from routing protocol, which can refer to the state of interfaces.
+                  add subnet route even when the interface is down will result in a wrong situation, route with same prefix
+                  from route protocol will be refused to added to asic*/
+                else if (m_intfsOrch->isPrefixSubnet(ip_prefix, alias))
+                {
+                    if (addSubnetRoute(alias, ip_prefix))
                         it = consumer.m_toSync.erase(it);
                     else
                         it++;
+                    continue;
                 }
-                else
+                // TODO: maybe route with P2P output-interface(i.e. tunnel), but now we have not deal with it
+                else 
+                {
                     it = consumer.m_toSync.erase(it);
-                continue;
+                    continue;
+                }
             }
 
             if (m_syncdRoutes.find(ip_prefix) == m_syncdRoutes.end() || m_syncdRoutes[ip_prefix] != ip_addresses)
@@ -375,16 +402,10 @@ void RouteOrch::doTask(Consumer& consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (m_syncdRoutes.find(ip_prefix) != m_syncdRoutes.end())
-            {
-                if (removeRoute(ip_prefix))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
-            }
-            else
-                /* Cannot locate the route */
+            if (removeRoute(ip_prefix))
                 it = consumer.m_toSync.erase(it);
+            else
+                it++;
         }
         else
         {
@@ -697,6 +718,92 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
 
     return true;
 }
+/*why add subnet route here? if add subnet route when intfs create, we can not 
+delete it when intfs down, so we can not select another way to these addresses 
+in this subnet, so only route-protocol can add these routes. why not increase 
+the refcnt of the out-intfs? it will be a difficult thing to decrease it when 
+the subnet route is deleted, fpmsyncd will not tell us the out-intfs when 
+delete the route, and now we have not record it in our route-table, we only 
+record nexthop in Ipaddress mode*/
+bool RouteOrch::addSubnetRoute(string &alias, IpPrefix ipPrefix)
+{
+    sai_route_entry_t unicast_route_entry;
+    unicast_route_entry.switch_id = gSwitchId;
+    copy(unicast_route_entry.destination, ipPrefix);
+    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
+    
+    if (rif_id == SAI_NULL_OBJECT_ID)
+        return false;
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+    unicast_route_entry.vr_id = m_intfsOrch->getVrId(alias);
+
+    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
+    attrs.push_back(attr);
+
+    attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+    attr.value.oid = rif_id;
+    attrs.push_back(attr);
+
+    sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create subnet route to %s from %s, rv:%d",
+                       ipPrefix.to_string().c_str(), alias.c_str(), status);
+        throw runtime_error("Failed to create subnet route.");
+    }
+
+    SWSS_LOG_NOTICE("Create subnet route to %s from %s",
+                    ipPrefix.to_string().c_str(), alias.c_str());
+
+    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
+    m_syncdRoutes[ipPrefix] = IpAddresses();
+    return true;
+}
+
+/*why not wait for removeRoute from fpmsyncd? we have not record the out-intfs in 
+route-table, so we can not modify it to decrease the refcnt of the intfs-id unless 
+delete it, indeed, remove it is reasonable when intfs deleted, so delete it here*/
+bool RouteOrch::intfsRemoveUpdate(const string &alias, const IpPrefix &ipPrefix)
+{
+    sai_route_entry_t route_entry;
+    route_entry.switch_id = gSwitchId;
+    IpPrefix subnet_prefix;
+    subnet_prefix = ipPrefix.getSubnet();
+    copy(route_entry.destination, subnet_prefix);
+    if (m_syncdRoutes.find(subnet_prefix) == m_syncdRoutes.end())
+        return true;
+    route_entry.vr_id = m_intfsOrch->getVrId(alias);
+    sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove route prefix:%s\n", subnet_prefix.to_string().c_str());
+        return false;
+    }
+
+    if (route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+    }
+    else
+    {
+        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+    }
+    m_syncdRoutes.erase(subnet_prefix);
+    SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
+            subnet_prefix.to_string().c_str(), alias.c_str());
+    /* Notify about the route next hop removal */
+    notifyNextHopChangeObservers(subnet_prefix, IpAddresses(), false);
+    return true;
+}
 
 void RouteOrch::addTempRoute(IpPrefix ipPrefix, IpAddresses nextHops)
 {
@@ -888,6 +995,9 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
 {
     SWSS_LOG_ENTER();
 
+    auto it_route = m_syncdRoutes.find(ipPrefix);
+    if (it_route == m_syncdRoutes.end())
+        return true;
     sai_route_entry_t route_entry;
     route_entry.vr_id = gVirtualRouterId;
     route_entry.switch_id = gSwitchId;
@@ -943,21 +1053,17 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
 
     }
     /* Remove next hop group entry if ref_count is zero */
-    auto it_route = m_syncdRoutes.find(ipPrefix);
-    if (it_route != m_syncdRoutes.end())
-    {
         /*
          * Decrease the reference count only when the route is pointing to a next hop.
          * Decrease the reference count when the route is pointing to a next hop group,
          * and check whether the reference count decreases to zero. If yes, then we need
          * to remove the next hop group.
          */
-        decreaseNextHopRefCount(it_route->second);
-        if (it_route->second.getSize() > 1
-            && m_syncdNextHopGroups[it_route->second].ref_count == 0)
-        {
-            removeNextHopGroup(it_route->second);
-        }
+    decreaseNextHopRefCount(it_route->second);
+    if (it_route->second.getSize() > 1
+        && m_syncdNextHopGroups[it_route->second].ref_count == 0)
+    {
+        removeNextHopGroup(it_route->second);
     }
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.to_string().c_str());
