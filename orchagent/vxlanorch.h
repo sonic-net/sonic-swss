@@ -137,7 +137,7 @@ const request_description_t vxlan_tunnel_request_description = {
 class VxlanTunnelRequest : public Request
 {
 public:
-    VxlanTunnelRequest() : Request(vxlan_tunnel_request_description, '|') { }
+    VxlanTunnelRequest() : Request(vxlan_tunnel_request_description, ':') { }
 };
 
 typedef std::unique_ptr<VxlanTunnel> VxlanTunnel_T;
@@ -198,7 +198,7 @@ typedef std::map<std::string, sai_object_id_t> VxlanTunnelMapTable;
 class VxlanTunnelMapRequest : public Request
 {
 public:
-    VxlanTunnelMapRequest() : Request(vxlan_tunnel_map_request_description, '|') { }
+    VxlanTunnelMapRequest() : Request(vxlan_tunnel_map_request_description, ':') { }
 };
 
 class VxlanTunnelMapOrch : public Orch2

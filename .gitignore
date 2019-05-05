@@ -51,6 +51,7 @@ cfgmgr/teammgrd
 cfgmgr/vlanmgrd
 cfgmgr/vrfmgrd
 cfgmgr/nbrmgrd
+cfgmgr/vxlanmgrd
 neighsyncd/neighsyncd
 portsyncd/portsyncd
 orchagent/orchagent

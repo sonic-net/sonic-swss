@@ -134,7 +134,8 @@ void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
         {
             if (route.first.isAddressInSubnet(dstAddr))
             {
-                SWSS_LOG_NOTICE("route%s", route.first.to_string().c_str());
+                SWSS_LOG_INFO("Prefix %s covers destination address",
+                        route.first.to_string().c_str());
                 observerEntry->second.routeTable.emplace(
                         route.first, route.second);
             }
@@ -948,7 +949,7 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
         /*
          * Decrease the reference count only when the route is pointing to a next hop.
          * Decrease the reference count when the route is pointing to a next hop group,
-         * and check wheather the reference count decreases to zero. If yes, then we need
+         * and check whether the reference count decreases to zero. If yes, then we need
          * to remove the next hop group.
          */
         decreaseNextHopRefCount(it_route->second);
