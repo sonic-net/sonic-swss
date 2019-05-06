@@ -38,7 +38,7 @@ class TestVlan(object):
 
     def create_port_channel(self, dvs, channel, admin_status="up", mtu="1500"):
         tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
-        fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "9100")])
+        fvs = swsscommon.FieldValuePairs([("admin", admin_status), ("mtu", mtu)])
         tbl.set("PortChannel" + channel, fvs)
         dvs.runcmd("ip link add PortChannel" + channel + " type bond")
         tbl = swsscommon.Table(self.sdb, "LAG_TABLE")
@@ -56,7 +56,7 @@ class TestVlan(object):
 
     def create_port_channel_member(self, channel, interface, status="enabled"):
         tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
-        fvs = swsscommon.FieldValuePairs([("status", "enabled")])
+        fvs = swsscommon.FieldValuePairs([("status", status)])
         tbl.set("PortChannel" + channel + ":" + interface, fvs)
         time.sleep(1)
 
