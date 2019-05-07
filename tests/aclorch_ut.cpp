@@ -23,7 +23,7 @@ namespace nsAclOrchTest {
 
 using namespace std;
 
-static size_t consumerAddToSync(Consumer* consumer, const deque<KeyOpFieldsValuesTuple>& entries)
+size_t consumerAddToSync(Consumer* consumer, const deque<KeyOpFieldsValuesTuple>& entries)
 {
     /* Nothing popped */
     if (entries.empty()) {
@@ -93,10 +93,10 @@ struct AclTest : public AclTestBase {
 
     void SetUp() override
     {
-        assert(gCrmOrch == nullptr);
+        ASSERT_EQ(gCrmOrch, nullptr);
         gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
 
-        assert(sai_acl_api == nullptr);
+        ASSERT_EQ(sai_acl_api, nullptr);
         sai_acl_api = new sai_acl_api_t();
     }
 
@@ -132,7 +132,7 @@ TEST_F(AclTest, Create_L3_Acl_Table)
     acltable.type = ACL_TABLE_L3;
     auto res = createAclTable(acltable);
 
-    ASSERT_TRUE(res->ret_val == true);
+    ASSERT_TRUE(res->ret_val);
 
     auto v = vector<swss::FieldValueTuple>(
         { { "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" },
@@ -281,7 +281,7 @@ struct AclOrchTest : public AclTest {
         };
 
         auto status = sai_api_initialize(0, (sai_service_method_table_t*)&test_services);
-        ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
         sai_api_query(SAI_API_SWITCH, (void**)&sai_switch_api);
         sai_api_query(SAI_API_BRIDGE, (void**)&sai_bridge_api);
@@ -296,13 +296,13 @@ struct AclOrchTest : public AclTest {
         attr.value.booldata = true;
 
         status = sai_switch_api->create_switch(&gSwitchId, 1, &attr);
-        ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
         // Get switch source MAC address
         attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
         status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
 
-        ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
         gMacAddress = attr.value.mac;
 
@@ -310,7 +310,7 @@ struct AclOrchTest : public AclTest {
         attr.id = SAI_SWITCH_ATTR_DEFAULT_VIRTUAL_ROUTER_ID;
         status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
 
-        ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
         gVirtualRouterId = attr.value.oid;
 
@@ -326,34 +326,34 @@ struct AclOrchTest : public AclTest {
             { APP_LAG_MEMBER_TABLE_NAME, portsorch_base_pri }
         };
 
-        assert(gPortsOrch == nullptr);
+        ASSERT_EQ(gPortsOrch, nullptr);
         gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
 
-        assert(gCrmOrch == nullptr);
+        ASSERT_EQ(gCrmOrch, nullptr);
         gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
 
-        assert(gVrfOrch == nullptr);
+        ASSERT_EQ(gVrfOrch, nullptr);
         gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME);
 
-        assert(gIntfsOrch == nullptr);
+        ASSERT_EQ(gIntfsOrch, nullptr);
         gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch);
 
-        assert(gNeighOrch == nullptr);
+        ASSERT_EQ(gNeighOrch, nullptr);
         gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch);
 
-        assert(gRouteOrch == nullptr);
+        ASSERT_EQ(gRouteOrch, nullptr);
         gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gNeighOrch);
 
         TableConnector applDbFdb(m_app_db.get(), APP_FDB_TABLE_NAME);
         TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
 
-        assert(gFdbOrch == nullptr);
+        ASSERT_EQ(gFdbOrch, nullptr);
         gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
 
         TableConnector stateDbMirrorSession(m_state_db.get(), APP_MIRROR_SESSION_TABLE_NAME);
         TableConnector confDbMirrorSession(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
 
-        assert(gMirrorOrch == nullptr);
+        ASSERT_EQ(gMirrorOrch, nullptr);
         gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession,
             gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch);
 
@@ -387,7 +387,7 @@ struct AclOrchTest : public AclTest {
         gPortsOrch = nullptr;
 
         auto status = sai_switch_api->remove_switch(gSwitchId);
-        ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+        ASSERT_EQ(status, SAI_STATUS_SUCCESS);
         gSwitchId = 0;
 
         sai_api_uninitialize();
@@ -432,15 +432,14 @@ struct AclOrchTest : public AclTest {
             break;
 
         default:
-            assert(false);
+            // We shouldn't get here. Will continue to add more test cases ...;
+            ;
         }
 
         if (ACL_STAGE_INGRESS == acl_table.stage) {
             fields.push_back({ "SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS" });
         } else if (ACL_STAGE_EGRESS == acl_table.stage) {
             fields.push_back({ "SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_EGRESS" });
-        } else {
-            assert(false);
         }
 
         return shared_ptr<SaiAttributeList>(new SaiAttributeList(objecttype, fields, false));
@@ -468,7 +467,8 @@ struct AclOrchTest : public AclTest {
             break;
 
         default:
-            assert(false);
+            // We shouldn't get here. Will continue to add more test cases ...
+            ;
         }
 
         return shared_ptr<SaiAttributeList>(new SaiAttributeList(objecttype, fields, false));
@@ -507,7 +507,7 @@ struct AclOrchTest : public AclTest {
                     break;
 
                 default:
-                    cout << "";
+                    // do nothing
                     ;
                 }
 
@@ -559,7 +559,7 @@ struct AclOrchTest : public AclTest {
                     break;
 
                 default:
-                    cout << "";
+                    // do nothing
                     ;
                 }
 
@@ -814,12 +814,12 @@ TEST_F(AclOrchTest, ACL_Creation_and_Destorying)
             orch->doAclTableTask(kvfAclTable);
 
             auto oid = orch->getTableById(acl_table_id);
-            ASSERT_TRUE(oid != SAI_NULL_OBJECT_ID);
+            ASSERT_NE(oid, SAI_NULL_OBJECT_ID);
 
             const auto& acl_tables = orch->getAclTables();
 
             auto it = acl_tables.find(oid);
-            ASSERT_TRUE(it != acl_tables.end());
+            ASSERT_NE(it, acl_tables.end());
 
             const auto& acl_table = it->second;
 
@@ -836,7 +836,7 @@ TEST_F(AclOrchTest, ACL_Creation_and_Destorying)
             orch->doAclTableTask(kvfAclTable);
 
             oid = orch->getTableById(acl_table_id);
-            ASSERT_TRUE(oid == SAI_NULL_OBJECT_ID);
+            ASSERT_EQ(oid, SAI_NULL_OBJECT_ID);
 
             ASSERT_TRUE(validateLowerLayerDb(orch.get()));
         }
@@ -872,11 +872,11 @@ TEST_F(AclOrchTest, L3Acl_Matches_Actions)
     // validate acl table ...
 
     auto acl_table_oid = orch->getTableById(acl_table_id);
-    ASSERT_TRUE(acl_table_oid != SAI_NULL_OBJECT_ID);
+    ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
 
     const auto& acl_tables = orch->getAclTables();
     auto it_table = acl_tables.find(acl_table_oid);
-    ASSERT_TRUE(it_table != acl_tables.end());
+    ASSERT_NE(it_table, acl_tables.end());
 
     const auto& acl_table = it_table->second;
 
@@ -911,7 +911,7 @@ TEST_F(AclOrchTest, L3Acl_Matches_Actions)
         // validate acl rule ...
 
         auto it_rule = acl_table.rules.find(acl_rule_id);
-        ASSERT_TRUE(it_rule != acl_table.rules.end());
+        ASSERT_NE(it_rule, acl_table.rules.end());
 
         ASSERT_TRUE(validateAclRuleByConfOp(*it_rule->second, kfvFieldsValues(kvfAclRule.front())));
         ASSERT_TRUE(validateLowerLayerDb(orch.get()));
@@ -927,7 +927,7 @@ TEST_F(AclOrchTest, L3Acl_Matches_Actions)
         // validate acl rule ...
 
         it_rule = acl_table.rules.find(acl_rule_id);
-        ASSERT_TRUE(it_rule == acl_table.rules.end());
+        ASSERT_EQ(it_rule, acl_table.rules.end());
         ASSERT_TRUE(validateLowerLayerDb(orch.get()));
     }
 }
@@ -961,11 +961,11 @@ TEST_F(AclOrchTest, L3V6Acl_Matches_Actions)
     // validate acl table ...
 
     auto acl_table_oid = orch->getTableById(acl_table_id);
-    ASSERT_TRUE(acl_table_oid != SAI_NULL_OBJECT_ID);
+    ASSERT_NE(acl_table_oid, SAI_NULL_OBJECT_ID);
 
     const auto& acl_tables = orch->getAclTables();
     auto it_table = acl_tables.find(acl_table_oid);
-    ASSERT_TRUE(it_table != acl_tables.end());
+    ASSERT_NE(it_table, acl_tables.end());
 
     const auto& acl_table = it_table->second;
 
@@ -1000,7 +1000,7 @@ TEST_F(AclOrchTest, L3V6Acl_Matches_Actions)
         // validate acl rule ...
 
         auto it_rule = acl_table.rules.find(acl_rule_id);
-        ASSERT_TRUE(it_rule != acl_table.rules.end());
+        ASSERT_NE(it_rule, acl_table.rules.end());
 
         ASSERT_TRUE(validateAclRuleByConfOp(*it_rule->second, kfvFieldsValues(kvfAclRule.front())));
         ASSERT_TRUE(validateLowerLayerDb(orch.get()));
@@ -1016,7 +1016,7 @@ TEST_F(AclOrchTest, L3V6Acl_Matches_Actions)
         // validate acl rule ...
 
         it_rule = acl_table.rules.find(acl_rule_id);
-        ASSERT_TRUE(it_rule == acl_table.rules.end());
+        ASSERT_EQ(it_rule, acl_table.rules.end());
         ASSERT_TRUE(validateLowerLayerDb(orch.get()));
     }
 }
