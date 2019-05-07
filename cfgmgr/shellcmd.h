@@ -3,6 +3,7 @@
 
 #define IP_CMD               "/sbin/ip"
 #define BRIDGE_CMD           "/sbin/bridge"
+#define BRCTL_CMD            "/sbin/brctl"
 #define ECHO_CMD             "/bin/echo"
 #define BASH_CMD             "/bin/bash"
 #define GREP_CMD             "/bin/grep"

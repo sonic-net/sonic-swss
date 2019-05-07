@@ -7,6 +7,7 @@
 #include "producertable.h"
 #include "notificationconsumer.h"
 #include "timer.h"
+#include "redisclient.h"
 
 extern "C" {
 #include "sai.h"
@@ -49,6 +50,11 @@ public:
 
     virtual void createEntry(const string& key, const vector<FieldValueTuple>& data);
     void deleteEntry(const string& name);
+
+protected:
+    virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) = 0;
+
+    bool m_entriesCreated = false;
 private:
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
@@ -68,6 +74,7 @@ public:
             int pollInterval);
     virtual ~PfcWdSwOrch(void);
 
+    void doTask(Consumer& consumer) override;
     virtual bool startWdOnPort(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     virtual bool stopWdOnPort(const Port& port);
@@ -75,6 +82,12 @@ public:
     void createEntry(const string& key, const vector<FieldValueTuple>& data);
     virtual void doTask(SelectableTimer &timer);
     //XXX Add port/queue state change event handlers
+
+    bool bake() override;
+
+protected:
+    bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) override;
+
 private:
     struct PfcWdQueueEntry
     {
@@ -118,6 +131,12 @@ private:
 
     bool m_bigRedSwitchFlag = false;
     int m_pollInterval;
+
+    shared_ptr<DBConnector> m_applDb = nullptr;
+    // Track queues in storm
+    shared_ptr<Table> m_applTable = nullptr;
+    // used for hdel
+    RedisClient m_applDbRedisClient;
 };
 
 #endif

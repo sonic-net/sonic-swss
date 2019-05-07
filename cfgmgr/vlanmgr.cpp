@@ -238,7 +238,16 @@ void VlanMgr::doVlanTask(Consumer &consumer)
         }
 
         int vlan_id;
-        vlan_id = stoi(key.substr(4));
+        try
+        {
+            vlan_id = stoi(key.substr(4));
+        }
+        catch (...)
+        {
+            SWSS_LOG_ERROR("Invalid key format. Not a number after 'Vlan' prefix: %s", key.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
 
         string vlan_alias, port_alias;
         string op = kfvOp(t);

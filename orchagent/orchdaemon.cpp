@@ -98,9 +98,9 @@ bool OrchDaemon::init()
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
-    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_configDb, CFG_VXLAN_TUNNEL_TABLE_NAME);
+    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_orch);
-    VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_configDb, CFG_VXLAN_TUNNEL_MAP_TABLE_NAME);
+    VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_applDb, APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_map_orch);
     VxlanVrfMapOrch *vxlan_vrf_orch = new VxlanVrfMapOrch(m_applDb, APP_VXLAN_VRF_TABLE_NAME);
     gDirectory.set(vxlan_vrf_orch);
@@ -190,10 +190,9 @@ bool OrchDaemon::init()
     {
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
-        gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
-    } else {
-        gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
     }
+    TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
+    gAclOrch = new AclOrch(acl_table_connectors, stateDbSwitchTable, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
 
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);
@@ -217,7 +216,8 @@ bool OrchDaemon::init()
         CFG_PFC_WD_TABLE_NAME
     };
 
-    if (platform == MLNX_PLATFORM_SUBSTRING)
+    if (platform == MLNX_PLATFORM_SUBSTRING
+        || platform == NPS_PLATFORM_SUBSTRING)
     {
 
         static const vector<sai_port_stat_t> portStatIds =
