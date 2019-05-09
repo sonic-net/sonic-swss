@@ -13,16 +13,16 @@ class TestVlan(object):
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
-    def create_vlan(self, vlan, sleep=1):
+    def create_vlan(self, vlan):
         tbl = swsscommon.Table(self.cdb, "VLAN")
         fvs = swsscommon.FieldValuePairs([("vlanid", vlan)])
         tbl.set("Vlan" + vlan, fvs)
-        time.sleep(sleep)
+        time.sleep(1)
 
-    def remove_vlan(self, vlan, sleep=1):
+    def remove_vlan(self, vlan):
         tbl = swsscommon.Table(self.cdb, "VLAN")
         tbl._del("Vlan" + vlan)
-        time.sleep(sleep)
+        time.sleep(1)
 
     def create_vlan_member(self, vlan, interface):
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
@@ -260,9 +260,8 @@ class TestVlan(object):
         # create max vlan
         vlan = min_vid
         while vlan <= max_vid:
-            self.create_vlan(str(vlan), 0)
+            self.create_vlan(str(vlan))
             vlan += 1
-        time.sleep(150)
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
@@ -272,9 +271,8 @@ class TestVlan(object):
         # remove all vlan
         vlan = min_vid
         while vlan <= max_vid:
-            self.remove_vlan(str(vlan), 0)
+            self.remove_vlan(str(vlan))
             vlan += 1
-        time.sleep(200)
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
