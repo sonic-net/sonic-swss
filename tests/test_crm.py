@@ -15,15 +15,7 @@ def getCrmCounterValue(dvs, key, counter):
         if k[0] == counter:
             return int(k[1])
 
-<<<<<<< HEAD
-def getCrmConfigValue(dvs, key, counter):
-
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    crm_stats_table = swsscommon.Table(config_db, 'CRM')
-
-    for k in crm_stats_table.get(key)[1]:
-        if k[0] == counter:
-            return int(k[1])
+    return 0
 
 
 def getCrmConfigStr(dvs, key, counter):
@@ -34,10 +26,7 @@ def getCrmConfigStr(dvs, key, counter):
     for k in crm_stats_table.get(key)[1]:
         if k[0] == counter:
             return k[1]
-=======
-    return 0
-
->>>>>>> official/master
+    return "" 
 
 def setReadOnlyAttr(dvs, obj, attr, val):
 
