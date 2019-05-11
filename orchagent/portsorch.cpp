@@ -2823,6 +2823,12 @@ bool PortsOrch::addLag(string lag_alias)
     lag.m_members = set<string>();
     m_portList[lag_alias] = lag;
 
+    /* Add lag name map to counter table */
+    FieldValueTuple tuple(lag_alias, sai_serialize_object_id(lag_id));
+    vector<FieldValueTuple> fields;
+    fields.push_back(tuple);
+    m_counterTable->set("",fields);
+
     PortUpdate update = { lag, true };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
@@ -2855,6 +2861,9 @@ bool PortsOrch::removeLag(Port lag)
     removeAclTableGroup(lag);
 
     SWSS_LOG_NOTICE("Remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
+
+    /* Remove LAG name map from counter table */
+    m_counterTable->hdel("",lag.m_alias.c_str());
 
     m_portList.erase(lag.m_alias);
 
