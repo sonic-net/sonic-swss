@@ -7,6 +7,7 @@
 #define ECHO_CMD             "/bin/echo"
 #define BASH_CMD             "/bin/bash"
 #define GREP_CMD             "/bin/grep"
+#define SED_CMD              "/bin/sed"
 #define TEAMD_CMD            "/usr/bin/teamd"
 #define TEAMDCTL_CMD         "/usr/bin/teamdctl"
 
