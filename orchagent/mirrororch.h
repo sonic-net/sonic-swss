@@ -7,6 +7,7 @@
 #include "neighorch.h"
 #include "routeorch.h"
 #include "fdborch.h"
+#include "policerorch.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -30,6 +31,7 @@ struct MirrorEntry
     uint8_t dscp;
     uint8_t ttl;
     uint8_t queue;
+    string policer;
 
     struct
     {
@@ -65,7 +67,7 @@ class MirrorOrch : public Orch, public Observer, public Subject
 {
 public:
     MirrorOrch(TableConnector appDbConnector, TableConnector confDbConnector,
-               PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch);
+               PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch);
 
     void update(SubjectType, void *);
     bool sessionExists(const string&);
@@ -79,6 +81,7 @@ private:
     RouteOrch *m_routeOrch;
     NeighOrch *m_neighOrch;
     FdbOrch *m_fdbOrch;
+    PolicerOrch *m_policerOrch;
 
     Table m_mirrorTable;
 
