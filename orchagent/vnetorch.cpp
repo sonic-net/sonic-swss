@@ -1423,7 +1423,7 @@ bool VNetOrch::addOperation(const Request& request)
                                 vnet_name.c_str(), tunnel.c_str());
             }
 
-            SWSS_LOG_INFO("VNET '%s' was added ", vnet_name.c_str());
+            SWSS_LOG_NOTICE("VNET '%s' was added ", vnet_name.c_str());
         }
         else
         {
