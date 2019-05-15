@@ -14,7 +14,7 @@ LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
 CFLAGS_GTEST =
 LDADD_GTEST = -L/usr/src/gtest
 
-tests_SOURCES = swssnet_ut.cpp request_parser_ut.cpp aclorch_ut.cpp fake_main.cpp \
+tests_SOURCES = swssnet_ut.cpp request_parser_ut.cpp aclorch_ut.cpp saispy_ut.cpp fake_main.cpp \
                 ../orchagent/orchdaemon.cpp \
                 ../orchagent/orch.cpp \
                 ../orchagent/notifications.cpp \

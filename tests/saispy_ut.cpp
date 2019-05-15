@@ -31,17 +31,17 @@ TEST(SaiSpy, CURD)
     sai_object_id_t oid;
 
     auto status = acl_api->create_acl_table(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == 1);
-    ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+    ASSERT_EQ(oid, 1);
+    ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
     status = acl_api->remove_acl_table(2);
-    ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+    ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
     status = acl_api->set_acl_table_attribute(3, nullptr);
-    ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+    ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
     status = acl_api->get_acl_table_attribute(4, 0, nullptr);
-    ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+    ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
     sai_object_id_t exp_oid_1 = 100;
     sai_object_id_t exp_oid_2 = 200;
@@ -67,33 +67,17 @@ TEST(SaiSpy, CURD)
         return (sai_status_t)(oid == exp_oid_2 ? SAI_STATUS_SUCCESS : SAI_STATUS_FAILURE);
     });
 
-    auto x_fake = x->fake;
-    auto x_spy = x->spy;
-    auto x_spy_ref = &x->spy;
-
-    auto y_fake = y->fake;
-    auto y_spy = y->spy;
-    auto y_spy_ref = &y->spy;
-
-    auto w_fake = w->fake;
-    auto w_spy = w->spy;
-    auto w_spy_ref = &w->spy;
-
-    auto z_fake = z->fake;
-    auto z_spy = z->spy;
-    auto z_spy_ref = &z->spy;
-
     acl_api->create_acl_table(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == exp_oid_1);
+    ASSERT_EQ(oid, exp_oid_1);
 
     status = acl_api->remove_acl_table(exp_oid_2);
-    ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+    ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
     status = acl_api->set_acl_table_attribute(exp_oid_2, nullptr);
-    ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+    ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
     status = acl_api->get_acl_table_attribute(exp_oid_2, 0, nullptr);
-    ASSERT_TRUE(status == SAI_STATUS_SUCCESS);
+    ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 }
 
 TEST(SaiSpy, Same_Function_Signature_In_Same_API_Table)
@@ -114,10 +98,10 @@ TEST(SaiSpy, Same_Function_Signature_In_Same_API_Table)
     sai_object_id_t oid;
 
     acl_api_1->create_acl_table(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == 1);
+    ASSERT_EQ(oid, 1);
 
     acl_api_1->create_acl_entry(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == 2);
+    ASSERT_EQ(oid, 2);
 
     sai_object_id_t exp_oid_1 = 100;
     sai_object_id_t exp_oid_2 = 200;
@@ -135,10 +119,10 @@ TEST(SaiSpy, Same_Function_Signature_In_Same_API_Table)
     });
 
     acl_api_1->create_acl_table(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == exp_oid_1);
+    ASSERT_EQ(oid, exp_oid_1);
 
     acl_api_1->create_acl_entry(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == exp_oid_2);
+    ASSERT_EQ(oid, exp_oid_2);
 }
 
 TEST(SaiSpy, Same_Function_Signature_In_Different_API_Table)
@@ -160,10 +144,10 @@ TEST(SaiSpy, Same_Function_Signature_In_Different_API_Table)
     sai_object_id_t oid;
 
     acl_api_1->create_acl_table(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == 1);
+    ASSERT_EQ(oid, 1);
 
     acl_api_2->create_acl_table(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == 2);
+    ASSERT_EQ(oid, 2);
 
     sai_object_id_t exp_oid_1 = 100;
     sai_object_id_t exp_oid_2 = 200;
@@ -183,10 +167,10 @@ TEST(SaiSpy, Same_Function_Signature_In_Different_API_Table)
     });
 
     acl_api_1->create_acl_table(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == exp_oid_1);
+    ASSERT_EQ(oid, exp_oid_1);
 
     acl_api_2->create_acl_table(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == exp_oid_2);
+    ASSERT_EQ(oid, exp_oid_2);
 }
 
 TEST(SaiSpy, create_switch_and_acl_table)
@@ -208,10 +192,10 @@ TEST(SaiSpy, create_switch_and_acl_table)
     sai_object_id_t oid;
 
     acl_api->create_acl_table(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == 1);
+    ASSERT_EQ(oid, 1);
 
     switch_api->create_switch(&oid, 0, nullptr);
-    ASSERT_TRUE(oid == 2);
+    ASSERT_EQ(oid, 2);
 
     sai_object_id_t exp_oid_1 = 100;
     sai_object_id_t exp_oid_2 = 200;
@@ -229,8 +213,8 @@ TEST(SaiSpy, create_switch_and_acl_table)
     });
 
     acl_api->create_acl_table(&oid, 1, 0, nullptr);
-    ASSERT_TRUE(oid == exp_oid_1);
+    ASSERT_EQ(oid, exp_oid_1);
 
     switch_api->create_switch(&oid, 0, nullptr);
-    ASSERT_TRUE(oid == exp_oid_2);
+    ASSERT_EQ(oid, exp_oid_2);
 }
