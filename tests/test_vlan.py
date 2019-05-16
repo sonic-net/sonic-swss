@@ -12,6 +12,7 @@ class TestVlan(object):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        self.sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
 
     def create_vlan(self, vlan):
         tbl = swsscommon.Table(self.cdb, "VLAN")
@@ -24,9 +25,9 @@ class TestVlan(object):
         tbl._del("Vlan" + vlan)
         time.sleep(1)
 
-    def create_vlan_member(self, vlan, interface):
+    def create_vlan_member(self, vlan, interface, tagging_mode="untagged"):
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
-        fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
+        fvs = swsscommon.FieldValuePairs([("tagging_mode", tagging_mode)])
         tbl.set("Vlan" + vlan + "|" + interface, fvs)
         time.sleep(1)
 
@@ -38,6 +39,28 @@ class TestVlan(object):
     def check_syslog(self, dvs, marker, err_log, vlan_str, expected_cnt):
         (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep vlanmgrd | grep \"%s\" | grep -i %s | wc -l" % (marker, err_log, vlan_str)])
         assert num.strip() == str(expected_cnt)
+
+    def check_app_db_vlan_fields(self, fvs, admin_status="up", mtu="9100"):
+        for fv in fvs:
+            if fv[0] == "admin_status":
+                assert fv[1] == admin_status
+            elif fv[0] == "mtu":
+                assert fv[1] == mtu
+
+    def check_app_db_vlan_member_fields(self, fvs, tagging_mode="untagged"):
+        for fv in fvs:
+            if fv[0] == "tagging_mode":
+                assert fv[1] == tagging_mode
+
+    def check_state_db_vlan_fields(self, fvs, state="ok"):
+        for fv in fvs:
+            if fv[0] == "state":
+                assert fv[1] == state
+
+    def check_state_db_vlan_member_fields(self, fvs, state="ok"):
+        for fv in fvs:
+            if fv[0] == "state":
+                assert fv[1] == state
 
     def test_VlanAddRemove(self, dvs, testlog):
         self.setup_db(dvs)
@@ -278,3 +301,118 @@ class TestVlan(object):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
         assert len(vlan_entries) == 0
+
+    def test_VlanDbData(self, dvs, testlog):
+        self.setup_db(dvs)
+        vlan = "2"
+
+        # create vlan
+        self.create_vlan(vlan)
+
+        # check app database
+        tbl = swsscommon.Table(self.pdb, "VLAN_TABLE")
+        vlan_entries = tbl.getKeys()
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        (status, fvs) = tbl.get(vlan_oid)
+        self.check_app_db_vlan_fields(fvs)
+
+        # check state database
+        tbl = swsscommon.Table(self.sdb, "VLAN_TABLE")
+        vlan_entries = tbl.getKeys()
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        (status, fvs) = tbl.get(vlan_oid)
+        self.check_state_db_vlan_fields(fvs)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        (status, fvs) = tbl.get(vlan_oid)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_VLAN_ATTR_VLAN_ID":
+                assert fv[1] == vlan
+
+        # remove vlan
+        self.remove_vlan(vlan)
+
+    @pytest.mark.parametrize("test_input, expected", [
+        (["untagged"],        ["SAI_VLAN_TAGGING_MODE_UNTAGGED"]),
+        (["tagged"],          ["SAI_VLAN_TAGGING_MODE_TAGGED"]),
+        (["priority_tagged"], ["SAI_VLAN_TAGGING_MODE_PRIORITY_TAGGED"]),
+    ])
+    def test_VlanMemberDbData(self, dvs, testlog, test_input, expected):
+        self.setup_db(dvs)
+        vlan = "2"
+        interface = "Ethernet0"
+        tagging_mode = test_input[0]
+
+        # create vlan
+        self.create_vlan(vlan)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        # create vlan member
+        self.create_vlan_member(vlan, interface, tagging_mode)
+
+        # check app database
+        tbl = swsscommon.Table(self.pdb, "VLAN_MEMBER_TABLE")
+        vlan_member_entries = tbl.getKeys()
+        assert len(vlan_member_entries) == 1
+        vlan_member_oid = vlan_member_entries[0]
+
+        (status, fvs) = tbl.get(vlan_member_oid)
+        self.check_app_db_vlan_member_fields(fvs, tagging_mode)
+
+        # check state database
+        tbl = swsscommon.Table(self.sdb, "VLAN_MEMBER_TABLE")
+        vlan_member_entries = tbl.getKeys()
+        assert len(vlan_member_entries) == 1
+        vlan_member_oid = vlan_member_entries[0]
+
+        (status, fvs) = tbl.get(vlan_member_oid)
+        self.check_state_db_vlan_member_fields(fvs)
+
+        # check asic database
+        bridge_port_map = {}
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+        bridge_port_entries = tbl.getKeys()
+        for key in bridge_port_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_BRIDGE_PORT_ATTR_PORT_ID":
+                    bridge_port_map[key] = fv[1]
+
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        vlan_member_entries = tbl.getKeys()
+        assert len(vlan_member_entries) == 1
+
+        (status, fvs) = tbl.get(vlan_member_entries[0])
+        assert status == True
+        assert len(fvs) == 3
+        for fv in fvs:
+            if fv[0] == "SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE":
+                assert fv[1] == expected[0]
+            elif fv[0] == "SAI_VLAN_MEMBER_ATTR_VLAN_ID":
+                assert fv[1] == vlan_oid
+            elif fv[0] == "SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID":
+                assert dvs.asicdb.portoidmap[bridge_port_map[fv[1]]] == interface
+            else:
+                assert False
+
+        # remove vlan member
+        self.remove_vlan_member(vlan, interface)
+
+        # remove vlan
+        self.remove_vlan(vlan)
