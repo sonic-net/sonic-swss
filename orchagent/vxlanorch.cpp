@@ -626,17 +626,16 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
     SWSS_LOG_ENTER();
 
     auto src_ip = request.getAttrIP("src_ip");
-    if (!src_ip.isV4())
-    {
-        SWSS_LOG_ERROR("Wrong format of the attribute: 'src_ip'. Currently only IPv4 address is supported");
-        return true;
-    }
 
     IpAddress dst_ip;
     auto attr_names = request.getAttrFieldNames();
     if (attr_names.count("dst_ip") == 0)
     {
-        dst_ip = IpAddress("0.0.0.0");
+        if(src_ip.isV4()) {
+            dst_ip = IpAddress("0.0.0.0");
+        } else {
+            dst_ip = IpAddress("::");
+        }
     }
     else
     {
