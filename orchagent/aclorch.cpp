@@ -2779,6 +2779,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
     m_AclTables[table_oid] = flowWLTable;
     SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", flowWLTable.description.c_str(), table_oid);
 
@@ -2839,6 +2840,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
     m_AclTables[table_oid] = dropWLTable;
     SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", dropWLTable.description.c_str(), table_oid);
 
@@ -2870,6 +2872,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);
     m_AclTables.erase(table_oid);
 
     table_id = TABLE_TYPE_DTEL_DROP_WATCHLIST;
@@ -2889,6 +2892,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);
     m_AclTables.erase(table_oid);
 
     return SAI_STATUS_SUCCESS;
