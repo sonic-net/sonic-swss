@@ -27,7 +27,6 @@ private:
     void doTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
     void doVlanMemberTask(Consumer &consumer);
-    void processUntaggedVlanMembers(string vlan, const string &members);
 
     bool addHostVlan(int vlan_id);
     bool removeHostVlan(int vlan_id);

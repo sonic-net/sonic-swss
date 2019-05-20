@@ -257,7 +257,6 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             string admin_status;
             string mtu = DEFAULT_MTU_STR;
             vector<FieldValueTuple> fvVector;
-            string members;
 
             /*
              * Don't program vlan again if state is already set.
@@ -299,9 +298,6 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                      */
                     SWSS_LOG_DEBUG("%s mtu %s: Host VLAN mtu setting to be supported.", key.c_str(), mtu.c_str());
                 }
-                else if (fvField(i) == "members@") {
-                    members = fvValue(i);
-                }
             }
             /* fvVector should not be empty */
             if (fvVector.empty())
@@ -322,15 +318,6 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             m_stateVlanTable.set(key, fvVector);
 
             it = consumer.m_toSync.erase(it);
-
-            /*
-             * Members configured together with VLAN in untagged mode.
-             * This is to be compatible with access VLAN configuration from minigraph.
-             */
-            if (!members.empty())
-            {
-                processUntaggedVlanMembers(key, members);
-            }
         }
         else if (op == DEL_COMMAND)
         {
@@ -404,53 +391,6 @@ bool VlanMgr::isVlanMemberStateOk(const string &vlanMemberKey)
         return true;
     }
     return false;
-}
-
-/*
- * members is grouped in format like
- * "Ethernet1,Ethernet2,Ethernet3,Ethernet4,Ethernet5,Ethernet6,
- * Ethernet7,Ethernet8,Ethernet9,Ethernet10,Ethernet11,Ethernet12,
- * Ethernet13,Ethernet14,Ethernet15,Ethernet16,Ethernet17,Ethernet18,
- * Ethernet19,Ethernet20,Ethernet21,Ethernet22,Ethernet23,Ethernet24"
- */
-void VlanMgr::processUntaggedVlanMembers(string vlan, const string &members)
-{
-
-    auto consumer_it = m_consumerMap.find(CFG_VLAN_MEMBER_TABLE_NAME);
-    if (consumer_it == m_consumerMap.end())
-    {
-        SWSS_LOG_ERROR("Failed to find tableName:%s", CFG_VLAN_MEMBER_TABLE_NAME);
-        return;
-    }
-    auto& consumer = static_cast<Consumer &>(*consumer_it->second);
-
-    vector<string> vlanMembers = tokenize(members, ',');
-
-    for (auto vlanMember : vlanMembers)
-    {
-        string member_key = vlan + CONFIGDB_KEY_SEPARATOR + vlanMember;
-
-        /* Directly put it into consumer.m_toSync map */
-        if (consumer.m_toSync.find(member_key) == consumer.m_toSync.end())
-        {
-            vector<FieldValueTuple> fvVector;
-            FieldValueTuple t("tagging_mode", "untagged");
-            fvVector.push_back(t);
-            consumer.m_toSync[member_key] = make_tuple(member_key, SET_COMMAND, fvVector);
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, consumer.m_toSync[member_key])).c_str());
-        }
-        /*
-         * There is pending task from consumer pipe, in this case just skip it.
-         */
-        else
-        {
-            SWSS_LOG_WARN("Duplicate key %s found in table:%s", member_key.c_str(), CFG_VLAN_MEMBER_TABLE_NAME);
-            continue;
-        }
-    }
-
-    doTask(consumer);
-    return;
 }
 
 void VlanMgr::doVlanMemberTask(Consumer &consumer)
