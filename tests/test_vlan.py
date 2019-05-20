@@ -251,6 +251,7 @@ class TestVlan(object):
             #remove vlan
             self.remove_vlan(vlan)
 
+    @pytest.mark.skip(reason="AddMaxVlan take too long to execute")
     def test_AddMaxVlan(self, dvs, testlog):
         self.setup_db(dvs)
 
