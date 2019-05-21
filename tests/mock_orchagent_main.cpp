@@ -5,8 +5,6 @@ extern "C" {
 
 #include "orchdaemon.h"
 
-// #include "main.cpp"
-
 /* Global variables */
 sai_object_id_t gVirtualRouterId;
 sai_object_id_t gUnderlayIfId;
