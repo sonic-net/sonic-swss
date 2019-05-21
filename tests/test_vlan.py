@@ -267,7 +267,7 @@ class TestVlan(object):
 
         # create vlan
         self.create_vlan(vlan)
-        
+
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
