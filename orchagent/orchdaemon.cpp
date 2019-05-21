@@ -148,7 +148,12 @@ bool OrchDaemon::init()
         CFG_DTEL_EVENT_TABLE_NAME
     };
 
-    WatermarkOrch *wm_orch = new WatermarkOrch(m_configDb, CFG_WATERMARK_TABLE_NAME);
+    vector<string> wm_tables = {
+        CFG_WATERMARK_TABLE_NAME,
+        CFG_FLEX_COUNTER_TABLE_NAME
+    };
+
+    WatermarkOrch *wm_orch = new WatermarkOrch(m_configDb, wm_tables);
 
     /*
      * The order of the orch list is important for state restore of warm start and
@@ -190,10 +195,9 @@ bool OrchDaemon::init()
     {
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
-        gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
-    } else {
-        gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
     }
+    TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
+    gAclOrch = new AclOrch(acl_table_connectors, stateDbSwitchTable, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
 
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);

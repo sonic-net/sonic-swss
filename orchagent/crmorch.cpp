@@ -215,7 +215,6 @@ void CrmOrch::doTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             SWSS_LOG_ERROR("Unsupported operation type %s\n", op.c_str());
-            it = consumer.m_toSync.erase(it);
         }
         else
         {

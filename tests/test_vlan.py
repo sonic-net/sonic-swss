@@ -267,7 +267,7 @@ class TestVlan(object):
 
         # create vlan
         self.create_vlan(vlan)
-
+        
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
@@ -317,3 +317,32 @@ class TestVlan(object):
 
         # remove vlan
         self.remove_vlan(vlan)
+
+    @pytest.mark.skip(reason="AddMaxVlan take too long to execute")
+    def test_AddMaxVlan(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        min_vid = 2
+        max_vid = 4094
+
+        # create max vlan
+        vlan = min_vid
+        while vlan <= max_vid:
+            self.create_vlan(str(vlan))
+            vlan += 1
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == (4094-1)
+
+        # remove all vlan
+        vlan = min_vid
+        while vlan <= max_vid:
+            self.remove_vlan(str(vlan))
+            vlan += 1
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 0
