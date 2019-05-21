@@ -15,6 +15,8 @@ def getCrmCounterValue(dvs, key, counter):
         if k[0] == counter:
             return int(k[1])
 
+    return 0
+
 
 def setReadOnlyAttr(dvs, obj, attr, val):
 
@@ -554,6 +556,8 @@ def test_CrmAcl(dvs, testlog):
 
     bind_ports = ["Ethernet0", "Ethernet4"]
 
+    old_table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
+
     # create ACL table
     ttbl = swsscommon.Table(db, "ACL_TABLE")
     fvs = swsscommon.FieldValuePairs([("policy_desc", "test"), ("type", "L3"), ("ports", ",".join(bind_ports))])
@@ -565,8 +569,9 @@ def test_CrmAcl(dvs, testlog):
     rtbl.set("test|acl_test_rule", fvs)
 
     time.sleep(2)
-
-    table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
+    
+    new_table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
+    table_used_counter = new_table_used_counter - old_table_used_counter
     assert table_used_counter == 1
 
     # get ACL table key
@@ -596,6 +601,7 @@ def test_CrmAcl(dvs, testlog):
 
     time.sleep(2)
 
-    table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
+    new_table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
+    table_used_counter = new_table_used_counter - old_table_used_counter
     assert table_used_counter == 0
 

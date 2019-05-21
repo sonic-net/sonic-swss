@@ -566,7 +566,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     MirrorSessionUpdate update = { name, true };
     notify(SUBJECT_TYPE_MIRROR_SESSION_CHANGE, static_cast<void *>(&update));
 
-    SWSS_LOG_NOTICE("Activate mirror session %s", name.c_str());
+    SWSS_LOG_NOTICE("Activated mirror session %s", name.c_str());
 
     return true;
 }
@@ -593,7 +593,7 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     // Store whole state into StateDB, since it is far from that frequent it's durable
     setSessionState(name, session);
 
-    SWSS_LOG_NOTICE("Deactive mirror session %s", name.c_str());
+    SWSS_LOG_NOTICE("Deactivated mirror session %s", name.c_str());
 
     return true;
 }

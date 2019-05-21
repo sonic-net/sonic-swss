@@ -112,14 +112,6 @@ For example (reorder output)
     mtu                 = 1*4DIGIT             ; MTU for the IP interface of the VLAN
 
 ---------------------------------------------
-### VLAN_MEMBER_TABLE
-    ;Defines interfaces which are members of a vlan
-    ;Status: work in progress
-
-    key                 = VLAN_MEMBER_TABLE:"Vlan"vlanid:ifname ; physical port "ifname" is a member of a VLAN "VlanX"
-    tagging_mode        = "untagged" / "tagged" / "priority_tagged" ; default value as untagged
-
----------------------------------------------
 ### LAG_TABLE
     ;a logical, link aggregation group interface (802.3ad) made of one or more ports
     ;In SONiC, data is loaded by teamsyncd
@@ -570,12 +562,13 @@ Equivalent RedisDB entry:
 
 ----------------------------------------------
 
-### PORT\_MIRROR\_TABLE
-Stores information about mirroring session and its properties.
+### MIRROR\_SESSION\_TABLE
+Mirror session table
+Stores information about mirror sessions and their properties.
 
-    key       = PORT_MIRROR_TABLE:mirror_session_name ; mirror_session_name is
-                                                      ; unique session
-                                                      ; identifier
+    key       = MIRROR_SESSION_TABLE:mirror_session_name ; mirror_session_name is
+                                                         ; unique session
+                                                         ; identifier
     ; field   = value
     status    = "active"/"inactive"   ; Session state.
     src_ip    = ipv4_address          ; Session souce IP address
@@ -584,9 +577,11 @@ Stores information about mirroring session and its properties.
     dscp      = h8                    ; Session DSCP
     ttl       = h8                    ; Session TTL
     queue     = h8                    ; Session output queue
+    policer   = policer_name          ; Session policer name
 
     ;value annotations
     mirror_session_name = 1*255VCHAR
+    policer_name        = 1*255VCHAR
     h8                  = 1*2HEXDIG
     h16                 = 1*4HEXDIG
     ipv4_address        = dec-octet "." dec-octet "." dec-octet "." dec-octet “/” %d1-32
@@ -628,7 +623,45 @@ Equivalent RedisDB entry:
     10) "64"
     11) "queue"
     12) "0"
-    127.0.0.1:6379>
+
+---------------------------------------------
+
+### POLICER_TABLE
+Policer table
+Stores information about policers and their properties.
+
+packet_action = "drop" | "forward" | "copy" | "copy_cancel" | "trap" | "log" | "deny" | "transit"
+
+    ;Key
+    key = "POLICER_TABLE:name"
+
+    ;Field-Value tuples
+    meter_type  = "packets" | "bytes"
+    mode        = "sr_tcm" | "tr_tcm" | "storm"
+    color       = "aware" | "blind"
+    cbs         = number ;packets or bytes depending on the meter_type value
+    cir         = number ;packets or bytes depending on the meter_type value
+    pbs         = number ;packets or bytes depending on the meter_type value
+    pir         = number ;packets or bytes depending on the meter_type value
+
+    green_action   = packet_action
+    yellow_action  = packet_action
+    red_action     = packet_action
+
+    Example:
+    127.0.0.1:6379> hgetall "POLICER_TABLE:POLICER_1"
+     1) "cbs"
+     2) "600"
+     3) "cir"
+     4) "600"
+     5) "meter_type"
+     6) "packets"
+     7) "mode"
+     8) "sr_tcm"
+     9) "red_action"
+    10) "drop"
+
+----------------------------------------------
 
 ### VXLAN\_TUNNEL\_MAP
     ;Stores vxlan tunnel map configuration. Defines mapping between vxlan vni and vrf
