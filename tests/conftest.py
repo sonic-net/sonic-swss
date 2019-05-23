@@ -299,7 +299,7 @@ class DockerVirtualSwitch(object):
             fds = re_space.split(l)
             if len(fds) > 1:
                 pname = fds[1].rstrip(":")
-                m = re.compile("(eth|lo|Bridge|Ethernet)").match(pname)
+                m = re.compile("(eth|lo|Bridge|Ethernet|vEthernet)").match(pname)
                 if not m:
                     self.ctn.exec_run("ip link del {}".format(pname))
                     print "remove extra link {}".format(pname)
