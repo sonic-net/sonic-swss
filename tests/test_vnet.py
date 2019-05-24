@@ -939,3 +939,77 @@ class TestVnetOrch(object):
 
         create_vnet_local_routes(dvs, "8.8.10.0/24", 'Vnet_20', 'Vlan2002')
         vnet_obj.check_vnet_local_routes(dvs, 'Vnet_20')
+
+
+    '''
+    Test 4 - IPv6 Vxlan tunnel test
+    '''
+    def test_vnet_orch_4(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_v6'
+        vni1 = '3001'
+        vni2 = '3002'
+        vni3 = '3003'
+        vni4 = '3004'
+        vnet_pref = 'Vnet_'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, 'fd:2::32')
+        create_vnet_entry(dvs, vnet_pref + vni1, tunnel_name, vni1, "")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_pref + vni1)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_pref + vni1, vni1)
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:2::32')
+
+        vid = create_vlan_interface(dvs, "Vlan300", "Ethernet24", vnet_pref + vni1, "100.100.3.1/24")
+        vnet_obj.check_router_interface(dvs, vnet_pref + vni1, vid)
+
+        vid = create_vlan_interface(dvs, "Vlan301", "Ethernet28", vnet_pref + vni1, "100.100.4.1/24")
+        vnet_obj.check_router_interface(dvs, vnet_pref + vni1, vid)
+
+        create_vnet_routes(dvs, "100.100.1.1/32", vnet_pref + vni1, 'fd:2::33')
+        vnet_obj.check_vnet_routes(dvs, vnet_pref + vni1, 'fd:2::33', tunnel_name)
+
+        create_vnet_routes(dvs, "100.100.1.2/32", vnet_pref + vni1, 'fd:2::33')
+        vnet_obj.check_vnet_routes(dvs, vnet_pref + vni1, 'fd:2::33', tunnel_name)
+
+        create_vnet_local_routes(dvs, "100.100.3.0/24", vnet_pref + vni1, 'Vlan300')
+        vnet_obj.check_vnet_local_routes(dvs, vnet_pref + vni1)
+
+        create_vnet_local_routes(dvs, "100.100.4.0/24", vnet_pref + vni1, 'Vlan301')
+        vnet_obj.check_vnet_local_routes(dvs, vnet_pref + vni1)
+
+        #Create Physical Interface in another Vnet
+
+        create_vnet_entry(dvs, vnet_pref + vni2, tunnel_name, vni2, "")
+
+        vnet_obj.check_vnet_entry(dvs, vnet_pref + vni2)
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_pref + vni2, vni2)
+
+        create_phy_interface(dvs, "Ethernet60", vnet_pref + vni2, "100.102.1.1/24")
+        vnet_obj.check_router_interface(dvs, vnet_pref + vni2)
+
+        create_vnet_routes(dvs, "100.100.2.1/32", vnet_pref + vni2, 'fd:2::34', "00:12:34:56:78:9A")
+        vnet_obj.check_vnet_routes(dvs, vnet_pref + vni2, 'fd:2::34', tunnel_name, "00:12:34:56:78:9A")
+
+        create_vnet_local_routes(dvs, "100.102.1.0/24", vnet_pref + vni2, 'Ethernet60')
+        vnet_obj.check_vnet_local_routes(dvs, vnet_pref + vni2)
+
+        # Test peering
+        create_vnet_entry(dvs, vnet_pref + vni3, tunnel_name, vni3, vnet_pref + vni4)
+
+        vnet_obj.check_vnet_entry(dvs, vnet_pref + vni3, [vnet_pref + vni4])
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_pref + vni3, vni3)
+
+        create_vnet_entry(dvs, vnet_pref + vni4, tunnel_name, vni4, vnet_pref + vni3)
+
+        vnet_obj.check_vnet_entry(dvs, vnet_pref + vni4, [vnet_pref + vni3])
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, vnet_pref + vni4, vni4)
+
+        create_vnet_routes(dvs, "5.5.5.10/32", vnet_pref + vni3, 'fd:2::35')
+        vnet_obj.check_vnet_routes(dvs, vnet_pref + vni4, 'fd:2::35', tunnel_name)
+
+        create_vnet_routes(dvs, "8.8.8.10/32", vnet_pref + vni4, 'fd:2::36')
+        vnet_obj.check_vnet_routes(dvs, vnet_pref + vni3, 'fd:2::36', tunnel_name)
