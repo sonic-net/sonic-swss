@@ -262,7 +262,7 @@ class TestVlan(object):
         while vlan <= max_vid:
             self.create_vlan(str(vlan), 0)
             vlan += 1
-        time.sleep(480)
+        time.sleep(360)
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
@@ -274,7 +274,7 @@ class TestVlan(object):
         while vlan <= max_vid:
             self.remove_vlan(str(vlan), 0)
             vlan += 1
-        time.sleep(480)
+        time.sleep(360)
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
