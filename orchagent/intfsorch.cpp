@@ -206,6 +206,46 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     return true;
 }
 
+bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix)
+{
+    SWSS_LOG_ENTER();
+
+    Port port;
+    if (!gPortsOrch->getPort(alias, port))
+    {
+        return false;
+    }
+
+    if (ip_prefix && m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
+    {
+        removeSubnetRoute(port, *ip_prefix);
+        removeIp2MeRoute(vrf_id, *ip_prefix);
+
+        if(port.m_type == Port::VLAN)
+        {
+            removeDirectedBroadcast(port, *ip_prefix);
+        }
+
+        m_syncdIntfses[alias].ip_addresses.erase(*ip_prefix);
+    }
+
+    /* Remove router interface that no IP addresses are associated with */
+    if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+    {
+        if (removeRouterIntfs(port))
+        {
+            m_syncdIntfses.erase(alias);
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 void IntfsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -257,7 +297,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         sai_object_id_t vrf_id = gVirtualRouterId;
         if (!vrf_name.empty())
         {
-            if (m_vrfOrch->isVRFexists(vrf_name))
+            if (!m_vrfOrch->isVRFexists(vrf_name))
             {
                 it++;
                 continue;
@@ -379,41 +419,50 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
-            vrf_id = port.m_vr_id;
-            if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
+            if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
             {
-                if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
+                /* Cannot locate the interface */
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            if (m_vnetInfses.find(alias) != m_vnetInfses.end())
+            {
+                vnet_name = m_vnetInfses.at(alias);
+            }
+
+            if (!vnet_name.empty())
+            {
+                VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
+                if (!vnet_orch->isVnetExists(vnet_name))
                 {
-                    removeSubnetRoute(port, ip_prefix);
-                    removeIp2MeRoute(vrf_id, ip_prefix);
-
-                    if(port.m_type == Port::VLAN)
-                    {
-                        removeDirectedBroadcast(port, ip_prefix);
-                    }
-
-                    m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
+                    it++;
+                    continue;
                 }
 
-                /* Remove router interface that no IP addresses are associated with */
-                if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+                if (vnet_orch->delIntf(alias, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
-                    if (removeRouterIntfs(port))
-                    {
-                        m_syncdIntfses.erase(alias);
-                        it = consumer.m_toSync.erase(it);
-                    }
-                    else
-                        it++;
+                    m_vnetInfses.erase(alias);
+                    it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
-                    it = consumer.m_toSync.erase(it);
+                    it++;
+                    continue;
                 }
             }
             else
-                /* Cannot locate the interface */
-                it = consumer.m_toSync.erase(it);
+            {
+                if (removeIntf(alias, port.m_vr_id, ip_prefix_in_key ? &ip_prefix : nullptr))
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                else
+                {
+                    it++;
+                    continue;
+                }
+            }
         }
     }
 }

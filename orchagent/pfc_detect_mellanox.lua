@@ -73,7 +73,7 @@ for i = n, 1, -1 do
                         if time_left <= poll_time then
                             redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
                             redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
-                            redis.call('PUBLISH', 'PFC_WD', '["' .. KEYS[i] .. '","storm"]')
+                            redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm"]')
                             is_deadlock = true
                             time_left = detection_time
                         else
@@ -81,7 +81,7 @@ for i = n, 1, -1 do
                         end
                     else
                         if pfc_wd_action == 'alert' and pfc_wd_status ~= 'operational' then
-                            redis.call('PUBLISH', 'PFC_WD', '["' .. KEYS[i] .. '","restore"]')
+                            redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","restore"]')
                         end
                         time_left = detection_time
                     end

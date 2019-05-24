@@ -826,7 +826,7 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &gro
                 {
                     SWSS_LOG_ERROR("Failed to bind port %s to ACL table group %lx, rv:%d",
                             port.m_alias.c_str(), group_oid, status);
-                    return status;
+                    return false;
                 }
                 break;
             }
@@ -842,7 +842,7 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &gro
                 {
                     SWSS_LOG_ERROR("Failed to bind LAG %s to ACL table group %lx, rv:%d",
                             port.m_alias.c_str(), group_oid, status);
-                    return status;
+                    return false;
                 }
                 break;
             }
@@ -858,18 +858,18 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &gro
                 {
                     SWSS_LOG_ERROR("Failed to bind VLAN %s to ACL table group %lx, rv:%d",
                             port.m_alias.c_str(), group_oid, status);
-                    return status;
+                    return false;
                 }
                 break;
             }
             default:
             {
                 SWSS_LOG_ERROR("Failed to bind %s port with type %d", port.m_alias.c_str(), port.m_type);
-                return SAI_STATUS_FAILURE;
+                return false;
             }
         }
 
-        SWSS_LOG_NOTICE("Create ACL table group and bind port %s to it", port.m_alias.c_str());
+        SWSS_LOG_NOTICE("Create %s ACL table group and bind port %s to it", ingress ? "ingress" : "egress", port.m_alias.c_str());
     }
 
     return true;
@@ -1415,8 +1415,8 @@ bool PortsOrch::bake()
     vector<FieldValueTuple> tuples;
     string value;
     bool foundPortConfigDone = m_portTable->hget("PortConfigDone", "count", value);
-    unsigned long portCount = stoul(value);
-    SWSS_LOG_NOTICE("foundPortConfigDone = %d, portCount = %lu, m_portCount = %u", foundPortConfigDone, portCount, m_portCount);
+    unsigned long portCount;
+    SWSS_LOG_NOTICE("foundPortConfigDone = %d", foundPortConfigDone);
 
     bool foundPortInitDone = m_portTable->get("PortInitDone", tuples);
     SWSS_LOG_NOTICE("foundPortInitDone = %d", foundPortInitDone);
@@ -1432,6 +1432,8 @@ bool PortsOrch::bake()
         return false;
     }
 
+    portCount = stoul(value);
+    SWSS_LOG_NOTICE("portCount = %lu, m_portCount = %u", portCount, m_portCount);
     if (portCount != keys.size() - 2)
     {
         // Invalid port table
@@ -1788,7 +1790,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
                         SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
                     }
-                    m_portList[alias].m_speed = speed;
+                    p.m_speed = speed;
+                    m_portList[alias] = p;
                 }
 
                 if (mtu != 0 && mtu != p.m_mtu)
