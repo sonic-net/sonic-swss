@@ -397,6 +397,7 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
             {
                 SWSS_LOG_ERROR("Entry exists: neighbor %s on %s, rv:%d",
                            macAddress.to_string().c_str(), alias.c_str(), status);
+                /* Returning True so as to skip retry */
                 return true;
             }
             else
