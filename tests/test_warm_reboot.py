@@ -731,6 +731,10 @@ def test_swss_neighbor_syncup(dvs, testlog):
     # check restore Count
     swss_app_check_RestoreCount_single(state_db, restore_count, "neighsyncd")
 
+    # post-cleanup
+    dvs.runcmd("ip -s neigh flush all")
+    dvs.runcmd("ip -6 -s neigh flush all")
+
     intf_tbl._del("{}|24.0.0.1/24".format(intfs[0]))
     intf_tbl._del("{}|28.0.0.9/24".format(intfs[1]))
     intf_tbl._del("{}|2400::1/64".format(intfs[0]))
@@ -741,8 +745,6 @@ def test_swss_neighbor_syncup(dvs, testlog):
 # TODO: The condition of warm restart readiness check is still under discussion.
 def test_OrchagentWarmRestartReadyCheck(dvs, testlog):
 
-    # do a pre-cleanup
-    dvs.runcmd("ip -s -s neigh flush all")
     time.sleep(1)
 
     dvs.runcmd("config warm_restart enable swss")
@@ -946,27 +948,13 @@ def set_restart_timer(dvs, db, app_name, value):
         ]
     )
 
-
-# Temporary instruction to activate warm_restart. To be deleted once equivalent CLI
-# function is pushed to sonic-utils.
-def enable_warmrestart(dvs, db, app_name):
-    create_entry_tbl(
-        db,
-        swsscommon.CFG_WARM_RESTART_TABLE_NAME, app_name,
-        [
-            ("enable", "true"),
-        ]
-    )
-
-
 ################################################################################
 #
 # Routing warm-restart testcases
 #
 ################################################################################
 
-# TODO: Please fix this test case. Here temporarily skip to unblock other pull requests
-@pytest.mark.skip(reason="Suspected unstable test code")
+
 def test_routing_WarmRestart(dvs, testlog):
 
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -974,7 +962,7 @@ def test_routing_WarmRestart(dvs, testlog):
     state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
 
     # Restart-timer to utilize during the following testcases
-    restart_timer = 10
+    restart_timer = 15
 
 
     #############################################################################
@@ -1095,10 +1083,9 @@ def test_routing_WarmRestart(dvs, testlog):
     # Enabling bgp warmrestart and setting restart timer.
     # The following two instructions will be substituted by the commented ones
     # once the later ones are added to sonic-utilities repo.
-    enable_warmrestart(dvs, conf_db, "bgp")
-    set_restart_timer(dvs, conf_db, "bgp", str(restart_timer))
-    #dvs.runcmd("config warm_restart enable bgp")
-    #dvs.runcmd("config warm_restart bgp_timer {}".format(restart_timer))
+
+    dvs.runcmd("config warm_restart enable bgp")
+    dvs.runcmd("config warm_restart bgp_timer {}".format(restart_timer))
 
     time.sleep(1)
 

@@ -35,6 +35,10 @@ class TestVlan(object):
         tbl._del("Vlan" + vlan + "|" + interface)
         time.sleep(1)
 
+    def check_syslog(self, dvs, marker, err_log, vlan_str, expected_cnt):
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep vlanmgrd | grep \"%s\" | grep -i %s | wc -l" % (marker, err_log, vlan_str)])
+        assert num.strip() == str(expected_cnt)
+
     def test_VlanAddRemove(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -181,6 +185,95 @@ class TestVlan(object):
         # remove vlans
         self.remove_vlan("18")
         self.remove_vlan("188")
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 0
+
+    @pytest.mark.parametrize("test_input, expected", [
+        (["Vla",  "2"], 0),
+        (["VLAN", "3"], 0),
+        (["vlan", "4"], 0),
+        (["Vlan", "5"], 1),
+    ])
+    def test_AddVlanWithIncorrectKeyPrefix(self, dvs, testlog, test_input, expected):
+        self.setup_db(dvs)
+        marker = dvs.add_log_marker()
+        vlan_prefix = test_input[0]
+        vlan = test_input[1]
+
+        # create vlan
+        tbl = swsscommon.Table(self.cdb, "VLAN")
+        fvs = swsscommon.FieldValuePairs([("vlanid", vlan)])
+        tbl.set(vlan_prefix + vlan, fvs)
+        time.sleep(1)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == expected
+
+        if len(vlan_entries) == 0:
+            # check error log
+            self.check_syslog(dvs, marker, "Invalid key format. No 'Vlan' prefix:", vlan_prefix+vlan, 1)
+        else:
+            #remove vlan
+            self.remove_vlan(vlan)
+
+    @pytest.mark.parametrize("test_input, expected", [
+        (["Vlan", "abc"], 0),
+        (["Vlan", "a3"],  0),
+        (["Vlan", ""],    0),
+        (["Vlan", "5"], 1),
+    ])
+    def test_AddVlanWithIncorrectValueType(self, dvs, testlog, test_input, expected):
+        self.setup_db(dvs)
+        marker = dvs.add_log_marker()
+        vlan_prefix = test_input[0]
+        vlan = test_input[1]
+
+        # create vlan
+        tbl = swsscommon.Table(self.cdb, "VLAN")
+        fvs = swsscommon.FieldValuePairs([("vlanid", vlan)])
+        tbl.set(vlan_prefix + vlan, fvs)
+        time.sleep(1)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == expected
+
+        if len(vlan_entries) == 0:
+            # check error log
+            self.check_syslog(dvs, marker, "Invalid key format. Not a number after \'Vlan\' prefix:", vlan_prefix+vlan, 1)
+        else:
+            #remove vlan
+            self.remove_vlan(vlan)
+
+    @pytest.mark.skip(reason="AddMaxVlan take too long to execute")
+    def test_AddMaxVlan(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        min_vid = 2
+        max_vid = 4094
+
+        # create max vlan
+        vlan = min_vid
+        while vlan <= max_vid:
+            self.create_vlan(str(vlan))
+            vlan += 1
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == (4094-1)
+
+        # remove all vlan
+        vlan = min_vid
+        while vlan <= max_vid:
+            self.remove_vlan(str(vlan))
+            vlan += 1
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")

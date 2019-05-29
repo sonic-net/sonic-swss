@@ -65,7 +65,7 @@ for i = n, 1, -1 do
                 -- DEBUG CODE END.
                 (occupancy_bytes == 0 and pfc_rx_packets - pfc_rx_packets_last > 0 and pfc_on2off - pfc_on2off_last == 0 and queue_pause_status_last == 'true' and queue_pause_status == 'true') then
                 if time_left <= poll_time then
-                    redis.call('PUBLISH', 'PFC_WD', '["' .. KEYS[i] .. '","storm"]')
+                    redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm"]')
                     is_deadlock = true
                     time_left = detection_time
                 else
@@ -73,7 +73,7 @@ for i = n, 1, -1 do
                 end
             else
                 if pfc_wd_action == 'alert' and pfc_wd_status ~= 'operational' then
-                    redis.call('PUBLISH', 'PFC_WD', '["' .. KEYS[i] .. '","restore"]')
+                    redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","restore"]')
                 end
                 time_left = detection_time
             end

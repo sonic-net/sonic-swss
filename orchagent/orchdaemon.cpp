@@ -77,7 +77,15 @@ bool OrchDaemon::init()
             APP_VNET_RT_TABLE_NAME,
             APP_VNET_RT_TUNNEL_TABLE_NAME
     };
-    VNetOrch *vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+    VNetOrch *vnet_orch;
+    if (platform == MLNX_PLATFORM_SUBSTRING)
+    {
+        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME, VNET_EXEC::VNET_EXEC_BRIDGE);
+    }
+    else
+    {
+        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+    }
     gDirectory.set(vnet_orch);
     VNetRouteOrch *vnet_rt_orch = new VNetRouteOrch(m_applDb, vnet_tables, vnet_orch);
     gDirectory.set(vnet_rt_orch);
@@ -90,9 +98,9 @@ bool OrchDaemon::init()
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
-    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_configDb, CFG_VXLAN_TUNNEL_TABLE_NAME);
+    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_orch);
-    VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_configDb, CFG_VXLAN_TUNNEL_MAP_TABLE_NAME);
+    VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_applDb, APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_map_orch);
     VxlanVrfMapOrch *vxlan_vrf_orch = new VxlanVrfMapOrch(m_applDb, APP_VXLAN_VRF_TABLE_NAME);
     gDirectory.set(vxlan_vrf_orch);
@@ -120,9 +128,11 @@ bool OrchDaemon::init()
     };
     gBufferOrch = new BufferOrch(m_configDb, buffer_tables);
 
-    TableConnector stateDbMirrorSession(m_stateDb, APP_MIRROR_SESSION_TABLE_NAME);
+    PolicerOrch *policer_orch = new PolicerOrch(m_configDb, "POLICER");
+
+    TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
-    MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch);
+    MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
@@ -140,17 +150,22 @@ bool OrchDaemon::init()
         CFG_DTEL_EVENT_TABLE_NAME
     };
 
-    WatermarkOrch *wm_orch = new WatermarkOrch(m_configDb, CFG_WATERMARK_TABLE_NAME);
+    vector<string> wm_tables = {
+        CFG_WATERMARK_TABLE_NAME,
+        CFG_FLEX_COUNTER_TABLE_NAME
+    };
+
+    WatermarkOrch *wm_orch = new WatermarkOrch(m_configDb, wm_tables);
 
     /*
      * The order of the orch list is important for state restore of warm start and
-     * the queued processing in m_toSync map after gPortsOrch->isInitDone() is set.
+     * the queued processing in m_toSync map after gPortsOrch->isPortReady() is set.
      *
      * For the multiple consumers in ports_tables, tasks for LAG_TABLE is processed before VLAN_TABLE
      * when iterating ConsumerMap.
      * That is ensured implicitly by the order of map key, "LAG_TABLE" is smaller than "VLAN_TABLE" in lexicographic order.
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch };
+    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch };
 
 
     bool initialize_dtel = false;
@@ -182,10 +197,9 @@ bool OrchDaemon::init()
     {
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
-        gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
-    } else {
-        gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
     }
+    TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
+    gAclOrch = new AclOrch(acl_table_connectors, stateDbSwitchTable, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
 
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);
@@ -209,7 +223,8 @@ bool OrchDaemon::init()
         CFG_PFC_WD_TABLE_NAME
     };
 
-    if (platform == MLNX_PLATFORM_SUBSTRING)
+    if (platform == MLNX_PLATFORM_SUBSTRING
+        || platform == NPS_PLATFORM_SUBSTRING)
     {
 
         static const vector<sai_port_stat_t> portStatIds =
@@ -413,21 +428,19 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     }
 
     /*
-     * Three iterations are needed.
+     * Four iterations are needed.
      *
-     * First iteration: Orch(s) which do not have dependency on port table,
-     *   gBufferOrch, gPortsOrch(Port table and VLAN table),
-     *   and orch(s) which have dependency on Port but processed after it.
+     * First iteration: switchorch, Port init/hostif create part of portorch.
      *
-     * Second iteration: gBufferOrch (has inter-dependency with gPortsOrch),
-     *   remaining attributes on port table for gPortsOrch,
-     *   gIntfsOrch which has dependency on both gBufferOrch and port table of gPortsOrch.
-     *   LAG_TABLE in gPortsOrch.
+     * Second iteratoin: gBufferOrch which requires port created,
+     *   then port speed/mtu/fec_mode/pfc_asym/admin_status config.
      *
-     * Third iteration: Drain remaining data that are out of order like LAG_MEMBER_TABLE and
+     * Third iteration: other orch(s) which wait for port init done.
+     *
+     * Fourth iteration: Drain remaining data that are out of order like LAG_MEMBER_TABLE and
      * VLAN_MEMBER_TABLE since they were checked before LAG_TABLE and VLAN_TABLE within gPortsOrch.
      */
-    for (auto it = 0; it < 3; it++)
+    for (auto it = 0; it < 4; it++)
     {
         for (Orch *o : m_orchList)
         {

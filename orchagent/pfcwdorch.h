@@ -7,6 +7,7 @@
 #include "producertable.h"
 #include "notificationconsumer.h"
 #include "timer.h"
+#include "redisclient.h"
 
 extern "C" {
 #include "sai.h"
@@ -47,8 +48,13 @@ public:
     static PfcWdAction deserializeAction(const string& key);
     static string serializeAction(const PfcWdAction &action); 
 
-    virtual void createEntry(const string& key, const vector<FieldValueTuple>& data);
-    void deleteEntry(const string& name);
+    virtual task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data);
+    task_process_status deleteEntry(const string& name);
+
+protected:
+    virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) = 0;
+
+    bool m_entriesCreated = false;
 private:
 
     shared_ptr<DBConnector> m_countersDb = nullptr;
@@ -68,13 +74,20 @@ public:
             int pollInterval);
     virtual ~PfcWdSwOrch(void);
 
+    void doTask(Consumer& consumer) override;
     virtual bool startWdOnPort(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     virtual bool stopWdOnPort(const Port& port);
 
-    void createEntry(const string& key, const vector<FieldValueTuple>& data);
+    task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data) override;
     virtual void doTask(SelectableTimer &timer);
     //XXX Add port/queue state change event handlers
+
+    bool bake() override;
+
+protected:
+    bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) override;
+
 private:
     struct PfcWdQueueEntry
     {
@@ -93,7 +106,7 @@ private:
 
     template <typename T>
     static string counterIdsToStr(const vector<T> ids, string (*convert)(T));
-    void registerInWdDb(const Port& port,
+    bool registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     void unregisterFromWdDb(const Port& port);
     void doTask(swss::NotificationConsumer &wdNotification);
@@ -118,6 +131,12 @@ private:
 
     bool m_bigRedSwitchFlag = false;
     int m_pollInterval;
+
+    shared_ptr<DBConnector> m_applDb = nullptr;
+    // Track queues in storm
+    shared_ptr<Table> m_applTable = nullptr;
+    // used for hdel
+    RedisClient m_applDbRedisClient;
 };
 
 #endif

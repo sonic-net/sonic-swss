@@ -48,22 +48,8 @@ def test_FDBAddedAfterMemberCreated(dvs, testlog):
     vm_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
 
     # create vlan
-    create_entry_tbl(
-        dvs.cdb,
-        "VLAN", "Vlan2",
-        [
-            ("vlanid", "2"),
-        ]
-    )
-
-    # create vlan member entry in application db
-    create_entry_tbl(
-        dvs.cdb,
-        "VLAN_MEMBER", "Vlan2|Ethernet0",
-        [
-            ("tagging_mode", "untagged"),
-        ]
-    )
+    dvs.create_vlan("2")
+    dvs.create_vlan_member("2", "Ethernet0")
 
     # check that the vlan information was propagated
     vlan_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
@@ -87,3 +73,8 @@ def test_FDBAddedAfterMemberCreated(dvs, testlog):
                      ('SAI_FDB_ENTRY_ATTR_PACKET_ACTION', 'SAI_PACKET_ACTION_FORWARD')]
     )
     assert ok, str(extra)
+
+    dvs.runcmd("sonic-clear fdb all")
+    dvs.remove_vlan_member("2", "Ethernet0")
+    dvs.remove_vlan("2")
+

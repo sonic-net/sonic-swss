@@ -1,13 +1,18 @@
 #include <unistd.h>
 #include <vector>
+#include <sstream>
+#include <fstream>
+#include <iostream>
 #include <mutex>
+#include <algorithm>
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
 #include "schema.h"
-#include "intfmgr.h"
-#include <fstream>
-#include <iostream>
+#include "macaddress.h"
+#include "producerstatetable.h"
+#include "vxlanmgr.h"
+#include "shellcmd.h"
 
 using namespace std;
 using namespace swss;
@@ -33,28 +38,26 @@ mutex gDbMutex;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("intfmgrd");
-    SWSS_LOG_ENTER();
+    Logger::linkToDbNative("vxlanmgrd");
 
-    SWSS_LOG_NOTICE("--- Starting intfmgrd ---");
+    SWSS_LOG_NOTICE("--- Starting vxlanmgrd ---");
 
     try
     {
-        vector<string> cfg_intf_tables = {
-            CFG_INTF_TABLE_NAME,
-            CFG_LAG_INTF_TABLE_NAME,
-            CFG_VLAN_INTF_TABLE_NAME,
-            CFG_LOOPBACK_INTERFACE_TABLE_NAME,
-        };
 
         DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
         DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-        IntfMgr intfmgr(&cfgDb, &appDb, &stateDb, cfg_intf_tables);
+        vector<std::string> cfg_vnet_tables = {
+            CFG_VNET_TABLE_NAME,
+            CFG_VXLAN_TUNNEL_TABLE_NAME,
+            CFG_VXLAN_TUNNEL_MAP_TABLE_NAME,
+        };
 
-        // TODO: add tables in stateDB which interface depends on to monitor list
-        std::vector<Orch *> cfgOrchList = {&intfmgr};
+        VxlanMgr vxlanmgr(&cfgDb, &appDb, &stateDb, cfg_vnet_tables);
+
+        std::vector<Orch *> cfgOrchList = {&vxlanmgr};
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
@@ -76,7 +79,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                intfmgr.doTask();
+                vxlanmgr.doTask();
                 continue;
             }
 

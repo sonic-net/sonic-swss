@@ -728,7 +728,7 @@ sai_object_id_t QosOrch::initSystemAclTable()
     }
     SWSS_LOG_NOTICE("Create a system ACL table for ECN coloring");
 
-    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t) attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
+    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_PORT);
 
     for (auto& pair: gPortsOrch->getAllPorts())
     {
@@ -1361,11 +1361,32 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
     return task_process_status::task_success;
 }
 
+void QosOrch::doTask()
+{
+    SWSS_LOG_ENTER();
+
+    auto *port_qos_map_cfg_exec = getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME);
+
+    for (const auto &it : m_consumerMap)
+    {
+        auto *exec = it.second.get();
+
+        if (exec == port_qos_map_cfg_exec)
+        {
+            continue;
+        }
+
+        exec->drain();
+    }
+
+    port_qos_map_cfg_exec->drain();
+}
+
 void QosOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isPortReady())
     {
         return;
     }
