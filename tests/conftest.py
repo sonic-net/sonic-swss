@@ -142,7 +142,7 @@ class VirtualServer(object):
         return subprocess.check_output("ip netns exec %s %s" % (self.nsname, cmd), shell=True)
 
 class DockerVirtualSwitch(object):
-    def __init__(self, name=None, keeptb=False):
+    def __init__(self, name=None, keeptb=False, fakeplatform=None):
         self.basicd = ['redis-server',
                        'rsyslogd']
         self.swssd = ['orchagent',
@@ -208,8 +208,11 @@ class DockerVirtualSwitch(object):
             self.mount = "/var/run/redis-vs/{}".format(self.ctn_sw.name)
             os.system("mkdir -p {}".format(self.mount))
 
+            self.environment = ["fake_platform={}".format(fakeplatform)] if fakeplatform else []
+
             # create virtual switch container
             self.ctn = self.client.containers.run('docker-sonic-vs', privileged=True, detach=True,
+                    environment=self.environment,
                     network_mode="container:%s" % self.ctn_sw.name,
                     volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
 
@@ -754,7 +757,8 @@ class DockerVirtualSwitch(object):
 def dvs(request):
     name = request.config.getoption("--dvsname")
     keeptb = request.config.getoption("--keeptb")
-    dvs = DockerVirtualSwitch(name, keeptb)
+    fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
+    dvs = DockerVirtualSwitch(name, keeptb, fakeplatform)
     yield dvs
     if name == None:
         dvs.get_logs(request.module.__name__)

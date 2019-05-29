@@ -22,7 +22,7 @@
     {
         "COPP_TABLE:trap.group.arp": {
             "trap_ids": "arp_req,arp_resp,neigh_discovery",
-            "trap_action":"trap",
+            "trap_action":"copy",
             "trap_priority":"4",
             "queue": "4",
             "meter_type":"packets",

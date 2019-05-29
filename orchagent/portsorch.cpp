@@ -869,7 +869,7 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &gro
             }
         }
 
-        SWSS_LOG_NOTICE("Create ACL table group and bind port %s to it", port.m_alias.c_str());
+        SWSS_LOG_NOTICE("Create %s ACL table group and bind port %s to it", ingress ? "ingress" : "egress", port.m_alias.c_str());
     }
 
     return true;
