@@ -640,11 +640,6 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
     else
     {
         dst_ip = request.getAttrIP("dst_ip");
-        if (!dst_ip.isV4())
-        {
-            SWSS_LOG_ERROR("Wrong format of the attribute: 'dst_ip'. Currently only IPv4 address is supported");
-            return true;
-        }
     }
 
     const auto& tunnel_name = request.getKeyString(0);
