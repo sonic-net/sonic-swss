@@ -48,8 +48,8 @@ public:
     static PfcWdAction deserializeAction(const string& key);
     static string serializeAction(const PfcWdAction &action); 
 
-    virtual void createEntry(const string& key, const vector<FieldValueTuple>& data);
-    void deleteEntry(const string& name);
+    virtual task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data);
+    task_process_status deleteEntry(const string& name);
 
 protected:
     virtual bool startWdActionOnQueue(const string &event, sai_object_id_t queueId) = 0;
@@ -79,7 +79,7 @@ public:
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     virtual bool stopWdOnPort(const Port& port);
 
-    void createEntry(const string& key, const vector<FieldValueTuple>& data);
+    task_process_status createEntry(const string& key, const vector<FieldValueTuple>& data) override;
     virtual void doTask(SelectableTimer &timer);
     //XXX Add port/queue state change event handlers
 
@@ -106,7 +106,7 @@ private:
 
     template <typename T>
     static string counterIdsToStr(const vector<T> ids, string (*convert)(T));
-    void registerInWdDb(const Port& port,
+    bool registerInWdDb(const Port& port,
             uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action);
     void unregisterFromWdDb(const Port& port);
     void doTask(swss::NotificationConsumer &wdNotification);

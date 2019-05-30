@@ -114,6 +114,7 @@ public:
     static type_map& getTypeMap();
     static type_map m_qos_maps;
 private:
+    void doTask() override;
     virtual void doTask(Consumer& consumer);
 
     typedef task_process_status (QosOrch::*qos_table_handler)(Consumer& consumer);
