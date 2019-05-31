@@ -101,12 +101,33 @@ def create_vlan(dvs, vlan_name, vlan_ids):
 
     return
 
+def get_default_1q_bridge_id(db):
+    table = 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE'
+    tbl =  swsscommon.Table(db, table)
+    keys = tbl.getKeys()
+    assert len(keys) == 1, "Wrong number of virtual routers found"
+
+    return keys[0]
+
+def get_tunnel_bridge_port_id(db, tunnel_id):
+    table = 'ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT'
+    tbl =  swsscommon.Table(db, table)
+    keys = tbl.getKeys()
+
+    for key in keys:
+        (status, fvs) = tbl.get(key)
+        for fv in fvs:
+            if fv[0] == "SAI_BRIDGE_PORT_ATTR_TUNNEL_ID":
+                if fv[1] == tunnel_id:
+                    return key
+    return None
 
 def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, lo_id):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     tunnel_map_id  = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", tunnel_map_ids)
     tunnel_id      = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_ids)
     tunnel_term_id = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", tunnel_term_ids)
+    tunnel_bridge_port_id = get_tunnel_bridge_port_id(asic_db, tunnel_id)
 
     # check that the vxlan tunnel termination are there
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP") == (len(tunnel_map_ids) + 1), "The TUNNEL_MAP wasn't created"
@@ -143,6 +164,18 @@ def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids
         expected_attributes['SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP'] = dst_ip
 
     check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", tunnel_term_id, expected_attributes)
+
+    # check that the vxlan tunnel bridge port is there
+    assert tunnel_bridge_port_id is not None, "Vxlan tunnel bridage port is Null"
+
+    default_1q_bridge_id = get_default_1q_bridge_id(asic_db)
+    expected_attributes = {
+            'SAI_BRIDGE_PORT_ATTR_TYPE': 'SAI_BRIDGE_PORT_TYPE_TUNNEL',
+            'SAI_BRIDGE_PORT_ATTR_TUNNEL_ID': tunnel_id,
+            'SAI_BRIDGE_PORT_ATTR_BRIDGE_ID': default_1q_bridge_id,
+            'SAI_BRIDGE_PORT_ATTR_ADMIN_STATE': 'true',
+    }
+    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT", tunnel_bridge_port_id, expected_attributes)
 
     tunnel_map_ids.add(tunnel_map_id)
     tunnel_ids.add(tunnel_id)
