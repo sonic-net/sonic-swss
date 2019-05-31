@@ -15,6 +15,8 @@ def getCrmCounterValue(dvs, key, counter):
         if k[0] == counter:
             return int(k[1])
 
+    return 0
+
 
 def setReadOnlyAttr(dvs, obj, attr, val):
 
