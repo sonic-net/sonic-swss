@@ -301,6 +301,8 @@ class TestVlan(object):
         # remvoe vlan
         dvs.remove_vlan("2")
 
+
+    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
         (["Vla",  "2"], 0),
         (["VLAN", "3"], 0),
@@ -331,6 +333,7 @@ class TestVlan(object):
             #remove vlan
             self.remove_vlan(vlan)
 
+    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
         (["Vlan", "abc"], 0),
         (["Vlan", "a3"],  0),
