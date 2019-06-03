@@ -15,6 +15,7 @@ using namespace swss;
 #define LAG_PREFIX          "PortChannel"
 #define LOOPBACK_PREFIX     "Loopback"
 #define VNET_PREFIX         "Vnet"
+#define VRF_PREFIX          "Vrf"
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
@@ -66,6 +67,30 @@ void IntfMgr::setIntfVrf(const string &alias, const string vrfName)
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
+int IntfMgr::getIntfIpCount(const string &alias)
+{
+    stringstream cmd;
+    string res;
+
+    cmd << IP_CMD << " address show " << alias << " | grep inet | grep -v 'inet6 fe80:' | wc -l";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    return std::stoi(res);
+}
+
+bool IntfMgr::isIntfGeneralDone(const string &alias)
+{
+    vector<FieldValueTuple> temp;
+
+    if (m_stateIntfTable.get(alias, temp))
+    {
+        SWSS_LOG_DEBUG("Intf %s is ready", alias.c_str());
+        return true;
+    }
+
+    return false;
+}
+
 bool IntfMgr::isIntfStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
@@ -91,6 +116,14 @@ bool IntfMgr::isIntfStateOk(const string &alias)
         if (m_stateVrfTable.get(alias, temp))
         {
             SWSS_LOG_DEBUG("Vnet %s is ready", alias.c_str());
+            return true;
+        }
+    }
+    else if (!alias.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+    {
+        if (m_stateVrfTable.get(alias, temp))
+        {
+            SWSS_LOG_DEBUG("Vrf %s is ready", alias.c_str());
             return true;
         }
     }
@@ -144,6 +177,11 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         // Set Interface VRF except for lo
         if (!is_lo)
         {
+            /* if intfGeneral has been done then skip */
+            if (isIntfGeneralDone(alias))
+            {
+                return true;
+            }
             if (!vrf_name.empty())
             {
                 setIntfVrf(alias, vrf_name);
@@ -154,12 +192,19 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             m_appIntfTableProducer.set("lo", data);
         }
+        m_stateIntfTable.hset(alias, "state", "ok");
     }
     else if (op == DEL_COMMAND)
     {
         // Set Interface VRF except for lo
         if (!is_lo)
         {
+            /* make sure all ip addresses associated with interface are removed, otherwise these ip address would
+               be set with global vrf and it may cause ip address confliction. */
+            if (getIntfIpCount(alias))
+            {
+                return false;
+            }
             setIntfVrf(alias, "");
             m_appIntfTableProducer.del(alias);
         }
@@ -167,6 +212,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             m_appIntfTableProducer.del("lo");
         }
+        m_stateIntfTable.del(alias);
     }
     else
     {
@@ -190,10 +236,10 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     if (op == SET_COMMAND)
     {
         /*
-         * Don't proceed if port/LAG/VLAN is not ready yet.
+         * Don't proceed if port/LAG/VLAN and intfGeneral are not ready yet.
          * The pending task will be checked periodically and retried.
          */
-        if (!isIntfStateOk(alias))
+        if (!isIntfStateOk(alias) || !isIntfGeneralDone(alias))
         {
             SWSS_LOG_DEBUG("Interface is not ready, skipping %s", alias.c_str());
             return false;

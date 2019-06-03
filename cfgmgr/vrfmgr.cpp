@@ -139,6 +139,17 @@ bool VrfMgr::setLink(const string& vrfName)
     return true;
 }
 
+int VrfMgr::getVrfIntfCount(const string& vrfName)
+{
+    stringstream cmd;
+    string res;
+
+    cmd << IP_CMD << " link show " << " | grep 'master " << vrfName << "' | wc -l";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    return std::stoi(res);
+}
+
 void VrfMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -173,6 +184,12 @@ void VrfMgr::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
+            if (getVrfIntfCount(vrfName))
+            {
+                it++;
+                continue;
+            }
+
             if (!delLink(vrfName))
             {
                 SWSS_LOG_ERROR("Failed to remove vrf netdev %s", vrfName.c_str());

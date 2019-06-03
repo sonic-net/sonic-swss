@@ -4,7 +4,15 @@
 #include "request_parser.h"
 
 extern sai_object_id_t gVirtualRouterId;
-typedef std::unordered_map<std::string, sai_object_id_t> VRFTable;
+
+struct VrfEntry
+{
+    sai_object_id_t vrf_id;
+    int             ref_count;
+};
+
+typedef std::unordered_map<std::string, VrfEntry> VRFTable;
+typedef std::unordered_map<sai_object_id_t, std::string> VRFId2NameTable;
 
 const request_description_t request_description = {
     { REQ_T_STRING },
@@ -42,13 +50,43 @@ public:
     sai_object_id_t getVRFid(const std::string& name) const
     {
         if (vrf_table_.find(name) != std::end(vrf_table_))
-        {
-            return vrf_table_.at(name);
-        }
+            return vrf_table_.at(name).vrf_id;
         else
-        {
             return gVirtualRouterId;
-        }
+    }
+
+    string getVRFname(sai_object_id_t vrf_id) const
+    {
+        if (vrf_id == gVirtualRouterId)
+            return string("");
+        if (vrf_id_table_.find(vrf_id) != std::end(vrf_id_table_))
+            return vrf_id_table_.at(vrf_id);
+        else
+            return string("");
+     }
+
+    void increaseVrfRefCount(const std::string& name)
+    {
+        if (vrf_table_.find(name) != std::end(vrf_table_))
+            vrf_table_.at(name).ref_count++;
+    }
+
+    void increaseVrfRefCount(sai_object_id_t vrf_id)
+    {
+        if (vrf_id != gVirtualRouterId)
+            increaseVrfRefCount(getVRFname(vrf_id));
+    }
+
+    void decreaseVrfRefCount(const std::string& name)
+    {
+        if (vrf_table_.find(name) != std::end(vrf_table_))
+            vrf_table_.at(name).ref_count--;
+    }
+
+    void decreaseVrfRefCount(sai_object_id_t vrf_id)
+    {
+        if (vrf_id != gVirtualRouterId)
+            decreaseVrfRefCount(getVRFname(vrf_id));
     }
 
 private:
@@ -56,6 +94,7 @@ private:
     virtual bool delOperation(const Request& request);
 
     VRFTable vrf_table_;
+    VRFId2NameTable vrf_id_table_;
     VRFRequest request_;
 };
 

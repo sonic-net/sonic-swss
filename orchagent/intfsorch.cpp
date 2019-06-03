@@ -78,8 +78,42 @@ sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
 {
     Port port;
     gPortsOrch->getPort(alias, port);
-    assert(port.m_rif_id);
     return port.m_rif_id;
+}
+
+sai_object_id_t IntfsOrch::getVRFid(const string &alias)
+{
+    Port port;
+    gPortsOrch->getPort(alias, port);
+    return port.m_vr_id;
+}
+
+bool IntfsOrch::isPrefixSubnet(const IpPrefix &ip_prefix, const string& alias)
+{
+    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+        return false;
+    for (auto &prefixIt: m_syncdIntfses[alias].ip_addresses)
+    {
+        if (prefixIt.getSubnet() == ip_prefix)
+            return true;
+    }
+    return false;
+}
+
+string IntfsOrch::getRouterIntfsAlias(const IpAddress &ip, sai_object_id_t vrf_id)
+{
+    for (const auto &it_intfs: m_syncdIntfses)
+    {
+        if (getVRFid(it_intfs.first) != vrf_id)
+            continue;
+
+        for (const auto &prefixIt: it_intfs.second.ip_addresses)
+        {
+            if (prefixIt.isAddressInSubnet(ip))
+                return it_intfs.first;
+        }
+    }
+    return string();
 }
 
 void IntfsOrch::increaseRouterIntfsRefCount(const string &alias)
@@ -148,11 +182,12 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     auto it_intfs = m_syncdIntfses.find(alias);
     if (it_intfs == m_syncdIntfses.end())
     {
-        if (addRouterIntfs(vrf_id, port))
+        if (!ip_prefix && addRouterIntfs(vrf_id, port))
         {
             IntfsEntry intfs_entry;
             intfs_entry.ref_count = 0;
             m_syncdIntfses[alias] = intfs_entry;
+            m_vrfOrch->increaseVrfRefCount(vrf_id);
         }
         else
         {
@@ -193,9 +228,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
         return false;
     }
 
-    vrf_id = port.m_vr_id;
-    addSubnetRoute(port, *ip_prefix);
-    addIp2MeRoute(vrf_id, *ip_prefix);
+    addIp2MeRoute(port.m_vr_id, *ip_prefix);
 
     if (port.m_type == Port::VLAN)
     {
@@ -218,8 +251,7 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
 
     if (ip_prefix && m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
     {
-        removeSubnetRoute(port, *ip_prefix);
-        removeIp2MeRoute(vrf_id, *ip_prefix);
+        removeIp2MeRoute(port.m_vr_id, *ip_prefix);
 
         if(port.m_type == Port::VLAN)
         {
@@ -229,12 +261,12 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
         m_syncdIntfses[alias].ip_addresses.erase(*ip_prefix);
     }
 
-    /* Remove router interface that no IP addresses are associated with */
-    if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+    if (!ip_prefix)
     {
-        if (removeRouterIntfs(port))
+        if (m_syncdIntfses[alias].ip_addresses.size() == 0 && removeRouterIntfs(port))
         {
             m_syncdIntfses.erase(alias);
+            m_vrfOrch->decreaseVrfRefCount(vrf_id);
             return true;
         }
         else
@@ -576,81 +608,6 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     SWSS_LOG_NOTICE("Remove router interface for port %s", port.m_alias.c_str());
 
     return true;
-}
-
-void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
-{
-    sai_route_entry_t unicast_route_entry;
-    unicast_route_entry.switch_id = gSwitchId;
-    unicast_route_entry.vr_id = port.m_vr_id;
-    copy(unicast_route_entry.destination, ip_prefix);
-    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
-
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attrs;
-
-    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    attr.value.oid = port.m_rif_id;
-    attrs.push_back(attr);
-
-    sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create subnet route to %s from %s, rv:%d",
-                       ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
-        throw runtime_error("Failed to create subnet route.");
-    }
-
-    SWSS_LOG_NOTICE("Create subnet route to %s from %s",
-                    ip_prefix.to_string().c_str(), port.m_alias.c_str());
-    increaseRouterIntfsRefCount(port.m_alias);
-
-    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
-    }
-    else
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
-    }
-
-    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, IpAddresses(), true);
-}
-
-void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
-{
-    sai_route_entry_t unicast_route_entry;
-    unicast_route_entry.switch_id = gSwitchId;
-    unicast_route_entry.vr_id = port.m_vr_id;
-    copy(unicast_route_entry.destination, ip_prefix);
-    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
-
-    sai_status_t status = sai_route_api->remove_route_entry(&unicast_route_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove subnet route to %s from %s, rv:%d",
-                       ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
-        throw runtime_error("Failed to remove subnet route.");
-    }
-
-    SWSS_LOG_NOTICE("Remove subnet route to %s from %s",
-                    ip_prefix.to_string().c_str(), port.m_alias.c_str());
-    decreaseRouterIntfsRefCount(port.m_alias);
-
-    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-    {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
-    }
-    else
-    {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
-    }
-
-    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, IpAddresses(), false);
 }
 
 void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)

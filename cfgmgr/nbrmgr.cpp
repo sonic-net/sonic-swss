@@ -13,9 +13,6 @@
 
 using namespace swss;
 
-#define VLAN_PREFIX "Vlan"
-#define LAG_PREFIX  "PortChannel"
-
 static bool send_message(struct nl_sock *sk, struct nl_msg *msg)
 {
     bool rc = false;
@@ -66,25 +63,9 @@ bool NbrMgr::isIntfStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
 
-    if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+    if (m_stateIntfTable.get(alias, temp))
     {
-        if (m_stateVlanTable.get(alias, temp))
-        {
-            SWSS_LOG_DEBUG("Vlan %s is ready", alias.c_str());
-            return true;
-        }
-    }
-    else if (!alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
-    {
-        if (m_stateLagTable.get(alias, temp))
-        {
-            SWSS_LOG_DEBUG("Lag %s is ready", alias.c_str());
-            return true;
-        }
-    }
-    else if (m_statePortTable.get(alias, temp))
-    {
-        SWSS_LOG_DEBUG("Port %s is ready", alias.c_str());
+        SWSS_LOG_DEBUG("Intf %s is ready", alias.c_str());
         return true;
     }
 

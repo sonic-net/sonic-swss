@@ -368,7 +368,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
     // 3) Otherwise, return false.
     if (!m_neighOrch->getNeighborEntry(session.dstIp,
                 session.neighborInfo.neighbor, session.neighborInfo.mac) &&
-            (session.nexthopInfo.nexthop.isZero() ||
+            (session.nexthopInfo.nexthop.ip_address.isZero() ||
             !m_neighOrch->getNeighborEntry(session.nexthopInfo.nexthop,
                 session.neighborInfo.neighbor, session.neighborInfo.mac)))
     {
@@ -770,8 +770,8 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
 
         // This is the ECMP scenario that the new next hop group contains the previous
         // next hop. There is no need to update this session's monitor port.
-        if (update.nexthopGroup != IpAddresses() &&
-                update.nexthopGroup.getIpAddresses().count(session.nexthopInfo.nexthop))
+        if (update.nexthopGroup != NextHopGroupKey() &&
+                update.nexthopGroup.getNextHops().count(session.nexthopInfo.nexthop))
 
         {
             continue;
@@ -780,13 +780,13 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         SWSS_LOG_NOTICE("Updating mirror session %s with route %s",
                 name.c_str(), update.prefix.to_string().c_str());
 
-        if (update.nexthopGroup != IpAddresses())
+        if (update.nexthopGroup != NextHopGroupKey())
         {
-            session.nexthopInfo.nexthop = *update.nexthopGroup.getIpAddresses().begin();
+            session.nexthopInfo.nexthop = *update.nexthopGroup.getNextHops().begin();
         }
         else
         {
-            session.nexthopInfo.nexthop = IpAddress();
+            session.nexthopInfo.nexthop = NextHopKey();
         }
 
         // Resolve the neighbor of the new next hop
@@ -808,7 +808,7 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
         // Check if the session's destination IP matches the neighbor's update IP
         // or if the session's next hop IP matches the neighbor's update IP
         if (session.dstIp != update.entry.ip_address &&
-                session.nexthopInfo.nexthop != update.entry.ip_address)
+                session.nexthopInfo.nexthop.ip_address != update.entry.ip_address)
         {
             continue;
         }

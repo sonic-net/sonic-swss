@@ -27,6 +27,8 @@ private:
     bool doIntfAddrTask(const vector<string>& keys, const vector<FieldValueTuple>& data, const string& op);
     void doTask(Consumer &consumer);
     bool isIntfStateOk(const string &alias);
+    bool isIntfGeneralDone(const string &alias);
+    int getIntfIpCount(const string &alias);
 };
 
 }

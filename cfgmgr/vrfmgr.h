@@ -21,6 +21,7 @@ public:
 private:
     bool delLink(const string& vrfName);
     bool setLink(const string& vrfName);
+    int getVrfIntfCount(const string& vrfName);
     void recycleTable(uint32_t table);
     uint32_t getFreeTable(void);
     void handleVnetConfigSet(KeyOpFieldsValuesTuple &t);

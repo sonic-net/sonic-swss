@@ -78,14 +78,16 @@ bool VRFOrch::addOperation(const Request& request)
             return false;
         }
 
-        vrf_table_[vrf_name] = router_id;
+        vrf_table_[vrf_name].vrf_id = router_id;
+        vrf_table_[vrf_name].ref_count = 0;
+        vrf_id_table_[router_id] = vrf_name;
         SWSS_LOG_NOTICE("VRF '%s' was added", vrf_name.c_str());
     }
     else
     {
         // Update an existing vrf
 
-        sai_object_id_t router_id = it->second;
+        sai_object_id_t router_id = it->second.vrf_id;
 
         for (const auto& attr: attrs)
         {
@@ -114,7 +116,10 @@ bool VRFOrch::delOperation(const Request& request)
         return true;
     }
 
-    sai_object_id_t router_id = vrf_table_[vrf_name];
+    if (vrf_table_[vrf_name].ref_count)
+        return false;
+
+    sai_object_id_t router_id = vrf_table_[vrf_name].vrf_id;
     sai_status_t status = sai_virtual_router_api->remove_virtual_router(router_id);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -123,6 +128,7 @@ bool VRFOrch::delOperation(const Request& request)
     }
 
     vrf_table_.erase(vrf_name);
+    vrf_id_table_.erase(router_id);
 
     SWSS_LOG_NOTICE("VRF '%s' was removed", vrf_name.c_str());
 
