@@ -297,7 +297,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         sai_object_id_t vrf_id = gVirtualRouterId;
         if (!vrf_name.empty())
         {
-            if (m_vrfOrch->isVRFexists(vrf_name))
+            if (!m_vrfOrch->isVRFexists(vrf_name))
             {
                 it++;
                 continue;
