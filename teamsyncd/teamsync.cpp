@@ -130,6 +130,7 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     FieldValueTuple m("mtu", to_string(mtu));
     fvVector.push_back(a);
     fvVector.push_back(o);
+    fvVector.push_back(m);
     m_lagTable.set(lagName, fvVector);
 
     SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
