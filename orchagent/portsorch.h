@@ -87,6 +87,7 @@ public:
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
+    unique_ptr<Table> m_lagTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
@@ -189,6 +190,8 @@ private:
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
+
+    void removeFDBEntriesByBridgePortID(sai_object_id_t bridge_port_id);
 };
 #endif /* SWSS_PORTSORCH_H */
 

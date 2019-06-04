@@ -32,6 +32,7 @@ extern sai_hostif_api_t* sai_hostif_api;
 extern sai_acl_api_t* sai_acl_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
+extern sai_fdb_api_t *sai_fdb_api;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
@@ -149,6 +150,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
 
     /* Initialize port table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
+    m_lagTable = unique_ptr<Table>(new Table(db, APP_LAG_TABLE_NAME));
 
     /* Initialize queue tables */
     m_queueTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_NAME_MAP));
@@ -2856,6 +2858,10 @@ bool PortsOrch::removeLag(Port lag)
 
     SWSS_LOG_NOTICE("Remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
 
+    /* Remove FDB Entries */
+    SWSS_LOG_NOTICE("%s was be removed, clear the FDB entries.", lag.m_alias.c_str());
+    removeFDBEntriesByBridgePortID(lag.m_bridge_port_id);
+
     m_portList.erase(lag.m_alias);
 
     PortUpdate update = { lag, false };
@@ -2968,6 +2974,25 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     LagMemberUpdate update = { lag, port, false };
     notify(SUBJECT_TYPE_LAG_MEMBER_CHANGE, static_cast<void *>(&update));
 
+    // If the number of enabled members is less than the value of this channel miniport,
+    // It will cause that the LAG channel oper_status DOWN,
+    // then we should clear the entire FDB entry.
+    vector<FieldValueTuple> lag_value;
+    if (m_lagTable->get(lag.m_alias.c_str(), lag_value))
+    {
+        for (auto it : lag_value)
+        {
+            if (fvField(it) == "oper_status")
+            {
+                if (fvValue(it) == "down")
+                {
+                    SWSS_LOG_NOTICE("%s oper_status is DOWN, remove the FDB entries.", lag.m_alias.c_str());
+                    removeFDBEntriesByBridgePortID(lag.m_bridge_port_id);
+                    break;
+                }
+            }
+        }
+    }
     return true;
 }
 
@@ -3163,6 +3188,16 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
 
             updatePortOperStatus(port, status);
 
+            if ( status == SAI_PORT_OPER_STATUS_DOWN )
+            {
+                Port port;
+                if (getPort(id, port))
+                {
+                    SWSS_LOG_NOTICE("%s status is DOWN, remove the FDB entries.", port.m_alias.c_str());
+                    removeFDBEntriesByBridgePortID( port.m_bridge_port_id );
+                }
+            }
+
             /* update m_portList */
             m_portList[port.m_alias] = port;
         }
@@ -3295,5 +3330,23 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
         gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_GROUP, SAI_ACL_STAGE_EGRESS, bind_type, p.m_egress_acl_table_group_id);
     }
     return true;
+}
+
+void PortsOrch::removeFDBEntriesByBridgePortID(sai_object_id_t bridge_port_id)
+{
+    sai_attribute_t flush_attr;
+    vector<sai_attribute_t> flush_attrs;
+    sai_status_t rv;
+
+    SWSS_LOG_NOTICE("SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID By 0x%lx", bridge_port_id);
+    flush_attr.id = SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID;
+    flush_attr.value.oid = bridge_port_id;
+    flush_attrs.push_back(flush_attr);
+    rv = sai_fdb_api->flush_fdb_entries(gSwitchId, (uint32_t)flush_attrs.size(), flush_attrs.data());
+
+    if (rv != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_WARN("Flush fdb by BRIDGE PORT failed, return code %d", rv);
+    }
 }
 
