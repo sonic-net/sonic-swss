@@ -434,15 +434,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
 bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const string& type)
 {
     SWSS_LOG_ENTER();
-#if 0
-    if (m_entries.count(entry) != 0) // we already have such entries
-    {
-        // FIXME: should we check that the entry are moving to another port?
-        // FIXME: should we check that the entry are changing its type?
-        SWSS_LOG_ERROR("FDB entry already exists. mac=%s bv_id=0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
-        return true;
-    }
-#endif
+
     sai_fdb_entry_t fdb_entry;
 
     fdb_entry.switch_id = gSwitchId;
