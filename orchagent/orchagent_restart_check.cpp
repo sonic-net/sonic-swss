@@ -44,8 +44,8 @@ int main(int argc, char **argv)
     swss::Logger::getInstance().setMinPrio(swss::Logger::SWSS_INFO);
     SWSS_LOG_ENTER();
 
-    std::string skipPendingTaskCheck = "fasle";
-    std::string noFreeze            = "fasle";
+    std::string skipPendingTaskCheck = "false";
+    std::string noFreeze            = "false";
     /* Default wait time is 1000 millisecond */
     int waitTime = 1000;
 
