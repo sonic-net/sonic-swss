@@ -189,6 +189,11 @@ private:
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
+
+    void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
+
+    bool setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
+                                vector<uint32_t> &serdes_val);
 };
 #endif /* SWSS_PORTSORCH_H */
 

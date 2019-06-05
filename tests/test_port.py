@@ -125,3 +125,93 @@ def test_PortFec(dvs, testlog):
     for fv in fvs:
         if fv[0] == "SAI_PORT_ATTR_FEC_MODE":
             assert fv[1] == "SAI_PORT_FEC_MODE_RS"
+
+def test_PortPreemp(dvs, testlog):
+
+    pre_name = 'preemphasis'
+    pre_val = [0x1234,0x2345,0x3456,0x4567]
+    pre_val_str = str(hex(pre_val[0])) + "," + str(hex(pre_val[1]))+ "," + \
+                  str(hex(pre_val[2]))+ "," + str(hex(pre_val[3]))
+
+    pre_val_asic = '4:' + str(pre_val[0]) + "," + str(pre_val[1]) + "," + \
+                   str(pre_val[2]) + "," + str(pre_val[3])
+    fvs = swsscommon.FieldValuePairs([(pre_name, pre_val_str)])
+    db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+    tbl = swsscommon.Table(db, "PORT_TABLE")
+    ptbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
+    atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+
+    ptbl.set("Ethernet0", fvs)
+
+
+    time.sleep(1)
+
+    # get fec
+    (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+    assert status == True
+
+    for fv in fvs:
+        if fv[0] == "SAI_PORT_ATTR_SERDES_PREEMPHASIS":
+            assert fv[1] == pre_val_asic
+
+def test_PortIdriver(dvs, testlog):
+
+    idrv_name = 'idriver'
+    idrv_val = [0x1,0x1,0x2,0x2]
+    idrv_val_str = str(hex(idrv_val[0])) + "," + str(hex(idrv_val[1]))+ "," + \
+                   str(hex(idrv_val[2]))+ "," + str(hex(idrv_val[3]))
+
+    idrv_val_asic = '4:' + str(idrv_val[0]) + "," + str(idrv_val[1]) + "," + \
+                   str(idrv_val[2]) + "," + str(idrv_val[3])
+    fvs = swsscommon.FieldValuePairs([(idrv_name, idrv_val_str)])
+    db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+    tbl = swsscommon.Table(db, "PORT_TABLE")
+    ptbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
+    atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+
+    ptbl.set("Ethernet0", fvs)
+
+
+    time.sleep(1)
+
+    # get fec
+    (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+    assert status == True
+
+    for fv in fvs:
+        if fv[0] == "SAI_PORT_ATTR_SERDES_IDRIVER":
+            assert fv[1] == idrv_val_asic
+
+def test_PortIpredriver(dvs, testlog):
+
+    ipre_name = 'ipredriver'
+    ipre_val = [0x2,0x3,0x4,0x5]
+    ipre_val_str = str(hex(ipre_val[0])) + "," + str(hex(ipre_val[1]))+ "," + \
+                   str(hex(ipre_val[2]))+ "," + str(hex(ipre_val[3]))
+
+    ipre_val_asic = '4:' + str(ipre_val[0]) + "," + str(ipre_val[1]) + "," + \
+                   str(ipre_val[2]) + "," + str(ipre_val[3])
+    fvs = swsscommon.FieldValuePairs([(ipre_name, ipre_val_str)])
+    db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+    tbl = swsscommon.Table(db, "PORT_TABLE")
+    ptbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
+    atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+
+    ptbl.set("Ethernet0", fvs)
+
+
+    time.sleep(1)
+
+    # get fec
+    (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+    assert status == True
+
+    for fv in fvs:
+        if fv[0] == "SAI_PORT_ATTR_SERDES_IPREDRIVER":
+            assert fv[1] == ipre_val_asic

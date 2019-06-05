@@ -1,4 +1,5 @@
 #include <string>
+#include <algorithm>
 #include "logger.h"
 #include "schema.h"
 #include "warm_restart.h"
@@ -173,7 +174,7 @@ void AppRestartAssist::insertToMap(string key, vector<FieldValueTuple> fvVector,
     else if (found != appTableCacheMap.end())
     {
         // check only the original vector range (exclude cache-state field/value)
-        if(!equal(fvVector.begin(), fvVector.end(), found->second.begin()))
+        if(! contains(found->second, fvVector))
         {
             SWSS_LOG_NOTICE("%s, found key: %s, new value ", m_appTableName.c_str(), key.c_str());
 
@@ -279,4 +280,19 @@ bool AppRestartAssist::checkReconcileTimer(Selectable *s)
         return true;
     }
     return false;
+}
+
+// check if left vector contains all elements of right vector
+bool AppRestartAssist::contains(const std::vector<FieldValueTuple>& left,
+              const std::vector<FieldValueTuple>& right)
+{
+    for (auto const& rv : right)
+    {
+        if (std::find(left.begin(), left.end(), rv) == left.end())
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
