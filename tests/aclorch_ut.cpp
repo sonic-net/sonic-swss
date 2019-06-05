@@ -350,7 +350,7 @@ struct AclOrchTest : public AclTest {
         ASSERT_EQ(gFdbOrch, nullptr);
         gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
 
-        TableConnector stateDbMirrorSession(m_state_db.get(), APP_MIRROR_SESSION_TABLE_NAME);
+        TableConnector stateDbMirrorSession(m_state_db.get(), STATE_MIRROR_SESSION_TABLE_NAME);
         TableConnector confDbMirrorSession(m_config_db.get(), CFG_MIRROR_SESSION_TABLE_NAME);
 
         ASSERT_EQ(gMirrorOrch, nullptr);
