@@ -56,7 +56,7 @@ public:
 
 protected:
     void addLag(const std::string &lagName, int ifindex, bool admin_state,
-                bool oper_state);
+                bool oper_state, unsigned int mtu);
     void removeLag(const std::string &lagName);
 
     /* valid only in WR mode */
