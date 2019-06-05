@@ -275,24 +275,22 @@ int main(int argc, char **argv)
 
     auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
 
+    if (!orchDaemon->init())
     {
-        if (!orchDaemon->init())
-        {
-            SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
-            exit(EXIT_FAILURE);
-        }
-
-        /*
-        * In syncd view comparison solution, apply view has been sent
-        * immediately after restore is done
-        */
-        if (!WarmStart::isWarmStart())
-        {
-            syncd_apply_view();
-        }
-
-        orchDaemon->start();
+        SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
+        exit(EXIT_FAILURE);
     }
+
+    /*
+    * In syncd view comparison solution, apply view has been sent
+    * immediately after restore is done
+    */
+    if (!WarmStart::isWarmStart())
+    {
+        syncd_apply_view();
+    }
+
+    orchDaemon->start();
 
     return 0;
 }
