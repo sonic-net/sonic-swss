@@ -29,6 +29,8 @@ private:
     bool isIntfStateOk(const string &alias);
     bool isIntfGeneralDone(const string &alias);
     int getIntfIpCount(const string &alias);
+    void addLoopbackIntf(const string &alias);
+    void delLoopbackIntf(const string &alias);
 };
 
 }

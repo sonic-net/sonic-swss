@@ -67,6 +67,33 @@ void IntfMgr::setIntfVrf(const string &alias, const string vrfName)
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
+void IntfMgr::addLoopbackIntf(const string &alias)
+{
+    stringstream cmd;
+    string res;
+
+    cmd << IP_CMD << " link add " << alias << " mtu 65536 type dummy && ";
+    cmd << IP_CMD << " link set " << alias << " up";
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+}
+
+void IntfMgr::delLoopbackIntf(const string &alias)
+{
+    stringstream cmd;
+    string res;
+
+    cmd << IP_CMD << " link del " << alias;
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+}
+
 int IntfMgr::getIntfIpCount(const string &alias)
 {
     stringstream cmd;
@@ -174,44 +201,36 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             return false;
         }
 
-        // Set Interface VRF except for lo
-        if (!is_lo)
+        /* if intfGeneral has been done then skip */
+        if (isIntfGeneralDone(alias))
         {
-            /* if intfGeneral has been done then skip */
-            if (isIntfGeneralDone(alias))
-            {
-                return true;
-            }
-            if (!vrf_name.empty())
-            {
-                setIntfVrf(alias, vrf_name);
-            }
-            m_appIntfTableProducer.set(alias, data);
+            return true;
         }
-        else
+        if (is_lo)
         {
-            m_appIntfTableProducer.set("lo", data);
+            addLoopbackIntf(alias);
         }
+        if (!vrf_name.empty())
+        {
+            setIntfVrf(alias, vrf_name);
+        }
+        m_appIntfTableProducer.set(alias, data);
         m_stateIntfTable.hset(alias, "state", "ok");
     }
     else if (op == DEL_COMMAND)
     {
-        // Set Interface VRF except for lo
-        if (!is_lo)
+        /* make sure all ip addresses associated with interface are removed, otherwise these ip address would
+           be set with global vrf and it may cause ip address confliction. */
+        if (getIntfIpCount(alias))
         {
-            /* make sure all ip addresses associated with interface are removed, otherwise these ip address would
-               be set with global vrf and it may cause ip address confliction. */
-            if (getIntfIpCount(alias))
-            {
-                return false;
-            }
-            setIntfVrf(alias, "");
-            m_appIntfTableProducer.del(alias);
+            return false;
         }
-        else
+        setIntfVrf(alias, "");
+        if (is_lo)
         {
-            m_appIntfTableProducer.del("lo");
+            delLoopbackIntf(alias);
         }
+        m_appIntfTableProducer.del(alias);
         m_stateIntfTable.del(alias);
     }
     else
@@ -230,8 +249,7 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 
     string alias(keys[0]);
     IpPrefix ip_prefix(keys[1]);
-    bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
-    string appKey = (is_lo ? "lo" : keys[0]) + ":" + keys[1];
+    string appKey = keys[0] + ":" + keys[1];
 
     if (op == SET_COMMAND)
     {
@@ -245,11 +263,7 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
             return false;
         }
 
-        // Set Interface IP except for lo
-        if (!is_lo)
-        {
-            setIntfIp(alias, "add", ip_prefix.to_string(), ip_prefix.isV4());
-        }
+        setIntfIp(alias, "add", ip_prefix.to_string(), ip_prefix.isV4());
 
         std::vector<FieldValueTuple> fvVector;
         FieldValueTuple f("family", ip_prefix.isV4() ? IPV4_NAME : IPV6_NAME);
@@ -262,11 +276,8 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     }
     else if (op == DEL_COMMAND)
     {
-        // Set Interface IP except for lo
-        if (!is_lo)
-        {
-            setIntfIp(alias, "del", ip_prefix.to_string(), ip_prefix.isV4());
-        }
+        setIntfIp(alias, "del", ip_prefix.to_string(), ip_prefix.isV4());
+
         m_appIntfTableProducer.del(appKey);
         m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
     }

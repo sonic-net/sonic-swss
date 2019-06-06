@@ -34,6 +34,8 @@ const int intfsorch_pri = 35;
 #define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 #define UPDATE_MAPS_SEC 1
 
+#define LOOPBACK_PREFIX     "Loopback"
+
 static const vector<sai_router_interface_stat_t> rifStatIds =
 {
     SAI_ROUTER_INTERFACE_STAT_IN_PACKETS,
@@ -81,13 +83,6 @@ sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
     return port.m_rif_id;
 }
 
-sai_object_id_t IntfsOrch::getVRFid(const string &alias)
-{
-    Port port;
-    gPortsOrch->getPort(alias, port);
-    return port.m_vr_id;
-}
-
 bool IntfsOrch::isPrefixSubnet(const IpPrefix &ip_prefix, const string& alias)
 {
     if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
@@ -104,7 +99,7 @@ string IntfsOrch::getRouterIntfsAlias(const IpAddress &ip, sai_object_id_t vrf_i
 {
     for (const auto &it_intfs: m_syncdIntfses)
     {
-        if (getVRFid(it_intfs.first) != vrf_id)
+        if (it_intfs.second.vrf_id != vrf_id)
             continue;
 
         for (const auto &prefixIt: it_intfs.second.ip_addresses)
@@ -186,6 +181,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
         {
             IntfsEntry intfs_entry;
             intfs_entry.ref_count = 0;
+            intfs_entry.vrf_id = vrf_id;
             m_syncdIntfses[alias] = intfs_entry;
             m_vrfOrch->increaseVrfRefCount(vrf_id);
         }
@@ -296,6 +292,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         string alias(keys[0]);
         IpPrefix ip_prefix;
         bool ip_prefix_in_key = false;
+        bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
 
         if (keys.size() > 1)
         {
@@ -340,38 +337,31 @@ void IntfsOrch::doTask(Consumer &consumer)
         string op = kfvOp(t);
         if (op == SET_COMMAND)
         {
-            if (alias == "lo")
+            if (is_lo)
             {
                 if (!ip_prefix_in_key)
                 {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-
-                bool addIp2Me = false;
-                // set request for lo may come after warm start restore.
-                // It is also to prevent dupicate set requests in normal running case.
-                auto it_intfs = m_syncdIntfses.find(alias);
-                if (it_intfs == m_syncdIntfses.end())
-                {
-                    IntfsEntry intfs_entry;
-
-                    intfs_entry.ref_count = 0;
-                    intfs_entry.ip_addresses.insert(ip_prefix);
-                    m_syncdIntfses[alias] = intfs_entry;
-                    addIp2Me = true;
+                    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+                    {
+                        IntfsEntry intfs_entry;
+                        intfs_entry.ref_count = 0;
+                        intfs_entry.vrf_id = vrf_id;
+                        m_syncdIntfses[alias] = intfs_entry;
+                        m_vrfOrch->increaseVrfRefCount(vrf_id);
+                    }
                 }
                 else
                 {
-                     if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix) == 0)
-                     {
+                    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+                    {
+                        it++;
+                        continue;
+                    }
+                    if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix) == 0)
+                    {
                         m_syncdIntfses[alias].ip_addresses.insert(ip_prefix);
-                        addIp2Me = true;
-                     }
-                }
-                if (addIp2Me)
-                {
-                    addIp2MeRoute(vrf_id, ip_prefix);
+                        addIp2MeRoute(m_syncdIntfses[alias].vrf_id, ip_prefix);
+                    }
                 }
 
                 it = consumer.m_toSync.erase(it);
@@ -423,19 +413,33 @@ void IntfsOrch::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (alias == "lo")
+            if (is_lo)
             {
-                // TODO: handle case for which lo is not in default vrf gVirtualRouterId
-                if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
+                if (!ip_prefix_in_key)
                 {
-                    if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
+                    if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
                     {
-                        m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
-                        removeIp2MeRoute(vrf_id, ip_prefix);
+                        if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+                        {
+                            m_vrfOrch->decreaseVrfRefCount(m_syncdIntfses[alias].vrf_id);
+                            m_syncdIntfses.erase(alias);
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+                }
+                else
+                {
+                    if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
                     {
-                        m_syncdIntfses.erase(alias);
+                        if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
+                        {
+                            m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
+                            removeIp2MeRoute(m_syncdIntfses[alias].vrf_id, ip_prefix);
+                        }
                     }
                 }
 
