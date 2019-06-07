@@ -71,7 +71,7 @@ FpmLink::~FpmLink()
 void FpmLink::accept()
 {
     struct sockaddr_in client_addr;
-    socklen_t client_len;
+    socklen_t client_len = 0;
 
     m_connection_socket = ::accept(m_server_socket, (struct sockaddr *)&client_addr,
                                    &client_len);
