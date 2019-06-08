@@ -24,6 +24,9 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     mtu                 = 1*4DIGIT      ; port MTU
     fec                 = 1*64VCHAR     ; port fec mode
     autoneg             = BIT           ; auto-negotiation mode
+    preemphasis         = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
+    idriver             = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
+    ipredriver          = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
 
     ;QOS Mappings
     map_dscp_to_tc      = ref_hash_key_reference
@@ -110,14 +113,6 @@ For example (reorder output)
     admin_status        = "down" / "up"        ; admin status
     oper_status         = "down" / "up"        ; operating status
     mtu                 = 1*4DIGIT             ; MTU for the IP interface of the VLAN
-
----------------------------------------------
-### VLAN_MEMBER_TABLE
-    ;Defines interfaces which are members of a vlan
-    ;Status: work in progress
-
-    key                 = VLAN_MEMBER_TABLE:"Vlan"vlanid:ifname ; physical port "ifname" is a member of a VLAN "VlanX"
-    tagging_mode        = "untagged" / "tagged" / "priority_tagged" ; default value as untagged
 
 ---------------------------------------------
 ### LAG_TABLE

@@ -266,7 +266,7 @@ std::bitset<VNET_TUNNEL_SIZE> VNetBitmapObject::tunnelIdOffsets_;
 map<string, uint32_t> VNetBitmapObject::vnetIds_;
 map<uint32_t, VnetBridgeInfo> VNetBitmapObject::bridgeInfoMap_;
 map<tuple<MacAddress, sai_object_id_t>, VnetNeighInfo> VNetBitmapObject::neighInfoMap_;
-map<tuple<IpAddress, sai_object_id_t>, uint16_t> VNetBitmapObject::endpointMap_;
+map<tuple<IpAddress, sai_object_id_t>, TunnelEndpointInfo> VNetBitmapObject::endpointMap_;
 
 VNetBitmapObject::VNetBitmapObject(const std::string& vnet, const VNetInfo& vnetInfo,
                              vector<sai_attribute_t>& attrs) : VNetObject(vnetInfo)
@@ -960,12 +960,12 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
     auto *tunnel = vxlan_orch->getVxlanTunnel(getTunnelName());
     auto endpoint = make_tuple(endp.ip, tunnel->getTunnelId());
     uint16_t tunnelIndex = 0;
+    TunnelEndpointInfo endpointInfo;
     if (endpointMap_.find(endpoint) == endpointMap_.end())
     {
         tunnelIndex = getFreeTunnelId();
         vector<sai_attribute_t> vxlan_attrs;
 
-        sai_object_id_t tunnelL3VxlanEntryId;
         attr.id = SAI_TABLE_META_TUNNEL_ENTRY_ATTR_ACTION;
         attr.value.s32 = SAI_TABLE_META_TUNNEL_ENTRY_ACTION_TUNNEL_ENCAP;
         vxlan_attrs.push_back(attr);
@@ -983,7 +983,7 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
         vxlan_attrs.push_back(attr);
 
         status = sai_bmtor_api->create_table_meta_tunnel_entry(
-                &tunnelL3VxlanEntryId,
+                &endpointInfo.metaTunnelEntryId,
                 gSwitchId,
                 (uint32_t)vxlan_attrs.size(),
                 vxlan_attrs.data());
@@ -994,11 +994,14 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
             throw std::runtime_error("VNet route creation failed");
         }
 
-        endpointMap_.emplace(endpoint, tunnelIndex);
+        endpointInfo.tunnelIndex = tunnelIndex;
+        endpointInfo.use_count = 1;
+        endpointMap_.emplace(endpoint, endpointInfo);
     }
     else
     {
-        tunnelIndex = endpointMap_.at(endpoint);
+        tunnelIndex = endpointMap_.at(endpoint).tunnelIndex;
+        endpointMap_.at(endpoint).use_count++;
     }
 
     /* Tunnel route */
@@ -1049,6 +1052,8 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
 
     tunnelRouteInfo.vni = endp.vni == 0 ? getVni() : endp.vni;
     tunnelRouteInfo.mac = mac;
+    tunnelRouteInfo.ip = endp.ip;
+    tunnelRouteInfo.tunnelId = tunnel->getTunnelId();
     tunnelRouteMap_.emplace(ipPrefix, tunnelRouteInfo);
 
     return true;
@@ -1081,6 +1086,16 @@ bool VNetBitmapObject::removeTunnelRoute(IpPrefix& ipPrefix)
         throw std::runtime_error("VNET tunnel route removal failed");
     }
 
+    auto endpoint = make_tuple(tunnelRouteInfo.ip, tunnelRouteInfo.tunnelId);
+
+    if (endpointMap_.find(endpoint) == endpointMap_.end())
+    {
+        SWSS_LOG_ERROR("Tunnel endpoint doesn't exist for tunnel route %s", ipPrefix.to_string().c_str());
+        throw std::runtime_error("VNET tunnel route removal failed");
+    }
+
+    auto endpointInfo = endpointMap_.at(endpoint);
+
     sai_status_t status;
 
     status = sai_bmtor_api->remove_table_bitmap_router_entry(tunnelRouteInfo.tunnelRouteTableEntryId);
@@ -1088,6 +1103,23 @@ bool VNetBitmapObject::removeTunnelRoute(IpPrefix& ipPrefix)
     {
         SWSS_LOG_ERROR("Failed to remove VNET tunnel route entry, SAI rc: %d", status);
         throw std::runtime_error("VNET tunnel route removal failed");
+    }
+
+    if (endpointInfo.use_count > 1)
+    {
+        endpointInfo.use_count--;
+    }
+    else
+    {
+        status = sai_bmtor_api->remove_table_meta_tunnel_entry(endpointInfo.metaTunnelEntryId);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove meta tunnel entry for VNET tunnel route, SAI rc: %d", status);
+            throw std::runtime_error("VNET tunnel route removal failed");
+        }
+
+        recycleTunnelId(endpointInfo.tunnelIndex);
+        endpointMap_.erase(endpoint);
     }
 
     status = sai_next_hop_api->remove_next_hop(tunnelRouteInfo.nexthopId);
@@ -1108,7 +1140,6 @@ bool VNetBitmapObject::removeTunnelRoute(IpPrefix& ipPrefix)
     }
 
     recycleTunnelRouteTableOffset(tunnelRouteInfo.offset);
-
     tunnelRouteMap_.erase(ipPrefix);
 
     return true;

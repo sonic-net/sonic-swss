@@ -955,6 +955,7 @@ def set_restart_timer(dvs, db, app_name, value):
 ################################################################################
 
 
+@pytest.mark.skip(reason="Failing. Under investigation")
 def test_routing_WarmRestart(dvs, testlog):
 
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)

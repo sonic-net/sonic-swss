@@ -184,8 +184,10 @@ struct TunnelRouteInfo
 {
     sai_object_id_t tunnelRouteTableEntryId;
     sai_object_id_t nexthopId;
+    sai_object_id_t tunnelId;
     uint32_t vni;
     MacAddress mac;
+    IpAddress ip;
     uint32_t offset;
 };
 
@@ -199,6 +201,14 @@ struct VnetIntfInfo
 {
     sai_object_id_t vnetTableEntryId;
     map<IpPrefix, RouteInfo> pfxMap;
+};
+
+
+struct TunnelEndpointInfo
+{
+    sai_object_id_t metaTunnelEntryId;
+    uint16_t tunnelIndex;
+    uint32_t use_count;
 };
 
 class VNetBitmapObject: public VNetObject
@@ -256,7 +266,7 @@ private:
     static std::bitset<VNET_TUNNEL_SIZE> tunnelIdOffsets_;
     static map<uint32_t, VnetBridgeInfo> bridgeInfoMap_;
     static map<tuple<MacAddress, sai_object_id_t>, VnetNeighInfo> neighInfoMap_;
-    static map<tuple<IpAddress, sai_object_id_t>, uint16_t> endpointMap_;
+    static map<tuple<IpAddress, sai_object_id_t>, TunnelEndpointInfo> endpointMap_;
 
     map<IpPrefix, RouteInfo> routeMap_;
     map<IpPrefix, TunnelRouteInfo> tunnelRouteMap_;

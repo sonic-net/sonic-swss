@@ -1361,6 +1361,27 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
     return task_process_status::task_success;
 }
 
+void QosOrch::doTask()
+{
+    SWSS_LOG_ENTER();
+
+    auto *port_qos_map_cfg_exec = getExecutor(CFG_PORT_QOS_MAP_TABLE_NAME);
+
+    for (const auto &it : m_consumerMap)
+    {
+        auto *exec = it.second.get();
+
+        if (exec == port_qos_map_cfg_exec)
+        {
+            continue;
+        }
+
+        exec->drain();
+    }
+
+    port_qos_map_cfg_exec->drain();
+}
+
 void QosOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();

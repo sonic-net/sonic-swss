@@ -393,9 +393,19 @@ bool NeighOrch::addNeighbor(NeighborEntry neighborEntry, MacAddress macAddress)
         status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry, 1, &neighbor_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to create neighbor %s on %s, rv:%d",
+            if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
+            {
+                SWSS_LOG_ERROR("Entry exists: neighbor %s on %s, rv:%d",
                            macAddress.to_string().c_str(), alias.c_str(), status);
-            return false;
+                /* Returning True so as to skip retry */
+                return true;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to create neighbor %s on %s, rv:%d",
+                           macAddress.to_string().c_str(), alias.c_str(), status);
+                return false;
+            }
         }
 
         SWSS_LOG_NOTICE("Created neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());

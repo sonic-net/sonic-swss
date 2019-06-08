@@ -522,7 +522,7 @@ VxlanTunnelOrch::removeNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAd
     if(!isTunnelExists(tunnelName))
     {
         SWSS_LOG_ERROR("Vxlan tunnel '%s' does not exists", tunnelName.c_str());
-        return true;
+        return false;
     }
 
     auto tunnel_obj = getVxlanTunnel(tunnelName);
