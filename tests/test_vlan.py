@@ -13,16 +13,16 @@ class TestVlan(object):
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
-    def create_vlan(self, vlan):
+    def create_vlan(self, vlan, sleep=1):
         tbl = swsscommon.Table(self.cdb, "VLAN")
         fvs = swsscommon.FieldValuePairs([("vlanid", vlan)])
         tbl.set("Vlan" + vlan, fvs)
-        time.sleep(1)
+        time.sleep(sleep)
 
-    def remove_vlan(self, vlan):
+    def remove_vlan(self, vlan, sleep=1):
         tbl = swsscommon.Table(self.cdb, "VLAN")
         tbl._del("Vlan" + vlan)
-        time.sleep(1)
+        time.sleep(sleep)
 
     def create_vlan_member(self, vlan, interface):
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
@@ -364,7 +364,6 @@ class TestVlan(object):
             #remove vlan
             self.remove_vlan(vlan)
 
-    @pytest.mark.skip(reason="AddMaxVlan take too long to execute")
     def test_AddMaxVlan(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -374,8 +373,9 @@ class TestVlan(object):
         # create max vlan
         vlan = min_vid
         while vlan <= max_vid:
-            self.create_vlan(str(vlan))
+            self.create_vlan(str(vlan), 0)
             vlan += 1
+        time.sleep(360)
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
@@ -385,8 +385,9 @@ class TestVlan(object):
         # remove all vlan
         vlan = min_vid
         while vlan <= max_vid:
-            self.remove_vlan(str(vlan))
+            self.remove_vlan(str(vlan), 0)
             vlan += 1
+        time.sleep(420)
 
         # check asic database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
