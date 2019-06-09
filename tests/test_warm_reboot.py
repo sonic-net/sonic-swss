@@ -955,7 +955,6 @@ def set_restart_timer(dvs, db, app_name, value):
 ################################################################################
 
 
-@pytest.mark.skip(reason="Failing. Under investigation")
 def test_routing_WarmRestart(dvs, testlog):
 
     appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -1014,7 +1013,7 @@ def test_routing_WarmRestart(dvs, testlog):
     #
     dvs.runcmd("ip route add 192.168.1.100/32 nexthop via 111.0.0.2")
     dvs.runcmd("ip route add 192.168.1.200/32 nexthop via 122.0.0.2")
-    dvs.runcmd("ip route add 192.168.1.300/32 nexthop via 133.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.230/32 nexthop via 133.0.0.2")
 
     #
     # Defining baseline IPv4 ecmp route-entries

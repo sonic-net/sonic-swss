@@ -329,7 +329,7 @@ class DockerVirtualSwitch(object):
         time.sleep(5)
 
     def stop_zebra(dvs):
-        dvs.runcmd(['sh', '-c', 'pkill -x zebra'])
+        dvs.runcmd(['sh', '-c', 'pkill -9 zebra'])
         time.sleep(1)
 
     def start_fpmsyncd(dvs):
