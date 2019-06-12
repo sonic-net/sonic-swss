@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <tuple>
 #include <sstream>
+#include <string>
+#include <ctime>
 
 #include <netinet/if_ether.h>
 #include "net/if.h"
@@ -1239,14 +1241,71 @@ bool PortsOrch::setHostIntfsOperStatus(const Port& port, bool isUp) const
     return true;
 }
 
+void PortsOrch::updateDbPortFlapCounter(const Port& port, vector<FieldValueTuple>& old_tuples, vector<FieldValueTuple>& new_tuples) const
+{
+  SWSS_LOG_ENTER();
+
+  string flap_value;
+  bool check = false;
+
+  /* Fetching current flap counters from redis DB and incrementing it by 1 under any UP or DOWN event */
+
+  for (auto const &i : old_tuples)
+  {
+    if (fvField(i) == "flap_counter")
+    {
+      flap_value = fvValue(i);
+      check = true;
+      break;
+    }
+  }
+
+  if (!check)
+  {
+    return;
+  }
+
+  long flap_val = stol(flap_value);
+  flap_val = flap_val + 1;
+  string flaps;
+  stringstream flap_stream;
+  flap_stream << flap_val;
+  flaps = flap_stream.str();
+  FieldValueTuple flap_tuple("flap_counter", flaps);
+  new_tuples.push_back(flap_tuple);
+}
+
+void PortsOrch::updateDbPortLastFlapTime(vector<FieldValueTuple>& new_tuples) const
+{
+  SWSS_LOG_ENTER();
+
+  time_t now = time(0);
+  string date = ctime(&now);
+
+  // convert now to tm struct for UTC
+  tm *gmtm = gmtime(&now);
+  date = asctime(gmtm);
+  FieldValueTuple tuple("last_flap", date);
+  new_tuples.push_back(tuple);
+}
+
 void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const
 {
     SWSS_LOG_ENTER();
 
-    vector<FieldValueTuple> tuples;
+    vector<FieldValueTuple> old_tuples;
+    vector<FieldValueTuple> new_tuples;
+
+    bool exist = m_portTable->get(port.m_alias, old_tuples);
+    if (!exist)
+    {
+      return;
+    }
+    updateDbPortLastFlapTime(new_tuples);
+    updateDbPortFlapCounter(port, old_tuples, new_tuples);
     FieldValueTuple tuple("oper_status", oper_status_strings.at(status));
-    tuples.push_back(tuple);
-    m_portTable->set(port.m_alias, tuples);
+    new_tuples.push_back(tuple);
+    m_portTable->set(port.m_alias, new_tuples);
 }
 
 bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string fec_mode)
@@ -2500,6 +2559,8 @@ bool PortsOrch::initializePort(Port &port)
     {
         port.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
     }
+    m_portTable->hset(port.m_alias, "flap_counter", "0");
+    m_portTable->hset(port.m_alias, "last_flap", "N/A");
 
     /* initialize port admin status */
     if (!getPortAdminStatus(port.m_port_id, port.m_admin_state_up))
