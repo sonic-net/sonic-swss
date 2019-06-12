@@ -110,7 +110,8 @@ private:
     Port m_cpuPort;
     // TODO: Add Bridge/Vlan class
     sai_object_id_t m_default1QBridge;
-    sai_object_id_t m_defaultVlan;
+    sai_object_id_t m_defaultVlan_ObjId;
+    sai_vlan_id_t   m_defaultVlan_Id;
 
     bool m_portConfigDone = false;
     sai_uint32_t m_portCount;

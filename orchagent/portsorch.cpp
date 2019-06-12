@@ -296,7 +296,21 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     }
 
     m_default1QBridge = attrs[0].value.oid;
-    m_defaultVlan = attrs[1].value.oid;
+    m_defaultVlan_ObjId = attrs[1].value.oid;
+
+    memset(&attr, 0x00, sizeof(attr));
+    attr.id  = SAI_VLAN_ATTR_VLAN_ID;
+ 
+    /* Get the VLAN ID associated with the default VLAN object */
+    status = sai_vlan_api->get_vlan_attribute(m_defaultVlan_ObjId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get default VLAN ID, rv:%d", status);
+        throw runtime_error("PortsOrch initialization failure");
+    }    
+ 
+    m_defaultVlan_Id = attr.value.u16;
+
 
     removeDefaultVlanMembers();
     removeDefaultBridgePorts();
@@ -318,7 +332,7 @@ void PortsOrch::removeDefaultVlanMembers()
     attr.value.objlist.count = (uint32_t)vlan_member_list.size();
     attr.value.objlist.list = vlan_member_list.data();
 
-    sai_status_t status = sai_vlan_api->get_vlan_attribute(m_defaultVlan, 1, &attr);
+    sai_status_t status = sai_vlan_api->get_vlan_attribute(m_defaultVlan_ObjId, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get VLAN member list in default VLAN, rv:%d", status);
@@ -2578,7 +2592,17 @@ bool PortsOrch::addVlan(string vlan_alias)
     sai_attribute_t attr;
     attr.id = SAI_VLAN_ATTR_VLAN_ID;
     attr.value.u16 = vlan_id;
-    sai_status_t status = sai_vlan_api->create_vlan(&vlan_oid, gSwitchId, 1, &attr);
+    sai_status_t status = SAI_STATUS_SUCCESS;
+
+    /* Do not create default VLAN. It is already created by default */
+    if (vlan_id != m_defaultVlan_Id)
+    {
+       status = sai_vlan_api->create_vlan(&vlan_oid, gSwitchId, 1, &attr);
+    }
+    else
+    {
+       vlan_oid = m_defaultVlan_ObjId; /* use the default VLAN object id instead */
+    }
 
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -2608,12 +2632,16 @@ bool PortsOrch::removeVlan(Port vlan)
         return false;
     }
 
-    sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
-    if (status != SAI_STATUS_SUCCESS)
+    /* Do not delete default VLAN from driver, but clear internal state */
+    if (vlan.m_vlan_info.vlan_id != m_defaultVlan_Id) 
     {
+      sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
+      if (status != SAI_STATUS_SUCCESS)
+      {
         SWSS_LOG_ERROR("Failed to remove VLAN %s vid:%hu",
                 vlan.m_alias.c_str(), vlan.m_vlan_info.vlan_id);
         return false;
+      }
     }
 
     removeAclTableGroup(vlan);
