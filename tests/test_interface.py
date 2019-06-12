@@ -9,39 +9,134 @@ class TestRouterInterface(object):
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
-    def set_admin_status(self, interface, status):
-        tbl = swsscommon.Table(self.cdb, "PORT")
+    def set_admin_status(self, dvs, interface, status):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN"
+        else:
+            tbl_name = "PORT"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("admin_status", status)])
         tbl.set(interface, fvs)
         time.sleep(1)
 
+        # when using FRR, route cannot be inserted if the neighbor is not
+        # connected. thus it is mandatory to force the interface up manually
+        if interface.startswith("PortChannel"):
+            dvs.runcmd("bash -c 'echo " + ("1" if status == "up" else "0") +\
+                    " > /sys/class/net/" + interface + "/carrier'")
+        time.sleep(1)
+
+    def create_vrf(self, vrf_name):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        initial_entries = set(tbl.getKeys())
+
+        tbl = swsscommon.Table(self.cdb, "VRF")
+        fvs = swsscommon.FieldValuePairs([('empty', 'empty')])
+        tbl.set(vrf_name, fvs)
+        time.sleep(1)
+
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        current_entries = set(tbl.getKeys())
+        assert len(current_entries - initial_entries) == 1
+        return list(current_entries - initial_entries)[0]
+
+    def remove_vrf(self, vrf_name):
+        tbl = swsscommon.Table(self.cdb, "VRF")
+        tbl._del(vrf_name)
+        time.sleep(1)
+
+    def create_l3_intf(self, interface, vrf_name):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        elif interface.startswith("Loopback"):
+            tbl_name = "LOOPBACK_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+        if len(vrf_name) == 0:
+            fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        else:
+            fvs = swsscommon.FieldValuePairs([("vrf_name", vrf_name)])
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
+    def remove_l3_intf(self, interface):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        elif interface.startswith("Loopback"):
+            tbl_name = "LOOPBACK_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        tbl._del(interface)
+        time.sleep(1)
+
     def add_ip_address(self, interface, ip):
-        tbl = swsscommon.Table(self.cdb, "INTERFACE")
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        elif interface.startswith("Loopback"):
+            tbl_name = "LOOPBACK_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
         tbl.set(interface + "|" + ip, fvs)
-        time.sleep(2) # IPv6 netlink message needs longer time
+        time.sleep(1)
 
     def remove_ip_address(self, interface, ip):
-        tbl = swsscommon.Table(self.cdb, "INTERFACE")
-        tbl._del(interface + "|" + ip);
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        elif interface.startswith("Loopback"):
+            tbl_name = "LOOPBACK_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        tbl._del(interface + "|" + ip)
         time.sleep(1)
 
     def set_mtu(self, interface, mtu):
-        tbl = swsscommon.Table(self.cdb, "PORT")
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN"
+        else:
+            tbl_name = "PORT"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("mtu", mtu)])
         tbl.set(interface, fvs)
         time.sleep(1)
 
-    def test_InterfaceAddRemoveIpv6Address(self, dvs, testlog):
+    def test_PortInterfaceAddRemoveIpv6Address(self, dvs, testlog):
         self.setup_db(dvs)
+
+        # create interface
+        self.create_l3_intf("Ethernet8", "")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            assert fv[0] != "vrf_name"
 
         # bring up interface
         # NOTE: For IPv6, only when the interface is up will the netlink message
         # get generated.
-        self.set_admin_status("Ethernet8", "up")
+        self.set_admin_status(dvs, "Ethernet8", "up")
 
         # assign IP to interface
         self.add_ip_address("Ethernet8", "fc00::1/126")
+        time.sleep(2)   # IPv6 netlink message needs longer time
 
         # check application database
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet8")
@@ -92,13 +187,21 @@ class TestRouterInterface(object):
         # remove IP from interface
         self.remove_ip_address("Ethernet8", "fc00::1/126")
 
+        # remove interface
+        self.remove_l3_intf("Ethernet8")
+
         # bring down interface
-        self.set_admin_status("Ethernet8", "down")
+        self.set_admin_status(dvs, "Ethernet8", "down")
 
         # check application database
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet8")
         intf_entries = tbl.getKeys()
         assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Ethernet8"
 
         # check ASIC database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
@@ -109,8 +212,21 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::1/128":
                 assert False
 
-    def test_InterfaceAddRemoveIpv4Address(self, dvs, testlog):
+    def test_PortInterfaceAddRemoveIpv4Address(self, dvs, testlog):
         self.setup_db(dvs)
+
+        # bring up interface
+        self.set_admin_status(dvs, "Ethernet8", "up")
+
+        # create interface
+        self.create_l3_intf("Ethernet8", "")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            assert fv[0] != "vrf_name"
 
         # assign IP to interface
         self.add_ip_address("Ethernet8", "10.0.0.4/31")
@@ -164,10 +280,21 @@ class TestRouterInterface(object):
         # remove IP from interface
         self.remove_ip_address("Ethernet8", "10.0.0.4/31")
 
+        # remove interface
+        self.remove_l3_intf("Ethernet8")
+
+        # bring down interface
+        self.set_admin_status(dvs, "Ethernet8", "down")
+
         # check application database
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet8")
         intf_entries = tbl.getKeys()
         assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Ethernet8"
 
         # check ASIC database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
@@ -178,8 +305,18 @@ class TestRouterInterface(object):
             if route["dest"] == "10.0.0.4/32":
                 assert False
 
-    def test_InterfaceSetMtu(self, dvs, testlog):
+    def test_PortInterfaceSetMtu(self, dvs, testlog):
         self.setup_db(dvs)
+
+        # create interface
+        self.create_l3_intf("Ethernet16", "")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("Ethernet16")
+        assert status == True
+        for fv in fvs:
+            assert fv[0] != "vrf_name"
 
         # assign IP to interface
         self.add_ip_address("Ethernet16", "20.0.0.8/29")
@@ -208,59 +345,512 @@ class TestRouterInterface(object):
         # remove IP from interface
         self.remove_ip_address("Ethernet16", "20.0.0.8/29")
 
-class TestLagRouterInterfaceIpv4(object):
-    def setup_db(self, dvs):
-        self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-        self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        # remove interface
+        self.remove_l3_intf("Ethernet16")
 
-    def create_port_channel(self, dvs, alias):
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet16")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Ethernet16"
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "20.0.0.8/29":
+                assert False
+            if route["dest"] == "20.0.0.8/32":
+                assert False
+
+    def test_PortInterfaceAddRemoveIpv6AddressWithVrf(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # bring up interface
+        self.set_admin_status(dvs, "Ethernet8", "up")
+
+        # create vrf
+        vrf_oid = self.create_vrf("Vrf_0")
+
+        # create interface with vrf
+        self.create_l3_intf("Ethernet8", "Vrf_0")
+
+        # check interface's vrf
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "vrf_name":
+                assert fv[1] == "Vrf_0"
+                vrf_found = True
+                break
+        assert vrf_found == True
+
+        # assign IP to interface
+        self.add_ip_address("Ethernet8", "fc00::1/126")
+        time.sleep(2)  # IPv6 netlink message needs longer time
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet8")
+        intf_entries = tbl.getKeys()
+
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "fc00::1/126"
+
+        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one port based router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            # a port based router interface has five field/value tuples
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_PORT"
+                    # the default MTU without any configuration is 9100
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                        assert fv[1] == "9100"
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
+                        assert fv[1] == vrf_oid
+
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::/126":
+                subnet_found = True
+                assert route["vr"] == vrf_oid
+            if route["dest"] == "fc00::1/128":
+                ip2me_found = True
+                assert route["vr"] == vrf_oid
+
+        assert subnet_found and ip2me_found
+
+        # remove IP from interface
+        self.remove_ip_address("Ethernet8", "fc00::1/126")
+
+        # remove vrf from interface
+        self.remove_l3_intf("Ethernet8")
+
+        # remove vrf
+        self.remove_vrf("Vrf_0")
+
+        # bring down interface
+        self.set_admin_status(dvs, "Ethernet8", "down")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet8")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Ethernet8"
+
+        tbl = swsscommon.Table(self.pdb, "VRF")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::/126":
+                assert False
+            if route["dest"] == "fc00::1/128":
+                assert False
+
+
+    def test_PortInterfaceAddRemoveIpv4AddressWithVrf(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # bring up interface
+        self.set_admin_status(dvs, "Ethernet8", "up")
+
+        # create vrf
+        vrf_oid = self.create_vrf("Vrf_0")
+
+        # create interface with vrf
+        self.create_l3_intf("Ethernet8", "Vrf_0")
+
+        # check interface's vrf
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("Ethernet8")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "vrf_name":
+                assert fv[1] == "Vrf_0"
+                vrf_found = True
+                break
+        assert vrf_found == True
+
+        # assign IP to interface
+        self.add_ip_address("Ethernet8", "10.0.0.4/31")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet8")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "10.0.0.4/31"
+
+        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv4"
+            else:
+                assert False
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one port based router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            # a port based router interface has five field/value tuples
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_PORT"
+                    # the default MTU without any configuration is 9100
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                        assert fv[1] == "9100"
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
+                        assert fv[1] == vrf_oid
+
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.0.0.4/31":
+                subnet_found = True
+                assert route["vr"] == vrf_oid
+            if route["dest"] == "10.0.0.4/32":
+                ip2me_found = True
+                assert route["vr"] == vrf_oid
+
+        assert subnet_found and ip2me_found
+
+        # remove IP from interface
+        self.remove_ip_address("Ethernet8", "10.0.0.4/31")
+
+        # remove interface
+        self.remove_l3_intf("Ethernet8")
+
+        # remove vrf
+        self.remove_vrf("Vrf_0")
+
+        # bring down interface
+        self.set_admin_status(dvs, "Ethernet8", "down")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet8")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Ethernet8"
+
+        tbl = swsscommon.Table(self.pdb, "VRF")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.0.0.4/31":
+                assert False
+            if route["dest"] == "10.0.0.4/32":
+                assert False
+
+    def test_PortInterfaceAddSameIpv4AddressWithDiffVrf(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        for i in [0, 4]:
+            # record ASIC router interface database
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+            old_intf_entries = set(tbl.getKeys())
+
+            # record ASIC router entry database
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+            old_route_entries = set(tbl.getKeys())
+
+            intf_name = "Ethernet" + str(i)
+            vrf_name = "Vrf_" + str(i)
+
+            # bring up interface
+            self.set_admin_status(dvs, intf_name, "up")
+
+            # create vrf
+            vrf_oid = self.create_vrf(vrf_name)
+
+            # create interface with vrf
+            self.create_l3_intf(intf_name, vrf_name)
+
+            # check interface's vrf
+            tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+            (status, fvs) = tbl.get(intf_name)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "vrf_name":
+                    assert fv[1] == vrf_name
+                    vrf_found = True
+                    break
+            assert vrf_found == True
+
+            # assign IP to interface
+            self.add_ip_address(intf_name, "10.0.0.4/31")
+
+            # check application database
+            tbl = swsscommon.Table(self.pdb, "INTF_TABLE:" + intf_name)
+            intf_entries = tbl.getKeys()
+            assert len(intf_entries) == 1
+            assert intf_entries[0] == "10.0.0.4/31"
+
+            (status, fvs) = tbl.get(tbl.getKeys()[0])
+            assert status == True
+            assert len(fvs) == 2
+            for fv in fvs:
+                if fv[0] == "scope":
+                    assert fv[1] == "global"
+                elif fv[0] == "family":
+                    assert fv[1] == "IPv4"
+                else:
+                    assert False
+
+            # check ASIC router interface database
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+            current_intf_entries = set(tbl.getKeys())
+            intf_entries = list(current_intf_entries - old_intf_entries)
+            for key in intf_entries:
+                (status, fvs) = tbl.get(key)
+                assert status == True
+                # a port based router interface has five field/value tuples
+                if len(fvs) == 5:
+                    for fv in fvs:
+                        if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                            assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_PORT"
+                        # the default MTU without any configuration is 9100
+                        if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                            assert fv[1] == "9100"
+                        if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
+                            assert fv[1] == vrf_oid
+
+            # check ASIC route database
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+            current_route_entries = set(tbl.getKeys())
+            route_entries = list(current_route_entries - old_route_entries)
+
+            for key in route_entries:
+                route = json.loads(key)
+                if route["dest"] == "10.0.0.4/31":
+                    subnet_found = True
+                    assert route["vr"] == vrf_oid
+                if route["dest"] == "10.0.0.4/32":
+                    ip2me_found = True
+                    assert route["vr"] == vrf_oid
+
+            assert subnet_found and ip2me_found
+
+
+        for i in [0, 4]:
+            # check ASIC router interface database
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+            old_intf_entries = set(tbl.getKeys())
+
+            intf_name = "Ethernet" + str(i)
+            vrf_name = "Vrf_" + str(i)
+
+            # remove IP from interface
+            self.remove_ip_address(intf_name, "10.0.0.4/31")
+
+            # remove interface
+            self.remove_l3_intf(intf_name)
+
+            # remove vrf
+            self.remove_vrf(vrf_name)
+
+            # bring down interface
+            self.set_admin_status(dvs, intf_name, "down")
+
+            # check application database
+            tbl = swsscommon.Table(self.pdb, "INTF_TABLE:" + intf_name)
+            intf_entries = tbl.getKeys()
+            assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Ethernet0" and entry[0] != "Ethernet4"
+
+        tbl = swsscommon.Table(self.pdb, "VRF")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.0.0.4/31":
+                assert False
+            if route["dest"] == "10.0.0.4/32":
+                assert False
+
+    def create_port_channel(self, alias):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
         fvs = swsscommon.FieldValuePairs([("admin_status", "up"),
                                           ("mtu", "9100")])
         tbl.set(alias, fvs)
         time.sleep(1)
 
-    def remove_port_channel(self, dvs, alias):
+    def remove_port_channel(self, alias):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
         tbl._del(alias)
         time.sleep(1)
 
-    def add_port_channel_members(self, dvs, lag, members):
+    def add_port_channel_members(self, lag, members):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
         for member in members:
             tbl.set(lag + "|" + member, fvs)
             time.sleep(1)
 
-    def remove_port_channel_members(self, dvs, lag, members):
+    def remove_port_channel_members(self, lag, members):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
         for member in members:
             tbl._del(lag + "|" + member)
             time.sleep(1)
 
-    def add_ip_address(self, interface, ip):
-        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_INTERFACE")
-        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
-        tbl.set(interface + "|" + ip, fvs)
-        time.sleep(1)
-
-    def remove_ip_address(self, interface, ip):
-        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_INTERFACE")
-        tbl._del(interface + "|" + ip);
-        time.sleep(1)
-
-    def set_mtu(self, interface, mtu):
-        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
-        fvs = swsscommon.FieldValuePairs([("mtu", mtu)])
-        tbl.set(interface, fvs)
-        time.sleep(1)
-
-    def test_InterfaceAddRemoveIpv4Address(self, dvs, testlog):
+    def test_LagInterfaceAddRemoveIpv6Address(self, dvs, testlog):
         self.setup_db(dvs)
 
         # create port channel
-        self.create_port_channel(dvs, "PortChannel001")
+        self.create_port_channel("PortChannel001")
+
+        # bring up interface
+        self.set_admin_status(dvs, "PortChannel001", "up")
+
+        # create l3 interface
+        self.create_l3_intf("PortChannel001", "")
+
+        # assign IP to interface
+        self.add_ip_address("PortChannel001", "fc00::1/126")
+        time.sleep(2)  # IPv6 netlink message needs longer time
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel001")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "fc00::1/126"
+
+        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one port based router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            # a port based router interface has five field/value tuples
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_PORT"
+                    # the default MTU without any configuration is 9100
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                        assert fv[1] == "9100"
+
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::/126":
+                subnet_found = True
+            if route["dest"] == "fc00::1/128":
+                ip2me_found = True
+
+        assert subnet_found and ip2me_found
+
+        # remove IP from interface
+        self.remove_ip_address("PortChannel001", "fc00::1/126")
+
+        # remove interface
+        self.remove_l3_intf("PortChannel001")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel001")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "PortChannel001"
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::/126":
+                assert False
+            if route["dest"] == "fc00::1/128":
+                assert False
+
+        # remove port channel
+        self.remove_port_channel("PortChannel001")
+
+    def test_LagInterfaceAddRemoveIpv4Address(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # create port channel
+        self.create_port_channel("PortChannel001")
+
+        # bring up interface
+        self.set_admin_status(dvs, "PortChannel001", "up")
+
+        # create l3 interface
+        self.create_l3_intf("PortChannel001", "")
 
         # assign IP to interface
         self.add_ip_address("PortChannel001", "30.0.0.4/31")
@@ -314,10 +904,18 @@ class TestLagRouterInterfaceIpv4(object):
         # remove IP from interface
         self.remove_ip_address("PortChannel001", "30.0.0.4/31")
 
+        # remove l3 interface
+        self.remove_l3_intf("PortChannel001")
+
         # check application database
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel001")
         intf_entries = tbl.getKeys()
         assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "PortChannel001"
 
         # check ASIC database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
@@ -329,17 +927,20 @@ class TestLagRouterInterfaceIpv4(object):
                 assert False
 
         # remove port channel
-        self.remove_port_channel(dvs, "PortChannel001")
+        self.remove_port_channel("PortChannel001")
 
 
-    def test_InterfaceSetMtu(self, dvs, testlog):
+    def test_LagInterfaceSetMtu(self, dvs, testlog):
         self.setup_db(dvs)
 
         # create port channel
-        self.create_port_channel(dvs, "PortChannel002")
+        self.create_port_channel("PortChannel002")
 
         # add port channel members
-        self.add_port_channel_members(dvs, "PortChannel002", ["Ethernet0", "Ethernet4"])
+        self.add_port_channel_members("PortChannel002", ["Ethernet0", "Ethernet4"])
+
+        # create l3 interface
+        self.create_l3_intf("PortChannel002", "")
 
         # assign IP to interface
         self.add_ip_address("PortChannel002", "40.0.0.8/29")
@@ -382,51 +983,740 @@ class TestLagRouterInterfaceIpv4(object):
         # remove IP from interface
         self.remove_ip_address("PortChannel002", "40.0.0.8/29")
 
+        # remove l3 interface
+        self.remove_l3_intf("PortChannel002")
+
         # remove port channel members
-        self.remove_port_channel_members(dvs, "PortChannel002", ["Ethernet0", "Ethernet4"])
+        self.remove_port_channel_members("PortChannel002", ["Ethernet0", "Ethernet4"])
 
         # remove port channel
-        self.remove_port_channel(dvs, "PortChannel002")
+        self.remove_port_channel("PortChannel002")
 
-class TestLoopbackRouterInterface(object):
-    def setup_db(self, dvs):
-        self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-        self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+    def test_LagInterfaceAddRemoveIpv6AddressWithVrf(self, dvs, testlog):
+        self.setup_db(dvs)
 
-    def createLoIntf(self, interface, ip):
-        tbl = swsscommon.Table(self.cdb, "LOOPBACK_INTERFACE")
-        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
-        tbl.set(interface + "|" + ip, fvs)
+        # create vrf
+        vrf_oid = self.create_vrf("Vrf_0")
+
+        # create port channel
+        self.create_port_channel("PortChannel001")
+
+        # bring up interface
+        self.set_admin_status(dvs, "PortChannel001", "up")
+
+        # create l3 interface
+        self.create_l3_intf("PortChannel001", "Vrf_0")
+
+        # check interface's vrf
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("PortChannel001")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "vrf_name":
+                assert fv[1] == "Vrf_0"
+                vrf_found = True
+                break
+        assert vrf_found == True
+
+        # assign IP to interface
+        self.add_ip_address("PortChannel001", "fc00::1/126")
+        time.sleep(2)  # IPv6 netlink message needs longer time
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel001")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "fc00::1/126"
+
+        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one port based router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            # a port based router interface has five field/value tuples
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_PORT"
+                    # the default MTU without any configuration is 9100
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                        assert fv[1] == "9100"
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
+                        assert fv[1] == vrf_oid
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::/126":
+                subnet_found = True
+                assert route["vr"] == vrf_oid
+            if route["dest"] == "fc00::1/128":
+                ip2me_found = True
+                assert route["vr"] == vrf_oid
+
+        assert subnet_found and ip2me_found
+
+        # remove IP from interface
+        self.remove_ip_address("PortChannel001", "fc00::1/126")
+
+        # remove interface
+        self.remove_l3_intf("PortChannel001")
+
+        # remove vrf
+        self.remove_vrf("Vrf_0")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel001")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "PortChannel001"
+
+        tbl = swsscommon.Table(self.pdb, "VRF")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::1/126":
+                assert False
+            if route["dest"] == "fc00::1/128":
+                assert False
+
+        # remove port channel
+        self.remove_port_channel("PortChannel001")
+
+
+    def test_LagInterfaceAddRemoveIpv4AddressWithVrf(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # create port channel
+        self.create_port_channel("PortChannel001")
+
+        # create vrf
+        vrf_oid = self.create_vrf("Vrf_0")
+
+        # create interface with vrf
+        self.create_l3_intf("PortChannel001", "Vrf_0")
+
+        # bring up interface
+        self.set_admin_status(dvs, "PortChannel001", "up")
+
+        # check interface's vrf
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("PortChannel001")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "vrf_name":
+                assert fv[1] == "Vrf_0"
+                vrf_found = True
+                break
+        assert vrf_found == True
+
+        # assign IP to interface
+        self.add_ip_address("PortChannel001", "30.0.0.4/31")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel001")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "30.0.0.4/31"
+
+        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv4"
+            else:
+                assert False
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one port based router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            # a port based router interface has five field/value tuples
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_PORT"
+                    # the default MTU without any configuration is 9100
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                        assert fv[1] == "9100"
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
+                        assert fv[1] == vrf_oid
+
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "30.0.0.4/31":
+                subnet_found = True
+                assert route["vr"] == vrf_oid
+            if route["dest"] == "30.0.0.4/32":
+                ip2me_found = True
+                assert route["vr"] == vrf_oid
+
+        assert subnet_found and ip2me_found
+
+        # remove IP from interface
+        self.remove_ip_address("PortChannel001", "30.0.0.4/31")
+
+        # remove l3 interface
+        self.remove_l3_intf("PortChannel001")
+
+        # remove vrf
+        self.remove_vrf("Vrf_0")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel001")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "PortChannel001"
+
+        tbl = swsscommon.Table(self.pdb, "VRF")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "30.0.0.4/31":
+                assert False
+            if route["dest"] == "30.0.0.4/32":
+                assert False
+
+        # remove port channel
+        self.remove_port_channel("PortChannel001")
+
+    def create_vlan(self, vlan_id):
+        tbl = swsscommon.Table(self.cdb, "VLAN")
+        fvs = swsscommon.FieldValuePairs([("vlanid", vlan_id)])
+        tbl.set("Vlan" + vlan_id, fvs)
         time.sleep(1)
 
-    def removeLoIntf(self, interface, ip):
-        tbl = swsscommon.Table(self.cdb, "LOOPBACK_INTERFACE")
-        tbl._del(interface + "|" + ip);
+    def remove_vlan(self, vlan_id):
+        tbl = swsscommon.Table(self.cdb, "VLAN")
+        tbl._del("Vlan" + vlan_id)
         time.sleep(1)
 
-    def test_InterfacesCreateRemove(self, dvs, testlog):
+    def create_vlan_member(self, vlan_id, interface):
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
+        tbl.set("Vlan" + vlan_id + "|" + interface, fvs)
+        time.sleep(1)
+
+    def remove_vlan_member(self, vlan_id, interface):
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        tbl._del("Vlan" + vlan_id + "|" + interface)
+        time.sleep(1)
+
+    def test_VLanInterfaceAddRemoveIpv6Address(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # create vlan
+        self.create_vlan("10")
+
+        # add vlan member
+        self.create_vlan_member("10", "Ethernet0")
+
+        # bring up interface
+        self.set_admin_status(dvs, "Ethernet0", "up")
+        self.set_admin_status(dvs, "Vlan10", "up")
+
+        # create vlan interface
+        self.create_l3_intf("Vlan10", "")
+
+        # assign IP to interface
+        self.add_ip_address("Vlan10", "fc00::1/126")
+        time.sleep(2)  # IPv6 netlink message needs longer time
+
+        # check asic database and get vlan_oid
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Vlan10")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "fc00::1/126"
+
+        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one vlan router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_VLAN"
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VLAN_ID":
+                        assert fv[1] == vlan_oid
+
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::/126":
+                subnet_found = True
+            if route["dest"] == "fc00::1/128":
+                ip2me_found = True
+
+        assert subnet_found and ip2me_found
+
+        # remove IP from interface
+        self.remove_ip_address("Vlan10", "fc00::1/126")
+
+        # remove interface
+        self.remove_l3_intf("Vlan10")
+
+        # remove vlan member
+        self.remove_vlan_member("10", "Ethernet0")
+
+        # remove vlan
+        self.remove_vlan("10")
+
+        # bring down interface
+        self.set_admin_status(dvs, "Ethernet0", "down")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Vlan10")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Vlan10"
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::/126":
+                assert False
+            if route["dest"] == "fc00::1/128":
+                assert False
+
+    def test_VLanInterfaceAddRemoveIpv4Address(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # create vlan
+        self.create_vlan("10")
+
+        # add vlan member
+        self.create_vlan_member("10", "Ethernet0")
+
+        # bring up interface
+        self.set_admin_status(dvs, "Ethernet0", "up")
+        self.set_admin_status(dvs, "Vlan10", "up")
+
+        #create vlan interface
+        self.create_l3_intf("Vlan10", "")
+
+        # assign IP to interface
+        self.add_ip_address("Vlan10", "10.0.0.4/31")
+
+        # check asic database and get vlan_oid
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Vlan10")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "10.0.0.4/31"
+
+        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv4"
+            else:
+                assert False
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one vlan router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_VLAN"
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VLAN_ID":
+                        assert fv[1] == vlan_oid
+
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.0.0.4/31":
+                subnet_found = True
+            if route["dest"] == "10.0.0.4/32":
+                ip2me_found = True
+
+        assert subnet_found and ip2me_found
+
+        # remove IP from interface
+        self.remove_ip_address("Vlan10", "10.0.0.4/31")
+
+        # remove vlan interface
+        self.remove_l3_intf("Vlan10")
+
+        # remove vlan member
+        self.remove_vlan_member("10", "Ethernet0")
+
+        # remove vlan
+        self.remove_vlan("10")
+
+        # bring down interface
+        self.set_admin_status(dvs, "Ethernet0", "down")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Vlan10")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "VLAN_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Vlan10"
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.0.0.4/31":
+                assert False
+            if route["dest"] == "10.0.0.4/32":
+                assert False
+
+    def test_VLanInterfaceAddRemoveIpv6AddressWithVrf(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # create vlan
+        self.create_vlan("10")
+
+        # add vlan member
+        self.create_vlan_member("10", "Ethernet0")
+
+        # bring up interface
+        self.set_admin_status(dvs, "Ethernet0", "up")
+        self.set_admin_status(dvs, "Vlan10", "up")
+
+        # create vrf
+        vrf_oid = self.create_vrf("Vrf_0")
+
+        # create vlan interface
+        self.create_l3_intf("Vlan10", "Vrf_0")
+
+        # assign IP to interface
+        self.add_ip_address("Vlan10", "fc00::1/126")
+        time.sleep(2)  # IPv6 netlink message needs longer time
+
+        # check interface's vrf
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("Vlan10")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "vrf_name":
+                assert fv[1] == "Vrf_0"
+                vrf_found = True
+                break
+        assert vrf_found == True
+
+        # check asic database and get vlan_oid
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Vlan10")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "fc00::1/126"
+
+        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one vlan router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_VLAN"
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VLAN_ID":
+                        assert fv[1] == vlan_oid
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
+                        assert fv[1] == vrf_oid
+
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::/126":
+                subnet_found = True
+                assert route["vr"] == vrf_oid
+            if route["dest"] == "fc00::1/128":
+                ip2me_found = True
+                assert route["vr"] == vrf_oid
+
+        assert subnet_found and ip2me_found
+
+        # remove IP from interface
+        self.remove_ip_address("Vlan10", "fc00::1/126")
+
+        # remove vlan interface
+        self.remove_l3_intf("Vlan10")
+
+        # remove vlan member
+        self.remove_vlan_member("10", "Ethernet0")
+
+        # remove vlan
+        self.remove_vlan("10")
+
+        # bring down interface
+        self.set_admin_status(dvs, "Ethernet0", "down")
+
+        # remove vrf
+        self.remove_vrf("Vrf_0")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Vlan10")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Vlan10"
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::/126":
+                assert False
+            if route["dest"] == "fc00::1/128":
+                assert False
+
+    def test_VLanInterfaceAddRemoveIpv4AddressWithVrf(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # create vlan
+        self.create_vlan("10")
+
+        # add vlan member
+        self.create_vlan_member("10", "Ethernet0")
+
+        # bring up interface
+        self.set_admin_status(dvs, "Ethernet0", "up")
+        self.set_admin_status(dvs, "Vlan10", "up")
+
+        # create vrf
+        vrf_oid = self.create_vrf("Vrf_0")
+
+        # create vlan interface
+        self.create_l3_intf("Vlan10", "Vrf_0")
+
+        # assign IP to interface
+        self.add_ip_address("Vlan10", "10.0.0.4/31")
+
+        # check interface's vrf
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("Vlan10")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "vrf_name":
+                assert fv[1] == "Vrf_0"
+                vrf_found = True
+                break
+        assert vrf_found == True
+
+        # check asic database and get vlan_oid
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Vlan10")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "10.0.0.4/31"
+
+        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv4"
+            else:
+                assert False
+
+        # check ASIC router interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one vlan router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_VLAN"
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VLAN_ID":
+                        assert fv[1] == vlan_oid
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
+                        assert fv[1] == vrf_oid
+
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.0.0.4/31":
+                subnet_found = True
+                assert route["vr"] == vrf_oid
+            if route["dest"] == "10.0.0.4/32":
+                ip2me_found = True
+                assert route["vr"] == vrf_oid
+
+        assert subnet_found and ip2me_found
+
+        # remove IP from interface
+        self.remove_ip_address("Vlan10", "10.0.0.4/31")
+
+        # remove vlan interface
+        self.remove_l3_intf("Vlan10")
+
+        # remove vlan member
+        self.remove_vlan_member("10", "Ethernet0")
+
+        # remove vlan
+        self.remove_vlan("10")
+
+        # bring down interface
+        self.set_admin_status(dvs, "Ethernet0", "down")
+
+        # remove vrf
+        self.remove_vrf("Vrf_0")
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Vlan10")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "VLAN_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Vlan10"
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.0.0.4/31":
+                assert False
+            if route["dest"] == "10.0.0.4/32":
+                assert False
+
+    def test_LoopbackInterfacesAddRemoveIpv4Address(self, dvs, testlog):
         self.setup_db(dvs)
 
         # Create loopback interfaces
-        self.createLoIntf("Loopback0", "10.1.0.1/32")
-        self.createLoIntf("Loopback1", "10.1.0.2/32")
+        self.create_l3_intf("Loopback0", "")
+        self.create_l3_intf("Loopback1", "")
 
-        # Check configuration database
-        tbl = swsscommon.Table(self.cdb, "LOOPBACK_INTERFACE")
-        intf_entries = tbl.getKeys()
-
-        assert len(intf_entries) == 2
-        assert "Loopback0|10.1.0.1/32" in intf_entries
-        assert "Loopback1|10.1.0.2/32" in intf_entries
+        # add ip address
+        self.add_ip_address("Loopback0", "10.1.0.1/32")
+        self.add_ip_address("Loopback1", "10.1.0.2/32")
 
         # Check application database
-        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:lo")
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Loopback0")
         intf_entries = tbl.getKeys()
-
-        assert len(intf_entries) == 2
-        assert "10.1.0.1/32" in intf_entries
-        assert "10.1.0.2/32" in intf_entries
+        assert intf_entries[0] == "10.1.0.1/32"
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Loopback1")
+        intf_entries = tbl.getKeys()
+        assert intf_entries[0] == "10.1.0.2/32"
 
         # Check ASIC database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
@@ -439,17 +1729,19 @@ class TestLoopbackRouterInterface(object):
 
         assert lo0_ip2me_found and lo1_ip2me_found
 
-        # Remove lopback interfaces
-        self.removeLoIntf("Loopback0", "10.1.0.1/32")
-        self.removeLoIntf("Loopback1", "10.1.0.2/32")
+        # Remove ip address
+        self.remove_ip_address("Loopback0", "10.1.0.1/32")
+        self.remove_ip_address("Loopback1", "10.1.0.2/32")
 
-        # Check configuration database
-        tbl = swsscommon.Table(self.cdb, "LOOPBACK_INTERFACE")
-        intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 0
+        # Remove interface
+        self.remove_l3_intf("Loopback0")
+        self.remove_l3_intf("Loopback1")
 
         # Check application database
-        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:lo")
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Loopback0")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Loopback1")
         intf_entries = tbl.getKeys()
         assert len(intf_entries) == 0
 
@@ -460,4 +1752,182 @@ class TestLoopbackRouterInterface(object):
             if route["dest"] == "10.1.0.1/32":
                 assert False
             if route["dest"] == "10.1.0.2/32":
+                assert False
+
+    def test_LoopbackInterfacesAddRemoveIpv6Address(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # Create loopback interfaces
+        self.create_l3_intf("Loopback0", "")
+        self.create_l3_intf("Loopback1", "")
+
+        # add ip address
+        self.add_ip_address("Loopback0", "fc00::1/128")
+        self.add_ip_address("Loopback1", "fd00::1/128")
+        time.sleep(2)  # IPv6 netlink message needs longer time
+
+        # Check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Loopback0")
+        intf_entries = tbl.getKeys()
+        assert intf_entries[0] == "fc00::1/128"
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Loopback1")
+        intf_entries = tbl.getKeys()
+        assert intf_entries[0] == "fd00::1/128"
+
+        # Check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::1/128":
+                lo0_ip2me_found = True
+            if route["dest"] == "fd00::1/128":
+                lo1_ip2me_found = True
+
+        assert lo0_ip2me_found and lo1_ip2me_found
+
+        # Remove ip address
+        self.remove_ip_address("Loopback0", "fc00::1/128")
+        self.remove_ip_address("Loopback1", "fd00::1/128")
+
+        # Remove interface
+        self.remove_l3_intf("Loopback0")
+        self.remove_l3_intf("Loopback1")
+
+        # Check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Loopback0")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Loopback1")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # Check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "fc00::1/128":
+                assert False
+            if route["dest"] == "fd00::1/128":
+                assert False
+
+    def test_LoopbackInterfaceIpv4AddressWithVrf(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        for i in [0, 1]:
+            # record ASIC router interface database
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+            old_intf_entries = set(tbl.getKeys())
+
+            # record ASIC router entry database
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+            old_route_entries = set(tbl.getKeys())
+
+            intf_name = "Loopback" + str(i)
+            vrf_name = "Vrf_" + str(i)
+
+            # create vrf
+            vrf_oid = self.create_vrf(vrf_name)
+
+            # create interface with vrf
+            self.create_l3_intf(intf_name, vrf_name)
+
+            # check interface's vrf
+            tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+            (status, fvs) = tbl.get(intf_name)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "vrf_name":
+                    assert fv[1] == vrf_name
+                    vrf_found = True
+                    break
+            assert vrf_found == True
+
+            # assign IP to interface
+            self.add_ip_address(intf_name, "10.0.0.4/32")
+
+            # check application database
+            tbl = swsscommon.Table(self.pdb, "INTF_TABLE:" + intf_name)
+            intf_entries = tbl.getKeys()
+            assert len(intf_entries) == 1
+            assert intf_entries[0] == "10.0.0.4/32"
+
+            (status, fvs) = tbl.get(tbl.getKeys()[0])
+            assert status == True
+            assert len(fvs) == 2
+            for fv in fvs:
+                if fv[0] == "scope":
+                    assert fv[1] == "global"
+                elif fv[0] == "family":
+                    assert fv[1] == "IPv4"
+                else:
+                    assert False
+
+            # check ASIC router interface database
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+            current_intf_entries = set(tbl.getKeys())
+            intf_entries = list(current_intf_entries - old_intf_entries)
+            for key in intf_entries:
+                (status, fvs) = tbl.get(key)
+                assert status == True
+                # a port based router interface has five field/value tuples
+                if len(fvs) == 5:
+                    for fv in fvs:
+                        if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                            assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_PORT"
+                        # the default MTU without any configuration is 9100
+                        if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                            assert fv[1] == "9100"
+                        if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
+                            assert fv[1] == vrf_oid
+
+            # check ASIC route database
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+            current_route_entries = set(tbl.getKeys())
+            route_entries = list(current_route_entries - old_route_entries)
+
+            for key in route_entries:
+                route = json.loads(key)
+                if route["dest"] == "10.0.0.4/32":
+                    ip2me_found = True
+                    assert route["vr"] == vrf_oid
+
+            assert ip2me_found
+
+
+        for i in [0, 1]:
+            # check ASIC router interface database
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+            old_intf_entries = set(tbl.getKeys())
+
+            intf_name = "Loopback" + str(i)
+            vrf_name = "Vrf_" + str(i)
+
+            # remove IP from interface
+            self.remove_ip_address(intf_name, "10.0.0.4/32")
+
+            # remove interface
+            self.remove_l3_intf(intf_name)
+
+            # remove vrf
+            self.remove_vrf(vrf_name)
+
+            # check application database
+            tbl = swsscommon.Table(self.pdb, "INTF_TABLE:" + intf_name)
+            intf_entries = tbl.getKeys()
+            assert len(intf_entries) == 0
+
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
+        intf_entries = tbl.getKeys()
+        for entry in intf_entries:
+            assert entry[0] != "Loopback0" and entry[0] != "Loopback1"
+
+        tbl = swsscommon.Table(self.pdb, "VRF")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 0
+
+        # check ASIC database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "10.0.0.4/32":
                 assert False

@@ -1206,3 +1206,144 @@ class TestAcl(object):
         self.remove_acl_rule(acl_table, acl_rule)
 
         self.remove_acl_table(acl_table)
+
+    def setup_db(self, dvs):
+        self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+
+    def set_admin_status(self, interface, status):
+        tbl = swsscommon.Table(self.cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("admin_status", status)])
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
+    def create_l3_intf(self, interface, vrf_name):
+        tbl = swsscommon.Table(self.cdb, "INTERFACE")
+        if len(vrf_name) == 0:
+            fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        else:
+            fvs = swsscommon.FieldValuePairs([("vrf_name", vrf_name)])
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
+    def remove_l3_intf(self, interface):
+        tbl = swsscommon.Table(self.cdb, "INTERFACE")
+        tbl._del(interface)
+        time.sleep(1)
+
+    def add_ip_address(self, interface, ip):
+        tbl = swsscommon.Table(self.cdb, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(interface + "|" + ip, fvs)
+        time.sleep(1)
+
+    def remove_ip_address(self, interface, ip):
+        tbl = swsscommon.Table(self.cdb, "INTERFACE")
+        tbl._del(interface + "|" + ip)
+        time.sleep(1)
+
+    def add_neighbor(self, interface, ip, mac):
+        tbl = swsscommon.Table(self.cdb, "NEIGH")
+        fvs = swsscommon.FieldValuePairs([("neigh", mac)])
+        tbl.set(interface + "|" + ip, fvs)
+        time.sleep(1)
+
+    def remove_neighbor(self, interface, ip):
+        tbl = swsscommon.Table(self.cdb, "NEIGH")
+        tbl._del(interface + "|" + ip)
+        time.sleep(1)
+
+    def test_AclRuleRedirectToNexthop(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # bring up interface
+        self.set_admin_status("Ethernet4", "up")
+
+        # create interface
+        self.create_l3_intf("Ethernet4", "")
+
+        # assign IP to interface
+        self.add_ip_address("Ethernet4", "10.0.0.1/24")
+
+        # add neighbor
+        self.add_neighbor("Ethernet4", "10.0.0.2", "00:01:02:03:04:05")
+
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        keys = atbl.getKeys()
+        assert len(keys) == 1
+        nhi_oid = keys[0]
+
+        # create ACL_TABLE in config db
+        tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
+        fvs = swsscommon.FieldValuePairs([("policy_desc", "test"), ("type", "L3"), ("ports", "Ethernet0")])
+        tbl.set("test_redirect", fvs)
+
+        time.sleep(2)
+
+        # create acl rule
+        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+        fvs = swsscommon.FieldValuePairs([
+                                        ("priority", "100"),
+                                        ("L4_SRC_PORT", "65000"),
+                                        ("PACKET_ACTION", "REDIRECT:10.0.0.2|Ethernet4")])
+        tbl.set("test_redirect|test_rule1", fvs)
+
+        time.sleep(1)
+
+        test_acl_table_id = self.get_acl_table_id(dvs)
+
+        # check acl table in asic db
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+        keys = atbl.getKeys()
+
+        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+        assert len(acl_entry) == 1
+
+        (status, fvs) = atbl.get(acl_entry[0])
+        assert status == True
+        assert len(fvs) == 6
+        for fv in fvs:
+            if fv[0] == "SAI_ACL_ENTRY_ATTR_TABLE_ID":
+                assert fv[1] == test_acl_table_id
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_ADMIN_STATE":
+                assert fv[1] == "true"
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_PRIORITY":
+                assert fv[1] == "100"
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_COUNTER":
+                assert True
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT":
+                assert fv[1] == "65000&mask:0xffff"
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT":
+                assert fv[1] == nhi_oid
+            else:
+                assert False
+
+        # remove acl rule
+        tbl._del("test_redirect|test_rule1")
+
+        time.sleep(1)
+
+        (status, fvs) = atbl.get(acl_entry[0])
+        assert status == False
+
+        tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
+        tbl._del("test_redirect")
+
+        time.sleep(1)
+
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
+        keys = atbl.getKeys()
+        assert len(keys) >= 1
+
+        # remove neighbor
+        self.remove_neighbor("Ethernet4", "10.0.0.2")
+
+        # remove interface ip
+        self.remove_ip_address("Ethernet4", "10.0.0.1/24")
+
+        # remove interface
+        self.remove_l3_intf("Ethernet4")
+
+        # bring down interface
+        self.set_admin_status("Ethernet4", "down")
