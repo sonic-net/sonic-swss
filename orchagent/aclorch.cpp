@@ -86,13 +86,14 @@ acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
 
 static acl_table_type_lookup_t aclTableTypeLookUp =
 {
-    { TABLE_TYPE_L3,        ACL_TABLE_L3 },
-    { TABLE_TYPE_L3V6,      ACL_TABLE_L3V6 },
-    { TABLE_TYPE_MIRROR,    ACL_TABLE_MIRROR },
-    { TABLE_TYPE_MIRRORV6,  ACL_TABLE_MIRRORV6 },
-    { TABLE_TYPE_CTRLPLANE, ACL_TABLE_CTRLPLANE },
-    { TABLE_TYPE_DTEL_FLOW_WATCHLIST, ACL_TABLE_DTEL_FLOW_WATCHLIST },
-    { TABLE_TYPE_DTEL_DROP_WATCHLIST, ACL_TABLE_DTEL_DROP_WATCHLIST }
+    { TABLE_TYPE_L3,                    ACL_TABLE_L3 },
+    { TABLE_TYPE_L3V6,                  ACL_TABLE_L3V6 },
+    { TABLE_TYPE_MIRROR,                ACL_TABLE_MIRROR },
+    { TABLE_TYPE_MIRRORV6,              ACL_TABLE_MIRRORV6 },
+    { TABLE_TYPE_MIRROR_DSCP,           ACL_TABLE_MIRROR_DSCP },
+    { TABLE_TYPE_CTRLPLANE,             ACL_TABLE_CTRLPLANE },
+    { TABLE_TYPE_DTEL_FLOW_WATCHLIST,   ACL_TABLE_DTEL_FLOW_WATCHLIST },
+    { TABLE_TYPE_DTEL_DROP_WATCHLIST,   ACL_TABLE_DTEL_DROP_WATCHLIST }
 };
 
 static acl_stage_type_lookup_t aclStageLookUp =
@@ -604,6 +605,7 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
         type != ACL_TABLE_L3V6 &&
         type != ACL_TABLE_MIRROR &&
         type != ACL_TABLE_MIRRORV6 &&
+        type != ACL_TABLE_MIRROR_DSCP &&
         type != ACL_TABLE_DTEL_FLOW_WATCHLIST &&
         type != ACL_TABLE_DTEL_DROP_WATCHLIST)
     {
@@ -974,7 +976,14 @@ bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
     if ((m_tableType == ACL_TABLE_L3 || m_tableType == ACL_TABLE_L3V6)
 	&& attr_name == MATCH_DSCP)
     {
-        SWSS_LOG_ERROR("DSCP match is not supported for the tables of type L3");
+        SWSS_LOG_ERROR("DSCP match is not supported for the table of type L3");
+        return false;
+    }
+
+    if ((m_tableType == ACL_TABLE_MIRROR_DSCP && attr_name != MATCH_DSCP))
+    {
+        SWSS_LOG_ERROR("%s match is not supported for the table of type MIRROR_DSCP",
+                attr_name.c_str());
         return false;
     }
 
@@ -1183,6 +1192,29 @@ bool AclTable::create()
         if (status == SAI_STATUS_SUCCESS)
         {
             gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t) attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
+        }
+
+        return status == SAI_STATUS_SUCCESS;
+    }
+
+    if (type == ACL_TABLE_MIRROR_DSCP)
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
+        attr.value.s32 = stage == ACL_STAGE_INGRESS
+            ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
+        table_attrs.push_back(attr);
+
+        sai_status_t status = sai_acl_api->create_acl_table(
+                &m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
+
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            gCrmOrch->incCrmAclUsedCounter(
+                    CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t)attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
         }
 
         return status == SAI_STATUS_SUCCESS;

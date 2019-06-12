@@ -98,7 +98,7 @@ class TestMirror(object):
         return self.get_mirror_session_state(name)["status"]
 
     def get_mirror_session_state(self, name):
-        tbl = swsscommon.Table(self.sdb, "MIRROR_SESSION")
+        tbl = swsscommon.Table(self.sdb, "MIRROR_SESSION_TABLE")
         (status, fvs) = tbl.get(name)
         assert status == True
         assert len(fvs) > 0

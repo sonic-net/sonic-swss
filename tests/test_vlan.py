@@ -191,6 +191,118 @@ class TestVlan(object):
         vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
         assert len(vlan_entries) == 0
 
+    def test_VlanIncrementalConfig(self, dvs, testlog):
+        dvs.setup_db()
+
+        # create vlan
+        dvs.create_vlan("2")
+
+        # check asic database
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        (status, fvs) = tbl.get(vlan_oid)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_VLAN_ATTR_VLAN_ID":
+                assert fv[1] == "2"
+
+        # create vlan member
+        dvs.create_vlan_member("2", "Ethernet0")
+
+        # check asic database
+        bridge_port_map = {}
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
+        bridge_port_entries = tbl.getKeys()
+        for key in bridge_port_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_BRIDGE_PORT_ATTR_PORT_ID":
+                    bridge_port_map[key] = fv[1]
+
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        vlan_member_entries = tbl.getKeys()
+        assert len(vlan_member_entries) == 1
+
+        (status, fvs) = tbl.get(vlan_member_entries[0])
+        assert status == True
+        assert len(fvs) == 3
+        for fv in fvs:
+            if fv[0] == "SAI_VLAN_MEMBER_ATTR_VLAN_TAGGING_MODE":
+                assert fv[1] == "SAI_VLAN_TAGGING_MODE_UNTAGGED"
+            elif fv[0] == "SAI_VLAN_MEMBER_ATTR_VLAN_ID":
+                assert fv[1] == vlan_oid
+            elif fv[0] == "SAI_VLAN_MEMBER_ATTR_BRIDGE_PORT_ID":
+                assert dvs.asicdb.portoidmap[bridge_port_map[fv[1]]] == "Ethernet0"
+            else:
+                assert False
+
+        # assign IP to interface
+        dvs.add_ip_address("Vlan2", "20.0.0.8/29")
+
+        # check ASIC router interface database for mtu changes.
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one vlan based router interface
+        assert len(intf_entries) == 2
+
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            # a Vlan based router interface has five field/value tuples
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_VLAN"
+                    # assert the default value 9100 for the router interface
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                        assert fv[1] == "9100"
+
+        # configure MTU to interface
+        dvs.set_mtu("Vlan2", "8888")
+        intf_entries = tbl.getKeys()
+        for key in intf_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            # a Vlan based router interface has five field/value tuples
+            if len(fvs) == 5:
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_TYPE":
+                        assert fv[1] == "SAI_ROUTER_INTERFACE_TYPE_VLAN"
+                    # assert the new value set to the router interface
+                    if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
+                        assert fv[1] == "8888"
+
+        # check appDB for VLAN admin_status change.
+        tbl = swsscommon.Table(dvs.pdb, "VLAN_TABLE")
+        dvs.set_interface_status("Vlan2", "down")
+        (status, fvs) = tbl.get("Vlan2")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "admin_status":
+                assert fv[1] == "down"
+
+        dvs.set_interface_status("Vlan2", "up")
+        (status, fvs) = tbl.get("Vlan2")
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "admin_status":
+                assert fv[1] == "up"
+
+        # remove IP from interface
+        dvs.remove_ip_address("Vlan2", "20.0.0.8/29")
+
+        # remove vlan member
+        dvs.remove_vlan_member("2", "Ethernet0")
+
+        # remvoe vlan
+        dvs.remove_vlan("2")
+
+
+    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
         (["Vla",  "2"], 0),
         (["VLAN", "3"], 0),
@@ -221,6 +333,7 @@ class TestVlan(object):
             #remove vlan
             self.remove_vlan(vlan)
 
+    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
         (["Vlan", "abc"], 0),
         (["Vlan", "a3"],  0),
