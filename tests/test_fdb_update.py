@@ -11,14 +11,25 @@ def create_entry(tbl, key, pairs):
 
     # FIXME: better to wait until DB create them
     time.sleep(1)
+def remove_entry(tbl, key):
+    tbl._del(key)
+    time.sleep(1)
 
 def create_entry_tbl(db, table, key, pairs):
     tbl = swsscommon.Table(db, table)
     create_entry(tbl, key, pairs)
 
+def remove_entry_tbl(db, table, key):
+    tbl = swsscommon.Table(db, table)
+    remove_entry(tbl, key)
+
 def create_entry_pst(db, table, key, pairs):
     tbl = swsscommon.ProducerStateTable(db, table)
     create_entry(tbl, key, pairs)
+
+def remove_entry_pst(db, table, key):
+    tbl = swsscommon.ProducerStateTable(db, table)
+    remove_entry(tbl, key)
 
 def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
@@ -88,7 +99,7 @@ def test_FDBAddedAndUpdated(dvs, testlog):
     )
     assert ok, str(extra)
 
-    # create vlan member entry in application db
+    # create vlan member entry in Application DB
     create_entry_tbl(
         dvs.cdb,
         "VLAN_MEMBER", "Vlan2|Ethernet4",
@@ -117,3 +128,25 @@ def test_FDBAddedAndUpdated(dvs, testlog):
                      ('SAI_FDB_ENTRY_ATTR_PACKET_ACTION', 'SAI_PACKET_ACTION_FORWARD')]
     )
     assert ok, str(extra)
+
+    # remove FDB entry from Application DB
+    remove_entry_pst(
+        dvs.pdb,
+        "FDB_TABLE", "Vlan2:52-54-00-25-06-E9"
+    )
+
+    # remove vlan member entry from Application DB
+    remove_entry_tbl(
+        dvs.cdb,
+        "VLAN_MEMBER", "Vlan2|Ethernet4"
+    )
+    remove_entry_tbl(
+        dvs.cdb,
+        "VLAN_MEMBER", "Vlan2|Ethernet0"
+    )
+
+    #remove vlan entry from Application DB
+    remove_entry_tbl(
+        dvs.cdb,
+        "VLAN", "Vlan2"
+    )
