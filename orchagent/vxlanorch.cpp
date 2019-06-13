@@ -640,6 +640,11 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
     else
     {
         dst_ip = request.getAttrIP("dst_ip");
+        if((src_ip.isV4() && !dst_ip.isV4()) ||
+               (!src_ip.isV4() && dst_ip.isV4())) {
+            SWSS_LOG_ERROR("Format mismatch: 'src_ip' and 'dst_ip' must be of the same family");
+            return true;
+	}
     }
 
     const auto& tunnel_name = request.getKeyString(0);
