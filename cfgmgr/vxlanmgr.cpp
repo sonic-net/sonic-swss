@@ -1,4 +1,7 @@
 #include <algorithm>
+#include <regex>
+#include <sstream>
+#include <string>
 #include <net/if.h>
 
 #include "logger.h"
@@ -155,6 +158,13 @@ VxlanMgr::VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
         m_stateVxlanTable(stateDb, STATE_VXLAN_TABLE_NAME)
 {
+    // Clear old vxlan devices that were created at last time.
+    clearAllVxlanDevices();
+}
+
+VxlanMgr::~VxlanMgr()
+{
+    clearAllVxlanDevices();
 }
 
 void VxlanMgr::doTask(Consumer &consumer)
@@ -526,5 +536,38 @@ bool VxlanMgr::deleteVxlan(const VxlanInfo & info)
     return true;
 }
 
-
+void VxlanMgr::clearAllVxlanDevices()
+{
+    std::string stdout;
+    const std::string cmd = std::string("") + IP_CMD + " addr";
+    int ret = EXECUTE(cmd, stdout);
+    if (ret != 0)
+    {
+        SWSS_LOG_ERROR("Cannot get devices by command : %s", cmd.c_str());
+        return;
+    }
+    std::regex device_name_pattern("^\\d+:\\s+([^:]+)");
+    std::smatch match_result;
+    auto lines = tokenize(stdout, '\n');
+    for (const std::string & line : lines)
+    {
+        if (!std::regex_search(line, match_result, device_name_pattern))
+        {
+            continue;
+        }
+        std::string res;
+        std::string device_name = match_result[1];
+        VxlanInfo info;
+        if (device_name.find(VXLAN_NAME_PREFIX) == 0)
+        {
+            info.m_vxlan = device_name;
+            cmdDeleteVxlan(info, res);
+        }
+        else if (device_name.find(VXLAN_IF_NAME_PREFIX) == 0)
+        {
+            info.m_vxlanIf = device_name;
+            cmdDeleteVxlanIf(info, res);
+        }
+    }
+}
 
