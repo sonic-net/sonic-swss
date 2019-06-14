@@ -869,7 +869,7 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &gro
             }
         }
 
-        SWSS_LOG_NOTICE("Create ACL table group and bind port %s to it", port.m_alias.c_str());
+        SWSS_LOG_NOTICE("Create %s ACL table group and bind port %s to it", ingress ? "ingress" : "egress", port.m_alias.c_str());
     }
 
     return true;
@@ -1519,6 +1519,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             set<int> lane_set;
+            vector<uint32_t> pre_emphasis;
+            vector<uint32_t> idriver;
+            vector<uint32_t> ipredriver;
             string admin_status;
             string fec_mode;
             string pfc_asym;
@@ -1574,6 +1577,24 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (fvField(i) == "autoneg")
                 {
                     an = (int)stoul(fvValue(i));
+                }
+
+                /* Set port serdes Pre-emphasis */
+                if (fvField(i) == "preemphasis")
+                {
+                    getPortSerdesVal(fvValue(i), pre_emphasis);
+                }
+
+                /* Set port serdes idriver */
+                if (fvField(i) == "idriver")
+                {
+                    getPortSerdesVal(fvValue(i), idriver);
+                }
+
+                /* Set port serdes ipredriver */
+                if (fvField(i) == "ipredriver")
+                {
+                    getPortSerdesVal(fvValue(i), ipredriver);
                 }
             }
 
@@ -1853,6 +1874,51 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it++;
                         continue;
                     }
+                }
+
+                if (pre_emphasis.size() != 0)
+                {
+                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_PREEMPHASIS, pre_emphasis))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s  preemphasis is success", alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s pre-emphasis", alias.c_str());
+                        it++;
+                        continue;
+                    }
+
+                }
+
+                if (idriver.size() != 0)
+                {
+                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_IDRIVER, idriver))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s idriver is success", alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s idriver", alias.c_str());
+                        it++;
+                        continue;
+                    }
+
+                }
+
+                if (ipredriver.size() != 0)
+                {
+                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_IPREDRIVER, ipredriver))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s ipredriver is success", alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s ipredriver", alias.c_str());
+                        it++;
+                        continue;
+                    }
+
                 }
 
                 /* Last step set port admin status */
@@ -3297,3 +3363,41 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
     return true;
 }
 
+bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
+                                       vector<uint32_t> &serdes_val)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    memset(&attr, 0, sizeof(attr));
+    attr.id = attr_id;
+
+    attr.value.u32list.count = (uint32_t)serdes_val.size();
+    attr.value.u32list.list = serdes_val.data();
+
+    sai_status_t status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set serdes attribute %d to port pid:%lx",
+                       attr_id, port_id);
+        return false;
+    }
+    return true;
+}
+
+void PortsOrch::getPortSerdesVal(const std::string& val_str,
+                                 std::vector<uint32_t> &lane_values)
+{
+    SWSS_LOG_ENTER();
+
+    uint32_t lane_val;
+    std::string lane_str;
+    std::istringstream iss(val_str);
+
+    while (std::getline(iss, lane_str, ','))
+    {
+        lane_val = (uint32_t)std::stoul(lane_str, NULL, 16);
+        lane_values.push_back(lane_val);
+    }
+}

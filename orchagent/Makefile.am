@@ -8,6 +8,7 @@ dist_swss_DATA = \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
 		 pfc_detect_barefoot.lua \
+		 pfc_detect_nephos.lua \
 		 pfc_restore.lua \
 		 watermark_queue.lua \
 		 watermark_pg.lua
@@ -48,39 +49,8 @@ orchagent_SOURCES = \
             vnetorch.cpp \
             dtelorch.cpp \
             flexcounterorch.cpp \
-            watermarkorch.cpp  \
-            acltable.h \
-            aclorch.h \
-            bufferorch.h \
-            copporch.h \
-            directory.h \
-            fdborch.h \
-            intfsorch.h \
-            mirrororch.h \
-            neighorch.h \
-            notifications.h \
-            observer.h \
-            orch.h \
-            orchdaemon.h \
-            pfcactionhandler.h \
-            pfcwdorch.h \
-            port.h \
-            portsorch.h \
-            qosorch.h \
-            routeorch.h \
-            saihelper.h \
-            switchorch.h \
-            swssnet.h \
-            tunneldecaporch.h \
-            crmorch.h        \
-            request_parser.h \
-            vrforch.h \
-            dtelorch.h \
-            countercheckorch.h \
-            vxlanorch.h \
-            vnetorch.h \
-            flexcounterorch.h   \
-            watermarkorch.h
+            watermarkorch.cpp \
+            policerorch.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
