@@ -56,6 +56,11 @@ public:
         return ids_.tunnel_encap_id;
     }
 
+    sai_object_id_t getTunnelTermId() const
+    {
+        return ids_.tunnel_term_id;
+    }
+
 private:
     string tunnel_name_;
     bool active_ = false;
