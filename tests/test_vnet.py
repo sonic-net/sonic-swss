@@ -943,6 +943,7 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan101", "Ethernet28", "Vnet_2000", "100.100.4.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_2000', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet_2000', '10.10.10.1')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2000', '10.10.10.1', tunnel_name)
 
@@ -962,6 +963,7 @@ class TestVnetOrch(object):
         create_phy_interface(dvs, "Ethernet4", "Vnet_2001", "100.102.1.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_2001')
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.2.1/32", 'Vnet_2001', '10.10.10.2', "00:12:34:56:78:9A")
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2001', '10.10.10.2', tunnel_name, "00:12:34:56:78:9A")
 
@@ -1021,15 +1023,19 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan1001", "Ethernet0", "Vnet_1", "1.1.10.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_1', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.10/32", 'Vnet_1', '100.1.1.10')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '100.1.1.10', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.11/32", 'Vnet_1', '100.1.1.10')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '100.1.1.10', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.12/32", 'Vnet_1', '200.200.1.200')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '200.200.1.200', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.14/32", 'Vnet_1', '200.200.1.201')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '200.200.1.201', tunnel_name)
 
@@ -1044,9 +1050,11 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan1002", "Ethernet4", "Vnet_2", "2.2.10.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_2', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "2.2.2.10/32", 'Vnet_2', '100.1.1.20')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2', '100.1.1.20', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "2.2.2.11/32", 'Vnet_2', '100.1.1.20')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2', '100.1.1.20', tunnel_name)
 
@@ -1121,9 +1129,11 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan2002", "Ethernet12", "Vnet_20", "8.8.10.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_20', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "5.5.5.10/32", 'Vnet_10', '50.1.1.10')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_10', '50.1.1.10', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "8.8.8.10/32", 'Vnet_20', '80.1.1.20')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_10', '80.1.1.20', tunnel_name)
 
