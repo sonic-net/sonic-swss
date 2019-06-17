@@ -118,7 +118,7 @@ private:
     map<set<int>, tuple<string, uint32_t, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
     unordered_set<string> m_pendingPortSet;
-    map<string, string> m_portSetLearnModeList;
+
 	
     NotificationConsumer* m_portStatusNotificationConsumer;
 
@@ -143,7 +143,7 @@ private:
 
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
-    bool setBridgePortLearnMode(Port &port, int32_t mode);
+    bool setBridgePortLearnMode(Port &port, string learn_mode);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);

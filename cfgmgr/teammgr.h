@@ -44,6 +44,7 @@ private:
 
     bool setLagAdminStatus(const string &alias, const string &admin_status);
     bool setLagMtu(const string &alias, const string &mtu);
+    bool setLagLearnMode(const string &alias, const string &learn_mode);
 
     bool isPortEnslaved(const string &);
     bool findPortMaster(string &, const string &);

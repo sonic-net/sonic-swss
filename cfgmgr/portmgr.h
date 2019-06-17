@@ -31,6 +31,7 @@ private:
     void doTask(Consumer &consumer);
     bool setPortMtu(const string &alias, const string &mtu);
     bool setPortAdminStatus(const string &alias, const bool up);
+    bool setPortLearnMode(const string &alias, const string &learn_mode);
     bool isPortStateOk(const string &alias);
 };
 
