@@ -95,11 +95,13 @@ class TestPortConfig(object):
             port_name = 'Ethernet{0}'.format(eth+i)
             port_oid = self.getPortOid(dvs, port_name)
             port_tbl = swsscommon.Table(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_PORT:{0}'.format(port_oid))
+            hw_lane_value = None
 
             for k in port_tbl.get('')[1]:
                 if k[0] == "SAI_PORT_ATTR_HW_LANE_LIST":
                     hw_lane_value = k[1]
 
+            assert hw_lane_value, "Can't get hw_lane list"
             assert hw_lane_value == "1:%s" % (LANES_L[i])
 
 
