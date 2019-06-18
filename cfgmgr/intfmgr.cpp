@@ -184,6 +184,28 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
     string appKey = (is_lo ? "lo" : keys[0]) + ":" + keys[1];
 
+    MacAddress mac;
+    bool invalid_mac = false;
+
+    for (auto idx : data)
+    {
+        const auto &field = fvField(idx);
+        const auto &value = fvValue(idx);
+        if (field == "mac_addr")
+        {
+            try
+            {
+                mac = MacAddress(value);
+            }
+            catch (const std::invalid_argument& e)
+            {
+                SWSS_LOG_ERROR("Invalid Mac addr '%s' for '%s'", value.c_str(), alias.c_str());
+                invalid_mac = true;
+                break;
+            }
+        }
+    }
+
     if (op == SET_COMMAND)
     {
         /*
@@ -207,6 +229,15 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
         FieldValueTuple s("scope", "global");
         fvVector.push_back(s);
         fvVector.push_back(f);
+        /*Set the mac of interface*/
+        if(mac)
+        {
+            if (invalid_mac == false)
+            {
+                FieldValueTuple mac_attr("mac_addr",mac.to_string().c_str());
+                fvVector.push_back(mac_attr);
+            }
+        }
 
         m_appIntfTableProducer.set(appKey, fvVector);
         m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");

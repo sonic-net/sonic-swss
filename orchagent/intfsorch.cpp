@@ -182,9 +182,6 @@ void IntfsOrch::doTask(Consumer &consumer)
     {
         KeyOpFieldsValuesTuple t = it->second;
         MacAddress mac;
-        int mac_attr_set;
-
-        mac_attr_set = 0;
 
         vector<string> keys = tokenize(kfvKey(t), ':');
         string alias(keys[0]);
@@ -214,8 +211,6 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else if (field == "mac_addr")
             {
-                mac_attr_set = 1;
-
                 mac = MacAddress(value);
             }
         }
@@ -309,7 +304,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                 }
             }
 
-            if (mac_attr_set == 1)
+            if (mac)
             {
                 auto it_intfs = m_syncdIntfses.find(alias);
                 if (it_intfs != m_syncdIntfses.end())
