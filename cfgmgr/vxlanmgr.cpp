@@ -16,10 +16,12 @@ using namespace swss;
 // Fields name
 #define VXLAN_TUNNEL "vxlan_tunnel"
 #define SOURCE_IP "src_ip"
+#define DST_IP "dst_ip"
 #define VNI "vni"
 #define VNET "vnet"
 #define VXLAN "vxlan"
 #define VXLAN_IF "vxlan_if"
+#define VLAN "vlan"
 
 #define VXLAN_NAME_PREFIX "Vxlan"
 #define VXLAN_IF_NAME_PREFIX "Brvxlan"
@@ -376,6 +378,78 @@ bool VxlanMgr::doVxlanTunnelMapCreateTask(const KeyOpFieldsValuesTuple & t)
     m_appVxlanTunnelMapTable.set(vxlanTunnelMapName, kfvFieldsValues(t));
 
     SWSS_LOG_NOTICE("Create vxlan tunnel map %s", vxlanTunnelMapName.c_str());
+
+    /*Create vxlan tunnel in Linux kernel, the foramt is vxlanTunnelName-vni, such as VTTNL0001-1000*/
+    std::string vlan, vlan_id, vni_id, src_ip, dst_ip;
+    for (auto i : kfvFieldsValues(t))
+    {
+        const std::string & field = fvField(i);
+        const std::string & value = fvValue(i);
+        if (field == VLAN)
+        {
+            vlan = value;
+        }
+        else if (field == VNI)
+        {
+            vni_id = value;
+        }
+    }
+
+    const auto vlan_prefix = std::string("Vlan");
+    const auto prefix_len = vlan_prefix.length();
+    vlan_id = vlan.substr(prefix_len);
+
+    size_t found = vxlanTunnelMapName.find(delimiter);
+    const auto vxlanTunnelName = vxlanTunnelMapName.substr(0, found);
+
+    // If the vxlan tunnel has been created
+    auto it = m_vxlanTunnelCache.find(vxlanTunnelName);
+    if (it == m_vxlanTunnelCache.end())
+    {
+        SWSS_LOG_DEBUG("Vxlan tunnel %s has not been created", vxlanTunnelName.c_str());
+        // Suspend this message util the vxlan tunnel is created
+        return false;
+    }
+
+    auto sourceIp = std::find_if(
+        it->second.begin(),
+        it->second.end(),
+        [](const FieldValueTuple & fvt){ return fvt.first == SOURCE_IP; });
+    if (sourceIp  == it->second.end())
+    {
+        SWSS_LOG_DEBUG("Vxlan tunnel %s has no field src_ip", vxlanTunnelName.c_str());
+        return true;
+    }
+    else
+    {
+        src_ip = sourceIp->second;
+    }
+    auto dstIp = std::find_if(
+        it->second.begin(),
+        it->second.end(),
+        [](const FieldValueTuple & fvt){ return fvt.first == DST_IP; });
+    if (dstIp  != it->second.end())
+    {
+        dst_ip = dstIp->second;
+    }
+
+    //ip link add <vxlan_dev_name> type vxlan id <vni> local <src_ip> remote <dst_ip>  dstport 4789
+    //ip link set <vxlan_dev_name> master DOT1Q_BRIDGE_NAME
+    //bridge vlan add vid <vlan_id> dev <vxlan_dev_name>
+    //ip link set <vxlan_dev_name> up
+    std::string vxlan_dev_name;
+    vxlan_dev_name = std::string("") + std::string(vxlanTunnelName) + "-" + std::string(vni_id);
+    const std::string cmds = std::string("")
+      + BASH_CMD + " -c \""
+      + IP_CMD + " link add " + vxlan_dev_name + " type vxlan id " + std::string(vni_id) 
+      + " local " + src_ip + (dstIp  == it->second.end() ? "" : (" remote " + dst_ip)) + " dstport 4789 " + " && "
+      + IP_CMD + " link set " + vxlan_dev_name + " master Bridge " + " && "
+      + BRIDGE_CMD + " vlan add vid " + std::string(vlan_id) + " dev " + vxlan_dev_name + " && "
+      + IP_CMD + " link set " + vxlan_dev_name + " up " + "\"";
+
+    std::string res;
+    EXEC_WITH_ERROR_THROW(cmds, res);
+
     return true;
 }
 
@@ -388,6 +462,16 @@ bool VxlanMgr::doVxlanTunnelMapDeleteTask(const KeyOpFieldsValuesTuple & t)
     m_appVxlanTunnelMapTable.del(vxlanTunnelMapName);
 
     SWSS_LOG_NOTICE("Delete vxlan tunnel map %s", vxlanTunnelMapName.c_str());
+
+    // ip link del dev {{VXLAN}}
+    size_t found = vxlanTunnelMapName.find(delimiter);
+    const auto vxlanTunnelName = vxlanTunnelMapName.substr(0, found);
+    std::string res;
+    const std::string cmd = std::string("")
+        + IP_CMD " link del dev "
+        + vxlanTunnelName;
+    EXECUTE(cmd, res);
+
     return true;
 }
 

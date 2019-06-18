@@ -446,15 +446,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
 bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const string& type)
 {
     SWSS_LOG_ENTER();
-#if 0
-    if (m_entries.count(entry) != 0) // we already have such entries
-    {
-        // FIXME: should we check that the entry are moving to another port?
-        // FIXME: should we check that the entry are changing its type?
-        SWSS_LOG_ERROR("FDB entry already exists. mac=%s bv_id=0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
-        return true;
-    }
-#endif
+
     sai_fdb_entry_t fdb_entry;
 
     fdb_entry.switch_id = gSwitchId;
@@ -465,7 +457,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     sai_object_id_t bridge_port_id = SAI_NULL_OBJECT_ID;
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     VxlanTunnel *tunnel_obj = NULL;
-    if(strncmp(port_name.c_str(),"VTT",3) == 0)
+    if(strncmp(port_name.c_str(),VXLAN_TUNNEL_PREFIX,strlen(VXLAN_TUNNEL_PREFIX)) == 0)
     {
         /* Retry until tunnel is created */
         if (!tunnel_orch->isTunnelExists(port_name))
@@ -518,7 +510,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     attrs.push_back(attr);
 
     attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
-    if(strncmp(port_name.c_str(),"VTT",3) != 0)
+    if(strncmp(port_name.c_str(),VXLAN_TUNNEL_PREFIX,strlen(VXLAN_TUNNEL_PREFIX)) != 0)
     {
         attr.value.oid = port.m_bridge_port_id;
         attrs.push_back(attr);
@@ -563,7 +555,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
 
     /*TBD: Vxlan tunnel is not in portlist, here skip observer, refine later*/
-    if(strncmp(port_name.c_str(),"VTT",3) != 0)
+    if(strncmp(port_name.c_str(),VXLAN_TUNNEL_PREFIX,strlen(VXLAN_TUNNEL_PREFIX)) != 0)
     {
         FdbUpdate update = {entry, port, true};
         for (auto observer: m_observers)
