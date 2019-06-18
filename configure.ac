@@ -96,9 +96,11 @@ AC_CONFIG_FILES([
     teamsyncd/Makefile
     swssconfig/Makefile
     cfgmgr/Makefile
+    tests/Makefile
 ])
 
+# If no SAI library is installed, compile with SAIVS and run unit tests
 AM_COND_IF([HAVE_SAI],[],
-           [AC_CONFIG_FILES([tests/Makefile])])
+           [AC_CONFIG_FILES([tests/mock_tests/Makefile])])
 
 AC_OUTPUT
