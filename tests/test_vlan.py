@@ -364,6 +364,50 @@ class TestVlan(object):
             #remove vlan
             self.remove_vlan(vlan)
 
+    def test_AddVlanMemberWithNonExistVlan(self, dvs, testlog):
+        self.setup_db(dvs)
+        marker = dvs.add_log_marker()
+        vlan = "2"
+
+        # create vlan member
+        self.create_vlan_member(vlan, "Ethernet0")
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 0
+
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        vlan_member_entries = tbl.getKeys()
+        assert len(vlan_member_entries) == 0
+
+        # remove vlan member from cfgdb
+        self.remove_vlan_member(vlan, "Ethernet0")
+
+    def test_RemoveNonexistentVlan(self, dvs, testlog):
+        self.setup_db(dvs)
+        marker = dvs.add_log_marker()
+        vlan = "2"
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 0
+
+        # remove nonexistent vlan
+        self.remove_vlan(vlan)
+
+        # create vlan
+        self.create_vlan(vlan)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+
+        # remove vlan
+        self.remove_vlan(vlan)
+
     @pytest.mark.skip(reason="AddMaxVlan take too long to execute")
     def test_AddMaxVlan(self, dvs, testlog):
         self.setup_db(dvs)

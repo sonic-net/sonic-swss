@@ -1586,7 +1586,9 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
         (attr_name != ACTION_DTEL_FLOW_OP &&
         attr_name != ACTION_DTEL_INT_SESSION &&
         attr_name != ACTION_DTEL_FLOW_SAMPLE_PERCENT &&
-        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS))
+        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS &&
+        attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
+        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE))
     {
         return false;
     }
@@ -1643,7 +1645,9 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
 
     value.aclaction.enable = true;
 
-    if (attr_name == ACTION_DTEL_REPORT_ALL_PACKETS)
+    if (attr_name == ACTION_DTEL_REPORT_ALL_PACKETS ||
+        attr_name == ACTION_DTEL_DROP_REPORT_ENABLE ||
+        attr_name == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE)
     {
         value.aclaction.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
         value.aclaction.enable = (attr_value == DTEL_ENABLED) ? true : false;
@@ -1798,7 +1802,8 @@ bool AclRuleDTelDropWatchListEntry::validateAddAction(string attr_name, string a
     string attr_value = to_upper(attr_val);
 
     if (attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
-        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE)
+        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE &&
+        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS)
     {
         return false;
     }
@@ -2811,6 +2816,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
     m_AclTables[table_oid] = flowWLTable;
     SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", flowWLTable.description.c_str(), table_oid);
 
@@ -2871,6 +2877,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
     m_AclTables[table_oid] = dropWLTable;
     SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", dropWLTable.description.c_str(), table_oid);
 
@@ -2902,6 +2909,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);
     m_AclTables.erase(table_oid);
 
     table_id = TABLE_TYPE_DTEL_DROP_WATCHLIST;
@@ -2921,6 +2929,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);
     m_AclTables.erase(table_oid);
 
     return SAI_STATUS_SUCCESS;
