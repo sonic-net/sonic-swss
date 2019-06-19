@@ -14,12 +14,13 @@ LDADD_SAI = -lsaimeta -lsaimetadata -lsaivs -lsairedis
 CFLAGS_GTEST =
 LDADD_GTEST = -L/usr/src/gtest
 
-tests_SOURCES = swssnet_ut.cpp request_parser_ut.cpp aclorch_ut.cpp saispy_ut.cpp \
+tests_SOURCES = swssnet_ut.cpp request_parser_ut.cpp aclorch_ut.cpp saispy_ut.cpp intfsorch_ut.cpp \
                 mock_orchagent_main.cpp \
                 mock_dbconnector.cpp \
                 mock_consumerstatetable.cpp \
                 mock_hiredis.cpp \
                 mock_redisreply.cpp \
+                ut_saihelper.cpp \
                 ../orchagent/orchdaemon.cpp \
                 ../orchagent/orch.cpp \
                 ../orchagent/notifications.cpp \

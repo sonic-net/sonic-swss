@@ -9,3 +9,10 @@
 #include "saispy.h"
 
 #include "check.h"
+
+namespace ut_helper
+{
+    sai_status_t initSaiApi(const std::map<std::string, std::string> &profile);
+
+    void uninitSaiApi();
+}
