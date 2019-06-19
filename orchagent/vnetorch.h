@@ -10,6 +10,7 @@
 #include "request_parser.h"
 #include "ipaddresses.h"
 #include "producerstatetable.h"
+#include "chassisfrontendorch.h"
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 512
@@ -354,7 +355,7 @@ public:
 class VNetRouteOrch : public Orch2
 {
 public:
-    VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *);
+    VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *, ChassisFrontendOrch * chassisFrontendOrch);
 
     typedef pair<string, bool (VNetRouteOrch::*) (const Request& )> handler_pair;
     typedef map<string, bool (VNetRouteOrch::*) (const Request& )> handler_map;
@@ -375,6 +376,8 @@ private:
     VNetOrch *vnet_orch_;
     VNetRouteRequest request_;
     handler_map handler_map_;
+
+    ChassisFrontendOrch *m_chassisFrontendOrch;
 };
 
 class VNetCfgRouteOrch : public Orch

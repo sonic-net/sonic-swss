@@ -1618,8 +1618,8 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
     return true;
 }
 
-VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch)
-                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch)
+VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch, ChassisFrontendOrch * chassisFrontendOrch)
+                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), m_chassisFrontendOrch(chassisFrontendOrch)
 {
     SWSS_LOG_ENTER();
 
@@ -1893,6 +1893,11 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
 
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for ip %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
+    
+    if (m_chassisFrontendOrch)
+    {
+        m_chassisFrontendOrch->handleVNetRoutesMessage(op, ip_pfx);
+    }
 
     if (vnet_orch_->isVnetExecVrf())
     {

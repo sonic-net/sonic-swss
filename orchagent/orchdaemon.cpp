@@ -73,6 +73,12 @@ bool OrchDaemon::init()
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
 
+    const vector<string> chassis_frontend_tables = {
+        APP_MIRROR_SESSION_IP_IN_CHASSIS_TABLE_NAME,
+    };
+    ChassisFrontendOrch * chassis_frontend_orch = new ChassisFrontendOrch(m_applDb, chassis_frontend_tables);
+    gDirectory.set(chassis_frontend_orch);
+
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
             APP_VNET_RT_TUNNEL_TABLE_NAME
@@ -212,6 +218,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);
     m_orchList.push_back(gAclOrch);
+    m_orchList.push_back(chassis_frontend_orch);
     m_orchList.push_back(cfg_vnet_rt_orch);
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
