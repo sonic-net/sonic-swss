@@ -73,6 +73,14 @@ void CounterCheckOrch::mcCounterCheck()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            if (status == SAI_STATUS_FAILURE) {
+                /*
+                 * A generic failure; Possibly due to Select::TIMEOUT
+                 * Being generic, it is likely to fail for rest.
+                 * Bail out early. 
+                 */
+                break;
+            }
             continue;
         }
 
@@ -124,6 +132,14 @@ void CounterCheckOrch::pfcFrameCounterCheck()
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to get PFC mask on port %s: %d", port.m_alias.c_str(), status);
+            if (status == SAI_STATUS_FAILURE) {
+                /*
+                 * A generic failure; Possibly due to Select::TIMEOUT
+                 * Being generic, it is likely to fail for rest.
+                 * Bail out early. 
+                 */
+                break;
+            }
             continue;
         }
 
