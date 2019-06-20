@@ -404,6 +404,11 @@ void RouteOrch::doTask(Consumer& consumer)
                     /* add addBlackholeRoute or addRoute support empty nhg */
                     it = consumer.m_toSync.erase(it);
                 }
+                /* directly connected route to VRF interface which come from kernel */
+                else if (!alsv[0].compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
                 /* skip prefix which is linklocal or multicast */
                 else if (ip_prefix.getIp().getAddrScope() != IpAddress::GLOBAL_SCOPE)
                 {
