@@ -23,6 +23,18 @@ def create_entry_pst(db, table, separator, key, pairs):
     create_entry(tbl, key, pairs)
 
 
+def delete_entry_tbl(db, table, key):
+    tbl = swsscommon.Table(db, table)
+    tbl._del(key)
+    time.sleep(1)
+
+
+def delete_entry_pst(db, table, key):
+    tbl = swsscommon.ProducerStateTable(db, table)
+    tbl._del(key)
+    time.sleep(1)
+
+
 def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
@@ -56,6 +68,15 @@ def get_created_entries(db, table, existed_entries, count):
     return new_entries
 
 
+def get_deleted_entries(db, table, existed_entries, count):
+    tbl =  swsscommon.Table(db, table)
+    entries = set(tbl.getKeys())
+    old_entries = list(existed_entries - entries)
+    assert len(old_entries) == count, "Wrong number of deleted entries."
+    old_entries.sort()
+    return old_entries
+
+
 def get_default_vr_id(dvs):
     db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
     table = 'ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER'
@@ -83,13 +104,18 @@ def check_object(db, table, key, expected_attributes):
             assert expected_attributes[name] == value, "Wrong value %s for the attribute %s = %s" % \
                                                (value, name, expected_attributes[name])
 
+def check_deleted_object(db, table, key):
+    tbl =  swsscommon.Table(db, table)
+    keys = tbl.getKeys()
+    assert key not in keys, "The desired key is not removed"
+
 
 def create_vnet_local_routes(dvs, prefix, vnet_name, ifname):
-    app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
-    create_entry_pst(
-        app_db,
-        "VNET_ROUTE_TABLE", ':', "%s:%s" % (vnet_name, prefix),
+    create_entry_tbl(
+        conf_db,
+        "VNET_ROUTE", '|', "%s|%s" % (vnet_name, prefix),
         [
             ("ifname", ifname),
         ]
@@ -98,8 +124,16 @@ def create_vnet_local_routes(dvs, prefix, vnet_name, ifname):
     time.sleep(2)
 
 
-def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0):
+def delete_vnet_local_routes(dvs, prefix, vnet_name):
     app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+
+    delete_entry_pst(app_db, "VNET_ROUTE_TABLE", "%s:%s" % (vnet_name, prefix))
+
+    time.sleep(2)
+
+
+def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0):
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
             ("endpoint", endpoint),
@@ -111,11 +145,19 @@ def create_vnet_routes(dvs, prefix, vnet_name, endpoint, mac="", vni=0):
     if mac:
         attrs.append(('mac_address', mac))
 
-    create_entry_pst(
-        app_db,
-        "VNET_ROUTE_TUNNEL_TABLE", ':', "%s:%s" % (vnet_name, prefix),
+    create_entry_tbl(
+        conf_db,
+        "VNET_ROUTE_TUNNEL", '|', "%s|%s" % (vnet_name, prefix),
         attrs,
     )
+
+    time.sleep(2)
+
+
+def delete_vnet_routes(dvs, prefix, vnet_name):
+    app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+
+    delete_entry_pst(app_db, "VNET_ROUTE_TUNNEL_TABLE", "%s:%s" % (vnet_name, prefix))
 
     time.sleep(2)
 
@@ -199,6 +241,14 @@ def create_vlan_interface(dvs, vlan_name, ifname, vnet_name, ipaddr):
     return vlan_oid
 
 
+def delete_vlan_interface(dvs, ifname, ipaddr):
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+
+    delete_entry_tbl(conf_db, "VLAN_INTERFACE", "%s|%s" % (ifname, ipaddr))
+
+    time.sleep(2)
+
+
 def create_phy_interface(dvs, ifname, vnet_name, ipaddr):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
@@ -233,6 +283,14 @@ def create_phy_interface(dvs, ifname, vnet_name, ipaddr):
     )
 
 
+def delete_phy_interface(dvs, ifname, ipaddr):
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+
+    delete_entry_tbl(conf_db, "INTERFACE", "%s|%s" % (ifname, ipaddr))
+
+    time.sleep(2)
+
+
 def create_vnet_entry(dvs, name, tunnel, vni, peer_list):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -249,6 +307,14 @@ def create_vnet_entry(dvs, name, tunnel, vni, peer_list):
         "VNET", '|', name,
         attrs,
     )
+
+    time.sleep(2)
+
+
+def delete_vnet_entry(dvs, name):
+    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+
+    delete_entry_tbl(conf_db, "VNET", "%s" % (name))
 
     time.sleep(2)
 
@@ -454,6 +520,10 @@ class VnetVxlanVrfTunnel(object):
         self.vnet_vr_ids.update(new_vr_ids)
         self.vr_map[name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[1], 'peer':peer_list }
 
+    def check_del_vnet_entry(self, dvs, name):
+        # TODO: Implement for VRF VNET
+        return True
+
     def vnet_route_ids(self, dvs, name, local=False):
         vr_set = set()
 
@@ -496,6 +566,10 @@ class VnetVxlanVrfTunnel(object):
         self.rifs.add(new_rif)
         self.routes.update(new_route)
 
+    def check_del_router_interface(self, dvs, name):
+        # TODO: Implement for VRF VNET
+        return True
+
     def check_vnet_local_routes(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -513,6 +587,10 @@ class VnetVxlanVrfTunnel(object):
         assert asic_vrs == vr_ids
 
         self.routes.update(new_route)
+
+    def check_del_vnet_local_routes(self, dvs, name):
+        # TODO: Implement for VRF VNET
+        return True
 
     def check_vnet_routes(self, dvs, name, endpoint, tunnel, mac="", vni=0):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -557,6 +635,10 @@ class VnetVxlanVrfTunnel(object):
         assert asic_vrs == vr_ids
 
         self.routes.update(new_route)
+
+    def check_del_vnet_routes(self, dvs, name):
+        # TODO: Implement for VRF VNET
+        return True
 
 
 '''
@@ -718,6 +800,14 @@ class VnetBitmapVxlanTunnel(object):
         self.rifs = get_exist_entries(dvs, self.ASIC_RIF_TABLE)
         self.vnet_map.update({name:{}})
 
+    def check_del_vnet_entry(self, dvs, name):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        old_bitmap_class_id = get_deleted_entries(asic_db, self.ASIC_BITMAP_CLASS_ENTRY, self.vnet_bitmap_class_ids, 1)
+        check_deleted_object(asic_db, self.ASIC_BITMAP_CLASS_ENTRY, old_bitmap_class_id[0])
+
+        self.vnet_bitmap_class_ids.remove(old_bitmap_class_id[0])
+
     def check_router_interface(self, dvs, name, vlan_oid=0):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -744,6 +834,22 @@ class VnetBitmapVxlanTunnel(object):
         self.vnet_bitmap_route_ids.update(new_bitmap_route)
         self.vnet_bitmap_class_ids.update(new_bitmap_class_id)
 
+    def check_del_router_interface(self, dvs, name):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        old_rif = get_deleted_entries(asic_db, self.ASIC_RIF_TABLE, self.rifs, 1)
+        check_deleted_object(asic_db, self.ASIC_RIF_TABLE, old_rif[0])
+
+        old_bitmap_class_id  = get_deleted_entries(asic_db, self.ASIC_BITMAP_CLASS_ENTRY, self.vnet_bitmap_class_ids, 1)
+        check_deleted_object(asic_db, self.ASIC_BITMAP_CLASS_ENTRY, old_bitmap_class_id[0])
+
+        old_bitmap_route_id  = get_deleted_entries(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, self.vnet_bitmap_route_ids, 1)
+        check_deleted_object(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, old_bitmap_route_id[0])
+
+        self.rifs.remove(old_rif[0])
+        self.vnet_bitmap_class_ids.remove(old_bitmap_class_id[0])
+        self.vnet_bitmap_route_ids.remove(old_bitmap_route_id[0])
+
     def check_vnet_local_routes(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -755,6 +861,14 @@ class VnetBitmapVxlanTunnel(object):
         check_object(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, new_bitmap_route[0], expected_attr)
 
         self.vnet_bitmap_route_ids.update(new_bitmap_route)
+
+    def check_del_vnet_local_routes(self, dvs, name):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        old_bitmap_route = get_deleted_entries(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, self.vnet_bitmap_route_ids, 1)
+        check_deleted_object(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, old_bitmap_route[0])
+
+        self.vnet_bitmap_route_ids.remove(old_bitmap_route[0])
 
     def check_vnet_routes(self, dvs, name, endpoint, tunnel, mac="", vni=0):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -791,6 +905,15 @@ class VnetBitmapVxlanTunnel(object):
         self.vnet_bitmap_route_ids.update(new_bitmap_route)
 
 
+    def check_del_vnet_routes(self, dvs, name):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        old_bitmap_route = get_deleted_entries(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, self.vnet_bitmap_route_ids, 1)
+        check_deleted_object(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, old_bitmap_route[0])
+
+        self.vnet_bitmap_route_ids.remove(old_bitmap_route[0])
+
+
 class TestVnetOrch(object):
 
     def get_vnet_obj(self):
@@ -799,8 +922,6 @@ class TestVnetOrch(object):
     '''
     Test 1 - Create Vlan Interface, Tunnel and Vnet
     '''
-    # TODO: Please fix this test case.
-    @pytest.mark.skip(reason="Starting Vxlanmgr to be merged")
     def test_vnet_orch_1(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
@@ -822,6 +943,7 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan101", "Ethernet28", "Vnet_2000", "100.100.4.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_2000', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet_2000', '10.10.10.1')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2000', '10.10.10.1', tunnel_name)
 
@@ -841,17 +963,48 @@ class TestVnetOrch(object):
         create_phy_interface(dvs, "Ethernet4", "Vnet_2001", "100.102.1.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_2001')
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.2.1/32", 'Vnet_2001', '10.10.10.2', "00:12:34:56:78:9A")
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2001', '10.10.10.2', tunnel_name, "00:12:34:56:78:9A")
 
         create_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet_2001', 'Ethernet4')
         vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2001')
 
+        # Clean-up and verify remove flows
+
+        delete_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet_2000')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000')
+
+        delete_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet_2000')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2000')
+
+        delete_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet_2001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2001')
+
+        delete_vnet_routes(dvs, "100.100.2.1/32", 'Vnet_2001')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2001')
+
+        delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet_2000')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2001')
+
+        delete_phy_interface(dvs, "Ethernet4", "100.102.1.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet4")
+
+        delete_vlan_interface(dvs, "Vlan100", "100.100.3.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Vlan100")
+
+        delete_vlan_interface(dvs, "Vlan101", "100.100.4.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Vlan101")
+
+        delete_vnet_entry(dvs, 'Vnet_2001')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet_2001')
+
+        delete_vnet_entry(dvs, 'Vnet_2000')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet_2000')
+
     '''
     Test 2 - Two VNets, One HSMs per VNet
     '''
-    # TODO: Please fix this test case.
-    @pytest.mark.skip(reason="Starting Vxlanmgr to be merged")
     def test_vnet_orch_2(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
@@ -870,15 +1023,19 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan1001", "Ethernet0", "Vnet_1", "1.1.10.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_1', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.10/32", 'Vnet_1', '100.1.1.10')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '100.1.1.10', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.11/32", 'Vnet_1', '100.1.1.10')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '100.1.1.10', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.12/32", 'Vnet_1', '200.200.1.200')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '200.200.1.200', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.14/32", 'Vnet_1', '200.200.1.201')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '200.200.1.201', tunnel_name)
 
@@ -893,20 +1050,58 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan1002", "Ethernet4", "Vnet_2", "2.2.10.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_2', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "2.2.2.10/32", 'Vnet_2', '100.1.1.20')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2', '100.1.1.20', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "2.2.2.11/32", 'Vnet_2', '100.1.1.20')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2', '100.1.1.20', tunnel_name)
 
         create_vnet_local_routes(dvs, "2.2.10.0/24", 'Vnet_2', 'Vlan1002')
         vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2')
 
+        # Clean-up and verify remove flows
+
+        delete_vnet_local_routes(dvs, "2.2.10.0/24", 'Vnet_2')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_2')
+
+        delete_vnet_local_routes(dvs, "1.1.10.0/24", 'Vnet_1')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_1')
+
+        delete_vnet_routes(dvs, "2.2.2.11/32", 'Vnet_2')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2')
+
+        delete_vnet_routes(dvs, "2.2.2.10/32", 'Vnet_2')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_2')
+
+        delete_vnet_routes(dvs, "1.1.1.14/32", 'Vnet_1')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_1')
+
+        delete_vnet_routes(dvs, "1.1.1.12/32", 'Vnet_1')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_1')
+
+        delete_vnet_routes(dvs, "1.1.1.11/32", 'Vnet_1')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_1')
+
+        delete_vnet_routes(dvs, "1.1.1.10/32", 'Vnet_1')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_1')
+
+        delete_vlan_interface(dvs, "Vlan1002", "2.2.10.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Vlan1002")
+
+        delete_vlan_interface(dvs, "Vlan1001", "1.1.10.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Vlan1001")
+
+        delete_vnet_entry(dvs, 'Vnet_1')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet_1')
+
+        delete_vnet_entry(dvs, 'Vnet_2')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet_2')
+
     '''
     Test 3 - Two VNets, One HSMs per VNet, Peering
     '''
-    # TODO: Please fix this test case.
-    @pytest.mark.skip(reason="Starting Vxlanmgr to be merged")
     def test_vnet_orch_3(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
@@ -934,9 +1129,11 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan2002", "Ethernet12", "Vnet_20", "8.8.10.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_20', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "5.5.5.10/32", 'Vnet_10', '50.1.1.10')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_10', '50.1.1.10', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "8.8.8.10/32", 'Vnet_20', '80.1.1.20')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_10', '80.1.1.20', tunnel_name)
 
@@ -945,3 +1142,145 @@ class TestVnetOrch(object):
 
         create_vnet_local_routes(dvs, "8.8.10.0/24", 'Vnet_20', 'Vlan2002')
         vnet_obj.check_vnet_local_routes(dvs, 'Vnet_20')
+
+        # Clean-up and verify remove flows
+
+        delete_vnet_local_routes(dvs, "5.5.10.0/24", 'Vnet_10')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_10')
+
+        delete_vnet_local_routes(dvs, "8.8.10.0/24", 'Vnet_20')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet_20')
+
+        delete_vnet_routes(dvs, "5.5.5.10/32", 'Vnet_10')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_10')
+
+        delete_vnet_routes(dvs, "8.8.8.10/32", 'Vnet_20')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet_20')
+
+        delete_vlan_interface(dvs, "Vlan2001", "5.5.10.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Vlan2001")
+
+        delete_vlan_interface(dvs, "Vlan2002", "8.8.10.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Vlan2002")
+
+        delete_vnet_entry(dvs, 'Vnet_10')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet_10')
+
+        delete_vnet_entry(dvs, 'Vnet_20')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet_20')
+
+    '''
+    Test 4 - IPv6 Vxlan tunnel test
+    '''
+    @pytest.mark.skip(reason="Failing. Under investigation")
+    def test_vnet_orch_4(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_v6'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, 'fd:2::32')
+        create_vnet_entry(dvs, 'Vnet3001', tunnel_name, '3001', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet3001')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet3001', '3001')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:2::32')
+
+        vid = create_vlan_interface(dvs, "Vlan300", "Ethernet24", 'Vnet3001', "100.100.3.1/24")
+        vnet_obj.check_router_interface(dvs, 'Vnet3001', vid)
+
+        vid = create_vlan_interface(dvs, "Vlan301", "Ethernet28", 'Vnet3001', "100.100.4.1/24")
+        vnet_obj.check_router_interface(dvs, 'Vnet3001', vid)
+
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000', tunnel_name)
+
+        create_vnet_routes(dvs, "100.100.1.2/32", 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000', tunnel_name)
+
+        create_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet3001', 'Vlan300')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001')
+
+        create_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet3001', 'Vlan301')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001')
+
+        #Create Physical Interface in another Vnet
+
+        create_vnet_entry(dvs, 'Vnet3002', tunnel_name, '3002', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet3002')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet3002', '3002')
+
+        create_phy_interface(dvs, "Ethernet60", 'Vnet3002', "100.102.1.1/24")
+        vnet_obj.check_router_interface(dvs, 'Vnet3002')
+
+        create_vnet_routes(dvs, "100.100.2.1/32", 'Vnet3002', 'fd:2::34', "00:12:34:56:78:9A")
+        vnet_obj.check_vnet_routes(dvs, 'Vnet3002', 'fd:2::34', tunnel_name, "00:12:34:56:78:9A")
+
+        create_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet3002', 'Ethernet60')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3002')
+
+        # Test peering
+        create_vnet_entry(dvs, 'Vnet3003', tunnel_name, '3003', 'Vnet3004')
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet3003', ['Vnet3004'])
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet3003', '3003')
+
+        create_vnet_entry(dvs, 'Vnet3004', tunnel_name, '3004', 'Vnet3003')
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet3004', ['Vnet3003'])
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet3004', '3004')
+
+        create_vnet_routes(dvs, "5.5.5.10/32", 'Vnet3003', 'fd:2::35')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet3004', 'fd:2::35', tunnel_name)
+
+        create_vnet_routes(dvs, "8.8.8.10/32", 'Vnet3004', 'fd:2::36')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet3003', 'fd:2::36', tunnel_name)
+
+        # Clean-up and verify remove flows
+
+        delete_vnet_routes(dvs, "5.5.5.10/32", 'Vnet3003')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet3003')
+
+        delete_vnet_routes(dvs, "8.8.8.10/32", 'Vnet3004')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet3004')
+
+        delete_vnet_entry(dvs, 'Vnet3003')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet3003')
+
+        delete_vnet_entry(dvs, 'Vnet3004')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet3004')
+
+        delete_vnet_routes(dvs, "100.100.2.1/24", 'Vnet3002')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet3002')
+
+        delete_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet3002')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3002')
+
+        delete_phy_interface(dvs, "Ethernet60", "100.102.1.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet60")
+
+        delete_vnet_entry(dvs, 'Vnet3002')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet3002')
+
+        delete_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet3001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001')
+
+        delete_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet3001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001')
+
+        delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet3001')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet3001')
+
+        delete_vnet_routes(dvs, "100.100.1.2/32", 'Vnet3001')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet3001')
+
+        delete_vlan_interface(dvs, "Vlan300", "100.100.3.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Vlan300")
+
+        delete_vlan_interface(dvs, "Vlan301", "100.100.4.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Vlan301")
+
+        delete_vnet_entry(dvs, 'Vnet3001')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet3001')

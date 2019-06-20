@@ -21,7 +21,8 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
-    m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp")
+    m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
+    m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_nl_sock = nl_socket_alloc();
     nl_connect(m_nl_sock, NETLINK_ROUTE);
@@ -291,7 +292,8 @@ bool RouteSync::getIfName(int if_index, char *if_name, size_t name_len)
     /* Cannot get interface name. Possibly the interface gets re-created. */
     if (!rtnl_link_i2name(m_link_cache, if_index, if_name, name_len))
     {
-        rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+        /* Trying to refill cache */
+        nl_cache_refill(m_nl_sock, m_link_cache);
         if (!rtnl_link_i2name(m_link_cache, if_index, if_name, name_len))
         {
             return false;

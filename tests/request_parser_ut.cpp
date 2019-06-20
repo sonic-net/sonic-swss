@@ -7,7 +7,6 @@
 #include "macaddress.h"
 #include "orch.h"
 #include "request_parser.h"
-#include "request_parser.cpp"
 
 const request_description_t request_description1 = {
     { REQ_T_STRING },

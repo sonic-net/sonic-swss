@@ -1,10 +1,12 @@
 #include "tokenize.h"
-
 #include "bufferorch.h"
 #include "logger.h"
+#include "sai_serialize.h"
 
 #include <sstream>
 #include <iostream>
+
+using namespace std;
 
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
@@ -14,7 +16,13 @@ extern sai_buffer_api_t *sai_buffer_api;
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 
-using namespace std;
+#define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "10000"
+
+
+static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
+{
+    SAI_BUFFER_POOL_STAT_WATERMARK_BYTES,
+};
 
 type_map BufferOrch::m_buffer_type_maps = {
     {CFG_BUFFER_POOL_TABLE_NAME, new object_map()},
@@ -25,11 +33,18 @@ type_map BufferOrch::m_buffer_type_maps = {
     {CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()}
 };
 
-BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
+BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) :
+    Orch(db, tableNames),
+    m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
+    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
+    m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_countersDbRedisClient(m_countersDb.get())
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
     initBufferReadyLists(db);
+    initFlexCounterGroupTable();
 };
 
 void BufferOrch::initTableHandlers()
@@ -82,6 +97,32 @@ void BufferOrch::initBufferReadyList(Table& table)
     }
 }
 
+void BufferOrch::initFlexCounterGroupTable(void)
+{
+    string bufferPoolWmPluginName = "watermark_bufferpool.lua";
+
+    try
+    {
+        string bufferPoolLuaScript = swss::loadLuaScript(bufferPoolWmPluginName);
+        string bufferPoolWmSha = swss::loadRedisScript(m_countersDb.get(), bufferPoolLuaScript);
+
+        vector<FieldValueTuple> fvTuples;
+        fvTuples.emplace_back(BUFFER_POOL_PLUGIN_FIELD, bufferPoolWmSha);
+        fvTuples.emplace_back(POLL_INTERVAL_FIELD, BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
+
+        // TODO (work in progress):
+        // Some platforms do not support buffer pool watermark clear operation on a particular pool
+        // Invoke the SAI clear_stats API per pool to query the capability from the API call return status
+        fvTuples.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
+
+        m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvTuples);
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_ERROR("Buffer pool watermark lua script and/or flex counter group not set successfully. Runtime error: %s", e.what());
+    }
+}
+
 bool BufferOrch::isPortReady(const std::string& port_name) const
 {
     SWSS_LOG_ENTER();
@@ -103,6 +144,51 @@ bool BufferOrch::isPortReady(const std::string& port_name) const
     }
 
     return result;
+}
+
+void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
+{
+    // This function will be called in FlexCounterOrch when field:value tuple "FLEX_COUNTER_STATUS":"enable"
+    // is received on buffer pool watermark key under table "FLEX_COUNTER_GROUP_TABLE"
+    // Because the SubscriberStateTable listens to the entire keyspace of "BUFFER_POOL_WATERMARK", any update
+    // to field value tuples under key "BUFFER_POOL_WATERMARK" will cause this tuple to be heard again
+    // To avoid resync the coutner ID list a second time, we introduce a data member variable to mark whether
+    // this operation has already been done or not yet
+    if (m_isBufferPoolWatermarkCounterIdListGenerated)
+    {
+        return;
+    }
+
+    // Detokenize the SAI watermark stats to a string, separated by comma
+    string statList;
+    for (const auto &it : bufferPoolWatermarkStatIds)
+    {
+        statList += (sai_serialize_buffer_pool_stat(it) + list_item_delimiter);
+    }
+    if (!statList.empty())
+    {
+        statList.pop_back();
+    }
+
+    vector<FieldValueTuple> fvTuples;
+    fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statList);
+
+    // Push buffer pool watermark COUNTER_ID_LIST to FLEX_COUNTER_TABLE on a per buffer pool basis
+    for (const auto &it : *(m_buffer_type_maps[CFG_BUFFER_POOL_TABLE_NAME]))
+    {
+        string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(it.second);
+        m_flexCounterTable->set(key, fvTuples);
+    }
+
+    m_isBufferPoolWatermarkCounterIdListGenerated = true;
+}
+
+const object_map &BufferOrch::getBufferPoolNameOidMap(void)
+{
+    // In the case different Orches are running in
+    // different threads, caller may need to grab a read lock
+    // before calling this function
+    return *m_buffer_type_maps[CFG_BUFFER_POOL_TABLE_NAME];
 }
 
 task_process_status BufferOrch::processBufferPool(Consumer &consumer)
@@ -209,6 +295,12 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name] = sai_object;
             SWSS_LOG_NOTICE("Created buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
+            // Here we take the PFC watchdog approach to update the COUNTERS_DB metadata (e.g., PFC_WD_DETECTION_TIME per queue)
+            // at initialization (creation and registration phase)
+            // Specifically, we push the buffer pool name to oid mapping upon the creation of the oid
+            // In pg and queue case, this mapping installment is deferred to FlexCounterOrch at a reception of field
+            // "FLEX_COUNTER_STATUS"
+            m_countersDbRedisClient.hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
         }
     }
     else if (op == DEL_COMMAND)
@@ -222,6 +314,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
+        m_countersDbRedisClient.hdel(COUNTERS_BUFFER_POOL_NAME_MAP, object_name);
     }
     else
     {
@@ -370,7 +463,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
 }
 
 /*
-Input sample "BUFFER_QUEUE_TABLE:Ethernet4,Ethernet45:10-15"
+Input sample "BUFFER_QUEUE|Ethernet4,Ethernet45|10-15"
 */
 task_process_status BufferOrch::processQueue(Consumer &consumer)
 {
