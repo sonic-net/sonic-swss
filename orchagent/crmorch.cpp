@@ -394,10 +394,6 @@ void CrmOrch::doTask(SelectableTimer &timer)
     getResAvailableCounters();
     updateCrmCountersTable();
     checkCrmThresholds();
-
-    auto interv = timespec { .tv_sec = m_pollingInterval.count(), .tv_nsec = 0 };
-    timer.setInterval(interv);
-    timer.reset();
 }
 
 void CrmOrch::getResAvailableCounters()
