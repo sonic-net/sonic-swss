@@ -368,6 +368,14 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
+            /* Wait for the Interface entry first */
+            auto it_intfs = m_syncdIntfses.find(alias);
+            if (ip_prefix_in_key && it_intfs == m_syncdIntfses.end())
+            {
+                it++;
+                continue;
+            }
+
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {

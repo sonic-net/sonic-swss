@@ -23,6 +23,7 @@ def test_DirectedBroadcast(dvs, testlog):
     # create vlan interface in config db
     tbl = swsscommon.Table(db, "VLAN_INTERFACE")
     fvs = swsscommon.FieldValuePairs([("family", "IPv4")])
+    tbl.set("Vlan100", fvs)
     tbl.set("Vlan100|192.169.0.1/27", fvs)
 
     time.sleep(1)

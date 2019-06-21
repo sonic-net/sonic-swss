@@ -105,6 +105,7 @@ def test_CrmIpv4Route(dvs, testlog):
     config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     intf_tbl = swsscommon.Table(config_db, "INTERFACE")
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0", fvs)
     intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
     dvs.runcmd("ifconfig Ethernet0 up")
 
@@ -165,6 +166,7 @@ def test_CrmIpv6Route(dvs, testlog):
     config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     intf_tbl = swsscommon.Table(config_db, "INTERFACE")
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0", fvs)
     intf_tbl.set("Ethernet0|fc00::1/126", fvs)
     dvs.runcmd("ifconfig Ethernet0 up")
 
@@ -225,6 +227,7 @@ def test_CrmIpv4Nexthop(dvs, testlog):
     intf_tbl = swsscommon.Table(config_db, "INTERFACE")
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
     intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+    intf_tbl.set("Ethernet0", fvs)
     dvs.runcmd("ifconfig Ethernet0 up")
 
     dvs.runcmd("crm config polling interval 1")
@@ -276,6 +279,7 @@ def test_CrmIpv6Nexthop(dvs, testlog):
     config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     intf_tbl = swsscommon.Table(config_db, "INTERFACE")
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0", fvs)
     intf_tbl.set("Ethernet0|fc00::1/126", fvs)
     dvs.runcmd("ifconfig Ethernet0 up")
 
@@ -324,6 +328,7 @@ def test_CrmIpv4Neighbor(dvs, testlog):
     config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     intf_tbl = swsscommon.Table(config_db, "INTERFACE")
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0", fvs)
     intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
     dvs.runcmd("ifconfig Ethernet0 up")
 
@@ -376,6 +381,7 @@ def test_CrmIpv6Neighbor(dvs, testlog):
     config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     intf_tbl = swsscommon.Table(config_db, "INTERFACE")
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0", fvs)
     intf_tbl.set("Ethernet0|fc00::1/126", fvs)
     dvs.runcmd("ifconfig Ethernet0 up")
 
@@ -424,6 +430,8 @@ def test_CrmNexthopGroup(dvs, testlog):
     config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     intf_tbl = swsscommon.Table(config_db, "INTERFACE")
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0", fvs)
+    intf_tbl.set("Ethernet4", fvs)
     intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
     intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
     dvs.runcmd("ifconfig Ethernet0 up")
@@ -491,6 +499,8 @@ def test_CrmNexthopGroupMember(dvs, testlog):
     config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     intf_tbl = swsscommon.Table(config_db, "INTERFACE")
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+    intf_tbl.set("Ethernet0", fvs)
+    intf_tbl.set("Ethernet4", fvs)
     intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
     intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
     dvs.runcmd("ifconfig Ethernet0 up")
