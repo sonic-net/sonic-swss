@@ -1207,11 +1207,6 @@ class TestAcl(object):
 
         self.remove_acl_table(acl_table)
 
-    def setup_db(self, dvs):
-        self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-        self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-
     def set_admin_status(self, interface, status):
         tbl = swsscommon.Table(self.cdb, "PORT")
         fvs = swsscommon.FieldValuePairs([("admin_status", status)])

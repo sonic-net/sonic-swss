@@ -390,6 +390,10 @@ class TestRouterInterface(object):
                 break
         assert vrf_found == True
 
+        # check linux kernel
+        (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show Ethernet8 | grep Vrf"])
+        assert "Vrf_0" in result
+
         # assign IP to interface
         self.add_ip_address("Ethernet8", "fc00::1/126")
         time.sleep(2)  # IPv6 netlink message needs longer time
@@ -461,6 +465,10 @@ class TestRouterInterface(object):
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet8")
         intf_entries = tbl.getKeys()
         assert len(intf_entries) == 0
+
+        # check linux kernel
+        (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show Ethernet8 | grep Vrf"])
+        assert "Vrf_0" not in result
 
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
         intf_entries = tbl.getKeys()
@@ -1133,6 +1141,10 @@ class TestRouterInterface(object):
                 break
         assert vrf_found == True
 
+        # check linux kernel
+        (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show PortChannel001 | grep Vrf"])
+        assert "Vrf_0" in result
+
         # assign IP to interface
         self.add_ip_address("PortChannel001", "30.0.0.4/31")
 
@@ -1191,6 +1203,10 @@ class TestRouterInterface(object):
 
         # remove l3 interface
         self.remove_l3_intf("PortChannel001")
+
+        # check linux kernel
+        (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show PortChannel001 | grep Vrf"])
+        assert "Vrf_0" not in result
 
         # remove vrf
         self.remove_vrf("Vrf_0")
@@ -1469,6 +1485,10 @@ class TestRouterInterface(object):
         # create vlan interface
         self.create_l3_intf("Vlan10", "Vrf_0")
 
+        # check linux kernel
+        (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show Vlan10 | grep Vrf"])
+        assert "Vrf_0" in result
+
         # assign IP to interface
         self.add_ip_address("Vlan10", "fc00::1/126")
         time.sleep(2)  # IPv6 netlink message needs longer time
@@ -1543,6 +1563,10 @@ class TestRouterInterface(object):
 
         # remove vlan interface
         self.remove_l3_intf("Vlan10")
+
+        # check linux kernel
+        (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show Vlan10 | grep Vrf"])
+        assert "Vrf_0" not in result
 
         # remove vlan member
         self.remove_vlan_member("10", "Ethernet0")
@@ -1831,6 +1855,10 @@ class TestRouterInterface(object):
             # create interface with vrf
             self.create_l3_intf(intf_name, vrf_name)
 
+            # check linux kernel
+            (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show %s | grep Vrf" % intf_name])
+            assert "%s" % vrf_name in result
+
             # check interface's vrf
             tbl = swsscommon.Table(self.pdb, "INTF_TABLE")
             (status, fvs) = tbl.get(intf_name)
@@ -1910,6 +1938,10 @@ class TestRouterInterface(object):
 
             # remove vrf
             self.remove_vrf(vrf_name)
+
+            # check linux kernel
+            (exitcode, result) = dvs.runcmd(['sh', '-c', "ip link show %s | grep Vrf" % intf_name])
+            assert "%s" % vrf_name not in result
 
             # check application database
             tbl = swsscommon.Table(self.pdb, "INTF_TABLE:" + intf_name)

@@ -116,6 +116,9 @@ class TestVrf(object):
         # check that the correct vrf entry was removed
         assert state['initial_entries'] == self.entries(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"), "The incorrect entry was removed"
 
+        # check vrf was removed from kernel
+        (status, rslt) = dvs.runcmd("ip link show " + vrf_name)
+        assert status != 0
 
     def vrf_update(self, vrf_name, attributes, expected_attributes, state):
         # update the VRF entry in Config DB
@@ -241,3 +244,59 @@ class TestVrf(object):
             self.vrf_update("Vrf_a", req_attr, exp_attr, state)
 
         self.vrf_remove(dvs, "Vrf_a", state)
+
+    def test_VRFMgr_Capacity(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        initial_entries_cnt = self.how_many_entries_exist(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+
+        maximum_vrf_cnt = 999
+
+        def create_entry(self, tbl, key, pairs):
+            fvs = swsscommon.FieldValuePairs(pairs)
+            tbl.set(key, fvs)
+            time.sleep(1)
+
+        def create_entry_tbl(self, db, table, key, pairs):
+            tbl = swsscommon.Table(db, table)
+            self.create_entry(tbl, key, pairs)
+
+        # create the VRF entry in Config DB
+        tbl = swsscommon.Table(self.cdb, "VRF")
+        fvs = swsscommon.FieldValuePairs([('empty', 'empty')])
+        for i in range(maximum_vrf_cnt):
+            tbl.set("Vrf_%d" % i, fvs)
+
+        # wait for all VRFs pushed to database and linux
+        time.sleep(15)
+
+        # check app_db
+        intf_entries_cnt = self.how_many_entries_exist(self.pdb, "VRF_TABLE")
+        assert intf_entries_cnt == maximum_vrf_cnt
+
+        # check asic_db
+        current_entries_cnt = self.how_many_entries_exist(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        assert (current_entries_cnt - initial_entries_cnt) == maximum_vrf_cnt
+
+        # check linux kernel
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "ip link show | grep Vrf | wc -l"])
+        assert num.strip() == str(maximum_vrf_cnt)
+
+        # remove VRF from Config DB
+        for i in range(maximum_vrf_cnt):
+            tbl._del("Vrf_%d" % i)
+
+        # wait for all VRFs deleted
+        time.sleep(60)
+
+        # check app_db
+        intf_entries_cnt = self.how_many_entries_exist(self.pdb, "VRF_TABLE")
+        assert intf_entries_cnt == 0
+
+        # check asic_db
+        current_entries_cnt = self.how_many_entries_exist(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
+        assert (current_entries_cnt - initial_entries_cnt) == 0
+
+        # check linux kernel
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "ip link show | grep Vrf | wc -l"])
+        assert num.strip() == '0'

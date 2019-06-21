@@ -71,8 +71,16 @@ class TestRoute(object):
         tbl._del(key)
         time.sleep(1)
 
+    def clear_srv_config(self, dvs):
+        dvs.servers[0].runcmd("ip address flush dev eth0")
+        dvs.servers[1].runcmd("ip address flush dev eth0")
+        dvs.servers[2].runcmd("ip address flush dev eth0")
+        dvs.servers[3].runcmd("ip address flush dev eth0")
+
     def test_RouteAddRemoveIpv4Route(self, dvs, testlog):
         self.setup_db(dvs)
+
+        self.clear_srv_config(dvs)
 
         # create l3 interface
         self.create_l3_intf("Ethernet0", "")
@@ -342,7 +350,6 @@ class TestRoute(object):
         dvs.servers[3].runcmd("ip route del default dev eth0")
         dvs.servers[3].runcmd("ip address del 10.0.0.3/31 dev eth0")
 
-
     def test_RouteAddRemoveIpv6RouteWithVrf(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -461,3 +468,153 @@ class TestRoute(object):
         dvs.servers[2].runcmd("ip -6 address del 2000::2/64 dev eth0")
         dvs.servers[3].runcmd("ip -6 route del default dev eth0")
         dvs.servers[3].runcmd("ip -6 address del 2001::2/64 dev eth0")
+
+    def test_RouteAndNexthopInDifferentVrf(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # create vrf
+        vrf_1_oid = self.create_vrf("Vrf_1")
+        vrf_2_oid = self.create_vrf("Vrf_2")
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet0", "Vrf_1")
+        self.create_l3_intf("Ethernet4", "Vrf_1")
+        self.create_l3_intf("Ethernet8", "Vrf_2")
+        self.create_l3_intf("Ethernet12", "Vrf_2")
+
+        # set ip address
+        self.add_ip_address("Ethernet0", "10.0.0.1/24")
+        self.add_ip_address("Ethernet4", "10.0.1.1/24")
+        self.add_ip_address("Ethernet8", "20.0.0.1/24")
+        self.add_ip_address("Ethernet12", "20.0.1.1/24")
+
+        # bring up interface
+        self.set_admin_status("Ethernet0", "up")
+        self.set_admin_status("Ethernet4", "up")
+        self.set_admin_status("Ethernet8", "up")
+        self.set_admin_status("Ethernet12", "up")
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip address add 10.0.0.2/24 dev eth0")
+        dvs.servers[0].runcmd("ip route add default via 10.0.0.1")
+
+        dvs.servers[1].runcmd("ip address add 10.0.1.2/24 dev eth0")
+        dvs.servers[1].runcmd("ip route add default via 10.0.1.1")
+
+        dvs.servers[2].runcmd("ip address add 20.0.0.2/24 dev eth0")
+        dvs.servers[2].runcmd("ip route add default via 20.0.0.1")
+
+        dvs.servers[3].runcmd("ip address add 20.0.1.2/24 dev eth0")
+        dvs.servers[3].runcmd("ip route add default via 20.0.1.1")
+
+        time.sleep(1)
+
+        # get neighbor entry
+        dvs.servers[0].runcmd("ping -c 1 10.0.1.2")
+        dvs.servers[2].runcmd("ping -c 1 20.0.1.2")
+
+        # add route
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 20.0.1.2/32 20.0.1.2 vrf Vrf_1 nexthop-vrf Vrf_2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 10.0.0.2/32 10.0.0.2 vrf Vrf_2 nexthop-vrf Vrf_1\"")
+        time.sleep(1)
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "ROUTE_TABLE:Vrf_1")
+        route_entries = tbl.getKeys()
+        assert "20.0.1.2/32" in route_entries
+
+        tbl = swsscommon.Table(self.pdb, "ROUTE_TABLE:Vrf_2")
+        route_entries = tbl.getKeys()
+        assert "10.0.0.2/32" in route_entries
+
+        # check ASIC neighbor interface database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        nexthop_entries = tbl.getKeys()
+        for key in nexthop_entries:
+            (status, fvs) = tbl.get(key)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_NEXT_HOP_ATTR_IP" and fv[1] == "20.0.1.2":
+                    nexthop2_found = True
+                    nexthop2_oid = key
+                if fv[0] == "SAI_NEXT_HOP_ATTR_IP" and fv[1] == "10.0.0.2":
+                    nexthop1_found = True
+                    nexthop1_oid = key
+
+        assert nexthop1_found == True and nexthop2_found == True
+
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        route_entries = tbl.getKeys()
+        for key in route_entries:
+            route = json.loads(key)
+            if route["dest"] == "10.0.0.2/32" and route["vr"] == vrf_2_oid:
+                (status, fvs) = tbl.get(key)
+                assert status == True
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
+                        assert fv[1] == nexthop1_oid
+                        route1_found = True
+            if route["dest"] == "20.0.1.2/32" and route["vr"] == vrf_1_oid:
+                (status, fvs) = tbl.get(key)
+                assert status == True
+                for fv in fvs:
+                    if fv[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
+                        assert fv[1] == nexthop2_oid
+                        route2_found = True
+        assert route1_found == True and route2_found == True
+
+        # Ping should work
+        ping_stats = dvs.servers[0].runcmd("ping -c 1 20.0.1.2")
+        assert ping_stats == 0
+
+        # remove route
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 20.0.1.2/32 20.0.1.2 vrf Vrf_1 nexthop-vrf Vrf_2\"")
+        dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 10.0.0.2/32 10.0.0.2 vrf Vrf_2 nexthop-vrf Vrf_1\"")
+        time.sleep(1)
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "ROUTE_TABLE:Vrf_1")
+        route_entries = tbl.getKeys()
+        assert "20.0.1.2/32" not in route_entries
+
+        tbl = swsscommon.Table(self.pdb, "ROUTE_TABLE:Vrf_2")
+        route_entries = tbl.getKeys()
+        assert "10.0.0.2/32" not in route_entries
+
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            assert route["dest"] != "10.0.0.2/32" and route["dest"] != "20.0.1.2/32"
+
+        # remove ip address
+        self.remove_ip_address("Ethernet0", "10.0.0.1/24")
+        self.remove_ip_address("Ethernet4", "10.0.1.1/24")
+        self.remove_ip_address("Ethernet8", "20.0.0.1/24")
+        self.remove_ip_address("Ethernet12", "20.0.1.1/24")
+
+        # remove l3 interface
+        self.remove_l3_intf("Ethernet0")
+        self.remove_l3_intf("Ethernet4")
+        self.remove_l3_intf("Ethernet8")
+        self.remove_l3_intf("Ethernet12")
+
+        self.set_admin_status("Ethernet0", "down")
+        self.set_admin_status("Ethernet4", "down")
+        self.set_admin_status("Ethernet8", "down")
+        self.set_admin_status("Ethernet12", "down")
+
+        # remove vrf
+        self.remove_vrf("Vrf_1")
+        self.remove_vrf("Vrf_2")
+
+        # remove ip address and default route
+        dvs.servers[0].runcmd("ip route del default dev eth0")
+        dvs.servers[0].runcmd("ip address del 10.0.0.2/24 dev eth0")
+        dvs.servers[1].runcmd("ip route del default dev eth0")
+        dvs.servers[1].runcmd("ip address del 10.0.1.2/24 dev eth0")
+        dvs.servers[2].runcmd("ip route del default dev eth0")
+        dvs.servers[2].runcmd("ip address del 20.0.0.2/24 dev eth0")
+        dvs.servers[3].runcmd("ip route del default dev eth0")
+        dvs.servers[3].runcmd("ip address del 20.0.1.2/24 dev eth0")
