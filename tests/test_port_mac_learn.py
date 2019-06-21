@@ -10,6 +10,15 @@ class TestPortMacLearn(object):
         self.cdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         self.cntdb = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
 
+    def get_learn_mode_map(self):
+        learn_mode_map = { "drop": "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP",
+                           "disable": "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE",
+                           "hardware": "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW",
+                           "cpu_trap": "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_CPU_TRAP",
+                           "cpu_log": "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_CPU_LOG",
+                           "notification": "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_FDB_NOTIFICATION"}
+        return learn_mode_map
+
     def get_port_oid(self, port_name):
         port_map_tbl = swsscommon.Table(self.cntdb, 'COUNTERS_PORT_NAME_MAP')
         for k in port_map_tbl.get('')[1]:
@@ -69,29 +78,32 @@ class TestPortMacLearn(object):
         port_oid = self.get_port_oid("Ethernet8")
         assert port_oid is not None
 
-        # check appdb before setting mac learn mode; There is no "learn_mode" attribute by default.
-        tbl = swsscommon.Table(self.pdb, "PORT_TABLE")
-        status = self.check_learn_mode_in_appdb(tbl, "Ethernet8", "disabled")
-        assert status == False
-
         # check asicdb before setting mac learn mode; The default learn_mode value is SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW.
         status = self.check_learn_mode_in_asicdb(port_oid, "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")
         assert status == True
 
-        # set MAC learn mode disable to port
+        learn_mode_map = self.get_learn_mode_map()
+        for key, value in learn_mode_map.items():
+            # set MAC learn mode to port
+            tbl = swsscommon.Table(self.cdb, "PORT")
+            fvs = swsscommon.FieldValuePairs([("learn_mode", key)])
+            tbl.set("Ethernet8", fvs)
+            time.sleep(1)
+
+            # check application database
+            tbl = swsscommon.Table(self.pdb, "PORT_TABLE")
+            status = self.check_learn_mode_in_appdb(tbl, "Ethernet8", key)
+            assert status == True
+
+            # check ASIC bridge port database
+            status = self.check_learn_mode_in_asicdb(port_oid, value)
+            assert status == True
+
+        # set default learn mode for Ethernet8
         tbl = swsscommon.Table(self.cdb, "PORT")
-        fvs = swsscommon.FieldValuePairs([("learn_mode", "disabled")])
+        fvs = swsscommon.FieldValuePairs([("learn_mode", "hardware")])
         tbl.set("Ethernet8", fvs)
         time.sleep(1)
-
-        # check application database
-        tbl = swsscommon.Table(self.pdb, "PORT_TABLE")
-        status = self.check_learn_mode_in_appdb(tbl, "Ethernet8", "disabled")
-        assert status == True
-
-        # check ASIC bridge port database
-        status = self.check_learn_mode_in_asicdb(port_oid, "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE")
-        assert status == True
 
         # remove vlan member
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
@@ -132,29 +144,26 @@ class TestPortMacLearn(object):
         assert len(lag_entries) == 1
         lag_oid = lag_entries[0]
 
-        # check appdb before setting mac learn mode; There is no "learn_mode" attribute by default.
-        tbl = swsscommon.Table(self.pdb, "LAG_TABLE")
-        status = self.check_learn_mode_in_appdb(tbl, "PortChannel001", "disabled")
-        assert status == False
-
         # check asicdb before setting mac learn mode; The default learn_mode value is SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW.
         status = self.check_learn_mode_in_asicdb(lag_oid, "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW")
         assert status == True
 
-        # set mac learn mode disable to PortChannel
-        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
-        fvs = swsscommon.FieldValuePairs([("learn_mode", "disabled")])
-        tbl.set("PortChannel001", fvs)
-        time.sleep(1)
+        learn_mode_map = self.get_learn_mode_map()
+        for key, value in learn_mode_map.items():
+            # set mac learn mode to PortChannel
+            tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
+            fvs = swsscommon.FieldValuePairs([("learn_mode", key)])
+            tbl.set("PortChannel001", fvs)
+            time.sleep(1)
 
-        # check application database
-        tbl = swsscommon.Table(self.pdb, "LAG_TABLE")
-        status = self.check_learn_mode_in_appdb(tbl, "PortChannel001", "disabled")
-        assert status == True
+            # check application database
+            tbl = swsscommon.Table(self.pdb, "LAG_TABLE")
+            status = self.check_learn_mode_in_appdb(tbl, "PortChannel001", key)
+            assert status == True
 
-        # check ASIC bridge port database
-        status = self.check_learn_mode_in_asicdb(lag_oid, "SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE")
-        assert status == True
+            # check ASIC bridge port database
+            status = self.check_learn_mode_in_asicdb(lag_oid, value)
+            assert status == True
 
         # remove vlan member
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
