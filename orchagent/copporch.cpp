@@ -604,7 +604,7 @@ void CoppOrch::doTask(Consumer &consumer)
         {
             task_status = processCoppRule(consumer);
         }
-        catch(const out_of_range e)
+        catch(const out_of_range& e)
         {
             SWSS_LOG_ERROR("processing copp rule threw out_of_range exception:%s", e.what());
             task_status = task_process_status::task_invalid_entry;
