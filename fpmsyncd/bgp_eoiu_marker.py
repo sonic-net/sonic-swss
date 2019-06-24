@@ -43,25 +43,31 @@ class BgpStateCheck():
         self.keepalivesRecvCnt = {}
         self.bgp_ipv4_eoiu = False
         self.bgp_ipv6_eoiu = False
+        self.get_peers_wt = self.DEF_TIME_OUT
 
     def get_all_peers(self):
-        try:
-            cmd = "vtysh -c 'show bgp summary json'"
-            output = commands.getoutput(cmd)
-            peer_info = json.loads(output)
-            if "ipv4Unicast" in peer_info and "peers" in peer_info["ipv4Unicast"]:
-                self.ipv4_neighbors = peer_info["ipv4Unicast"]["peers"].keys()
+        while self.get_peers_wt >= 0:
+            try:
+                cmd = "vtysh -c 'show bgp summary json'"
+                output = commands.getoutput(cmd)
+                peer_info = json.loads(output)
+                if "ipv4Unicast" in peer_info and "peers" in peer_info["ipv4Unicast"]:
+                    self.ipv4_neighbors = peer_info["ipv4Unicast"]["peers"].keys()
 
-            if "ipv6Unicast" in peer_info and "peers" in peer_info["ipv6Unicast"]:
-                self.ipv6_neighbors = peer_info["ipv6Unicast"]["peers"].keys()
+                if "ipv6Unicast" in peer_info and "peers" in peer_info["ipv6Unicast"]:
+                    self.ipv6_neighbors = peer_info["ipv6Unicast"]["peers"].keys()
 
-            syslog.syslog('BGP ipv4 neighbors: {}'.format(self.ipv4_neighbors))
-            syslog.syslog('BGP ipv4 neighbors: {}'.format(self.ipv6_neighbors))
+                syslog.syslog('BGP ipv4 neighbors: {}'.format(self.ipv4_neighbors))
+                syslog.syslog('BGP ipv4 neighbors: {}'.format(self.ipv6_neighbors))
+                return
 
-        except Exception:
-            syslog.syslog(syslog.LOG_ERR, "*ERROR* get_all_peers Exception: %s" % (traceback.format_exc()))
-            time.sleep(5)
-            self.get_all_peers()
+            except Exception:
+                syslog.syslog(syslog.LOG_ERR, "*ERROR* get_all_peers Exception: %s" % (traceback.format_exc()))
+                time.sleep(5)
+                self.get_peers_wt -= 5
+                self.get_all_peers()
+        syslog.syslog(syslog.LOG_ERR, "Failed to get bgp neighbor info in {} seconds, exiting".format(self.DEF_TIME_OUT));
+        sys.exit(1)
 
     def init_peers_eor_status(self):
         # init neigh eor status to unknown
@@ -116,7 +122,7 @@ class BgpStateCheck():
                     # it looks we need to record the keepalivesRecv count for detecting count change
                     if neighstr not in self.keepalivesRecvCnt:
                         self.keepalivesRecvCnt[neighstr] = neig_status[neighstr]["messageStats"]["keepalivesRecv"]
-                    else :
+                    else:
                         eor_received = (self.keepalivesRecvCnt[neighstr] is not neig_status[neighstr]["messageStats"]["keepalivesRecv"])
                         if eor_received:
                             syslog.syslog('BGP implicit eor received for neighbors: {}'.format(neigh))
