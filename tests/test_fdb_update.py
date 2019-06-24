@@ -35,6 +35,23 @@ def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
 
+def get_mac_by_bridge_id(dvs, bridge_id):
+    tbl =  swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY")
+    keys = tbl.getKeys()
+
+    mac = []
+    for key in keys:
+        (status, fvs) = tbl.get(key)
+        assert status
+        value = dict(fvs)
+        if value["SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID"] == bridge_id:
+            try:
+                d_key = json.loads(key)
+            except ValueError:
+                d_key = json.loads('{' + key + '}')
+            mac.append(d_key["mac"])
+    return mac
+
 def test_FDBAddedAndUpdated(dvs, testlog):
     dvs.setup_db()
 
@@ -67,7 +84,7 @@ def test_FDBAddedAndUpdated(dvs, testlog):
         ]
     )
 
-    # create vlan member entry in application db
+    # create vlan member entry in Config db
     create_entry_tbl(
         dvs.cdb,
         "VLAN_MEMBER", "Vlan2|Ethernet0",
@@ -99,7 +116,7 @@ def test_FDBAddedAndUpdated(dvs, testlog):
     )
     assert ok, str(extra)
 
-    # create vlan member entry in Application DB
+    # create vlan member entry in Config DB
     create_entry_tbl(
         dvs.cdb,
         "VLAN_MEMBER", "Vlan2|Ethernet4",
@@ -135,7 +152,7 @@ def test_FDBAddedAndUpdated(dvs, testlog):
         "FDB_TABLE", "Vlan2:52-54-00-25-06-E9"
     )
 
-    # remove vlan member entry from Application DB
+    # remove vlan member entry from Config DB
     remove_entry_tbl(
         dvs.cdb,
         "VLAN_MEMBER", "Vlan2|Ethernet4"
@@ -145,8 +162,100 @@ def test_FDBAddedAndUpdated(dvs, testlog):
         "VLAN_MEMBER", "Vlan2|Ethernet0"
     )
 
-    #remove vlan entry from Application DB
+    #remove vlan entry from Config DB
     remove_entry_tbl(
         dvs.cdb,
         "VLAN", "Vlan2"
     )
+
+def test_FDBLearnedAndUpdated(dvs, testlog):
+    dvs.setup_db()
+
+    dvs.runcmd("sonic-clear fdb all")
+
+    # create vlan; create vlan member
+    dvs.create_vlan("6")
+    dvs.create_vlan_member("6", "Ethernet64")
+    dvs.create_vlan_member("6", "Ethernet68")
+    dvs.create_vlan_member("6", "Ethernet72")
+
+    # Get mapping between interface name and its bridge port_id
+    time.sleep(2)
+    iface_2_bridge_port_id = dvs.get_map_iface_bridge_port_id(dvs.adb)
+
+    # bring up vlan and member
+    dvs.set_interface_status("Vlan6", "up")
+
+    dvs.add_ip_address("Vlan6", "6.6.6.1/24")
+
+    dvs.set_interface_status("Ethernet64", "up")
+    dvs.set_interface_status("Ethernet68", "up")
+    dvs.set_interface_status("Ethernet72", "up")
+
+    dvs.servers[16].runcmd("ifconfig eth0 hw ether 00:00:00:00:00:11")
+    dvs.servers[16].runcmd("ifconfig eth0 6.6.6.6/24 up")
+    dvs.servers[16].runcmd("ip route add default via 6.6.6.1")
+    dvs.servers[17].runcmd("ifconfig eth0 6.6.6.7/24 up")
+    dvs.servers[17].runcmd("ip route add default via 6.6.6.1")
+    time.sleep(2)
+
+    # get neighbor and arp entry
+    rc = dvs.servers[16].runcmd("ping -c 1 6.6.6.7")
+    assert rc == 0
+    rc = dvs.servers[17].runcmd("ping -c 1 6.6.6.6")
+    assert rc == 0
+    time.sleep(2)
+
+    # check that the FDB entries were inserted into ASIC DB
+    Ethernet64_mac = get_mac_by_bridge_id(dvs, iface_2_bridge_port_id["Ethernet64"])
+    assert "00:00:00:00:00:11" in Ethernet64_mac
+
+    # update FDB entry port in Application DB
+    create_entry_pst(
+        dvs.pdb,
+        "FDB_TABLE", "Vlan6:00-00-00-00-00-11",
+        [
+            ("port", "Ethernet72"),
+            ("type", "dynamic"),
+        ]
+    )
+
+    # check that the FDB entry was updated in ASIC DB
+    Ethernet72_mac = get_mac_by_bridge_id(dvs, iface_2_bridge_port_id["Ethernet72"])
+    assert "00:00:00:00:00:11" in Ethernet72_mac, "Updating fdb entry to Ethernet72 failed"
+
+    Ethernet64_mac = get_mac_by_bridge_id(dvs, iface_2_bridge_port_id["Ethernet64"])
+    assert "00:00:00:00:00:11" not in Ethernet64_mac, "Updating fdb entry from Ethernet64 failed"
+
+    # remove FDB entry from Application DB
+    remove_entry_pst(
+        dvs.pdb,
+        "FDB_TABLE", "Vlan6:00-00-00-00-00-11"
+    )
+
+    # restore the default value of the servers
+    dvs.servers[16].runcmd("ip route del default via 6.6.6.1")
+    dvs.servers[16].runcmd("ifconfig eth0 0")
+    dvs.servers[17].runcmd("ip route del default via 6.6.6.1")
+    dvs.servers[17].runcmd("ifconfig eth0 0")
+
+    # bring down port
+    dvs.set_interface_status("Ethernet64", "down")
+    dvs.set_interface_status("Ethernet68", "down")
+    dvs.set_interface_status("Ethernet72", "down")
+
+    # remove vlan ip
+    key = "Vlan6" + "|" + "6.6.6.1/24"
+    remove_entry_tbl(dvs.cdb, "VLAN_INTERFACE", key)
+
+    # bring down vlan
+    dvs.set_interface_status("Vlan6", "down")
+
+    # remove vlan member; remove vlan
+    dvs.remove_vlan_member("6", "Ethernet64")
+    dvs.remove_vlan_member("6", "Ethernet68")
+    dvs.remove_vlan_member("6", "Ethernet72")
+    dvs.remove_vlan("6")
+
+    # clear fdb
+    dvs.runcmd("sonic-clear fdb all")
