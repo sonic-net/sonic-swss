@@ -25,6 +25,7 @@ const request_description_t vnet_request_description = {
         { "vni",           REQ_T_UINT },
         { "peer_list",     REQ_T_SET },
         { "guid",          REQ_T_STRING },
+        { "scope",         REQ_T_STRING },
     },
     { "vxlan_tunnel", "vni" } // mandatory attributes
 };
@@ -48,6 +49,7 @@ struct VNetInfo
     string tunnel;
     uint32_t vni;
     set<string> peers;
+    string scope;
 };
 
 typedef map<VR_TYPE, sai_object_id_t> vrid_list_t;
@@ -72,7 +74,8 @@ public:
     VNetObject(const VNetInfo& vnetInfo) :
                tunnel_(vnetInfo.tunnel),
                peer_list_(vnetInfo.peers),
-               vni_(vnetInfo.vni)
+               vni_(vnetInfo.vni),
+               scope_(vnetInfo.scope)
                { }
 
     virtual bool updateObj(vector<sai_attribute_t>&) = 0;
@@ -97,12 +100,18 @@ public:
         return vni_;
     }
 
+    string getScope() const
+    {
+        return scope_;
+    }
+
     virtual ~VNetObject() noexcept(false) {};
 
 private:
     set<string> peer_list_ = {};
     string tunnel_;
     uint32_t vni_;
+    string scope_;
 };
 
 struct nextHop
