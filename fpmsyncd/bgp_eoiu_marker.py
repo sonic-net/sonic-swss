@@ -146,7 +146,6 @@ class BgpStateCheck():
     # The function will timeout in case eoiu states never meet the condition
     # after some time (DEF_TIME_OUT).
     def wait_for_bgp_eoiu(self):
-        #mtime = monotonic.time.time
         wait_time = self.DEF_TIME_OUT
         while wait_time >= 0:
             if not self.bgp_ipv4_eoiu:
