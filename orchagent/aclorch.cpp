@@ -1133,7 +1133,7 @@ void AclRuleMirror::update(SubjectType type, void *cntx)
     else
     {
         // Store counters before deactivating ACL rule
-        counters += getCounters();
+        counters += AclRule::getCounters();
 
         SWSS_LOG_INFO("Deactivating mirroring ACL %s for session %s", m_id.c_str(), m_sessionName.c_str());
         remove();
