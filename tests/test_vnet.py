@@ -291,7 +291,7 @@ def delete_phy_interface(dvs, ifname, ipaddr):
     time.sleep(2)
 
 
-def create_vnet_entry(dvs, name, tunnel, vni, peer_list):
+def create_vnet_entry(dvs, name, tunnel, vni, peer_list, scope=""):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -300,6 +300,9 @@ def create_vnet_entry(dvs, name, tunnel, vni, peer_list):
             ("vni", vni),
             ("peer_list", peer_list),
     ]
+
+    if scope:
+        attrs.append(('scope', scope))
 
     # create the VXLAN tunnel Term entry in Config DB
     create_entry_tbl(
@@ -520,6 +523,14 @@ class VnetVxlanVrfTunnel(object):
         self.vnet_vr_ids.update(new_vr_ids)
         self.vr_map[name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[1], 'peer':peer_list }
 
+    def check_default_vnet_entry(self, dvs, name):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        #Check virtual router objects
+        assert how_many_entries_exist(asic_db, self.ASIC_VRF_TABLE) == (len(self.vnet_vr_ids)),\
+                                     "Some VR objects are created"
+        #Mappers for default VNET is created with default VR objects.
+        self.vr_map[name] = { 'ing':list(self.vnet_vr_ids)[0], 'egr':list(self.vnet_vr_ids)[0], 'peer':[] }
+
     def check_del_vnet_entry(self, dvs, name):
         # TODO: Implement for VRF VNET
         return True
@@ -567,8 +578,12 @@ class VnetVxlanVrfTunnel(object):
         self.routes.update(new_route)
 
     def check_del_router_interface(self, dvs, name):
-        # TODO: Implement for VRF VNET
-        return True
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        old_rif = get_deleted_entries(asic_db, self.ASIC_RIF_TABLE, self.rifs, 1)
+        check_deleted_object(asic_db, self.ASIC_RIF_TABLE, old_rif[0])
+
+        self.rifs.remove(old_rif[0])
 
     def check_vnet_local_routes(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -799,6 +814,9 @@ class VnetBitmapVxlanTunnel(object):
         self.vnet_bitmap_class_ids.update(new_bitmap_class_id)
         self.rifs = get_exist_entries(dvs, self.ASIC_RIF_TABLE)
         self.vnet_map.update({name:{}})
+
+    def check_default_vnet_entry(self, dvs, name):
+        return True
 
     def check_del_vnet_entry(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -1284,3 +1302,19 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet3001')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet3001')
+
+    '''
+    Test 5 - Default VNet test
+    '''
+    def test_vnet_orch_5(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_5'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '8.8.8.8')
+        create_vnet_entry(dvs, 'Vnet_5', tunnel_name, '4789', "", 'default')
+
+        vnet_obj.check_default_vnet_entry(dvs, 'Vnet_5')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_5', '4789')
