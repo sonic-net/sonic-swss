@@ -1619,7 +1619,7 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
 }
 
 VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch, ChassisFrontendOrch * chassisFrontendOrch)
-                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), m_chassisFrontendOrch(chassisFrontendOrch)
+                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), chassis_frontend_orch_(chassisFrontendOrch)
 {
     SWSS_LOG_ENTER();
 
@@ -1894,9 +1894,9 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for ip %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
     
-    if (m_chassisFrontendOrch)
+    if (chassis_frontend_orch_)
     {
-        m_chassisFrontendOrch->handleVNetRoutesMessage(op, ip_pfx);
+        chassis_frontend_orch_->handleVNetRoutesMessage(op, ip_pfx);
     }
 
     if (vnet_orch_->isVnetExecVrf())

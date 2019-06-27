@@ -377,7 +377,7 @@ private:
     VNetRouteRequest request_;
     handler_map handler_map_;
 
-    ChassisFrontendOrch *m_chassisFrontendOrch;
+    ChassisFrontendOrch *chassis_frontend_orch_;
 };
 
 class VNetCfgRouteOrch : public Orch
