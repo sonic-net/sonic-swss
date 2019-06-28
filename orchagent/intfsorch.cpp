@@ -322,6 +322,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                 auto it_intfs = m_syncdIntfses.find(alias);
                 if (it_intfs == m_syncdIntfses.end())
                 {
+                    gPortsOrch->increasePortRefCount(alias);
                     IntfsEntry intfs_entry;
 
                     intfs_entry.ref_count = 0;
@@ -411,6 +412,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                     }
                     if (m_syncdIntfses[alias].ip_addresses.size() == 0)
                     {
+                        gPortsOrch->decreasePortRefCount(alias);
                         m_syncdIntfses.erase(alias);
                     }
                 }

@@ -220,6 +220,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_cpuPort = Port("CPU", Port::CPU);
     m_cpuPort.m_port_id = attr.value.oid;
     m_portList[m_cpuPort.m_alias] = m_cpuPort;
+    m_port_ref_count[m_cpuPort.m_alias] = 0;
 
     /* Get port number */
     attr.id = SAI_SWITCH_ATTR_PORT_NUMBER;
@@ -456,6 +457,20 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
     return false;
 }
 
+
+void PortsOrch::increasePortRefCount(const string &alias)
+{
+    assert (m_port_ref_count.find(alias) != m_port_ref_count.end());
+    m_port_ref_count[alias]++;
+    
+}
+
+
+void PortsOrch::decreasePortRefCount(const string &alias)
+{
+    assert (m_port_ref_count.find(alias) != m_port_ref_count.end());
+    m_port_ref_count[alias]--;
+}
 bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port)
 {
     SWSS_LOG_ENTER();
@@ -1365,6 +1380,7 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
             {
                 /* Add port to port list */
                 m_portList[alias] = p;
+                m_port_ref_count[alias] = 0;
                 /* Add port name map to counter table */
                 FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
                 vector<FieldValueTuple> fields;
@@ -2717,6 +2733,7 @@ bool PortsOrch::addVlan(string vlan_alias)
     vlan.m_vlan_info.vlan_id = vlan_id;
     vlan.m_members = set<string>();
     m_portList[vlan_alias] = vlan;
+    m_port_ref_count[vlan_alias] = 0;
 
     return true;
 }
@@ -2724,6 +2741,13 @@ bool PortsOrch::addVlan(string vlan_alias)
 bool PortsOrch::removeVlan(Port vlan)
 {
     SWSS_LOG_ENTER();
+    if (m_port_ref_count[vlan.m_alias] > 0)
+    {
+        SWSS_LOG_ERROR("Failed to remove ref count %d VLAN %s", 
+                       m_port_ref_count[vlan.m_alias],
+                       vlan.m_alias.c_str());
+        return false;
+    }
 
     /* Vlan removing is not allowed when the VLAN still has members */
     if (vlan.m_members.size() > 0)
@@ -2746,6 +2770,7 @@ bool PortsOrch::removeVlan(Port vlan)
             vlan.m_vlan_info.vlan_id);
 
     m_portList.erase(vlan.m_alias);
+    m_port_ref_count.erase(vlan.m_alias);
 
     return true;
 }
@@ -2888,6 +2913,7 @@ bool PortsOrch::addLag(string lag_alias)
     lag.m_lag_id = lag_id;
     lag.m_members = set<string>();
     m_portList[lag_alias] = lag;
+    m_port_ref_count[lag_alias] = 0;
 
     PortUpdate update = { lag, true };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
@@ -2898,6 +2924,14 @@ bool PortsOrch::addLag(string lag_alias)
 bool PortsOrch::removeLag(Port lag)
 {
     SWSS_LOG_ENTER();
+
+    if (m_port_ref_count[lag.m_alias] > 0)
+    {
+        SWSS_LOG_ERROR("Failed to remove ref count %d LAG %s", 
+                        m_port_ref_count[lag.m_alias], 
+                        lag.m_alias.c_str());
+        return false;
+    }
 
     /* Retry when the LAG still has members */
     if (lag.m_members.size() > 0)
@@ -2923,6 +2957,7 @@ bool PortsOrch::removeLag(Port lag)
     SWSS_LOG_NOTICE("Remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
 
     m_portList.erase(lag.m_alias);
+    m_port_ref_count.erase(lag.m_alias);
 
     PortUpdate update = { lag, false };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
