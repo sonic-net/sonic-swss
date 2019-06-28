@@ -539,7 +539,7 @@ bool VxlanMgr::deleteVxlan(const VxlanInfo & info)
 void VxlanMgr::clearAllVxlanDevices()
 {
     std::string stdout;
-    const std::string cmd = std::string("") + IP_CMD + " addr";
+    const std::string cmd = std::string("") + IP_CMD + " link";
     int ret = EXECUTE(cmd, stdout);
     if (ret != 0)
     {
