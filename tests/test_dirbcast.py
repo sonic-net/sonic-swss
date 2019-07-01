@@ -82,6 +82,8 @@ def test_DirectedBroadcast(dvs, testlog):
     # Explicitly add a neighbor entry with BCAST MAC and check if its in ASIC_DB
     dvs.runcmd("ip neigh replace 192.169.0.30 lladdr FF:FF:FF:FF:FF:FF dev Vlan100")
 
+    time.sleep(1)
+
     keys = atbl.getKeys()
     for key in keys:
         neigh = json.loads(key)
