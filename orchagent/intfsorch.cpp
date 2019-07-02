@@ -150,6 +150,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     {
         if (addRouterIntfs(vrf_id, port))
         {
+            gPortsOrch->increasePortRefCount(alias);
             IntfsEntry intfs_entry;
             intfs_entry.ref_count = 0;
             m_syncdIntfses[alias] = intfs_entry;
@@ -234,6 +235,7 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
     {
         if (removeRouterIntfs(port))
         {
+            gPortsOrch->decreasePortRefCount(alias);
             m_syncdIntfses.erase(alias);
             return true;
         }
@@ -322,7 +324,6 @@ void IntfsOrch::doTask(Consumer &consumer)
                 auto it_intfs = m_syncdIntfses.find(alias);
                 if (it_intfs == m_syncdIntfses.end())
                 {
-                    gPortsOrch->increasePortRefCount(alias);
                     IntfsEntry intfs_entry;
 
                     intfs_entry.ref_count = 0;
@@ -412,7 +413,6 @@ void IntfsOrch::doTask(Consumer &consumer)
                     }
                     if (m_syncdIntfses[alias].ip_addresses.size() == 0)
                     {
-                        gPortsOrch->decreasePortRefCount(alias);
                         m_syncdIntfses.erase(alias);
                     }
                 }

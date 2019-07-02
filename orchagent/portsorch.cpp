@@ -457,20 +457,18 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
     return false;
 }
 
-
 void PortsOrch::increasePortRefCount(const string &alias)
 {
     assert (m_port_ref_count.find(alias) != m_port_ref_count.end());
     m_port_ref_count[alias]++;
-    
 }
-
 
 void PortsOrch::decreasePortRefCount(const string &alias)
 {
     assert (m_port_ref_count.find(alias) != m_port_ref_count.end());
     m_port_ref_count[alias]--;
 }
+
 bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port)
 {
     SWSS_LOG_ENTER();
