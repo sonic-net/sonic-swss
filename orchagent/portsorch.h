@@ -36,6 +36,12 @@ struct PortUpdate
     bool add;
 };
 
+struct PortStatusUpdate
+{
+    Port port;
+    sai_port_oper_status_t operStatus;
+};
+
 struct LagMemberUpdate
 {
     Port lag;
@@ -72,6 +78,7 @@ public:
     bool getAclBindPortId(string alias, sai_object_id_t &port_id);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
+    void notifyPortStatusChange(sai_object_id_t, sai_port_oper_status_t status);
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
     bool createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &group_oid, acl_stage_type_t acl_stage = ACL_STAGE_EGRESS);
     bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage = ACL_STAGE_INGRESS);
@@ -150,11 +157,12 @@ private:
     bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
     bool removeVlanMember(Port &vlan, Port &port);
 
-    bool addLag(string lag);
+    bool addLag(string lag, string admin_status, string oper_status);
     bool removeLag(Port lag);
     bool addLagMember(Port &lag, Port &port);
     bool removeLagMember(Port &lag, Port &port);
     void getLagMember(Port &lag, vector<Port> &portv);
+    bool setLagStatus(Port &lag, string admin_status, string oper_status);
 
     bool addPort(const set<int> &lane_set, uint32_t speed, int an=0, string fec="");
     bool removePort(sai_object_id_t port_id);

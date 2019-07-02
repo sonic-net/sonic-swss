@@ -1249,6 +1249,29 @@ void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t 
     m_portTable->set(port.m_alias, tuples);
 }
 
+void PortsOrch::notifyPortStatusChange(sai_object_id_t id, sai_port_oper_status_t status)
+{
+    SWSS_LOG_ENTER();
+    struct PortStatusUpdate update;
+    Port port;
+
+    /* Can only status of up/down proceeded */
+    if ((SAI_PORT_OPER_STATUS_UP != status) && (SAI_PORT_OPER_STATUS_DOWN != status))
+    {
+        return;
+    }
+    if (getPort(id, port))
+    {
+        update.port = port;
+        update.operStatus = status;
+        SWSS_LOG_DEBUG("Notify observer event SUBJECT_TYPE_PORT_STATUS_CHANGE: %s",
+                       status == SAI_PORT_OPER_STATUS_UP ? "up" : "down");
+        notify(SUBJECT_TYPE_PORT_STATUS_CHANGE, static_cast<void *>(&update));
+    } else {
+        SWSS_LOG_ERROR("Failed to get Port info for id 0x%lx", id);
+    }
+}
+
 bool PortsOrch::addPort(const set<int> &lane_set, uint32_t speed, int an, string fec_mode)
 {
     SWSS_LOG_ENTER();
@@ -2167,7 +2190,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
 
         string alias = kfvKey(t);
         string op = kfvOp(t);
-
+        string oper_status = "down";
+        string admin_status = "down";
         if (op == SET_COMMAND)
         {
             // Retrieve attributes
@@ -2178,12 +2202,20 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
                 }
+                else if (fvField(i) == "oper_status")
+                {
+                    oper_status = fvValue(i);
+                }
+                else if (fvField(i) == "admin_status")
+                {
+                    admin_status = fvValue(i);
+                }
             }
 
             // Create a new LAG when the new alias comes
             if (m_portList.find(alias) == m_portList.end())
             {
-                if (!addLag(alias))
+                if (!addLag(alias, admin_status, oper_status))
                 {
                     it++;
                     continue;
@@ -2207,6 +2239,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
                         gIntfsOrch->setRouterIntfsMtu(l);
                     }
                 }
+                setLagStatus(l, admin_status, oper_status);
             }
 
             it = consumer.m_toSync.erase(it);
@@ -2869,7 +2902,7 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
     return true;
 }
 
-bool PortsOrch::addLag(string lag_alias)
+bool PortsOrch::addLag(string lag_alias, string admin_status, string oper_status)
 {
     SWSS_LOG_ENTER();
 
@@ -2887,6 +2920,8 @@ bool PortsOrch::addLag(string lag_alias)
     Port lag(lag_alias, Port::LAG);
     lag.m_lag_id = lag_id;
     lag.m_members = set<string>();
+    lag.m_oper_status = (oper_status == "up") ? SAI_PORT_OPER_STATUS_UP : SAI_PORT_OPER_STATUS_DOWN;
+    lag.m_admin_state_up = (admin_status == "up");
     m_portList[lag_alias] = lag;
 
     PortUpdate update = { lag, true };
@@ -2927,6 +2962,29 @@ bool PortsOrch::removeLag(Port lag)
     PortUpdate update = { lag, false };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
+    return true;
+}
+
+bool PortsOrch::setLagStatus(Port &lag, string admin_status, string oper_status)
+{
+
+    SWSS_LOG_DEBUG("Update lag %s admin status to %s, oper status to %s",
+                    lag.m_alias.c_str(), admin_status.c_str(), oper_status.c_str());
+
+    auto old_oper_status = lag.m_oper_status;
+    struct PortStatusUpdate update;
+    //update the lag port status
+    lag.m_oper_status = (oper_status == "up") ? SAI_PORT_OPER_STATUS_UP : SAI_PORT_OPER_STATUS_DOWN;
+    lag.m_admin_state_up = (admin_status == "up");
+    m_portList[lag.m_alias] = lag;
+    if (old_oper_status == lag.m_oper_status)
+        return true;
+    //notify the lag oper status change
+    update.port = lag;
+    update.operStatus = lag.m_oper_status;
+    SWSS_LOG_DEBUG("Notify observer event SUBJECT_TYPE_PORT_STATUS_CHANGE: %s",
+                   lag.m_oper_status == SAI_PORT_OPER_STATUS_UP ? "up" : "down");
+    notify(SUBJECT_TYPE_PORT_STATUS_CHANGE, static_cast<void *>(&update));
     return true;
 }
 
@@ -3228,6 +3286,7 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
             }
 
             updatePortOperStatus(port, status);
+            notifyPortStatusChange(id, status);
 
             /* update m_portList */
             m_portList[port.m_alias] = port;
