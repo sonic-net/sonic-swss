@@ -980,7 +980,9 @@ bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
         return false;
     }
 
-    if ((m_tableType == ACL_TABLE_MIRROR_DSCP && attr_name != MATCH_DSCP))
+    if ((m_tableType == ACL_TABLE_MIRROR_DSCP &&
+                aclMatchLookup.find(attr_name) != aclMatchLookup.end() &&
+                attr_name != MATCH_DSCP))
     {
         SWSS_LOG_ERROR("%s match is not supported for the table of type MIRROR_DSCP",
                 attr_name.c_str());
