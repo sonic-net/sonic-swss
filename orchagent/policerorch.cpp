@@ -251,7 +251,7 @@ void PolicerOrch::doTask(Consumer &consumer)
 
             sai_status_t status = sai_policer_api->remove_policer(
                     m_syncdPolicers.at(key));
-            if (status == SAI_STATUS_SUCCESS)
+            if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to remove policer %s, rv:%d",
                         key.c_str(), status);
