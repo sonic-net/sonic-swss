@@ -61,8 +61,7 @@ vector<string> string_split(const string& s, const string& delim)
     return elems;
 }
 
-void mclagsyncd_get_oid_2_port_name_map(RedisClient *p_redisClient_2_counters, 
-        std::unordered_map<std::string,std:: string> & port_map)
+void MclagLink::mclagsyncd_get_oid_2_port_name_map(std::unordered_map<std::string,std:: string> & port_map)
 {
     std::unordered_map<std::string,std:: string>::iterator it;
     auto hash = p_redisClient_2_counters->hgetall("COUNTERS_PORT_NAME_MAP");
@@ -73,8 +72,7 @@ void mclagsyncd_get_oid_2_port_name_map(RedisClient *p_redisClient_2_counters,
     return;
 }
 
-void mclagsyncd_get_bridgePortId_2_attrPortId_map(RedisClient *p_redisClient_2_asic, 
-        std::map<std::string, std:: string> *oid_map)
+void MclagLink::mclagsyncd_get_bridgePortId_2_attrPortId_map(std::map<std::string, std:: string> *oid_map)
 {
     std::string bridge_port_id;
     size_t pos1 = 0;
@@ -90,7 +88,11 @@ void mclagsyncd_get_bridgePortId_2_attrPortId_map(RedisClient *p_redisClient_2_a
         auto hash = p_redisClient_2_asic->hgetall(key);
         attr_port_id = hash.find("SAI_BRIDGE_PORT_ATTR_PORT_ID");
         if (attr_port_id == hash.end())
-            continue;
+        {
+            attr_port_id = hash.find("SAI_BRIDGE_PORT_ATTR_TUNNEL_ID");
+            if (attr_port_id == hash.end())
+                continue;
+        }
         
         oid_map->insert(pair<string, string>(bridge_port_id, attr_port_id->second));     
     }
@@ -98,8 +100,7 @@ void mclagsyncd_get_bridgePortId_2_attrPortId_map(RedisClient *p_redisClient_2_a
     return;
 }
 
-void mclagsyncd_get_vid_by_bvid(RedisClient *p_redisClient_2_asic, 
-        std::string &bvid, std::string &vlanid)
+void MclagLink::mclagsyncd_get_vid_by_bvid(std::string &bvid, std::string &vlanid)
 {
     
     std::unordered_map<std::string, std::string>::iterator attr_vlan_id;
@@ -116,8 +117,7 @@ void mclagsyncd_get_vid_by_bvid(RedisClient *p_redisClient_2_asic,
     return;
 }
 
-void mclagsyncd_get_fdb_set(RedisClient *p_redisClient_2_asic, 
-        RedisClient *p_redisClient_2_counters, std::set<mclag_fdb> *fdb_set)
+void MclagLink::mclagsyncd_get_fdb_set(std::set<mclag_fdb> *fdb_set)
 {
     string bvid;
     string bri_port_id;
@@ -152,7 +152,7 @@ void mclagsyncd_get_fdb_set(RedisClient *p_redisClient_2_asic,
             pos1 = key.find("oid:", 0);
             pos2 = key.find(",", 0) - 2;
             bvid = key.substr(pos1, pos2 - pos1 + 1);            
-            mclagsyncd_get_vid_by_bvid(p_redisClient_2_asic, bvid, vlanid);            
+            mclagsyncd_get_vid_by_bvid(bvid, vlanid); 
         }
    
         vid = atoi(vlanid.c_str());
@@ -175,8 +175,7 @@ void mclagsyncd_get_fdb_set(RedisClient *p_redisClient_2_asic,
             type = "static";
      
         /*get port name*/
-        mclagsyncd_get_oid_2_port_name_map(p_redisClient_2_counters, 
-                oid_2_portname_map);
+        mclagsyncd_get_oid_2_port_name_map(oid_2_portname_map);
 #if 0       
         SWSS_LOG_NOTICE("oid_2_portname_map:");
         {
@@ -185,8 +184,7 @@ void mclagsyncd_get_fdb_set(RedisClient *p_redisClient_2_asic,
                 SWSS_LOG_NOTICE("%s vs %s", it->first.c_str(), it->second.c_str());
          }
 #endif
-        mclagsyncd_get_bridgePortId_2_attrPortId_map(p_redisClient_2_asic, 
-                &brPortId_2_attrPortId_map);
+        mclagsyncd_get_bridgePortId_2_attrPortId_map(&brPortId_2_attrPortId_map);
 #if 0        
         SWSS_LOG_NOTICE("brPortId_2_attrPortId_map:");
         {
@@ -224,19 +222,18 @@ void mclagsyncd_get_fdb_set(RedisClient *p_redisClient_2_asic,
     return;
 }
 
-void mclagsyncd_set_port_isolate(RedisClient *p_redisClient_2_cfg, ProducerStateTable *p_acl_tbl,  
-        ProducerStateTable *p_acl_rule_tbl, std::map<std::string,std:: string> *p_isolate, char *msg)
+void MclagLink::mclagsyncd_set_port_isolate(char *msg)
 {
     mclag_sub_option_hdr_t *op_hdr = NULL;
     string isolate_src_port;
     string isolate_dst_port;
     char * cur = NULL;
     string acl_name = "mclag";
-    string acl_rule_name = "mclag|mclag";
+    string acl_rule_name = "mclag:mclag";
     vector<FieldValueTuple> acl_attrs;
     vector<FieldValueTuple> acl_rule_attrs;
-    std::string acl_key = "ACL_TABLE|" + acl_name;
-    std::string acl_rule_key = "ACL_RULE|" + acl_rule_name;
+    std::string acl_key = std::string("") + APP_ACL_TABLE_NAME + ":" + acl_name;
+    std::string acl_rule_key = std::string("") + APP_ACL_RULE_TABLE_NAME + ":" + acl_rule_name;
 
     cur = msg;
     
@@ -257,7 +254,7 @@ void mclagsyncd_set_port_isolate(RedisClient *p_redisClient_2_cfg, ProducerState
     if (op_hdr->op_len == 0)
     {
         /* If dst port is NULL, delete the acl table 'mclag' */
-        p_redisClient_2_cfg->del(acl_key);
+        p_acl_tbl->del(acl_name);
         SWSS_LOG_NOTICE("set port isolate, src port: %s, dst port is NULL", 
              isolate_src_port.c_str());
         return;
@@ -276,7 +273,7 @@ void mclagsyncd_set_port_isolate(RedisClient *p_redisClient_2_cfg, ProducerState
     FieldValueTuple port_attr("ports",isolate_src_port);
     acl_attrs.push_back(port_attr);
 
-    p_redisClient_2_cfg->hmset(acl_key, acl_attrs.begin(), acl_attrs.end());
+    p_acl_tbl->set(acl_name, acl_attrs);
     /*End create ACL table*/
 
     /*Then create ACL rule table*/
@@ -289,14 +286,13 @@ void mclagsyncd_set_port_isolate(RedisClient *p_redisClient_2_cfg, ProducerState
     FieldValueTuple packet_attr("PACKET_ACTION","DROP");
     acl_rule_attrs.push_back(packet_attr);
 
-    p_redisClient_2_cfg->hmset(acl_rule_key, acl_rule_attrs.begin(), acl_rule_attrs.end());
+    p_acl_rule_tbl->set(acl_rule_name, acl_rule_attrs);
     /*End create ACL rule table*/
     
     return;
 }
 
-void mclagsyncd_set_port_mac_learn_mode(ProducerStateTable *p_port_tbl, 
-        ProducerStateTable *p_lag_tbl, std::map<std::string,std:: string> *p_learn, char *msg)
+void MclagLink::mclagsyncd_set_port_mac_learn_mode(char *msg)
 {
     string learn_port;
     string learn_mode;
@@ -311,11 +307,11 @@ void mclagsyncd_set_port_mac_learn_mode(ProducerStateTable *p_port_tbl,
     op_hdr = (mclag_sub_option_hdr_t *)cur;
     if (op_hdr->op_type == MCLAG_SUB_OPTION_TYPE_MAC_LEARN_ENABLE)
     {
-        learn_mode = "enabled";
+        learn_mode = "hardware";
     }
     else if (op_hdr->op_type == MCLAG_SUB_OPTION_TYPE_MAC_LEARN_DISABLE)
     {
-        learn_mode = "disabled";
+        learn_mode = "disable";
     }
 
     cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
@@ -334,8 +330,11 @@ void mclagsyncd_set_port_mac_learn_mode(ProducerStateTable *p_port_tbl,
         vector<FieldValueTuple> attrs;
         FieldValueTuple learn_attr("learn_mode", learn_mode);
         attrs.push_back(learn_attr);
-        if(strncmp(res[index].c_str(),"PortC",5)==0)
-            p_lag_tbl->set(res[index], attrs);            
+        if(strncmp(res[index].c_str(),PORTCHANNEL_PREFIX,strlen(PORTCHANNEL_PREFIX))==0)
+            p_lag_tbl->set(res[index], attrs);
+        /*vxlan tunnel dont supported currently, for src_ip is the mandatory attribute*/
+        /*else if(strncmp(res[index].c_str(),VXLAN_TUNNEL_PREFIX,5)==0)
+            p_tnl_tbl->set(res[index], attrs); */
         else
             p_port_tbl->set(res[index], attrs); 
 
@@ -346,7 +345,7 @@ void mclagsyncd_set_port_mac_learn_mode(ProducerStateTable *p_port_tbl,
     return;
 }
 
-void mclagsyncd_set_fdb_flush(DBConnector *p_appl_db)
+void MclagLink::mclagsyncd_set_fdb_flush()
 {
      swss::NotificationProducer flushFdb(p_appl_db, "FLUSHFDBREQUEST");
          
@@ -359,7 +358,7 @@ void mclagsyncd_set_fdb_flush(DBConnector *p_appl_db)
      return;
 }
 
-void mclagsyncd_set_fdb_flush_by_port(DBConnector *p_appl_db, char *msg)
+void MclagLink::mclagsyncd_set_fdb_flush_by_port(char *msg)
 {
      string port;
      char *cur = NULL;
@@ -380,7 +379,7 @@ void mclagsyncd_set_fdb_flush_by_port(DBConnector *p_appl_db, char *msg)
      return;
 }
 
-void mclagsyncd_set_intf_mac(ProducerStateTable *p_intf_tbl, char *msg)
+void MclagLink::mclagsyncd_set_intf_mac(char *msg)
 {
     mclag_sub_option_hdr_t *op_hdr = NULL;
     string intf_key;
@@ -410,7 +409,7 @@ void mclagsyncd_set_intf_mac(ProducerStateTable *p_intf_tbl, char *msg)
     return;
 }
 
-void mclagsyncd_set_fdb_entry(ProducerStateTable *p_fdb_tbl, std::set <mclag_fdb> *p_old_fdb, char *msg, int msg_len)
+void MclagLink::mclagsyncd_set_fdb_entry(char *msg, int msg_len)
 {
     struct mclag_fdb_info * fdb_info = NULL;
     struct mclag_fdb fdb;
@@ -499,9 +498,7 @@ void mclagsyncd_set_fdb_entry(ProducerStateTable *p_fdb_tbl, std::set <mclag_fdb
     return;
 }
 
-ssize_t  mclagsyncd_get_fdb_changes(RedisClient *p_redisClient_2_asic,
-        RedisClient *p_redisClient_2_counters, std::set <mclag_fdb> *p_old_fdb,
-        char *msg_buf, int m_connection_socket)
+ssize_t  MclagLink::mclagsyncd_get_fdb_changes(char *msg_buf)
 {
     set <mclag_fdb> new_fdb;
     set <mclag_fdb> del_fdb;
@@ -519,7 +516,7 @@ ssize_t  mclagsyncd_get_fdb_changes(RedisClient *p_redisClient_2_asic,
 
     infor_len = infor_len + sizeof(mclag_msg_hdr_t);
                 
-    mclagsyncd_get_fdb_set(p_redisClient_2_asic, p_redisClient_2_counters ,p_new_fdb);
+    mclagsyncd_get_fdb_set(p_new_fdb);
  
     set_difference(p_old_fdb->begin(), p_old_fdb->end(), p_new_fdb->begin(), 
                 p_new_fdb->end(), inserter(del_fdb, del_fdb.begin()));
@@ -724,27 +721,25 @@ void MclagLink::readData()
         switch (hdr->msg_type)
         {
             case MCLAG_MSG_TYPE_PORT_ISOLATE:
-                    /*mclagsyncd_set_port_isolate(p_port_tbl, p_isolate, msg);*/
-                    mclagsyncd_set_port_isolate(p_redisClient_2_cfg, p_acl_tbl, p_acl_rule_tbl, p_isolate, msg);
+                    mclagsyncd_set_port_isolate(msg);
                     break;
             case MCLAG_MSG_TYPE_PORT_MAC_LEARN_MODE:
-                    mclagsyncd_set_port_mac_learn_mode(p_port_tbl, p_lag_tbl, p_learn, msg);
+                    mclagsyncd_set_port_mac_learn_mode(msg);
                     break;
             case MCLAG_MSG_TYPE_FLUSH_FDB:
-                    mclagsyncd_set_fdb_flush(p_appl_db);
+                    mclagsyncd_set_fdb_flush();
                     break;
             case MCLAG_MSG_TYPE_FLUSH_FDB_BY_PORT:
-                    mclagsyncd_set_fdb_flush_by_port(p_appl_db, msg);
+                    mclagsyncd_set_fdb_flush_by_port(msg);
                     break;
             case MCLAG_MSG_TYPE_SET_INTF_MAC:
-                    mclagsyncd_set_intf_mac(p_intf_tbl, msg);
+                    mclagsyncd_set_intf_mac(msg);
                     break;
             case MCLAG_MSG_TYPE_SET_FDB:
-                    mclagsyncd_set_fdb_entry(p_fdb_tbl, p_old_fdb, msg, (int)(hdr->msg_len - sizeof(mclag_msg_hdr_t)));
+                    mclagsyncd_set_fdb_entry(msg, (int)(hdr->msg_len - sizeof(mclag_msg_hdr_t)));
                     break;
             case MCLAG_MSG_TYPE_GET_FDB_CHANGES:
-                    write = mclagsyncd_get_fdb_changes(p_redisClient_2_asic, p_redisClient_2_counters, 
-                    p_old_fdb, m_messageBuffer_send, m_connection_socket);
+                    write = mclagsyncd_get_fdb_changes(m_messageBuffer_send);
                     if (write == 0)
                         throw MclagConnectionClosedException();
                     if (write < 0)
@@ -761,50 +756,48 @@ void MclagLink::readData()
     return;
 }
 
- void mclag_connection_lost_handle_port_Isolate(RedisClient *p_redisClient_2_cfg)
+void MclagLink::mclag_connection_lost_handle_port_isolate()
 {
-     string acl_name = "mclag";
-     std::string acl_key = "ACL_TABLE|" + acl_name;
-     
-     p_redisClient_2_cfg->del(acl_key);
-     
-     return;
+    string acl_name = "mclag";
+
+    p_acl_tbl->del(acl_name);
+
+    return;
 }
 
-  void mclag_connection_lost_handle_port_learn_mode(std::map<std::string,
-        std:: string> *p_learn,  ProducerStateTable * p_port_tbl, ProducerStateTable * p_lag_tbl)
- {
-     vector<FieldValueTuple> attrs;
-     std::map<std::string,std:: string>::iterator it;
-     
-     it = p_learn->begin();
-     
-     while (it != p_learn->end())
-     {
-        it->second = "enabled";
+void MclagLink::mclag_connection_lost_handle_port_learn_mode()
+{
+    vector<FieldValueTuple> attrs;
+    std::map<std::string,std:: string>::iterator it;
+
+    it = p_learn->begin();
+
+    while (it != p_learn->end())
+    {
+        it->second = "hardware";
 
         FieldValueTuple block_attr("learn_mode",it->second);
 
         attrs.push_back(block_attr);
-        if(strncmp(it->first.c_str(),"PortC",5) == 0)
+        if(strncmp(it->first.c_str(),PORTCHANNEL_PREFIX,strlen(PORTCHANNEL_PREFIX)) == 0)
             p_lag_tbl->set(it->first, attrs);
+        /*vxlan tunnel dont supported currently, for src_ip is the mandatory attribute*/
+        /*else if(strncmp(it->first.c_str(),VXLAN_TUNNEL_PREFIX,5) == 0)
+            p_tnl_tbl->set(it->first, attrs); */
         else
             p_port_tbl->set(it->first, attrs);     
 
         it ++;
-     }
+    }
 
-     p_learn->clear();
-     
-     return;
- }
+    p_learn->clear();
 
- void mclag_connection_lost( std::map<std::string,std:: string> *p_isolate, std::map<std::string,std:: string> *p_learn, 
-            ProducerStateTable * p_port_tbl, ProducerStateTable * p_lag_tbl, RedisClient *p_redisClient_2_cfg)
- {
-     mclag_connection_lost_handle_port_Isolate(p_redisClient_2_cfg);     
-     mclag_connection_lost_handle_port_learn_mode(p_learn, p_port_tbl, p_lag_tbl);
-     return;
- }
+    return;
+}
+
+void MclagLink::mclag_connection_lost()
+{
+    return;
+}
 
 
