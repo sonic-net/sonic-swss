@@ -232,7 +232,7 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
         /*Set the mac of interface*/
         if(mac)
         {
-            if (invalid_mac == false)
+            if (!invalid_mac)
             {
                 FieldValueTuple mac_attr("mac_addr",mac.to_string().c_str());
                 fvVector.push_back(mac_attr);
