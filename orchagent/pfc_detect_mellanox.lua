@@ -8,9 +8,25 @@ local counters_db = ARGV[1]
 local counters_table_name = ARGV[2]
 local poll_time = tonumber(ARGV[3])
 
+local asic_db = "1"
+local asic_db_port_table = "ASIC_STATE:SAI_OBJECT_TYPE_PORT"
+
+local quanta_size = 512
+
 local rets = {}
 
 redis.call('SELECT', counters_db)
+
+local function port_speed_get(port_id)
+    redis.call('SELECT', asic_db)
+    local port_speed = redis.call('HGET', asic_db_port_table .. ':' .. port_id, 'SAI_PORT_ATTR_SPEED')
+    redis.call('SELECT', counters_db)
+    return tonumber(port_speed)
+end
+
+local function quantatous(quanta, port_id)
+    return quanta * quanta_size / port_speed_get(port_id)
+end
 
 -- Iterate through each queue
 local n = table.getn(KEYS)
@@ -63,17 +79,18 @@ for i = n, 1, -1 do
                     packets_last = tonumber(packets_last)
                     pfc_rx_packets_last = tonumber(pfc_rx_packets_last)
                     pfc_duration_last = tonumber(pfc_duration_last)
+                    local storm_condition = ((quantatous(pfc_duration, port_id) - quantatous(pfc_duration_last, port_id)) > poll_time * 0.8)
 
                     -- Check actual condition of queue being in PFC storm
                     if (occupancy_bytes > 0 and packets - packets_last == 0 and pfc_rx_packets - pfc_rx_packets_last > 0) or
                         -- DEBUG CODE START. Uncomment to enable
                         (debug_storm == "enabled") or
                         -- DEBUG CODE END.
-                        (occupancy_bytes == 0 and packets - packets_last == 0 and (pfc_duration - pfc_duration_last) > poll_time * 0.8) then
+                        (occupancy_bytes == 0 and packets - packets_last == 0 and storm_condition) then
                         if time_left <= poll_time then
                             redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_rx_pkt_key .. '_last')
                             redis.call('HDEL', counters_table_name .. ':' .. port_id, pfc_duration_key .. '_last')
-                            redis.call('PUBLISH', 'PFC_WD', '["' .. KEYS[i] .. '","storm"]')
+                            redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","storm"]')
                             is_deadlock = true
                             time_left = detection_time
                         else
@@ -81,7 +98,7 @@ for i = n, 1, -1 do
                         end
                     else
                         if pfc_wd_action == 'alert' and pfc_wd_status ~= 'operational' then
-                            redis.call('PUBLISH', 'PFC_WD', '["' .. KEYS[i] .. '","restore"]')
+                            redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","restore"]')
                         end
                         time_left = detection_time
                     end

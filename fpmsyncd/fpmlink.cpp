@@ -9,7 +9,7 @@
 using namespace swss;
 using namespace std;
 
-FpmLink::FpmLink(int port) :
+FpmLink::FpmLink(unsigned short port) :
     MSG_BATCH_SIZE(256),
     m_bufSize(FPM_MAX_MSG_LEN * MSG_BATCH_SIZE),
     m_messageBuffer(NULL),
@@ -71,7 +71,10 @@ FpmLink::~FpmLink()
 void FpmLink::accept()
 {
     struct sockaddr_in client_addr;
-    socklen_t client_len;
+
+    // Ref: man 3 accept
+    // address_len argument, on input, specifies the length of the supplied sockaddr structure
+    socklen_t client_len = sizeof(struct sockaddr_in);
 
     m_connection_socket = ::accept(m_server_socket, (struct sockaddr *)&client_addr,
                                    &client_len);

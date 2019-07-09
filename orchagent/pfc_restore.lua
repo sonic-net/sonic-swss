@@ -49,7 +49,7 @@ for i = n, 1, -1 do
                 -- DEBUG CODE END.
             then
                 if time_left <= poll_time then
-                    redis.call('PUBLISH', 'PFC_WD', '["' .. KEYS[i] .. '","restore"]')
+                    redis.call('PUBLISH', 'PFC_WD_ACTION', '["' .. KEYS[i] .. '","restore"]')
                     time_left = restoration_time
                 else
                     time_left = time_left - poll_time

@@ -144,7 +144,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         // Set Interface VRF except for lo
         if (!is_lo)
         {
-            setIntfVrf(alias, vrf_name);
+            if (!vrf_name.empty())
+            {
+                setIntfVrf(alias, vrf_name);
+            }
             m_appIntfTableProducer.set(alias, data);
         }
         else
