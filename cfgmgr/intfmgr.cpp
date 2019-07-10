@@ -50,6 +50,20 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
     }
 }
 
+void IntfMgr::setIntfMac(const string &alias, const string mac_str)
+{
+    stringstream cmd;
+    string res;
+
+    cmd << IP_CMD << " link set " << alias << " address " << mac_str;
+
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+}
+
 void IntfMgr::setIntfVrf(const string &alias, const string vrfName)
 {
     stringstream cmd;
@@ -116,6 +130,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string alias(keys[0]);
     string vrf_name = "";
     bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
+    string mac = "";
 
     for (auto idx : data)
     {
@@ -124,6 +139,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         if (field == "vnet_name" || field == "vrf_name")
         {
             vrf_name = value;
+        }
+        else  if (field == "mac_addr")
+        {
+            mac = value;
         }
     }
 
@@ -147,6 +166,11 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             if (!vrf_name.empty())
             {
                 setIntfVrf(alias, vrf_name);
+            }
+            /*Set the mac of interface*/
+            if(!mac.empty())
+            {
+                setIntfMac(alias, mac);
             }
             m_appIntfTableProducer.set(alias, data);
         }
@@ -187,28 +211,6 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
     string appKey = (is_lo ? "lo" : keys[0]) + ":" + keys[1];
 
-    MacAddress mac;
-    bool invalid_mac = false;
-
-    for (auto idx : data)
-    {
-        const auto &field = fvField(idx);
-        const auto &value = fvValue(idx);
-        if (field == "mac_addr")
-        {
-            try
-            {
-                mac = MacAddress(value);
-            }
-            catch (const std::invalid_argument& e)
-            {
-                SWSS_LOG_ERROR("Invalid Mac addr '%s' for '%s'", value.c_str(), alias.c_str());
-                invalid_mac = true;
-                break;
-            }
-        }
-    }
-
     if (op == SET_COMMAND)
     {
         /*
@@ -232,15 +234,6 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
         FieldValueTuple s("scope", "global");
         fvVector.push_back(s);
         fvVector.push_back(f);
-        /*Set the mac of interface*/
-        if(mac)
-        {
-            if (!invalid_mac)
-            {
-                FieldValueTuple mac_attr("mac_addr",mac.to_string().c_str());
-                fvVector.push_back(mac_attr);
-            }
-        }
 
         m_appIntfTableProducer.set(appKey, fvVector);
         m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");
