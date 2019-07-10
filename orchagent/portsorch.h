@@ -65,6 +65,8 @@ public:
     bool setBridgePortLearningFDB(Port &port, sai_bridge_port_fdb_learning_mode_t mode);
     bool getPort(string alias, Port &port);
     bool getPort(sai_object_id_t id, Port &port);
+    void increasePortRefCount(const string &alias);
+    void decreasePortRefCount(const string &alias);
     bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);
     void setPort(string alias, Port port);
     void getCpuPort(Port &port);
@@ -73,6 +75,7 @@ public:
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
+    bool createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &group_oid, acl_stage_type_t acl_stage = ACL_STAGE_EGRESS);
     bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage = ACL_STAGE_INGRESS);
 
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
@@ -117,6 +120,7 @@ private:
     map<set<int>, sai_object_id_t> m_portListLaneMap;
     map<set<int>, tuple<string, uint32_t, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
+    map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
 
 	
@@ -161,6 +165,7 @@ private:
     bool initPort(const string &alias, const set<int> &lane_set);
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);
+    bool getPortAdminStatus(sai_object_id_t id, bool& up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
@@ -188,6 +193,11 @@ private:
 
     bool getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const;
     void updatePortOperStatus(Port &port, sai_port_oper_status_t status);
+
+    void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
+
+    bool setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
+                                vector<uint32_t> &serdes_val);
 };
 #endif /* SWSS_PORTSORCH_H */
 

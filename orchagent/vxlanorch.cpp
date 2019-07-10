@@ -82,7 +82,7 @@ create_tunnel_map(MAP_T map_t)
 
     if (map_t == MAP_T::MAP_TO_INVALID)
     {
-        SWSS_LOG_ERROR("Invalid map type %d", map_t);
+        SWSS_LOG_ERROR("Invalid map type %d", static_cast<int>(map_t));
         return SAI_NULL_OBJECT_ID;
     }
 
@@ -104,6 +104,16 @@ create_tunnel_map(MAP_T map_t)
     }
 
     return tunnel_map_id;
+}
+
+void
+remove_tunnel_map(sai_object_id_t tunnel_map_id)
+{
+    sai_status_t status = sai_tunnel_api->remove_tunnel_map(tunnel_map_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't remove a tunnel map object");
+    }
 }
 
 static sai_object_id_t create_tunnel_map_entry(
@@ -269,6 +279,16 @@ create_tunnel(
     return tunnel_id;
 }
 
+void
+remove_tunnel(sai_object_id_t tunnel_id)
+{
+    sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't remove a tunnel object");
+    }
+}
+
 // Create tunnel termination
 static sai_object_id_t
 create_tunnel_termination(
@@ -328,6 +348,16 @@ create_tunnel_termination(
     return term_table_id;
 }
 
+void
+remove_tunnel_termination(sai_object_id_t term_table_id)
+{
+    sai_status_t status = sai_tunnel_api->remove_tunnel_term_table_entry(term_table_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't remove a tunnel term table object");
+    }
+}
+
 bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap)
 {
     try
@@ -368,7 +398,7 @@ bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap)
         return false;
     }
 
-    SWSS_LOG_INFO("Vxlan tunnel '%s' was created", tunnel_name_.c_str());
+    SWSS_LOG_NOTICE("Vxlan tunnel '%s' was created", tunnel_name_.c_str());
     return true;
 }
 
@@ -522,7 +552,7 @@ VxlanTunnelOrch::removeNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAd
     if(!isTunnelExists(tunnelName))
     {
         SWSS_LOG_ERROR("Vxlan tunnel '%s' does not exists", tunnelName.c_str());
-        return true;
+        return false;
     }
 
     auto tunnel_obj = getVxlanTunnel(tunnelName);
@@ -575,7 +605,8 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
         return false;
     }
 
-    SWSS_LOG_NOTICE("Vxlan map for tunnel '%s' was created", tunnelName.c_str());
+    SWSS_LOG_NOTICE("Vxlan map for tunnel '%s' and vni '%d' was created",
+            tunnelName.c_str(), vni);
     return true;
 }
 
@@ -626,26 +657,25 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
     SWSS_LOG_ENTER();
 
     auto src_ip = request.getAttrIP("src_ip");
-    if (!src_ip.isV4())
-    {
-        SWSS_LOG_ERROR("Wrong format of the attribute: 'src_ip'. Currently only IPv4 address is supported");
-        return true;
-    }
 
     IpAddress dst_ip;
     auto attr_names = request.getAttrFieldNames();
     if (attr_names.count("dst_ip") == 0)
     {
-        dst_ip = IpAddress("0.0.0.0");
+        if(src_ip.isV4()) {
+            dst_ip = IpAddress("0.0.0.0");
+        } else {
+            dst_ip = IpAddress("::");
+        }
     }
     else
     {
         dst_ip = request.getAttrIP("dst_ip");
-        if (!dst_ip.isV4())
-        {
-            SWSS_LOG_ERROR("Wrong format of the attribute: 'dst_ip'. Currently only IPv4 address is supported");
+        if((src_ip.isV4() && !dst_ip.isV4()) ||
+               (!src_ip.isV4() && dst_ip.isV4())) {
+            SWSS_LOG_ERROR("Format mismatch: 'src_ip' and 'dst_ip' must be of the same family");
             return true;
-        }
+	}
     }
 
     const auto& tunnel_name = request.getKeyString(0);
@@ -658,7 +688,7 @@ bool VxlanTunnelOrch::addOperation(const Request& request)
 
     vxlan_tunnel_table_[tunnel_name] = std::unique_ptr<VxlanTunnel>(new VxlanTunnel(tunnel_name, src_ip, dst_ip));
 
-    SWSS_LOG_INFO("Vxlan tunnel '%s' was added", tunnel_name.c_str());
+    SWSS_LOG_NOTICE("Vxlan tunnel '%s' was added", tunnel_name.c_str());
     return true;
 }
 
@@ -666,7 +696,39 @@ bool VxlanTunnelOrch::delOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_ERROR("DEL operation is not implemented");
+    const auto& tunnel_name = request.getKeyString(0);
+
+    if(!isTunnelExists(tunnel_name))
+    {
+        SWSS_LOG_ERROR("Vxlan tunnel '%s' doesn't exist", tunnel_name.c_str());
+        return true;
+    }
+
+    auto tunnel_term_id = vxlan_tunnel_table_[tunnel_name].get()->getTunnelTermId();
+    try
+    {
+        remove_tunnel_termination(tunnel_term_id);
+    }
+    catch(const std::runtime_error& error)
+    {
+        SWSS_LOG_ERROR("Error removing tunnel term entry. Tunnel: %s. Error: %s", tunnel_name.c_str(), error.what());
+        return false;
+    }
+
+    auto tunnel_id = vxlan_tunnel_table_[tunnel_name].get()->getTunnelId();
+    try
+    {
+        remove_tunnel(tunnel_id);
+    }
+    catch(const std::runtime_error& error)
+    {
+        SWSS_LOG_ERROR("Error removing tunnel entry. Tunnel: %s. Error: %s", tunnel_name.c_str(), error.what());
+        return false;
+    }
+
+    vxlan_tunnel_table_.erase(tunnel_name);
+
+    SWSS_LOG_NOTICE("Vxlan tunnel '%s' was removed", tunnel_name.c_str());
 
     return true;
 }
@@ -738,7 +800,32 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_ERROR("DEL operation is not implemented");
+    const auto& tunnel_name = request.getKeyString(0);
+    const auto& tunnel_map_entry_name = request.getKeyString(1);
+    const auto& full_tunnel_map_entry_name = request.getFullKey();
+
+
+    if (!isTunnelMapExists(full_tunnel_map_entry_name))
+    {
+        SWSS_LOG_WARN("Vxlan tunnel map '%s' doesn't exist", full_tunnel_map_entry_name.c_str());
+        return true;
+    }
+
+    auto tunnel_map_entry_id = vxlan_tunnel_map_table_[full_tunnel_map_entry_name];
+    try
+    {
+        remove_tunnel_map_entry(tunnel_map_entry_id);
+    }
+    catch (const std::runtime_error& error)
+    {
+        SWSS_LOG_ERROR("Error removing tunnel map %s: %s", full_tunnel_map_entry_name.c_str(), error.what());
+        return false;
+    }
+
+    vxlan_tunnel_map_table_.erase(full_tunnel_map_entry_name);
+
+    SWSS_LOG_NOTICE("Vxlan tunnel map entry '%s' for tunnel '%s' was removed",
+                   tunnel_map_entry_name.c_str(), tunnel_name.c_str());
 
     return true;
 }
