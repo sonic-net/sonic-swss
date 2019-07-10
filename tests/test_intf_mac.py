@@ -4,11 +4,16 @@ import time
 import json
 
 class TestRouterInterfaceMac(object):
-    def set_mac(self, dvs, interface, mac, ip):
+    def set_mac(self, dvs, interface, mac):
         tbl = swsscommon.Table(dvs.cdb, "INTERFACE")
         fvs = swsscommon.FieldValuePairs([("mac_addr", mac)])
-        tbl.set(interface + "|" + ip, fvs)
-        time.sleep(2)
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
+    def remove_mac(self, dvs, interface):
+        tbl = swsscommon.Table(dvs.cdb, "INTERFACE")
+        tbl.hdel(interface, "mac_addr")
+        time.sleep(1)
 
     def find_mac(self, dvs, interface, mac):
         port_oid = dvs.asicdb.portnamemap[interface]
@@ -32,14 +37,14 @@ class TestRouterInterfaceMac(object):
         dvs.add_ip_address("Ethernet8", "10.0.0.4/31")
 
         # set MAC to interface
-        self.set_mac(dvs, "Ethernet8", "6C:EC:5A:11:22:33", "10.0.0.4/31")
+        self.set_mac(dvs, "Ethernet8", "6C:EC:5A:11:22:33")
 
         # check application database
-        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE:Ethernet8")
-        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("Ethernet8")
         assert status == True
         values = dict(fvs)
-        assert values["mac_addr"] == "6c:ec:5a:11:22:33"
+        assert values["mac_addr"] == "6C:EC:5A:11:22:33"
 
         # check ASIC router interface database
         src_mac_addr_found = self.find_mac(dvs, "Ethernet8", "6C:EC:5A:11:22:33")
@@ -48,10 +53,8 @@ class TestRouterInterfaceMac(object):
         # remove IP from interface
         dvs.remove_ip_address("Ethernet8", "10.0.0.4/31")
 
-        # check application database
-        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE:Ethernet8")
-        intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 0
+        # remove MAC from interface
+        self.remove_mac(dvs, "Ethernet8")
 
     def test_InterfaceChangeMac(self, dvs, testlog):
         dvs.setup_db()
@@ -60,17 +63,17 @@ class TestRouterInterfaceMac(object):
         dvs.add_ip_address("Ethernet12", "12.0.0.4/31")
 
         # set MAC to interface
-        self.set_mac(dvs, "Ethernet12", "6C:EC:5A:22:33:44", "12.0.0.4/31")
+        self.set_mac(dvs, "Ethernet12", "6C:EC:5A:22:33:44")
 
         # change interface MAC
-        self.set_mac(dvs, "Ethernet12", "6C:EC:5A:33:44:55", "12.0.0.4/31")
+        self.set_mac(dvs, "Ethernet12", "6C:EC:5A:33:44:55")
 
         # check application database
-        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE:Ethernet12")
-        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("Ethernet12")
         assert status == True
         values = dict(fvs)
-        assert values["mac_addr"] == "6c:ec:5a:33:44:55"
+        assert values["mac_addr"] == "6C:EC:5A:33:44:55"
 
         # check ASIC router interface database
         src_mac_addr_found = self.find_mac(dvs, "Ethernet12", "6C:EC:5A:33:44:55")
@@ -79,10 +82,8 @@ class TestRouterInterfaceMac(object):
         # remove IP from interface
         dvs.remove_ip_address("Ethernet12", "12.0.0.4/31")
 
-        # check application database
-        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE:Ethernet12")
-        intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 0
+        # remove MAC from interface
+        self.remove_mac(dvs, "Ethernet12")
 
 class TestLagRouterInterfaceMac(object):
     def create_port_channel(self, dvs, alias):
@@ -110,11 +111,16 @@ class TestLagRouterInterfaceMac(object):
             tbl._del(lag + "|" + member)
             time.sleep(1)
 
-    def set_mac(self, dvs, interface, mac, ip):
+    def set_mac(self, dvs, interface, mac):
         tbl = swsscommon.Table(dvs.cdb, "PORTCHANNEL_INTERFACE")
         fvs = swsscommon.FieldValuePairs([("mac_addr", mac)])
-        tbl.set(interface + "|" + ip, fvs)
-        time.sleep(2)
+        tbl.set(interface, fvs)
+        time.sleep(1)
+
+    def remove_mac(self, dvs, interface):
+        tbl = swsscommon.Table(dvs.cdb, "PORTCHANNEL_INTERFACE")
+        tbl.hdel(interface, "mac_addr")
+        time.sleep(1)
 
     def find_mac(self, dvs, lag_oid, mac):
         tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
@@ -140,14 +146,14 @@ class TestLagRouterInterfaceMac(object):
         dvs.add_ip_address("PortChannel001", "30.0.0.4/31")
 
         # set MAC to interface
-        self.set_mac(dvs, "PortChannel001", "6C:EC:5A:11:22:33", "30.0.0.4/31")
+        self.set_mac(dvs, "PortChannel001", "6C:EC:5A:11:22:33")
 
         # check application database
-        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE:PortChannel001")
-        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("PortChannel001")
         assert status == True
         values = dict(fvs)
-        assert values["mac_addr"] == "6c:ec:5a:11:22:33"
+        assert values["mac_addr"] == "6C:EC:5A:11:22:33"
 
         # get PortChannel oid; When sonic-swss pr885 is complete, you can get oid directly from COUNTERS_LAG_NAME_MAP, which would be better.
         lag_tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
@@ -163,10 +169,8 @@ class TestLagRouterInterfaceMac(object):
         # remove IP from interface
         dvs.remove_ip_address("PortChannel001", "30.0.0.4/31")
 
-        # check application database
-        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE:PortChannel001")
-        intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 0
+        # remove MAC from interface
+        self.remove_mac(dvs, "PortChannel001")
 
         # remove port channel
         self.remove_port_channel(dvs, "PortChannel001")
@@ -181,17 +185,17 @@ class TestLagRouterInterfaceMac(object):
         dvs.add_ip_address("PortChannel002", "32.0.0.4/31")
 
         # set MAC to interface
-        self.set_mac(dvs, "PortChannel002", "6C:EC:5A:22:33:44", "32.0.0.4/31")
+        self.set_mac(dvs, "PortChannel002", "6C:EC:5A:22:33:44")
 
         # change interface MAC
-        self.set_mac(dvs, "PortChannel002", "6C:EC:5A:33:44:55", "32.0.0.4/31")
+        self.set_mac(dvs, "PortChannel002", "6C:EC:5A:33:44:55")
 
         # check application database
-        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE:PortChannel002")
-        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE")
+        (status, fvs) = tbl.get("PortChannel002")
         assert status == True
         values = dict(fvs)
-        assert values["mac_addr"] == "6c:ec:5a:33:44:55"
+        assert values["mac_addr"] == "6C:EC:5A:33:44:55"
 
         # get PortChannel oid; When sonic-swss pr885 is complete, you can get oid directly from COUNTERS_LAG_NAME_MAP, which would be better.
         lag_tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
@@ -207,10 +211,8 @@ class TestLagRouterInterfaceMac(object):
         # remove IP from interface
         dvs.remove_ip_address("PortChannel002", "32.0.0.4/31")
 
-        # check application database
-        tbl = swsscommon.Table(dvs.pdb, "INTF_TABLE:PortChannel002")
-        intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 0
+        # remove MAC from interface
+        self.remove_mac(dvs, "PortChannel002")
 
         # remove port channel
         self.remove_port_channel(dvs, "PortChannel002")
