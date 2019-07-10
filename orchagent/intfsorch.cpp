@@ -150,6 +150,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     {
         if (addRouterIntfs(vrf_id, port))
         {
+            gPortsOrch->increasePortRefCount(alias);
             IntfsEntry intfs_entry;
             intfs_entry.ref_count = 0;
             m_syncdIntfses[alias] = intfs_entry;
@@ -234,6 +235,7 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
     {
         if (removeRouterIntfs(port))
         {
+            gPortsOrch->decreasePortRefCount(alias);
             m_syncdIntfses.erase(alias);
             return true;
         }
@@ -297,7 +299,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         sai_object_id_t vrf_id = gVirtualRouterId;
         if (!vrf_name.empty())
         {
-            if (m_vrfOrch->isVRFexists(vrf_name))
+            if (!m_vrfOrch->isVRFexists(vrf_name))
             {
                 it++;
                 continue;
@@ -343,6 +345,14 @@ void IntfsOrch::doTask(Consumer &consumer)
                 }
 
                 it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            /* Wait for the Interface entry first */
+            auto it_intfs = m_syncdIntfses.find(alias);
+            if (ip_prefix_in_key && it_intfs == m_syncdIntfses.end())
+            {
+                it++;
                 continue;
             }
 

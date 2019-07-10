@@ -260,11 +260,14 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             string members;
 
             /*
-             * Don't program vlan again if state is already set.
-             * will hit this for docker warm restart.
-             * Just set the internal data structure and remove the request.
+             * If state is already set for this vlan, but it doesn't exist in m_vlans set,
+             * just add it to m_vlans set and remove the request to skip disrupting Linux vlan.
+             * Will hit this scenario for docker warm restart.
+             *
+             * Otherwise, it is new VLAN create or VLAN attribute update like admin_status/mtu change,
+             * proceed with regular processing.
              */
-            if (isVlanStateOk(key))
+            if (isVlanStateOk(key) && m_vlans.find(key) == m_vlans.end())
             {
                 m_vlans.insert(key);
                 it = consumer.m_toSync.erase(it);

@@ -336,21 +336,28 @@ void CrmOrch::decCrmAclUsedCounter(CrmResourceType resource, sai_acl_stage_t sta
     {
         m_resourcesMap.at(resource).countersMap[getCrmAclKey(stage, point)].usedCounter--;
 
-        // Remove ACL table related counters
+        // remove acl_entry and acl_counter in this acl table
         if (resource == CrmResourceType::CRM_ACL_TABLE)
         {
-            auto & cntMap = m_resourcesMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap;
-            for (auto it = cntMap.begin(); it != cntMap.end();)
+            for (auto &resourcesMap : m_resourcesMap)
             {
-                if (it->second.id == oid)
+                if ((resourcesMap.first == (CrmResourceType::CRM_ACL_ENTRY))
+                    || (resourcesMap.first == (CrmResourceType::CRM_ACL_COUNTER)))
                 {
-                    it = cntMap.erase(it);
-                }
-                else
-                {
-                    ++it;
+                    auto &cntMap = resourcesMap.second.countersMap;
+                    for (auto it = cntMap.begin(); it != cntMap.end(); ++it)
+                    {
+                        if (it->second.id == oid)
+                        {
+                            cntMap.erase(it);
+                            break;
+                        }
+                    }
                 }
             }
+
+            // remove ACL_TABLE_STATS in crm database
+            m_countersCrmTable->del(getCrmAclTableKey(oid));
         }
     }
     catch (...)
@@ -398,10 +405,6 @@ void CrmOrch::doTask(SelectableTimer &timer)
     getResAvailableCounters();
     updateCrmCountersTable();
     checkCrmThresholds();
-
-    auto interv = timespec { .tv_sec = m_pollingInterval.count(), .tv_nsec = 0 };
-    timer.setInterval(interv);
-    timer.reset();
 }
 
 void CrmOrch::getResAvailableCounters()

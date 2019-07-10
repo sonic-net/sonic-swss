@@ -329,7 +329,7 @@ class DockerVirtualSwitch(object):
         time.sleep(5)
 
     def stop_zebra(dvs):
-        dvs.runcmd(['sh', '-c', 'pkill -x zebra'])
+        dvs.runcmd(['sh', '-c', 'pkill -9 zebra'])
         time.sleep(1)
 
     def start_fpmsyncd(dvs):
@@ -665,10 +665,20 @@ class DockerVirtualSwitch(object):
         tbl.set("Vlan" + vlan, fvs)
         time.sleep(1)
 
+    def remove_vlan(self, vlan):
+        tbl = swsscommon.Table(self.cdb, "VLAN")
+        tbl._del("Vlan" + vlan)
+        time.sleep(1)
+
     def create_vlan_member(self, vlan, interface):
         tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
         fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
         tbl.set("Vlan" + vlan + "|" + interface, fvs)
+        time.sleep(1)
+
+    def remove_vlan_member(self, vlan, interface):
+        tbl = swsscommon.Table(self.cdb, "VLAN_MEMBER")
+        tbl._del("Vlan" + vlan + "|" + interface)
         time.sleep(1)
 
     def create_vlan_member_tagged(self, vlan, interface):
@@ -695,7 +705,7 @@ class DockerVirtualSwitch(object):
         else:
             tbl_name = "PORT"
         tbl = swsscommon.Table(self.cdb, tbl_name)
-        fvs = swsscommon.FieldValuePairs([("admin_status", "up")])
+        fvs = swsscommon.FieldValuePairs([("admin_status", admin_status)])
         tbl.set(interface, fvs)
         time.sleep(1)
 
@@ -708,7 +718,31 @@ class DockerVirtualSwitch(object):
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(interface, fvs)
         tbl.set(interface + "|" + ip, fvs)
+        time.sleep(1)
+
+    def remove_ip_address(self, interface, ip):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL_INTERFACE"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN_INTERFACE"
+        else:
+            tbl_name = "INTERFACE"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        tbl._del(interface + "|" + ip);
+        time.sleep(1)
+
+    def set_mtu(self, interface, mtu):
+        if interface.startswith("PortChannel"):
+            tbl_name = "PORTCHANNEL"
+        elif interface.startswith("Vlan"):
+            tbl_name = "VLAN"
+        else:
+            tbl_name = "PORT"
+        tbl = swsscommon.Table(self.cdb, tbl_name)
+        fvs = swsscommon.FieldValuePairs([("mtu", mtu)])
+        tbl.set(interface, fvs)
         time.sleep(1)
 
     def add_neighbor(self, interface, ip, mac):

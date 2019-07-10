@@ -220,6 +220,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_cpuPort = Port("CPU", Port::CPU);
     m_cpuPort.m_port_id = attr.value.oid;
     m_portList[m_cpuPort.m_alias] = m_cpuPort;
+    m_port_ref_count[m_cpuPort.m_alias] = 0;
 
     /* Get port number */
     attr.id = SAI_SWITCH_ATTR_PORT_NUMBER;
@@ -454,6 +455,18 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
     }
 
     return false;
+}
+
+void PortsOrch::increasePortRefCount(const string &alias)
+{
+    assert (m_port_ref_count.find(alias) != m_port_ref_count.end());
+    m_port_ref_count[alias]++;
+}
+
+void PortsOrch::decreasePortRefCount(const string &alias)
+{
+    assert (m_port_ref_count.find(alias) != m_port_ref_count.end());
+    m_port_ref_count[alias]--;
 }
 
 bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port)
@@ -1365,6 +1378,7 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
             {
                 /* Add port to port list */
                 m_portList[alias] = p;
+                m_port_ref_count[alias] = 0;
                 /* Add port name map to counter table */
                 FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
                 vector<FieldValueTuple> fields;
@@ -1519,6 +1533,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             set<int> lane_set;
+            vector<uint32_t> pre_emphasis;
+            vector<uint32_t> idriver;
+            vector<uint32_t> ipredriver;
             string admin_status;
             string fec_mode;
             string pfc_asym;
@@ -1574,6 +1591,24 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (fvField(i) == "autoneg")
                 {
                     an = (int)stoul(fvValue(i));
+                }
+
+                /* Set port serdes Pre-emphasis */
+                if (fvField(i) == "preemphasis")
+                {
+                    getPortSerdesVal(fvValue(i), pre_emphasis);
+                }
+
+                /* Set port serdes idriver */
+                if (fvField(i) == "idriver")
+                {
+                    getPortSerdesVal(fvValue(i), idriver);
+                }
+
+                /* Set port serdes ipredriver */
+                if (fvField(i) == "ipredriver")
+                {
+                    getPortSerdesVal(fvValue(i), ipredriver);
                 }
             }
 
@@ -1853,6 +1888,51 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         it++;
                         continue;
                     }
+                }
+
+                if (pre_emphasis.size() != 0)
+                {
+                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_PREEMPHASIS, pre_emphasis))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s  preemphasis is success", alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s pre-emphasis", alias.c_str());
+                        it++;
+                        continue;
+                    }
+
+                }
+
+                if (idriver.size() != 0)
+                {
+                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_IDRIVER, idriver))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s idriver is success", alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s idriver", alias.c_str());
+                        it++;
+                        continue;
+                    }
+
+                }
+
+                if (ipredriver.size() != 0)
+                {
+                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_IPREDRIVER, ipredriver))
+                    {
+                        SWSS_LOG_NOTICE("Set port %s ipredriver is success", alias.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Failed to set port %s ipredriver", alias.c_str());
+                        it++;
+                        continue;
+                    }
+
                 }
 
                 /* Last step set port admin status */
@@ -2651,6 +2731,7 @@ bool PortsOrch::addVlan(string vlan_alias)
     vlan.m_vlan_info.vlan_id = vlan_id;
     vlan.m_members = set<string>();
     m_portList[vlan_alias] = vlan;
+    m_port_ref_count[vlan_alias] = 0;
 
     return true;
 }
@@ -2658,6 +2739,13 @@ bool PortsOrch::addVlan(string vlan_alias)
 bool PortsOrch::removeVlan(Port vlan)
 {
     SWSS_LOG_ENTER();
+    if (m_port_ref_count[vlan.m_alias] > 0)
+    {
+        SWSS_LOG_ERROR("Failed to remove ref count %d VLAN %s", 
+                       m_port_ref_count[vlan.m_alias],
+                       vlan.m_alias.c_str());
+        return false;
+    }
 
     /* Vlan removing is not allowed when the VLAN still has members */
     if (vlan.m_members.size() > 0)
@@ -2680,6 +2768,7 @@ bool PortsOrch::removeVlan(Port vlan)
             vlan.m_vlan_info.vlan_id);
 
     m_portList.erase(vlan.m_alias);
+    m_port_ref_count.erase(vlan.m_alias);
 
     return true;
 }
@@ -2822,6 +2911,7 @@ bool PortsOrch::addLag(string lag_alias)
     lag.m_lag_id = lag_id;
     lag.m_members = set<string>();
     m_portList[lag_alias] = lag;
+    m_port_ref_count[lag_alias] = 0;
 
     PortUpdate update = { lag, true };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
@@ -2832,6 +2922,14 @@ bool PortsOrch::addLag(string lag_alias)
 bool PortsOrch::removeLag(Port lag)
 {
     SWSS_LOG_ENTER();
+
+    if (m_port_ref_count[lag.m_alias] > 0)
+    {
+        SWSS_LOG_ERROR("Failed to remove ref count %d LAG %s", 
+                        m_port_ref_count[lag.m_alias], 
+                        lag.m_alias.c_str());
+        return false;
+    }
 
     /* Retry when the LAG still has members */
     if (lag.m_members.size() > 0)
@@ -2857,6 +2955,7 @@ bool PortsOrch::removeLag(Port lag)
     SWSS_LOG_NOTICE("Remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
 
     m_portList.erase(lag.m_alias);
+    m_port_ref_count.erase(lag.m_alias);
 
     PortUpdate update = { lag, false };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
@@ -3297,3 +3396,41 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
     return true;
 }
 
+bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
+                                       vector<uint32_t> &serdes_val)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    memset(&attr, 0, sizeof(attr));
+    attr.id = attr_id;
+
+    attr.value.u32list.count = (uint32_t)serdes_val.size();
+    attr.value.u32list.list = serdes_val.data();
+
+    sai_status_t status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set serdes attribute %d to port pid:%lx",
+                       attr_id, port_id);
+        return false;
+    }
+    return true;
+}
+
+void PortsOrch::getPortSerdesVal(const std::string& val_str,
+                                 std::vector<uint32_t> &lane_values)
+{
+    SWSS_LOG_ENTER();
+
+    uint32_t lane_val;
+    std::string lane_str;
+    std::istringstream iss(val_str);
+
+    while (std::getline(iss, lane_str, ','))
+    {
+        lane_val = (uint32_t)std::stoul(lane_str, NULL, 16);
+        lane_values.push_back(lane_val);
+    }
+}

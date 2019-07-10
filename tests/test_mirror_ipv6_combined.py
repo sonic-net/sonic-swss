@@ -44,6 +44,7 @@ class TestMirror(object):
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(interface, fvs)
         tbl.set(interface + "|" + ip, fvs)
         time.sleep(1)
 
@@ -56,6 +57,7 @@ class TestMirror(object):
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         tbl._del(interface + "|" + ip)
+        tbl._del(interface)
         time.sleep(1)
 
     def add_neighbor(self, interface, ip, mac):
@@ -98,7 +100,7 @@ class TestMirror(object):
         return self.get_mirror_session_state(name)["status"]
 
     def get_mirror_session_state(self, name):
-        tbl = swsscommon.Table(self.sdb, "MIRROR_SESSION")
+        tbl = swsscommon.Table(self.sdb, "MIRROR_SESSION_TABLE")
         (status, fvs) = tbl.get(name)
         assert status == True
         assert len(fvs) > 0

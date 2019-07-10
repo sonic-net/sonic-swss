@@ -46,6 +46,10 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_IP_TYPE,           SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE },
     { MATCH_DSCP,              SAI_ACL_ENTRY_ATTR_FIELD_DSCP },
     { MATCH_TC,                SAI_ACL_ENTRY_ATTR_FIELD_TC },
+    { MATCH_ICMP_TYPE,         SAI_ACL_ENTRY_ATTR_FIELD_ICMP_TYPE },
+    { MATCH_ICMP_CODE,         SAI_ACL_ENTRY_ATTR_FIELD_ICMP_CODE },
+    { MATCH_ICMPV6_TYPE,       SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_TYPE },
+    { MATCH_ICMPV6_CODE,       SAI_ACL_ENTRY_ATTR_FIELD_ICMPV6_CODE },
     { MATCH_L4_SRC_PORT_RANGE, (sai_acl_entry_attr_t)SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE },
     { MATCH_L4_DST_PORT_RANGE, (sai_acl_entry_attr_t)SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE },
     { MATCH_TUNNEL_VNI,        SAI_ACL_ENTRY_ATTR_FIELD_TUNNEL_VNI },
@@ -82,13 +86,14 @@ acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
 
 static acl_table_type_lookup_t aclTableTypeLookUp =
 {
-    { TABLE_TYPE_L3,        ACL_TABLE_L3 },
-    { TABLE_TYPE_L3V6,      ACL_TABLE_L3V6 },
-    { TABLE_TYPE_MIRROR,    ACL_TABLE_MIRROR },
-    { TABLE_TYPE_MIRRORV6,  ACL_TABLE_MIRRORV6 },
-    { TABLE_TYPE_CTRLPLANE, ACL_TABLE_CTRLPLANE },
-    { TABLE_TYPE_DTEL_FLOW_WATCHLIST, ACL_TABLE_DTEL_FLOW_WATCHLIST },
-    { TABLE_TYPE_DTEL_DROP_WATCHLIST, ACL_TABLE_DTEL_DROP_WATCHLIST }
+    { TABLE_TYPE_L3,                    ACL_TABLE_L3 },
+    { TABLE_TYPE_L3V6,                  ACL_TABLE_L3V6 },
+    { TABLE_TYPE_MIRROR,                ACL_TABLE_MIRROR },
+    { TABLE_TYPE_MIRRORV6,              ACL_TABLE_MIRRORV6 },
+    { TABLE_TYPE_MIRROR_DSCP,           ACL_TABLE_MIRROR_DSCP },
+    { TABLE_TYPE_CTRLPLANE,             ACL_TABLE_CTRLPLANE },
+    { TABLE_TYPE_DTEL_FLOW_WATCHLIST,   ACL_TABLE_DTEL_FLOW_WATCHLIST },
+    { TABLE_TYPE_DTEL_DROP_WATCHLIST,   ACL_TABLE_DTEL_DROP_WATCHLIST }
 };
 
 static acl_stage_type_lookup_t aclStageLookUp =
@@ -330,6 +335,12 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
             }
         }
         else if (attr_name == MATCH_TC)
+        {
+            value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
+            value.aclfield.mask.u8 = 0xFF;
+        }
+        else if (attr_name == MATCH_ICMP_TYPE || attr_name == MATCH_ICMP_CODE ||
+                attr_name == MATCH_ICMPV6_TYPE || attr_name == MATCH_ICMPV6_CODE)
         {
             value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
             value.aclfield.mask.u8 = 0xFF;
@@ -594,6 +605,7 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
         type != ACL_TABLE_L3V6 &&
         type != ACL_TABLE_MIRROR &&
         type != ACL_TABLE_MIRRORV6 &&
+        type != ACL_TABLE_MIRROR_DSCP &&
         type != ACL_TABLE_DTEL_FLOW_WATCHLIST &&
         type != ACL_TABLE_DTEL_DROP_WATCHLIST)
     {
@@ -850,12 +862,19 @@ bool AclRuleL3::validateAddMatch(string attr_name, string attr_value)
 {
     if (attr_name == MATCH_DSCP)
     {
-        SWSS_LOG_ERROR("DSCP match is not supported for the tables of type L3");
+        SWSS_LOG_ERROR("DSCP match is not supported for table type L3");
         return false;
     }
+
     if (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6)
     {
-        SWSS_LOG_ERROR("IPv6 address match is not supported for the tables of type L3");
+        SWSS_LOG_ERROR("IPv6 address match is not supported for table type L3");
+        return false;
+    }
+
+    if (attr_name == MATCH_ICMPV6_TYPE || attr_name == MATCH_ICMPV6_CODE)
+    {
+        SWSS_LOG_ERROR("ICMPv6 match is not supported for table type L3");
         return false;
     }
 
@@ -906,12 +925,19 @@ bool AclRuleL3V6::validateAddMatch(string attr_name, string attr_value)
 {
     if (attr_name == MATCH_DSCP)
     {
-        SWSS_LOG_ERROR("DSCP match is not supported for the tables of type L3V6");
+        SWSS_LOG_ERROR("DSCP match is not supported for table type L3V6");
         return false;
     }
+
     if (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP)
     {
-        SWSS_LOG_ERROR("IPv4 address match is not supported for the tables of type L3V6");
+        SWSS_LOG_ERROR("IPv4 address match is not supported for table type L3V6");
+        return false;
+    }
+
+    if (attr_name == MATCH_ICMP_TYPE || attr_name == MATCH_ICMP_CODE)
+    {
+        SWSS_LOG_ERROR("ICMPv4 match is not supported for table type L3V6");
         return false;
     }
 
@@ -950,27 +976,43 @@ bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
     if ((m_tableType == ACL_TABLE_L3 || m_tableType == ACL_TABLE_L3V6)
 	&& attr_name == MATCH_DSCP)
     {
-        SWSS_LOG_ERROR("DSCP match is not supported for the tables of type L3");
+        SWSS_LOG_ERROR("DSCP match is not supported for the table of type L3");
+        return false;
+    }
+
+    if ((m_tableType == ACL_TABLE_MIRROR_DSCP &&
+                aclMatchLookup.find(attr_name) != aclMatchLookup.end() &&
+                attr_name != MATCH_DSCP))
+    {
+        SWSS_LOG_ERROR("%s match is not supported for the table of type MIRROR_DSCP",
+                attr_name.c_str());
         return false;
     }
 
     /*
      * Type of Tables and Supported Match Types (Configuration)
-     * |--------------------------------------------------|
-     * |    Match Type    | TABLE_MIRROR | TABLE_MIRRORV6 |
-     * |--------------------------------------------------|
-     * | MATCH_SRC_IP     |      √       |                |
-     * | MATCH_DST_IP     |      √       |                |
-     * |--------------------------------------------------|
-     * | MATCH_SRC_IPV6   |              |       √        |
-     * | MATCH_DST_IPV6   |              |       √        |
-     * |--------------------------------------------------|
-     * | MARTCH_ETHERTYPE |      √       |                |
-     * |--------------------------------------------------|
+     * |---------------------------------------------------|
+     * |    Match Type     | TABLE_MIRROR | TABLE_MIRRORV6 |
+     * |---------------------------------------------------|
+     * | MATCH_SRC_IP      |      √       |                |
+     * | MATCH_DST_IP      |      √       |                |
+     * |---------------------------------------------------|
+     * | MATCH_ICMP_TYPE   |      √       |                |
+     * | MATCH_ICMP_CODE   |      √       |                |
+     * |---------------------------------------------------|
+     * | MATCH_ICMPV6_TYPE |              |       √        |
+     * | MATCH_ICMPV6_CODE |              |       √        |
+     * |---------------------------------------------------|
+     * | MATCH_SRC_IPV6    |              |       √        |
+     * | MATCH_DST_IPV6    |              |       √        |
+     * |---------------------------------------------------|
+     * | MARTCH_ETHERTYPE  |      √       |                |
+     * |---------------------------------------------------|
      */
 
     if (m_tableType == ACL_TABLE_MIRROR &&
-            (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6))
+            (attr_name == MATCH_SRC_IPV6 || attr_name == MATCH_DST_IPV6 ||
+             attr_name == MATCH_ICMPV6_TYPE || attr_name == MATCH_ICMPV6_CODE))
     {
         SWSS_LOG_ERROR("%s match is not supported for the table of type MIRROR",
                 attr_name.c_str());
@@ -978,9 +1020,11 @@ bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
     }
 
     if (m_tableType == ACL_TABLE_MIRRORV6 &&
-            (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP || attr_name == MATCH_ETHER_TYPE))
+            (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP ||
+             attr_name == MATCH_ICMP_TYPE || attr_name == MATCH_ICMP_CODE ||
+             attr_name == MATCH_ETHER_TYPE))
     {
-        SWSS_LOG_ERROR("%s match is not supported for the table of type MIRRORV6",
+        SWSS_LOG_ERROR("%s match is not supported for the table of type MIRRORv6",
                 attr_name.c_str());
         return false;
     }
@@ -1091,7 +1135,7 @@ void AclRuleMirror::update(SubjectType type, void *cntx)
     else
     {
         // Store counters before deactivating ACL rule
-        counters += getCounters();
+        counters += AclRule::getCounters();
 
         SWSS_LOG_INFO("Deactivating mirroring ACL %s for session %s", m_id.c_str(), m_sessionName.c_str());
         remove();
@@ -1155,6 +1199,29 @@ bool AclTable::create()
         return status == SAI_STATUS_SUCCESS;
     }
 
+    if (type == ACL_TABLE_MIRROR_DSCP)
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
+        attr.value.s32 = stage == ACL_STAGE_INGRESS
+            ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
+        table_attrs.push_back(attr);
+
+        sai_status_t status = sai_acl_api->create_acl_table(
+                &m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
+
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            gCrmOrch->incCrmAclUsedCounter(
+                    CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t)attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
+        }
+
+        return status == SAI_STATUS_SUCCESS;
+    }
+
     if (type != ACL_TABLE_MIRRORV6)
     {
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE;
@@ -1172,19 +1239,25 @@ bool AclTable::create()
 
     /*
      * Type of Tables and Supported Match Types (ASIC database)
-     * |-----------------------------------------------------------------|
-     * |                  | TABLE_MIRROR | TABLE_MIRROR | TABLE_MIRRORV6 |
-     * |    Match Type    |----------------------------------------------|
-     * |                  |   combined   |          separated            |
-     * |-----------------------------------------------------------------|
-     * | MATCH_SRC_IP     |      √       |      √       |                |
-     * | MATCH_DST_IP     |      √       |      √       |                |
-     * |-----------------------------------------------------------------|
-     * | MATCH_SRC_IPV6   |      √       |              |       √        |
-     * | MATCH_DST_IPV6   |      √       |              |       √        |
-     * |-----------------------------------------------------------------|
-     * | MARTCH_ETHERTYPE |      √       |      √       |                |
-     * |-----------------------------------------------------------------|
+     * |------------------------------------------------------------------|
+     * |                   | TABLE_MIRROR | TABLE_MIRROR | TABLE_MIRRORV6 |
+     * |    Match Type     |----------------------------------------------|
+     * |                   |   combined   |          separated            |
+     * |------------------------------------------------------------------|
+     * | MATCH_SRC_IP      |      √       |      √       |                |
+     * | MATCH_DST_IP      |      √       |      √       |                |
+     * |------------------------------------------------------------------|
+     * | MATCH_ICMP_TYPE   |      √       |      √       |                |
+     * | MATCH_ICMP_CODE   |      √       |      √       |                |
+     * |------------------------------------------------------------------|
+     * | MATCH_SRC_IPV6    |      √       |              |       √        |
+     * | MATCH_DST_IPV6    |      √       |              |       √        |
+     * |------------------------------------------------------------------|
+     * | MATCH_ICMPV6_TYPE |      √       |             |        √        |
+     * | MATCH_ICMPV6_CODE |      √       |             |        √        |
+     * |------------------------------------------------------------------|
+     * | MARTCH_ETHERTYPE  |      √       |      √       |                |
+     * |------------------------------------------------------------------|
      */
 
     if (type == ACL_TABLE_MIRROR)
@@ -1194,6 +1267,14 @@ bool AclTable::create()
         table_attrs.push_back(attr);
 
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IP;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
 
@@ -1208,6 +1289,14 @@ bool AclTable::create()
             attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6;
             attr.value.booldata = true;
             table_attrs.push_back(attr);
+
+            attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE;
+            attr.value.booldata = true;
+            table_attrs.push_back(attr);
+
+            attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE;
+            attr.value.booldata = true;
+            table_attrs.push_back(attr);
         }
     }
     else if (type == ACL_TABLE_L3V6 || type == ACL_TABLE_MIRRORV6) // v6 only
@@ -1219,6 +1308,14 @@ bool AclTable::create()
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
     }
     else // v4 only
     {
@@ -1227,6 +1324,14 @@ bool AclTable::create()
         table_attrs.push_back(attr);
 
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_DST_IP;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
     }
@@ -1483,7 +1588,9 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
         (attr_name != ACTION_DTEL_FLOW_OP &&
         attr_name != ACTION_DTEL_INT_SESSION &&
         attr_name != ACTION_DTEL_FLOW_SAMPLE_PERCENT &&
-        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS))
+        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS &&
+        attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
+        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE))
     {
         return false;
     }
@@ -1540,7 +1647,9 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
 
     value.aclaction.enable = true;
 
-    if (attr_name == ACTION_DTEL_REPORT_ALL_PACKETS)
+    if (attr_name == ACTION_DTEL_REPORT_ALL_PACKETS ||
+        attr_name == ACTION_DTEL_DROP_REPORT_ENABLE ||
+        attr_name == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE)
     {
         value.aclaction.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
         value.aclaction.enable = (attr_value == DTEL_ENABLED) ? true : false;
@@ -1695,7 +1804,8 @@ bool AclRuleDTelDropWatchListEntry::validateAddAction(string attr_name, string a
     string attr_value = to_upper(attr_val);
 
     if (attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
-        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE)
+        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE &&
+        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS)
     {
         return false;
     }
@@ -2708,6 +2818,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
     m_AclTables[table_oid] = flowWLTable;
     SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", flowWLTable.description.c_str(), table_oid);
 
@@ -2768,6 +2879,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
     m_AclTables[table_oid] = dropWLTable;
     SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", dropWLTable.description.c_str(), table_oid);
 
@@ -2799,6 +2911,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);
     m_AclTables.erase(table_oid);
 
     table_id = TABLE_TYPE_DTEL_DROP_WATCHLIST;
@@ -2818,6 +2931,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);
     m_AclTables.erase(table_oid);
 
     return SAI_STATUS_SUCCESS;

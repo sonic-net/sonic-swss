@@ -124,6 +124,8 @@ def test_PortSyncdWarmRestart(dvs, testlog):
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
     intf_tbl.set("Ethernet16|11.0.0.1/29", fvs)
     intf_tbl.set("Ethernet20|11.0.0.9/29", fvs)
+    intf_tbl.set("Ethernet16", fvs)
+    intf_tbl.set("Ethernet20", fvs)
     dvs.runcmd("ifconfig Ethernet16 up")
     dvs.runcmd("ifconfig Ethernet20 up")
 
@@ -190,6 +192,8 @@ def test_PortSyncdWarmRestart(dvs, testlog):
 
     intf_tbl._del("Ethernet16|11.0.0.1/29")
     intf_tbl._del("Ethernet20|11.0.0.9/29")
+    intf_tbl._del("Ethernet16")
+    intf_tbl._del("Ethernet20")
     time.sleep(2)
 
 
@@ -248,6 +252,8 @@ def test_VlanMgrdWarmRestart(dvs, testlog):
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
     intf_tbl.set("Vlan16|11.0.0.1/29", fvs)
     intf_tbl.set("Vlan20|11.0.0.9/29", fvs)
+    intf_tbl.set("Vlan16", fvs)
+    intf_tbl.set("Vlan20", fvs)
     dvs.runcmd("ifconfig Vlan16 up")
     dvs.runcmd("ifconfig Vlan20 up")
 
@@ -303,6 +309,8 @@ def test_VlanMgrdWarmRestart(dvs, testlog):
 
     intf_tbl._del("Vlan16|11.0.0.1/29")
     intf_tbl._del("Vlan20|11.0.0.9/29")
+    intf_tbl._del("Vlan16")
+    intf_tbl._del("Vlan20")
     time.sleep(2)
 
 def stop_neighsyncd(dvs):
@@ -407,6 +415,10 @@ def test_swss_neighbor_syncup(dvs, testlog):
     intf_tbl.set("{}|28.0.0.9/24".format(intfs[1]), fvs)
     intf_tbl.set("{}|2400::1/64".format(intfs[0]), fvs)
     intf_tbl.set("{}|2800::1/64".format(intfs[1]), fvs)
+    intf_tbl.set("{}".format(intfs[0]), fvs)
+    intf_tbl.set("{}".format(intfs[1]), fvs)
+    intf_tbl.set("{}".format(intfs[0]), fvs)
+    intf_tbl.set("{}".format(intfs[1]), fvs)
     dvs.runcmd("ifconfig {} up".format(intfs[0]))
     dvs.runcmd("ifconfig {} up".format(intfs[1]))
 
@@ -739,6 +751,10 @@ def test_swss_neighbor_syncup(dvs, testlog):
     intf_tbl._del("{}|28.0.0.9/24".format(intfs[1]))
     intf_tbl._del("{}|2400::1/64".format(intfs[0]))
     intf_tbl._del("{}|2800::1/64".format(intfs[1]))
+    intf_tbl._del("{}".format(intfs[0]))
+    intf_tbl._del("{}".format(intfs[1]))
+    intf_tbl._del("{}".format(intfs[0]))
+    intf_tbl._del("{}".format(intfs[1]))
     time.sleep(2)
 
 
@@ -754,6 +770,8 @@ def test_OrchagentWarmRestartReadyCheck(dvs, testlog):
     fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
     intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
     intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+    intf_tbl.set("Ethernet0", fvs)
+    intf_tbl.set("Ethernet4", fvs)
     dvs.runcmd("ifconfig Ethernet0 up")
     dvs.runcmd("ifconfig Ethernet4 up")
 
@@ -797,6 +815,8 @@ def test_OrchagentWarmRestartReadyCheck(dvs, testlog):
 
     intf_tbl._del("Ethernet0|10.0.0.0/31")
     intf_tbl._del("Ethernet4|10.0.0.2/31")
+    intf_tbl._del("Ethernet0")
+    intf_tbl._del("Ethernet4")
     time.sleep(2)
 
     # recover for test cases after this one.
@@ -822,6 +842,9 @@ def test_swss_port_state_syncup(dvs, testlog):
     intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
     intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
     intf_tbl.set("Ethernet8|10.0.0.4/31", fvs)
+    intf_tbl.set("Ethernet0", fvs)
+    intf_tbl.set("Ethernet4", fvs)
+    intf_tbl.set("Ethernet8", fvs)
     dvs.runcmd("ifconfig Ethernet0 up")
     dvs.runcmd("ifconfig Ethernet4 up")
     dvs.runcmd("ifconfig Ethernet8 up")
@@ -854,6 +877,9 @@ def test_swss_port_state_syncup(dvs, testlog):
     intf_tbl._del("Ethernet0|10.0.0.0/31")
     intf_tbl._del("Ethernet4|10.0.0.2/31")
     intf_tbl._del("Ethernet8|10.0.0.4/31")
+    intf_tbl._del("Ethernet0")
+    intf_tbl._del("Ethernet4")
+    intf_tbl._del("Ethernet8")
     time.sleep(2)
 
     dvs.stop_swss()
@@ -880,6 +906,9 @@ def test_swss_port_state_syncup(dvs, testlog):
     intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
     intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
     intf_tbl.set("Ethernet8|10.0.0.4/31", fvs)
+    intf_tbl.set("Ethernet0", fvs)
+    intf_tbl.set("Ethernet4", fvs)
+    intf_tbl.set("Ethernet8", fvs)
     time.sleep(3)
 
     for i in [0, 1, 2]:
@@ -929,6 +958,9 @@ def test_swss_port_state_syncup(dvs, testlog):
     intf_tbl._del("Ethernet0|10.0.0.0/31")
     intf_tbl._del("Ethernet4|10.0.0.2/31")
     intf_tbl._del("Ethernet8|10.0.0.4/31")
+    intf_tbl._del("Ethernet0")
+    intf_tbl._del("Ethernet4")
+    intf_tbl._del("Ethernet8")
     time.sleep(2)
 
 
@@ -987,6 +1019,12 @@ def test_routing_WarmRestart(dvs, testlog):
     intf_tbl.set("{}|1220::1/64".format(intfs[1]), fvs)
     intf_tbl.set("{}|133.0.0.1/24".format(intfs[2]), fvs)
     intf_tbl.set("{}|1330::1/64".format(intfs[2]), fvs)
+    intf_tbl.set("{}".format(intfs[0]), fvs)
+    intf_tbl.set("{}".format(intfs[0]), fvs)
+    intf_tbl.set("{}".format(intfs[1]), fvs)
+    intf_tbl.set("{}".format(intfs[1]), fvs)
+    intf_tbl.set("{}".format(intfs[2]), fvs)
+    intf_tbl.set("{}".format(intfs[2]), fvs)
     dvs.runcmd("ip link set {} up".format(intfs[0]))
     dvs.runcmd("ip link set {} up".format(intfs[1]))
     dvs.runcmd("ip link set {} up".format(intfs[2]))
@@ -1013,7 +1051,7 @@ def test_routing_WarmRestart(dvs, testlog):
     #
     dvs.runcmd("ip route add 192.168.1.100/32 nexthop via 111.0.0.2")
     dvs.runcmd("ip route add 192.168.1.200/32 nexthop via 122.0.0.2")
-    dvs.runcmd("ip route add 192.168.1.300/32 nexthop via 133.0.0.2")
+    dvs.runcmd("ip route add 192.168.1.230/32 nexthop via 133.0.0.2")
 
     #
     # Defining baseline IPv4 ecmp route-entries
@@ -1578,6 +1616,12 @@ def test_routing_WarmRestart(dvs, testlog):
     intf_tbl._del("{}|1220::1/64".format(intfs[1]))
     intf_tbl._del("{}|133.0.0.1/24".format(intfs[2]))
     intf_tbl._del("{}|1330::1/64".format(intfs[2]))
+    intf_tbl._del("{}".format(intfs[0]))
+    intf_tbl._del("{}".format(intfs[0]))
+    intf_tbl._del("{}".format(intfs[1]))
+    intf_tbl._del("{}".format(intfs[1]))
+    intf_tbl._del("{}".format(intfs[2]))
+    intf_tbl._del("{}".format(intfs[2]))
     time.sleep(2)
 
 
@@ -1661,6 +1705,8 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
         dvs.runcmd("ip addr flush dev Ethernet{}".format(i*4))
         intf_tbl.set("Ethernet{}|{}.0.0.1/24".format(i*4, i*4), fvs)
         intf_tbl.set("Ethernet{}|{}00::1/64".format(i*4, i*4), fvs)
+        intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
+        intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
         dvs.runcmd("ip link set Ethernet{} up".format(i*4, i*4))
         dvs.servers[i].runcmd("ip link set up dev eth0")
         dvs.servers[i].runcmd("ip addr flush dev eth0")
@@ -1895,4 +1941,6 @@ def test_system_warmreboot_neighbor_syncup(dvs, testlog):
     for i in range(8, 8+NUM_INTF):
         intf_tbl._del("Ethernet{}|{}.0.0.1/24".format(i*4, i*4))
         intf_tbl._del("Ethernet{}|{}00::1/64".format(i*4, i*4))
+        intf_tbl._del("Ethernet{}".format(i*4, i*4))
+        intf_tbl._del("Ethernet{}".format(i*4, i*4))
 

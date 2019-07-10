@@ -120,6 +120,11 @@ public:
         return dst_ip_;
     }
 
+    sai_object_id_t getTunnelTermId() const
+    {
+        return ids_.tunnel_term_id;
+    }
+
     void updateNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nhId);
     bool removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
     sai_object_id_t getNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni) const;
