@@ -210,7 +210,7 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
             SWSS_LOG_ERROR("Failed to create trap %d, rv:%d", trap_id, status);
             return false;
         }
-        m_syncdTrapIds[trap_id] = hostif_trap_id;
+        m_syncdTrapIds[trap_id] = trap_group_id;
     }
 
     return true;
