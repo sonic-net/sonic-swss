@@ -48,7 +48,7 @@ void ChassisFrontendOrch::addRouteToChassisInterVrfForwardingIpTable(const IpPre
         return;
     }
     std::vector<FieldValueTuple> fvVector;
-    fvVector.emplace_back("distribute", "true");
+    fvVector.emplace_back("redistribute", "true");
     fvVector.emplace_back("source", "ORCHAGENT_MIRROR_SESSION");
     m_passThroughRouteTable.set(ipPfx.to_string(), fvVector);
     m_hasBroadcastedRoute.insert(ipPfx);
