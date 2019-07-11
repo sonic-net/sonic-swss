@@ -22,12 +22,13 @@ private:
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
 
     void setIntfIp(const string &alias, const string &opCmd, const string &ipPrefixStr, const bool ipv4 = true);
-    void setIntfVrf(const string &alias, const string vrfName);
+    void setIntfVrf(const string &alias, const string &vrfName);
     bool doIntfGeneralTask(const vector<string>& keys, const vector<FieldValueTuple>& data, const string& op);
     bool doIntfAddrTask(const vector<string>& keys, const vector<FieldValueTuple>& data, const string& op);
     void doTask(Consumer &consumer);
     bool isIntfStateOk(const string &alias);
     bool isIntfGeneralDone(const string &alias);
+    bool isIntfChangeVrf(const string &alias, const string &vrfName);
     int getIntfIpCount(const string &alias);
     void addLoopbackIntf(const string &alias);
     void delLoopbackIntf(const string &alias);

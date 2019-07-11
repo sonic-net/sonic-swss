@@ -51,7 +51,7 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
     }
 }
 
-void IntfMgr::setIntfVrf(const string &alias, const string vrfName)
+void IntfMgr::setIntfVrf(const string &alias, const string &vrfName)
 {
     stringstream cmd;
     string res;
@@ -113,6 +113,29 @@ bool IntfMgr::isIntfGeneralDone(const string &alias)
     {
         SWSS_LOG_DEBUG("Intf %s is ready", alias.c_str());
         return true;
+    }
+
+    return false;
+}
+
+bool IntfMgr::isIntfChangeVrf(const string &alias, const string &vrfName)
+{
+    vector<FieldValueTuple> temp;
+
+    if (m_stateIntfTable.get(alias, temp))
+    {
+        for (auto idx : temp)
+        {
+            const auto &field = fvField(idx);
+            const auto &value = fvValue(idx);
+            if (field == "vrf")
+            {
+                if (value == vrfName)
+                    return false;
+                else
+                    return true;
+            }
+	}
     }
 
     return false;
@@ -201,9 +224,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             return false;
         }
 
-        /* if intfGeneral has been done then skip */
-        if (isIntfGeneralDone(alias))
+        /* if to change vrf then skip */
+        if (isIntfChangeVrf(alias, vrf_name))
         {
+            SWSS_LOG_ERROR("%s can not change to %s directly, skipping", alias.c_str(), vrf_name.c_str());
             return true;
         }
         if (is_lo)
@@ -215,7 +239,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             setIntfVrf(alias, vrf_name);
         }
         m_appIntfTableProducer.set(alias, data);
-        m_stateIntfTable.hset(alias, "state", "ok");
+        m_stateIntfTable.hset(alias, "vrf", vrf_name);
     }
     else if (op == DEL_COMMAND)
     {
