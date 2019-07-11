@@ -1,75 +1,9 @@
 #include "ut_helper.h"
-
-extern sai_object_id_t gSwitchId;
-
-extern CrmOrch *gCrmOrch;
-extern PortsOrch *gPortsOrch;
-extern RouteOrch *gRouteOrch;
-extern IntfsOrch *gIntfsOrch;
-extern NeighOrch *gNeighOrch;
-
-extern FdbOrch *gFdbOrch;
-extern MirrorOrch *gMirrorOrch;
-extern VRFOrch *gVrfOrch;
-
-extern sai_acl_api_t *sai_acl_api;
-extern sai_switch_api_t *sai_switch_api;
-extern sai_port_api_t *sai_port_api;
-extern sai_vlan_api_t *sai_vlan_api;
-extern sai_bridge_api_t *sai_bridge_api;
-extern sai_route_api_t *sai_route_api;
+#include "mock_orchagent_main.h"
 
 namespace aclorch_test
 {
     using namespace std;
-
-    size_t consumerAddToSync(Consumer *consumer, const deque<KeyOpFieldsValuesTuple> &entries)
-    {
-        /* Nothing popped */
-        if (entries.empty())
-        {
-            return 0;
-        }
-
-        for (auto &entry : entries)
-        {
-            string key = kfvKey(entry);
-            string op = kfvOp(entry);
-
-            /* If a new task comes or if a DEL task comes, we directly put it into getConsumerTable().m_toSync map */
-            if (consumer->m_toSync.find(key) == consumer->m_toSync.end() || op == DEL_COMMAND)
-            {
-                consumer->m_toSync[key] = entry;
-            }
-            /* If an old task is still there, we combine the old task with new task */
-            else
-            {
-                KeyOpFieldsValuesTuple existing_data = consumer->m_toSync[key];
-
-                auto new_values = kfvFieldsValues(entry);
-                auto existing_values = kfvFieldsValues(existing_data);
-
-                for (auto it : new_values)
-                {
-                    string field = fvField(it);
-                    string value = fvValue(it);
-
-                    auto iu = existing_values.begin();
-                    while (iu != existing_values.end())
-                    {
-                        string ofield = fvField(*iu);
-                        if (field == ofield)
-                            iu = existing_values.erase(iu);
-                        else
-                            iu++;
-                    }
-                    existing_values.push_back(FieldValueTuple(field, value));
-                }
-                consumer->m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
-            }
-        }
-        return entries.size();
-    }
 
     struct AclTestBase : public ::testing::Test
     {
@@ -199,7 +133,7 @@ namespace aclorch_test
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_TABLE_NAME));
 
-            consumerAddToSync(consumer.get(), entries);
+            Portal::ConsumerInternal::addToSync(consumer.get(), entries);
 
             static_cast<Orch *>(m_aclOrch)->doTask(*consumer);
         }
@@ -209,7 +143,7 @@ namespace aclorch_test
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(config_db, CFG_ACL_RULE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_RULE_TABLE_NAME));
 
-            consumerAddToSync(consumer.get(), entries);
+            Portal::ConsumerInternal::addToSync(consumer.get(), entries);
 
             static_cast<Orch *>(m_aclOrch)->doTask(*consumer);
         }
@@ -240,75 +174,19 @@ namespace aclorch_test
             m_state_db = make_shared<swss::DBConnector>(STATE_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
         }
 
-        static map<string, string> gProfileMap;
-        static map<string, string>::iterator gProfileIter;
-
-        static const char *profile_get_value(
-            sai_switch_profile_id_t profile_id,
-            const char *variable)
-        {
-            map<string, string>::const_iterator it = gProfileMap.find(variable);
-            if (it == gProfileMap.end())
-            {
-                return NULL;
-            }
-
-            return it->second.c_str();
-        }
-
-        static int profile_get_next_value(
-            sai_switch_profile_id_t profile_id,
-            const char **variable,
-            const char **value)
-        {
-            if (value == NULL)
-            {
-                gProfileIter = gProfileMap.begin();
-                return 0;
-            }
-
-            if (variable == NULL)
-            {
-                return -1;
-            }
-
-            if (gProfileIter == gProfileMap.end())
-            {
-                return -1;
-            }
-
-            *variable = gProfileIter->first.c_str();
-            *value = gProfileIter->second.c_str();
-
-            gProfileIter++;
-
-            return 0;
-        }
-
         void SetUp() override
         {
             AclTestBase::SetUp();
 
-            // Init switch and create dependencies
-
-            gProfileMap.emplace("SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850");
-            gProfileMap.emplace("KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00");
-
-            sai_service_method_table_t test_services = {
-                AclOrchTest::profile_get_value,
-                AclOrchTest::profile_get_next_value
+            map<string, string> profile = {
+                { "SAI_VS_SWITCH_TYPE", "SAI_VS_SWITCH_TYPE_BCM56850" },
+                { "KV_DEVICE_MAC_ADDRESS", "20:03:04:05:06:00" }
             };
 
-            auto status = sai_api_initialize(0, (sai_service_method_table_t *)&test_services);
+            auto status = ut_helper::initSaiApi(profile);
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
-            sai_api_query(SAI_API_SWITCH, (void **)&sai_switch_api);
-            sai_api_query(SAI_API_BRIDGE, (void **)&sai_bridge_api);
-            sai_api_query(SAI_API_PORT, (void **)&sai_port_api);
-            sai_api_query(SAI_API_VLAN, (void **)&sai_vlan_api);
-            sai_api_query(SAI_API_ROUTE, (void **)&sai_route_api);
-            sai_api_query(SAI_API_ACL, (void **)&sai_acl_api);
-
+            // Init switch and create dependencies
             sai_attribute_t attr;
 
             attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
@@ -381,7 +259,7 @@ namespace aclorch_test
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));
 
-            consumerAddToSync(consumer.get(), { { "PortInitDone", EMPTY_PREFIX, { { "", "" } } } });
+            Portal::ConsumerInternal::addToSync(consumer.get(), { { "PortInitDone", EMPTY_PREFIX, { { "", "" } } } });
 
             static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
         }
@@ -411,14 +289,7 @@ namespace aclorch_test
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
             gSwitchId = 0;
 
-            sai_api_uninitialize();
-
-            sai_switch_api = nullptr;
-            sai_acl_api = nullptr;
-            sai_port_api = nullptr;
-            sai_vlan_api = nullptr;
-            sai_bridge_api = nullptr;
-            sai_route_api = nullptr;
+            ut_helper::uninitSaiApi();
         }
 
         shared_ptr<MockAclOrch> createAclOrch()
@@ -876,9 +747,6 @@ namespace aclorch_test
             return true;
         }
     };
-
-    map<string, string> AclOrchTest::gProfileMap;
-    map<string, string>::iterator AclOrchTest::gProfileIter = AclOrchTest::gProfileMap.begin();
 
     // When received ACL table SET_COMMAND, orchagent can create corresponding ACL.
     // When received ACL table DEL_COMMAND, orchagent can delete corresponding ACL.
