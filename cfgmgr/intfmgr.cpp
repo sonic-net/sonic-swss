@@ -140,7 +140,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             vrf_name = value;
         }
-        else  if (field == "mac_addr")
+        else if (field == "mac_addr")
         {
             mac = value;
         }
@@ -168,7 +168,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 setIntfVrf(alias, vrf_name);
             }
             /*Set the mac of interface*/
-            if(!mac.empty())
+            if (!mac.empty())
             {
                 setIntfMac(alias, mac);
             }
