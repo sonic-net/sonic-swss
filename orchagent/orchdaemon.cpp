@@ -8,6 +8,8 @@
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
+#include "chassisfrontendorch.h"
+
 
 using namespace std;
 using namespace swss;
@@ -73,12 +75,6 @@ bool OrchDaemon::init()
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
 
-    const vector<string> chassis_frontend_tables = {
-        APP_MIRROR_SESSION_IP_IN_CHASSIS_TABLE_NAME,
-    };
-    ChassisFrontendOrch * chassis_frontend_orch = new ChassisFrontendOrch(m_applDb, chassis_frontend_tables);
-    gDirectory.set(chassis_frontend_orch);
-
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
             APP_VNET_RT_TUNNEL_TABLE_NAME
@@ -105,6 +101,12 @@ bool OrchDaemon::init()
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME);
     gDirectory.set(vrf_orch);
+
+    const vector<string> chassis_frontend_tables = {
+    APP_MIRROR_SESSION_IP_IN_CHASSIS_TABLE_NAME,
+    };
+    ChassisFrontendOrch* chassis_frontend_orch = new ChassisFrontendOrch(m_applDb, chassis_frontend_tables, vnet_rt_orch);
+    gDirectory.set(chassis_frontend_orch);
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch);
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch);

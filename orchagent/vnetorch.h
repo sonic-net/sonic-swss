@@ -10,7 +10,8 @@
 #include "request_parser.h"
 #include "ipaddresses.h"
 #include "producerstatetable.h"
-#include "chassisfrontendorch.h"
+#include "observer.h"
+#include "routeorch.h"
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 512
@@ -352,17 +353,23 @@ public:
     VNetRouteRequest() : Request(vnet_route_description, ':') { }
 };
 
-class VNetRouteOrch : public Orch2
+class VNetRouteOrch : public Orch2, public Subject
 {
 public:
-    VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *, ChassisFrontendOrch * chassisFrontendOrch);
+    VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *);
 
     typedef pair<string, bool (VNetRouteOrch::*) (const Request& )> handler_pair;
     typedef map<string, bool (VNetRouteOrch::*) (const Request& )> handler_map;
 
+    void attach(Observer* observer, const IpAddress& dstAddr);
+    void detach(Observer* observer, const IpAddress& dstAddr);
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
+
+    void addRoute(const IpPrefix & ipPrefix, const IpAddresses& ip_addresses);
+    void delRoute(const IpPrefix& ipPrefix);
 
     bool handleRoutes(const Request&);
     bool handleTunnel(const Request&);
@@ -377,7 +384,8 @@ private:
     VNetRouteRequest request_;
     handler_map handler_map_;
 
-    ChassisFrontendOrch *chassis_frontend_orch_;
+    RouteTable syncd_routes_;
+    NextHopObserverTable next_hop_observers_;
 };
 
 class VNetCfgRouteOrch : public Orch

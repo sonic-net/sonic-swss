@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <exception>
+#include <algorithm>
 
 #include "sai.h"
 #include "saiextensions.h"
@@ -1618,8 +1619,8 @@ static bool add_route(sai_object_id_t vr_id, sai_ip_prefix_t& ip_pfx, sai_object
     return true;
 }
 
-VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch, ChassisFrontendOrch * chassisFrontendOrch)
-                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch), chassis_frontend_orch_(chassisFrontendOrch)
+VNetRouteOrch::VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *vnetOrch)
+                                  : Orch2(db, tableNames, request_), vnet_orch_(vnetOrch)
 {
     SWSS_LOG_ENTER();
 
@@ -1893,10 +1894,14 @@ bool VNetRouteOrch::handleRoutes(const Request& request)
 
     SWSS_LOG_INFO("VNET-RT '%s' op '%s' for ip %s", vnet_name.c_str(),
                    op.c_str(), ip_pfx.to_string().c_str());
-    
-    if (chassis_frontend_orch_)
+
+    if (op == SET_COMMAND)
     {
-        chassis_frontend_orch_->handleVNetRoutesMessage(op, ip_pfx);
+        addRoute(ip_pfx, ip_addresses);
+    }
+    else
+    {
+        delRoute(ip_pfx);
     }
 
     if (vnet_orch_->isVnetExecVrf())
@@ -2007,6 +2012,127 @@ bool VNetRouteOrch::delOperation(const Request& request)
     }
 
     return true;
+}
+
+void VNetRouteOrch::attach(Observer* observer, const IpAddress& dstAddr)
+{
+    SWSS_LOG_ENTER();
+
+    auto insert_result = next_hop_observers_.emplace(dstAddr, NextHopObserverEntry());
+    auto observerEntry = insert_result.first;
+
+    /* Create a new observer entry if no current observer is observing this
+     * IP address */
+    if (insert_result.second)
+    {
+        /* Find the prefixes that cover the destination IP */
+        for (auto route : syncd_routes_)
+        {
+            if (route.first.isAddressInSubnet(dstAddr))
+            {
+                SWSS_LOG_INFO("Prefix %s covers destination address",
+                    route.first.to_string().c_str());
+                observerEntry->second.routeTable.emplace(
+                    route.first, route.second);
+            }
+        }
+    }
+
+    observerEntry->second.observers.push_back(observer);
+
+    SWSS_LOG_NOTICE("Attached next hop observer of route %s for destination IP %s",
+        observerEntry->second.routeTable.rbegin()->first.to_string().c_str(),
+        dstAddr.to_string().c_str());
+
+    for (const auto & route : observerEntry->second.routeTable)
+    {
+        NextHopUpdate update = { dstAddr, route.first, route.second };
+        observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, reinterpret_cast<void*>(&update));
+    }
+}
+
+void VNetRouteOrch::detach(Observer* observer, const IpAddress& dstAddr)
+{
+    SWSS_LOG_ENTER();
+    auto observerEntry = next_hop_observers_.find(dstAddr);
+
+    if (observerEntry == next_hop_observers_.end())
+    {
+        SWSS_LOG_ERROR("Failed to detach observer for %s. Entry not found.", dstAddr.to_string().c_str());
+        assert(false);
+        return;
+    }
+    auto iter = std::find(
+        observerEntry->second.observers.begin(),
+        observerEntry->second.observers.end(),
+        observer);
+    if (iter == observerEntry->second.observers.end())
+    {
+        SWSS_LOG_ERROR("Failed to detach observer for %s. Observer not found.", dstAddr.to_string().c_str());
+        assert(false);
+        return;
+    }
+    for (const auto& route : observerEntry->second.routeTable)
+    {
+        NextHopUpdate update = { IpAddress(0), route.first, route.second };
+        observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, reinterpret_cast<void*>(&update));
+    }
+    next_hop_observers_.erase(observerEntry);
+}
+
+void VNetRouteOrch::addRoute(const IpPrefix& ipPrefix, const IpAddresses& ip_addresses)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto & next_hop_observer : next_hop_observers_)
+    {
+        if (ipPrefix.isAddressInSubnet(next_hop_observer.first))
+        {
+            next_hop_observer.second.routeTable.emplace(ipPrefix, ip_addresses);
+            for (auto& observer : next_hop_observer.second.observers)
+            {
+                NextHopUpdate update = { next_hop_observer.first, ipPrefix, ip_addresses };
+                observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, reinterpret_cast<void*>(&update));
+            }
+        }
+    }
+    syncd_routes_.emplace(ipPrefix, ip_addresses);
+}
+
+void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
+{
+    SWSS_LOG_ENTER();
+
+    auto next_hop_observer = next_hop_observers_.begin();
+    while(next_hop_observer != next_hop_observers_.end())
+    {
+        if (ipPrefix.isAddressInSubnet(next_hop_observer->first))
+        {
+            auto itr = next_hop_observer->second.routeTable.find(ipPrefix);
+            if ( itr == next_hop_observer->second.routeTable.end())
+            {
+                SWSS_LOG_ERROR(
+                    "Failed to find any ip(%s) belong to this route(%s).", 
+                    next_hop_observer->first.to_string().c_str(),
+                    ipPrefix.to_string().c_str());
+                assert(false);
+                continue;
+            }
+            for (auto& observer : next_hop_observer->second.observers)
+            {
+                NextHopUpdate update = { IpAddress(0), itr->first, itr->second};
+                observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, reinterpret_cast<void*>(&update));
+            }
+            next_hop_observer->second.routeTable.erase(itr);
+            if (next_hop_observer->second.routeTable.empty())
+            {
+                next_hop_observer = next_hop_observers_.erase(next_hop_observer);
+                continue;
+            }
+        }
+        next_hop_observer++;
+    }
+    syncd_routes_.erase(ipPrefix);
 }
 
 VNetCfgRouteOrch::VNetCfgRouteOrch(DBConnector *db, DBConnector *appDb, vector<string> &tableNames)

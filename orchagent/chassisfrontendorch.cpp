@@ -1,31 +1,11 @@
 #include "chassisfrontendorch.h"
+#include "routeorch.h"
 
-ChassisFrontendOrch::ChassisFrontendOrch(DBConnector *appDb, const std::vector<std::string> &tableNames) :
+ChassisFrontendOrch::ChassisFrontendOrch(DBConnector *appDb, const std::vector<std::string> &tableNames, VNetRouteOrch* vNetRouteOrch) :
     Orch(appDb, tableNames),
-    m_chassisInterVrfForwardingIpTable(appDb, APP_CHASSIS_INTER_VRF_FORWARDING_IP_TABLE_NAME)
+    m_chassisInterVrfForwardingIpTable(appDb, APP_CHASSIS_INTER_VRF_FORWARDING_IP_TABLE_NAME),
+    m_vNetRouteOrch(vNetRouteOrch)
 {
-}
-
-void ChassisFrontendOrch::handleVNetRoutesMessage(const std::string & op, const IpPrefix& ipPfx)
-{
-    SWSS_LOG_ENTER();
-
-    if (op == SET_COMMAND)
-    {
-        if (m_vNetRouteTable.find(ipPfx) == m_vNetRouteTable.end())
-        {
-            updateChassisInterVrfForwardingIp(op, ipPfx);
-            m_vNetRouteTable.insert(ipPfx);
-        }
-    }
-    else
-    {
-        if (m_vNetRouteTable.find(ipPfx) != m_vNetRouteTable.end())
-        {
-            updateChassisInterVrfForwardingIp(op, ipPfx);
-            m_vNetRouteTable.erase(ipPfx);
-        }
-    }
 }
 
 void ChassisFrontendOrch::handleMirrorSessionMessage(const std::string & op, const IpAddress& ip)
@@ -34,61 +14,24 @@ void ChassisFrontendOrch::handleMirrorSessionMessage(const std::string & op, con
 
     if (op == SET_COMMAND)
     {
-        if (m_mirrorSessionIpInChassisTable.find(ip) == m_mirrorSessionIpInChassisTable.end())
-        {
-            updateChassisInterVrfForwardingIp(op, ip);
-            m_mirrorSessionIpInChassisTable.insert(ip);
-        }
+        m_vNetRouteOrch->attach(this, ip);
     }
     else
     {
-        if (m_mirrorSessionIpInChassisTable.find(ip) != m_mirrorSessionIpInChassisTable.end())
-        {
-            updateChassisInterVrfForwardingIp(op, ip);
-            m_mirrorSessionIpInChassisTable.erase(ip);
-        }
+        m_vNetRouteOrch->detach(this, ip);
     }
 }
 
-void ChassisFrontendOrch::updateChassisInterVrfForwardingIp(const std::string & op, const IpAddress& mirrorSessionIp)
+void ChassisFrontendOrch::update(SubjectType type, void* ctx)
 {
-    SWSS_LOG_ENTER();
-
-    for (const auto & vnetRoute : m_vNetRouteTable)
+    NextHopUpdate* updateInfo = reinterpret_cast<NextHopUpdate *>(ctx);
+    if (updateInfo->destination.isZero())
     {
-        if (vnetRoute.isAddressInSubnet(mirrorSessionIp))
-        {
-            if (op == SET_COMMAND)
-            {
-                addRouteToChassisInterVrfForwardingIpTable(vnetRoute);
-            }
-            else
-            {
-                deleteRouteFromChassisInterVrfForwardingIpTable(vnetRoute);
-            }
-            break;
-        }
+        addRouteToChassisInterVrfForwardingIpTable(updateInfo->prefix);
     }
-}
-
-void ChassisFrontendOrch::updateChassisInterVrfForwardingIp(const std::string & op, const IpPrefix& vNetRoute)
-{
-    SWSS_LOG_ENTER();
-
-    for (const auto & mirrorSessionIp : m_mirrorSessionIpInChassisTable)
+    else
     {
-        if (vNetRoute.isAddressInSubnet(mirrorSessionIp))
-        {
-            if (op == SET_COMMAND)
-            {
-                addRouteToChassisInterVrfForwardingIpTable(vNetRoute);
-            }
-            else
-            {
-                deleteRouteFromChassisInterVrfForwardingIpTable(vNetRoute);
-            }
-            break;
-        }
+        deleteRouteFromChassisInterVrfForwardingIpTable(updateInfo->prefix);
     }
 }
 
