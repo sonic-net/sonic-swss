@@ -51,7 +51,7 @@ orchagent_SOURCES = \
             flexcounterorch.cpp \
             watermarkorch.cpp \
             policerorch.cpp \
-            chassisfrontendorch.cpp
+            chassisorch.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

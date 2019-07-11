@@ -16,10 +16,10 @@
 #define CFG_PASS_THROUGH_ROUTE_TABLE_NAME "PASS_THROUGH_ROUTE_TABLE"
 #define APP_PASS_THROUGH_ROUTE_TABLE_NAME "PASS_THROUGH_ROUTE_TABLE"
 
-class ChassisFrontendOrch : public Orch, public Observer
+class ChassisOrch : public Orch, public Observer
 {
 public:
-    ChassisFrontendOrch(
+    ChassisOrch(
         DBConnector* cfgDb,
         DBConnector *applDb,
         const std::vector<std::string> &tableNames,

@@ -1,7 +1,7 @@
-#include "chassisfrontendorch.h"
+#include "chassisorch.h"
 #include "routeorch.h"
 
-ChassisFrontendOrch::ChassisFrontendOrch(
+ChassisOrch::ChassisOrch(
     DBConnector* cfgDb,
     DBConnector* applDb, 
     const std::vector<std::string>& tableNames, 
@@ -12,7 +12,7 @@ ChassisFrontendOrch::ChassisFrontendOrch(
 {
 }
 
-void ChassisFrontendOrch::handleMirrorSessionMessage(const std::string & op, const IpAddress& ip)
+void ChassisOrch::handleMirrorSessionMessage(const std::string & op, const IpAddress& ip)
 {
     SWSS_LOG_ENTER();
 
@@ -26,7 +26,7 @@ void ChassisFrontendOrch::handleMirrorSessionMessage(const std::string & op, con
     }
 }
 
-void ChassisFrontendOrch::update(SubjectType type, void* ctx)
+void ChassisOrch::update(SubjectType type, void* ctx)
 {
     NextHopUpdate* updateInfo = reinterpret_cast<NextHopUpdate *>(ctx);
     if (updateInfo->destination.isZero())
@@ -39,7 +39,7 @@ void ChassisFrontendOrch::update(SubjectType type, void* ctx)
     }
 }
 
-void ChassisFrontendOrch::addRouteToChassisInterVrfForwardingIpTable(const IpPrefix& ipPfx)
+void ChassisOrch::addRouteToChassisInterVrfForwardingIpTable(const IpPrefix& ipPfx)
 {
     SWSS_LOG_ENTER();
 
@@ -54,7 +54,7 @@ void ChassisFrontendOrch::addRouteToChassisInterVrfForwardingIpTable(const IpPre
     m_hasBroadcastedRoute.insert(ipPfx);
 }
 
-void ChassisFrontendOrch::deleteRouteFromChassisInterVrfForwardingIpTable(const IpPrefix& ipPfx)
+void ChassisOrch::deleteRouteFromChassisInterVrfForwardingIpTable(const IpPrefix& ipPfx)
 {
     SWSS_LOG_ENTER();
 
@@ -66,7 +66,7 @@ void ChassisFrontendOrch::deleteRouteFromChassisInterVrfForwardingIpTable(const 
     m_hasBroadcastedRoute.erase(ipPfx);
 }
 
-void ChassisFrontendOrch::doTask(Consumer &consumer)
+void ChassisOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 

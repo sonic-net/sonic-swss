@@ -8,7 +8,7 @@
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
-#include "chassisfrontendorch.h"
+#include "chassisorch.h"
 
 
 using namespace std;
@@ -105,7 +105,7 @@ bool OrchDaemon::init()
     const vector<string> chassis_frontend_tables = {
         CFG_PASS_THROUGH_ROUTE_TABLE_NAME,
     };
-    ChassisFrontendOrch* chassis_frontend_orch = new ChassisFrontendOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
+    ChassisOrch* chassis_frontend_orch = new ChassisOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
     gDirectory.set(chassis_frontend_orch);
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch);
