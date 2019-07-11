@@ -1,9 +1,13 @@
 #include "chassisfrontendorch.h"
 #include "routeorch.h"
 
-ChassisFrontendOrch::ChassisFrontendOrch(DBConnector *appDb, const std::vector<std::string> &tableNames, VNetRouteOrch* vNetRouteOrch) :
-    Orch(appDb, tableNames),
-    m_chassisInterVrfForwardingIpTable(appDb, APP_CHASSIS_INTER_VRF_FORWARDING_IP_TABLE_NAME),
+ChassisFrontendOrch::ChassisFrontendOrch(
+    DBConnector* cfgDb,
+    DBConnector* applDb, 
+    const std::vector<std::string>& tableNames, 
+    VNetRouteOrch* vNetRouteOrch) :
+    Orch(cfgDb, tableNames),
+    m_passThroughRouteTable(applDb, APP_PASS_THROUGH_ROUTE_TABLE_NAME),
     m_vNetRouteOrch(vNetRouteOrch)
 {
 }
@@ -46,7 +50,7 @@ void ChassisFrontendOrch::addRouteToChassisInterVrfForwardingIpTable(const IpPre
     std::vector<FieldValueTuple> fvVector;
     fvVector.emplace_back("distribute", "true");
     fvVector.emplace_back("source", "ORCHAGENT_MIRROR_SESSION");
-    m_chassisInterVrfForwardingIpTable.set(ipPfx.to_string(), fvVector);
+    m_passThroughRouteTable.set(ipPfx.to_string(), fvVector);
     m_hasBroadcastedRoute.insert(ipPfx);
 }
 
@@ -58,7 +62,7 @@ void ChassisFrontendOrch::deleteRouteFromChassisInterVrfForwardingIpTable(const 
     {
         return;
     }
-    m_chassisInterVrfForwardingIpTable.del(ipPfx.to_string());
+    m_passThroughRouteTable.del(ipPfx.to_string());
     m_hasBroadcastedRoute.erase(ipPfx);
 }
 
@@ -70,7 +74,7 @@ void ChassisFrontendOrch::doTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        if (tableName == APP_MIRROR_SESSION_IP_IN_CHASSIS_TABLE_NAME)
+        if (tableName == CFG_PASS_THROUGH_ROUTE_TABLE_NAME)
         {
             auto t = it->second;
             const std::string & op = kfvOp(t);

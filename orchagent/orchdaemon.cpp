@@ -103,9 +103,9 @@ bool OrchDaemon::init()
     gDirectory.set(vrf_orch);
 
     const vector<string> chassis_frontend_tables = {
-    APP_MIRROR_SESSION_IP_IN_CHASSIS_TABLE_NAME,
+        CFG_PASS_THROUGH_ROUTE_TABLE_NAME,
     };
-    ChassisFrontendOrch* chassis_frontend_orch = new ChassisFrontendOrch(m_applDb, chassis_frontend_tables, vnet_rt_orch);
+    ChassisFrontendOrch* chassis_frontend_orch = new ChassisFrontendOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
     gDirectory.set(chassis_frontend_orch);
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch);
