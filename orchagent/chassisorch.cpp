@@ -49,13 +49,15 @@ void ChassisOrch::addRouteToPassThroughRouteTable(const VNetNextHopUpdate& updat
     fvVector.emplace_back("next_hop_ip", update.nexthop.ips.to_string());
     fvVector.emplace_back("ifname", update.nexthop.ifname);
     fvVector.emplace_back("source", "CHASSIS_ORCH");
-    m_passThroughRouteTable.set(update.prefix.to_string(), fvVector);
+    const std::string everflow_route = update.destination.to_string() + "/" + (update.destination.isV4() ? "32" : "128");
+    m_passThroughRouteTable.set(everflow_route, fvVector);
 }
 
 void ChassisOrch::deleteRoutePassThroughRouteTable(const VNetNextHopUpdate& update)
 {
     SWSS_LOG_ENTER();
-    m_passThroughRouteTable.del(update.prefix.to_string());
+    const std::string everflow_route = update.destination.to_string() + "/" + (update.destination.isV4() ? "32" : "128");
+    m_passThroughRouteTable.del(everflow_route);
 }
 
 void ChassisOrch::doTask(Consumer &consumer)
