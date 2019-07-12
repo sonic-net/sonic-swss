@@ -6,12 +6,12 @@
 #include <unordered_map>
 #include <algorithm>
 #include <bitset>
+#include <tuple>
 
 #include "request_parser.h"
 #include "ipaddresses.h"
 #include "producerstatetable.h"
 #include "observer.h"
-#include "routeorch.h"
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 512
@@ -353,6 +353,25 @@ public:
     VNetRouteRequest() : Request(vnet_route_description, ':') { }
 };
 
+struct VNetNextHopUpdate
+{
+    std::string op;
+    std::string vnet;
+    IpAddress destination;
+    IpPrefix prefix;
+    nextHop nexthop;
+};
+/* VNetRouteTable: destination network, vnet name, next hop IP address(es) */
+typedef std::map<IpPrefix, std::tuple<std::string, nextHop> > VNetRouteTable;
+struct VNetNextHopObserverEntry
+{
+    VNetRouteTable routeTable;
+    list<Observer*> observers;
+};
+/* NextHopObserverTable: Destination IP address, next hop observer entry */
+typedef std::map<IpAddress, VNetNextHopObserverEntry> VNetNextHopObserverTable;
+
+
 class VNetRouteOrch : public Orch2, public Subject
 {
 public:
@@ -368,7 +387,7 @@ private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
 
-    void addRoute(const IpPrefix & ipPrefix, const IpAddresses& ip_addresses);
+    void addRoute(const std::string & vnet, const IpPrefix & ipPrefix, const nextHop& nh);
     void delRoute(const IpPrefix& ipPrefix);
 
     bool handleRoutes(const Request&);
@@ -384,8 +403,8 @@ private:
     VNetRouteRequest request_;
     handler_map handler_map_;
 
-    RouteTable syncd_routes_;
-    NextHopObserverTable next_hop_observers_;
+    VNetRouteTable syncd_routes_;
+    VNetNextHopObserverTable next_hop_observers_;
 };
 
 class VNetCfgRouteOrch : public Orch

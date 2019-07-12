@@ -28,42 +28,34 @@ void ChassisOrch::handleMirrorSessionMessage(const std::string & op, const IpAdd
 
 void ChassisOrch::update(SubjectType type, void* ctx)
 {
-    NextHopUpdate* updateInfo = reinterpret_cast<NextHopUpdate *>(ctx);
-    if (updateInfo->destination.isZero())
+    VNetNextHopUpdate* updateInfo = reinterpret_cast<VNetNextHopUpdate*>(ctx);
+    if (updateInfo->op == SET_COMMAND)
     {
-        addRouteToChassisInterVrfForwardingIpTable(updateInfo->prefix);
+        addRouteToPassThroughRouteTable(*updateInfo);
     }
     else
     {
-        deleteRouteFromChassisInterVrfForwardingIpTable(updateInfo->prefix);
+        deleteRoutePassThroughRouteTable(*updateInfo);
     }
 }
 
-void ChassisOrch::addRouteToChassisInterVrfForwardingIpTable(const IpPrefix& ipPfx)
+void ChassisOrch::addRouteToPassThroughRouteTable(const VNetNextHopUpdate& update)
 {
     SWSS_LOG_ENTER();
 
-    if (m_hasBroadcastedRoute.find(ipPfx) != m_hasBroadcastedRoute.end())
-    {
-        return;
-    }
     std::vector<FieldValueTuple> fvVector;
     fvVector.emplace_back("redistribute", "true");
+    fvVector.emplace_back("next_vrf_name", update.vnet);
+    fvVector.emplace_back("next_hop_ip", update.nexthop.ips.to_string());
+    fvVector.emplace_back("ifname", update.nexthop.ifname);
     fvVector.emplace_back("source", "CHASSIS_ORCH");
-    m_passThroughRouteTable.set(ipPfx.to_string(), fvVector);
-    m_hasBroadcastedRoute.insert(ipPfx);
+    m_passThroughRouteTable.set(update.prefix.to_string(), fvVector);
 }
 
-void ChassisOrch::deleteRouteFromChassisInterVrfForwardingIpTable(const IpPrefix& ipPfx)
+void ChassisOrch::deleteRoutePassThroughRouteTable(const VNetNextHopUpdate& update)
 {
     SWSS_LOG_ENTER();
-
-    if (m_hasBroadcastedRoute.find(ipPfx) == m_hasBroadcastedRoute.end())
-    {
-        return;
-    }
-    m_passThroughRouteTable.del(ipPfx.to_string());
-    m_hasBroadcastedRoute.erase(ipPfx);
+    m_passThroughRouteTable.del(update.prefix.to_string());
 }
 
 void ChassisOrch::doTask(Consumer &consumer)

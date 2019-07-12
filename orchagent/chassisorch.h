@@ -30,17 +30,12 @@ public:
 private:
 
     void update(SubjectType, void*);
-    void addRouteToChassisInterVrfForwardingIpTable(const IpPrefix& ipPfx);
-    void deleteRouteFromChassisInterVrfForwardingIpTable(const IpPrefix& ipPfx);
+    void addRouteToPassThroughRouteTable(const VNetNextHopUpdate& update);
+    void deleteRoutePassThroughRouteTable(const VNetNextHopUpdate& update);
 
     virtual void doTask(Consumer &consumer);
 
-    std::set<IpPrefix>  m_vNetRouteTable;
-    std::set<IpAddress> m_mirrorSessionIpInChassisTable;
-    std::set<IpPrefix>  m_hasBroadcastedRoute;
-    
     Table m_passThroughRouteTable;
-
     VNetRouteOrch* m_vNetRouteOrch;
 };
 
