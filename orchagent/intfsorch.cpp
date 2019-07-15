@@ -821,7 +821,6 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
     }
 
     /* check the state of intf, if registering the intf to FC will result in runtime error */
-    vector<FieldValueTuple> fvt;
     vector<FieldValueTuple> fieldValues;
     fieldValues.emplace_back(RIF_COUNTER_ID_LIST, counters_stream.str());
 
@@ -839,10 +838,7 @@ void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
     /* remove it from FLEX_COUNTER_DB */
     string key = getRifFlexCounterTableKey(id);
 
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(RIF_COUNTER_ID_LIST, "");
-
-    m_flexCounterTable->set(key, fieldValues);
+    m_flexCounterTable->del(key);
     SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
 }
 
