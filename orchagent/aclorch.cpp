@@ -2135,7 +2135,7 @@ void AclOrch::doTask(Consumer &consumer)
 
     string table_name = consumer.getTableName();
 
-    if (table_name == CFG_ACL_TABLE_NAME)
+    if (table_name == CFG_ACL_TABLE_TABLE_NAME)
     {
         unique_lock<mutex> lock(m_countersMutex);
         doAclTableTask(consumer);

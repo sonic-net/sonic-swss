@@ -154,7 +154,7 @@ bool OrchDaemon::init()
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
     MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
-    TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_NAME);
+    TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
 
     vector<TableConnector> acl_table_connectors = {
