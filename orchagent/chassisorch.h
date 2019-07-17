@@ -1,6 +1,5 @@
-
-#ifndef SWSS_CHASSISFRONTENDORCH_H
-#define SWSS_CHASSISFRONTENDORCH_H
+#ifndef SWSS_CHASSISORCH_H
+#define SWSS_CHASSISORCH_H
 
 #include <map>
 #include <set>
@@ -24,8 +23,6 @@ public:
         DBConnector *applDb,
         const std::vector<std::string> &tableNames,
         VNetRouteOrch * vNetRouteOrch);
-
-    void handleMirrorSessionMessage(const std::string & op, const IpAddress& ip);
 
 private:
 

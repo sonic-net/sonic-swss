@@ -2046,7 +2046,7 @@ void VNetRouteOrch::attach(Observer* observer, const IpAddress& dstAddr)
         observerEntry->second.routeTable.rbegin()->first.to_string().c_str(),
         dstAddr.to_string().c_str());
 
-    for (const auto & route : observerEntry->second.routeTable)
+    for (const auto& route : observerEntry->second.routeTable)
     {
         VNetNextHopUpdate update = {
             SET_COMMAND,
@@ -2070,6 +2070,7 @@ void VNetRouteOrch::detach(Observer* observer, const IpAddress& dstAddr)
         assert(false);
         return;
     }
+
     auto iter = std::find(
         observerEntry->second.observers.begin(),
         observerEntry->second.observers.end(),
@@ -2080,6 +2081,7 @@ void VNetRouteOrch::detach(Observer* observer, const IpAddress& dstAddr)
         assert(false);
         return;
     }
+
     for (const auto& route : observerEntry->second.routeTable)
     {
         VNetNextHopUpdate update = {
@@ -2145,7 +2147,7 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
                 assert(false);
                 continue;
             }
-            for (auto& observer : next_hop_observer->second.observers)
+            for (auto & observer : next_hop_observer->second.observers)
             {
                 VNetNextHopUpdate update = {
                     DEL_COMMAND,

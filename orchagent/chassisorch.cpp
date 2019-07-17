@@ -12,20 +12,6 @@ ChassisOrch::ChassisOrch(
 {
 }
 
-void ChassisOrch::handleMirrorSessionMessage(const std::string & op, const IpAddress& ip)
-{
-    SWSS_LOG_ENTER();
-
-    if (op == SET_COMMAND)
-    {
-        m_vNetRouteOrch->attach(this, ip);
-    }
-    else
-    {
-        m_vNetRouteOrch->detach(this, ip);
-    }
-}
-
 void ChassisOrch::update(SubjectType type, void* ctx)
 {
     SWSS_LOG_ENTER();
@@ -50,14 +36,14 @@ void ChassisOrch::addRouteToPassThroughRouteTable(const VNetNextHopUpdate& updat
     fvVector.emplace_back("next_hop_ip", update.nexthop.ips.to_string());
     fvVector.emplace_back("ifname", update.nexthop.ifname);
     fvVector.emplace_back("source", "CHASSIS_ORCH");
-    const std::string everflow_route = update.destination.to_string() + "/" + (update.destination.isV4() ? "32" : "128");
+    const std::string everflow_route = IpPrefix(update.destination.to_string()).to_string();
     m_passThroughRouteTable.set(everflow_route, fvVector);
 }
 
 void ChassisOrch::deleteRoutePassThroughRouteTable(const VNetNextHopUpdate& update)
 {
     SWSS_LOG_ENTER();
-    const std::string everflow_route = update.destination.to_string() + "/" + (update.destination.isV4() ? "32" : "128");
+    const std::string everflow_route = IpPrefix(update.destination.to_string()).to_string();
     m_passThroughRouteTable.del(everflow_route);
 }
 
@@ -74,7 +60,14 @@ void ChassisOrch::doTask(Consumer &consumer)
             auto t = it->second;
             const std::string & op = kfvOp(t);
             const std::string & ip = kfvKey(t);
-            handleMirrorSessionMessage(op, ip);
+            if (op == SET_COMMAND)
+            {
+                m_vNetRouteOrch->attach(this, ip);
+            }
+            else
+            {
+                m_vNetRouteOrch->detach(this, ip);
+            }
         }
         else
         {
