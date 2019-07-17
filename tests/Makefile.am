@@ -47,7 +47,8 @@ tests_SOURCES = swssnet_ut.cpp request_parser_ut.cpp aclorch_ut.cpp saispy_ut.cp
                 ../orchagent/vnetorch.cpp \
                 ../orchagent/dtelorch.cpp \
                 ../orchagent/flexcounterorch.cpp \
-                ../orchagent/watermarkorch.cpp
+                ../orchagent/watermarkorch.cpp \
+                ../orchagent/chassisorch.cpp
 
 tests_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)
 tests_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_GTEST) $(CFLAGS_SAI)

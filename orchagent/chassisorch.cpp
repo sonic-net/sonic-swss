@@ -28,6 +28,7 @@ void ChassisOrch::handleMirrorSessionMessage(const std::string & op, const IpAdd
 
 void ChassisOrch::update(SubjectType type, void* ctx)
 {
+    SWSS_LOG_ENTER();
     VNetNextHopUpdate* updateInfo = reinterpret_cast<VNetNextHopUpdate*>(ctx);
     if (updateInfo->op == SET_COMMAND)
     {
