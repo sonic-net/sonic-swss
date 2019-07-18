@@ -165,12 +165,15 @@ void TeamSync::removeLag(const string &lagName)
     for (auto it : selectable->m_lagMembers)
     {
         m_lagMemberTable.del(lagName + ":" + it.first);
+
+        SWSS_LOG_INFO("Remove member %s before removing LAG %s",
+                it.first.c_str(), lagName.c_str());
     }
 
     /* Delete the LAG */
     m_lagTable.del(lagName);
 
-    SWSS_LOG_INFO("Remove %s", lagName.c_str());
+    SWSS_LOG_INFO("Remove LAG %s", lagName.c_str());
 
     /* Return when the team instance hasn't been tracked before */
     if (m_teamSelectables.find(lagName) == m_teamSelectables.end())
@@ -281,6 +284,9 @@ int TeamSync::TeamPortSync::onChange()
             FieldValueTuple l("status", it.second ? "enabled" : "disabled");
             v.push_back(l);
             m_lagMemberTable->set(key, v);
+
+            SWSS_LOG_INFO("Set LAG %s member %s with status %s",
+                    m_lagName.c_str(), it.first.c_str(), it.second ? "enabled" : "disabled");
         }
     }
 
@@ -290,6 +296,9 @@ int TeamSync::TeamPortSync::onChange()
         {
             string key = m_lagName + ":" + it.first;
             m_lagMemberTable->del(key);
+
+            SWSS_LOG_INFO("Remove member %s from LAG %s",
+                    it.first.c_str(), m_lagName.c_str());
         }
     }
 
