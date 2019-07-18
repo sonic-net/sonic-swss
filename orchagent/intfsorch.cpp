@@ -179,6 +179,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     {
         if (!ip_prefix && addRouterIntfs(vrf_id, port))
         {
+            gPortsOrch->increasePortRefCount(alias);
             IntfsEntry intfs_entry;
             intfs_entry.ref_count = 0;
             intfs_entry.vrf_id = vrf_id;
@@ -261,6 +262,7 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
     {
         if (m_syncdIntfses[alias].ip_addresses.size() == 0 && removeRouterIntfs(port))
         {
+            gPortsOrch->decreasePortRefCount(alias);
             m_syncdIntfses.erase(alias);
             m_vrfOrch->decreaseVrfRefCount(vrf_id);
             return true;
@@ -780,7 +782,6 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
     }
 
     /* check the state of intf, if registering the intf to FC will result in runtime error */
-    vector<FieldValueTuple> fvt;
     vector<FieldValueTuple> fieldValues;
     fieldValues.emplace_back(RIF_COUNTER_ID_LIST, counters_stream.str());
 
@@ -798,10 +799,7 @@ void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
     /* remove it from FLEX_COUNTER_DB */
     string key = getRifFlexCounterTableKey(id);
 
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(RIF_COUNTER_ID_LIST, "");
-
-    m_flexCounterTable->set(key, fieldValues);
+    m_flexCounterTable->del(key);
     SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
 }
 

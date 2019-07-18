@@ -605,7 +605,8 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
         return false;
     }
 
-    SWSS_LOG_NOTICE("Vxlan map for tunnel '%s' was created", tunnelName.c_str());
+    SWSS_LOG_NOTICE("Vxlan map for tunnel '%s' and vni '%d' was created",
+            tunnelName.c_str(), vni);
     return true;
 }
 

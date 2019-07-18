@@ -210,7 +210,7 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
             SWSS_LOG_ERROR("Failed to create trap %d, rv:%d", trap_id, status);
             return false;
         }
-        m_syncdTrapIds[trap_id] = hostif_trap_id;
+        m_syncdTrapIds[trap_id] = trap_group_id;
     }
 
     return true;
@@ -604,7 +604,7 @@ void CoppOrch::doTask(Consumer &consumer)
         {
             task_status = processCoppRule(consumer);
         }
-        catch(const out_of_range e)
+        catch(const out_of_range& e)
         {
             SWSS_LOG_ERROR("processing copp rule threw out_of_range exception:%s", e.what());
             task_status = task_process_status::task_invalid_entry;

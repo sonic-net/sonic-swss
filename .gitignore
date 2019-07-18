@@ -16,6 +16,8 @@ debian/libswsscommon.postrm.debhelper
 debian/libswsscommon.substvars
 debian/swss.debhelper.log
 debian/swss.substvars
+debian/swss-dbg.debhelper.log
+debian/swss-dbg.substvars
 
 debian/libswsscommon-dev/
 debian/libswsscommon/

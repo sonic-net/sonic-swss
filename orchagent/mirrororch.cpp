@@ -786,7 +786,7 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         }
         else
         {
-            session.nexthopInfo.nexthop = NextHopKey();
+            session.nexthopInfo.nexthop = NextHopKey("0.0.0.0", "");
         }
 
         // Resolve the neighbor of the new next hop

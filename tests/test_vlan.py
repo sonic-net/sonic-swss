@@ -35,8 +35,8 @@ class TestVlan(object):
         tbl._del("Vlan" + vlan + "|" + interface)
         time.sleep(1)
 
-    def check_syslog(self, dvs, marker, err_log, vlan_str, expected_cnt):
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep vlanmgrd | grep \"%s\" | grep -i %s | wc -l" % (marker, err_log, vlan_str)])
+    def check_syslog(self, dvs, marker, process, err_log, vlan_str, expected_cnt):
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep %s | grep \"%s\" | grep -i %s | wc -l" % (marker, process, err_log, vlan_str)])
         assert num.strip() == str(expected_cnt)
 
     def test_VlanAddRemove(self, dvs, testlog):
@@ -328,7 +328,7 @@ class TestVlan(object):
 
         if len(vlan_entries) == 0:
             # check error log
-            self.check_syslog(dvs, marker, "Invalid key format. No 'Vlan' prefix:", vlan_prefix+vlan, 1)
+            self.check_syslog(dvs, marker, "vlanmgrd", "Invalid key format. No 'Vlan' prefix:", vlan_prefix+vlan, 1)
         else:
             #remove vlan
             self.remove_vlan(vlan)
@@ -359,7 +359,7 @@ class TestVlan(object):
 
         if len(vlan_entries) == 0:
             # check error log
-            self.check_syslog(dvs, marker, "Invalid key format. Not a number after \'Vlan\' prefix:", vlan_prefix+vlan, 1)
+            self.check_syslog(dvs, marker, "vlanmgrd", "Invalid key format. Not a number after \'Vlan\' prefix:", vlan_prefix+vlan, 1)
         else:
             #remove vlan
             self.remove_vlan(vlan)
@@ -436,3 +436,43 @@ class TestVlan(object):
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
         assert len(vlan_entries) == 0
+
+    def test_RemoveVlanWithRouterInterface(self, dvs, testlog):
+        dvs.setup_db()
+        marker = dvs.add_log_marker()
+
+        # create vlan
+        dvs.create_vlan("100")
+
+        # check asic database
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+        vlan_oid = vlan_entries[0]
+
+        (status, fvs) = tbl.get(vlan_oid)
+        assert status == True
+        for fv in fvs:
+            if fv[0] == "SAI_VLAN_ATTR_VLAN_ID":
+                assert fv[1] == "100"
+
+        # assign IP to interface
+        dvs.add_ip_address("Vlan100", "20.0.0.8/29")
+
+        # check ASIC router interface database for mtu changes.
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
+        intf_entries = tbl.getKeys()
+        # one loopback router interface one vlan based router interface
+        assert len(intf_entries) == 2
+
+        # remvoe vlan
+        dvs.remove_vlan("100")
+
+        # check error log
+        self.check_syslog(dvs, marker, "orchagent", "Failed to remove ref count", "Vlan100", 1)
+
+        # remove IP from interface
+        dvs.remove_ip_address("Vlan100", "20.0.0.8/29")
+
+        # remvoe vlan
+        dvs.remove_vlan("100")

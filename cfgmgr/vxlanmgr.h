@@ -26,7 +26,7 @@ public:
         std::string m_vxlan;
         std::string m_vxlanIf;
     } VxlanInfo;
-
+    ~VxlanMgr();
 private:
     void doTask(Consumer &consumer);
 
@@ -51,6 +51,7 @@ private:
     bool createVxlan(const VxlanInfo & info);
     bool deleteVxlan(const VxlanInfo & info);
 
+    void clearAllVxlanDevices();
 
     ProducerStateTable m_appVxlanTunnelTable,m_appVxlanTunnelMapTable;
     Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable;
