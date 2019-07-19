@@ -361,8 +361,10 @@ struct VNetNextHopUpdate
     IpPrefix prefix;
     nextHop nexthop;
 };
+/* VNetEntry: vnet name, next hop IP address(es)  */
+typedef std::map<std::string, nextHop> VNetEntry;
 /* VNetRouteTable: destination network, vnet name, next hop IP address(es) */
-typedef std::map<IpPrefix, std::tuple<std::string, nextHop> > VNetRouteTable;
+typedef std::map<IpPrefix, VNetEntry > VNetRouteTable;
 struct VNetNextHopObserverEntry
 {
     VNetRouteTable routeTable;

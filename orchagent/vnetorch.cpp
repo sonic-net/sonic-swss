@@ -2032,6 +2032,7 @@ void VNetRouteOrch::attach(Observer* observer, const IpAddress& dstAddr)
             {
                 SWSS_LOG_INFO("Prefix %s covers destination address",
                     route.first.to_string().c_str());
+
                 observerEntry->second.routeTable.emplace(
                     route.first,
                     route.second
@@ -2046,16 +2047,21 @@ void VNetRouteOrch::attach(Observer* observer, const IpAddress& dstAddr)
         observerEntry->second.routeTable.rbegin()->first.to_string().c_str(),
         dstAddr.to_string().c_str());
 
-    for (const auto& route : observerEntry->second.routeTable)
+    auto bestRoute = observerEntry->second.routeTable.rbegin();
+    if (bestRoute != observerEntry->second.routeTable.rend())
     {
-        VNetNextHopUpdate update = {
-            SET_COMMAND,
-            std::get<0>(route.second), // vnet name
-            dstAddr, // destination
-            route.first, // prefix
-            std::get<1>(route.second) // nexthop
-        };
-        observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, reinterpret_cast<void*>(&update));
+        for (auto vnetEntry : bestRoute->second)
+        {
+            VNetNextHopUpdate update = 
+            {
+                SET_COMMAND,
+                vnetEntry.first, // vnet name
+                dstAddr, // destination
+                bestRoute->first, // prefix
+                vnetEntry.second // nexthop
+            };
+            observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, reinterpret_cast<void*>(&update));
+        }
     }
 }
 
@@ -2082,16 +2088,21 @@ void VNetRouteOrch::detach(Observer* observer, const IpAddress& dstAddr)
         return;
     }
 
-    for (const auto& route : observerEntry->second.routeTable)
+    auto bestRoute = observerEntry->second.routeTable.rbegin();
+    if (bestRoute != observerEntry->second.routeTable.rend())
     {
-        VNetNextHopUpdate update = {
-            DEL_COMMAND,
-            std::get<0>(route.second), // vnet name
-            dstAddr, // destination
-            route.first, // prefix
-            std::get<1>(route.second) // nexthop
-        };
-        observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, reinterpret_cast<void*>(&update));
+        for (auto vnetEntry : bestRoute->second)
+        {
+            VNetNextHopUpdate update = 
+            {
+                DEL_COMMAND,
+                vnetEntry.first, // vnet name
+                dstAddr, // destination
+                bestRoute->first, // prefix
+                vnetEntry.second // nexthop
+            };
+            observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, reinterpret_cast<void*>(&update));
+        }
     }
     next_hop_observers_.erase(observerEntry);
 }
@@ -2100,25 +2111,42 @@ void VNetRouteOrch::addRoute(const std::string& vnet, const IpPrefix& ipPrefix, 
 {
     SWSS_LOG_ENTER();
 
-    for (auto & next_hop_observer : next_hop_observers_)
+    for (auto& next_hop_observer : next_hop_observers_)
     {
         if (ipPrefix.isAddressInSubnet(next_hop_observer.first))
         {
-            next_hop_observer.second.routeTable.emplace(ipPrefix, std::make_tuple(vnet, nh));
-            for (auto& observer : next_hop_observer.second.observers)
+            auto route_insert_result = next_hop_observer.second.routeTable.emplace(ipPrefix, VNetEntry());            
+            
+            auto vnet_result_result = route_insert_result.first->second.emplace(vnet, nh);
+            if (!vnet_result_result.second)
             {
-                VNetNextHopUpdate update = { 
-                    SET_COMMAND, 
-                    vnet,
-                    next_hop_observer.first, 
-                    ipPrefix, 
-                    nh
+                if (vnet_result_result.first->second.ips == nh.ips 
+                    && vnet_result_result.first->second.ifname == nh.ifname)
+                {
+                    continue;
+                }
+                vnet_result_result.first->second = nh;
+            }
+
+            // If the inserted route is the best route. (Table should not be empty. Because we inserted a new entry above)
+            if (route_insert_result.first == --next_hop_observer.second.routeTable.end())
+            {
+                VNetNextHopUpdate update = 
+                {
+                    SET_COMMAND,
+                    vnet, // vnet name
+                    next_hop_observer.first, // destination
+                    ipPrefix, // prefix
+                    nh // nexthop
                 };
-                observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, reinterpret_cast<void*>(&update));
+                for (auto& observer : next_hop_observer.second.observers)
+                {
+                    observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, reinterpret_cast<void*>(&update));
+                }
             }
         }
     }
-    syncd_routes_.emplace(ipPrefix, std::make_tuple(vnet, nh));
+    syncd_routes_.emplace(ipPrefix, VNetEntry()).first->second[vnet] = nh;
 }
 
 void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
@@ -2147,14 +2175,18 @@ void VNetRouteOrch::delRoute(const IpPrefix& ipPrefix)
                 assert(false);
                 continue;
             }
-            for (auto & observer : next_hop_observer->second.observers)
+            if (itr->second.empty())
+            {
+                continue;
+            }
+            for (auto& observer : next_hop_observer->second.observers)
             {
                 VNetNextHopUpdate update = {
                     DEL_COMMAND,
-                    std::get<0>(itr->second), // vnet name
+                    itr->second.rbegin()->first, // vnet name
                     next_hop_observer->first, // destination
                     itr->first, // prefix
-                    std::get<1>(itr->second) // nexthop
+                    itr->second.rbegin()->second // nexthop
                 };
                 observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, reinterpret_cast<void*>(&update));
             }
