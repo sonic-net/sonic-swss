@@ -55,23 +55,16 @@ void ChassisOrch::doTask(Consumer &consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        if (tableName == CFG_PASS_THROUGH_ROUTE_TABLE_NAME)
+        auto t = it->second;
+        const std::string & op = kfvOp(t);
+        const std::string & ip = kfvKey(t);
+        if (op == SET_COMMAND)
         {
-            auto t = it->second;
-            const std::string & op = kfvOp(t);
-            const std::string & ip = kfvKey(t);
-            if (op == SET_COMMAND)
-            {
-                m_vNetRouteOrch->attach(this, ip);
-            }
-            else
-            {
-                m_vNetRouteOrch->detach(this, ip);
-            }
+            m_vNetRouteOrch->attach(this, ip);
         }
         else
         {
-            SWSS_LOG_ERROR("Unknown table : %s", tableName.c_str());
+            m_vNetRouteOrch->detach(this, ip);
         }
         it = consumer.m_toSync.erase(it);
     }
