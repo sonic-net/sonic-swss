@@ -46,12 +46,14 @@ int gBatchSize = DEFAULT_BATCH_SIZE;
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
 bool gLogRotate = false;
+bool gSybcMode = false;
+
 ofstream gRecordOfs;
 string gRecordFile;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-s]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -61,6 +63,7 @@ void usage()
     cout << "    -d record_location: set record logs folder location (default .)" << endl;
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
+    cout << "    -s: enable synchronous mode" << endl;
 }
 
 void sighup_handler(int signo)
@@ -117,7 +120,7 @@ int main(int argc, char **argv)
 
     string record_location = ".";
 
-    while ((opt = getopt(argc, argv, "b:m:r:d:h")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:d:hs")) != -1)
     {
         switch (opt)
         {
@@ -162,6 +165,11 @@ int main(int argc, char **argv)
         case 'h':
             usage();
             exit(EXIT_SUCCESS);
+        case 's':
+            gSyncMode = true;
+            SWSS_LOG_NOTICE("Enabling synchronous mode");
+            break;
+
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -218,6 +226,14 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
     SWSS_LOG_NOTICE("Create a switch");
+
+    if (gSyncMode)
+    {
+        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_MODE;
+        attr.value.booldata = true;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
 
     /* Get switch source MAC address if not provided */
     if (!gMacAddress)
