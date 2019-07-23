@@ -1596,10 +1596,13 @@ void PortsOrch::doPortTask(Consumer &consumer)
             {
                 for (auto it = m_portListLaneMap.begin(); it != m_portListLaneMap.end();)
                 {
-                    if (m_lanesAliasSpeedMap.find(it->first) == m_lanesAliasSpeedMap.end())
+                    sai_uint32_t port_speed;
+                    auto is = m_lanesAliasSpeedMap.find(it->first);
+                    getPortSpeed(it->second, port_speed);
+                    if ((m_lanesAliasSpeedMap.find(it->first) == m_lanesAliasSpeedMap.end()) || (get<1>(is->second) != port_speed))
                     {
                         char *platform = getenv("platform");
-                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
+                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, INVM_PLATFORM_SUBSTRING)))
                         {
                             if (!removePort(it->second))
                             {
@@ -1628,7 +1631,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         // work around to avoid syncd termination on SAI error due missing create_port SAI API
                         // can be removed when SAI redis return NotImplemented error
                         char *platform = getenv("platform");
-                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
+                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, INVM_PLATFORM_SUBSTRING)))
                         {
                             if (!addPort(it->first, get<1>(it->second), get<2>(it->second), get<3>(it->second)))
                             {

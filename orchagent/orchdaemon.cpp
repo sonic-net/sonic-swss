@@ -215,7 +215,7 @@ bool OrchDaemon::init()
         CFG_PFC_WD_TABLE_NAME
     };
 
-    if ((platform == MLNX_PLATFORM_SUBSTRING) || (platform == BFN_PLATFORM_SUBSTRING))
+    if ((platform == MLNX_PLATFORM_SUBSTRING) || (platform == INVM_PLATFORM_SUBSTRING) || (platform == BFN_PLATFORM_SUBSTRING))
     {
 
         static const vector<sai_port_stat_t> portStatIds =
@@ -246,7 +246,7 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
-        if (platform == MLNX_PLATFORM_SUBSTRING)
+        if ((platform == MLNX_PLATFORM_SUBSTRING) || (platform == INVM_PLATFORM_SUBSTRING))
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
