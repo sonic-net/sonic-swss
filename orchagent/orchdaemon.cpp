@@ -126,7 +126,7 @@ bool OrchDaemon::init()
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
-    TableConnector appDbAclTable(m_applDb, APP_ACL_TABLE_NAME);
+    TableConnector appDbAclTable(m_applDb, APP_ACL_TABLE_TABLE_NAME);
     TableConnector appDbAclRuleTable(m_applDb, APP_ACL_RULE_TABLE_NAME);
 
     vector<TableConnector> acl_table_connectors = {
