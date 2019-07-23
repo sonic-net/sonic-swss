@@ -1,22 +1,22 @@
 /* Copyright(c) 2016-2019 Nephos.
-*
-* This program is free software; you can redistribute it and/or modify it
-* under the terms and conditions of the GNU General Public License,
-* version 2, as published by the Free Software Foundation.
-*
-* This program is distributed in the hope it will be useful, but WITHOUT
-* ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-* FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-* more details.
-*
-* You should have received a copy of the GNU General Public License along with
-* this program; if not, see <http://www.gnu.org/licenses/>.
-*
-* The full GNU General Public License is included in this distribution in
-* the file called "COPYING".
-*
-*  Maintainer: Jim Jiang from nephos
-*/
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, see <http://www.gnu.org/licenses/>.
+ *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
+ *  Maintainer: Jim Jiang from nephos
+ */
 
 #ifndef __MCLAGLINK__
 #define __MCLAGLINK__
@@ -46,8 +46,8 @@ struct mclag_fdb_info
     char mac[32];
     unsigned int vid;
     char port_name[32];
-    short type;/*dynamic or static*/
-    short op_type;/*add or del*/
+    short type;     /*dynamic or static*/
+    short op_type;  /*add or del*/
 };
 
 struct mclag_fdb
@@ -56,28 +56,34 @@ struct mclag_fdb
     unsigned int vid;
     std::string port_name;
     std::string type;/*dynamic or static*/
-    
-    mclag_fdb(std::string val_mac, unsigned int val_vid, std::string val_pname, 
-            std::string val_type):mac(val_mac),vid(val_vid),port_name(val_pname),type(val_type){}
-    mclag_fdb() {}
-    
-    bool operator <(const mclag_fdb &fdb) const 
+
+    mclag_fdb(std::string val_mac, unsigned int val_vid, std::string val_pname,
+              std::string val_type) : mac(val_mac), vid(val_vid), port_name(val_pname), type(val_type)
     {
-            if(mac != fdb.mac) 
-                return mac < fdb.mac;
-            else if (vid != fdb.vid) 
-                return vid < fdb.vid;
-            else 
-                return port_name < fdb.port_name;
-            //else if (port_name != fdb.port_name) return port_name < fdb.port_name;
-            //else return type <fdb.type;
+    }
+    mclag_fdb()
+    {
     }
 
-    bool operator ==(const mclag_fdb &fdb) const 
+    bool operator <(const mclag_fdb &fdb) const
     {
-            if(mac != fdb.mac) return 0;
-            if (vid != fdb.vid) return 0;
-            return 1;
+        if (mac != fdb.mac)
+            return mac < fdb.mac;
+        else if (vid != fdb.vid)
+            return vid < fdb.vid;
+        else
+            return port_name < fdb.port_name;
+        //else if (port_name != fdb.port_name) return port_name < fdb.port_name;
+        //else return type <fdb.type;
+    }
+
+    bool operator ==(const mclag_fdb &fdb) const
+    {
+        if (mac != fdb.mac)
+            return 0;
+        if (vid != fdb.vid)
+            return 0;
+        return 1;
     }
 
 };
@@ -85,7 +91,7 @@ struct mclag_fdb
 class MclagLink : public Selectable {
 public:
     const int MSG_BATCH_SIZE;
-    std::map<std::string,std:: string> *p_learn;
+    std::map<std::string, std:: string> *p_learn;
     ProducerStateTable * p_port_tbl;
     ProducerStateTable * p_lag_tbl;
     ProducerStateTable * p_tnl_tbl;
@@ -123,7 +129,7 @@ private:
     int m_server_socket;
     int m_connection_socket;
 
-    void mclagsyncd_get_oid_2_port_name_map(std::unordered_map<std::string,std:: string> & port_map);
+    void mclagsyncd_get_oid_2_port_name_map(std::unordered_map<std::string, std:: string> & port_map);
     void mclagsyncd_get_bridgePortId_2_attrPortId_map(std::map<std::string, std:: string> *oid_map);
     void mclagsyncd_get_vid_by_bvid(std::string &bvid, std::string &vlanid);
     void mclagsyncd_get_fdb_set(std::set<mclag_fdb> *fdb_set);
