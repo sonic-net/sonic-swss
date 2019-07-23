@@ -3,6 +3,7 @@
 #include "logger.h"
 #include "sai_serialize.h"
 
+#include <inttypes.h>
 #include <sstream>
 #include <iostream>
 
