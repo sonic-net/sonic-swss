@@ -280,10 +280,10 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             sai_status = sai_buffer_api->set_buffer_pool_attribute(sai_object, &attribs[0]);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
+                SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
                 return task_process_status::task_failed;
             }
-            SWSS_LOG_DEBUG("Modified existing pool:%lx, type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
+            SWSS_LOG_DEBUG("Modified existing pool:%" PRIx64 ", type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
         }
         else
         {
@@ -422,11 +422,11 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
-            SWSS_LOG_DEBUG("Modifying existing sai object:%lx ", sai_object);
+            SWSS_LOG_DEBUG("Modifying existing sai object:%" PRIx64, sai_object);
             sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribs[0]);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
+                SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
                 return task_process_status::task_failed;
             }
         }
@@ -521,7 +521,7 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
                 return task_process_status::task_invalid_entry;
             }
             queue_id = port.m_queue_ids[ind];
-            SWSS_LOG_DEBUG("Applying buffer profile:0x%lx to queue index:%zd, queue sai_id:0x%lx", sai_buffer_profile, ind, queue_id);
+            SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
             sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
             if (sai_status != SAI_STATUS_SUCCESS)
             {
@@ -608,7 +608,7 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
                 return task_process_status::task_invalid_entry;
             }
             pg_id = port.m_priority_group_ids[ind];
-            SWSS_LOG_DEBUG("Applying buffer profile:0x%lx to port:%s pg index:%zd, pg sai_id:0x%lx", sai_buffer_profile, port_name.c_str(), ind, pg_id);
+            SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to port:%s pg index:%zd, pg sai_id:0x%" PRIx64, sai_buffer_profile, port_name.c_str(), ind, pg_id);
             sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attribute(pg_id, &attr);
             if (sai_status != SAI_STATUS_SUCCESS)
             {

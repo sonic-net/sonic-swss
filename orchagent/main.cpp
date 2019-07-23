@@ -12,6 +12,7 @@ extern "C" {
 #include <chrono>
 #include <getopt.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 #include <sys/time.h>
 #include "timestamp.h"
@@ -246,7 +247,7 @@ int main(int argc, char **argv)
     }
 
     gVirtualRouterId = attr.value.oid;
-    SWSS_LOG_NOTICE("Get switch virtual router ID %lx", gVirtualRouterId);
+    SWSS_LOG_NOTICE("Get switch virtual router ID %" PRIx64, gVirtualRouterId);
 
     /* Create a loopback underlay router interface */
     vector<sai_attribute_t> underlay_intf_attrs;
@@ -267,7 +268,7 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    SWSS_LOG_NOTICE("Created underlay router interface ID %lx", gUnderlayIfId);
+    SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
 
     /* Initialize orchestration components */
     DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);

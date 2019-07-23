@@ -1,4 +1,5 @@
 #include <string.h>
+#include <inttypes.h>
 #include "tunneldecaporch.h"
 #include "portsorch.h"
 #include "logger.h"
@@ -216,7 +217,7 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
         return false;
     }
 
-    SWSS_LOG_NOTICE("Create overlay loopback router interface oid:%lx", overlayIfId);
+    SWSS_LOG_NOTICE("Create overlay loopback router interface oid:%" PRIx64, overlayIfId);
 
     // tunnel type (only ipinip for now)
     attr.id = SAI_TUNNEL_ATTR_TYPE;
@@ -525,7 +526,7 @@ bool TunnelDecapOrch::removeDecapTunnel(string key)
     status = sai_tunnel_api->remove_tunnel(tunnel_info->tunnel_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove tunnel: %lu", tunnel_info->tunnel_id);
+        SWSS_LOG_ERROR("Failed to remove tunnel: %" PRIu64, tunnel_info->tunnel_id);
         return false;
     }
 
@@ -533,7 +534,7 @@ bool TunnelDecapOrch::removeDecapTunnel(string key)
     status = sai_router_intfs_api->remove_router_interface(tunnel_info->overlay_intf_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove tunnel overlay interface: %lu", tunnel_info->overlay_intf_id);
+        SWSS_LOG_ERROR("Failed to remove tunnel overlay interface: %" PRIu64, tunnel_info->overlay_intf_id);
         return false;
     }
 
@@ -558,7 +559,7 @@ bool TunnelDecapOrch::removeDecapTunnelTermEntry(sai_object_id_t tunnel_term_id,
     status = sai_tunnel_api->remove_tunnel_term_table_entry(tunnel_term_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove tunnel table entry: %lu", tunnel_term_id);
+        SWSS_LOG_ERROR("Failed to remove tunnel table entry: %" PRIu64, tunnel_term_id);
         return false;
     }
 

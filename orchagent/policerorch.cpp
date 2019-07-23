@@ -2,6 +2,7 @@
 #include "policerorch.h"
 
 #include "converter.h"
+#include <inttypes.h>
 
 using namespace std;
 using namespace swss;
@@ -63,7 +64,7 @@ bool PolicerOrch::getPolicerOid(const string &name, sai_object_id_t &oid)
     if (policerExists(name))
     {
         oid = m_syncdPolicers[name];
-        SWSS_LOG_NOTICE("Get policer %s oid:%lx", name.c_str(), oid);
+        SWSS_LOG_NOTICE("Get policer %s oid:%" PRIx64, name.c_str(), oid);
         return true;
     }
 
