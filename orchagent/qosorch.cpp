@@ -869,6 +869,30 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
                 // TODO: The meaning is to be able to adjus priority of the given scheduler group.
                 // However currently SAI model does not provide such ability.
             }
+            else if (fvField(*i) == scheduler_min_bandwidth_rate_field_name)
+            {
+                attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_RATE;
+                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                sai_attr_list.push_back(attr);
+            }
+            else if (fvField(*i) == scheduler_min_bandwidth_burst_rate_field_name)
+            {
+                attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_BURST_RATE;
+                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                sai_attr_list.push_back(attr);
+            }
+            else if (fvField(*i) == scheduler_max_bandwidth_rate_field_name)
+            {
+                attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE;
+                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                sai_attr_list.push_back(attr);
+            }
+            else if (fvField(*i) == scheduler_max_bandwidth_burst_rate_field_name)
+            {
+                attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_BURST_RATE;
+                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                sai_attr_list.push_back(attr);
+            }
             else {
                 SWSS_LOG_ERROR("Unknown field:%s", fvField(*i).c_str());
                 return task_process_status::task_invalid_entry;
