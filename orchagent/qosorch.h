@@ -36,10 +36,14 @@ const string scheduler_algo_STRICT              = "STRICT";
 const string scheduler_weight_field_name        = "weight";
 const string scheduler_priority_field_name      = "priority";
 
-const string scheduler_min_bandwidth_rate_field_name        = "cir";
-const string scheduler_min_bandwidth_burst_rate_field_name  = "cbs";
-const string scheduler_max_bandwidth_rate_field_name        = "pir";
-const string scheduler_max_bandwidth_burst_rate_field_name  = "pbs";
+const string scheduler_min_bandwidth_rate_field_name
+                                                = "cir";
+const string scheduler_min_bandwidth_burst_rate_field_name  
+                                                = "cbs";
+const string scheduler_max_bandwidth_rate_field_name        
+                                                = "pir";
+const string scheduler_max_bandwidth_burst_rate_field_name  
+                                                = "pbs";
 
 const string ecn_field_name                     = "ecn";
 const string ecn_none                           = "ecn_none";
