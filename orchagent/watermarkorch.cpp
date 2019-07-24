@@ -51,7 +51,7 @@ void WatermarkOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -142,7 +142,7 @@ void WatermarkOrch::handleFcConfigUpdate(const std::string &key, const std::vect
 void WatermarkOrch::doTask(NotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
