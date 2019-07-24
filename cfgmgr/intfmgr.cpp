@@ -64,7 +64,11 @@ void IntfMgr::setIntfVrf(const string &alias, const string &vrfName)
     {
         cmd << IP_CMD << " link set " << alias << " nomaster";
     }
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
 }
 
 void IntfMgr::addLoopbackIntf(const string &alias)
@@ -100,7 +104,12 @@ int IntfMgr::getIntfIpCount(const string &alias)
     string res;
 
     cmd << IP_CMD << " address show " << alias << " | grep inet | grep -v 'inet6 fe80:' | wc -l";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        return 0;
+    }
 
     return std::stoi(res);
 }
