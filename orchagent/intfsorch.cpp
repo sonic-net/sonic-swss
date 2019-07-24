@@ -207,22 +207,30 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
      * we should wait until entry with /8 netmask will be removed.
      * Time frame between those event is quite small.*/
     bool overlaps = false;
-    for (const auto &prefixIt: m_syncdIntfses[alias].ip_addresses)
+    for (const auto &intfsIt: m_syncdIntfses)
     {
-        if (prefixIt.isAddressInSubnet(ip_prefix->getIp()) ||
-                ip_prefix->isAddressInSubnet(prefixIt.getIp()))
+        if (port.m_vr_id != intfsIt.second.vrf_id)
         {
-            overlaps = true;
-            SWSS_LOG_NOTICE("Router interface %s IP %s overlaps with %s.", port.m_alias.c_str(),
-                    prefixIt.to_string().c_str(), ip_prefix->to_string().c_str());
-            break;
+            continue;
         }
-    }
 
-    if (overlaps)
-    {
-        /* Overlap of IP address network */
-        return false;
+        for (const auto &prefixIt: intfsIt.second.ip_addresses)
+        {
+            if (prefixIt.isAddressInSubnet(ip_prefix->getIp()) ||
+                    ip_prefix->isAddressInSubnet(prefixIt.getIp()))
+            {
+                overlaps = true;
+                SWSS_LOG_NOTICE("Router interface %s IP %s overlaps with %s.", port.m_alias.c_str(),
+                        prefixIt.to_string().c_str(), ip_prefix->to_string().c_str());
+                break;
+            }
+        }
+
+        if (overlaps)
+        {
+            /* Overlap of IP address network */
+            return false;
+        }
     }
 
     addIp2MeRoute(port.m_vr_id, *ip_prefix);
