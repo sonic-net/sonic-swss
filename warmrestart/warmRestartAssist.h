@@ -115,6 +115,8 @@ private:
     std::string joinVectorString(const std::vector<FieldValueTuple> &fv);
     void setCacheEntryState(std::vector<FieldValueTuple> &fvVector, cache_state_t state);
     cache_state_t getCacheEntryState(const std::vector<FieldValueTuple> &fvVector);
+    bool contains(const std::vector<FieldValueTuple>& left,
+                  const std::vector<FieldValueTuple>& right);
 };
 
 }

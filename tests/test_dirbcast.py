@@ -23,6 +23,7 @@ def test_DirectedBroadcast(dvs, testlog):
     # create vlan interface in config db
     tbl = swsscommon.Table(db, "VLAN_INTERFACE")
     fvs = swsscommon.FieldValuePairs([("family", "IPv4")])
+    tbl.set("Vlan100", fvs)
     tbl.set("Vlan100|192.169.0.1/27", fvs)
 
     time.sleep(1)
@@ -77,3 +78,15 @@ def test_DirectedBroadcast(dvs, testlog):
                 assert fvs[0][1] == "FF:FF:FF:FF:FF:FF"
 
     assert dir_bcast
+
+    # Explicitly add a neighbor entry with BCAST MAC and check if its in ASIC_DB
+    dvs.runcmd("ip neigh replace 192.169.0.30 lladdr FF:FF:FF:FF:FF:FF dev Vlan100")
+
+    time.sleep(1)
+
+    keys = atbl.getKeys()
+    for key in keys:
+        neigh = json.loads(key)
+
+        if neigh['ip'] == "192.169.0.30":
+            assert False

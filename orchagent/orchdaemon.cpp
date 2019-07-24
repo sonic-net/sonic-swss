@@ -45,8 +45,20 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
 OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
-    for (Orch *o : m_orchList)
-        delete(o);
+    
+    /*
+     * Some orchagents call other agents in their destructor.
+     * To avoid accessing deleted agent, do deletion in reverse order.
+     * NOTE: This is stil not a robust solution, as order in this list
+     *       does not strictly match the order of construction of agents. 
+     * For a robust solution, first some cleaning/house-keeping in 
+     * orchagents management is in order.
+     * For now it fixes, possible crash during process exit.
+     */
+    auto it = m_orchList.rbegin();
+    for(; it != m_orchList.rend(); ++it) {
+        delete(*it);
+    }
 }
 
 bool OrchDaemon::init()
@@ -77,8 +89,24 @@ bool OrchDaemon::init()
             APP_VNET_RT_TABLE_NAME,
             APP_VNET_RT_TUNNEL_TABLE_NAME
     };
-    VNetOrch *vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+
+    vector<string> cfg_vnet_tables = {
+            CFG_VNET_RT_TABLE_NAME,
+            CFG_VNET_RT_TUNNEL_TABLE_NAME
+    };
+
+    VNetOrch *vnet_orch;
+    if (platform == MLNX_PLATFORM_SUBSTRING)
+    {
+        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME, VNET_EXEC::VNET_EXEC_BRIDGE);
+    }
+    else
+    {
+        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+    }
     gDirectory.set(vnet_orch);
+    VNetCfgRouteOrch *cfg_vnet_rt_orch = new VNetCfgRouteOrch(m_configDb, m_applDb, cfg_vnet_tables);
+    gDirectory.set(cfg_vnet_rt_orch);
     VNetRouteOrch *vnet_rt_orch = new VNetRouteOrch(m_applDb, vnet_tables, vnet_orch);
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME);
@@ -90,9 +118,9 @@ bool OrchDaemon::init()
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
-    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_configDb, CFG_VXLAN_TUNNEL_TABLE_NAME);
+    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_orch);
-    VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_configDb, CFG_VXLAN_TUNNEL_MAP_TABLE_NAME);
+    VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_applDb, APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_map_orch);
     VxlanVrfMapOrch *vxlan_vrf_orch = new VxlanVrfMapOrch(m_applDb, APP_VXLAN_VRF_TABLE_NAME);
     gDirectory.set(vxlan_vrf_orch);
@@ -120,11 +148,13 @@ bool OrchDaemon::init()
     };
     gBufferOrch = new BufferOrch(m_configDb, buffer_tables);
 
-    TableConnector stateDbMirrorSession(m_stateDb, APP_MIRROR_SESSION_TABLE_NAME);
-    TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
-    MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch);
+    PolicerOrch *policer_orch = new PolicerOrch(m_configDb, "POLICER");
 
-    TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_NAME);
+    TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
+    TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
+    MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
+
+    TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
     TableConnector appDbAclTable(m_applDb, APP_ACL_TABLE_TABLE_NAME);
     TableConnector appDbAclRuleTable(m_applDb, APP_ACL_RULE_TABLE_NAME);
@@ -144,7 +174,12 @@ bool OrchDaemon::init()
         CFG_DTEL_EVENT_TABLE_NAME
     };
 
-    WatermarkOrch *wm_orch = new WatermarkOrch(m_configDb, CFG_WATERMARK_TABLE_NAME);
+    vector<string> wm_tables = {
+        CFG_WATERMARK_TABLE_NAME,
+        CFG_FLEX_COUNTER_TABLE_NAME
+    };
+
+    WatermarkOrch *wm_orch = new WatermarkOrch(m_configDb, wm_tables);
 
     /*
      * The order of the orch list is important for state restore of warm start and
@@ -154,7 +189,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap.
      * That is ensured implicitly by the order of map key, "LAG_TABLE" is smaller than "VLAN_TABLE" in lexicographic order.
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch };
+    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch };
 
 
     bool initialize_dtel = false;
@@ -186,20 +221,20 @@ bool OrchDaemon::init()
     {
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
-        gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
-    } else {
-        gAclOrch = new AclOrch(acl_table_connectors, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch);
     }
+    TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
+    gAclOrch = new AclOrch(acl_table_connectors, stateDbSwitchTable, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
 
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);
     m_orchList.push_back(gAclOrch);
-    m_orchList.push_back(vnet_orch);
-    m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
     m_orchList.push_back(vxlan_vrf_orch);
+    m_orchList.push_back(cfg_vnet_rt_orch);
+    m_orchList.push_back(vnet_orch);
+    m_orchList.push_back(vnet_rt_orch);
 
     m_select = new Select();
 
@@ -213,7 +248,9 @@ bool OrchDaemon::init()
         CFG_PFC_WD_TABLE_NAME
     };
 
-    if (platform == MLNX_PLATFORM_SUBSTRING)
+    if ((platform == MLNX_PLATFORM_SUBSTRING)
+        || (platform == BFN_PLATFORM_SUBSTRING)
+        || (platform == NPS_PLATFORM_SUBSTRING))
     {
 
         static const vector<sai_port_stat_t> portStatIds =
@@ -244,13 +281,27 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
-        m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
-                    m_configDb,
-                    pfc_wd_tables,
-                    portStatIds,
-                    queueStatIds,
-                    queueAttrIds,
-                    PFC_WD_POLL_MSECS));
+        if ((platform == MLNX_PLATFORM_SUBSTRING)
+            || (platform == NPS_PLATFORM_SUBSTRING))
+        {
+            m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds,
+                        PFC_WD_POLL_MSECS));
+        }
+        else if (platform == BFN_PLATFORM_SUBSTRING)
+        {
+            m_orchList.push_back(new PfcWdSwOrch<PfcWdAclHandler, PfcWdLossyHandler>(
+                        m_configDb,
+                        pfc_wd_tables,
+                        portStatIds,
+                        queueStatIds,
+                        queueAttrIds,
+                        PFC_WD_POLL_MSECS));
+        }
     }
     else if (platform == BRCM_PLATFORM_SUBSTRING)
     {

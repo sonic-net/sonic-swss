@@ -17,23 +17,23 @@ extern sai_switch_api_t*    sai_switch_api;
 extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
 
-map<string, sai_meter_type_t> policer_meter_map = {
+static map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
     {"bytes", SAI_METER_TYPE_BYTES}
 };
 
-map<string, sai_policer_mode_t> policer_mode_map = {
+static map<string, sai_policer_mode_t> policer_mode_map = {
     {"sr_tcm", SAI_POLICER_MODE_SR_TCM},
     {"tr_tcm", SAI_POLICER_MODE_TR_TCM},
     {"storm",  SAI_POLICER_MODE_STORM_CONTROL}
 };
 
-map<string, sai_policer_color_source_t> policer_color_aware_map = {
+static map<string, sai_policer_color_source_t> policer_color_aware_map = {
     {"aware", SAI_POLICER_COLOR_SOURCE_AWARE},
     {"blind", SAI_POLICER_COLOR_SOURCE_BLIND}
 };
 
-map<string, sai_hostif_trap_type_t> trap_id_map = {
+static map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"stp", SAI_HOSTIF_TRAP_TYPE_STP},
     {"lacp", SAI_HOSTIF_TRAP_TYPE_LACP},
     {"eapol", SAI_HOSTIF_TRAP_TYPE_EAPOL},
@@ -71,7 +71,7 @@ map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"udld", SAI_HOSTIF_TRAP_TYPE_UDLD}
 };
 
-map<string, sai_packet_action_t> packet_action_map = {
+static map<string, sai_packet_action_t> packet_action_map = {
     {"drop", SAI_PACKET_ACTION_DROP},
     {"forward", SAI_PACKET_ACTION_FORWARD},
     {"copy", SAI_PACKET_ACTION_COPY},
@@ -210,7 +210,7 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
             SWSS_LOG_ERROR("Failed to create trap %d, rv:%d", trap_id, status);
             return false;
         }
-        m_syncdTrapIds[trap_id] = hostif_trap_id;
+        m_syncdTrapIds[trap_id] = trap_group_id;
     }
 
     return true;
@@ -604,7 +604,7 @@ void CoppOrch::doTask(Consumer &consumer)
         {
             task_status = processCoppRule(consumer);
         }
-        catch(const out_of_range e)
+        catch(const out_of_range& e)
         {
             SWSS_LOG_ERROR("processing copp rule threw out_of_range exception:%s", e.what());
             task_status = task_process_status::task_invalid_entry;

@@ -134,7 +134,8 @@ void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
         {
             if (route.first.isAddressInSubnet(dstAddr))
             {
-                SWSS_LOG_NOTICE("route%s", route.first.to_string().c_str());
+                SWSS_LOG_INFO("Prefix %s covers destination address",
+                        route.first.to_string().c_str());
                 observerEntry->second.routeTable.emplace(
                         route.first, route.second);
             }
@@ -159,6 +160,7 @@ void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
             dstAddr.to_string().c_str());
 
     // Trigger next hop change for the first time the observer is attached
+    // Note that rbegin() is pointing to the entry with longest prefix match
     auto route = observerEntry->second.routeTable.rbegin();
     if (route != observerEntry->second.routeTable.rend())
     {
@@ -170,19 +172,34 @@ void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
 void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr)
 {
     SWSS_LOG_ENTER();
+
     auto observerEntry = m_nextHopObservers.find(dstAddr);
 
     if (observerEntry == m_nextHopObservers.end())
     {
-        SWSS_LOG_ERROR("Failed to detach observer for %s. Entry not found.\n", dstAddr.to_string().c_str());
+        SWSS_LOG_ERROR("Failed to locate observer for destination IP %s",
+                dstAddr.to_string().c_str());
         assert(false);
+        return;
     }
 
-    for (auto iter = observerEntry->second.observers.begin(); iter != observerEntry->second.observers.end(); ++iter)
+    // Find the observer
+    for (auto iter = observerEntry->second.observers.begin();
+            iter != observerEntry->second.observers.end(); ++iter)
     {
         if (observer == *iter)
         {
-            m_observers.erase(iter);
+            observerEntry->second.observers.erase(iter);
+
+            SWSS_LOG_NOTICE("Detached next hop observer for destination IP %s",
+                    dstAddr.to_string().c_str());
+
+            // Remove NextHopObserverEntry if no observer is tracking this
+            // destination IP.
+            if (observerEntry->second.observers.empty())
+            {
+                m_nextHopObservers.erase(observerEntry);
+            }
             break;
         }
     }
@@ -948,7 +965,7 @@ bool RouteOrch::removeRoute(IpPrefix ipPrefix)
         /*
          * Decrease the reference count only when the route is pointing to a next hop.
          * Decrease the reference count when the route is pointing to a next hop group,
-         * and check wheather the reference count decreases to zero. If yes, then we need
+         * and check whether the reference count decreases to zero. If yes, then we need
          * to remove the next hop group.
          */
         decreaseNextHopRefCount(it_route->second);

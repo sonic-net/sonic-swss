@@ -11,6 +11,7 @@
 #include "netmsg.h"
 #include <team.h>
 
+#define TEAMSYNCD_APP_NAME  "teamsyncd"
 // seconds
 const uint32_t DEFAULT_WR_PENDING_TIMEOUT = 70;
 
@@ -55,7 +56,7 @@ public:
 
 protected:
     void addLag(const std::string &lagName, int ifindex, bool admin_state,
-                bool oper_state);
+                bool oper_state, unsigned int mtu);
     void removeLag(const std::string &lagName);
 
     /* valid only in WR mode */

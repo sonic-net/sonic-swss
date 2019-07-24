@@ -38,6 +38,7 @@ sai_object_id_t gVirtualRouterId;
 sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
+MacAddress gVxlanMacAddress;
 
 #define DEFAULT_BATCH_SIZE  128
 int gBatchSize = DEFAULT_BATCH_SIZE;
@@ -275,33 +276,22 @@ int main(int argc, char **argv)
 
     auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
 
-    try
+    if (!orchDaemon->init())
     {
-        if (!orchDaemon->init())
-        {
-            SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
-            exit(EXIT_FAILURE);
-        }
+        SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
+        exit(EXIT_FAILURE);
+    }
 
-        /*
-        * In syncd view comparison solution, apply view has been sent
-        * immediately after restore is done
-        */
-        if (!WarmStart::isWarmStart())
-        {
-            syncd_apply_view();
-        }
+    /*
+    * In syncd view comparison solution, apply view has been sent
+    * immediately after restore is done
+    */
+    if (!WarmStart::isWarmStart())
+    {
+        syncd_apply_view();
+    }
 
-        orchDaemon->start();
-    }
-    catch (char const *e)
-    {
-        SWSS_LOG_ERROR("Exception: %s", e);
-    }
-    catch (exception& e)
-    {
-        SWSS_LOG_ERROR("Failed due to exception: %s", e.what());
-    }
+    orchDaemon->start();
 
     return 0;
 }
