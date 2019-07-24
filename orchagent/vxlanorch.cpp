@@ -228,7 +228,8 @@ create_tunnel(
     sai_object_id_t tunnel_encap_id,
     sai_object_id_t tunnel_decap_id,
     sai_ip_address_t *src_ip,
-    sai_object_id_t underlay_rif)
+    sai_object_id_t underlay_rif,
+    sai_uint8_t encap_ttl=0)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_attrs;
@@ -261,6 +262,17 @@ create_tunnel(
     {
         attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
         attr.value.ipaddr = *src_ip;
+        tunnel_attrs.push_back(attr);
+    }
+
+    if (encap_ttl != 0)
+    {
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_MODE;
+        attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
+        tunnel_attrs.push_back(attr);
+
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_VAL;
+        attr.value.u8 = encap_ttl;
         tunnel_attrs.push_back(attr);
     }
 
@@ -358,7 +370,7 @@ remove_tunnel_termination(sai_object_id_t term_table_id)
     }
 }
 
-bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap)
+bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl)
 {
     try
     {
@@ -378,7 +390,7 @@ bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap)
             ip = &ips;
         }
 
-        ids_.tunnel_id = create_tunnel(ids_.tunnel_encap_id, ids_.tunnel_decap_id, ip, gUnderlayIfId);
+        ids_.tunnel_id = create_tunnel(ids_.tunnel_encap_id, ids_.tunnel_decap_id, ip, gUnderlayIfId, encap_ttl);
 
         ip = nullptr;
         if (!dst_ip_.isZero())
@@ -562,7 +574,7 @@ VxlanTunnelOrch::removeNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAd
 }
 
 bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t map, uint32_t vni,
-                                           sai_object_id_t encap, sai_object_id_t decap)
+                                           sai_object_id_t encap, sai_object_id_t decap, uint8_t encap_ttl)
 {
     SWSS_LOG_ENTER();
 
@@ -578,11 +590,11 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
     {
         if (map == TUNNEL_MAP_T_VIRTUAL_ROUTER)
         {
-            tunnel_obj->createTunnel(MAP_T::VRID_TO_VNI, MAP_T::VNI_TO_VRID);
+            tunnel_obj->createTunnel(MAP_T::VRID_TO_VNI, MAP_T::VNI_TO_VRID, encap_ttl);
         }
         else if (map == TUNNEL_MAP_T_BRIDGE)
         {
-            tunnel_obj->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE);
+            tunnel_obj->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE, encap_ttl);
         }
     }
 

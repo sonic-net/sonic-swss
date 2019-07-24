@@ -154,7 +154,7 @@ bool OrchDaemon::init()
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
     MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
-    TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_NAME);
+    TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
 
     vector<TableConnector> acl_table_connectors = {
@@ -179,7 +179,7 @@ bool OrchDaemon::init()
 
     /*
      * The order of the orch list is important for state restore of warm start and
-     * the queued processing in m_toSync map after gPortsOrch->isPortReady() is set.
+     * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
      *
      * For the multiple consumers in ports_tables, tasks for LAG_TABLE is processed before VLAN_TABLE
      * when iterating ConsumerMap.

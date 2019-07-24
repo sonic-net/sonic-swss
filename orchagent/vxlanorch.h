@@ -82,7 +82,7 @@ public:
         return active_;
     }
 
-    bool createTunnel(MAP_T encap, MAP_T decap);
+    bool createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl=0);
     sai_object_id_t addEncapMapperEntry(sai_object_id_t obj, uint32_t vni);
     sai_object_id_t addDecapMapperEntry(sai_object_id_t obj, uint32_t vni);
 
@@ -172,7 +172,7 @@ public:
     }
 
     bool createVxlanTunnelMap(string tunnelName, tunnel_map_type_t mapType, uint32_t vni,
-                              sai_object_id_t encap, sai_object_id_t decap);
+                              sai_object_id_t encap, sai_object_id_t decap, uint8_t encap_ttl=0);
 
     bool removeVxlanTunnelMap(string tunnelName, uint32_t vni);
 

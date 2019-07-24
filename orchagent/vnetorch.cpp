@@ -465,9 +465,10 @@ VnetBridgeInfo VNetBitmapObject::getBridgeInfoByVni(uint32_t vni, string tunnelN
     vector<sai_attribute_t> bpt_attrs;
     auto* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
     auto *tunnel = vxlan_orch->getVxlanTunnel(tunnelName);
+
     if (!tunnel->isActive())
     {
-        tunnel->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE);
+        tunnel->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE, VXLAN_ENCAP_TTL);
     }
 
     attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
@@ -1448,7 +1449,7 @@ bool VNetOrch::addOperation(const Request& request)
 
             VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(obj.get());
             if (!vxlan_orch->createVxlanTunnelMap(tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
-                                                  vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId()))
+                                                  vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId(), VXLAN_ENCAP_TTL))
             {
                 SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
                                 vnet_name.c_str(), tunnel.c_str());
