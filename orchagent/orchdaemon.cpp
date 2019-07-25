@@ -45,8 +45,20 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
 OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
-    for (Orch *o : m_orchList)
-        delete(o);
+    
+    /*
+     * Some orchagents call other agents in their destructor.
+     * To avoid accessing deleted agent, do deletion in reverse order.
+     * NOTE: This is stil not a robust solution, as order in this list
+     *       does not strictly match the order of construction of agents. 
+     * For a robust solution, first some cleaning/house-keeping in 
+     * orchagents management is in order.
+     * For now it fixes, possible crash during process exit.
+     */
+    auto it = m_orchList.rbegin();
+    for(; it != m_orchList.rend(); ++it) {
+        delete(*it);
+    }
 }
 
 bool OrchDaemon::init()
@@ -142,7 +154,7 @@ bool OrchDaemon::init()
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
     MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
-    TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_NAME);
+    TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
 
     vector<TableConnector> acl_table_connectors = {
@@ -167,7 +179,7 @@ bool OrchDaemon::init()
 
     /*
      * The order of the orch list is important for state restore of warm start and
-     * the queued processing in m_toSync map after gPortsOrch->isPortReady() is set.
+     * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
      *
      * For the multiple consumers in ports_tables, tasks for LAG_TABLE is processed before VLAN_TABLE
      * when iterating ConsumerMap.
@@ -212,13 +224,13 @@ bool OrchDaemon::init()
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);
     m_orchList.push_back(gAclOrch);
-    m_orchList.push_back(cfg_vnet_rt_orch);
-    m_orchList.push_back(vnet_orch);
-    m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
     m_orchList.push_back(vxlan_vrf_orch);
+    m_orchList.push_back(cfg_vnet_rt_orch);
+    m_orchList.push_back(vnet_orch);
+    m_orchList.push_back(vnet_rt_orch);
 
     m_select = new Select();
 

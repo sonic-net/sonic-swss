@@ -786,7 +786,7 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         }
         else
         {
-            session.nexthopInfo.nexthop = IpAddress();
+            session.nexthopInfo.nexthop = IpAddress(0);
         }
 
         // Resolve the neighbor of the new next hop
@@ -968,7 +968,7 @@ void MirrorOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }

@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <stdexcept>
+#include <inttypes.h>
 
 
 #include "sai.h"
@@ -228,7 +229,8 @@ create_tunnel(
     sai_object_id_t tunnel_encap_id,
     sai_object_id_t tunnel_decap_id,
     sai_ip_address_t *src_ip,
-    sai_object_id_t underlay_rif)
+    sai_object_id_t underlay_rif,
+    sai_uint8_t encap_ttl=0)
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> tunnel_attrs;
@@ -261,6 +263,17 @@ create_tunnel(
     {
         attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
         attr.value.ipaddr = *src_ip;
+        tunnel_attrs.push_back(attr);
+    }
+
+    if (encap_ttl != 0)
+    {
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_MODE;
+        attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
+        tunnel_attrs.push_back(attr);
+
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_VAL;
+        attr.value.u8 = encap_ttl;
         tunnel_attrs.push_back(attr);
     }
 
@@ -358,7 +371,7 @@ remove_tunnel_termination(sai_object_id_t term_table_id)
     }
 }
 
-bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap)
+bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl)
 {
     try
     {
@@ -378,7 +391,7 @@ bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap)
             ip = &ips;
         }
 
-        ids_.tunnel_id = create_tunnel(ids_.tunnel_encap_id, ids_.tunnel_decap_id, ip, gUnderlayIfId);
+        ids_.tunnel_id = create_tunnel(ids_.tunnel_encap_id, ids_.tunnel_decap_id, ip, gUnderlayIfId, encap_ttl);
 
         ip = nullptr;
         if (!dst_ip_.isZero())
@@ -540,7 +553,7 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAd
     //Store the nh tunnel id
     tunnel_obj->updateNextHop(ipAddr, macAddress, vni, nh_id);
 
-    SWSS_LOG_INFO("NH vxlan tunnel was created for %s, id 0x%lx", tunnelName.c_str(), nh_id);
+    SWSS_LOG_INFO("NH vxlan tunnel was created for %s, id 0x%" PRIx64, tunnelName.c_str(), nh_id);
     return nh_id;
 }
 
@@ -562,7 +575,7 @@ VxlanTunnelOrch::removeNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAd
 }
 
 bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t map, uint32_t vni,
-                                           sai_object_id_t encap, sai_object_id_t decap)
+                                           sai_object_id_t encap, sai_object_id_t decap, uint8_t encap_ttl)
 {
     SWSS_LOG_ENTER();
 
@@ -578,11 +591,11 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
     {
         if (map == TUNNEL_MAP_T_VIRTUAL_ROUTER)
         {
-            tunnel_obj->createTunnel(MAP_T::VRID_TO_VNI, MAP_T::VNI_TO_VRID);
+            tunnel_obj->createTunnel(MAP_T::VRID_TO_VNI, MAP_T::VNI_TO_VRID, encap_ttl);
         }
         else if (map == TUNNEL_MAP_T_BRIDGE)
         {
-            tunnel_obj->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE);
+            tunnel_obj->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE, encap_ttl);
         }
     }
 
@@ -596,7 +609,7 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
 
         tunnel_obj->insertMapperEntry(encap_id, decap_id, vni);
 
-        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%lx' decap entry '0x%lx'", encap_id, decap_id);
+        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'", encap_id, decap_id);
     }
     catch(const std::runtime_error& error)
     {
@@ -605,7 +618,8 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
         return false;
     }
 
-    SWSS_LOG_NOTICE("Vxlan map for tunnel '%s' was created", tunnelName.c_str());
+    SWSS_LOG_NOTICE("Vxlan map for tunnel '%s' and vni '%d' was created",
+            tunnelName.c_str(), vni);
     return true;
 }
 
@@ -638,7 +652,7 @@ bool VxlanTunnelOrch::removeVxlanTunnelMap(string tunnelName, uint32_t vni)
         remove_tunnel_map_entry(mapper.first);
         remove_tunnel_map_entry(mapper.second);
 
-        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%lx' decap entry '0x%lx'", mapper.first, mapper.second);
+        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'", mapper.first, mapper.second);
     }
     catch(const std::runtime_error& error)
     {
@@ -882,7 +896,7 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
         entry.encap_id = tunnel_obj->addEncapMapperEntry(vrf_id, vni_id);
         entry.decap_id = tunnel_obj->addDecapMapperEntry(vrf_id, vni_id);
 
-        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%lx' decap entry '0x%lx'",
+        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'",
                 entry.encap_id, entry.decap_id);
 
         vxlan_vrf_table_[full_map_entry_name] = entry;

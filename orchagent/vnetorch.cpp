@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <exception>
+#include <inttypes.h>
 
 #include "sai.h"
 #include "saiextensions.h"
@@ -108,7 +109,7 @@ bool VNetVrfObject::createObj(vector<sai_attribute_t>& attrs)
             {
                 l_fn(router_id);
             }
-            SWSS_LOG_DEBUG("VNET vr_type %d router id %lx  ", static_cast<int>(vr_type), router_id);
+            SWSS_LOG_DEBUG("VNET vr_type %d router id %" PRIx64 "  ", static_cast<int>(vr_type), router_id);
             vr_ids_.insert(std::pair<VR_TYPE, sai_object_id_t>(vr_type, router_id));
         }
     }
@@ -470,9 +471,10 @@ VnetBridgeInfo VNetBitmapObject::getBridgeInfoByVni(uint32_t vni, string tunnelN
     vector<sai_attribute_t> bpt_attrs;
     auto* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
     auto *tunnel = vxlan_orch->getVxlanTunnel(tunnelName);
+
     if (!tunnel->isActive())
     {
-        tunnel->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE);
+        tunnel->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE, VXLAN_ENCAP_TTL);
     }
 
     attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
@@ -1458,13 +1460,13 @@ bool VNetOrch::addOperation(const Request& request)
 
             VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(obj.get());
             if (!vxlan_orch->createVxlanTunnelMap(tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
-                                                  vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId()))
+                                                  vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId(), VXLAN_ENCAP_TTL))
             {
                 SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
                                 vnet_name.c_str(), tunnel.c_str());
             }
 
-            SWSS_LOG_INFO("VNET '%s' was added ", vnet_name.c_str());
+            SWSS_LOG_NOTICE("VNET '%s' was added ", vnet_name.c_str());
         }
         else
         {
@@ -1678,12 +1680,12 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     {
         if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
         {
-            SWSS_LOG_ERROR("Route add failed for %s, vr_id '0x%lx", ipPrefix.to_string().c_str(), vr_id);
+            SWSS_LOG_ERROR("Route add failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
             return false;
         }
         else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
         {
-            SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%lx", ipPrefix.to_string().c_str(), vr_id);
+            SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
             return false;
         }
     }
