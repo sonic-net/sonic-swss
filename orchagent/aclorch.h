@@ -354,6 +354,8 @@ public:
     bool unbind();
     // Link the ACL table with a port, for future bind or unbind
     void link(sai_object_id_t portOid);
+    // Unlink the ACL table with a port, for future bind
+    void unlink(sai_object_id_t portOid);
     // Add or overwrite a rule into the ACL table
     bool add(shared_ptr<AclRule> newRule);
     // Remove a rule from the ACL table

@@ -2732,6 +2732,9 @@ bool PortsOrch::addVlan(string vlan_alias)
     vlan.m_members = set<string>();
     m_portList[vlan_alias] = vlan;
     m_port_ref_count[vlan_alias] = 0;
+    /* notify aclorch to bind vlan to acl table */
+    PortUpdate update = { vlan, true };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
     return true;
 }
@@ -2753,6 +2756,9 @@ bool PortsOrch::removeVlan(Port vlan)
         SWSS_LOG_ERROR("Failed to remove non-empty VLAN %s", vlan.m_alias.c_str());
         return false;
     }
+    /* notify aclorch to unbind vlan from acl table */
+    PortUpdate update = { vlan, false };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
     if (status != SAI_STATUS_SUCCESS)
@@ -2942,6 +2948,9 @@ bool PortsOrch::removeLag(Port lag)
         SWSS_LOG_ERROR("Failed to remove LAG %s, it is still in VLAN", lag.m_alias.c_str());
         return false;
     }
+    /* notify PORTCHANGE before remove port*/
+    PortUpdate update = { lag, false };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
     sai_status_t status = sai_lag_api->remove_lag(lag.m_lag_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -2956,9 +2965,6 @@ bool PortsOrch::removeLag(Port lag)
 
     m_portList.erase(lag.m_alias);
     m_port_ref_count.erase(lag.m_alias);
-
-    PortUpdate update = { lag, false };
-    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
     return true;
 }
