@@ -82,7 +82,7 @@ public:
         return active_;
     }
 
-    bool createTunnel(MAP_T encap, MAP_T decap);
+    bool createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl=0);
     sai_object_id_t addEncapMapperEntry(sai_object_id_t obj, uint32_t vni);
     sai_object_id_t addDecapMapperEntry(sai_object_id_t obj, uint32_t vni);
 
@@ -103,6 +103,12 @@ public:
     {
         return ids_.tunnel_encap_id;
     }
+
+    sai_object_id_t getTunnelTermId() const
+    {
+        return ids_.tunnel_term_id;
+    }
+
 
     void updateNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni, sai_object_id_t nhId);
     bool removeNextHop(IpAddress& ipAddr, MacAddress macAddress, uint32_t vni);
@@ -137,7 +143,7 @@ const request_description_t vxlan_tunnel_request_description = {
 class VxlanTunnelRequest : public Request
 {
 public:
-    VxlanTunnelRequest() : Request(vxlan_tunnel_request_description, '|') { }
+    VxlanTunnelRequest() : Request(vxlan_tunnel_request_description, ':') { }
 };
 
 typedef std::unique_ptr<VxlanTunnel> VxlanTunnel_T;
@@ -166,7 +172,7 @@ public:
     }
 
     bool createVxlanTunnelMap(string tunnelName, tunnel_map_type_t mapType, uint32_t vni,
-                              sai_object_id_t encap, sai_object_id_t decap);
+                              sai_object_id_t encap, sai_object_id_t decap, uint8_t encap_ttl=0);
 
     bool removeVxlanTunnelMap(string tunnelName, uint32_t vni);
 
@@ -198,7 +204,7 @@ typedef std::map<std::string, sai_object_id_t> VxlanTunnelMapTable;
 class VxlanTunnelMapRequest : public Request
 {
 public:
-    VxlanTunnelMapRequest() : Request(vxlan_tunnel_map_request_description, '|') { }
+    VxlanTunnelMapRequest() : Request(vxlan_tunnel_map_request_description, ':') { }
 };
 
 class VxlanTunnelMapOrch : public Orch2

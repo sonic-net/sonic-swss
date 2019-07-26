@@ -15,7 +15,7 @@ class TestMirror(object):
         self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         self.sdb = swsscommon.DBConnector(6, dvs.redis_sock, 0)
 
-    def set_interface_status(self, interface, admin_status):
+    def set_interface_status(self, dvs, interface, admin_status):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL"
         elif interface.startswith("Vlan"):
@@ -27,6 +27,12 @@ class TestMirror(object):
         tbl.set(interface, fvs)
         time.sleep(1)
 
+        # when using FRR, route cannot be inserted if the neighbor is not
+        # connected. thus it is mandatory to force the interface up manually
+        if interface.startswith("PortChannel"):
+            dvs.runcmd("bash -c 'echo " + ("1" if admin_status == "up" else "0") +\
+                    " > /sys/class/net/" + interface + "/carrier'")
+
     def add_ip_address(self, interface, ip):
         if interface.startswith("PortChannel"):
             tbl_name = "PORTCHANNEL_INTERFACE"
@@ -37,6 +43,7 @@ class TestMirror(object):
         tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
         tbl.set(interface + "|" + ip, fvs)
+        tbl.set(interface, fvs)
         time.sleep(1)
 
     def remove_ip_address(self, interface, ip):
@@ -48,6 +55,7 @@ class TestMirror(object):
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         tbl._del(interface + "|" + ip)
+        tbl._del(interface)
         time.sleep(1)
 
     def add_neighbor(self, interface, ip, mac):
@@ -90,7 +98,7 @@ class TestMirror(object):
         return self.get_mirror_session_state(name)["status"]
 
     def get_mirror_session_state(self, name):
-        tbl = swsscommon.Table(self.sdb, "MIRROR_SESSION")
+        tbl = swsscommon.Table(self.sdb, "MIRROR_SESSION_TABLE")
         (status, fvs) = tbl.get(name)
         assert status == True
         assert len(fvs) > 0
@@ -118,7 +126,7 @@ class TestMirror(object):
         assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring up Ethernet16
-        self.set_interface_status("Ethernet16", "up")
+        self.set_interface_status(dvs, "Ethernet16", "up")
         assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # add IP address to Ethernet16
@@ -183,7 +191,7 @@ class TestMirror(object):
         assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring down Ethernet16
-        self.set_interface_status("Ethernet16", "down")
+        self.set_interface_status(dvs, "Ethernet16", "down")
         assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # remove mirror session
@@ -253,8 +261,8 @@ class TestMirror(object):
         self.create_vlan_member("6", "Ethernet4")
 
         # bring up vlan and member
-        self.set_interface_status("Vlan6", "up")
-        self.set_interface_status("Ethernet4", "up")
+        self.set_interface_status(dvs, "Vlan6", "up")
+        self.set_interface_status(dvs, "Ethernet4", "up")
 
         # add ip address to vlan 6
         self.add_ip_address("Vlan6", "6.6.6.0/24")
@@ -325,8 +333,8 @@ class TestMirror(object):
         assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring down vlan and member
-        self.set_interface_status("Ethernet4", "down")
-        self.set_interface_status("Vlan6", "down")
+        self.set_interface_status(dvs, "Ethernet4", "down")
+        self.set_interface_status(dvs, "Vlan6", "down")
 
         # remove vlan member; remove vlan
         self.remove_vlan_member("6", "Ethernet4")
@@ -390,8 +398,8 @@ class TestMirror(object):
         self.create_port_channel_member("008", "Ethernet88")
 
         # bring up port channel and port channel member
-        self.set_interface_status("PortChannel008", "up")
-        self.set_interface_status("Ethernet88", "up")
+        self.set_interface_status(dvs, "PortChannel008", "up")
+        self.set_interface_status(dvs, "Ethernet88", "up")
 
         # add ip address to port channel 008
         self.add_ip_address("PortChannel008", "11.11.11.0/24")
@@ -422,8 +430,8 @@ class TestMirror(object):
         assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring down port channel and port channel member
-        self.set_interface_status("PortChannel008", "down")
-        self.set_interface_status("Ethernet88", "down")
+        self.set_interface_status(dvs, "PortChannel008", "down")
+        self.set_interface_status(dvs, "Ethernet88", "down")
 
         # remove port channel member; remove port channel
         self.remove_port_channel_member("008", "Ethernet88")
@@ -458,7 +466,7 @@ class TestMirror(object):
         assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring up port; add ip; add neighbor; add route
-        self.set_interface_status("Ethernet32", "up")
+        self.set_interface_status(dvs, "Ethernet32", "up")
         self.add_ip_address("Ethernet32", "80.0.0.0/31")
         self.add_neighbor("Ethernet32", "80.0.0.1", "02:04:06:08:10:12")
         self.add_route(dvs, "8.8.0.0/16", "80.0.0.1")
@@ -479,8 +487,8 @@ class TestMirror(object):
         # create vlan; create vlan member; bring up vlan and member
         self.create_vlan(dvs, "9")
         self.create_vlan_member("9", "Ethernet48")
-        self.set_interface_status("Vlan9", "up")
-        self.set_interface_status("Ethernet48", "up")
+        self.set_interface_status(dvs, "Vlan9", "up")
+        self.set_interface_status(dvs, "Ethernet48", "up")
         assert self.get_mirror_session_state(session)["status"] == "active"
 
         # add ip address to vlan 9
@@ -539,8 +547,8 @@ class TestMirror(object):
                 assert fv[1] == "false"
 
         # bring down vlan and member; remove vlan member; remove vlan
-        self.set_interface_status("Ethernet48", "down")
-        self.set_interface_status("Vlan9", "down")
+        self.set_interface_status(dvs, "Ethernet48", "down")
+        self.set_interface_status(dvs, "Vlan9", "down")
         self.remove_vlan_member("9", "Ethernet48")
         self.remove_vlan("9")
 
@@ -548,7 +556,7 @@ class TestMirror(object):
         self.remove_route(dvs, "8.8.8.0/24")
         self.remove_neighbor("Ethernet32", "80.0.0.1")
         self.remove_ip_address("Ethernet32", "80.0.0.0/31")
-        self.set_interface_status("Ethernet32", "down")
+        self.set_interface_status(dvs, "Ethernet32", "down")
 
         # remove mirror session
         self.remove_mirror_session(session)
@@ -576,7 +584,7 @@ class TestMirror(object):
         assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # bring up port; add ip; add neighbor; add route
-        self.set_interface_status("Ethernet64", "up")
+        self.set_interface_status(dvs, "Ethernet64", "up")
         self.add_ip_address("Ethernet64", "100.0.0.0/31")
         self.add_neighbor("Ethernet64", "100.0.0.1", "02:04:06:08:10:12")
         self.add_route(dvs, "13.13.0.0/16", "100.0.0.1")
@@ -597,8 +605,8 @@ class TestMirror(object):
         # create port channel; create port channel member; bring up
         self.create_port_channel(dvs, "080")
         self.create_port_channel_member("080", "Ethernet32")
-        self.set_interface_status("PortChannel080", "up")
-        self.set_interface_status("Ethernet32", "up")
+        self.set_interface_status(dvs, "PortChannel080", "up")
+        self.set_interface_status(dvs, "Ethernet32", "up")
 
         # add ip address to port channel 080; create neighbor to port channel 080
         self.add_ip_address("PortChannel080", "200.0.0.0/31")
@@ -663,8 +671,8 @@ class TestMirror(object):
         self.remove_ip_address("PortChannel080", "200.0.0.0/31")
 
         # bring down; remove port channel member; remove port channel
-        self.set_interface_status("Ethernet32", "down")
-        self.set_interface_status("PortChannel080", "down")
+        self.set_interface_status(dvs, "Ethernet32", "down")
+        self.set_interface_status(dvs, "PortChannel080", "down")
         self.remove_port_channel_member("080", "Ethernet32")
         self.remove_port_channel(dvs, "080")
         assert self.get_mirror_session_state(session)["status"] == "active"
@@ -673,7 +681,7 @@ class TestMirror(object):
         self.remove_route(dvs, "13.13.0.0/16")
         self.remove_neighbor("Ethernet64", "100.0.0.1")
         self.remove_ip_address("Ethernet64", "100.0.0.0/31")
-        self.set_interface_status("Ethernet64", "down")
+        self.set_interface_status(dvs, "Ethernet64", "down")
         assert self.get_mirror_session_state(session)["status"] == "inactive"
 
         # remove mirror session
@@ -719,7 +727,7 @@ class TestMirror(object):
         acl_rule = "MIRROR_RULE"
 
         # bring up port; assign ip; create neighbor; create route
-        self.set_interface_status("Ethernet32", "up")
+        self.set_interface_status(dvs, "Ethernet32", "up")
         self.add_ip_address("Ethernet32", "20.0.0.0/31")
         self.add_neighbor("Ethernet32", "20.0.0.1", "02:04:06:08:10:12")
         self.add_route(dvs, "4.4.4.4", "20.0.0.1")
@@ -788,4 +796,4 @@ class TestMirror(object):
         self.remove_route(dvs, "4.4.4.4")
         self.remove_neighbor("Ethernet32", "20.0.0.1")
         self.remove_ip_address("Ethernet32", "20.0.0.0/31")
-        self.set_interface_status("Ethernet32", "down")
+        self.set_interface_status(dvs, "Ethernet32", "down")

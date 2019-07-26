@@ -1,5 +1,6 @@
 #include <fstream>
 #include <iostream>
+#include <inttypes.h>
 #include <sys/time.h>
 #include "timestamp.h"
 #include "orch.h"
@@ -462,7 +463,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
                     return ref_resolve_status::not_resolved;
                 }
                 sai_object_id_t sai_obj = (*(type_maps[ref_type_name]))[object_name];
-                SWSS_LOG_DEBUG("Resolved to sai_object:0x%lx, type:%s, name:%s", sai_obj, ref_type_name.c_str(), object_name.c_str());
+                SWSS_LOG_DEBUG("Resolved to sai_object:0x%" PRIx64 ", type:%s, name:%s", sai_obj, ref_type_name.c_str(), object_name.c_str());
                 sai_object_arr.push_back(sai_obj);
             }
             count++;

@@ -25,17 +25,18 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME),
     m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME)
 {
-    WarmStart::initialize("teamsyncd", "teamd");
-    WarmStart::checkWarmStart("teamsyncd", "teamd");
+    WarmStart::initialize(TEAMSYNCD_APP_NAME, "teamd");
+    WarmStart::checkWarmStart(TEAMSYNCD_APP_NAME, "teamd");
     m_warmstart = WarmStart::isWarmStart();
 
     if (m_warmstart)
     {
         m_start_time = steady_clock::now();
-        auto warmRestartIval = WarmStart::getWarmStartTimer("teamsyncd", "teamd");
+        auto warmRestartIval = WarmStart::getWarmStartTimer(TEAMSYNCD_APP_NAME, "teamd");
         m_pending_timeout = warmRestartIval ? warmRestartIval : DEFAULT_WR_PENDING_TIMEOUT;
         m_lagTable.create_temp_view();
         m_lagMemberTable.create_temp_view();
+        WarmStart::setWarmStartState(TEAMSYNCD_APP_NAME, WarmStart::INITIALIZED);
         SWSS_LOG_NOTICE("Starting in warmstart mode");
     }
 }
@@ -49,6 +50,7 @@ void TeamSync::periodic()
         {
             applyState();
             m_warmstart = false; // apply state just once
+            WarmStart::setWarmStartState(TEAMSYNCD_APP_NAME, WarmStart::RECONCILED);
         }
     }
 
@@ -112,24 +114,27 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
+    unsigned int mtu = rtnl_link_get_mtu(link);
     addLag(lagName, rtnl_link_get_ifindex(link),
            rtnl_link_get_flags(link) & IFF_UP,
-           rtnl_link_get_flags(link) & IFF_LOWER_UP);
+           rtnl_link_get_flags(link) & IFF_LOWER_UP, mtu);
 }
 
 void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
-                      bool oper_state)
+                      bool oper_state, unsigned int mtu)
 {
     /* Set the LAG */
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin_state ? "up" : "down");
     FieldValueTuple o("oper_status", oper_state ? "up" : "down");
+    FieldValueTuple m("mtu", to_string(mtu));
     fvVector.push_back(a);
     fvVector.push_back(o);
+    fvVector.push_back(m);
     m_lagTable.set(lagName, fvVector);
 
-    SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s",
-                   lagName.c_str(), admin_state ? "up" : "down", oper_state ? "up" : "down");
+    SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
+                   lagName.c_str(), admin_state ? "up" : "down", oper_state ? "up" : "down", mtu);
 
     /* Return when the team instance has already been tracked */
     if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
@@ -160,12 +165,15 @@ void TeamSync::removeLag(const string &lagName)
     for (auto it : selectable->m_lagMembers)
     {
         m_lagMemberTable.del(lagName + ":" + it.first);
+
+        SWSS_LOG_INFO("Remove member %s before removing LAG %s",
+                it.first.c_str(), lagName.c_str());
     }
 
     /* Delete the LAG */
     m_lagTable.del(lagName);
 
-    SWSS_LOG_INFO("Remove %s", lagName.c_str());
+    SWSS_LOG_INFO("Remove LAG %s", lagName.c_str());
 
     /* Return when the team instance hasn't been tracked before */
     if (m_teamSelectables.find(lagName) == m_teamSelectables.end())
@@ -276,6 +284,9 @@ int TeamSync::TeamPortSync::onChange()
             FieldValueTuple l("status", it.second ? "enabled" : "disabled");
             v.push_back(l);
             m_lagMemberTable->set(key, v);
+
+            SWSS_LOG_INFO("Set LAG %s member %s with status %s",
+                    m_lagName.c_str(), it.first.c_str(), it.second ? "enabled" : "disabled");
         }
     }
 
@@ -285,6 +296,9 @@ int TeamSync::TeamPortSync::onChange()
         {
             string key = m_lagName + ":" + it.first;
             m_lagMemberTable->del(key);
+
+            SWSS_LOG_INFO("Remove member %s from LAG %s",
+                    it.first.c_str(), m_lagName.c_str());
         }
     }
 
