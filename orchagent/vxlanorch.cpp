@@ -295,7 +295,7 @@ create_tunnel(
 void
 remove_tunnel(sai_object_id_t tunnel_id)
 {
-    if(tunnel_id != SAI_NULL_OBJECT_ID)
+    if (tunnel_id != SAI_NULL_OBJECT_ID)
     {
         sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
         if (status != SAI_STATUS_SUCCESS)
@@ -371,7 +371,7 @@ create_tunnel_termination(
 void
 remove_tunnel_termination(sai_object_id_t term_table_id)
 {
-    if(term_table_id != SAI_NULL_OBJECT_ID)
+    if (term_table_id != SAI_NULL_OBJECT_ID)
     {
         sai_status_t status = sai_tunnel_api->remove_tunnel_term_table_entry(term_table_id);
         if (status != SAI_STATUS_SUCCESS)
