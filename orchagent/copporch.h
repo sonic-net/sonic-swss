@@ -24,10 +24,18 @@ const std::string copp_policer_action_green_field  = "green_action";
 const std::string copp_policer_action_red_field    = "red_action";
 const std::string copp_policer_action_yellow_field = "yellow_action";
 
+// genetlink fields
+const string copp_genetlink_name              = "genetlink_name";
+const string copp_genetlink_mcgrp_name        = "genetlink_mcgrp_name";
+
 /* TrapGroupPolicerTable: trap group ID, policer ID */
 typedef std::map<sai_object_id_t, sai_object_id_t> TrapGroupPolicerTable;
 /* TrapIdTrapGroupTable: trap ID, trap group ID */
 typedef std::map<sai_hostif_trap_type_t, sai_object_id_t> TrapIdTrapGroupTable;
+/* TrapGroupHostIfMap: trap group ID to host interface ID */
+typedef std::map<sai_object_id_t, sai_object_id_t> TrapGroupHostIfMap;
+/* TrapGroupHostIfMap: trap type to host table entry */
+typedef std::map<sai_hostif_trap_type_t, sai_object_id_t> TrapHostTblEntryMap;
 
 class CoppOrch : public Orch
 {
@@ -38,6 +46,9 @@ protected:
 
     TrapGroupPolicerTable m_trap_group_policer_map;
     TrapIdTrapGroupTable m_syncdTrapIds;
+
+    TrapGroupHostIfMap m_trap_group_hostif_map;
+    TrapHostTblEntryMap m_trapId_hostTblEntry_map;
 
     void initDefaultHostIntfTable();
     void initDefaultTrapGroup();
@@ -53,6 +64,9 @@ protected:
     bool removePolicer(std::string trap_group_name);
 
     sai_object_id_t getPolicer(std::string trap_group_name);
+
+    bool createGenetlinkHostIf(string trap_group_name, vector<sai_attribute_t> &hostif_attribs);
+    bool removeGenetlinkHostIf(string trap_group_name);
 
     virtual void doTask(Consumer& consumer);
 };

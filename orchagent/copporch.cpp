@@ -212,6 +212,41 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
             return false;
         }
         m_syncdTrapIds[trap_id] = trap_group_id;
+
+        auto hostTbl_entry = m_trapId_hostTblEntry_map.find(trap_id);
+
+        if (hostTbl_entry == m_trapId_hostTblEntry_map.end())
+        {
+            auto hostif_map = m_trap_group_hostif_map.find(trap_group_id);
+            if (hostif_map != m_trap_group_hostif_map.end())
+            {
+                sai_object_id_t hostif_table_entry = SAI_NULL_OBJECT_ID;
+                sai_attribute_t sai_host_table_attr[4];
+
+                sai_host_table_attr[0].id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TYPE;
+                sai_host_table_attr[0].value.s32 = SAI_HOSTIF_TABLE_ENTRY_TYPE_TRAP_ID;
+
+                sai_host_table_attr[1].id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TRAP_ID;
+                sai_host_table_attr[1].value.oid = hostif_trap_id;
+
+                sai_host_table_attr[2].id = SAI_HOSTIF_TABLE_ENTRY_ATTR_CHANNEL_TYPE;
+                sai_host_table_attr[2].value.s32 =  SAI_HOSTIF_TABLE_ENTRY_CHANNEL_TYPE_GENETLINK;
+
+                sai_host_table_attr[3].id = SAI_HOSTIF_TABLE_ENTRY_ATTR_HOST_IF;
+                sai_host_table_attr[3].value.oid = hostif_map->second;
+
+                sai_status_t status = sai_hostif_api->create_hostif_table_entry(&hostif_table_entry,
+                                                                                gSwitchId, 4,
+                                                                                sai_host_table_attr);
+
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to create hostif table entry failed, rv %d", status);
+                    return false;
+                }
+                m_trapId_hostTblEntry_map[trap_id] = hostif_table_entry;
+            }
+        }
     }
 
     return true;
@@ -319,6 +354,69 @@ bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &po
     return true;
 }
 
+bool CoppOrch::createGenetlinkHostIf(string trap_group_name, vector<sai_attribute_t> &genetlink_attribs)
+{
+    SWSS_LOG_ENTER();
+
+    sai_object_id_t hostif_id;
+    sai_status_t sai_status;
+
+    sai_status = sai_hostif_api->create_hostif(&hostif_id, gSwitchId,
+                                               (uint32_t)genetlink_attribs.size(),
+                                               genetlink_attribs.data());
+    if (sai_status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create genetlink hostif for trap group %s, rc=%d",
+                       trap_group_name.c_str(), sai_status);
+        return false;
+    }
+
+    m_trap_group_hostif_map[m_trap_group_map[trap_group_name]] = hostif_id;
+    return true;
+}
+
+bool CoppOrch::removeGenetlinkHostIf(string trap_group_name)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t sai_status;
+
+    for (auto it : m_syncdTrapIds)
+    {
+        if (it.second == m_trap_group_map[trap_group_name])
+        {
+            auto hostTableEntry = m_trapId_hostTblEntry_map.find(it.first);
+            if (hostTableEntry != m_trapId_hostTblEntry_map.end())
+            {
+                sai_status = sai_hostif_api->remove_hostif_table_entry(hostTableEntry->second);
+                if(sai_status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to delete hostif table entry %ld \
+                                   on trap group %s. rc=%d", hostTableEntry->second,
+                                   trap_group_name.c_str(), sai_status);
+                    return false;
+                }
+                m_trapId_hostTblEntry_map.erase(it.first);
+            }
+        }
+    }
+
+    auto hostInfo = m_trap_group_hostif_map.find(m_trap_group_map[trap_group_name]);
+    if(hostInfo != m_trap_group_hostif_map.end())
+    {
+        sai_status = sai_hostif_api->remove_hostif(hostInfo->second);
+        if(sai_status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to delete host info %ld on trap group %s. rc=%d",
+                           hostInfo->second, trap_group_name.c_str(), sai_status);
+            return false;
+        }
+        m_trap_group_hostif_map.erase(m_trap_group_map[trap_group_name]);
+    }
+
+    return true;
+}
+
 task_process_status CoppOrch::processCoppRule(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
@@ -334,6 +432,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
     vector<sai_attribute_t> trap_gr_attribs;
     vector<sai_attribute_t> trap_id_attribs;
     vector<sai_attribute_t> policer_attribs;
+    vector<sai_attribute_t> genetlink_attribs;
 
     if (op == SET_COMMAND)
     {
@@ -441,6 +540,25 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 attr.value.s32 = policer_action;
                 policer_attribs.push_back(attr);
             }
+            else if (fvField(*i) == copp_genetlink_name)
+            {
+                attr.id = SAI_HOSTIF_ATTR_TYPE;
+                attr.value.s32 = SAI_HOSTIF_TYPE_GENETLINK;
+                genetlink_attribs.push_back(attr);
+
+                attr.id = SAI_HOSTIF_ATTR_NAME;
+                strncpy(attr.value.chardata, fvValue(*i).c_str(),
+                        sizeof(attr.value.chardata));
+                genetlink_attribs.push_back(attr);
+
+            }
+            else if (fvField(*i) == copp_genetlink_mcgrp_name)
+            {
+                attr.id = SAI_HOSTIF_ATTR_GENETLINK_MCGRP_NAME;
+                strncpy(attr.value.chardata, fvValue(*i).c_str(),
+                        sizeof(attr.value.chardata));
+                genetlink_attribs.push_back(attr);
+            }
             else
             {
                 SWSS_LOG_ERROR("Unknown copp field specified:%s\n", fvField(*i).c_str());
@@ -475,6 +593,38 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                         if (sai_status != SAI_STATUS_SUCCESS)
                         {
                             SWSS_LOG_ERROR("Failed to apply attribute[%d].id=%d to policer for trap group:%s, error:%d\n", ind, policer_attr.id, trap_group_name.c_str(), sai_status);
+                            return task_process_status::task_failed;
+                        }
+                    }
+                }
+            }
+            if (!genetlink_attribs.empty())
+            {
+                auto hostif_map = m_trap_group_hostif_map.find(m_trap_group_map[trap_group_name]);
+
+                if (hostif_map != m_trap_group_hostif_map.end())
+                {
+                    for(sai_uint32_t idx = 0; idx < genetlink_attribs.size(); idx++)
+                    {
+                        auto hostif_attr = genetlink_attribs[idx];
+                        sai_status = sai_hostif_api->set_hostif_attribute(hostif_map->second,
+                                                                          &hostif_attr);
+                        if(sai_status != SAI_STATUS_SUCCESS)
+                        {
+                            SWSS_LOG_ERROR("Failed to apply attribute[%d].id=%d to hostif for \
+                                           trap group %s, error:%d", idx, hostif_attr.id,
+                                           trap_group_name.c_str(), sai_status);
+
+                            return task_process_status::task_failed;
+                        }
+                    }
+                } 
+                else
+                {
+                    if (!genetlink_attribs.empty())
+                    {
+                        if (!createGenetlinkHostIf(trap_group_name, genetlink_attribs))
+                        {
                             return task_process_status::task_failed;
                         }
                     }
@@ -517,6 +667,14 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                     return task_process_status::task_failed;
                 }
             }
+
+            if (!genetlink_attribs.empty())
+            {
+                if (!createGenetlinkHostIf(trap_group_name, genetlink_attribs))
+                {
+                    return task_process_status::task_failed;
+                }
+            }
         }
 
         /* Apply traps to trap group */
@@ -531,6 +689,12 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
         if (!removePolicer(trap_group_name))
         {
             SWSS_LOG_ERROR("Failed to remove policer from trap group %s", trap_group_name.c_str());
+            return task_process_status::task_failed;
+        }
+
+        if (!removeGenetlinkHostIf(trap_group_name))
+        {
+            SWSS_LOG_ERROR("Failed to remove hostif from trap group %s", trap_group_name.c_str());
             return task_process_status::task_failed;
         }
 
