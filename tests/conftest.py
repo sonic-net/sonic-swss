@@ -158,6 +158,9 @@ class DockerVirtualSwitch(object):
         self.alld  = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd
         self.client = docker.from_env()
 
+        if subprocess.check_call(["/sbin/modprobe", "team"]) != 0:
+            raise NameError("cannot install kernel team module")
+
         self.ctn = None
         if keeptb:
             self.cleanup = False
@@ -718,6 +721,7 @@ class DockerVirtualSwitch(object):
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(interface, fvs)
         tbl.set(interface + "|" + ip, fvs)
         time.sleep(1)
 

@@ -151,6 +151,7 @@ class TestWatermark(object):
      
         self.enable_unittests(dvs, "false")
 
+    @pytest.mark.skip(reason="This test is not stable enough")
     def test_lua_plugins(self, dvs):
         
         self.set_up(dvs)

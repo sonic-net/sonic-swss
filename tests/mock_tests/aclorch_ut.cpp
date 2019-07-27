@@ -173,7 +173,7 @@ namespace aclorch_test
                     PortsOrch *portsOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch) :
             config_db(config_db)
         {
-            TableConnector confDbAclTable(config_db, CFG_ACL_TABLE_NAME);
+            TableConnector confDbAclTable(config_db, CFG_ACL_TABLE_TABLE_NAME);
             TableConnector confDbAclRuleTable(config_db, CFG_ACL_RULE_TABLE_NAME);
 
             vector<TableConnector> acl_table_connectors = { confDbAclTable, confDbAclRuleTable };
@@ -197,7 +197,7 @@ namespace aclorch_test
         void doAclTableTask(const deque<KeyOpFieldsValuesTuple> &entries)
         {
             auto consumer = unique_ptr<Consumer>(new Consumer(
-                new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_TABLE_NAME));
+                new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_TABLE_TABLE_NAME));
 
             consumerAddToSync(consumer.get(), entries);
 
