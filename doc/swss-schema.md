@@ -843,13 +843,28 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     ;Stores bgp status
     ;Status: work in progress
 
-    key             = WARM_RESTART_TABLE|family|eoiu             ; family = "IPv4" / "IPv6"  ; address family.
+    key             = BGP_STATE_TABLE|family|eoiu             ; family = "IPv4" / "IPv6"  ; address family.
 
     state           = "unknown" / "reached" / "consumed"         ; unknown: eoiu state not fetched yet.
                                                                  ; reached: bgp eoiu done.
                                                                  ;
                                                                  ; consumed: the reached state has been consumed by application.
+    timestamp       = time-stamp                                 ; "%Y-%m-%d %H:%M:%S", full-date and partial-time separated by
+                                                                 ; white space.  Example: 2019-04-25 09:39:19
 
+    ;value annotations
+    date-fullyear   = 4DIGIT
+    date-month      = 2DIGIT  ; 01-12
+    date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on
+                              ; month/year
+    time-hour       = 2DIGIT  ; 00-23
+    time-minute     = 2DIGIT  ; 00-59
+    time-second     = 2DIGIT  ; 00-58, 00-59, 00-60 based on leap second
+                              ; rules
+
+    partial-time    = time-hour ":" time-minute ":" time-second
+    full-date       = date-fullyear "-" date-month "-" date-mday
+    time-stamp      = full-date %x20 partial-time
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?

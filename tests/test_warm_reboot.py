@@ -1,3 +1,4 @@
+
 from swsscommon import swsscommon
 import os
 import re
@@ -1944,4 +1945,3 @@ class TestWarmReboot(object):
             intf_tbl._del("Ethernet{}|{}00::1/64".format(i*4, i*4))
             intf_tbl._del("Ethernet{}".format(i*4, i*4))
             intf_tbl._del("Ethernet{}".format(i*4, i*4))
-

@@ -78,7 +78,7 @@ class BgpStateCheck():
 
     # Set the statedb "BGP_STATE_TABLE|eoiu", so fpmsyncd can get the bgp eoiu signal
     # Only two families: 'ipv4' and 'ipv6'
-    # state is 'true' or 'false'
+    # state is "unknown" / "reached" / "consumed"
     def set_bgp_eoiu_marker(self, family, state):
         db = swsssdk.SonicV2Connector(host='127.0.0.1')
         db.connect(db.STATE_DB, False)
