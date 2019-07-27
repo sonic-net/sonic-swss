@@ -1927,6 +1927,7 @@ class TestWarmReboot(object):
 
         time.sleep(10)
 
+
         # check syslog and sairedis.rec file for activities
         check_syslog_for_neighbor_entry(dvs, marker, 0, NUM_OF_NEIGHS/2, "ipv4")
         check_syslog_for_neighbor_entry(dvs, marker, 0, NUM_OF_NEIGHS/2, "ipv6")
