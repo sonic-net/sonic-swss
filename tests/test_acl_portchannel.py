@@ -123,6 +123,16 @@ class TestPortChannelAcl(object):
 
         assert len(acl_tables) == 0
 
+    def check_asic_tablegroup_absent(self, dvs):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
+        acl_table_groups = tbl.getKeys()
+        assert len(acl_table_groups) == 0
+
+    def check_asic_tablegroupmember_absent(self, dvs):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER")
+        acl_table_group_members = tbl.getKeys()
+        assert len(acl_table_group_members) == 0
+
     # Frist create port channel
     # Second create ACL table
     def test_PortChannelAfterAcl(self, dvs):
@@ -176,13 +186,15 @@ class TestPortChannelAcl(object):
         # check ASIC table
         self.check_asic_table_existed(dvs)
 
-        # TODO: right now it is not supported to remove port before remove ACL
-        # table. Will swap the order after having it supported
-        # remove ACL table
-        self.remove_acl_table(dvs, "LAG_ACL_TABLE")
-
         # remove port channel
         self.remove_port_channel(dvs, "PortChannel01")
+
+        # check ASIC table group and member
+        self.check_asic_tablegroup_absent(dvs)
+        self.check_asic_tablegroupmember_absent(dvs)
+
+        # remove ACL table
+        self.remove_acl_table(dvs, "LAG_ACL_TABLE")
 
     # ACL table cannot be created upon a member port of a port channel
     def test_AclOnPortChannelMember(self, dvs):
