@@ -155,6 +155,14 @@ class TestVlan(object):
         vlan_member_entries = tbl.getKeys()
         assert len(vlan_member_entries) == 0
 
+        # member ports should have been detached from bridge master properly
+        exitcode, output = dvs.runcmd(['sh', '-c', "ip link show Ethernet20 | grep -w master"])
+        assert exitcode != 0
+        exitcode, output = dvs.runcmd(['sh', '-c', "ip link show Ethernet24 | grep -w master"])
+        assert exitcode != 0
+        exitcode, output = dvs.runcmd(['sh', '-c', "ip link show Ethernet28 | grep -w master"])
+        assert exitcode != 0
+
         # remove vlans
         dvs.remove_vlan("18")
         dvs.remove_vlan("188")
