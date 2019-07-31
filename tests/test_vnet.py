@@ -816,7 +816,7 @@ class VnetBitmapVxlanTunnel(object):
         self.vnet_map.update({name:{}})
 
     def check_default_vnet_entry(self, dvs, name):
-        return True
+        return self.check_vnet_entry(dvs, name)
 
     def check_del_vnet_entry(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
