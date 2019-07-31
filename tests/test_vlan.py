@@ -13,7 +13,7 @@ class TestVlan(object):
         assert num.strip() == str(expected_cnt)
 
     def create_acl_table(self, dvs, table_name, ports):
-        tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
+        tbl = swsscommon.Table(dvs.cdb, "ACL_TABLE")
         fvs = swsscommon.FieldValuePairs([("POLICY_DESC", table_name),
                                           ("TYPE", "L3"),
                                           ("PORTS", ports)])
@@ -21,12 +21,12 @@ class TestVlan(object):
         time.sleep(1)
 
     def remove_acl_table(self, dvs, table_name):
-        tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
+        tbl = swsscommon.Table(dvs.cdb, "ACL_TABLE")
         tbl._del(table_name)
         time.sleep(1)
 
     def check_asic_table_existed(self, dvs, vlanid):
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         vlan = tbl.getKeys()
         assert dvs.asicdb.default_vlan_id in vlan
         vlan = [k for k in vlan if k not in dvs.asicdb.default_vlan_id]
@@ -43,7 +43,7 @@ class TestVlan(object):
             else:
                 assert False
 
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
         (status, fvs) = tbl.get(table_group_id)
         assert status == True
         assert len(fvs) == 3
@@ -57,7 +57,7 @@ class TestVlan(object):
             else:
                 assert False
 
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER")
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER")
         member = tbl.getKeys()[0]
         (status, fvs) = tbl.get(member)
         assert status == True
@@ -72,17 +72,17 @@ class TestVlan(object):
             else:
                 assert False
 
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         (status, fvs) = tbl.get(table_id)
         assert status == True
 
     def check_asic_tablegroup_absent(self, dvs):
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
         acl_table_groups = tbl.getKeys()
         assert len(acl_table_groups) == 0
 
     def check_asic_tablegroupmember_absent(self, dvs):
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER")
+        tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER")
         acl_table_group_members = tbl.getKeys()
         assert len(acl_table_group_members) == 0
 
@@ -541,20 +541,20 @@ class TestVlan(object):
     # Frist create ACL table
     # Second create Vlan
     # Third remove Vlan
-    def test_VlanBeforeAcl(self, dvs):
-        self.setup_db(dvs)
+    def test_VlanBeforeAcl(self, dvs, testlog):
+        dvs.setup_db()
 
         # create ACL table
         self.create_acl_table(dvs, "VLAN_ACL_TABLE", "Vlan1234")
 
         # create Vlan
-        self.create_vlan("1234")
+        dvs.create_vlan("1234")
 
         # check ASIC table
         self.check_asic_table_existed(dvs,"1234")
 
         # remove port channel
-        self.remove_vlan("1234")
+        dvs.remove_vlan("1234")
 
         # check ASIC table group and member
         self.check_asic_tablegroup_absent(dvs)
