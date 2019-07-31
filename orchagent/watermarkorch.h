@@ -51,7 +51,7 @@ private:
     /*
     [7-2] - unused
     [1] - pg wm status
-    [0] - queue wm status (least significant bit) 
+    [0] - queue wm status (least significant bit)
     */
     uint8_t m_wmStatus = 0;
     bool m_timerChanged = false;

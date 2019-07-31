@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <exception>
+#include <inttypes.h>
 
 #include "sai.h"
 #include "saiextensions.h"
@@ -103,7 +104,7 @@ bool VNetVrfObject::createObj(vector<sai_attribute_t>& attrs)
         sai_object_id_t router_id;
         if (vr_type != VR_TYPE::VR_INVALID && l_fn(router_id))
         {
-            SWSS_LOG_DEBUG("VNET vr_type %d router id %lx  ", static_cast<int>(vr_type), router_id);
+            SWSS_LOG_DEBUG("VNET vr_type %d router id %" PRIx64 "  ", static_cast<int>(vr_type), router_id);
             vr_ids_.insert(std::pair<VR_TYPE, sai_object_id_t>(vr_type, router_id));
         }
     }
@@ -1669,12 +1670,12 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     {
         if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
         {
-            SWSS_LOG_ERROR("Route add failed for %s, vr_id '0x%lx", ipPrefix.to_string().c_str(), vr_id);
+            SWSS_LOG_ERROR("Route add failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
             return false;
         }
         else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
         {
-            SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%lx", ipPrefix.to_string().c_str(), vr_id);
+            SWSS_LOG_ERROR("Route del failed for %s, vr_id '0x%" PRIx64, ipPrefix.to_string().c_str(), vr_id);
             return false;
         }
     }
