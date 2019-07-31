@@ -376,7 +376,7 @@ remove_tunnel_termination(sai_object_id_t term_table_id)
         sai_status_t status = sai_tunnel_api->remove_tunnel_term_table_entry(term_table_id);
         if (status != SAI_STATUS_SUCCESS)
         {
-        throw std::runtime_error("Can't remove a tunnel term table object");
+            throw std::runtime_error("Can't remove a tunnel term table object");
         }
     }
     else
