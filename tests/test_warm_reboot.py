@@ -1659,6 +1659,127 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         assert rt_key['dest'] == "192.168.100.0/24"
 
+
+        #############################################################################
+        #
+        # Testcase 16. Restart zebra and make no control-plane changes.
+        #             Set WARM_RESTART_TABLE|IPv4|eoiu
+        #                 WARM_RESTART_TABLE|IPv6|eoiu
+        #             Check route reconciliation wait time is reduced
+        #             For this and all subsequent test-cases routing-warm-reboot
+        #             feature will be kept enabled.
+        #
+        #############################################################################
+
+
+        time.sleep(1)
+        # Hold time from EOIU detected for both Ipv4/Ipv6 to start route reconciliation
+        DEFAULT_EOIU_HOLD_INTERVAL = 3
+
+        # change to 20 for easy timeline check
+        restart_timer = 20
+
+        # clean up as that in bgp_eoiu_marker.py
+        del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv4|eoiu")
+        del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv6|eoiu")
+
+        dvs.runcmd("config warm_restart bgp_timer {}".format(restart_timer))
+        # Restart zebra
+        dvs.stop_zebra()
+        dvs.start_zebra()
+
+        #
+        # Verify FSM:  no eoiu, just default warm restart timer
+        #
+        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        # Periodic eoiu check timer, first wait 5 seconds, then check every 1 second
+        # DEFAULT_EOIU_HOLD_INTERVAL is 3 seconds.
+        # Since no EOIU set, after 3+ 5 + 1 seconds, the state still in restored state
+        time.sleep(DEFAULT_EOIU_HOLD_INTERVAL + 5 +1)
+        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        # default restart timer kicks in:
+        time.sleep(restart_timer - DEFAULT_EOIU_HOLD_INTERVAL -5)
+        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+
+        time.sleep(1)
+        # Restart zebra
+        dvs.stop_zebra()
+        dvs.start_zebra()
+
+        #
+        # Verify FSM:  eoiu works as expected
+        #
+        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        # Set BGP_STATE_TABLE|Ipv4|eoiu BGP_STATE_TABLE|IPv6|eoiu
+        create_entry_tbl(
+            state_db,
+            "BGP_STATE_TABLE", "IPv4|eoiu",
+            [
+                ("state", "reached"),
+                ("timestamp", "2019-04-25 09:39:19"),
+            ]
+        )
+        create_entry_tbl(
+            state_db,
+            "BGP_STATE_TABLE", "IPv6|eoiu",
+            [
+                ("state", "reached"),
+                ("timestamp", "2019-04-25 09:39:22"),
+            ]
+        )
+
+        # after DEFAULT_EOIU_HOLD_INTERVAL + inital eoiu check timer wait time + 1 seconds: 3+5+1
+        # verify that bgp reached reconciled state
+        time.sleep(DEFAULT_EOIU_HOLD_INTERVAL + 5 + 1)
+        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+        # Verify swss changes -- none are expected this time
+        (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+        assert len(addobjs) == 0 and len(delobjs) == 0
+        # Verify swss changes -- none are expected this time
+        (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+        assert len(addobjs) == 0 and len(delobjs) == 0
+
+
+        del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv4|eoiu")
+        del_entry_tbl(state_db, "BGP_STATE_TABLE", "IPv6|eoiu")
+        time.sleep(1)
+        # Restart zebra
+        dvs.stop_zebra()
+        dvs.start_zebra()
+
+        #
+        # Verify FSM:  partial eoiu,  fallback to default warm restart timer
+        #
+        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        # Set BGP_STATE_TABLE|Ipv4|eoiu but not BGP_STATE_TABLE|IPv6|eoiu
+        create_entry_tbl(
+            state_db,
+            "BGP_STATE_TABLE", "IPv4|eoiu",
+            [
+                ("state", "reached"),
+                ("timestamp", "2019-04-25 09:39:19"),
+            ]
+        )
+
+        # Periodic eoiu check timer, first wait 5 seconds, then check every 1 second
+        # DEFAULT_EOIU_HOLD_INTERVAL is 3 seconds.
+        # Current bgp eoiu needs flag set on both Ipv4/Ipv6 to work, after 3+ 5 + 1 seconds, the state still in restored state
+        time.sleep(DEFAULT_EOIU_HOLD_INTERVAL + 5 +1)
+        swss_app_check_warmstart_state(state_db, "bgp", "restored")
+        # Fall back to warm restart timer, it kicks in after 15 seconds, +1 to avoid race condition:
+        time.sleep(restart_timer - DEFAULT_EOIU_HOLD_INTERVAL -5 )
+        swss_app_check_warmstart_state(state_db, "bgp", "reconciled")
+
+        # Verify swss changes -- none are expected this time
+        (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
+        assert len(addobjs) == 0 and len(delobjs) == 0
+
+        # Verify swss changes -- none are expected this time
+        (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
+        assert len(addobjs) == 0 and len(delobjs) == 0
+
         intf_tbl._del("{}|111.0.0.1/24".format(intfs[0]))
         intf_tbl._del("{}|1110::1/64".format(intfs[0]))
         intf_tbl._del("{}|122.0.0.1/24".format(intfs[1]))
