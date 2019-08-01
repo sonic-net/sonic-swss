@@ -295,10 +295,17 @@ create_tunnel(
 void
 remove_tunnel(sai_object_id_t tunnel_id)
 {
-    sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
-    if (status != SAI_STATUS_SUCCESS)
+    if (tunnel_id != SAI_NULL_OBJECT_ID)
     {
-        throw std::runtime_error("Can't remove a tunnel object");
+        sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            throw std::runtime_error("Can't remove a tunnel object");
+        }
+    }
+    else
+    {
+        SWSS_LOG_DEBUG("Tunnel id is NULL.");
     }
 }
 
@@ -364,10 +371,17 @@ create_tunnel_termination(
 void
 remove_tunnel_termination(sai_object_id_t term_table_id)
 {
-    sai_status_t status = sai_tunnel_api->remove_tunnel_term_table_entry(term_table_id);
-    if (status != SAI_STATUS_SUCCESS)
+    if (term_table_id != SAI_NULL_OBJECT_ID)
     {
-        throw std::runtime_error("Can't remove a tunnel term table object");
+        sai_status_t status = sai_tunnel_api->remove_tunnel_term_table_entry(term_table_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            throw std::runtime_error("Can't remove a tunnel term table object");
+        }
+    }
+    else
+    {
+        SWSS_LOG_DEBUG("Tunnel term table id is NULL.");
     }
 }
 
