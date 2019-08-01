@@ -1,4 +1,5 @@
 #include <limits.h>
+#include <inttypes.h>
 #include <unordered_map>
 #include "pfcwdorch.h"
 #include "sai_serialize.h"
@@ -53,7 +54,7 @@ void PfcWdOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -100,11 +101,6 @@ void PfcWdOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
                     consumer.m_toSync.erase(it++);
                     break;
             }
-        }
-
-        if (consumer.m_toSync.empty())
-        {
-            m_entriesCreated = true;
         }
     }
 }
@@ -357,7 +353,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
         if (entry.second.handler != nullptr)
         {
             SWSS_LOG_NOTICE(
-                    "PFC Watchdog BIG_RED_SWITCH mode disabled on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                    "PFC Watchdog BIG_RED_SWITCH mode disabled on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                     entry.second.portAlias.c_str(),
                     entry.second.index,
                     entry.first,
@@ -461,7 +457,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             if (entry->second.handler== nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog BIG_RED_SWITCH mode enabled on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog BIG_RED_SWITCH mode enabled on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -763,11 +759,6 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
     PfcWdOrch<DropHandler, ForwardHandler>::doTask(consumer);
 
-    if (!this->m_entriesCreated)
-    {
-        return;
-    }
-
     if ((consumer.getDbId() == APPL_DB) && (consumer.getTableName() == APP_PFC_WD_TABLE_NAME))
     {
         auto it = consumer.m_toSync.begin();
@@ -837,6 +828,39 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 }
 
 template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask()
+{
+    SWSS_LOG_ENTER();
+
+    // In the warm-reboot case with ongoing PFC storm,
+    // we care about dependency.
+    // PFC watchdog should be started on a port queue before
+    // a storm action can be taken in effect. The PFC watchdog
+    // configuration is stored in CONFIG_DB CFG_PFC_WD_TABLE_NAME,
+    // while the ongoing storming port queue is recorded
+    // in APPL_DB APP_PFC_WD_TABLE_NAME. We thus invoke the Executor
+    // in this order.
+    // In the cold-boot case, APP_PFC_WD_TABLE_NAME will not
+    // be populated. No dependency is introduced in this case.
+    auto *cfg_exec = this->getExecutor(CFG_PFC_WD_TABLE_NAME);
+    cfg_exec->drain();
+
+    auto *appl_exec = this->getExecutor(APP_PFC_WD_TABLE_NAME);
+    appl_exec->drain();
+
+    for (const auto &it : this->m_consumerMap)
+    {
+        auto *exec = it.second.get();
+
+        if ((exec == cfg_exec) || (exec == appl_exec))
+        {
+            continue;
+        }
+        exec->drain();
+    }
+}
+
+template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer& wdNotification)
 {
     SWSS_LOG_ENTER();
@@ -877,7 +901,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
     auto entry = m_entryMap.find(queueId);
     if (entry == m_entryMap.end())
     {
-        SWSS_LOG_ERROR("Queue 0x%lx is not registered", queueId);
+        SWSS_LOG_ERROR("Queue 0x%" PRIx64 " is not registered", queueId);
         return false;
     }
 
@@ -894,7 +918,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -916,7 +940,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -938,7 +962,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -966,7 +990,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         if (entry->second.handler != nullptr)
         {
             SWSS_LOG_NOTICE(
-                    "PFC Watchdog storm restored on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                    "PFC Watchdog storm restored on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -991,7 +1015,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
 template <typename DropHandler, typename ForwardHandler>
 bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 {
-    // clean all *_last fields in COUNTERS_TABLE
+    // clean all *_last and *_LEFT fields in COUNTERS_TABLE
     // to allow warm-reboot pfc detect & restore state machine to enter the same init state as cold-reboot
     RedisClient redisClient(this->getCountersDb().get());
 
@@ -1004,7 +1028,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
         vector<string> wLasts;
         for (const auto &fv : fvTuples)
         {
-            if (fvField(fv).find("_last") != string::npos)
+            if ((fvField(fv).find("_last") != string::npos) || (fvField(fv).find("_LEFT") != string::npos))
             {
                 wLasts.push_back(fvField(fv));
             }

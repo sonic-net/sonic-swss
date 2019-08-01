@@ -35,6 +35,7 @@ public:
     void handleFcConfigUpdate(const std::string &key, const std::vector<FieldValueTuple> &fvt);
 
     void clearSingleWm(Table *table, string wm_name, vector<sai_object_id_t> &obj_ids);
+    void clearSingleWm(Table *table, string wm_name, const object_map &nameOidMap);
 
     shared_ptr<Table> getCountersTable(void)
     {
@@ -50,7 +51,7 @@ private:
     /*
     [7-2] - unused
     [1] - pg wm status
-    [0] - queue wm status (least significant bit) 
+    [0] - queue wm status (least significant bit)
     */
     uint8_t m_wmStatus = 0;
     bool m_timerChanged = false;
