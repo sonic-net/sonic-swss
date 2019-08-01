@@ -1193,9 +1193,6 @@ class TestWarmReboot(object):
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
         assert len(addobjs) == 0 and len(delobjs) == 0
 
-        # Verify swss changes -- none are expected this time
-        (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
-        assert len(addobjs) == 0 and len(delobjs) == 0
 
         #############################################################################
         #
@@ -1232,13 +1229,6 @@ class TestWarmReboot(object):
         rt_key = json.loads(addobjs[0]['key'])
         assert rt_key['dest'] == "192.168.100.0/24"
 
-        # Verify the changed prefix is seen in swss
-        (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
-        assert len(addobjs) == 1 and len(delobjs) == 0
-        rt_key = json.loads(addobjs[0]['key'])
-        rt_val = json.loads(addobjs[0]['vals'])
-        assert rt_key == "192.168.100.0/24"
-        assert rt_val == {"ifname": "Ethernet0", "nexthop": "111.0.0.2"}
 
         #############################################################################
         #
@@ -1274,11 +1264,6 @@ class TestWarmReboot(object):
         rt_key = json.loads(delobjs[0]['key'])
         assert rt_key['dest'] == "192.168.100.0/24"
 
-        # Verify the changed prefix is seen in swss
-        (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
-        assert len(addobjs) == 0 and len(delobjs) == 1
-        rt_key = json.loads(delobjs[0]['key'])
-        assert rt_key == "192.168.100.0/24"
 
         #############################################################################
         #
@@ -1498,11 +1483,6 @@ class TestWarmReboot(object):
         rt_key = json.loads(delobjs[0]['key'])
         assert rt_key['dest'] == "fc00:4:4::1/128"
 
-        # Verify the changed prefix is seen in swss
-        (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
-        assert len(addobjs) == 0 and len(delobjs) == 1
-        rt_key = json.loads(delobjs[0]['key'])
-        assert rt_key == "fc00:4:4::1"
 
         #############################################################################
         #
