@@ -9,10 +9,12 @@
 
 #include "request_parser.h"
 #include "ipaddresses.h"
+#include "producerstatetable.h"
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 512
 #define VNET_NEIGHBOR_MAX 0xffff
+#define VXLAN_ENCAP_TTL 128
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -184,8 +186,10 @@ struct TunnelRouteInfo
 {
     sai_object_id_t tunnelRouteTableEntryId;
     sai_object_id_t nexthopId;
+    sai_object_id_t tunnelId;
     uint32_t vni;
     MacAddress mac;
+    IpAddress ip;
     uint32_t offset;
 };
 
@@ -199,6 +203,14 @@ struct VnetIntfInfo
 {
     sai_object_id_t vnetTableEntryId;
     map<IpPrefix, RouteInfo> pfxMap;
+};
+
+
+struct TunnelEndpointInfo
+{
+    sai_object_id_t metaTunnelEntryId;
+    uint16_t tunnelIndex;
+    uint32_t use_count;
 };
 
 class VNetBitmapObject: public VNetObject
@@ -239,6 +251,10 @@ private:
     static uint32_t getFreeTunnelRouteTableOffset();
     static void recycleTunnelRouteTableOffset(uint32_t offset);
 
+    static uint16_t getFreeTunnelId();
+
+    static void recycleTunnelId(uint16_t offset);
+
     static VnetBridgeInfo getBridgeInfoByVni(uint32_t vni, string tunnelName);
     static bool clearBridgeInfoByVni(uint32_t vni, string tunnelName);
 
@@ -249,8 +265,10 @@ private:
     static std::bitset<VNET_BITMAP_SIZE> vnetBitmap_;
     static map<string, uint32_t> vnetIds_;
     static std::bitset<VNET_TUNNEL_SIZE> tunnelOffsets_;
+    static std::bitset<VNET_TUNNEL_SIZE> tunnelIdOffsets_;
     static map<uint32_t, VnetBridgeInfo> bridgeInfoMap_;
     static map<tuple<MacAddress, sai_object_id_t>, VnetNeighInfo> neighInfoMap_;
+    static map<tuple<IpAddress, sai_object_id_t>, TunnelEndpointInfo> endpointMap_;
 
     map<IpPrefix, RouteInfo> routeMap_;
     map<IpPrefix, TunnelRouteInfo> tunnelRouteMap_;
@@ -358,6 +376,21 @@ private:
     VNetOrch *vnet_orch_;
     VNetRouteRequest request_;
     handler_map handler_map_;
+};
+
+class VNetCfgRouteOrch : public Orch
+{
+public:
+    VNetCfgRouteOrch(DBConnector *db, DBConnector *appDb, vector<string> &tableNames);
+    using Orch::doTask;
+
+private:
+    void doTask(Consumer &consumer);
+
+    bool doVnetTunnelRouteTask(const KeyOpFieldsValuesTuple & t, const std::string & op);
+    bool doVnetRouteTask(const KeyOpFieldsValuesTuple & t, const std::string & op);
+
+    ProducerStateTable m_appVnetRouteTable, m_appVnetRouteTunnelTable;
 };
 
 #endif // __VNETORCH_H

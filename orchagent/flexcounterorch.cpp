@@ -6,11 +6,15 @@
 #include "redisclient.h"
 #include "sai_serialize.h"
 #include "pfcwdorch.h"
+#include "bufferorch.h"
 
 extern sai_port_api_t *sai_port_api;
 
 extern PortsOrch *gPortsOrch;
 extern IntfsOrch *gIntfsOrch;
+extern BufferOrch *gBufferOrch;
+
+#define BUFFER_POOL_WATERMARK_KEY   "BUFFER_POOL_WATERMARK"
 
 unordered_map<string, string> flexCounterGroupMap =
 {
@@ -19,6 +23,7 @@ unordered_map<string, string> flexCounterGroupMap =
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
     {"QUEUE_WATERMARK", QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PG_WATERMARK", PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {BUFFER_POOL_WATERMARK_KEY, BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
 };
 
@@ -40,7 +45,7 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -76,11 +81,28 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                 }
                 else if(field == FLEX_COUNTER_STATUS_FIELD)
                 {
-                    // Currently the counters are disabled by default
-                    // The queue maps will be generated as soon as counters are enabled
+                    // Currently, the counters are disabled for polling by default
+                    // The queue maps will be generated as soon as counters are enabled for polling
+                    // Counter polling is enabled by pushing the COUNTER_ID_LIST/ATTR_ID_LIST, which contains
+                    // the list of SAI stats/attributes of polling interest, to the FLEX_COUNTER_DB under the
+                    // additional condition that the polling interval at that time is set nonzero positive,
+                    // which is automatically satisfied upon the creation of the orch object that requires
+                    // the syncd flex counter polling service
+                    // This postponement is introduced by design to accelerate the initialization process
+                    //
+                    // generateQueueMap() is called as long as a field "FLEX_COUNTER_STATUS" event is heard,
+                    // regardless of whether the key is "QUEUE" or whether the value is "enable" or "disable"
+                    // This can be because generateQueueMap() installs a fundamental list of queue stats
+                    // that need to be polled. So my doubt here is if queue watermark stats shall be piggybacked
+                    // into the same function as they may not be counted as fundamental
                     gPortsOrch->generateQueueMap();
                     gPortsOrch->generatePriorityGroupMap();
                     gIntfsOrch->generateInterfaceMap();
+                    // Install COUNTER_ID_LIST/ATTR_ID_LIST only when hearing buffer pool watermark enable event
+                    if ((key == BUFFER_POOL_WATERMARK_KEY) && (value == "enable"))
+                    {
+                        gBufferOrch->generateBufferPoolWatermarkCounterIdList();
+                    }
 
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);

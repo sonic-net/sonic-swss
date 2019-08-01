@@ -24,6 +24,7 @@
 #define MIRROR_SESSION_MONITOR_PORT         "monitor_port"
 #define MIRROR_SESSION_ROUTE_PREFIX         "route_prefix"
 #define MIRROR_SESSION_VLAN_HEADER_VALID    "vlan_header_valid"
+#define MIRROR_SESSION_POLICER              "policer"
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
@@ -60,12 +61,13 @@ MirrorEntry::MirrorEntry(const string& platform) :
 }
 
 MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbConnector,
-        PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch) :
+        PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch) :
         Orch(confDbConnector.first, confDbConnector.second),
         m_portsOrch(portOrch),
         m_routeOrch(routeOrch),
         m_neighOrch(neighOrch),
         m_fdbOrch(fdbOrch),
+        m_policerOrch(policerOrch),
         m_mirrorTable(stateDbConnector.first, stateDbConnector.second)
 {
     m_portsOrch->attach(this);
@@ -239,6 +241,18 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
             {
                 entry.queue = to_uint<uint8_t>(fvValue(i));
             }
+            else if (fvField(i) == MIRROR_SESSION_POLICER)
+            {
+                if (!m_policerOrch->policerExists(fvValue(i)))
+                {
+                    SWSS_LOG_ERROR("Failed to get policer %s",
+                            fvValue(i).c_str());
+                    return;
+                }
+
+                m_policerOrch->increaseRefCount(fvValue(i));
+                entry.policer = fvValue(i);
+            }
             else
             {
                 SWSS_LOG_ERROR("Failed to parse session %s configuration. Unknown attribute %s.\n", key.c_str(), fvField(i).c_str());
@@ -290,6 +304,11 @@ void MirrorOrch::deleteEntry(const string& name)
     {
         m_routeOrch->detach(this, session.dstIp);
         deactivateSession(name, session);
+    }
+
+    if (!session.policer.empty())
+    {
+        m_policerOrch->decreaseRefCount(session.policer);
     }
 
     m_syncdMirrors.erase(sessionIter);
@@ -387,7 +406,8 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
         }
         case Port::VLAN:
         {
-            SWSS_LOG_NOTICE("vlan id is %d", session.neighborInfo.port.m_vlan_info.vlan_id);
+            SWSS_LOG_NOTICE("Get mirror session destination IP neighbor VLAN %d",
+                    session.neighborInfo.port.m_vlan_info.vlan_id);
             Port member;
             if (!m_fdbOrch->getPort(session.neighborInfo.mac, session.neighborInfo.port.m_vlan_info.vlan_id, member))
             {
@@ -550,6 +570,20 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     attr.value.u16 = session.greType;
     attrs.push_back(attr);
 
+    if (!session.policer.empty())
+    {
+        sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+        if (!m_policerOrch->getPolicerOid(session.policer, oid))
+        {
+            SWSS_LOG_ERROR("Faield to get policer %s", session.policer.c_str());
+            return false;
+        }
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_POLICER;
+        attr.value.oid = oid;
+        attrs.push_back(attr);
+    }
+
     status = sai_mirror_api->
         create_mirror_session(&session.sessionId, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -566,7 +600,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     MirrorSessionUpdate update = { name, true };
     notify(SUBJECT_TYPE_MIRROR_SESSION_CHANGE, static_cast<void *>(&update));
 
-    SWSS_LOG_NOTICE("Activate mirror session %s", name.c_str());
+    SWSS_LOG_NOTICE("Activated mirror session %s", name.c_str());
 
     return true;
 }
@@ -593,7 +627,7 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     // Store whole state into StateDB, since it is far from that frequent it's durable
     setSessionState(name, session);
 
-    SWSS_LOG_NOTICE("Deactive mirror session %s", name.c_str());
+    SWSS_LOG_NOTICE("Deactivated mirror session %s", name.c_str());
 
     return true;
 }
@@ -752,7 +786,7 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         }
         else
         {
-            session.nexthopInfo.nexthop = IpAddress();
+            session.nexthopInfo.nexthop = IpAddress(0);
         }
 
         // Resolve the neighbor of the new next hop
@@ -934,7 +968,7 @@ void MirrorOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }

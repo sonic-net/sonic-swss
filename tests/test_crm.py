@@ -15,6 +15,8 @@ def getCrmCounterValue(dvs, key, counter):
         if k[0] == counter:
             return int(k[1])
 
+    return 0
+
 
 def setReadOnlyAttr(dvs, obj, attr, val):
 
@@ -38,564 +40,583 @@ def setReadOnlyAttr(dvs, obj, attr, val):
 
     ntf.send("set_ro", key, fvp)
 
+class TestCrm(object):
+    def test_CrmFdbEntry(self, dvs, testlog):
 
-def test_CrmFdbEntry(dvs, testlog):
+        # disable ipv6 on Ethernet8 neighbor as once ipv6 link-local address is
+        # configured, server 2 will send packet which can switch to learn another
+        # mac and fail the test.
+        dvs.servers[2].runcmd("sysctl -w net.ipv6.conf.eth0.disable_ipv6=1")
+        dvs.runcmd("crm config polling interval 1")
 
-    # disable ipv6 on Ethernet8 neighbor as once ipv6 link-local address is
-    # configured, server 2 will send packet which can switch to learn another
-    # mac and fail the test.
-    dvs.servers[2].runcmd("sysctl -w net.ipv6.conf.eth0.disable_ipv6=1")
-    dvs.runcmd("crm config polling interval 1")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY', '1000')
 
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_available')
 
-    # get counters
-    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_used')
-    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_available')
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
-    app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-    cfg_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        # create a FDB entry
+        tbl = swsscommon.ProducerStateTable(app_db, "FDB_TABLE")
+        fvs = swsscommon.FieldValuePairs([("port","Ethernet8"),("type","dynamic")])
+        tbl.set("Vlan2:52-54-00-25-06-E9", fvs)
 
-    # create a FDB entry
-    tbl = swsscommon.ProducerStateTable(app_db, "FDB_TABLE")
-    fvs = swsscommon.FieldValuePairs([("port","Ethernet8"),("type","dynamic")])
-    tbl.set("Vlan2:52-54-00-25-06-E9", fvs)
+        # create vlan
+        tbl = swsscommon.Table(cfg_db, "VLAN")
+        fvs = swsscommon.FieldValuePairs([("vlanid", "2")])
+        tbl.set("Vlan2", fvs)
 
-    # create vlan
-    tbl = swsscommon.Table(cfg_db, "VLAN")
-    fvs = swsscommon.FieldValuePairs([("vlanid", "2")])
-    tbl.set("Vlan2", fvs)
+        # create vlan member
+        tbl = swsscommon.Table(cfg_db, "VLAN_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
+        tbl.set("Vlan2|Ethernet8", fvs)
 
-    # create vlan member
-    tbl = swsscommon.Table(cfg_db, "VLAN_MEMBER")
-    fvs = swsscommon.FieldValuePairs([("tagging_mode", "untagged")])
-    tbl.set("Vlan2|Ethernet8", fvs)
+        # update available counter
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY', '999')
 
-    # update available counter
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY', '999')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_available')
+        assert new_used_counter - used_counter == 1
+        assert avail_counter - new_avail_counter == 1
 
-    assert new_used_counter - used_counter == 1
-    assert avail_counter - new_avail_counter == 1
+        # update available counter
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY', '1000')
 
-    # update available counter
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_available')
 
-    # get counters
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_fdb_entry_available')
+        assert new_avail_counter == avail_counter
 
-    assert new_avail_counter == avail_counter
+        # enable ipv6 on server 2
+        dvs.servers[2].runcmd("sysctl -w net.ipv6.conf.eth0.disable_ipv6=0")
 
-    # enable ipv6 on server 2
-    dvs.servers[2].runcmd("sysctl -w net.ipv6.conf.eth0.disable_ipv6=0")
+    def test_CrmIpv4Route(self, dvs, testlog):
 
-def test_CrmIpv4Route(dvs, testlog):
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+        intf_tbl.set("Ethernet0", fvs)
+        intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+        dvs.runcmd("ifconfig Ethernet0 up")
 
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
-    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
-    dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("crm config polling interval 1")
 
-    dvs.runcmd("crm config polling interval 1")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY', '1000')
 
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY', '1000')
+        # add static neighbor
+        dvs.runcmd("ip neigh replace 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
 
-    # add static neighbor
-    dvs.runcmd("ip neigh replace 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
 
-    db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-    ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
-    fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1"), ("ifname", "Ethernet0")])
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_available')
 
-    # get counters
-    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_used')
-    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_available')
+        # add route and update available counter
+        ps.set("2.2.2.0/24", fvs)
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY', '999')
 
-    # add route and update available counter
-    ps.set("2.2.2.0/24", fvs)
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY', '999')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_available')
+        assert new_used_counter - used_counter == 1
+        assert avail_counter - new_avail_counter == 1
 
-    assert new_used_counter - used_counter == 1
-    assert avail_counter - new_avail_counter == 1
+        # remove route and update available counter
+        ps._del("2.2.2.0/24")
+        dvs.runcmd("ip neigh del 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY', '1000')
 
-    # remove route and update available counter
-    ps._del("2.2.2.0/24")
-    dvs.runcmd("ip neigh del 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_ROUTE_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_route_available')
+        assert new_used_counter == used_counter
+        assert new_avail_counter == avail_counter
 
-    assert new_used_counter == used_counter
-    assert new_avail_counter == avail_counter
+        intf_tbl._del("Ethernet0|10.0.0.0/31")
+        time.sleep(2)
 
-    intf_tbl._del("Ethernet0|10.0.0.0/31")
-    time.sleep(2)
 
+    def test_CrmIpv6Route(self, dvs, testlog):
 
-def test_CrmIpv6Route(dvs, testlog):
+        # Enable IPv6 routing
+        dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
+        time.sleep(2)
 
-    # Enable IPv6 routing
-    dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
-    time.sleep(2)
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+        intf_tbl.set("Ethernet0", fvs)
+        intf_tbl.set("Ethernet0|fc00::1/126", fvs)
+        dvs.runcmd("ifconfig Ethernet0 up")
 
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
-    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-    intf_tbl.set("Ethernet0|fc00::1/126", fvs)
-    dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.servers[0].runcmd("ifconfig eth0 inet6 add fc00::2/126")
+        dvs.servers[0].runcmd("ip -6 route add default via fc00::1")
 
-    dvs.servers[0].runcmd("ifconfig eth0 inet6 add fc00::2/126")
-    dvs.servers[0].runcmd("ip -6 route add default via fc00::1")
+        dvs.runcmd("crm config polling interval 1")
 
-    dvs.runcmd("crm config polling interval 1")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_ROUTE_ENTRY', '1000')
 
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_ROUTE_ENTRY', '1000')
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping6 -c 4 fc00::1")
 
-    # get neighbor and arp entry
-    dvs.servers[0].runcmd("ping6 -c 4 fc00::1")
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("nexthop","fc00::2"), ("ifname", "Ethernet0")])
 
-    db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-    ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
-    fvs = swsscommon.FieldValuePairs([("nexthop","fc00::2"), ("ifname", "Ethernet0")])
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_available')
 
-    # get counters
-    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_used')
-    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_available')
+        # add route and update available counter
+        ps.set("2001::/64", fvs)
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_ROUTE_ENTRY', '999')
 
-    # add route and update available counter
-    ps.set("2001::/64", fvs)
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_ROUTE_ENTRY', '999')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_available')
+        assert new_used_counter - used_counter == 1
+        assert avail_counter - new_avail_counter == 1
 
-    assert new_used_counter - used_counter == 1
-    assert avail_counter - new_avail_counter == 1
+        # remove route and update available counter
+        ps._del("2001::/64")
+        dvs.runcmd("ip -6 neigh del fc00::2 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_ROUTE_ENTRY', '1000')
 
-    # remove route and update available counter
-    ps._del("2001::/64")
-    dvs.runcmd("ip -6 neigh del fc00::2 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_ROUTE_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_route_available')
+        assert new_used_counter == used_counter
+        assert new_avail_counter == avail_counter
 
-    assert new_used_counter == used_counter
-    assert new_avail_counter == avail_counter
+        intf_tbl._del("Ethernet0|fc00::1/126")
+        time.sleep(2)
 
-    intf_tbl._del("Ethernet0|fc00::1/126")
-    time.sleep(2)
 
+    def test_CrmIpv4Nexthop(self, dvs, testlog):
 
-def test_CrmIpv4Nexthop(dvs, testlog):
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+        intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+        intf_tbl.set("Ethernet0", fvs)
+        dvs.runcmd("ifconfig Ethernet0 up")
 
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
-    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
-    dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("crm config polling interval 1")
 
-    dvs.runcmd("crm config polling interval 1")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY', '1000')
 
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_available')
 
-    # get counters
-    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_used')
-    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_available')
+        # add nexthop and update available counter
+        dvs.runcmd("ip neigh replace 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY', '999')
 
-    # add nexthop and update available counter
-    dvs.runcmd("ip neigh replace 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY', '999')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_available')
+        assert new_used_counter - used_counter == 1
+        assert avail_counter - new_avail_counter == 1
 
-    assert new_used_counter - used_counter == 1
-    assert avail_counter - new_avail_counter == 1
+        # remove nexthop and update available counter
+        dvs.runcmd("ip neigh del 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY', '1000')
 
-    # remove nexthop and update available counter
-    dvs.runcmd("ip neigh del 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEXTHOP_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_nexthop_available')
+        assert new_used_counter == used_counter
+        assert new_avail_counter == avail_counter
 
-    assert new_used_counter == used_counter
-    assert new_avail_counter == avail_counter
+        intf_tbl._del("Ethernet0|10.0.0.0/31")
+        time.sleep(2)
 
-    intf_tbl._del("Ethernet0|10.0.0.0/31")
-    time.sleep(2)
 
+    def test_CrmIpv6Nexthop(self, dvs, testlog):
 
-def test_CrmIpv6Nexthop(dvs, testlog):
+        # Enable IPv6 routing
+        dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
+        time.sleep(2)
 
-    # Enable IPv6 routing
-    dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
-    time.sleep(2)
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+        intf_tbl.set("Ethernet0", fvs)
+        intf_tbl.set("Ethernet0|fc00::1/126", fvs)
+        dvs.runcmd("ifconfig Ethernet0 up")
 
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
-    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-    intf_tbl.set("Ethernet0|fc00::1/126", fvs)
-    dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("crm config polling interval 1")
 
-    dvs.runcmd("crm config polling interval 1")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY', '1000')
 
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_available')
 
-    # get counters
-    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_used')
-    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_available')
+        # add nexthop and update available counter
+        dvs.runcmd("ip -6 neigh replace fc00::2 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY', '999')
 
-    # add nexthop and update available counter
-    dvs.runcmd("ip -6 neigh replace fc00::2 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY', '999')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_available')
+        assert new_used_counter - used_counter == 1
+        assert avail_counter - new_avail_counter == 1
 
-    assert new_used_counter - used_counter == 1
-    assert avail_counter - new_avail_counter == 1
+        # remove nexthop and update available counter
+        dvs.runcmd("ip -6 neigh del fc00::2 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY', '1000')
 
-    # remove nexthop and update available counter
-    dvs.runcmd("ip -6 neigh del fc00::2 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEXTHOP_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_nexthop_available')
+        assert new_used_counter == used_counter
+        assert new_avail_counter == avail_counter
 
-    assert new_used_counter == used_counter
-    assert new_avail_counter == avail_counter
+        intf_tbl._del("Ethernet0|fc00::1/126")
+        time.sleep(2)
 
-    intf_tbl._del("Ethernet0|fc00::1/126")
-    time.sleep(2)
 
+    def test_CrmIpv4Neighbor(self, dvs, testlog):
 
-def test_CrmIpv4Neighbor(dvs, testlog):
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+        intf_tbl.set("Ethernet0", fvs)
+        intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+        dvs.runcmd("ifconfig Ethernet0 up")
 
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
-    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
-    dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("crm config polling interval 1")
 
-    dvs.runcmd("crm config polling interval 1")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEIGHBOR_ENTRY', '1000')
 
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEIGHBOR_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_available')
 
-    # get counters
-    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_used')
-    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_available')
+        # add neighbor and update available counter
+        dvs.runcmd("ip neigh replace 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEIGHBOR_ENTRY', '999')
 
-    # add neighbor and update available counter
-    dvs.runcmd("ip neigh replace 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEIGHBOR_ENTRY', '999')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_available')
+        assert new_used_counter - used_counter == 1
+        assert avail_counter - new_avail_counter == 1
 
-    assert new_used_counter - used_counter == 1
-    assert avail_counter - new_avail_counter == 1
+        # remove neighbor and update available counter
+        dvs.runcmd("ip neigh del 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEIGHBOR_ENTRY', '1000')
 
-    # remove neighbor and update available counter
-    dvs.runcmd("ip neigh del 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV4_NEIGHBOR_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv4_neighbor_available')
+        assert new_used_counter == used_counter
+        assert new_avail_counter == avail_counter
 
-    assert new_used_counter == used_counter
-    assert new_avail_counter == avail_counter
+        intf_tbl._del("Ethernet0|10.0.0.0/31")
+        time.sleep(2)
 
-    intf_tbl._del("Ethernet0|10.0.0.0/31")
-    time.sleep(2)
 
+    def test_CrmIpv6Neighbor(self, dvs, testlog):
 
-def test_CrmIpv6Neighbor(dvs, testlog):
+        # Enable IPv6 routing
+        dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
+        time.sleep(2)
 
-    # Enable IPv6 routing
-    dvs.runcmd("sysctl net.ipv6.conf.all.disable_ipv6=0")
-    time.sleep(2)
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+        intf_tbl.set("Ethernet0", fvs)
+        intf_tbl.set("Ethernet0|fc00::1/126", fvs)
+        dvs.runcmd("ifconfig Ethernet0 up")
 
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
-    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-    intf_tbl.set("Ethernet0|fc00::1/126", fvs)
-    dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("crm config polling interval 1")
 
-    dvs.runcmd("crm config polling interval 1")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEIGHBOR_ENTRY', '1000')
 
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEIGHBOR_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_available')
 
-    # get counters
-    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_used')
-    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_available')
+        # add neighbor and update available counter
+        dvs.runcmd("ip -6 neigh replace fc00::2 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEIGHBOR_ENTRY', '999')
 
-    # add neighbor and update available counter
-    dvs.runcmd("ip -6 neigh replace fc00::2 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEIGHBOR_ENTRY', '999')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_available')
+        assert new_used_counter - used_counter == 1
+        assert avail_counter - new_avail_counter == 1
 
-    assert new_used_counter - used_counter == 1
-    assert avail_counter - new_avail_counter == 1
+        # remove neighbor and update available counter
+        dvs.runcmd("ip -6 neigh del fc00::2 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEIGHBOR_ENTRY', '1000')
 
-    # remove neighbor and update available counter
-    dvs.runcmd("ip -6 neigh del fc00::2 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_IPV6_NEIGHBOR_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipv6_neighbor_available')
+        assert new_used_counter == used_counter
+        assert new_avail_counter == avail_counter
 
-    assert new_used_counter == used_counter
-    assert new_avail_counter == avail_counter
+        intf_tbl._del("Ethernet0|fc00::1/126")
+        time.sleep(2)
 
-    intf_tbl._del("Ethernet0|fc00::1/126")
-    time.sleep(2)
 
+    def test_CrmNexthopGroup(self, dvs, testlog):
 
-def test_CrmNexthopGroup(dvs, testlog):
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+        intf_tbl.set("Ethernet0", fvs)
+        intf_tbl.set("Ethernet4", fvs)
+        intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+        intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+        dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("ifconfig Ethernet4 up")
 
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
-    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
-    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
-    dvs.runcmd("ifconfig Ethernet0 up")
-    dvs.runcmd("ifconfig Ethernet4 up")
+        dvs.runcmd("crm config polling interval 1")
 
-    dvs.runcmd("crm config polling interval 1")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_ENTRY', '1000')
 
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_ENTRY', '1000')
+        # add neighbors
+        dvs.runcmd("ip neigh replace 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        dvs.runcmd("ip neigh replace 10.0.0.3 lladdr 11:22:33:44:55:66 dev Ethernet4")
 
-    # add neighbors
-    dvs.runcmd("ip neigh replace 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    dvs.runcmd("ip neigh replace 10.0.0.3 lladdr 11:22:33:44:55:66 dev Ethernet4")
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3"), ("ifname", "Ethernet0,Ethernet4")])
 
-    db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-    ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
-    fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3"), ("ifname", "Ethernet0,Ethernet4")])
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_available')
 
-    # get counters
-    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_used')
-    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_available')
+        # add route and update available counter
+        ps.set("2.2.2.0/24", fvs)
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_ENTRY', '999')
 
-    # add route and update available counter
-    ps.set("2.2.2.0/24", fvs)
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_ENTRY', '999')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_available')
+        assert new_used_counter - used_counter == 1
+        assert avail_counter - new_avail_counter == 1
 
-    assert new_used_counter - used_counter == 1
-    assert avail_counter - new_avail_counter == 1
+        # remove route and update available counter
+        ps._del("2.2.2.0/24")
+        dvs.runcmd("ip neigh del 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        dvs.runcmd("ip neigh del 10.0.0.3 lladdr 11:22:33:44:55:66 dev Ethernet4")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_ENTRY', '1000')
 
-    # remove route and update available counter
-    ps._del("2.2.2.0/24")
-    dvs.runcmd("ip neigh del 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    dvs.runcmd("ip neigh del 10.0.0.3 lladdr 11:22:33:44:55:66 dev Ethernet4")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_available')
+        assert new_used_counter == used_counter
+        assert new_avail_counter == avail_counter
 
-    assert new_used_counter == used_counter
-    assert new_avail_counter == avail_counter
+        intf_tbl._del("Ethernet0|10.0.0.0/31")
+        intf_tbl._del("Ethernet4|10.0.0.2/31")
+        time.sleep(2)
 
-    intf_tbl._del("Ethernet0|10.0.0.0/31")
-    intf_tbl._del("Ethernet4|10.0.0.2/31")
-    time.sleep(2)
 
+    def test_CrmNexthopGroupMember(self, dvs, testlog):
 
-def test_CrmNexthopGroupMember(dvs, testlog):
+        # down, then up to generate port up signal
+        dvs.servers[0].runcmd("ip link set down dev eth0") == 0
+        dvs.servers[1].runcmd("ip link set down dev eth0") == 0
+        dvs.servers[0].runcmd("ip link set up dev eth0") == 0
+        dvs.servers[1].runcmd("ip link set up dev eth0") == 0
 
-    # down, then up to generate port up signal
-    dvs.servers[0].runcmd("ip link set down dev eth0") == 0
-    dvs.servers[1].runcmd("ip link set down dev eth0") == 0
-    dvs.servers[0].runcmd("ip link set up dev eth0") == 0
-    dvs.servers[1].runcmd("ip link set up dev eth0") == 0
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+        intf_tbl.set("Ethernet0", fvs)
+        intf_tbl.set("Ethernet4", fvs)
+        intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
+        intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
+        dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("ifconfig Ethernet4 up")
 
-    config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    intf_tbl = swsscommon.Table(config_db, "INTERFACE")
-    fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-    intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
-    intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
-    dvs.runcmd("ifconfig Ethernet0 up")
-    dvs.runcmd("ifconfig Ethernet4 up")
+        dvs.runcmd("crm config polling interval 1")
 
-    dvs.runcmd("crm config polling interval 1")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_MEMBER_ENTRY', '1000')
 
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_MEMBER_ENTRY', '1000')
+        # add neighbors
+        dvs.runcmd("ip neigh replace 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        dvs.runcmd("ip neigh replace 10.0.0.3 lladdr 11:22:33:44:55:66 dev Ethernet4")
 
-    # add neighbors
-    dvs.runcmd("ip neigh replace 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    dvs.runcmd("ip neigh replace 10.0.0.3 lladdr 11:22:33:44:55:66 dev Ethernet4")
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3"), ("ifname", "Ethernet0,Ethernet4")])
 
-    db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-    ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
-    fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3"), ("ifname", "Ethernet0,Ethernet4")])
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_available')
 
-    # get counters
-    used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_used')
-    avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_available')
+        # add route and update available counter
+        ps.set("2.2.2.0/24", fvs)
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_MEMBER_ENTRY', '998')
 
-    # add route and update available counter
-    ps.set("2.2.2.0/24", fvs)
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_MEMBER_ENTRY', '998')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_available')
+        assert new_used_counter - used_counter == 2
+        assert avail_counter - new_avail_counter == 2
 
-    assert new_used_counter - used_counter == 2
-    assert avail_counter - new_avail_counter == 2
+        # remove route and update available counter
+        ps._del("2.2.2.0/24")
+        dvs.runcmd("ip neigh del 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
+        dvs.runcmd("ip neigh del 10.0.0.3 lladdr 11:22:33:44:55:66 dev Ethernet4")
+        setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_MEMBER_ENTRY', '1000')
 
-    # remove route and update available counter
-    ps._del("2.2.2.0/24")
-    dvs.runcmd("ip neigh del 10.0.0.1 lladdr 11:22:33:44:55:66 dev Ethernet0")
-    dvs.runcmd("ip neigh del 10.0.0.3 lladdr 11:22:33:44:55:66 dev Ethernet4")
-    setReadOnlyAttr(dvs, 'SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_MEMBER_ENTRY', '1000')
+        time.sleep(2)
 
-    time.sleep(2)
+        # get counters
+        new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_used')
+        new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_available')
 
-    # get counters
-    new_used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_used')
-    new_avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_nexthop_group_member_available')
+        assert new_used_counter == used_counter
+        assert new_avail_counter == avail_counter
 
-    assert new_used_counter == used_counter
-    assert new_avail_counter == avail_counter
+        intf_tbl._del("Ethernet0|10.0.0.0/31")
+        intf_tbl._del("Ethernet4|10.0.0.2/31")
+        time.sleep(2)
 
-    intf_tbl._del("Ethernet0|10.0.0.0/31")
-    intf_tbl._del("Ethernet4|10.0.0.2/31")
-    time.sleep(2)
 
+    def test_CrmAcl(self, dvs, testlog):
 
-def test_CrmAcl(dvs, testlog):
+        db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
-    db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-    adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        dvs.runcmd("crm config polling interval 1")
+        time.sleep(1)
 
-    dvs.runcmd("crm config polling interval 1")
+        bind_ports = ["Ethernet0", "Ethernet4"]
 
-    bind_ports = ["Ethernet0", "Ethernet4"]
+        old_table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
 
-    # create ACL table
-    ttbl = swsscommon.Table(db, "ACL_TABLE")
-    fvs = swsscommon.FieldValuePairs([("policy_desc", "test"), ("type", "L3"), ("ports", ",".join(bind_ports))])
-    ttbl.set("test", fvs)
+        # create ACL table
+        ttbl = swsscommon.Table(db, "ACL_TABLE")
+        fvs = swsscommon.FieldValuePairs([("policy_desc", "test"), ("type", "L3"), ("ports", ",".join(bind_ports))])
+        ttbl.set("test", fvs)
 
-    # create ACL rule
-    rtbl = swsscommon.Table(db, "ACL_RULE")
-    fvs = swsscommon.FieldValuePairs([("priority", "55"), ("PACKET_ACTION", "FORWARD"), ("L4_SRC_PORT", "65000")])
-    rtbl.set("test|acl_test_rule", fvs)
+        # create ACL rule
+        rtbl = swsscommon.Table(db, "ACL_RULE")
+        fvs = swsscommon.FieldValuePairs([("priority", "55"), ("PACKET_ACTION", "FORWARD"), ("L4_SRC_PORT", "65000")])
+        rtbl.set("test|acl_test_rule", fvs)
 
-    time.sleep(2)
+        time.sleep(2)
 
-    table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
-    assert table_used_counter == 1
+        new_table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
+        table_used_counter = new_table_used_counter - old_table_used_counter
+        assert table_used_counter == 1
 
-    # get ACL table key
-    atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
-    acl_tables = [k for k in atbl.getKeys() if k not in dvs.asicdb.default_acl_tables]
-    key = "ACL_TABLE_STATS:{0}".format(acl_tables[0].replace('oid:', ''))
+        # get ACL table key
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
+        acl_tables = [k for k in atbl.getKeys() if k not in dvs.asicdb.default_acl_tables]
+        key = "ACL_TABLE_STATS:{0}".format(acl_tables[0].replace('oid:', ''))
 
-    entry_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_entry_used')
-    assert entry_used_counter == 1
+        entry_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_entry_used')
+        assert entry_used_counter == 1
 
-    cnt_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_counter_used')
-    assert entry_used_counter == 1
+        cnt_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_counter_used')
+        assert entry_used_counter == 1
 
-    # remove ACL rule
-    rtbl._del("test|acl_test_rule")
+        # remove ACL rule
+        rtbl._del("test|acl_test_rule")
 
-    time.sleep(2)
+        time.sleep(2)
 
-    entry_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_entry_used')
-    assert entry_used_counter == 0
+        entry_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_entry_used')
+        assert entry_used_counter == 0
 
-    cnt_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_counter_used')
-    assert cnt_used_counter == 0
+        cnt_used_counter = getCrmCounterValue(dvs, key, 'crm_stats_acl_counter_used')
+        assert cnt_used_counter == 0
 
-    # remove ACL table
-    ttbl._del("test")
+        # remove ACL table
+        ttbl._del("test")
 
-    time.sleep(2)
+        time.sleep(2)
 
-    table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
-    assert table_used_counter == 0
+        new_table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_table_used')
+        table_used_counter = new_table_used_counter - old_table_used_counter
+        assert table_used_counter == 0
 
+        counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
+        crm_stats_table = swsscommon.Table(counters_db, 'CRM')
+        keys = crm_stats_table.getKeys()
+        assert key not in keys

@@ -24,13 +24,15 @@
 #define TABLE_PORTS       "PORTS"
 #define TABLE_SERVICES    "SERVICES"
 
-#define TABLE_TYPE_L3        "L3"
-#define TABLE_TYPE_L3V6      "L3V6"
-#define TABLE_TYPE_MIRROR    "MIRROR"
-#define TABLE_TYPE_PFCWD     "PFCWD"
-#define TABLE_TYPE_CTRLPLANE "CTRLPLANE"
-#define TABLE_TYPE_DTEL_FLOW_WATCHLIST "DTEL_FLOW_WATCHLIST"
-#define TABLE_TYPE_DTEL_DROP_WATCHLIST "DTEL_DROP_WATCHLIST"
+#define TABLE_TYPE_L3                   "L3"
+#define TABLE_TYPE_L3V6                 "L3V6"
+#define TABLE_TYPE_MIRROR               "MIRROR"
+#define TABLE_TYPE_MIRRORV6             "MIRRORV6"
+#define TABLE_TYPE_MIRROR_DSCP          "MIRROR_DSCP"
+#define TABLE_TYPE_PFCWD                "PFCWD"
+#define TABLE_TYPE_CTRLPLANE            "CTRLPLANE"
+#define TABLE_TYPE_DTEL_FLOW_WATCHLIST  "DTEL_FLOW_WATCHLIST"
+#define TABLE_TYPE_DTEL_DROP_WATCHLIST  "DTEL_DROP_WATCHLIST"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
@@ -49,14 +51,18 @@
 #define MATCH_L4_SRC_PORT_RANGE "L4_SRC_PORT_RANGE"
 #define MATCH_L4_DST_PORT_RANGE "L4_DST_PORT_RANGE"
 #define MATCH_TC                "TC"
+#define MATCH_ICMP_TYPE         "ICMP_TYPE"
+#define MATCH_ICMP_CODE         "ICMP_CODE"
+#define MATCH_ICMPV6_TYPE       "ICMPV6_TYPE"
+#define MATCH_ICMPV6_CODE       "ICMPV6_CODE"
 #define MATCH_TUNNEL_VNI        "TUNNEL_VNI"
 #define MATCH_INNER_ETHER_TYPE  "INNER_ETHER_TYPE"
 #define MATCH_INNER_IP_PROTOCOL "INNER_IP_PROTOCOL"
 #define MATCH_INNER_L4_SRC_PORT "INNER_L4_SRC_PORT"
 #define MATCH_INNER_L4_DST_PORT "INNER_L4_DST_PORT"
 
-#define ACTION_PACKET_ACTION    "PACKET_ACTION"
-#define ACTION_MIRROR_ACTION    "MIRROR_ACTION"
+#define ACTION_PACKET_ACTION                "PACKET_ACTION"
+#define ACTION_MIRROR_ACTION                "MIRROR_ACTION"
 #define ACTION_DTEL_FLOW_OP                 "FLOW_OP"
 #define ACTION_DTEL_INT_SESSION             "INT_SESSION"
 #define ACTION_DTEL_DROP_REPORT_ENABLE      "DROP_REPORT_ENABLE"
@@ -95,6 +101,8 @@ typedef enum
     ACL_TABLE_L3,
     ACL_TABLE_L3V6,
     ACL_TABLE_MIRROR,
+    ACL_TABLE_MIRRORV6,
+    ACL_TABLE_MIRROR_DSCP,
     ACL_TABLE_PFCWD,
     ACL_TABLE_CTRLPLANE,
     ACL_TABLE_DTEL_FLOW_WATCHLIST,
@@ -301,6 +309,7 @@ protected:
 
 class AclTable {
     sai_object_id_t m_oid;
+    AclOrch *m_pAclOrch;
 public:
     string id;
     string description;
@@ -317,7 +326,15 @@ public:
     set<string> pendingPortSet;
 
     AclTable()
-        : type(ACL_TABLE_UNKNOWN)
+        : m_pAclOrch(NULL)
+        , type(ACL_TABLE_UNKNOWN)
+        , m_oid(SAI_NULL_OBJECT_ID)
+        , stage(ACL_STAGE_INGRESS)
+    {}
+
+    AclTable(AclOrch *aclOrch)
+        : m_pAclOrch(aclOrch)
+        , type(ACL_TABLE_UNKNOWN)
         , m_oid(SAI_NULL_OBJECT_ID)
         , stage(ACL_STAGE_INGRESS)
     {}
@@ -363,8 +380,8 @@ inline void split(string str, Iterable& out, char delim = ' ')
 class AclOrch : public Orch, public Observer
 {
 public:
-    AclOrch(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
-    AclOrch(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *m_dTelOrch);
+    AclOrch(vector<TableConnector>& connectors, TableConnector switchTable,
+            PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *m_dTelOrch = NULL);
     ~AclOrch();
     void update(SubjectType, void *);
 
@@ -374,6 +391,8 @@ public:
     {
         return m_countersTable;
     }
+
+    Table m_switchTable;
 
     // FIXME: Add getters for them? I'd better to add a common directory of orch objects and use it everywhere
     MirrorOrch *m_mirrorOrch;
@@ -386,12 +405,19 @@ public:
     bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
 
+    bool isCombinedMirrorV6Table();
+
+    bool m_isCombinedMirrorV6Table = true;
+    map<acl_table_type_t, bool> m_mirrorTableCapabilities;
+
 private:
     void doTask(Consumer &consumer);
     void doAclTableTask(Consumer &consumer);
     void doAclRuleTask(Consumer &consumer);
     void doTask(SelectableTimer &timer);
     void init(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
+
+    void queryMirrorTableCapability();
 
     static void collectCountersThread(AclOrch *pAclOrch);
 
@@ -406,7 +432,6 @@ private:
     sai_status_t createDTelWatchListTables();
     sai_status_t deleteDTelWatchListTables();
 
-    //vector <AclTable> m_AclTables;
     map<sai_object_id_t, AclTable> m_AclTables;
     // TODO: Move all ACL tables into one map: name -> instance
     map<string, AclTable> m_ctrlAclTables;
@@ -414,8 +439,11 @@ private:
     static mutex m_countersMutex;
     static condition_variable m_sleepGuard;
     static bool m_bCollectCounters;
-    static swss::DBConnector m_db;
-    static swss::Table m_countersTable;
+    static DBConnector m_db;
+    static Table m_countersTable;
+
+    string m_mirrorTableId;
+    string m_mirrorV6TableId;
 };
 
 #endif /* SWSS_ACLORCH_H */
