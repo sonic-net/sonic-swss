@@ -1636,17 +1636,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     if (m_lanesAliasSpeedMap.find(it->first) == m_lanesAliasSpeedMap.end())
                     {
-                        char *platform = getenv("platform");
-                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
+                        if (!removePort(it->second))
                         {
-                            if (!removePort(it->second))
-                            {
-                                throw runtime_error("PortsOrch initialization failure.");
-                            }
-                        }
-                        else
-                        {
-                            SWSS_LOG_NOTICE("Failed to remove Port %" PRIx64 " due to missing SAI remove_port API.", it->second);
+                            throw runtime_error("PortsOrch initialization failure.");
                         }
                         it = m_portListLaneMap.erase(it);
                     }
