@@ -9,6 +9,7 @@
 #include "ipaddress.h"
 #include "netmsg.h"
 #include "linkcache.h"
+#include "macaddress.h"
 
 #include "neighsync.h"
 #include "warm_restart.h"
@@ -77,6 +78,13 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
 
     nl_addr2str(rtnl_neigh_get_lladdr(neigh), macStr, MAX_ADDR_SIZE);
+
+    /* Ignore neighbor entries with Broadcast Mac - Trigger for directed broadcast */
+    if (!delete_key && (MacAddress(macStr) == MacAddress("ff:ff:ff:ff:ff:ff")))
+    {
+        SWSS_LOG_INFO("Broadcast Mac recieved, ignoring for %s", ipStr);
+        return;
+    }
 
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple f("family", family);

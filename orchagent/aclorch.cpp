@@ -1,3 +1,4 @@
+#include <inttypes.h>
 #include <limits.h>
 #include <unordered_map>
 #include <algorithm>
@@ -86,13 +87,14 @@ acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
 
 static acl_table_type_lookup_t aclTableTypeLookUp =
 {
-    { TABLE_TYPE_L3,        ACL_TABLE_L3 },
-    { TABLE_TYPE_L3V6,      ACL_TABLE_L3V6 },
-    { TABLE_TYPE_MIRROR,    ACL_TABLE_MIRROR },
-    { TABLE_TYPE_MIRRORV6,  ACL_TABLE_MIRRORV6 },
-    { TABLE_TYPE_CTRLPLANE, ACL_TABLE_CTRLPLANE },
-    { TABLE_TYPE_DTEL_FLOW_WATCHLIST, ACL_TABLE_DTEL_FLOW_WATCHLIST },
-    { TABLE_TYPE_DTEL_DROP_WATCHLIST, ACL_TABLE_DTEL_DROP_WATCHLIST }
+    { TABLE_TYPE_L3,                    ACL_TABLE_L3 },
+    { TABLE_TYPE_L3V6,                  ACL_TABLE_L3V6 },
+    { TABLE_TYPE_MIRROR,                ACL_TABLE_MIRROR },
+    { TABLE_TYPE_MIRRORV6,              ACL_TABLE_MIRRORV6 },
+    { TABLE_TYPE_MIRROR_DSCP,           ACL_TABLE_MIRROR_DSCP },
+    { TABLE_TYPE_CTRLPLANE,             ACL_TABLE_CTRLPLANE },
+    { TABLE_TYPE_DTEL_FLOW_WATCHLIST,   ACL_TABLE_DTEL_FLOW_WATCHLIST },
+    { TABLE_TYPE_DTEL_DROP_WATCHLIST,   ACL_TABLE_DTEL_DROP_WATCHLIST }
 };
 
 static acl_stage_type_lookup_t aclStageLookUp =
@@ -604,6 +606,7 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
         type != ACL_TABLE_L3V6 &&
         type != ACL_TABLE_MIRROR &&
         type != ACL_TABLE_MIRRORV6 &&
+        type != ACL_TABLE_MIRROR_DSCP &&
         type != ACL_TABLE_DTEL_FLOW_WATCHLIST &&
         type != ACL_TABLE_DTEL_DROP_WATCHLIST)
     {
@@ -713,7 +716,7 @@ bool AclRule::removeCounter()
 
     gCrmOrch->decCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_COUNTER, m_tableOid);
 
-    SWSS_LOG_INFO("Removing record about the counter %lX from the DB", m_counterOid);
+    SWSS_LOG_INFO("Removing record about the counter %" PRIx64 " from the DB", m_counterOid);
     AclOrch::getCountersTable().del(getTableId() + ":" + getId());
 
     m_counterOid = SAI_NULL_OBJECT_ID;
@@ -974,7 +977,16 @@ bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
     if ((m_tableType == ACL_TABLE_L3 || m_tableType == ACL_TABLE_L3V6)
 	&& attr_name == MATCH_DSCP)
     {
-        SWSS_LOG_ERROR("DSCP match is not supported for the tables of type L3");
+        SWSS_LOG_ERROR("DSCP match is not supported for the table of type L3");
+        return false;
+    }
+
+    if ((m_tableType == ACL_TABLE_MIRROR_DSCP &&
+                aclMatchLookup.find(attr_name) != aclMatchLookup.end() &&
+                attr_name != MATCH_DSCP))
+    {
+        SWSS_LOG_ERROR("%s match is not supported for the table of type MIRROR_DSCP",
+                attr_name.c_str());
         return false;
     }
 
@@ -1124,7 +1136,7 @@ void AclRuleMirror::update(SubjectType type, void *cntx)
     else
     {
         // Store counters before deactivating ACL rule
-        counters += getCounters();
+        counters += AclRule::getCounters();
 
         SWSS_LOG_INFO("Deactivating mirroring ACL %s for session %s", m_id.c_str(), m_sessionName.c_str());
         remove();
@@ -1183,6 +1195,29 @@ bool AclTable::create()
         if (status == SAI_STATUS_SUCCESS)
         {
             gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t) attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
+        }
+
+        return status == SAI_STATUS_SUCCESS;
+    }
+
+    if (type == ACL_TABLE_MIRROR_DSCP)
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
+        attr.value.s32 = stage == ACL_STAGE_INGRESS
+            ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
+        table_attrs.push_back(attr);
+
+        sai_status_t status = sai_acl_api->create_acl_table(
+                &m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
+
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            gCrmOrch->incCrmAclUsedCounter(
+                    CrmResourceType::CRM_ACL_TABLE, (sai_acl_stage_t)attr.value.s32, SAI_ACL_BIND_POINT_TYPE_PORT);
         }
 
         return status == SAI_STATUS_SUCCESS;
@@ -1411,7 +1446,7 @@ bool AclTable::unbind(sai_object_id_t portOid)
     sai_object_id_t member = ports[portOid];
     sai_status_t status = sai_acl_api->remove_acl_table_group_member(member);
     if (status != SAI_STATUS_SUCCESS) {
-        SWSS_LOG_ERROR("Failed to unbind table %lu as member %lu from ACL table: %d",
+        SWSS_LOG_ERROR("Failed to unbind table %" PRIu64 " as member %" PRIu64 " from ACL table: %d",
                 m_oid, member, status);
         return false;
     }
@@ -1554,7 +1589,9 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
         (attr_name != ACTION_DTEL_FLOW_OP &&
         attr_name != ACTION_DTEL_INT_SESSION &&
         attr_name != ACTION_DTEL_FLOW_SAMPLE_PERCENT &&
-        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS))
+        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS &&
+        attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
+        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE))
     {
         return false;
     }
@@ -1611,7 +1648,9 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
 
     value.aclaction.enable = true;
 
-    if (attr_name == ACTION_DTEL_REPORT_ALL_PACKETS)
+    if (attr_name == ACTION_DTEL_REPORT_ALL_PACKETS ||
+        attr_name == ACTION_DTEL_DROP_REPORT_ENABLE ||
+        attr_name == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE)
     {
         value.aclaction.parameter.booldata = (attr_value == DTEL_ENABLED) ? true : false;
         value.aclaction.enable = (attr_value == DTEL_ENABLED) ? true : false;
@@ -1766,7 +1805,8 @@ bool AclRuleDTelDropWatchListEntry::validateAddAction(string attr_name, string a
     string attr_value = to_upper(attr_val);
 
     if (attr_name != ACTION_DTEL_DROP_REPORT_ENABLE &&
-        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE)
+        attr_name != ACTION_DTEL_TAIL_DROP_REPORT_ENABLE &&
+        attr_name != ACTION_DTEL_REPORT_ALL_PACKETS)
     {
         return false;
     }
@@ -1849,14 +1889,14 @@ AclRange *AclRange::create(sai_acl_range_type_t type, int min, int max)
             return NULL;
         }
 
-        SWSS_LOG_INFO("Created ACL Range object. Type: %d, range %d-%d, oid: %lX", type, min, max, range_oid);
+        SWSS_LOG_INFO("Created ACL Range object. Type: %d, range %d-%d, oid: %" PRIx64, type, min, max, range_oid);
         m_ranges[rangeProperties] = new AclRange(type, range_oid, min, max);
 
         range_it = m_ranges.find(rangeProperties);
     }
     else
     {
-        SWSS_LOG_INFO("Reusing range object oid %lX ref count increased to %d", range_it->second->m_oid, range_it->second->m_refCnt);
+        SWSS_LOG_INFO("Reusing range object oid %" PRIx64 " ref count increased to %d", range_it->second->m_oid, range_it->second->m_refCnt);
     }
 
     // increase range reference count
@@ -1908,10 +1948,10 @@ bool AclRange::remove()
 
     if (m_refCnt == 0)
     {
-        SWSS_LOG_INFO("Range object oid %lX ref count is %d, removing..", m_oid, m_refCnt);
+        SWSS_LOG_INFO("Range object oid %" PRIx64 " ref count is %d, removing..", m_oid, m_refCnt);
         if (sai_acl_api->remove_acl_range(m_oid) != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to delete ACL Range object oid: %lX", m_oid);
+            SWSS_LOG_ERROR("Failed to delete ACL Range object oid: %" PRIx64, m_oid);
             return false;
         }
         auto range_it = m_ranges.find(make_tuple(m_type, m_min, m_max));
@@ -1921,7 +1961,7 @@ bool AclRange::remove()
     }
     else
     {
-        SWSS_LOG_INFO("Range object oid %lX ref count decreased to %d", m_oid, m_refCnt);
+        SWSS_LOG_INFO("Range object oid %" PRIx64 " ref count decreased to %d", m_oid, m_refCnt);
     }
 
     return true;
@@ -2089,14 +2129,14 @@ void AclOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
 
     string table_name = consumer.getTableName();
 
-    if (table_name == CFG_ACL_TABLE_NAME)
+    if (table_name == CFG_ACL_TABLE_TABLE_NAME)
     {
         unique_lock<mutex> lock(m_countersMutex);
         doAclTableTask(consumer);
@@ -2168,7 +2208,7 @@ bool AclOrch::addAclTable(AclTable &newTable, string table_id)
     if (createBindAclTable(newTable, table_oid))
     {
         m_AclTables[table_oid] = newTable;
-        SWSS_LOG_NOTICE("Created ACL table %s oid:%lx",
+        SWSS_LOG_NOTICE("Created ACL table %s oid:%" PRIx64,
                 newTable.id.c_str(), table_oid);
 
         // Mark the existence of the mirror table
@@ -2779,8 +2819,9 @@ sai_status_t AclOrch::createDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
     m_AclTables[table_oid] = flowWLTable;
-    SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", flowWLTable.description.c_str(), table_oid);
+    SWSS_LOG_INFO("Successfully created ACL table %s, oid: %" PRIx64, flowWLTable.description.c_str(), table_oid);
 
     /* Create Drop watchlist ACL table */
 
@@ -2839,8 +2880,9 @@ sai_status_t AclOrch::createDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
     m_AclTables[table_oid] = dropWLTable;
-    SWSS_LOG_INFO("Successfully created ACL table %s, oid: %lX", dropWLTable.description.c_str(), table_oid);
+    SWSS_LOG_INFO("Successfully created ACL table %s, oid: %" PRIx64, dropWLTable.description.c_str(), table_oid);
 
     return status;
 }
@@ -2870,6 +2912,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);
     m_AclTables.erase(table_oid);
 
     table_id = TABLE_TYPE_DTEL_DROP_WATCHLIST;
@@ -2889,6 +2932,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
         return status;
     }
 
+    gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);
     m_AclTables.erase(table_oid);
 
     return SAI_STATUS_SUCCESS;

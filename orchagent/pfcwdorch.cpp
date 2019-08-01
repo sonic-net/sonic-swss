@@ -1,4 +1,5 @@
 #include <limits.h>
+#include <inttypes.h>
 #include <unordered_map>
 #include "pfcwdorch.h"
 #include "sai_serialize.h"
@@ -53,7 +54,7 @@ void PfcWdOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -68,25 +69,38 @@ void PfcWdOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
             string key = kfvKey(t);
             string op = kfvOp(t);
 
+            task_process_status task_status = task_process_status::task_ignore;
             if (op == SET_COMMAND)
             {
-                createEntry(key, kfvFieldsValues(t));
+                task_status = createEntry(key, kfvFieldsValues(t));
             }
             else if (op == DEL_COMMAND)
             {
-                deleteEntry(key);
+                task_status = deleteEntry(key);
             }
             else
             {
+                task_status = task_process_status::task_invalid_entry;
                 SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
             }
-
-            consumer.m_toSync.erase(it++);
-        }
-
-        if (consumer.m_toSync.empty())
-        {
-            m_entriesCreated = true;
+            switch (task_status)
+            {
+                case task_process_status::task_success:
+                    consumer.m_toSync.erase(it++);
+                    break;
+                case task_process_status::task_need_retry:
+                    SWSS_LOG_INFO("Failed to process PFC watchdog %s task, retry it", op.c_str());
+                    ++it;
+                    break;
+                case task_process_status::task_invalid_entry:
+                    SWSS_LOG_ERROR("Failed to process PFC watchdog %s task, invalid entry", op.c_str());
+                    consumer.m_toSync.erase(it++);
+                    break;
+                default:
+                    SWSS_LOG_ERROR("Invalid task status %d", task_status);
+                    consumer.m_toSync.erase(it++);
+                    break;
+            }
         }
     }
 }
@@ -156,7 +170,7 @@ string PfcWdOrch<DropHandler, ForwardHandler>::serializeAction(const PfcWdAction
 
 
 template <typename DropHandler, typename ForwardHandler>
-void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
+task_process_status PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
         const vector<FieldValueTuple>& data)
 {
     SWSS_LOG_ENTER();
@@ -170,13 +184,13 @@ void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
     if (!gPortsOrch->getPort(key, port))
     {
         SWSS_LOG_ERROR("Invalid port interface %s", key.c_str());
-        return;
+        return task_process_status::task_invalid_entry;
     }
 
     if (port.m_type != Port::PHY)
     {
         SWSS_LOG_ERROR("Interface %s is not physical port", key.c_str());
-        return;
+        return task_process_status::task_invalid_entry;
     }
 
     for (auto i : data)
@@ -205,7 +219,7 @@ void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
                 if (action == PfcWdAction::PFC_WD_ACTION_UNKNOWN)
                 {
                     SWSS_LOG_ERROR("Invalid PFC Watchdog action %s", value.c_str());
-                    return;
+                    return task_process_status::task_invalid_entry;
                 }
             }
             else
@@ -214,7 +228,7 @@ void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
                         "Failed to parse PFC Watchdog %s configuration. Unknown attribute %s.\n",
                         key.c_str(),
                         field.c_str());
-                return;
+                return task_process_status::task_invalid_entry;
             }
         }
         catch (const exception& e)
@@ -224,7 +238,7 @@ void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
                     key.c_str(),
                     field.c_str(),
                     e.what());
-            return;
+            return task_process_status::task_invalid_entry;
         }
         catch (...)
         {
@@ -232,7 +246,7 @@ void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
                     "Failed to parse PFC Watchdog %s attribute %s. Unknown error has been occurred",
                     key.c_str(),
                     field.c_str());
-            return;
+            return task_process_status::task_invalid_entry;
         }
     }
 
@@ -240,20 +254,21 @@ void PfcWdOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
     if (detectionTime == 0)
     {
         SWSS_LOG_ERROR("%s missing", PFC_WD_DETECTION_TIME);
-        return;
+        return task_process_status::task_invalid_entry;
     }
 
     if (!startWdOnPort(port, detectionTime, restorationTime, action))
     {
         SWSS_LOG_ERROR("Failed to start PFC Watchdog on port %s", port.m_alias.c_str());
-        return;
+        return task_process_status::task_need_retry;
     }
 
     SWSS_LOG_NOTICE("Started PFC Watchdog on port %s", port.m_alias.c_str());
+    return task_process_status::task_success;
 }
 
 template <typename DropHandler, typename ForwardHandler>
-void PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const string& name)
+task_process_status PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const string& name)
 {
     SWSS_LOG_ENTER();
 
@@ -263,14 +278,15 @@ void PfcWdOrch<DropHandler, ForwardHandler>::deleteEntry(const string& name)
     if (!stopWdOnPort(port))
     {
         SWSS_LOG_ERROR("Failed to stop PFC Watchdog on port %s", name.c_str());
-        return;
+        return task_process_status::task_failed;
     }
 
     SWSS_LOG_NOTICE("Stopped PFC Watchdog on port %s", name.c_str());
+    return task_process_status::task_success;
 }
 
 template <typename DropHandler, typename ForwardHandler>
-void PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
+task_process_status PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
         const vector<FieldValueTuple>& data)
 {
     SWSS_LOG_ENTER();
@@ -297,8 +313,10 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::createEntry(const string& key,
     }
     else
     {
-        PfcWdOrch<DropHandler, ForwardHandler>::createEntry(key, data);
+        return PfcWdOrch<DropHandler, ForwardHandler>::createEntry(key, data);
     }
+
+    return task_process_status::task_success;
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -335,7 +353,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
         if (entry.second.handler != nullptr)
         {
             SWSS_LOG_NOTICE(
-                    "PFC Watchdog BIG_RED_SWITCH mode disabled on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                    "PFC Watchdog BIG_RED_SWITCH mode disabled on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                     entry.second.portAlias.c_str(),
                     entry.second.index,
                     entry.first,
@@ -439,7 +457,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             if (entry->second.handler== nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog BIG_RED_SWITCH mode enabled on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog BIG_RED_SWITCH mode enabled on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -457,7 +475,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
 }
 
 template <typename DropHandler, typename ForwardHandler>
-void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
+bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         uint32_t detectionTime, uint32_t restorationTime, PfcWdAction action)
 {
     SWSS_LOG_ENTER();
@@ -467,7 +485,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
     if (!gPortsOrch->getPortPfc(port.m_port_id, &pfcMask))
     {
         SWSS_LOG_ERROR("Failed to get PFC mask on port %s", port.m_alias.c_str());
-        return;
+        return false;
     }
 
     set<uint8_t> losslessTc;
@@ -479,6 +497,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
         }
 
         losslessTc.insert(i);
+    }
+    if (losslessTc.empty())
+    {
+        SWSS_LOG_NOTICE("No lossless TC found on port %s", port.m_alias.c_str());
+        return false;
     }
 
     if (!c_portStatIds.empty())
@@ -541,6 +564,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
     sai_object_id_t groupId;
     gPortsOrch->createBindAclTableGroup(port.m_port_id, groupId, ACL_STAGE_INGRESS);
     gPortsOrch->createBindAclTableGroup(port.m_port_id, groupId, ACL_STAGE_EGRESS);
+
+    return true;
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -716,9 +741,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdOnPort(const Port& port,
 {
     SWSS_LOG_ENTER();
 
-    registerInWdDb(port, detectionTime, restorationTime, action);
-
-    return true;
+    return registerInWdDb(port, detectionTime, restorationTime, action);
 }
 
 template <typename DropHandler, typename ForwardHandler>
@@ -735,11 +758,6 @@ template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
     PfcWdOrch<DropHandler, ForwardHandler>::doTask(consumer);
-
-    if (!this->m_entriesCreated)
-    {
-        return;
-    }
 
     if ((consumer.getDbId() == APPL_DB) && (consumer.getTableName() == APP_PFC_WD_TABLE_NAME))
     {
@@ -810,6 +828,39 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 }
 
 template <typename DropHandler, typename ForwardHandler>
+void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask()
+{
+    SWSS_LOG_ENTER();
+
+    // In the warm-reboot case with ongoing PFC storm,
+    // we care about dependency.
+    // PFC watchdog should be started on a port queue before
+    // a storm action can be taken in effect. The PFC watchdog
+    // configuration is stored in CONFIG_DB CFG_PFC_WD_TABLE_NAME,
+    // while the ongoing storming port queue is recorded
+    // in APPL_DB APP_PFC_WD_TABLE_NAME. We thus invoke the Executor
+    // in this order.
+    // In the cold-boot case, APP_PFC_WD_TABLE_NAME will not
+    // be populated. No dependency is introduced in this case.
+    auto *cfg_exec = this->getExecutor(CFG_PFC_WD_TABLE_NAME);
+    cfg_exec->drain();
+
+    auto *appl_exec = this->getExecutor(APP_PFC_WD_TABLE_NAME);
+    appl_exec->drain();
+
+    for (const auto &it : this->m_consumerMap)
+    {
+        auto *exec = it.second.get();
+
+        if ((exec == cfg_exec) || (exec == appl_exec))
+        {
+            continue;
+        }
+        exec->drain();
+    }
+}
+
+template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(swss::NotificationConsumer& wdNotification)
 {
     SWSS_LOG_ENTER();
@@ -850,7 +901,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
     auto entry = m_entryMap.find(queueId);
     if (entry == m_entryMap.end())
     {
-        SWSS_LOG_ERROR("Queue 0x%lx is not registered", queueId);
+        SWSS_LOG_ERROR("Queue 0x%" PRIx64 " is not registered", queueId);
         return false;
     }
 
@@ -867,7 +918,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -889,7 +940,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -911,7 +962,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -939,7 +990,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         if (entry->second.handler != nullptr)
         {
             SWSS_LOG_NOTICE(
-                    "PFC Watchdog storm restored on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                    "PFC Watchdog storm restored on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -964,7 +1015,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
 template <typename DropHandler, typename ForwardHandler>
 bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 {
-    // clean all *_last fields in COUNTERS_TABLE
+    // clean all *_last and *_LEFT fields in COUNTERS_TABLE
     // to allow warm-reboot pfc detect & restore state machine to enter the same init state as cold-reboot
     RedisClient redisClient(this->getCountersDb().get());
 
@@ -977,7 +1028,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
         vector<string> wLasts;
         for (const auto &fv : fvTuples)
         {
-            if (fvField(fv).find("_last") != string::npos)
+            if ((fvField(fv).find("_last") != string::npos) || (fvField(fv).find("_LEFT") != string::npos))
             {
                 wLasts.push_back(fvField(fv));
             }
