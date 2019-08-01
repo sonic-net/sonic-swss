@@ -1430,7 +1430,7 @@ bool PortsOrch::bake()
     vector<FieldValueTuple> tuples;
     string value;
     bool foundPortConfigDone = m_portTable->hget("PortConfigDone", "count", value);
-    unsigned long portCount;
+    uint64_t portCount;
     SWSS_LOG_NOTICE("foundPortConfigDone = %d", foundPortConfigDone);
 
     bool foundPortInitDone = m_portTable->get("PortInitDone", tuples);
@@ -1452,7 +1452,7 @@ bool PortsOrch::bake()
     if (portCount != keys.size() - 2)
     {
         // Invalid port table
-        SWSS_LOG_ERROR("Invalid port table: portCount, expecting %" PRIu64 ", got %" PRIu64,
+        SWSS_LOG_ERROR("Invalid port table: portCount, expecting %" PRIu64 ", got %zu",
                 portCount, keys.size() - 2);
 
         cleanPortTable(keys);

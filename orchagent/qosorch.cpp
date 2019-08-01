@@ -1053,7 +1053,7 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
     const sai_object_id_t group_id = getSchedulerGroup(port, queue_id);
     if(group_id == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %" PRIu64, port.m_alias.c_str(), queue_ind);
+        SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %zu", port.m_alias.c_str(), queue_ind);
         return false;
     }
 
