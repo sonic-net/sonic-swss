@@ -4,6 +4,7 @@
 #include "notifier.h"
 #include "converter.h"
 #include "bufferorch.h"
+#include <inttypes.h>
 
 #define DEFAULT_TELEMETRY_INTERVAL 120
 
@@ -50,7 +51,7 @@ void WatermarkOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -141,7 +142,7 @@ void WatermarkOrch::handleFcConfigUpdate(const std::string &key, const std::vect
 void WatermarkOrch::doTask(NotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -294,7 +295,7 @@ void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_objec
 {
     /* Zero-out some WM in some table for some vector of object ids*/
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("clear WM %s, for %ld obj ids", wm_name.c_str(), obj_ids.size());
+    SWSS_LOG_DEBUG("clear WM %s, for %" PRId64 " obj ids", wm_name.c_str(), obj_ids.size());
 
     vector<FieldValueTuple> vfvt = {{wm_name, "0"}};
 

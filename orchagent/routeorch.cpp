@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <inttypes.h>
 #include "routeorch.h"
 #include "logger.h"
 #include "swssnet.h"
@@ -160,6 +161,7 @@ void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
             dstAddr.to_string().c_str());
 
     // Trigger next hop change for the first time the observer is attached
+    // Note that rbegin() is pointing to the entry with longest prefix match
     auto route = observerEntry->second.routeTable.rbegin();
     if (route != observerEntry->second.routeTable.rend())
     {
@@ -171,19 +173,34 @@ void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
 void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr)
 {
     SWSS_LOG_ENTER();
+
     auto observerEntry = m_nextHopObservers.find(dstAddr);
 
     if (observerEntry == m_nextHopObservers.end())
     {
-        SWSS_LOG_ERROR("Failed to detach observer for %s. Entry not found.\n", dstAddr.to_string().c_str());
+        SWSS_LOG_ERROR("Failed to locate observer for destination IP %s",
+                dstAddr.to_string().c_str());
         assert(false);
+        return;
     }
 
-    for (auto iter = observerEntry->second.observers.begin(); iter != observerEntry->second.observers.end(); ++iter)
+    // Find the observer
+    for (auto iter = observerEntry->second.observers.begin();
+            iter != observerEntry->second.observers.end(); ++iter)
     {
         if (observer == *iter)
         {
-            m_observers.erase(iter);
+            observerEntry->second.observers.erase(iter);
+
+            SWSS_LOG_NOTICE("Detached next hop observer for destination IP %s",
+                    dstAddr.to_string().c_str());
+
+            // Remove NextHopObserverEntry if no observer is tracking this
+            // destination IP.
+            if (observerEntry->second.observers.empty())
+            {
+                m_nextHopObservers.erase(observerEntry);
+            }
             break;
         }
     }
@@ -222,7 +239,7 @@ bool RouteOrch::validnexthopinNextHopGroup(const IpAddress &ipaddr)
 
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to add next hop member to group %lx: %d\n",
+            SWSS_LOG_ERROR("Failed to add next hop member to group %" PRIx64 ": %d\n",
                            nhopgroup->second.next_hop_group_id, status);
             return false;
         }
@@ -255,7 +272,7 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const IpAddress &ipaddr)
 
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to remove next hop member %lx from group %lx: %d\n",
+            SWSS_LOG_ERROR("Failed to remove next hop member %" PRIx64 " from group %" PRIx64 ": %d\n",
                            nexthop_id, nhopgroup->second.next_hop_group_id, status);
             return false;
         }
@@ -270,7 +287,7 @@ void RouteOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -610,7 +627,7 @@ bool RouteOrch::addNextHopGroup(IpAddresses ipAddresses)
         if (status != SAI_STATUS_SUCCESS)
         {
             // TODO: do we need to clean up?
-            SWSS_LOG_ERROR("Failed to create next hop group %lx member %lx: %d\n",
+            SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d\n",
                            next_hop_group_id, next_hop_group_member_id, status);
             return false;
         }
@@ -661,7 +678,7 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
 
         if (m_neighOrch->isNextHopFlagSet(nhop->first, NHFLAGS_IFDOWN))
         {
-            SWSS_LOG_WARN("NHFLAGS_IFDOWN set for next hop group member %s with next_hop_id %lx",
+            SWSS_LOG_WARN("NHFLAGS_IFDOWN set for next hop group member %s with next_hop_id %" PRIx64,
                            nhop->first.to_string().c_str(), nhop->second);
             nhop = next_hop_group_entry->second.nhopgroup_members.erase(nhop);
             continue;
@@ -669,7 +686,7 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
         status = sai_next_hop_group_api->remove_next_hop_group_member(nhop->second);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to remove next hop group member %lx, rv:%d",
+            SWSS_LOG_ERROR("Failed to remove next hop group member %" PRIx64 ", rv:%d",
                            nhop->second, status);
             return false;
         }
@@ -681,7 +698,7 @@ bool RouteOrch::removeNextHopGroup(IpAddresses ipAddresses)
     status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove next hop group %lx, rv:%d", next_hop_group_id, status);
+        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d", next_hop_group_id, status);
         return false;
     }
 

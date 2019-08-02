@@ -51,13 +51,19 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     // The command should be generated as:
     // /bin/bash -c "/sbin/ip link del Bridge 2>/dev/null ;
     //               /sbin/ip link add Bridge up type bridge &&
-    //               /sbin/bridge vlan del vid 1 dev Bridge self"
+    //               /sbin/bridge vlan del vid 1 dev Bridge self;
+    //               /sbin/ip link del dummy 2>/dev/null;
+    //               /sbin/ip link add dummy type dummy &&
+    //               sbin/ip link set dummy master Bridge"
 
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
       + IP_CMD + " link del " + DOT1Q_BRIDGE_NAME + " 2>/dev/null; "
       + IP_CMD + " link add " + DOT1Q_BRIDGE_NAME + " up type bridge && "
-      + BRIDGE_CMD + " vlan del vid " + DEFAULT_VLAN_ID + " dev " + DOT1Q_BRIDGE_NAME + " self\"";
+      + BRIDGE_CMD + " vlan del vid " + DEFAULT_VLAN_ID + " dev " + DOT1Q_BRIDGE_NAME + " self; "
+      + IP_CMD + " link del dev dummy 2>/dev/null; "
+      + IP_CMD + " link add dummy type dummy && "
+      + IP_CMD + " link set dummy master " + DOT1Q_BRIDGE_NAME + "\"";
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds, res);
@@ -169,10 +175,12 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
 
     // The command should be generated as:
     // /bin/bash -c "/sbin/ip link set {{port_alias}} master Bridge &&
+    //               /sbin/bridge vlan del vid 1 dev {{ port_alias }} &&
     //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}"
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
       + IP_CMD + " link set " + port_alias + " master " + DOT1Q_BRIDGE_NAME + " && "
+      + BRIDGE_CMD + " vlan del vid " + DEFAULT_VLAN_ID + " dev " + port_alias + " && "
       + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + "\"";
 
     std::string res;

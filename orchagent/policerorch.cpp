@@ -2,6 +2,7 @@
 #include "policerorch.h"
 
 #include "converter.h"
+#include <inttypes.h>
 
 using namespace std;
 using namespace swss;
@@ -63,7 +64,7 @@ bool PolicerOrch::getPolicerOid(const string &name, sai_object_id_t &oid)
     if (policerExists(name))
     {
         oid = m_syncdPolicers[name];
-        SWSS_LOG_NOTICE("Get policer %s oid:%lx", name.c_str(), oid);
+        SWSS_LOG_NOTICE("Get policer %s oid:%" PRIx64, name.c_str(), oid);
         return true;
     }
 
@@ -114,7 +115,7 @@ void PolicerOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -251,7 +252,7 @@ void PolicerOrch::doTask(Consumer &consumer)
 
             sai_status_t status = sai_policer_api->remove_policer(
                     m_syncdPolicers.at(key));
-            if (status == SAI_STATUS_SUCCESS)
+            if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to remove policer %s, rv:%d",
                         key.c_str(), status);

@@ -3,6 +3,7 @@
 #include <sstream>
 #include <map>
 #include <net/if.h>
+#include <inttypes.h>
 
 #include "sai_serialize.h"
 #include "intfsorch.h"
@@ -150,6 +151,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     {
         if (addRouterIntfs(vrf_id, port))
         {
+            gPortsOrch->increasePortRefCount(alias);
             IntfsEntry intfs_entry;
             intfs_entry.ref_count = 0;
             m_syncdIntfses[alias] = intfs_entry;
@@ -234,6 +236,7 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
     {
         if (removeRouterIntfs(port))
         {
+            gPortsOrch->decreasePortRefCount(alias);
             m_syncdIntfses.erase(alias);
             return true;
         }
@@ -250,7 +253,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -819,7 +822,6 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
     }
 
     /* check the state of intf, if registering the intf to FC will result in runtime error */
-    vector<FieldValueTuple> fvt;
     vector<FieldValueTuple> fieldValues;
     fieldValues.emplace_back(RIF_COUNTER_ID_LIST, counters_stream.str());
 
@@ -837,10 +839,7 @@ void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
     /* remove it from FLEX_COUNTER_DB */
     string key = getRifFlexCounterTableKey(id);
 
-    vector<FieldValueTuple> fieldValues;
-    fieldValues.emplace_back(RIF_COUNTER_ID_LIST, "");
-
-    m_flexCounterTable->set(key, fieldValues);
+    m_flexCounterTable->del(key);
     SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
 }
 
@@ -858,7 +857,7 @@ void IntfsOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_DEBUG("Registering %ld new intfs", m_rifsToAdd.size());
+    SWSS_LOG_DEBUG("Registering %" PRId64 " new intfs", m_rifsToAdd.size());
     string value;
     for (auto it = m_rifsToAdd.begin(); it != m_rifsToAdd.end(); )
     {
