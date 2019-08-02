@@ -439,6 +439,7 @@ class TestVlan(object):
         # remove vlan
         dvs.remove_vlan(vlan)
 
+    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
         (["tagging_mode", "untagged"],        [1, "SAI_VLAN_TAGGING_MODE_UNTAGGED"]),
         (["tagging_mode", "tagged"],          [1, "SAI_VLAN_TAGGING_MODE_TAGGED"]),
@@ -629,6 +630,7 @@ class TestVlan(object):
         # remove vlan
         self.remove_vlan(vlan)
 
+    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
         (["untagged"],        ["SAI_VLAN_TAGGING_MODE_UNTAGGED"]),
         (["tagged"],          ["SAI_VLAN_TAGGING_MODE_TAGGED"]),
