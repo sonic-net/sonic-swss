@@ -37,7 +37,7 @@ class TestVlan(object):
         time.sleep(1)
 
     def check_syslog(self, dvs, marker, process, err_log, vlan_str, expected_cnt):
-        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep %s | grep \"%s\" | grep -i %s | wc -l" % (marker, process, err_log, vlan_str)])
+        (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep %s | grep \"%s\" | grep -i \"%s\" | wc -l" % (marker, process, err_log, vlan_str)])
         assert num.strip() == str(expected_cnt)
 
     def check_app_db_vlan_fields(self, fvs, admin_status="up", mtu="9100"):
