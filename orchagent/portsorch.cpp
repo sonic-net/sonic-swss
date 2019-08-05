@@ -1314,20 +1314,20 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    Port p;
-    if (getPort(port_id, p))
-    {
-        PortUpdate update = {p, false };
-        notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
-    }
-
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove port %" PRIx64 ", rv:%d", port_id, status);
         return false;
     }
-    removeAclTableGroup(p);
+
+    Port p;
+    if (getPort(port_id, p))
+    {
+        PortUpdate update = {p, false };
+        notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+        removeAclTableGroup(p);
+    }
     SWSS_LOG_NOTICE("Remove port %" PRIx64, port_id);
 
     return true;
@@ -2757,9 +2757,6 @@ bool PortsOrch::removeVlan(Port vlan)
         SWSS_LOG_ERROR("Failed to remove non-empty VLAN %s", vlan.m_alias.c_str());
         return false;
     }
-    /* notify aclorch to unbind vlan from acl table */
-    PortUpdate update = { vlan, false };
-    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
     if (status != SAI_STATUS_SUCCESS)
@@ -2769,6 +2766,9 @@ bool PortsOrch::removeVlan(Port vlan)
         return false;
     }
 
+    /* notify aclorch to unbind vlan from acl table */
+    PortUpdate update = { vlan, false };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
     removeAclTableGroup(vlan);
 
     SWSS_LOG_NOTICE("Remove VLAN %s vid:%hu", vlan.m_alias.c_str(),
@@ -2949,9 +2949,6 @@ bool PortsOrch::removeLag(Port lag)
         SWSS_LOG_ERROR("Failed to remove LAG %s, it is still in VLAN", lag.m_alias.c_str());
         return false;
     }
-    /* notify PORTCHANGE before remove port*/
-    PortUpdate update = { lag, false };
-    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
     sai_status_t status = sai_lag_api->remove_lag(lag.m_lag_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -2960,6 +2957,9 @@ bool PortsOrch::removeLag(Port lag)
         return false;
     }
 
+    /* notify PORTCHANGE before remove AclTableGroup*/
+    PortUpdate update = { lag, false };
+    notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
     removeAclTableGroup(lag);
 
     SWSS_LOG_NOTICE("Remove LAG %s lid:%" PRIx64, lag.m_alias.c_str(), lag.m_lag_id);
