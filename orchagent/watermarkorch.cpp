@@ -98,7 +98,10 @@ void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vect
         {
             if (i.first == "interval")
             {
-                auto intervT = timespec { .tv_sec = static_cast<time_t>(to_uint<uint32_t>(i.second.c_str())) , .tv_nsec = 0 };
+                struct tm tmInterval;
+                memset(&tmInterval, 0, sizeof(tm));
+                tmInterval.tm_sec = to_uint<uint32_t>(i.second.c_str());
+                auto intervT = timespec { .tv_sec = mktime(&tmInterval), .tv_nsec = 0 };
                 m_telemetryTimer->setInterval(intervT);
                 // reset the timer interval when current timer expires
                 m_timerChanged = true;
@@ -295,7 +298,7 @@ void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_objec
 {
     /* Zero-out some WM in some table for some vector of object ids*/
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("clear WM %s, for %zd obj ids", wm_name.c_str(), obj_ids.size());
+    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids", wm_name.c_str(), obj_ids.size());
 
     vector<FieldValueTuple> vfvt = {{wm_name, "0"}};
 
