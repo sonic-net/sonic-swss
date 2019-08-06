@@ -30,19 +30,27 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 }
 
 void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
-                        const string &ipPrefixStr, const bool ipv4)
+                        const IpPrefix &ipPrefix)
 {
-    stringstream cmd;
-    string res;
+    stringstream    cmd;
+    string          res;
+    string          ipPrefixStr = ipPrefix.to_string();
+    string          broadcastIpStr = ipPrefix.getBroadcastIp().to_string();
+    int             prefixLen = ipPrefix.getMaskLength();
 
-    if (ipv4)
+    if (ipPrefix.isV4())
     {
-        cmd << IP_CMD << " address " << opCmd << " " << ipPrefixStr << " dev " << alias;
+        (prefixLen < 31) ?
+        (cmd << IP_CMD << " address " << opCmd << " " << ipPrefixStr << " broadcast " << broadcastIpStr <<" dev " << alias) :
+        (cmd << IP_CMD << " address " << opCmd << " " << ipPrefixStr << " dev " << alias);
     }
     else
     {
-        cmd << IP_CMD << " -6 address " << opCmd << " " << ipPrefixStr << " dev " << alias;
+        (prefixLen < 127) ?
+        (cmd << IP_CMD << " -6 address " << opCmd << " " << ipPrefixStr << " broadcast " << broadcastIpStr << " dev " << alias) :
+        (cmd << IP_CMD << " -6 address " << opCmd << " " << ipPrefixStr << " dev " << alias);
     }
+
     int ret = swss::exec(cmd.str(), res);
     if (ret)
     {
@@ -202,7 +210,7 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
         // Set Interface IP except for lo
         if (!is_lo)
         {
-            setIntfIp(alias, "add", ip_prefix.to_string(), ip_prefix.isV4());
+            setIntfIp(alias, "add", ip_prefix);
         }
 
         std::vector<FieldValueTuple> fvVector;
@@ -219,7 +227,7 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
         // Set Interface IP except for lo
         if (!is_lo)
         {
-            setIntfIp(alias, "del", ip_prefix.to_string(), ip_prefix.isV4());
+            setIntfIp(alias, "del", ip_prefix);
         }
         m_appIntfTableProducer.del(appKey);
         m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
