@@ -57,45 +57,45 @@ def getPortAttr(dvs, port_oid, port_attr):
 
     return ''
 
+class TestPfc(object):
+    def test_PfcAsymmetric(self, dvs, testlog):
 
-def test_PfcAsymmetric(dvs, testlog):
+        port_name = 'Ethernet0'
+        pfc_queues = [ 3, 4 ]
 
-    port_name = 'Ethernet0'
-    pfc_queues = [ 3, 4 ]
+        # Configure default PFC
+        setPortPfc(dvs, port_name, pfc_queues)
 
-    # Configure default PFC
-    setPortPfc(dvs, port_name, pfc_queues)
+        # Get SAI object ID for the interface
+        port_oid = getPortOid(dvs, port_name)
 
-    # Get SAI object ID for the interface
-    port_oid = getPortOid(dvs, port_name)
+        # Verify default PFC is set to configured value
+        pfc = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL')
+        assert pfc == getBitMaskStr(pfc_queues)
 
-    # Verify default PFC is set to configured value
-    pfc = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL')
-    assert pfc == getBitMaskStr(pfc_queues)
+        # Enable asymmetric PFC
+        setPortPfcAsym(dvs, port_name, 'on')
 
-    # Enable asymmetric PFC
-    setPortPfcAsym(dvs, port_name, 'on')
+        # Verify PFC mode is set to 'SEPARATE'
+        pfc_mode = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE')
+        assert pfc_mode == 'SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE'
 
-    # Verify PFC mode is set to 'SEPARATE'
-    pfc_mode = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE')
-    assert pfc_mode == 'SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE'
+        # Verify TX PFC is set to previous PFC value
+        pfc_tx = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_TX')
+        assert pfc_tx == pfc
 
-    # Verify TX PFC is set to previous PFC value
-    pfc_tx = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_TX')
-    assert pfc_tx == pfc
+        # Verify RX PFC is set to 0xFF (255)
+        pfc_rx = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_RX')
+        assert pfc_rx == '255'
 
-    # Verify RX PFC is set to 0xFF (255)
-    pfc_rx = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_RX')
-    assert pfc_rx == '255'
+        # Disable asymmetric PFC
+        setPortPfcAsym(dvs, port_name, 'off')
 
-    # Disable asymmetric PFC
-    setPortPfcAsym(dvs, port_name, 'off')
+        # Verify PFC mode is set to 'COMBINED'
+        pfc_mode = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE')
+        assert pfc_mode == 'SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED'
 
-    # Verify PFC mode is set to 'COMBINED'
-    pfc_mode = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE')
-    assert pfc_mode == 'SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED'
-
-    # Verify PFC is set to TX PFC value
-    pfc = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL')
-    assert pfc == pfc_tx
+        # Verify PFC is set to TX PFC value
+        pfc = getPortAttr(dvs, port_oid, 'SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL')
+        assert pfc == pfc_tx
 
