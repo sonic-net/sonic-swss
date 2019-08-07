@@ -239,11 +239,8 @@ void CrmOrch::handleSetCommand(const string& key, const vector<FieldValueTuple>&
         {
             if (field == CRM_POLLING_INTERVAL)
             {
-                struct tm tmInterval;
-                memset(&tmInterval, 0, sizeof(tmInterval));
-                tmInterval.tm_sec = static_cast<int> (m_pollingInterval.count());
                 m_pollingInterval = chrono::seconds(to_uint<uint32_t>(value));
-                auto interv = timespec { .tv_sec = mktime(&tmInterval), .tv_nsec = 0 };
+                auto interv = timespec { .tv_sec = (time_t)m_pollingInterval.count(), .tv_nsec = 0 };
                 m_timer->setInterval(interv);
                 m_timer->reset();
             }
