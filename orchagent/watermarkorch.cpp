@@ -99,7 +99,7 @@ void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vect
             if (i.first == "interval")
             {
                 struct tm tmInterval;
-                memset(&tmInterval, 0, sizeof(tm));
+                memset(&tmInterval, 0, sizeof(tmInterval));
                 tmInterval.tm_sec = to_uint<uint32_t>(i.second.c_str());
                 auto intervT = timespec { .tv_sec = mktime(&tmInterval), .tv_nsec = 0 };
                 m_telemetryTimer->setInterval(intervT);
