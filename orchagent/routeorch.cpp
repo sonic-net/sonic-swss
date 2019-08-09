@@ -210,7 +210,6 @@ bool RouteOrch::validnexthopinNextHopGroup(const IpAddress &ipaddr)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_INFO("##### Entering validnexthopinNextHopGroup #####");
     sai_object_id_t nexthop_id;
     sai_status_t status;
 
@@ -256,7 +255,6 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const IpAddress &ipaddr)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_INFO("##### Entering invalidnexthopinNextHopGroup #####");
     sai_object_id_t nexthop_id;
     sai_status_t status;
 
@@ -270,7 +268,6 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const IpAddress &ipaddr)
         }
 
         nexthop_id = nhopgroup->second.nhopgroup_members[ipaddr];
-	SWSS_LOG_INFO("##### calling sai_next_hop_group_api->remove_next_hop_group_member #####");
         status = sai_next_hop_group_api->remove_next_hop_group_member(nexthop_id);
 
         if (status != SAI_STATUS_SUCCESS)

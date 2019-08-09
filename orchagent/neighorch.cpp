@@ -134,7 +134,6 @@ bool NeighOrch::clearNextHopFlag(const IpAddress &ipaddr, const uint32_t nh_flag
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_INFO("##### clearNextHopFlag called #####");
     auto nhop = m_syncdNextHops.find(ipaddr);
     bool rc = false;
 
@@ -181,34 +180,28 @@ bool NeighOrch::ifChangeInformNextHop(const string &alias, bool if_up)
     SWSS_LOG_ENTER();
     bool rc = true;
 
-    SWSS_LOG_INFO("##### Entering IfChangeInformNextHop #####");
     for (auto nhop = m_syncdNextHops.begin(); nhop != m_syncdNextHops.end(); ++nhop)
     {
         if (nhop->second.if_alias != alias)
         {
-	    SWSS_LOG_INFO("##### Conitnue 1 #####");
             continue;
         }
 
         if (if_up)
         {
-	    SWSS_LOG_INFO("##### Clearing Next hop flag #####");
             rc = clearNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
         }
         else
         {
-	    SWSS_LOG_INFO("##### Setting Next hop flag #####");
             rc = setNextHopFlag(nhop->first, NHFLAGS_IFDOWN);
         }
 
         if (rc == true)
         {
-	    SWSS_LOG_INFO("##### Continue 2 #####");
             continue;
         }
         else
         {
-	    SWSS_LOG_INFO("##### Breaking #####");
             break;
         }
     }
