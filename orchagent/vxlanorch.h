@@ -82,7 +82,7 @@ public:
         return active_;
     }
 
-    bool createTunnel(MAP_T encap, MAP_T decap);
+    bool createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl=0);
     sai_object_id_t addEncapMapperEntry(sai_object_id_t obj, uint32_t vni);
     sai_object_id_t addDecapMapperEntry(sai_object_id_t obj, uint32_t vni);
 
@@ -121,7 +121,7 @@ private:
     string tunnel_name_;
     bool active_ = false;
 
-    tunnel_ids_t ids_;
+    tunnel_ids_t ids_ = {0, 0, 0, 0};
     std::pair<MAP_T, MAP_T> tunnel_map_ = { MAP_T::MAP_TO_INVALID, MAP_T::MAP_TO_INVALID };
 
     TunnelMapEntries tunnel_map_entries_;
@@ -172,7 +172,7 @@ public:
     }
 
     bool createVxlanTunnelMap(string tunnelName, tunnel_map_type_t mapType, uint32_t vni,
-                              sai_object_id_t encap, sai_object_id_t decap);
+                              sai_object_id_t encap, sai_object_id_t decap, uint8_t encap_ttl=0);
 
     bool removeVxlanTunnelMap(string tunnelName, uint32_t vni);
 

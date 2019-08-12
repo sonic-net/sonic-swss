@@ -34,8 +34,8 @@
         "OP": "SET"
     },
     {
-        "COPP_TABLE:trap.group.lldp.dhcp.udld": {
-            "trap_ids": "lldp,dhcp,udld",
+        "COPP_TABLE:trap.group.lldp.dhcp.dhcpv6.udld": {
+            "trap_ids": "lldp,dhcp,dhcpv6,udld",
             "trap_action":"trap",
             "trap_priority":"4",
             "queue": "4"

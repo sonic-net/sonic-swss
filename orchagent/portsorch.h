@@ -55,7 +55,7 @@ class PortsOrch : public Orch, public Subject
 public:
     PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames);
 
-    bool isPortReady();
+    bool allPortsReady();
     bool isInitDone();
 
     map<string, Port>& getAllPorts();

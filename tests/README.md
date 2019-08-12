@@ -55,8 +55,12 @@ persists.
     -e "fake_platform=mellanox"
     ```
     
-- Run test using the existing vs container
-
+- Run full test using the existing vs container
     ```
     sudo pytest -s -v --dvsname=vs
+    ```
+
+- Run specific test using the existing vs container
+    ```
+    sudo pytest -s -v --dvsname=vs <test_file_name>::<test_class_name>::<test_name>
     ```
