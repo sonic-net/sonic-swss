@@ -84,7 +84,7 @@ int main(int argc, char **argv)
             if (warmStartEnabled)
             {
                 /* Obtain warm-restart timer defined for routing application */
-                time_t  warmRestartIval = sync.m_warmStartHelper.getRestartTimer();
+                time_t warmRestartIval = sync.m_warmStartHelper.getRestartTimer();
                 if (!warmRestartIval)
                 {
                     warmStartTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
