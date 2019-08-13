@@ -157,7 +157,7 @@ int main(int argc, char **argv)
                             }
                             else
                             {
-                                eoiuHoldTimer.setInterval(timespec{eoiuHoldIval, 0});
+                                eoiuHoldTimer.setInterval(timespec{(time_t)eoiuHoldIval, 0});
                             }
                             eoiuHoldTimer.start();
                             s.addSelectable(&eoiuHoldTimer);
