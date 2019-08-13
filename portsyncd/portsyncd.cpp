@@ -79,10 +79,6 @@ int main(int argc, char **argv)
     WarmStart::checkWarmStart("portsyncd", "swss");
     const bool warm = WarmStart::isWarmStart();
 
-    LinkSync sync(&appl_db, &state_db);
-    NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
-    NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
-
     try
     {
         NetLink netlink;
@@ -101,6 +97,10 @@ int main(int argc, char **argv)
                 handlePortConfigFile(p, port_config_file, warm);
             }
         }
+
+        LinkSync sync(&appl_db, &state_db);
+        NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
+        NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
         s.addSelectable(&netlink);
         s.addSelectable(&portCfg);
