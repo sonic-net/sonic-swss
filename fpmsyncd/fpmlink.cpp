@@ -101,6 +101,8 @@ void FpmLink::readData()
         throw FpmConnectionClosedException();
     if (read < 0)
         throw system_error(errno, system_category());
+   
+    start = m_pos;
     m_pos+= (uint32_t)read;
 
     /* Check for complete messages */
