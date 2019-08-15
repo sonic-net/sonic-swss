@@ -4,6 +4,19 @@ import time
 import json
 
 class TestRouterInterfaceMac(object):
+    def add_ip_address(self, dvs, interface, ip):
+        tbl = swsscommon.Table(dvs.cdb, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(interface, fvs)
+        tbl.set(interface + "|" + ip, fvs)
+        time.sleep(1)
+
+    def remove_ip_address(self, dvs, interface, ip):
+        tbl = swsscommon.Table(dvs.cdb, "INTERFACE")
+        tbl._del(interface + "|" + ip);
+        tbl.hdel(interface, "NULL")
+        time.sleep(1)
+
     def set_mac(self, dvs, interface, mac):
         tbl = swsscommon.Table(dvs.cdb, "INTERFACE")
         fvs = swsscommon.FieldValuePairs([("mac_addr", mac)])
@@ -34,7 +47,7 @@ class TestRouterInterfaceMac(object):
         dvs.setup_db()
 
         # assign IP to interface
-        dvs.add_ip_address("Ethernet8", "10.0.0.4/31")
+        self.add_ip_address(dvs, "Ethernet8", "10.0.0.4/31")
 
         # set MAC to interface
         self.set_mac(dvs, "Ethernet8", "6C:EC:5A:11:22:33")
@@ -51,7 +64,7 @@ class TestRouterInterfaceMac(object):
         assert src_mac_addr_found == True
 
         # remove IP from interface
-        dvs.remove_ip_address("Ethernet8", "10.0.0.4/31")
+        self.remove_ip_address(dvs, "Ethernet8", "10.0.0.4/31")
 
         # remove MAC from interface
         self.remove_mac(dvs, "Ethernet8")
@@ -60,7 +73,7 @@ class TestRouterInterfaceMac(object):
         dvs.setup_db()
 
         # assign IP to interface
-        dvs.add_ip_address("Ethernet12", "12.0.0.4/31")
+        self.add_ip_address(dvs, "Ethernet12", "12.0.0.4/31")
 
         # set MAC to interface
         self.set_mac(dvs, "Ethernet12", "6C:EC:5A:22:33:44")
@@ -80,7 +93,7 @@ class TestRouterInterfaceMac(object):
         assert src_mac_addr_found == True
 
         # remove IP from interface
-        dvs.remove_ip_address("Ethernet12", "12.0.0.4/31")
+        self.remove_ip_address(dvs, "Ethernet12", "12.0.0.4/31")
 
         # remove MAC from interface
         self.remove_mac(dvs, "Ethernet12")
@@ -110,6 +123,19 @@ class TestLagRouterInterfaceMac(object):
         for member in members:
             tbl._del(lag + "|" + member)
             time.sleep(1)
+
+    def add_ip_address(self, dvs, interface, ip):
+        tbl = swsscommon.Table(dvs.cdb, "PORTCHANNEL_INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set(interface, fvs)
+        tbl.set(interface + "|" + ip, fvs)
+        time.sleep(1)
+
+    def remove_ip_address(self, dvs, interface, ip):
+        tbl = swsscommon.Table(dvs.cdb, "PORTCHANNEL_INTERFACE")
+        tbl._del(interface + "|" + ip);
+        tbl.hdel(interface, "NULL")
+        time.sleep(1)
 
     def set_mac(self, dvs, interface, mac):
         tbl = swsscommon.Table(dvs.cdb, "PORTCHANNEL_INTERFACE")
@@ -143,7 +169,7 @@ class TestLagRouterInterfaceMac(object):
         self.create_port_channel(dvs, "PortChannel001")
 
         # assign IP to interface
-        dvs.add_ip_address("PortChannel001", "30.0.0.4/31")
+        self.add_ip_address(dvs, "PortChannel001", "30.0.0.4/31")
 
         # set MAC to interface
         self.set_mac(dvs, "PortChannel001", "6C:EC:5A:11:22:33")
@@ -167,7 +193,7 @@ class TestLagRouterInterfaceMac(object):
         assert src_mac_addr_found == True
 
         # remove IP from interface
-        dvs.remove_ip_address("PortChannel001", "30.0.0.4/31")
+        self.remove_ip_address(dvs, "PortChannel001", "30.0.0.4/31")
 
         # remove MAC from interface
         self.remove_mac(dvs, "PortChannel001")
@@ -182,7 +208,7 @@ class TestLagRouterInterfaceMac(object):
         self.create_port_channel(dvs, "PortChannel002")
 
         # assign IP to interface
-        dvs.add_ip_address("PortChannel002", "32.0.0.4/31")
+        self.add_ip_address(dvs, "PortChannel002", "32.0.0.4/31")
 
         # set MAC to interface
         self.set_mac(dvs, "PortChannel002", "6C:EC:5A:22:33:44")
@@ -209,7 +235,7 @@ class TestLagRouterInterfaceMac(object):
         assert src_mac_addr_found == True
 
         # remove IP from interface
-        dvs.remove_ip_address("PortChannel002", "32.0.0.4/31")
+        self.remove_ip_address(dvs, "PortChannel002", "32.0.0.4/31")
 
         # remove MAC from interface
         self.remove_mac(dvs, "PortChannel002")
