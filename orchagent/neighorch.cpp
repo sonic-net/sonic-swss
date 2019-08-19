@@ -30,6 +30,13 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, string alias)
 {
     SWSS_LOG_ENTER();
 
+    if (hasNextHop(ipAddress))
+    {
+        SWSS_LOG_ERROR("Next hop IP %s already exists",
+                ipAddress.to_string().c_str());
+        return false;
+    }
+
     Port p;
     if (!gPortsOrch->getPort(alias, p))
     {
@@ -38,7 +45,6 @@ bool NeighOrch::addNextHop(IpAddress ipAddress, string alias)
         return false;
     }
 
-    assert(!hasNextHop(ipAddress));
     sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
 
     vector<sai_attribute_t> next_hop_attrs;
@@ -213,7 +219,12 @@ bool NeighOrch::removeNextHop(IpAddress ipAddress, string alias)
 {
     SWSS_LOG_ENTER();
 
-    assert(hasNextHop(ipAddress));
+    if (!hasNextHop(ipAddress))
+    {
+        SWSS_LOG_ERROR("Next hop IP %s already removed",
+                ipAddress.to_string().c_str());
+        return false;
+    }
 
     if (m_syncdNextHops[ipAddress].ref_count > 0)
     {
