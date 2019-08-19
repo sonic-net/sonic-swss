@@ -163,12 +163,12 @@ int main(int argc, char **argv)
     }
     catch (const std::exception& e)
     {
-        cerr << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
+        cerr << "Exception \"" << e.what() << "\" was thrown in daemon" << endl;
         return EXIT_FAILURE;
     }
     catch (...)
     {
-        cerr << "Exception had been thrown in deamon" << endl;
+        cerr << "Exception was thrown in daemon" << endl;
         return EXIT_FAILURE;
     }
 
