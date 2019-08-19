@@ -166,6 +166,12 @@ int main(int argc, char **argv)
         cerr << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
         return EXIT_FAILURE;
     }
+    catch (...)
+    {
+        cerr << "Exception had been thrown in deamon" << endl;
+        return EXIT_FAILURE;
+    }
+
 
     return 1;
 }
