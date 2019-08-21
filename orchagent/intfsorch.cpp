@@ -195,8 +195,14 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
         return false;
     }
 
+    /* Don't add subnet route for IP addresses with maximum prefix length.
+     * It is a duplicate of IP2Me route */
+    if ((ip_prefix->isV4() && ip_prefix->getMaskLength() != 32) ||
+        (!ip_prefix->isV4() && ip_prefix->getMaskLength() != 128))
+    {
+        addSubnetRoute(port, *ip_prefix);
+    }
     vrf_id = port.m_vr_id;
-    addSubnetRoute(port, *ip_prefix);
     addIp2MeRoute(vrf_id, *ip_prefix);
 
     if (port.m_type == Port::VLAN)
@@ -220,7 +226,12 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
 
     if (ip_prefix && m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
     {
-        removeSubnetRoute(port, *ip_prefix);
+        /* No subnet route for IP addresses with maximum prefix length */
+        if ((ip_prefix->isV4() && ip_prefix->getMaskLength() != 32) ||
+            (!ip_prefix->isV4() && ip_prefix->getMaskLength() != 128))
+        {
+            removeSubnetRoute(port, *ip_prefix);
+        }
         removeIp2MeRoute(vrf_id, *ip_prefix);
 
         if(port.m_type == Port::VLAN)
@@ -740,7 +751,7 @@ void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix
      * add a broadcast route. */
     if (!(ip_prefix.isV4()) || (ip_prefix.getMaskLength() > 30))
     {
-      return;
+        return;
     }
     ip_addr =  ip_prefix.getBroadcastIp();
 
