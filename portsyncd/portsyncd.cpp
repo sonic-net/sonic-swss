@@ -230,7 +230,7 @@ void handlePortConfigFile(ProducerStateTable &p, string file, bool warm)
     if (!infile.is_open())
     {
         usage();
-        throw "Port configuration file not found!";
+	throw(std::runtime_error("Port configuration file not found!"));
     }
 
     list<string> header = {"name", "lanes", "alias", "speed", "autoneg", "fec"};
