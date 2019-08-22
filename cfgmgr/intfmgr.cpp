@@ -103,7 +103,11 @@ int IntfMgr::getIntfIpCount(const string &alias)
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " address show " << alias << " | grep inet | grep -v 'inet6 fe80:' | wc -l";
+    /* query ip address of the device with master name, it is much faster */
+    cmd << IP_CMD << " address show " << alias
+        << " $(" << IP_CMD << " link show " << alias << " | grep -o 'master [^\\s]*')"
+        << " | grep inet | grep -v 'inet6 fe80:' | wc -l";
+
     int ret = swss::exec(cmd.str(), res);
     if (ret)
     {
@@ -144,7 +148,7 @@ bool IntfMgr::isIntfChangeVrf(const string &alias, const string &vrfName)
                 else
                     return true;
             }
-	}
+        }
     }
 
     return false;

@@ -11,6 +11,9 @@
 
 #define NHFLAGS_IFDOWN                  0x1 // nexthop's outbound i/f is down
 
+#define VRF_PREFIX "Vrf"
+extern IntfsOrch *gIntfsOrch;
+
 struct NextHopKey
 {
     IpAddress           ip_address;     // neighbor IP address
@@ -27,13 +30,25 @@ struct NextHopKey
             throw std::invalid_argument(err);
         }
         auto keys = tokenize(str, '|');
-        if (keys.size() != 2)
+        if (keys.size() == 1)
+        {
+            ip_address = keys[0];
+            alias = gIntfsOrch->getRouterIntfsAlias(ip_address);
+        }
+        else if (keys.size() == 2)
+        {
+            ip_address = keys[0];
+            alias = keys[1];
+            if (!alias.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+            {
+                alias = gIntfsOrch->getRouterIntfsAlias(ip_address, alias);
+            }
+        }
+        else
         {
             std::string err = "Error converting " + str + " to NextHop";
             throw std::invalid_argument(err);
         }
-        ip_address = keys[0];
-        alias = keys[1];
     }
     const std::string to_string() const
     {

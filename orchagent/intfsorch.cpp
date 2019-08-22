@@ -83,29 +83,43 @@ sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
     return port.m_rif_id;
 }
 
-bool IntfsOrch::isPrefixSubnet(const IpPrefix &ip_prefix, const string& alias)
+bool IntfsOrch::isPrefixSubnet(const IpPrefix &ip_prefix, const string &alias)
 {
     if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+    {
         return false;
+    }
     for (auto &prefixIt: m_syncdIntfses[alias].ip_addresses)
     {
         if (prefixIt.getSubnet() == ip_prefix)
+        {
             return true;
+        }
     }
     return false;
 }
 
-string IntfsOrch::getRouterIntfsAlias(const IpAddress &ip, sai_object_id_t vrf_id)
+string IntfsOrch::getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name)
 {
+    sai_object_id_t vrf_id = gVirtualRouterId;
+
+    if (!vrf_name.empty())
+    {
+        vrf_id = m_vrfOrch->getVRFid(vrf_name);
+    }
+
     for (const auto &it_intfs: m_syncdIntfses)
     {
         if (it_intfs.second.vrf_id != vrf_id)
+        {
             continue;
-
+        }
         for (const auto &prefixIt: it_intfs.second.ip_addresses)
         {
             if (prefixIt.isAddressInSubnet(ip))
+            {
                 return it_intfs.first;
+            }
         }
     }
     return string();

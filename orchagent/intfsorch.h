@@ -34,7 +34,7 @@ public:
 
     sai_object_id_t getRouterIntfsId(const string&);
     bool isPrefixSubnet(const IpPrefix&, const string&);
-    string getRouterIntfsAlias(const IpAddress &ip, sai_object_id_t vrf_id = gVirtualRouterId);
+    string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");
 
     void increaseRouterIntfsRefCount(const string&);
     void decreaseRouterIntfsRefCount(const string&);

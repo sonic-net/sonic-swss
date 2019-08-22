@@ -63,6 +63,18 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                 break;
         }
     }
+
+    cmd.str("");
+    cmd.clear();
+    cmd << IP_CMD << " rule | grep '^0:'";
+    if (swss::exec(cmd.str(), res) == 0)
+    {
+        cmd.str("");
+        cmd.clear();
+        cmd << IP_CMD << " rule add pref 1001 table local && " << IP_CMD << " rule del pref 0 && "
+            << IP_CMD << " -6 rule add pref 1001 table local && " << IP_CMD << " -6 rule del pref 0";
+        EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    }
 }
 
 uint32_t VrfMgr::getFreeTable(void)
@@ -144,8 +156,13 @@ int VrfMgr::getVrfIntfCount(const string& vrfName)
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link show " << " | grep 'master " << vrfName << "' | wc -l";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+    cmd << IP_CMD << " link show master " << vrfName << " | wc -l";
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        return 0;
+    }
 
     return std::stoi(res);
 }

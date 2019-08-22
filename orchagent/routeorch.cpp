@@ -4,8 +4,6 @@
 #include "swssnet.h"
 #include "crmorch.h"
 
-#define VRF_PREFIX          "Vrf"
-
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
 
