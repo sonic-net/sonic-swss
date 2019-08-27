@@ -11,7 +11,8 @@ dist_swss_DATA = \
 		 pfc_detect_nephos.lua \
 		 pfc_restore.lua \
 		 watermark_queue.lua \
-		 watermark_pg.lua
+		 watermark_pg.lua \
+		 watermark_bufferpool.lua
 
 bin_PROGRAMS = orchagent routeresync orchagent_restart_check
 
@@ -49,7 +50,8 @@ orchagent_SOURCES = \
             vnetorch.cpp \
             dtelorch.cpp \
             flexcounterorch.cpp \
-            watermarkorch.cpp
+            watermarkorch.cpp \
+            policerorch.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

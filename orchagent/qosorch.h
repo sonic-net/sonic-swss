@@ -36,6 +36,11 @@ const string scheduler_algo_STRICT              = "STRICT";
 const string scheduler_weight_field_name        = "weight";
 const string scheduler_priority_field_name      = "priority";
 
+const string scheduler_min_bandwidth_rate_field_name       = "cir";//Committed Information Rate
+const string scheduler_min_bandwidth_burst_rate_field_name = "cbs";//Committed Burst Size
+const string scheduler_max_bandwidth_rate_field_name       = "pir";//Peak Information Rate
+const string scheduler_max_bandwidth_burst_rate_field_name = "pbs";//Peak Burst Size
+
 const string ecn_field_name                     = "ecn";
 const string ecn_none                           = "ecn_none";
 const string ecn_red                            = "ecn_red";
@@ -114,6 +119,7 @@ public:
     static type_map& getTypeMap();
     static type_map m_qos_maps;
 private:
+    void doTask() override;
     virtual void doTask(Consumer& consumer);
 
     typedef task_process_status (QosOrch::*qos_table_handler)(Consumer& consumer);

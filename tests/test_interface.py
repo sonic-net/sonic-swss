@@ -19,11 +19,13 @@ class TestRouterInterface(object):
         tbl = swsscommon.Table(self.cdb, "INTERFACE")
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
         tbl.set(interface + "|" + ip, fvs)
+        tbl.set(interface, fvs)
         time.sleep(2) # IPv6 netlink message needs longer time
 
     def remove_ip_address(self, interface, ip):
         tbl = swsscommon.Table(self.cdb, "INTERFACE")
         tbl._del(interface + "|" + ip);
+        tbl._del(interface);
         time.sleep(1)
 
     def set_mtu(self, interface, mtu):
@@ -243,6 +245,7 @@ class TestLagRouterInterfaceIpv4(object):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_INTERFACE")
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
         tbl.set(interface + "|" + ip, fvs)
+        tbl.set(interface, fvs)
         time.sleep(1)
 
     def remove_ip_address(self, interface, ip):
