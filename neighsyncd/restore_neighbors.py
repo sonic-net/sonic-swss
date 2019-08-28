@@ -25,10 +25,28 @@ logging.getLogger("scapy.runtime").setLevel(logging.ERROR)
 from scapy.all import conf, in6_getnsma, inet_pton, inet_ntop, in6_getnsmac, get_if_hwaddr, Ether, ARP, IPv6, ICMPv6ND_NS, ICMPv6NDOptSrcLLAddr
 from swsscommon import swsscommon
 import errno
+import syslog
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.WARNING)
 logger.addHandler(logging.NullHandler())
+
+SYSLOG_IDENTIFIER = 'restore_neighbor'
+
+def log_info(msg):
+    syslog.openlog(SYSLOG_IDENTIFIER)
+    syslog.syslog(syslog.LOG_INFO, msg)
+    syslog.closelog()
+
+def log_warning(msg):
+    syslog.openlog(SYSLOG_IDENTIFIER)
+    syslog.syslog(syslog.LOG_WARNING, msg)
+    syslog.closelog()
+
+def log_error(msg):
+    syslog.openlog(SYSLOG_IDENTIFIER)
+    syslog.syslog(syslog.LOG_ERR, msg)
+    syslog.closelog()
 
 # timeout the restore process in 110 seconds if not finished
 # This is mostly to wait for interfaces to be created and up after system warm-reboot
@@ -58,11 +76,34 @@ def is_intf_oper_state_up(intf):
         state_file = open(oper_file.format(intf), 'r')
         state = state_file.readline().rstrip()
     except Exception as e:
-        logger.info('Error: {}'.format(str(e)))
+        log_info('Error: {}'.format(str(e)))
         return False
     if state == '1':
         return True
     return False
+
+def is_intf_up(intf):
+    if not is_intf_oper_state_up(intf):
+         return False
+    if 'Vlan' in intf:
+        db = swsssdk.SonicV2Connector(host='127.0.0.1')
+        db.connect(db.STATE_DB, False)
+        table_name = 'VLAN_MEMBER_TABLE|{}|*'.format(intf)
+        key = db.keys(db.STATE_DB, table_name)
+        if key is None:
+            log_info ("Vlan member is not yet created")
+            return False
+        log_info ("intf {} is up".format(intf))
+    return True
+
+# check if port init is done
+def is_port_init_done():
+    db = swsssdk.SonicV2Connector(host='127.0.0.1')
+    db.connect(db.APPL_DB, False)
+    key = db.keys(db.APPL_DB, 'PORT_TABLE:PortInitDone')
+    if key is None:
+        return False
+    return True
 
 # read the neigh table from AppDB to memory, format as below
 # build map as below, this can efficiently access intf and family groups later
@@ -131,7 +172,7 @@ def read_neigh_table_to_maps():
 
 # Use netlink to set neigh table into kernel, not overwrite the existing ones
 def set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac):
-    logging.info('Add neighbor entries: family: {}, intf_idx: {}, ip: {}, mac: {}'.format(
+    log_info('Add neighbor entries: family: {}, intf_idx: {}, ip: {}, mac: {}'.format(
     family, intf_idx, dst_ip, dmac))
 
     if family not in ip_family:
@@ -152,7 +193,7 @@ def set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac):
     # If neigh exists, log it but no exception raise, other exceptions, raise
     except NetlinkError as e:
         if e[0] == errno.EEXIST:
-            logger.warning('Neigh exists in kernel with family: {}, intf_idx: {}, ip: {}, mac: {}'.format(
+            log_warning('Neigh exists in kernel with family: {}, intf_idx: {}, ip: {}, mac: {}'.format(
             family, intf_idx, dst_ip, dmac))
         else:
             raise
@@ -199,7 +240,7 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
     while (mtime() - start_time) < timeout:
         for intf, family_neigh_map in intf_neigh_map.items():
             # only try to restore to kernel when link is up
-            if is_intf_oper_state_up(intf):
+            if is_intf_up(intf):
                 src_mac = get_if_hwaddr(intf)
                 intf_idx = ipclass.link_lookup(ifname=intf)[0]
                 # create socket per intf to send packets
@@ -215,6 +256,8 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
                             # use netlink to set neighbor entries
                             set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac)
 
+                            log_info('Sending Neigh with family: {}, intf_idx: {}, ip: {}, mac: {}'.format(
+                            family, intf_idx, dst_ip, dmac))
                             # sending arp/ns packet to update kernel neigh info
                             s.send(build_arp_ns_pkt(family, src_mac, src_ip, dst_ip))
                         # delete this family on the intf
@@ -233,8 +276,7 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
 
 def main():
 
-    print "restore_neighbors service is started"
-
+    log_info ("restore_neighbors service is started")
     # Use warmstart python binding to check warmstart information
     warmstart = swsscommon.WarmStart()
     warmstart.initialize("neighsyncd", "swss")
@@ -242,15 +284,14 @@ def main():
 
     # if swss or system warm reboot not enabled, don't run
     if not warmstart.isWarmStart():
-        print "restore_neighbors service is skipped as warm restart not enabled"
+        log_info ("restore_neighbors service is skipped as warm restart not enabled")
         return
 
     # swss restart not system warm reboot, set statedb directly
     if not warmstart.isSystemWarmRebootEnabled():
         set_statedb_neigh_restore_done()
-        print "restore_neighbors service is done as system warm reboot not enabled"
+        log_info ("restore_neighbors service is done as system warm reboot not enabled")
         return
-
     # read the neigh table from appDB to internal map
     try:
         intf_neigh_map = read_neigh_table_to_maps()
@@ -266,7 +307,7 @@ def main():
 
     # set statedb to signal other processes like neighsyncd
     set_statedb_neigh_restore_done()
-    print "restore_neighbor service is done for system warmreboot"
+    log_info ("restore_neighbor service is done for system warmreboot")
     return
 
 if __name__ == '__main__':
