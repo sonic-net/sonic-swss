@@ -93,16 +93,10 @@ def is_intf_up(intf):
         if key is None:
             log_info ("Vlan member is not yet created")
             return False
+        if is_intf_up.counter == 0:
+            time.sleep(3*CHECK_INTERVAL)
+            is_intf_up.counter = 1
         log_info ("intf {} is up".format(intf))
-    return True
-
-# check if port init is done
-def is_port_init_done():
-    db = swsssdk.SonicV2Connector(host='127.0.0.1')
-    db.connect(db.APPL_DB, False)
-    key = db.keys(db.APPL_DB, 'PORT_TABLE:PortInitDone')
-    if key is None:
-        return False
     return True
 
 # read the neigh table from AppDB to memory, format as below
@@ -237,6 +231,7 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
     ipclass = IPRoute()
     mtime = monotonic.time.time
     start_time = mtime()
+    is_intf_up.counter = 0
     while (mtime() - start_time) < timeout:
         for intf, family_neigh_map in intf_neigh_map.items():
             # only try to restore to kernel when link is up
