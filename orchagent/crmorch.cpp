@@ -391,6 +391,22 @@ void CrmOrch::decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_
     try
     {
         m_resourcesMap.at(resource).countersMap[getCrmAclTableKey(tableId)].usedCounter--;
+        if (resource == CrmResourceType::CRM_ACL_ENTRY || resource == CrmResourceType::CRM_ACL_COUNTER)
+        {
+            auto &cntMap = m_resourcesMap.at(resource).countersMap;
+            for (auto it = cntMap.begin(); it != cntMap.end();)
+            {
+                if (it->second.usedCounter == 0 && it->second.id == tableId)
+                {
+                    it = cntMap.erase(it);
+                    break;
+                }
+                else
+                {
+                    ++it;
+                }
+            }
+        }
     }
     catch (...)
     {

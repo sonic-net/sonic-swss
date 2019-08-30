@@ -632,12 +632,67 @@ namespace aclorch_test
             auto ifpPortKey = Portal::CrmOrchInternal::getCrmAclKey(crmOrch, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_PORT);
             auto efpPortKey = Portal::CrmOrchInternal::getCrmAclKey(crmOrch, SAI_ACL_STAGE_EGRESS, SAI_ACL_BIND_POINT_TYPE_PORT);
 
-            auto ifpPortAclTableCount = resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap[ifpPortKey].usedCounter;
-            auto efpPortAclTableCount = resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap[efpPortKey].usedCounter;
+            auto aclTables = Portal::AclOrchInternal::getAclTables(aclOrch);
+            auto ifpPortAclTableItr = resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap.find(ifpPortKey);
+            int ifpPortAclTableCount = 0;
+            if (ifpPortAclTableItr != resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap.end())
+            {
+                ifpPortAclTableCount = ifpPortAclTableItr->second.usedCounter;
+            }
 
-            return ifpPortAclTableCount + efpPortAclTableCount == Portal::AclOrchInternal::getAclTables(aclOrch).size();
+            auto efpPortAclTableItr = resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap.find(efpPortKey);
+            int efpPortAclTableCount = 0;
+            if (efpPortAclTableItr != resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap.end())
+            {
+                efpPortAclTableCount = efpPortAclTableItr->second.usedCounter;
+            }
 
-            // TODO: add rule check
+            if (ifpPortAclTableCount + efpPortAclTableCount != aclTables.size())
+            {
+                return false;
+            }
+
+            /* Verify Acl Rules
+            */
+            for (auto it : aclTables)
+            {
+                auto acl_table_rule_cnt = it.second.rules.size();
+                auto acl_table_key = Portal::CrmOrchInternal::getCrmAclTableKey(crmOrch, it.first);
+
+                if (acl_table_rule_cnt)
+                {
+                    auto crm_rule_cnt = resourceMap.at(CrmResourceType::CRM_ACL_ENTRY).countersMap[acl_table_key].usedCounter;
+                    if (acl_table_rule_cnt != crm_rule_cnt)
+                    {
+                        return false;
+                    }
+
+                    auto crm_acl_table_oid = resourceMap.at(CrmResourceType::CRM_ACL_ENTRY).countersMap[acl_table_key].id;
+                    if (crm_acl_table_oid != it.second.getOid())
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    auto &cntMap = resourceMap.at(CrmResourceType::CRM_ACL_ENTRY).countersMap;
+                    for (auto it = cntMap.begin(); it != cntMap.end(); it++)
+                    {
+                        if (it->first == acl_table_key)
+                        {
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            if (aclTables.empty())
+            {
+                if (!resourceMap.at(CrmResourceType::CRM_ACL_ENTRY).countersMap.empty())
+                    return false;
+            }
+
+            return true;
         }
 
         // leakage check
