@@ -1280,7 +1280,7 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, 'Vnet3004')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet3004')
 
-        delete_vnet_routes(dvs, "100.100.2.1/24", 'Vnet3002')
+        delete_vnet_routes(dvs, "100.100.2.1/32", 'Vnet3002')
         vnet_obj.check_del_vnet_routes(dvs, 'Vnet3002')
 
         delete_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet3002')
