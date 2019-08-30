@@ -236,6 +236,7 @@ void MclagLink::mclagsyncd_set_port_isolate(char *msg)
     vector<FieldValueTuple> acl_rule_attrs;
     std::string acl_key = std::string("") + APP_ACL_TABLE_TABLE_NAME + ":" + acl_name;
     std::string acl_rule_key = std::string("") + APP_ACL_RULE_TABLE_NAME + ":" + acl_rule_name;
+    static int acl_table_is_added = 0;
 
     cur = msg;
 
@@ -257,6 +258,7 @@ void MclagLink::mclagsyncd_set_port_isolate(char *msg)
     {
         /* If dst port is NULL, delete the acl table 'mclag' */
         p_acl_tbl->del(acl_name);
+        acl_table_is_added = 0;
         SWSS_LOG_NOTICE("set port isolate, src port: %s, dst port is NULL",
                         isolate_src_port.c_str());
         return;
@@ -265,18 +267,23 @@ void MclagLink::mclagsyncd_set_port_isolate(char *msg)
     SWSS_LOG_NOTICE("set port isolate, src port: %s, dst port: %s",
                     isolate_src_port.c_str(), isolate_dst_port.c_str());
 
-    /*First create ACL table*/
-    FieldValueTuple desc_attr("policy_desc", "Mclag egress port isolate acl");
-    acl_attrs.push_back(desc_attr);
+    if (acl_table_is_added == 0)
+    {
+        /*First create ACL table*/
+        FieldValueTuple desc_attr("policy_desc", "Mclag egress port isolate acl");
+        acl_attrs.push_back(desc_attr);
 
-    FieldValueTuple type_attr("type", "L3");
-    acl_attrs.push_back(type_attr);
+        FieldValueTuple type_attr("type", "L3");
+        acl_attrs.push_back(type_attr);
 
-    FieldValueTuple port_attr("ports", isolate_src_port);
-    acl_attrs.push_back(port_attr);
+        FieldValueTuple port_attr("ports", isolate_src_port);
+        acl_attrs.push_back(port_attr);
 
-    p_acl_tbl->set(acl_name, acl_attrs);
-    /*End create ACL table*/
+        p_acl_tbl->set(acl_name, acl_attrs);
+
+        acl_table_is_added = 1;
+        /*End create ACL table*/
+    }
 
     /*Then create ACL rule table*/
     FieldValueTuple ip_type_attr("IP_TYPE", "ANY");
@@ -285,7 +292,7 @@ void MclagLink::mclagsyncd_set_port_isolate(char *msg)
     FieldValueTuple out_port_attr("OUT_PORTS", isolate_dst_port);
     acl_rule_attrs.push_back(out_port_attr);
 
-    FieldValueTuple packet_attr("PACKET_ACTION","DROP");
+    FieldValueTuple packet_attr("PACKET_ACTION", "DROP");
     acl_rule_attrs.push_back(packet_attr);
 
     p_acl_rule_tbl->set(acl_rule_name, acl_rule_attrs);
@@ -544,7 +551,7 @@ ssize_t  MclagLink::mclagsyncd_get_fdb_changes(char *msg_buf)
             if (write <= 0)
                 return write;
 
-            infor_len = 0;
+            infor_len = sizeof(mclag_msg_hdr_t);
         }
         SWSS_LOG_NOTICE("notify iccpd to del fdb_entry:mac:%s, vid:%d, portname:%s, type:%s",
                         it->mac.c_str(), it->vid, it->port_name.c_str(), it->type.c_str());
@@ -577,7 +584,7 @@ ssize_t  MclagLink::mclagsyncd_get_fdb_changes(char *msg_buf)
             if (write <= 0)
                 return write;
 
-            infor_len = 0;
+            infor_len = sizeof(mclag_msg_hdr_t);
         }
         SWSS_LOG_NOTICE("notify iccpd to add fdb_entry:mac:%s, vid:%d, portname:%s, type:%s",
                         it->mac.c_str(), it->vid, it->port_name.c_str(), it->type.c_str());
@@ -766,49 +773,4 @@ void MclagLink::readData()
     m_pos = m_pos - (uint32_t)start;
     return;
 }
-
-void MclagLink::mclag_connection_lost_handle_port_isolate()
-{
-    string acl_name = "mclag";
-
-    p_acl_tbl->del(acl_name);
-
-    return;
-}
-
-void MclagLink::mclag_connection_lost_handle_port_learn_mode()
-{
-    vector<FieldValueTuple> attrs;
-    std::map<std::string, std:: string>::iterator it;
-
-    it = p_learn->begin();
-
-    while (it != p_learn->end())
-    {
-        it->second = "hardware";
-
-        FieldValueTuple block_attr("learn_mode", it->second);
-
-        attrs.push_back(block_attr);
-        if (strncmp(it->first.c_str(), PORTCHANNEL_PREFIX, strlen(PORTCHANNEL_PREFIX)) == 0)
-            p_lag_tbl->set(it->first, attrs);
-        /*vxlan tunnel dont supported currently, for src_ip is the mandatory attribute*/
-        /*else if(strncmp(it->first.c_str(),VXLAN_TUNNEL_PREFIX,5) == 0)
-            p_tnl_tbl->set(it->first, attrs); */
-        else
-            p_port_tbl->set(it->first, attrs);
-
-        it++;
-    }
-
-    p_learn->clear();
-
-    return;
-}
-
-void MclagLink::mclag_connection_lost()
-{
-    return;
-}
-
 

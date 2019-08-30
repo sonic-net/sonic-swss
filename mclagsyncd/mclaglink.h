@@ -41,11 +41,14 @@
 
 namespace swss {
 
+#define ETHER_ADDR_STR_LEN 18
+#define MAX_L_PORT_NAME 20
+
 struct mclag_fdb_info
 {
-    char mac[32];
+    char mac[ETHER_ADDR_STR_LEN];
     unsigned int vid;
-    char port_name[32];
+    char port_name[MAX_L_PORT_NAME];
     short type;     /*dynamic or static*/
     short op_type;  /*add or del*/
 };

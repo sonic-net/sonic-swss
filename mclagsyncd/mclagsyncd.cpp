@@ -86,7 +86,6 @@ int main(int argc, char **argv)
         }
         catch (MclagLink::MclagConnectionClosedException &e)
         {
-            /*mclag_connection_lost();*/
             cout << "Connection lost, reconnecting..." << endl;
         }
         catch (const exception& e)
