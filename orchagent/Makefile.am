@@ -1,4 +1,6 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart
+utildir = $(top_srcdir)/utilities
+
+INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I $(utildir)/flexcounter -I $(utildir)/debug_counter
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -54,11 +56,12 @@ orchagent_SOURCES = \
             watermarkorch.cpp \
             policerorch.cpp \
             sfloworch.cpp \
-            chassisorch.cpp
+            chassisorch.cpp \
+            debugcounterorch.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
-orchagent_LDADD = -lnl-3 -lnl-route-3 -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata
+orchagent_LDADD = -lnl-3 -lnl-route-3 -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata $(utildir)/flexcounter/libflexcounter.la $(utildir)/debug_counter/libdebugcounter.la
 
 routeresync_SOURCES = routeresync.cpp
 routeresync_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)

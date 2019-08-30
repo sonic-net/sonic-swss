@@ -1,0 +1,33 @@
+#ifndef DROP_REASONS_H
+#define DROP_REASONS_H
+
+// L2 Drop Reasons
+#define L2_ANY               "L2_ANY"
+#define SMAC_MULTICAST       "SMAC_MULTICAST"
+#define SMAC_EQUALS_DMAC     "SMAC_EQUALS_DMAC"
+#define VLAN_TAG_NOT_ALLOWED "VLAN_TAG_NOT_ALLOWED"
+#define INGRESS_VLAN_FILTER  "INGRESS_VLAN_FILTER"
+#define EGRESS_VLAN_FILTER   "EGRESS_VLAN_FILTER"
+#define INGRESS_STP_FILTER   "INGRESS_STP_FILTER"
+#define FDB_UC_DISCARD       "FDB_UC_DISCARD"
+#define FDB_MC_DISCARD       "FDB_MC_DISCARD"
+#define L2_LOOPBACK_FILTER   "L2_LOOPBACK_FILTER"
+#define EXCEEDS_L2_MTU       "EXCEEDS_L2_MTU"
+
+// L3 Ingress Drop Reasons
+#define L3_ANY              "L3_ANY"
+#define TTL                 "TTL"
+#define L3_LOOPBACK_FILTER  "L3_LOOPBACK_FILTER"
+#define REASON_NON_ROUTABLE "REASON_NON_ROUTABLE"
+#define NO_L3_HEADER        "NO_L3_HEADER"
+#define IP_HEADER_ERROR     "IP_HEADER_ERROR"
+#define UC_DIP_MC_DMAC      "UC_DIP_MC_DMAC"
+#define EXCEEDS_L3_MTU      "EXCEEDS_L3_MTU"
+#define SIP_LINK_LOCAL      "SIP_LINK_LOCAL"
+#define DIP_LINK_LOCAL      "DIP_LINK_LOCAL"
+#define L3_EGRESS_LINK_DOWN "L3_EGRESS_LINK_DOWN"
+
+// ACL Drop Reasons
+#define ACL_ANY             "ACL_ANY"
+
+#endif
