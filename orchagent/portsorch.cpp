@@ -2229,11 +2229,19 @@ void PortsOrch::doLagTask(Consumer &consumer)
         {
             // Retrieve attributes
             uint32_t mtu = 0;
+            string learn_mode;
+
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
+                }
+
+                /* Get port fdb learn mode*/
+                if (fvField(i) == "learn_mode")
+                {
+                    learn_mode = fvValue(i);
                 }
             }
 
@@ -2262,16 +2270,6 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     if (l.m_rif_id)
                     {
                         gIntfsOrch->setRouterIntfsMtu(l);
-                    }
-                }
-
-                string learn_mode;
-                for (auto i : kfvFieldsValues(t))
-                {
-                     /* Get port fdb learn mode*/
-                    if (fvField(i) == "learn_mode")
-                    {
-                        learn_mode = fvValue(i);
                     }
                 }
 
