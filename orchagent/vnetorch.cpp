@@ -1329,7 +1329,7 @@ VNetOrch::VNetOrch(DBConnector *db, const std::string& tableName, VNET_EXEC op)
 
     if (op == VNET_EXEC::VNET_EXEC_VRF)
     {
-        vr_cntxt = { VR_TYPE::ING_VR_VALID, VR_TYPE::EGR_VR_VALID };
+        vr_cntxt = { VR_TYPE::ING_VR_VALID, VR_TYPE::VR_INVALID };
     }
     else
     {
@@ -1647,8 +1647,9 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
     if (!vnet_orch_->isVnetExists(vnet))
     {
-        SWSS_LOG_WARN("VNET %s doesn't exist", vnet.c_str());
-        return false;
+        SWSS_LOG_WARN("VNET %s doesn't exist for prefix %s, op %s",
+                      vnet.c_str(), ipPrefix.to_string().c_str(), op.c_str());
+        return (op == DEL_COMMAND)?true:false;
     }
 
     set<sai_object_id_t> vr_set;
@@ -1710,8 +1711,9 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
     if (!vnet_orch_->isVnetExists(vnet))
     {
-        SWSS_LOG_WARN("VNET %s doesn't exist", vnet.c_str());
-        return false;
+        SWSS_LOG_WARN("VNET %s doesn't exist for prefix %s, op %s",
+                      vnet.c_str(), ipPrefix.to_string().c_str(), op.c_str());
+        return (op == DEL_COMMAND)?true:false;
     }
 
     auto *vrf_obj = vnet_orch_->getTypePtr<VNetVrfObject>(vnet);
@@ -1799,14 +1801,18 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
     for (auto vr_id : vr_set)
     {
+        if (vr_id == SAI_NULL_OBJECT_ID)
+        {
+            continue;
+        }
         if (op == SET_COMMAND && !add_route(vr_id, pfx, nh_id))
         {
-            SWSS_LOG_ERROR("Route add failed for %s", ipPrefix.to_string().c_str());
+            SWSS_LOG_INFO("Route add failed for %s", ipPrefix.to_string().c_str());
             break;
         }
         else if (op == DEL_COMMAND && !del_route(vr_id, pfx))
         {
-            SWSS_LOG_ERROR("Route del failed for %s", ipPrefix.to_string().c_str());
+            SWSS_LOG_INFO("Route del failed for %s", ipPrefix.to_string().c_str());
             break;
         }
     }

@@ -643,9 +643,17 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     sai_status_t status = sai_route_api->remove_route_entry(&unicast_route_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove subnet route to %s from %s, rv:%d",
-                       ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
-        throw runtime_error("Failed to remove subnet route.");
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_ERROR("No subnet route found for %s", ip_prefix.to_string().c_str());
+            return;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove subnet route to %s from %s, rv:%d",
+                           ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
+            throw runtime_error("Failed to remove subnet route.");
+        }
     }
 
     SWSS_LOG_NOTICE("Remove subnet route to %s from %s",
