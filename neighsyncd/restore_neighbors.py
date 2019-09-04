@@ -82,12 +82,10 @@ def is_intf_oper_state_up(intf):
         return True
     return False
 
-def is_intf_up(intf):
+def is_intf_up(intf, db):
     if not is_intf_oper_state_up(intf):
          return False
     if 'Vlan' in intf:
-        db = swsssdk.SonicV2Connector(host='127.0.0.1')
-        db.connect(db.STATE_DB, False)
         table_name = 'VLAN_MEMBER_TABLE|{}|*'.format(intf)
         key = db.keys(db.STATE_DB, table_name)
         if key is None:
@@ -232,10 +230,12 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
     mtime = monotonic.time.time
     start_time = mtime()
     is_intf_up.counter = 0
+    db = swsssdk.SonicV2Connector(host='127.0.0.1')
+    db.connect(db.STATE_DB, False)
     while (mtime() - start_time) < timeout:
         for intf, family_neigh_map in intf_neigh_map.items():
             # only try to restore to kernel when link is up
-            if is_intf_up(intf):
+            if is_intf_up(intf, db):
                 src_mac = get_if_hwaddr(intf)
                 intf_idx = ipclass.link_lookup(ifname=intf)[0]
                 # create socket per intf to send packets
@@ -267,6 +267,7 @@ def restore_update_kernel_neighbors(intf_neigh_map, timeout=DEF_TIME_OUT):
         if not intf_neigh_map:
             break
         time.sleep(CHECK_INTERVAL)
+    db.close(db.STATE_DB)
 
 
 def main():
