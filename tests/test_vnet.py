@@ -1200,7 +1200,6 @@ class TestVnetOrch(object):
     '''
     Test 4 - IPv6 Vxlan tunnel test
     '''
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_vnet_orch_4(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
