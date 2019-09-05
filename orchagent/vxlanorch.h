@@ -87,7 +87,14 @@ public:
     sai_object_id_t addDecapMapperEntry(sai_object_id_t obj, uint32_t vni);
 
     void insertMapperEntry(sai_object_id_t encap, sai_object_id_t decap, uint32_t vni);
+    void removeMapperEntry(uint32_t vni);
     std::pair<sai_object_id_t, sai_object_id_t> getMapperEntry(uint32_t vni);
+    std::vector<uint32_t> getMapperKeys();
+
+    bool isMapperEmpty() const
+    {
+        return tunnel_map_entries_.empty();
+    }
 
     sai_object_id_t getTunnelId() const
     {

@@ -448,6 +448,23 @@ void VxlanTunnel::insertMapperEntry(sai_object_id_t encap, sai_object_id_t decap
     tunnel_map_entries_[vni] = std::pair<sai_object_id_t, sai_object_id_t>(encap, decap);
 }
 
+void VxlanTunnel::removeMapperEntry(uint32_t vni)
+{
+    tunnel_map_entries_.erase(vni);
+}
+
+std::vector<uint32_t> VxlanTunnel::getMapperKeys()
+{
+    std::vector<uint32_t> keys;
+
+    for (const auto& p: tunnel_map_entries_)
+    {
+        keys.push_back(p.first);
+    }
+
+    return keys;
+}
+
 std::pair<sai_object_id_t, sai_object_id_t> VxlanTunnel::getMapperEntry(uint32_t vni)
 {
     if (tunnel_map_entries_.find(vni) != tunnel_map_entries_.end())
@@ -666,6 +683,8 @@ bool VxlanTunnelOrch::removeVxlanTunnelMap(string tunnelName, uint32_t vni)
         remove_tunnel_map_entry(mapper.first);
         remove_tunnel_map_entry(mapper.second);
 
+        tunnel_obj->removeMapperEntry(vni);
+
         SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'", mapper.first, mapper.second);
     }
     catch(const std::runtime_error& error)
@@ -731,7 +750,24 @@ bool VxlanTunnelOrch::delOperation(const Request& request)
         return true;
     }
 
-    auto tunnel_term_id = vxlan_tunnel_table_[tunnel_name].get()->getTunnelTermId();
+    auto tunnel = vxlan_tunnel_table_[tunnel_name].get();
+
+    if (!tunnel->isMapperEmpty())
+    {
+        std::string vni_list;
+        bool first = true;
+        for (auto vni: tunnel->getMapperKeys())
+        {
+            if (!first)
+                vni_list += ", ";
+            vni_list += std::to_string(vni);
+            first = false;
+        }
+        SWSS_LOG_WARN("Vxlan tunnel '%s' has tunnel maps configured [%s]. Can't remove now.", tunnel_name.c_str(), vni_list.c_str());
+        return false;
+    }
+
+    auto tunnel_term_id = tunnel->getTunnelTermId();
     try
     {
         remove_tunnel_termination(tunnel_term_id);
@@ -742,7 +778,7 @@ bool VxlanTunnelOrch::delOperation(const Request& request)
         return false;
     }
 
-    auto tunnel_id = vxlan_tunnel_table_[tunnel_name].get()->getTunnelId();
+    auto tunnel_id = tunnel->getTunnelId();
     try
     {
         remove_tunnel(tunnel_id);
