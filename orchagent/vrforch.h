@@ -38,7 +38,9 @@ public:
 class VRFOrch : public Orch2
 {
 public:
-    VRFOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_)
+    VRFOrch(DBConnector *appDb, const std::string& appTableName, DBConnector *stateDb, const std::string& stateTableName) :
+        Orch2(appDb, appTableName, request_),
+        m_stateVrfTable(stateDb, stateTableName)
     {
     }
 
@@ -114,6 +116,7 @@ private:
     VRFTable vrf_table_;
     VRFId2NameTable vrf_id_table_;
     VRFRequest request_;
+    Table m_stateVrfTable;
 };
 
 #endif // __VRFORCH_H

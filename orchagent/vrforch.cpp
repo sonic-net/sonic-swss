@@ -11,6 +11,8 @@
 #include "request_parser.h"
 #include "vrforch.h"
 
+#define OBJ_PREFIX "OBJ"
+
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
 
@@ -81,6 +83,7 @@ bool VRFOrch::addOperation(const Request& request)
         vrf_table_[vrf_name].vrf_id = router_id;
         vrf_table_[vrf_name].ref_count = 0;
         vrf_id_table_[router_id] = vrf_name;
+        m_stateVrfTable.hset(string(OBJ_PREFIX) + state_db_key_delimiter + vrf_name, "state", "ok");
         SWSS_LOG_NOTICE("VRF '%s' was added", vrf_name.c_str());
     }
     else
@@ -129,6 +132,7 @@ bool VRFOrch::delOperation(const Request& request)
 
     vrf_table_.erase(vrf_name);
     vrf_id_table_.erase(router_id);
+    m_stateVrfTable.del(string(OBJ_PREFIX) + state_db_key_delimiter + vrf_name);
 
     SWSS_LOG_NOTICE("VRF '%s' was removed", vrf_name.c_str());
 

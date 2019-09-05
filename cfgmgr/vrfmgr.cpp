@@ -10,6 +10,7 @@
 
 #define VRF_TABLE_START 1001
 #define VRF_TABLE_END 2000
+#define OBJ_PREFIX "OBJ"
 
 using namespace swss;
 
@@ -151,20 +152,18 @@ bool VrfMgr::setLink(const string& vrfName)
     return true;
 }
 
-int VrfMgr::getVrfIntfCount(const string& vrfName)
+bool VrfMgr::isVrfObjExist(const string& vrfName)
 {
-    stringstream cmd;
-    string res;
+    vector<FieldValueTuple> temp;
+    string key = string(OBJ_PREFIX) + state_db_key_delimiter + vrfName;
 
-    cmd << IP_CMD << " link show master " << vrfName << " | wc -l";
-    int ret = swss::exec(cmd.str(), res);
-    if (ret)
+    if (m_stateVrfTable.get(key, temp))
     {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
-        return 0;
+        SWSS_LOG_DEBUG("Vrf %s object exist", vrfName.c_str());
+        return true;
     }
 
-    return std::stoi(res);
+    return false;
 }
 
 void VrfMgr::doTask(Consumer &consumer)
@@ -201,7 +200,29 @@ void VrfMgr::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (getVrfIntfCount(vrfName))
+            vector<FieldValueTuple> temp;
+
+            if (m_stateVrfTable.get(vrfName, temp))
+            {
+                if (!isVrfObjExist(vrfName))
+                {
+                    it++;
+                    continue;
+                }
+
+                m_stateVrfTable.del(vrfName);
+
+                if (consumer.getTableName() == CFG_VRF_TABLE_NAME)
+                {
+                    m_appVrfTableProducer.del(vrfName);
+                }
+                else
+                {
+                    m_appVnetTableProducer.del(vrfName);
+                }
+            }
+
+            if (isVrfObjExist(vrfName))
             {
                 it++;
                 continue;
@@ -210,17 +231,6 @@ void VrfMgr::doTask(Consumer &consumer)
             if (!delLink(vrfName))
             {
                 SWSS_LOG_ERROR("Failed to remove vrf netdev %s", vrfName.c_str());
-            }
-
-            m_stateVrfTable.del(vrfName);
-
-            if (consumer.getTableName() == CFG_VRF_TABLE_NAME)
-            {
-                m_appVrfTableProducer.del(vrfName);
-            }
-            else
-            {
-                m_appVnetTableProducer.del(vrfName);
             }
 
             SWSS_LOG_NOTICE("Removed vrf netdev %s", vrfName.c_str());

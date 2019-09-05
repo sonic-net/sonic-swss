@@ -109,7 +109,7 @@ bool OrchDaemon::init()
     gDirectory.set(cfg_vnet_rt_orch);
     VNetRouteOrch *vnet_rt_orch = new VNetRouteOrch(m_applDb, vnet_tables, vnet_orch);
     gDirectory.set(vnet_rt_orch);
-    VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME);
+    VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_TABLE_NAME);
     gDirectory.set(vrf_orch);
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch);
