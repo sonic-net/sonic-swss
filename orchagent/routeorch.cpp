@@ -156,15 +156,14 @@ void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
 
     observerEntry->second.observers.push_back(observer);
 
-    SWSS_LOG_NOTICE("Attached next hop observer of route %s for destination IP %s",
-            observerEntry->second.routeTable.rbegin()->first.to_string().c_str(),
-            dstAddr.to_string().c_str());
-
     // Trigger next hop change for the first time the observer is attached
     // Note that rbegin() is pointing to the entry with longest prefix match
     auto route = observerEntry->second.routeTable.rbegin();
     if (route != observerEntry->second.routeTable.rend())
     {
+        SWSS_LOG_NOTICE("Attached next hop observer of route %s for destination IP %s",
+                observerEntry->second.routeTable.rbegin()->first.to_string().c_str(),
+                dstAddr.to_string().c_str());
         NextHopUpdate update = { dstAddr, route->first, route->second };
         observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, static_cast<void *>(&update));
     }

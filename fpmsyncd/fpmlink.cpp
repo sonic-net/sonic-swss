@@ -106,7 +106,7 @@ void FpmLink::readData()
     /* Check for complete messages */
     while (true)
     {
-        hdr = (fpm_msg_hdr_t *)(m_messageBuffer + start);
+        hdr = reinterpret_cast<fpm_msg_hdr_t *>(static_cast<void *>(m_messageBuffer + start));
         left = m_pos - start;
         if (left < FPM_MSG_HDR_LEN)
             break;

@@ -59,12 +59,18 @@ def get_created_entry(db, table, existed_entries):
     return new_entries[0]
 
 
-def get_created_entries(db, table, existed_entries, count):
+def get_all_created_entries(db, table, existed_entries):
     tbl =  swsscommon.Table(db, table)
     entries = set(tbl.getKeys())
     new_entries = list(entries - existed_entries)
-    assert len(new_entries) == count, "Wrong number of created entries."
+    assert len(new_entries) > 0, "No created entries."
     new_entries.sort()
+    return new_entries
+
+
+def get_created_entries(db, table, existed_entries, count):
+    new_entries = get_all_created_entries(db, table, existed_entries)
+    assert len(new_entries) == count, "Wrong number of created entries."
     return new_entries
 
 
@@ -291,7 +297,7 @@ def delete_phy_interface(dvs, ifname, ipaddr):
     time.sleep(2)
 
 
-def create_vnet_entry(dvs, name, tunnel, vni, peer_list):
+def create_vnet_entry(dvs, name, tunnel, vni, peer_list, scope=""):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -300,6 +306,9 @@ def create_vnet_entry(dvs, name, tunnel, vni, peer_list):
             ("vni", vni),
             ("peer_list", peer_list),
     ]
+
+    if scope:
+        attrs.append(('scope', scope))
 
     # create the VXLAN tunnel Term entry in Config DB
     create_entry_tbl(
@@ -520,6 +529,14 @@ class VnetVxlanVrfTunnel(object):
         self.vnet_vr_ids.update(new_vr_ids)
         self.vr_map[name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[1], 'peer':peer_list }
 
+    def check_default_vnet_entry(self, dvs, name):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        #Check virtual router objects
+        assert how_many_entries_exist(asic_db, self.ASIC_VRF_TABLE) == (len(self.vnet_vr_ids)),\
+                                     "Some VR objects are created"
+        #Mappers for default VNET is created with default VR objects.
+        self.vr_map[name] = { 'ing':list(self.vnet_vr_ids)[0], 'egr':list(self.vnet_vr_ids)[0], 'peer':[] }
+
     def check_del_vnet_entry(self, dvs, name):
         # TODO: Implement for VRF VNET
         return True
@@ -567,8 +584,12 @@ class VnetVxlanVrfTunnel(object):
         self.routes.update(new_route)
 
     def check_del_router_interface(self, dvs, name):
-        # TODO: Implement for VRF VNET
-        return True
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        old_rif = get_deleted_entries(asic_db, self.ASIC_RIF_TABLE, self.rifs, 1)
+        check_deleted_object(asic_db, self.ASIC_RIF_TABLE, old_rif[0])
+
+        self.rifs.remove(old_rif[0])
 
     def check_vnet_local_routes(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -800,6 +821,9 @@ class VnetBitmapVxlanTunnel(object):
         self.rifs = get_exist_entries(dvs, self.ASIC_RIF_TABLE)
         self.vnet_map.update({name:{}})
 
+    def check_default_vnet_entry(self, dvs, name):
+        return self.check_vnet_entry(dvs, name)
+
     def check_del_vnet_entry(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -876,12 +900,16 @@ class VnetBitmapVxlanTunnel(object):
         _vni = str(vni) if vni != 0 else self.vnet_map[name]['vni']
 
         if (mac,_vni) not in self.vnet_mac_vni_list:
-            new_fdb = get_created_entry(asic_db, self.ASIC_FDB_ENTRY, self.fdbs)
+            new_fdbs = get_all_created_entries(asic_db, self.ASIC_FDB_ENTRY, self.fdbs)
 
             expected_attrs = {
                 "SAI_FDB_ENTRY_ATTR_TYPE": "SAI_FDB_ENTRY_TYPE_STATIC",
                 "SAI_FDB_ENTRY_ATTR_ENDPOINT_IP": endpoint
             }
+
+            new_fdb = next(iter([fdb for fdb in new_fdbs if (mac if mac != "" else "00:00:00:00:00:00") in fdb]), None)
+            assert new_fdb, "Wrong number of created FDB entries."
+
             check_object(asic_db, self.ASIC_FDB_ENTRY, new_fdb, expected_attrs)
 
             self.fdbs.add(new_fdb)
@@ -922,7 +950,6 @@ class TestVnetOrch(object):
     '''
     Test 1 - Create Vlan Interface, Tunnel and Vnet
     '''
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_vnet_orch_1(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
@@ -1285,3 +1312,19 @@ class TestVnetOrch(object):
 
         delete_vnet_entry(dvs, 'Vnet3001')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet3001')
+
+    '''
+    Test 5 - Default VNet test
+    '''
+    def test_vnet_orch_5(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_5'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '8.8.8.8')
+        create_vnet_entry(dvs, 'Vnet_5', tunnel_name, '4789', "", 'default')
+
+        vnet_obj.check_default_vnet_entry(dvs, 'Vnet_5')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_5', '4789')

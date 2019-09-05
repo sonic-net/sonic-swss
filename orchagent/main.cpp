@@ -220,14 +220,9 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
-    status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create a switch, rv:%d", status);
-        exit(EXIT_FAILURE);
-    }
-    SWSS_LOG_NOTICE("Create a switch");
-
+    // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
+    // since it is not using ASIC_DB, we can execute it before create_switch
+    // when g_syncMode is set to true here, create_switch will wait the response from syncd
     if (gSyncMode)
     {
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_MODE;
@@ -235,6 +230,15 @@ int main(int argc, char **argv)
 
         sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     }
+
+
+    status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create a switch, rv:%d", status);
+        exit(EXIT_FAILURE);
+    }
+    SWSS_LOG_NOTICE("Create a switch");
 
     /* Get switch source MAC address if not provided */
     if (!gMacAddress)

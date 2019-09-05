@@ -21,7 +21,7 @@ private:
     Table m_cfgIntfTable, m_cfgVlanIntfTable;
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
 
-    void setIntfIp(const string &alias, const string &opCmd, const string &ipPrefixStr, const bool ipv4 = true);
+    void setIntfIp(const string &alias, const string &opCmd, const IpPrefix &ipPrefix);
     void setIntfVrf(const string &alias, const string vrfName);
     bool doIntfGeneralTask(const vector<string>& keys, const vector<FieldValueTuple>& data, const string& op);
     bool doIntfAddrTask(const vector<string>& keys, const vector<FieldValueTuple>& data, const string& op);

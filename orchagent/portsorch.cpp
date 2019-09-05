@@ -1430,7 +1430,8 @@ bool PortsOrch::bake()
     vector<FieldValueTuple> tuples;
     string value;
     bool foundPortConfigDone = m_portTable->hget("PortConfigDone", "count", value);
-    unsigned long portCount;
+    uintmax_t portCount;
+    char* endPtr = NULL;
     SWSS_LOG_NOTICE("foundPortConfigDone = %d", foundPortConfigDone);
 
     bool foundPortInitDone = m_portTable->get("PortInitDone", tuples);
@@ -1447,12 +1448,12 @@ bool PortsOrch::bake()
         return false;
     }
 
-    portCount = stoul(value);
-    SWSS_LOG_NOTICE("portCount = %" PRIu64 ", m_portCount = %u", portCount, m_portCount);
+    portCount = strtoumax(value.c_str(), &endPtr, 0);
+    SWSS_LOG_NOTICE("portCount = %" PRIuMAX ", m_portCount = %u", portCount, m_portCount);
     if (portCount != keys.size() - 2)
     {
         // Invalid port table
-        SWSS_LOG_ERROR("Invalid port table: portCount, expecting %" PRIu64 ", got %" PRIu64,
+        SWSS_LOG_ERROR("Invalid port table: portCount, expecting %" PRIuMAX ", got %zu",
                 portCount, keys.size() - 2);
 
         cleanPortTable(keys);
@@ -1636,19 +1637,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     if (m_lanesAliasSpeedMap.find(it->first) == m_lanesAliasSpeedMap.end())
                     {
-                        char *platform = getenv("platform");
-                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
+                        if (!removePort(it->second))
                         {
-                            if (!removePort(it->second))
-                            {
-                                throw runtime_error("PortsOrch initialization failure.");
-                            }
+                            throw runtime_error("PortsOrch initialization failure.");
                         }
-                        else
-                        {
-                            SWSS_LOG_NOTICE("Failed to remove Port %" PRIx64 " due to missing SAI remove_port API.", it->second);
-                        }
-
                         it = m_portListLaneMap.erase(it);
                     }
                     else
@@ -1663,22 +1655,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     if (m_portListLaneMap.find(it->first) == m_portListLaneMap.end())
                     {
-                        // work around to avoid syncd termination on SAI error due missing create_port SAI API
-                        // can be removed when SAI redis return NotImplemented error
-                        char *platform = getenv("platform");
-                        if (platform && (strstr(platform, BFN_PLATFORM_SUBSTRING) || strstr(platform, MLNX_PLATFORM_SUBSTRING)))
+                        if (!addPort(it->first, get<1>(it->second), get<2>(it->second), get<3>(it->second)))
                         {
-                            if (!addPort(it->first, get<1>(it->second), get<2>(it->second), get<3>(it->second)))
-                            {
-                                throw runtime_error("PortsOrch initialization failure.");
-                            }
-
-                            port_created = true;
+                            throw runtime_error("PortsOrch initialization failure.");
                         }
-                        else
-                        {
-                            SWSS_LOG_NOTICE("Failed to create Port %s due to missing SAI create_port API.", get<0>(it->second).c_str());
-                        }
+                        port_created = true;
                     }
                     else
                     {
@@ -2742,7 +2723,7 @@ bool PortsOrch::removeVlan(Port vlan)
     SWSS_LOG_ENTER();
     if (m_port_ref_count[vlan.m_alias] > 0)
     {
-        SWSS_LOG_ERROR("Failed to remove ref count %d VLAN %s", 
+        SWSS_LOG_ERROR("Failed to remove ref count %d VLAN %s",
                        m_port_ref_count[vlan.m_alias],
                        vlan.m_alias.c_str());
         return false;
@@ -2926,8 +2907,8 @@ bool PortsOrch::removeLag(Port lag)
 
     if (m_port_ref_count[lag.m_alias] > 0)
     {
-        SWSS_LOG_ERROR("Failed to remove ref count %d LAG %s", 
-                        m_port_ref_count[lag.m_alias], 
+        SWSS_LOG_ERROR("Failed to remove ref count %d LAG %s",
+                        m_port_ref_count[lag.m_alias],
                         lag.m_alias.c_str());
         return false;
     }
