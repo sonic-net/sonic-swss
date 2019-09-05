@@ -1,4 +1,5 @@
 #include <sstream>
+#include <inttypes.h>
 
 #include "crmorch.h"
 #include "converter.h"
@@ -239,7 +240,7 @@ void CrmOrch::handleSetCommand(const string& key, const vector<FieldValueTuple>&
             if (field == CRM_POLLING_INTERVAL)
             {
                 m_pollingInterval = chrono::seconds(to_uint<uint32_t>(value));
-                auto interv = timespec { .tv_sec = m_pollingInterval.count(), .tv_nsec = 0 };
+                auto interv = timespec { .tv_sec = (time_t)m_pollingInterval.count(), .tv_nsec = 0 };
                 m_timer->setInterval(interv);
                 m_timer->reset();
             }
@@ -378,7 +379,7 @@ void CrmOrch::incCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_
     }
     catch (...)
     {
-        SWSS_LOG_ERROR("Failed to increment \"used\" counter for the %s CRM resource (tableId:%lx).", crmResTypeNameMap.at(resource).c_str(), tableId);
+        SWSS_LOG_ERROR("Failed to increment \"used\" counter for the %s CRM resource (tableId:%" PRIx64 ").", crmResTypeNameMap.at(resource).c_str(), tableId);
         return;
     }
 }
@@ -393,7 +394,7 @@ void CrmOrch::decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_
     }
     catch (...)
     {
-        SWSS_LOG_ERROR("Failed to decrement \"used\" counter for the %s CRM resource (tableId:%lx).", crmResTypeNameMap.at(resource).c_str(), tableId);
+        SWSS_LOG_ERROR("Failed to decrement \"used\" counter for the %s CRM resource (tableId:%" PRIx64 ").", crmResTypeNameMap.at(resource).c_str(), tableId);
         return;
     }
 }

@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <stdexcept>
+#include <inttypes.h>
 
 
 #include "sai.h"
@@ -294,10 +295,17 @@ create_tunnel(
 void
 remove_tunnel(sai_object_id_t tunnel_id)
 {
-    sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
-    if (status != SAI_STATUS_SUCCESS)
+    if (tunnel_id != SAI_NULL_OBJECT_ID)
     {
-        throw std::runtime_error("Can't remove a tunnel object");
+        sai_status_t status = sai_tunnel_api->remove_tunnel(tunnel_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            throw std::runtime_error("Can't remove a tunnel object");
+        }
+    }
+    else
+    {
+        SWSS_LOG_DEBUG("Tunnel id is NULL.");
     }
 }
 
@@ -363,10 +371,17 @@ create_tunnel_termination(
 void
 remove_tunnel_termination(sai_object_id_t term_table_id)
 {
-    sai_status_t status = sai_tunnel_api->remove_tunnel_term_table_entry(term_table_id);
-    if (status != SAI_STATUS_SUCCESS)
+    if (term_table_id != SAI_NULL_OBJECT_ID)
     {
-        throw std::runtime_error("Can't remove a tunnel term table object");
+        sai_status_t status = sai_tunnel_api->remove_tunnel_term_table_entry(term_table_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            throw std::runtime_error("Can't remove a tunnel term table object");
+        }
+    }
+    else
+    {
+        SWSS_LOG_DEBUG("Tunnel term table id is NULL.");
     }
 }
 
@@ -552,7 +567,7 @@ VxlanTunnelOrch::createNextHopTunnel(string tunnelName, IpAddress& ipAddr, MacAd
     //Store the nh tunnel id
     tunnel_obj->updateNextHop(ipAddr, macAddress, vni, nh_id);
 
-    SWSS_LOG_INFO("NH vxlan tunnel was created for %s, id 0x%lx", tunnelName.c_str(), nh_id);
+    SWSS_LOG_INFO("NH vxlan tunnel was created for %s, id 0x%" PRIx64, tunnelName.c_str(), nh_id);
     return nh_id;
 }
 
@@ -608,7 +623,7 @@ bool VxlanTunnelOrch::createVxlanTunnelMap(string tunnelName, tunnel_map_type_t 
 
         tunnel_obj->insertMapperEntry(encap_id, decap_id, vni);
 
-        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%lx' decap entry '0x%lx'", encap_id, decap_id);
+        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'", encap_id, decap_id);
     }
     catch(const std::runtime_error& error)
     {
@@ -651,7 +666,7 @@ bool VxlanTunnelOrch::removeVxlanTunnelMap(string tunnelName, uint32_t vni)
         remove_tunnel_map_entry(mapper.first);
         remove_tunnel_map_entry(mapper.second);
 
-        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%lx' decap entry '0x%lx'", mapper.first, mapper.second);
+        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'", mapper.first, mapper.second);
     }
     catch(const std::runtime_error& error)
     {
@@ -895,7 +910,7 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
         entry.encap_id = tunnel_obj->addEncapMapperEntry(vrf_id, vni_id);
         entry.decap_id = tunnel_obj->addDecapMapperEntry(vrf_id, vni_id);
 
-        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%lx' decap entry '0x%lx'",
+        SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'",
                 entry.encap_id, entry.decap_id);
 
         vxlan_vrf_table_[full_map_entry_name] = entry;

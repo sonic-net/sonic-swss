@@ -3,6 +3,7 @@
 #include "logger.h"
 #include "crmorch.h"
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <sstream>
 #include <iostream>
@@ -115,7 +116,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
         }
         if (!removeQosItem(sai_object))
         {
-            SWSS_LOG_ERROR("Failed to remove dscp_to_tc map. db name:%s sai object:%lx", qos_object_name.c_str(), sai_object);
+            SWSS_LOG_ERROR("Failed to remove dscp_to_tc map. db name:%s sai object:%" PRIx64, qos_object_name.c_str(), sai_object);
             return task_process_status::task_failed;
         }
         auto it_to_delete = (QosOrch::getTypeMap()[qos_map_type_name])->find(qos_object_name);
@@ -144,7 +145,7 @@ bool QosMapHandler::modifyQosItem(sai_object_id_t sai_object, vector<sai_attribu
 bool QosMapHandler::removeQosItem(sai_object_id_t sai_object)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("Removing QosMap object:%lx", sai_object);
+    SWSS_LOG_DEBUG("Removing QosMap object:%" PRIx64, sai_object);
     sai_status_t sai_status = sai_qos_map_api->remove_qos_map(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
@@ -204,7 +205,7 @@ sai_object_id_t DscpToTcMapHandler::addQosItem(const vector<sai_attribute_t> &at
         SWSS_LOG_ERROR("Failed to create dscp_to_tc map. status:%d", sai_status);
         return SAI_NULL_OBJECT_ID;
     }
-    SWSS_LOG_DEBUG("created QosMap object:%lx", sai_object);
+    SWSS_LOG_DEBUG("created QosMap object:%" PRIx64, sai_object);
     return sai_object;
 }
 
@@ -869,6 +870,30 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
                 // TODO: The meaning is to be able to adjus priority of the given scheduler group.
                 // However currently SAI model does not provide such ability.
             }
+            else if (fvField(*i) == scheduler_min_bandwidth_rate_field_name)
+            {
+                attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_RATE;
+                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                sai_attr_list.push_back(attr);
+            }
+            else if (fvField(*i) == scheduler_min_bandwidth_burst_rate_field_name)
+            {
+                attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_BURST_RATE;
+                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                sai_attr_list.push_back(attr);
+            }
+            else if (fvField(*i) == scheduler_max_bandwidth_rate_field_name)
+            {
+                attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE;
+                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                sai_attr_list.push_back(attr);
+            }
+            else if (fvField(*i) == scheduler_max_bandwidth_burst_rate_field_name)
+            {
+                attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_BURST_RATE;
+                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                sai_attr_list.push_back(attr);
+            }
             else {
                 SWSS_LOG_ERROR("Unknown field:%s", fvField(*i).c_str());
                 return task_process_status::task_invalid_entry;
@@ -910,7 +935,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
         sai_status = sai_scheduler_api->remove_scheduler(sai_object);
         if (SAI_STATUS_SUCCESS != sai_status)
         {
-            SWSS_LOG_ERROR("Failed to remove scheduler profile. db name:%s sai object:%lx", qos_object_name.c_str(), sai_object);
+            SWSS_LOG_ERROR("Failed to remove scheduler profile. db name:%s sai object:%" PRIx64, qos_object_name.c_str(), sai_object);
             return task_process_status::task_failed;
         }
         auto it_to_delete = (m_qos_maps[qos_map_type_name])->find(qos_object_name);
@@ -975,7 +1000,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             sai_status = sai_scheduler_group_api->get_scheduler_group_attribute(group_id, 1, &attr);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed to get child count for scheduler group:0x%lx of port:%s", group_id, port.m_alias.c_str());
+                SWSS_LOG_ERROR("Failed to get child count for scheduler group:0x%" PRIx64 " of port:%s", group_id, port.m_alias.c_str());
                 return SAI_NULL_OBJECT_ID;
             }
 
@@ -994,7 +1019,7 @@ sai_object_id_t QosOrch::getSchedulerGroup(const Port &port, const sai_object_id
             sai_status = sai_scheduler_group_api->get_scheduler_group_attribute(group_id, 1, &attr);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed to get child list for scheduler group:0x%lx of port:%s", group_id, port.m_alias.c_str());
+                SWSS_LOG_ERROR("Failed to get child list for scheduler group:0x%" PRIx64 " of port:%s", group_id, port.m_alias.c_str());
                 return SAI_NULL_OBJECT_ID;
             }
 
@@ -1028,7 +1053,7 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
     const sai_object_id_t group_id = getSchedulerGroup(port, queue_id);
     if(group_id == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %lu", port.m_alias.c_str(), queue_ind);
+        SWSS_LOG_ERROR("Failed to find a scheduler group for port: %s queue: %zu", port.m_alias.c_str(), queue_ind);
         return false;
     }
 
@@ -1042,11 +1067,11 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
     sai_status = sai_scheduler_group_api->set_scheduler_group_attribute(group_id, &attr);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed applying scheduler profile:0x%lx to scheduler group:0x%lx, port:%s", scheduler_profile_id, group_id, port.m_alias.c_str());
+        SWSS_LOG_ERROR("Failed applying scheduler profile:0x%" PRIx64 " to scheduler group:0x%" PRIx64 ", port:%s", scheduler_profile_id, group_id, port.m_alias.c_str());
         return false;
     }
 
-    SWSS_LOG_DEBUG("port:%s, scheduler_profile_id:0x%lx applied to scheduler group:0x%lx", port.m_alias.c_str(), scheduler_profile_id, group_id);
+    SWSS_LOG_DEBUG("port:%s, scheduler_profile_id:0x%" PRIx64 " applied to scheduler group:0x%" PRIx64, port.m_alias.c_str(), scheduler_profile_id, group_id);
 
     return true;
 }
@@ -1222,7 +1247,7 @@ bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t 
     sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed setting sai object:%lx for port:%s, status:%d", map_id, port.m_alias.c_str(), status);
+        SWSS_LOG_ERROR("Failed setting sai object:%" PRIx64 " for port:%s, status:%d", map_id, port.m_alias.c_str(), status);
         return false;
     }
     return true;
