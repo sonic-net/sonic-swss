@@ -25,6 +25,9 @@ typedef map<uint32_t, sai_object_id_t> SflowRateSampleMap;
 /* SAI Samplesession object to reference(number of ports referencing this object) map*/
 typedef map<sai_object_id_t, uint32_t> SflowSampleRefMap;
 
+/* Speed to Samplerate map*/
+typedef map<uint32_t, uint32_t> SflowSpeedRateMap;
+
 class SflowOrch : public Orch
 {
 public:
@@ -34,10 +37,9 @@ private:
     SflowPortSessionMap m_sflowPortSessionMap;
     SflowRateSampleMap  m_sflowRateSampleMap;
     SflowSampleRefMap   m_sflowSampleRefMap;
-    unique_ptr<Table>   m_sflowDefaults;
-    bool               gEnable;
-    bool               sflowStatus;
-    unique_ptr<Table>  m_sflowSampleRateTable;
+    SflowSpeedRateMap   m_speedRateMap;
+    bool                gEnable;
+    bool                sflowStatus;
 
     virtual void doTask(Consumer& consumer);
     void doSflowStatusTask(Consumer &consumer);
@@ -52,4 +54,5 @@ private:
     bool sflowGlobalConfigure(bool enable);
     bool sflowPortApplyGlobalSetting(Port port, SflowSession &session);
     bool sflowUpdateRate(sai_object_id_t port_id, uint32_t rate);
+    void sflowUpdateSpeedRateMap(Consumer &consumer);
 };

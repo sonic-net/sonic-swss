@@ -14,18 +14,15 @@ extern PortsOrch* gPortsOrch;
 
 bool SflowOrch::sflowGetDefaultSampleRate(Port port, uint32_t &rate)
 {
-    string speed_str = to_string(port.m_speed);
-    string rate_str;
-    bool ret = m_sflowSampleRateTable->hget("global", speed_str, rate_str);
+    auto speedRate = m_speedRateMap.find(port.m_speed);
 
-
-    if(ret == false) 
+    if (speedRate == m_speedRateMap.end()) 
     {
         SWSS_LOG_ERROR("Unable to find default rate for speed %d", port.m_speed);
         return false;
     }
 
-    rate = (uint32_t)stoul(rate_str);
+    rate = speedRate->second;
     return true;
 }
 
@@ -33,7 +30,6 @@ SflowOrch::SflowOrch(DBConnector* db, vector<string> &tableNames) :
     Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();
-    m_sflowSampleRateTable = unique_ptr<Table>(new Table(db, APP_SFLOW_SAMPLE_RATE_TABLE_NAME));
     gEnable = true;
     sflowStatus = false;
 }
@@ -49,7 +45,7 @@ bool SflowOrch::sflowCreateSession(SflowSession &session)
 
     sai_rc = sai_samplepacket_api->create_samplepacket(&session_id, gSwitchId,
                                                        1, &attr);
-    if(sai_rc != SAI_STATUS_SUCCESS)
+    if (sai_rc != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create sample packet session with rate %d",
                        session.rate);
@@ -65,7 +61,7 @@ bool SflowOrch::sflowDestroySession(SflowSession &session)
     sai_status_t    sai_rc;
 
     sai_rc = sai_samplepacket_api->remove_samplepacket(session.m_sample_id);
-    if(sai_rc != SAI_STATUS_SUCCESS)
+    if (sai_rc != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to destroy sample packet session with id %lx",
                        session.m_sample_id);
@@ -157,7 +153,6 @@ bool SflowOrch::sflowDelPort(SflowSession &session, sai_object_id_t port_id)
     sai_attribute_t attr;
     sai_status_t    sai_rc;
 
-
     if (!sflowStatus)
     {
         return true;
@@ -168,7 +163,7 @@ bool SflowOrch::sflowDelPort(SflowSession &session, sai_object_id_t port_id)
 
     sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
 
-    if(sai_rc != SAI_STATUS_SUCCESS)
+    if (sai_rc != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete session %lx on port %lx",
                        session.m_sample_id, port_id);
@@ -184,12 +179,15 @@ bool SflowOrch::sflowGlobalConfigure(bool enable)
     for(auto& pair: gPortsOrch->getAllPorts())
     {
         auto& port = pair.second;
-        if (port.m_type != Port::PHY) continue;
+        if (port.m_type != Port::PHY)
+        {
+            continue;
+        }
 
         auto sflowInfo = m_sflowPortSessionMap.find(port.m_port_id);
-        if(sflowInfo == m_sflowPortSessionMap.end())
+        if (sflowInfo == m_sflowPortSessionMap.end())
         {
-            if(!enable)
+            if (!enable)
             {
                 continue;
             }
@@ -241,13 +239,13 @@ bool SflowOrch::sflowGlobalConfigure(bool enable)
         }
         else
         {
-            if(!sflowInfo->second.globalConfigured)
+            if (!sflowInfo->second.globalConfigured)
             {
                 continue;
             }
-            if(sflowInfo->second.adminState != enable)
+            if (sflowInfo->second.adminState != enable)
             {
-                if(!enable)
+                if (!enable)
                 {
                     if (sflowDelPort(sflowInfo->second, port.m_port_id))
                     {
@@ -356,11 +354,11 @@ bool SflowOrch::sflowPortApplyGlobalSetting(Port port, SflowSession &session)
         }
     }
 
-    if(session.adminState != gEnable)
+    if (session.adminState != gEnable)
     {
         if (gEnable)
         {
-            if(!sflowAddPort(session, port.m_port_id))
+            if (!sflowAddPort(session, port.m_port_id))
             {
                 SWSS_LOG_ERROR("Updating port with session %lx failed", session.m_sample_id);
                 return false;
@@ -368,7 +366,7 @@ bool SflowOrch::sflowPortApplyGlobalSetting(Port port, SflowSession &session)
         }
         else
         {
-            if(!sflowDelPort(session, port.m_port_id))
+            if (!sflowDelPort(session, port.m_port_id))
             {
                 SWSS_LOG_ERROR("Updating port with session %lx failed", session.m_sample_id);
                 return false;
@@ -395,7 +393,7 @@ bool SflowOrch::handleSflowStatus(KeyOpFieldsValuesTuple tuple)
             {
                 if (fvValue(i) == "enable")
                 {
-                    if(sflowStatus)
+                    if (sflowStatus)
                     {
                         continue;
                     }
@@ -403,7 +401,7 @@ bool SflowOrch::handleSflowStatus(KeyOpFieldsValuesTuple tuple)
                 } 
                 else if (fvValue(i) == "disable")
                 {
-                    if(!sflowStatus)
+                    if (!sflowStatus)
                     {
                         continue;
                     }
@@ -439,15 +437,15 @@ bool SflowOrch::handleGlobalConfig(KeyOpFieldsValuesTuple tuple)
         {
             if (fvField(i) == "admin_state")
             {
-                if(fvValue(i) == "enable")
+                if (fvValue(i) == "enable")
                 {
                     gEnable = true;
                 } 
-                else if(fvValue(i) == "disable")
+                else if (fvValue(i) == "disable")
                 {
                     gEnable = false;
                 }
-                if(!sflowGlobalConfigure(gEnable)) 
+                if (!sflowGlobalConfigure(gEnable)) 
                 {
                     ret = false;
                     continue;
@@ -492,6 +490,30 @@ void SflowOrch::doSflowStatusTask(Consumer &consumer)
     }
 }
 
+void SflowOrch::sflowUpdateSpeedRateMap(Consumer &consumer)
+{
+    auto it = consumer.m_toSync.begin();
+    uint32_t speed = 0;
+    uint32_t rate = 0;
+
+    while (it != consumer.m_toSync.end())
+    {
+        auto tuple = it->second;
+        string op = kfvOp(tuple);
+
+        for (auto i : kfvFieldsValues(tuple))
+        {
+            speed = (uint32_t)stoul(fvField(i));
+            rate = (uint32_t)stoul(fvValue(i));
+            if (op == SET_COMMAND)
+            {
+                m_speedRateMap[speed] = rate;
+            }
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
 void SflowOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -504,7 +526,11 @@ void SflowOrch::doTask(Consumer &consumer)
         return;
     }
 
-    if (table_name == APP_SFLOW_TABLE_NAME)
+    if (table_name == APP_SFLOW_SAMPLE_RATE_TABLE_NAME)
+    {
+        sflowUpdateSpeedRateMap(consumer);
+    }
+    else if (table_name == APP_SFLOW_TABLE_NAME)
     {
         doSflowStatusTask(consumer);
         return;
@@ -551,14 +577,14 @@ void SflowOrch::doTask(Consumer &consumer)
                     {
                         adminState = true;
                     } 
-                    else if(fvValue(i) == "disable")
+                    else if (fvValue(i) == "disable")
                     {
                         adminState = false;
                     }
                     adminSet = true;
                 }
 
-                if(fvField(i) == "sample_rate")
+                if (fvField(i) == "sample_rate")
                 {
                     rate = (uint32_t)stoul(fvValue(i));
                     rateSet = true;
@@ -612,7 +638,7 @@ void SflowOrch::doTask(Consumer &consumer)
                 }
                 if ((adminSet) && (adminState != sflowInfo->second.adminState))
                 {
-                    if(adminState)
+                    if (adminState)
                     {
                         if (!sflowAddPort(sflowInfo->second, port.m_port_id))
                         {
@@ -639,13 +665,13 @@ void SflowOrch::doTask(Consumer &consumer)
             auto sflowInfo = m_sflowPortSessionMap.find(port.m_port_id);
             if (sflowInfo != m_sflowPortSessionMap.end())
             {
-                if(gEnable)
+                if (gEnable)
                 {
                     sflowPortApplyGlobalSetting(port, sflowInfo->second);
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
-                if(sflowInfo->second.adminState)
+                if (sflowInfo->second.adminState)
                 {
                     if (!sflowDelPort(sflowInfo->second, port.m_port_id))
                     {

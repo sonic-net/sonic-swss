@@ -7,7 +7,7 @@ class TestSflow(object):
     def setup_sflow(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-        rtbl = swsscommon.Table(self.pdb, "SFLOW_SAMPLE_RATE_TABLE")
+        rtbl = swsscommon.ProducerStateTable(self.pdb, "SFLOW_SAMPLE_RATE_TABLE")
         fvs = swsscommon.FieldValuePairs([("100000", "10000"),
                                           ("40000", "4000"),
                                           ("10000", "1000"),

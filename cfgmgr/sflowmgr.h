@@ -39,12 +39,11 @@ public:
 private:
     Table m_cfgSflowTable;
     Table m_cfgSflowSessionTable;
-    Table m_appSflowSpeedRateTable;
+    ProducerStateTable m_appSflowSpeedRateTable;
     ProducerStateTable m_appSflowTable;
     ProducerStateTable m_appSflowSessionTable;
 
     void doTask(Consumer &consumer);
-    void handleSflowTableConfig(Consumer &consumer);
 };
 
 }

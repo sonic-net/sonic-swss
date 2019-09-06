@@ -179,7 +179,8 @@ bool OrchDaemon::init()
 
     vector<string> sflow_tables = {
             APP_SFLOW_TABLE_NAME,
-            APP_SFLOW_SESSION_TABLE_NAME
+            APP_SFLOW_SESSION_TABLE_NAME,
+            APP_SFLOW_SAMPLE_RATE_TABLE_NAME
     };
     SflowOrch *sflow_orch = new SflowOrch(m_applDb,  sflow_tables);
 
