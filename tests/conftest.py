@@ -736,6 +736,7 @@ class DockerVirtualSwitch(object):
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         tbl._del(interface + "|" + ip);
+        tbl._del(interface);
         time.sleep(1)
 
     def set_mtu(self, interface, mtu):
