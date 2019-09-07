@@ -51,6 +51,8 @@ int main(int argc, char **argv)
         vector<string> cfg_vlan_tables = {
             CFG_VLAN_TABLE_NAME,
             CFG_VLAN_MEMBER_TABLE_NAME,
+            CFG_FDB_TABLE_NAME,
+            CFG_SWITCH_TABLE_NAME,
         };
 
         DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);

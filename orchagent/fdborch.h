@@ -14,19 +14,35 @@ struct FdbEntry
     {
         return tie(mac, bv_id) < tie(other.mac, other.bv_id);
     }
+    bool operator==(const FdbEntry& other) const
+    {
+        return tie(mac, bv_id) == tie(other.mac, other.bv_id);
+    }
 };
 
 struct FdbUpdate
 {
     FdbEntry entry;
     Port port;
+    string type;
     bool add;
+};
+
+struct FdbData
+{
+    sai_object_id_t bridge_port_id;
+    string type;
 };
 
 struct SavedFdbEntry
 {
-    FdbEntry entry;
+    MacAddress mac;
+    unsigned short vlanId;
     string type;
+    bool operator==(const SavedFdbEntry& other) const
+    {
+        return tie(mac, vlanId) == tie(other.mac, other.vlanId);
+    }
 };
 
 typedef unordered_map<string, vector<SavedFdbEntry>> fdb_entries_by_port_t;
@@ -46,10 +62,15 @@ public:
     void update(sai_fdb_event_t, const sai_fdb_entry_t *, sai_object_id_t);
     void update(SubjectType type, void *cntx);
     bool getPort(const MacAddress&, uint16_t, Port&);
+    int flushFdbByPortVlan(const string &, const string &, bool flush_static);
+    int flushFdbByVlan(const string &, bool flush_static);
+    int flushFdbByPort(const string &, bool flush_static);
+    int flushFdbAll(bool flush_static);
+    bool removeFdbEntry(const FdbEntry&);
 
 private:
     PortsOrch *m_portsOrch;
-    set<FdbEntry> m_entries;
+    map<FdbEntry, FdbData> m_entries;
     fdb_entries_by_port_t saved_fdb_entries;
     Table m_table;
     Table m_fdbStateTable;
@@ -61,7 +82,7 @@ private:
 
     void updateVlanMember(const VlanMemberUpdate&);
     bool addFdbEntry(const FdbEntry&, const string&, const string&);
-    bool removeFdbEntry(const FdbEntry&);
+    void deleteFdbEntryFromSavedFDB(const MacAddress &mac, const unsigned short &vlanId, const string portName="");
 
     bool storeFdbEntryState(const FdbUpdate& update);
 };
