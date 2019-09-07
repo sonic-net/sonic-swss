@@ -36,6 +36,35 @@ class TestVlan(object):
         tbl._del("Vlan" + vlan + "|" + interface)
         time.sleep(1)
 
+    def create_port_channel(self, dvs, channel, admin_status="up", mtu="1500"):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("admin", admin_status), ("mtu", mtu)])
+        tbl.set("PortChannel" + channel, fvs)
+        dvs.runcmd("ip link add PortChannel" + channel + " type bond")
+        tbl = swsscommon.Table(self.sdb, "LAG_TABLE")
+        fvs = swsscommon.FieldValuePairs([("state", "ok")])
+        tbl.set("PortChannel" + channel, fvs)
+        time.sleep(1)
+
+    def remove_port_channel(self, dvs, channel):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
+        tbl._del("PortChannel" + channel)
+        dvs.runcmd("ip link del PortChannel" + channel)
+        tbl = swsscommon.Table(self.sdb, "LAG_TABLE")
+        tbl._del("PortChannel" + channel)
+        time.sleep(1)
+
+    def create_port_channel_member(self, channel, interface, status="enabled"):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
+        fvs = swsscommon.FieldValuePairs([("status", status)])
+        tbl.set("PortChannel" + channel + ":" + interface, fvs)
+        time.sleep(1)
+
+    def remove_port_channel_member(self, channel, interface):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
+        tbl._del("PortChannel" + channel + ":" + interface)
+        time.sleep(1)
+
     def check_syslog(self, dvs, marker, process, err_log, vlan_str, expected_cnt):
         (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep %s | grep \"%s\" | grep -i \"%s\" | wc -l" % (marker, process, err_log, vlan_str)])
         assert num.strip() == str(expected_cnt)
@@ -394,6 +423,85 @@ class TestVlan(object):
         else:
             #remove vlan
             dvs.remove_vlan(vlan)
+
+    def test_AddPortChannelToVlan(self, dvs, testlog):
+        self.setup_db(dvs)
+        marker = dvs.add_log_marker()
+        vlan = "2"
+        channel = "001"
+
+        # create port channel
+        self.create_port_channel(dvs, channel)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+        lag_entries = tbl.getKeys()
+        assert len(lag_entries) == 1
+
+        # add port channel member
+        self.create_port_channel_member(channel, "Ethernet0")
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
+        lag_member_entries = tbl.getKeys()
+        assert len(lag_member_entries) == 1
+
+        (status, fvs) = tbl.get(lag_member_entries[0])
+        for fv in fvs:
+            if fv[0] == "SAI_LAG_MEMBER_ATTR_LAG_ID":
+                assert fv[1] == lag_entries[0]
+            elif fv[0] == "SAI_LAG_MEMBER_ATTR_PORT_ID":
+                assert dvs.asicdb.portoidmap[fv[1]] == "Ethernet0"
+            else:
+                assert False
+
+        # create vlan
+        self.create_vlan(vlan)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 1
+
+        # create vlan member
+        self.create_vlan_member(vlan, "PortChannel" + channel, "tagged")
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        vlan_member_entries = tbl.getKeys()
+        assert len(vlan_member_entries) == 1
+
+        # remove vlan member
+        self.remove_vlan_member(vlan, "PortChannel" + channel)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
+        vlan_member_entries = tbl.getKeys()
+        assert len(vlan_member_entries) == 0
+
+        # remove vlan
+        self.remove_vlan(vlan)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
+        assert len(vlan_entries) == 0
+
+        # remove trunk member
+        self.remove_port_channel_member(channel, "Ethernet0")
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
+        lag_member_entries = tbl.getKeys()
+        assert len(lag_member_entries) == 0
+
+        # remove trunk
+        self.remove_port_channel(dvs, channel)
+
+        # check asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+        lag_entries = tbl.getKeys()
+        assert len(lag_entries) == 0
 
     def test_AddVlanMemberWithNonExistVlan(self, dvs, testlog):
         dvs.setup_db()

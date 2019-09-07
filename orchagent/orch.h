@@ -32,6 +32,7 @@ const char range_specifier     = '-';
 const char config_db_key_delimiter = '|';
 const char state_db_key_delimiter  = '|';
 
+#define INVM_PLATFORM_SUBSTRING "innovium"
 #define MLNX_PLATFORM_SUBSTRING "mellanox"
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
 #define BFN_PLATFORM_SUBSTRING  "barefoot"

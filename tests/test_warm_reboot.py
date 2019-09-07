@@ -1823,8 +1823,8 @@ class TestWarmReboot(object):
             # bring servers' interface up, save the macs
             dvs.runcmd("sysctl -w net.ipv4.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
             dvs.runcmd("sysctl -w net.ipv6.neigh.Ethernet{}.base_reachable_time_ms=1800000".format(i*4))
-            dvs.runcmd("sysctl -w net.ipv4.neigh.Ethernet{}.gc_stale_time=180".format(i*4))
-            dvs.runcmd("sysctl -w net.ipv6.neigh.Ethernet{}.gc_stale_time=180".format(i*4))
+            dvs.runcmd("sysctl -w net.ipv4.neigh.Ethernet{}.gc_stale_time=600".format(i*4))
+            dvs.runcmd("sysctl -w net.ipv6.neigh.Ethernet{}.gc_stale_time=600".format(i*4))
             dvs.runcmd("ip addr flush dev Ethernet{}".format(i*4))
             intf_tbl.set("Ethernet{}|{}.0.0.1/24".format(i*4, i*4), fvs)
             intf_tbl.set("Ethernet{}|{}00::1/64".format(i*4, i*4), fvs)

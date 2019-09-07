@@ -79,10 +79,6 @@ int main(int argc, char **argv)
     WarmStart::checkWarmStart("portsyncd", "swss");
     const bool warm = WarmStart::isWarmStart();
 
-    LinkSync sync(&appl_db, &state_db);
-    NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
-    NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
-
     try
     {
         NetLink netlink;
@@ -101,6 +97,10 @@ int main(int argc, char **argv)
                 handlePortConfigFile(p, port_config_file, warm);
             }
         }
+
+        LinkSync sync(&appl_db, &state_db);
+        NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
+        NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
         s.addSelectable(&netlink);
         s.addSelectable(&portCfg);
@@ -163,9 +163,15 @@ int main(int argc, char **argv)
     }
     catch (const std::exception& e)
     {
-        cerr << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
+        cerr << "Exception \"" << e.what() << "\" was thrown in daemon" << endl;
         return EXIT_FAILURE;
     }
+    catch (...)
+    {
+        cerr << "Exception was thrown in daemon" << endl;
+        return EXIT_FAILURE;
+    }
+
 
     return 1;
 }
@@ -224,7 +230,7 @@ void handlePortConfigFile(ProducerStateTable &p, string file, bool warm)
     if (!infile.is_open())
     {
         usage();
-        throw "Port configuration file not found!";
+	throw runtime_error("Port configuration file not found!");
     }
 
     list<string> header = {"name", "lanes", "alias", "speed", "autoneg", "fec"};

@@ -404,7 +404,7 @@ bool PfcWdLossyHandler::getHwCounters(PfcWdHwStats& counters)
         return false;
     }
 
-    sai_object_id_t pg = portInstance.m_priority_group_ids[getQueueId()];
+    sai_object_id_t pg = portInstance.m_priority_group_ids[static_cast <size_t> (getQueueId())];
     vector<uint64_t> pgStats;
     pgStats.resize(pgStatIds.size());
 
@@ -469,7 +469,7 @@ PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
         return;
     }
 
-    sai_object_id_t pg = portInstance.m_priority_group_ids[queueId];
+    sai_object_id_t pg = portInstance.m_priority_group_ids[static_cast <size_t> (queueId)];
 
     attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
 
@@ -521,7 +521,7 @@ PfcWdZeroBufferHandler::~PfcWdZeroBufferHandler(void)
         return;
     }
 
-    sai_object_id_t pg = portInstance.m_priority_group_ids[getQueueId()];
+    sai_object_id_t pg = portInstance.m_priority_group_ids[size_t(getQueueId())];
 
     attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
     attr.value.oid = m_originalPgBufferProfile;
