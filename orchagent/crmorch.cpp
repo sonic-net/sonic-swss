@@ -406,6 +406,8 @@ void CrmOrch::decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_
                     ++it;
                 }
             }
+            // clear counter table entry
+            m_countersCrmTable->del(getCrmAclTableKey(oid));
         }
     }
     catch (...)
