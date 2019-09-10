@@ -268,7 +268,7 @@ class TestVrf(object):
             tbl.set("Vrf_%d" % i, fvs)
 
         # wait for all VRFs pushed to database and linux
-        time.sleep(15)
+        time.sleep(30)
 
         # check app_db
         intf_entries_cnt = self.how_many_entries_exist(self.pdb, "VRF_TABLE")
@@ -287,7 +287,7 @@ class TestVrf(object):
             tbl._del("Vrf_%d" % i)
 
         # wait for all VRFs deleted
-        time.sleep(60)
+        time.sleep(120)
 
         # check app_db
         intf_entries_cnt = self.how_many_entries_exist(self.pdb, "VRF_TABLE")

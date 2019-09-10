@@ -1365,7 +1365,7 @@ class TestWarmReboot(object):
         assert len(addobjs) == 1 and len(delobjs) == 0
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
-        assert rt_key == "192.168.1.3"
+        assert rt_key == "192.168.1.3/32"
         assert rt_val == {"ifname": "Ethernet0,Ethernet4,Ethernet8", "nexthop": "111.0.0.2,122.0.0.2,133.0.0.2"}
 
         # Verify the changed prefix is seen in sairedis
@@ -1403,7 +1403,7 @@ class TestWarmReboot(object):
         assert len(addobjs) == 1 and len(delobjs) == 0
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
-        assert rt_key == "192.168.1.3"
+        assert rt_key == "192.168.1.3/32"
         assert rt_val == {"ifname": "Ethernet0,Ethernet4", "nexthop": "111.0.0.2,122.0.0.2"}
 
         # Verify the changed prefix is seen in sairedis
@@ -1440,7 +1440,7 @@ class TestWarmReboot(object):
         assert len(addobjs) == 1 and len(delobjs) == 0
         rt_key = json.loads(addobjs[0]['key'])
         rt_val = json.loads(addobjs[0]['vals'])
-        assert rt_key == "fc00:4:4::1"
+        assert rt_key == "fc00:4:4::1/128"
         assert rt_val == {"ifname": "Ethernet0", "nexthop": "1110::2"}
 
         # Verify the changed prefix is seen in sairedis
@@ -1475,7 +1475,7 @@ class TestWarmReboot(object):
         (addobjs, delobjs) = dvs.GetSubscribedAppDbObjects(pubsubAppDB)
         assert len(addobjs) == 0 and len(delobjs) == 1
         rt_key = json.loads(delobjs[0]['key'])
-        assert rt_key == "fc00:4:4::1"
+        assert rt_key == "fc00:4:4::1/128"
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
