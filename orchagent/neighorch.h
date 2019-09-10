@@ -65,6 +65,7 @@ public:
     void decreaseNextHopRefCount(const IpAddress&);
 
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
+    bool getNeighborEntry(const string&, NeighborEntry&, MacAddress&);
 
     bool ifChangeInformNextHop(const string &, bool);
     bool isNextHopFlagSet(const IpAddress &, const uint32_t);
