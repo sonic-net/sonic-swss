@@ -26,7 +26,7 @@ Orch::Orch(DBConnector *db, const string tableName, int pri)
 
 Orch::Orch(DBConnector *db, const vector<string> &tableNames)
 {
-    for(auto it : tableNames)
+    for (auto it : tableNames)
     {
         addConsumer(db, it, default_orch_pri);
     }
@@ -34,7 +34,7 @@ Orch::Orch(DBConnector *db, const vector<string> &tableNames)
 
 Orch::Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNames_with_pri)
 {
-    for(const auto& it : tableNames_with_pri)
+    for (const auto& it : tableNames_with_pri)
     {
         addConsumer(db, it.first, it.second);
     }
@@ -59,7 +59,7 @@ Orch::~Orch()
 vector<Selectable *> Orch::getSelectables()
 {
     vector<Selectable *> selectables;
-    for(auto& it : m_consumerMap)
+    for (auto& it : m_consumerMap)
     {
         selectables.push_back(it.second.get());
     }
@@ -239,7 +239,7 @@ bool Orch::bake()
 {
     SWSS_LOG_ENTER();
 
-    for(auto &it : m_consumerMap)
+    for (auto &it : m_consumerMap)
     {
         string executorName = it.first;
         auto executor = it.second;
@@ -252,6 +252,13 @@ bool Orch::bake()
         size_t refilled = consumer->refillToSync();
         SWSS_LOG_NOTICE("Add warm input: %s, %zd", executorName.c_str(), refilled);
     }
+
+    return true;
+}
+
+bool Orch::postBake()
+{
+    SWSS_LOG_ENTER();
 
     return true;
 }
@@ -364,7 +371,7 @@ ref_resolve_status Orch::resolveFieldRefValue(
 
 void Orch::doTask()
 {
-    for(auto &it : m_consumerMap)
+    for (auto &it : m_consumerMap)
     {
         it.second->drain();
     }
@@ -372,7 +379,7 @@ void Orch::doTask()
 
 void Orch::dumpPendingTasks(vector<string> &ts)
 {
-    for(auto &it : m_consumerMap)
+    for (auto &it : m_consumerMap)
     {
         Consumer* consumer = dynamic_cast<Consumer *>(it.second.get());
         if (consumer == NULL)

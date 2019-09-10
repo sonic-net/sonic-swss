@@ -444,12 +444,20 @@ bool OrchDaemon::warmRestoreAndSyncUp()
      * Fourth iteration: Drain remaining data that are out of order like LAG_MEMBER_TABLE and
      * VLAN_MEMBER_TABLE since they were checked before LAG_TABLE and VLAN_TABLE within gPortsOrch.
      */
+
     for (auto it = 0; it < 4; it++)
     {
+        SWSS_LOG_DEBUG("The current iteration is %d", it);
+
         for (Orch *o : m_orchList)
         {
             o->doTask();
         }
+    }
+
+    for (Orch *o : m_orchList)
+    {
+        o->postBake();
     }
 
     /*
