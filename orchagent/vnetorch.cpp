@@ -1329,7 +1329,7 @@ VNetOrch::VNetOrch(DBConnector *db, const std::string& tableName, VNET_EXEC op)
 
     if (op == VNET_EXEC::VNET_EXEC_VRF)
     {
-        vr_cntxt = { VR_TYPE::ING_VR_VALID, VR_TYPE::VR_INVALID };
+        vr_cntxt = { VR_TYPE::ING_VR_VALID };
     }
     else
     {
