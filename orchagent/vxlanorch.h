@@ -3,6 +3,7 @@
 #include <map>
 #include <set>
 #include <memory>
+#include <algorithm>
 #include "request_parser.h"
 #include "portsorch.h"
 #include "vrforch.h"
@@ -151,6 +152,17 @@ public:
     bool isTunnelMapExists(const std::string& name) const
     {
         return vxlan_tunnel_map_table_.find(name) != std::end(vxlan_tunnel_map_table_);
+    }
+    bool anyMapForTunnel(const std::string& tunnel_name) const
+    {
+        return std::any_of(
+            vxlan_tunnel_map_table_.cbegin(),
+            vxlan_tunnel_map_table_.cend(),
+            [&tunnel_name](std::pair<std::string, sai_object_id_t> p)
+            {
+                return p.first.rfind(tunnel_name, 0) == 0;
+            }
+        );
     }
 private:
     virtual bool addOperation(const Request& request);

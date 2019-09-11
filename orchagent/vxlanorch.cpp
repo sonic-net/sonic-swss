@@ -548,6 +548,13 @@ bool VxlanTunnelOrch::delOperation(const Request& request)
         return true;
     }
 
+    VxlanTunnelMapOrch* tunnel_map_orch = gDirectory.get<VxlanTunnelMapOrch*>();
+    if (tunnel_map_orch->anyMapForTunnel(tunnel_name))
+    {
+        SWSS_LOG_WARN("Can't remove vxlan tunnel '%s'. There are active tunnel maps for the tunnel.", tunnel_name.c_str());
+        return false;
+    }
+
     auto tunnel_term_id = vxlan_tunnel_table_[tunnel_name].get()->getTunnelTermId();
     try
     {
