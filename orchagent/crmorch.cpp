@@ -529,14 +529,18 @@ void CrmOrch::checkCrmThresholds()
 
     for (auto &i : m_resourcesMap)
     {
+        uint32_t maxUtilization = 0;
+        uint32_t maxUsedCounter = 0;
+        uint32_t maxAvailableCounter = 0;
+        uint32_t maxPercentageUtil = 0;
+        string threshType = "";
         auto &res = i.second;
 
         for (const auto &j : i.second.countersMap)
         {
             auto &cnt = j.second;
-            uint64_t utilization = 0;
             uint32_t percentageUtil = 0;
-            string threshType = "";
+            uint32_t utilization = 0;
 
             if (cnt.usedCounter != 0)
             {
@@ -560,22 +564,29 @@ void CrmOrch::checkCrmThresholds()
                 default:
                     throw runtime_error("Unknown threshold type for CRM resource");
             }
-
-            if ((utilization >= res.highThreshold) && (res.exceededLogCounter < CRM_EXCEEDED_MSG_MAX))
+            if (utilization >= maxUtilization)
             {
-                SWSS_LOG_WARN("%s THRESHOLD_EXCEEDED for %s %u%% Used count %u free count %u",
-                              res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
-
-                res.exceededLogCounter++;
+                maxUtilization = utilization;
+                maxPercentageUtil = percentageUtil;
+                maxUsedCounter = cnt.usedCounter;
+                maxAvailableCounter = cnt.availableCounter;
             }
-            else if ((utilization <= res.lowThreshold) && (res.exceededLogCounter > 0))
-            {
-                SWSS_LOG_WARN("%s THRESHOLD_CLEAR for %s %u%% Used count %u free count %u",
-                              res.name.c_str(), threshType.c_str(), percentageUtil, cnt.usedCounter, cnt.availableCounter);
 
-                res.exceededLogCounter = 0;
-            }
         } // end of counters loop
+        if ((maxUtilization >= res.highThreshold) && (res.exceededLogCounter < CRM_EXCEEDED_MSG_MAX))
+        {
+            SWSS_LOG_WARN("%s THRESHOLD_EXCEEDED for %s %u%% Used count %u free count %u",
+                          res.name.c_str(), threshType.c_str(), maxPercentageUtil, maxUsedCounter, maxAvailableCounter);
+
+            res.exceededLogCounter++;
+        }
+        else if ((maxUtilization <= res.lowThreshold) && (res.exceededLogCounter > 0))
+        {
+            SWSS_LOG_WARN("%s THRESHOLD_CLEAR for %s %u%% Used count %u free count %u",
+                          res.name.c_str(), threshType.c_str(), maxPercentageUtil, maxUsedCounter, maxAvailableCounter);
+
+            res.exceededLogCounter = 0;
+        }
     } // end of resources loop
 }
 
