@@ -525,6 +525,38 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
             return;
         }
     }
+    else if (&consumer == m_fdbNotificationConsumer && op == "fdb_event")
+    {
+        uint32_t count;
+        sai_fdb_event_notification_data_t *fdbevent = nullptr;
+        extern void handle_fdb_event(_In_ const std::string &data);
+
+        /* The sai_redis fdb handling is moved here so that both
+         * reference count updates (sai_redis and portsOrch)
+         * happen in same context to avoid any mismatch.
+         */
+        handle_fdb_event(data);
+
+        sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
+
+        for (uint32_t i = 0; i < count; ++i)
+        {
+            sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+
+            for (uint32_t j = 0; j < fdbevent[i].attr_count; ++j)
+            {
+                if (fdbevent[i].attr[j].id == SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID)
+                {
+                    oid = fdbevent[i].attr[j].value.oid;
+                    break;
+                }
+            }
+
+            this->update(fdbevent[i].event_type, &fdbevent[i].fdb_entry, oid);
+        }
+
+        sai_deserialize_free_fdb_event_ntf(count, fdbevent);
+    }
 }
 
 void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)

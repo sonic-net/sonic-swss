@@ -39,7 +39,6 @@ extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
-std::recursive_mutex g_orchmutex;
 
 
 #define VLAN_PREFIX         "Vlan"
@@ -429,16 +428,13 @@ bool PortsOrch::getPort(string alias, Port &p)
 {
     SWSS_LOG_ENTER();
 
-    std::unique_lock<std::recursive_mutex> lock(g_orchmutex);
     if (m_portList.find(alias) == m_portList.end())
     {
-        std::unique_lock<std::recursive_mutex> unlock(g_orchmutex);
         return false;
     }
     else
     {
         p = m_portList[alias];
-        std::unique_lock<std::recursive_mutex> unlock(g_orchmutex);
         return true;
     }
 }
@@ -527,16 +523,7 @@ bool PortsOrch::getAclBindPortId(string alias, sai_object_id_t &port_id)
 
 void PortsOrch::setPort(string alias, Port p)
 {
-    std::unique_lock<std::recursive_mutex> lock(g_orchmutex);
     m_portList[alias] = p;
-    std::unique_lock<std::recursive_mutex> unlock(g_orchmutex);
-}
-
-void PortsOrch::erasePort(string alias)
-{
-    std::unique_lock<std::recursive_mutex> lock(g_orchmutex);
-    m_portList.erase(alias);
-    std::unique_lock<std::recursive_mutex> unlock(g_orchmutex);
 }
 
 void PortsOrch::getCpuPort(Port &port)
@@ -679,7 +666,7 @@ bool PortsOrch::setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask)
     if (p.m_pfc_bitmask != pfc_bitmask)
     {
         p.m_pfc_bitmask = pfc_bitmask;
-        setPort(p.m_alias, p);
+        m_portList[p.m_alias] = p;
     }
 
     return true;
@@ -712,7 +699,7 @@ bool PortsOrch::setPortPfcAsym(Port &port, string pfc_asym)
     }
 
     port.m_pfc_asym = new_pfc_asym;
-    setPort(port.m_alias, port);
+    m_portList[port.m_alias] = port;
 
     attr.id = SAI_PORT_ATTR_PRIORITY_FLOW_CONTROL_MODE;
     attr.value.s32 = (int32_t) port.m_pfc_asym;
@@ -1384,29 +1371,25 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
     /* Determine if the lane combination exists in switch */
     if (m_portListLaneMap.find(lane_set) != m_portListLaneMap.end())
     {
-        Port port;
         sai_object_id_t id = m_portListLaneMap[lane_set];
 
         /* Determine if the port has already been initialized before */
-        auto port_found = getPort(alias, port);
-        if (port_found && (port.m_port_id == id)) {
+        if (m_portList.find(alias) != m_portList.end() && m_portList[alias].m_port_id == id)
+        {
             SWSS_LOG_INFO("Port has already been initialized before alias:%s", alias.c_str());
         }
         else
         {
             Port p(alias, Port::PHY);
-            {
-                std::unique_lock<std::recursive_mutex> lock(g_orchmutex);
-                p.m_index = static_cast<int32_t>(m_portList.size()); // TODO: Assume no deletion of physical port
-                std::unique_lock<std::recursive_mutex> unlock(g_orchmutex);
-                p.m_port_id = id;
-            }
 
+            p.m_index = static_cast<int32_t>(m_portList.size()); // TODO: Assume no deletion of physical port
+            p.m_port_id = id;
+            
             /* Initialize the port and create corresponding host interface */
             if (initializePort(p))
             {
                 /* Add port to port list */
-                setPort(alias, p);
+                m_portList[alias] = p;
                 portOidToName[id] = alias; 
                 m_port_ref_count[alias] = 0;   
                 /* Add port name map to counter table */
@@ -1745,7 +1728,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     {
                         SWSS_LOG_NOTICE("Set port %s AutoNeg to %u", alias.c_str(), an);
                         p.m_autoneg = an;
-                        setPort(alias, p);
+                        m_portList[alias] = p;
 
                         // Once AN is changed
                         // - no speed specified: need to reapply the port speed or port adv speed accordingly
@@ -1781,7 +1764,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                  */
                 if (speed != 0 && speed != p.m_speed)
                 {
-                    setPort(alias, p);
+                    m_portList[alias] = p;
 
                     if (p.m_autoneg)
                     {
@@ -1815,7 +1798,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             }
 
                             p.m_admin_state_up = false;
-                            setPort(alias, p);
+                            m_portList[alias] = p;
 
                             if (!setPortSpeed(p.m_port_id, speed))
                             {
@@ -1837,7 +1820,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         SWSS_LOG_NOTICE("Set port %s speed to %u", alias.c_str(), speed);
                     }
                     p.m_speed = speed;
-                    setPort(alias, p);
+                    m_portList[alias] = p;
                 }
 
                 if (mtu != 0 && mtu != p.m_mtu)
@@ -1845,7 +1828,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (setPortMtu(p.m_port_id, mtu))
                     {
                         p.m_mtu = mtu;
-                        setPort(alias, p);
+                        m_portList[alias] = p;
                         SWSS_LOG_NOTICE("Set port %s MTU to %u", alias.c_str(), mtu);
                         if (p.m_rif_id)
                         {
@@ -1870,7 +1853,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             p.m_fec_mode = fec_mode_map[fec_mode];
                             if (setPortFec(p.m_port_id, p.m_fec_mode))
                             {
-                                setPort(alias, p);
+                                m_portList[alias] = p;
                                 SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
                             }
                             else
@@ -1952,7 +1935,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     if (setPortAdminStatus(p.m_port_id, admin_status == "up"))
                     {
                         p.m_admin_state_up = (admin_status == "up");
-                        setPort(alias, p);
+                        m_portList[alias] = p;
                         SWSS_LOG_NOTICE("Set port %s admin status to %s", alias.c_str(), admin_status.c_str());
                     }
                     else
@@ -2001,7 +1984,6 @@ void PortsOrch::doVlanTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            Port vlan;
             // Retrieve attributes
             uint32_t mtu = 0;
             for (auto i : kfvFieldsValues(t))
@@ -2017,7 +1999,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
              * We may add support for VLAN mac learning enable/disable,
              * VLAN flooding control setting and etc. in the future.
              */
-            if (!getPort(vlan_alias, vlan))
+            if (m_portList.find(vlan_alias) == m_portList.end())
             {
                 if (!addVlan(vlan_alias))
                 {
@@ -2037,7 +2019,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                 if (mtu != 0)
                 {
                     vl.m_mtu = mtu;
-                    setPort(vlan_alias, vl);
+                    m_portList[vlan_alias] = vl;
                     if (vl.m_rif_id)
                     {
                         gIntfsOrch->setRouterIntfsMtu(vl);
@@ -2224,7 +2206,7 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 if ((mtu != 0) && (mtu != l.m_mtu))
                 {
                     l.m_mtu = mtu;
-                    setPort(alias, l);
+                    m_portList[alias] = l;
                     if (l.m_rif_id)
                     {
                         gIntfsOrch->setRouterIntfsMtu(l);
@@ -2651,7 +2633,7 @@ bool PortsOrch::addBridgePort(Port &port)
                 return false;
             }
             port.m_bridge_port_admin_state = true;
-            setPort(port.m_alias, port);
+            m_portList[port.m_alias] = port;
             if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
             {
                 SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
@@ -2717,7 +2699,7 @@ bool PortsOrch::addBridgePort(Port &port)
                 hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], port.m_alias.c_str());
         return false;
     }
-    setPort(port.m_alias, port);
+    m_portList[port.m_alias] = port;
     portOidToName[port.m_bridge_port_id] = port.m_alias;
     SWSS_LOG_NOTICE("Add bridge port %s to default 1Q bridge", port.m_alias.c_str());
 
@@ -2748,7 +2730,7 @@ bool PortsOrch::removeBridgePort(Port &port)
             return false;
         }
         port.m_bridge_port_admin_state = false;
-        setPort(port.m_alias, port);
+        m_portList[port.m_alias] = port;
 
         if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
         {
@@ -2776,7 +2758,7 @@ bool PortsOrch::removeBridgePort(Port &port)
 
     SWSS_LOG_NOTICE("Remove bridge port %s from default 1Q bridge", port.m_alias.c_str());
 
-    setPort(port.m_alias, port);
+    m_portList[port.m_alias] = port;
     return true;
 }
 
@@ -2814,7 +2796,7 @@ bool PortsOrch::addVlan(string vlan_alias)
     vlan.m_vlan_info.vlan_oid = vlan_oid;
     vlan.m_vlan_info.vlan_id = vlan_id;
     vlan.m_members = set<string>();
-    setPort(vlan_alias, vlan);
+    m_portList[vlan_alias] = vlan;
     portOidToName[vlan_oid] =  vlan_alias;
     m_port_ref_count[vlan_alias] = 0;
 
@@ -2864,7 +2846,7 @@ bool PortsOrch::removeVlan(Port vlan)
             vlan.m_vlan_info.vlan_id);
 
     portOidToName.erase(vlan.m_vlan_info.vlan_oid);
-    erasePort(vlan.m_alias);
+    m_portList.erase(vlan.m_alias);
     m_port_ref_count.erase(vlan.m_alias);
 
     return true;
@@ -2874,17 +2856,14 @@ bool PortsOrch::getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan)
 {
     SWSS_LOG_ENTER();
 
-    std::unique_lock<std::recursive_mutex> lock(g_orchmutex);
     for (auto &it: m_portList)
     {
         if (it.second.m_type == Port::VLAN && it.second.m_vlan_info.vlan_id == vlan_id)
         {
             vlan = it.second;
-            std::unique_lock<std::recursive_mutex> unlock(g_orchmutex);
             return true;
         }
     }
-    std::unique_lock<std::recursive_mutex> unlock(g_orchmutex);
 
     return false;
 }
@@ -2939,7 +2918,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode)
     /* a physical port may join multiple vlans */
     VlanMemberEntry vme = {vlan.m_alias, vlan_member_id, sai_tagging_mode};
     port.m_vlan_members[vlan.m_vlan_info.vlan_id] = vme;
-    setPort(port.m_alias, port);
+    m_portList[port.m_alias] = port;
     vlan.m_members.insert(port.m_alias);
     if (port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
     {
@@ -2950,7 +2929,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode)
         	updateDbVlanOperStatus(vlan, "up");
         }
     }
-    setPort(vlan.m_alias, vlan);
+    m_portList[vlan.m_alias] = vlan;
 
     VlanMemberUpdate update = { vlan, port, true };
     notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
@@ -2991,7 +2970,7 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
         }
     }
 
-    setPort(port.m_alias, port);
+    m_portList[port.m_alias] = port;
     vlan.m_members.erase(port.m_alias);
     if (port.m_oper_status == SAI_PORT_OPER_STATUS_UP)
     {
@@ -3001,7 +2980,7 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
         	updateDbVlanOperStatus(vlan, "down");
         }
     }
-    setPort(vlan.m_alias, vlan);
+    m_portList[vlan.m_alias] = vlan;
 
     VlanMemberUpdate update = { vlan, port, false };
     notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
@@ -3013,17 +2992,17 @@ bool PortsOrch::addLag(string lag_alias)
 {
     SWSS_LOG_ENTER();
 
-    Port lagport;
-    if (getPort(lag_alias, lagport))
+    auto lagport = m_portList.find(lag_alias);
+    if (lagport != m_portList.end())
     {
-        if ((lagport.m_bridge_port_id != SAI_NULL_OBJECT_ID) &&
-            (lagport.m_vlan_members.empty()))
+        if ((m_portList[lag_alias].m_bridge_port_id != SAI_NULL_OBJECT_ID) &&
+            (m_portList[lag_alias].m_vlan_members.empty()))
         {
             return false;
         }
         return true;
     }
-
+    
     sai_object_id_t lag_id;
     sai_status_t status = sai_lag_api->create_lag(&lag_id, gSwitchId, 0, NULL);
 
@@ -3038,7 +3017,7 @@ bool PortsOrch::addLag(string lag_alias)
     Port lag(lag_alias, Port::LAG);
     lag.m_lag_id = lag_id;
     lag.m_members = set<string>();
-    setPort(lag_alias, lag);
+    m_portList[lag_alias] = lag;
     portOidToName[lag_id] = lag_alias;
     m_port_ref_count[lag_alias] = 0;
 
@@ -3097,7 +3076,7 @@ bool PortsOrch::removeLag(Port lag)
     m_counterTable->hdel("",lag.m_alias.c_str());
 
     portOidToName.erase(lag.m_lag_id);
-    erasePort(lag.m_alias);
+    m_portList.erase(lag.m_alias);
     m_port_ref_count.erase(lag.m_alias);
 
     PortUpdate update = { lag, false };
@@ -3157,10 +3136,10 @@ bool PortsOrch::addLagMember(Port &lag, Port &port)
 
     port.m_lag_id = lag.m_lag_id;
     port.m_lag_member_id = lag_member_id;
-    setPort(port.m_alias, port);
+    m_portList[port.m_alias] = port;
     lag.m_members.insert(port.m_alias);
 
-    setPort(lag.m_alias, lag);
+    m_portList[lag.m_alias] = lag;
 
     if (lag.m_bridge_port_id > 0)
     {
@@ -3194,9 +3173,9 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
 
     port.m_lag_id = 0;
     port.m_lag_member_id = 0;
-    setPort(port.m_alias, port);
+    m_portList[port.m_alias] = port;
     lag.m_members.erase(port.m_alias);
-    setPort(lag.m_alias, lag);
+    m_portList[lag.m_alias] = lag;
 
     if (lag.m_bridge_port_id > 0)
     {
@@ -3220,7 +3199,6 @@ void PortsOrch::generateQueueMap()
         return;
     }
 
-    std::unique_lock<std::recursive_mutex> lock(g_orchmutex);
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -3228,7 +3206,6 @@ void PortsOrch::generateQueueMap()
             generateQueueMapPerPort(it.second);
         }
     }
-    std::unique_lock<std::recursive_mutex> unlock(g_orchmutex);
 
     m_isQueueMapGenerated = true;
 }
@@ -3308,7 +3285,6 @@ void PortsOrch::generatePriorityGroupMap()
         return;
     }
 
-    std::unique_lock<std::recursive_mutex> lock(g_orchmutex);
     for (const auto& it: m_portList)
     {
         if (it.second.m_type == Port::PHY)
@@ -3316,7 +3292,6 @@ void PortsOrch::generatePriorityGroupMap()
             generatePriorityGroupMapPerPort(it.second);
         }
     }
-    std::unique_lock<std::recursive_mutex> unlock(g_orchmutex);
 
     m_isPriorityGroupMapGenerated = true;
 }
@@ -3410,7 +3385,7 @@ void PortsOrch::doTask(NotificationConsumer &consumer)
             updatePortOperStatus(port, status);
 
             /* update m_portList */
-            setPort(port.m_alias, port);
+            m_portList[port.m_alias] = port;
         }
 
         sai_deserialize_free_port_oper_status_ntf(count, portoperstatus);
@@ -3434,8 +3409,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
 
     for(auto vlan_member: port.m_vlan_members)
     {
-        Port Vlan;
-        getPort(vlan_member.second.alias, Vlan);
+        auto Vlan = m_portList[vlan_member.second.alias];
         auto old_count = Vlan.m_up_member_count;
         isUp ? Vlan.m_up_member_count++ : Vlan.m_up_member_count--;
         if (Vlan.m_up_member_count == 0)
@@ -3449,7 +3423,7 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
         SWSS_LOG_NOTICE("Vlan %s Port %s state %s m_up_member_count %d",
             vlan_member.second.alias.c_str(), port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(), Vlan.m_up_member_count);
 
-        setPort(Vlan.m_alias, Vlan);
+        m_portList[Vlan.m_alias] = Vlan;
     }
     if (!setHostIntfsOperStatus(port, isUp))
     {
@@ -3478,14 +3452,13 @@ void PortsOrch::updateLagOperStatus(Port &port, sai_port_oper_status_t status)
             oper_status_strings.at(status).c_str());
 
     port.m_oper_status = status;
-    setPort(port.m_alias, port);
+    m_portList[port.m_alias] = port;
 
     bool isUp = status == SAI_PORT_OPER_STATUS_UP;
 
     for(auto vlan_member: port.m_vlan_members)
     {
-        Port Vlan;
-        getPort(vlan_member.second.alias, Vlan);
+        auto Vlan = m_portList[vlan_member.second.alias];
         auto old_count = Vlan.m_up_member_count;
         isUp ? Vlan.m_up_member_count++ : Vlan.m_up_member_count--;
         if (Vlan.m_up_member_count == 0)
@@ -3499,7 +3472,7 @@ void PortsOrch::updateLagOperStatus(Port &port, sai_port_oper_status_t status)
         SWSS_LOG_NOTICE("Vlan %s Port %s state %s m_up_member_count %d",
             vlan_member.second.alias.c_str(), port.m_alias.c_str(), oper_status_strings.at(port.m_oper_status).c_str(), Vlan.m_up_member_count);
 
-        setPort(Vlan.m_alias, Vlan);
+        m_portList[Vlan.m_alias] = Vlan;
     }
 }
 
@@ -3518,7 +3491,6 @@ void PortsOrch::refreshPortStatus()
 {
     SWSS_LOG_ENTER();
 
-    std::unique_lock<std::recursive_mutex> lock(g_orchmutex);
     for (auto &it: m_portList)
     {
         auto &port = it.second;
@@ -3530,14 +3502,12 @@ void PortsOrch::refreshPortStatus()
         sai_port_oper_status_t status;
         if (!getPortOperStatus(port, status))
         {
-            std::unique_lock<std::recursive_mutex> unlock(g_orchmutex);
             throw runtime_error("PortsOrch get port oper status failure");
         }
 
         SWSS_LOG_INFO("%s oper status is %s", port.m_alias.c_str(), oper_status_strings.at(status).c_str());
         updatePortOperStatus(port, status);
     }
-    std::unique_lock<std::recursive_mutex> unlock(g_orchmutex);
 }
 
 bool PortsOrch::getPortOperStatus(const Port& port, sai_port_oper_status_t& status) const
