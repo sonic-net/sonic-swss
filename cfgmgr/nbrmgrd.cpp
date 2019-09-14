@@ -9,6 +9,7 @@
 #include "exec.h"
 #include "schema.h"
 #include "nbrmgr.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -54,19 +55,25 @@ int main(int argc, char **argv)
 
         NbrMgr nbrmgr(&cfgDb, &appDb, &stateDb, cfg_nbr_tables);
 
-        chrono::steady_clock::time_point starttime = chrono::steady_clock::now();
-        while (!nbrmgr.isNeighRestoreDone())
+        WarmStart::initialize("nbrmgrd", "swss");
+        WarmStart::checkWarmStart("nbrmgrd", "swss");
+
+        if (WarmStart::isWarmStart())
         {
-            chrono::duration<double> time_span = chrono::duration_cast<chrono::duration<double>>
-                                                 (chrono::steady_clock::now() - starttime);
-            int pasttime = int(time_span.count());
-            SWSS_LOG_INFO("Kernel neighbor table restoration waited for %d seconds", pasttime);
-            if (pasttime > RESTORE_NEIGH_WAIT_TIME_OUT)
+            chrono::steady_clock::time_point starttime = chrono::steady_clock::now();
+            while (!nbrmgr.isNeighRestoreDone())
             {
-                SWSS_LOG_WARN("Kernel neighbor table restore is not finished!");
-                break;
+                chrono::duration<double> time_span = chrono::duration_cast<chrono::duration<double>>
+                                                     (chrono::steady_clock::now() - starttime);
+                int pasttime = int(time_span.count());
+                SWSS_LOG_INFO("Kernel neighbor table restoration waited for %d seconds", pasttime);
+                if (pasttime > RESTORE_NEIGH_WAIT_TIME_OUT)
+                {
+                    SWSS_LOG_WARN("Kernel neighbor table restore is not finished!");
+                    break;
+                }
+                sleep(RESTORE_NEIGH_WAIT_TIME_INT);
             }
-            sleep(RESTORE_NEIGH_WAIT_TIME_INT);
         }
 
         std::vector<Orch *> cfgOrchList = {&nbrmgr};
