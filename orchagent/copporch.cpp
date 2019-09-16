@@ -221,23 +221,29 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
             if (hostif_map != m_trap_group_hostif_map.end())
             {
                 sai_object_id_t hostif_table_entry = SAI_NULL_OBJECT_ID;
-                sai_attribute_t sai_host_table_attr[4];
+                sai_attribute_t attr;
+                vector<sai_attribute_t> sai_host_table_attr;
 
-                sai_host_table_attr[0].id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TYPE;
-                sai_host_table_attr[0].value.s32 = SAI_HOSTIF_TABLE_ENTRY_TYPE_TRAP_ID;
+                attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TYPE;
+                attr.value.s32 = SAI_HOSTIF_TABLE_ENTRY_TYPE_TRAP_ID;
+                sai_host_table_attr.push_back(attr);
 
-                sai_host_table_attr[1].id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TRAP_ID;
-                sai_host_table_attr[1].value.oid = hostif_trap_id;
+                attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_TRAP_ID;
+                attr.value.oid = hostif_trap_id;
+                sai_host_table_attr.push_back(attr);
 
-                sai_host_table_attr[2].id = SAI_HOSTIF_TABLE_ENTRY_ATTR_CHANNEL_TYPE;
-                sai_host_table_attr[2].value.s32 =  SAI_HOSTIF_TABLE_ENTRY_CHANNEL_TYPE_GENETLINK;
+                attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_CHANNEL_TYPE;
+                attr.value.s32 =  SAI_HOSTIF_TABLE_ENTRY_CHANNEL_TYPE_GENETLINK;
+                sai_host_table_attr.push_back(attr);
 
-                sai_host_table_attr[3].id = SAI_HOSTIF_TABLE_ENTRY_ATTR_HOST_IF;
-                sai_host_table_attr[3].value.oid = hostif_map->second;
+                attr.id = SAI_HOSTIF_TABLE_ENTRY_ATTR_HOST_IF;
+                attr.value.oid = hostif_map->second;
+                sai_host_table_attr.push_back(attr);
 
                 sai_status_t status = sai_hostif_api->create_hostif_table_entry(&hostif_table_entry,
-                                                                                gSwitchId, 4,
-                                                                                sai_host_table_attr);
+                                                                                gSwitchId,
+                                                                                (uint32_t)sai_host_table_attr.size(),
+                                                                                sai_host_table_attr.data());
 
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -615,7 +621,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                                            trap group %s, error:%d", idx, hostif_attr.id,
                                            trap_group_name.c_str(), sai_status);
 
-                            return task_process_status::task_failed;
+                            return task_process_status::task_ignore;
                         }
                     }
                 } 
