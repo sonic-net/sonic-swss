@@ -200,32 +200,38 @@ void VrfMgr::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            vector<FieldValueTuple> temp;
-
-            if (m_stateVrfTable.get(vrfName, temp))
+            /*
+             * Delay delLink until vrf object deleted in orchagent to ensure fpmsyncd can get vrf ifname.
+             * Now state VRF_TABLE|Vrf represent vrf exist in appDB, if it exist vrf device is always effective.
+             * VRFOrch add/del state VRF_TABLE|OBJ|Vrf to represent object existence. VNETOrch is not do so now.
+             */
+            if (consumer.getTableName() == CFG_VRF_TABLE_NAME)
             {
-                if (!isVrfObjExist(vrfName))
+                vector<FieldValueTuple> temp;
+
+                if (m_stateVrfTable.get(vrfName, temp))
+                {
+                    /* VRFOrch add delay so wait */
+                    if (!isVrfObjExist(vrfName))
+                    {
+                        it++;
+                        continue;
+                    }
+
+                    m_appVrfTableProducer.del(vrfName);
+                    m_stateVrfTable.del(vrfName);
+                }
+
+                if (isVrfObjExist(vrfName))
                 {
                     it++;
                     continue;
                 }
-
-                m_stateVrfTable.del(vrfName);
-
-                if (consumer.getTableName() == CFG_VRF_TABLE_NAME)
-                {
-                    m_appVrfTableProducer.del(vrfName);
-                }
-                else
-                {
-                    m_appVnetTableProducer.del(vrfName);
-                }
             }
-
-            if (isVrfObjExist(vrfName))
+            else
             {
-                it++;
-                continue;
+                m_appVnetTableProducer.del(vrfName);
+                m_stateVrfTable.del(vrfName);
             }
 
             if (!delLink(vrfName))
