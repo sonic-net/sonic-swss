@@ -461,7 +461,17 @@ Stores rules associated with a specific ACL table on the switch.
                                                : next-hop ip address and ifname  Example: "10.0.0.3|Ethernet1"
                                                : next-hop group set of next-hop  Example: "10.0.0.1,10.0.0.3|Ethernet1"
 
-    mirror_action = 1*255VCHAR                 ; refer to the mirror session
+    redirect_action = 1*255CHAR                ; redirect parameter
+                                               ; This parameter defines a destination for redirected packets
+                                               ; it could be:
+                                               : name of physical port.          Example: "Ethernet10"
+                                               : name of LAG port                Example: "PortChannel5"
+                                               : next-hop ip address             Example: "10.0.0.1"
+                                               : next-hop group set of addresses Example: "10.0.0.1,10.0.0.3"
+
+    mirror_action = 1*255VCHAR                 ; refer to the mirror session (by default it will be ingress mirror action)
+    mirror_ingress_action = 1*255VCHAR         ; refer to the mirror session
+    mirror_egress_action = 1*255VCHAR          ; refer to the mirror session
 
     ether_type    = h16                        ; Ethernet type field
 

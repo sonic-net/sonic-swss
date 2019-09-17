@@ -701,10 +701,18 @@ class TestMirror(object):
         tbl._del(table)
         time.sleep(1)
 
-    def create_mirror_acl_dscp_rule(self, table, rule, dscp, session):
+    def create_mirror_acl_dscp_rule(self, table, rule, dscp, session, stage=None):
+        action_name = "mirror_action"
+        action_name_map = {
+            "ingress": "MIRROR_INGRESS_ACTION",
+            "egress": "MIRROR_EGRESS_ACTION"
+        }
+        if stage is not None: # else it should be treated as ingress by default in orchagent
+            assert stage in ('ingress', 'egress'), "invalid stage input {}".format(stage)
+            action_name = action_name_map[stage]
         tbl = swsscommon.Table(self.cdb, "ACL_RULE")
         fvs = swsscommon.FieldValuePairs([("priority", "1000"),
-                                          ("mirror_action", session),
+                                          (action_name, session),
                                           ("DSCP", dscp)])
         tbl.set(table + "|" + rule, fvs)
         time.sleep(1)
@@ -714,6 +722,74 @@ class TestMirror(object):
         tbl._del(table + "|" + rule)
         time.sleep(1)
 
+    def test_AclBindMirrorPerStage(self, dvs, testlog):
+        """
+        This test configures mirror rules with specifying explicitely
+        the mirror action stage (ingress, egress) and verifies ASIC db
+        entry set with correct mirror action
+        """
+        self.setup_db(dvs)
+
+        session = "MIRROR_SESSION"
+        acl_table = "MIRROR_TABLE"
+        acl_rule = "MIRROR_RULE"
+
+        # bring up port; assign ip; create neighbor; create route
+        self.set_interface_status(dvs, "Ethernet32", "up")
+        self.add_ip_address("Ethernet32", "20.0.0.0/31")
+        self.add_neighbor("Ethernet32", "20.0.0.1", "02:04:06:08:10:12")
+        self.add_route(dvs, "4.4.4.4", "20.0.0.1")
+
+        # create mirror session
+        self.create_mirror_session(session, "3.3.3.3", "4.4.4.4", "0x6558", "8", "100", "0")
+        assert self.get_mirror_session_state(session)["status"] == "active"
+
+        # assert mirror session in asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
+        assert len(tbl.getKeys()) == 1
+        mirror_session_oid = tbl.getKeys()[0]
+
+        # create acl table
+        self.create_acl_table(acl_table, ["Ethernet0", "Ethernet4"])
+
+        for stage, asic_attr in (("ingress", "SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS"),
+                                 ("egress", "SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS")):
+            # create acl rule with dscp value 48
+            self.create_mirror_acl_dscp_rule(acl_table, acl_rule, "48", session, stage=stage)
+
+            # assert acl rule is created
+            tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+            rule_entries = [k for k in tbl.getKeys() if k not in dvs.asicdb.default_acl_entries]
+            assert len(rule_entries) == 1
+
+            (status, fvs) = tbl.get(rule_entries[0])
+            assert status == True
+
+            asic_attr_found = False
+            for fv in fvs:
+                if fv[0] == asic_attr:
+                    asic_attr_found = True
+
+            assert asic_attr_found == True
+
+            # remove acl rule
+            self.remove_mirror_acl_dscp_rule(acl_table, acl_rule)
+
+        # remove acl table
+        self.remove_acl_table(acl_table)
+
+        # remove mirror session
+        self.remove_mirror_session(session)
+
+        # assert no mirror session in asic database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION")
+        assert len(tbl.getKeys()) == 0
+
+        # remove route; remove neighbor; remove ip; bring down port
+        self.remove_route(dvs, "4.4.4.4")
+        self.remove_neighbor("Ethernet32", "20.0.0.1")
+        self.remove_ip_address("Ethernet32", "20.0.0.0/31")
+        self.set_interface_status(dvs, "Ethernet32", "down")
 
     def test_AclBindMirror(self, dvs, testlog):
         """

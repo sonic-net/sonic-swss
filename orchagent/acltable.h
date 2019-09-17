@@ -14,8 +14,10 @@ using namespace std;
 
 /* TODO: move all acltable and aclrule implementation out of aclorch */
 
-#define TABLE_INGRESS     "INGRESS"
-#define TABLE_EGRESS      "EGRESS"
+#define STAGE_INGRESS     "INGRESS"
+#define STAGE_EGRESS      "EGRESS"
+#define TABLE_INGRESS     STAGE_INGRESS
+#define TABLE_EGRESS      STAGE_EGRESS
 #define TABLE_STAGE       "STAGE"
 
 typedef enum
