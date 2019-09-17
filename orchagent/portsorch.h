@@ -30,6 +30,15 @@ static const map<sai_port_oper_status_t, string> oper_status_strings =
     { SAI_PORT_OPER_STATUS_NOT_PRESENT, "not present" }
 };
 
+typedef enum _stp_state
+{
+    DISABLED				= 0,
+	BLOCKING				= 1,
+	LISTENING				= 2,
+	LEARNING				= 3,
+	FORWARDING				= 4
+}stp_state;
+
 struct PortUpdate
 {
     Port port;
@@ -53,7 +62,7 @@ struct VlanMemberUpdate
 class PortsOrch : public Orch, public Subject
 {
 public:
-    PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames);
+    PortsOrch(DBConnector *db, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames);
 
     bool allPortsReady();
     bool isInitDone();
@@ -72,6 +81,8 @@ public:
     void getCpuPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
     bool getAclBindPortId(string alias, sai_object_id_t &port_id);
+    bool stpVlanFdbFlush(string vlan_alias);
+    bool updateMaxStpInstance();
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
@@ -89,6 +100,7 @@ public:
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
+    unique_ptr<Table> m_stpTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
@@ -108,12 +120,15 @@ private:
     shared_ptr<DBConnector> m_flex_db;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
+    std::map<sai_uint16_t, sai_object_id_t> m_stpInstToOid;//Mapping from STP instance id to corresponding object id
 
     bool m_initDone = false;
     Port m_cpuPort;
     // TODO: Add Bridge/Vlan class
     sai_object_id_t m_default1QBridge;
     sai_object_id_t m_defaultVlan;
+    sai_object_id_t m_defaultStpId;
+    sai_uint32_t    m_maxStpInstances;
 
     bool m_portConfigDone = false;
     sai_uint32_t m_portCount;
@@ -132,6 +147,9 @@ private:
     void doVlanMemberTask(Consumer &consumer);
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);
+    void doStpTask(Consumer &consumer);
+    void doStpPortStateTask(Consumer &consumer);
+    void doStpFastageTask(Consumer &consumer);
 
     void doTask(NotificationConsumer &consumer);
 
@@ -197,6 +215,18 @@ private:
 
     bool setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
                                 vector<uint32_t> &serdes_val);
+
+    sai_object_id_t addStpInstance(sai_uint16_t stp_instance);
+    bool removeStpInstance(sai_uint16_t stp_instance);
+    bool addVlanToStpInstance(string vlan, sai_uint16_t stp_instance);
+    bool removeVlanFromStpInstance(string vlan, sai_uint16_t stp_instance);
+    sai_object_id_t getStpInstanceOid(sai_uint16_t stp_instance);
+
+    sai_object_id_t addStpPort(Port &port, sai_uint16_t stp_instance);
+    bool removeStpPort(Port &port, sai_uint16_t stp_instance);
+    bool removeStpPorts(Port &port);
+    sai_stp_port_state_t getStpSaiState(sai_uint8_t stp_state);
+    bool updateStpPortState(Port &port, sai_uint16_t stp_instance, sai_uint8_t stp_state);
 };
 #endif /* SWSS_PORTSORCH_H */
 
