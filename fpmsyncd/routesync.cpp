@@ -1,4 +1,3 @@
-
 #include <netlink/route/link.h>
 #include <netlink/route/route.h>
 #include <netlink/route/nexthop.h>
