@@ -57,3 +57,130 @@ class TestPortchannel(object):
 
         lagms = lagmtbl.getKeys()
         assert len(lagms) == 0
+
+
+    def test_Portchannel_oper_down(self, dvs, testlog):
+
+        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+
+        # Create 4 Ports
+        tbl = swsscommon.Table(self.cdb, "PORT")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up")])
+
+        tbl.set("Ethernet1", fvs)
+        time.sleep(1)
+        tbl.set("Ethernet2", fvs)
+        time.sleep(1)
+        tbl.set("Ethernet3", fvs)
+        time.sleep(1)
+        tbl.set("Ethernet4", fvs)
+        time.sleep(1)
+
+        # Create 4 PortChannels
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
+        fvs = swsscommon.FieldValuePairs([("admin_status", "up"),("mtu", "9100")])
+
+        tbl.set("PortChannel001", fvs)
+        time.sleep(1)
+        tbl.set("PortChannel002", fvs)
+        time.sleep(1)
+        tbl.set("PortChannel003", fvs)
+        time.sleep(1)
+        tbl.set("PortChannel004", fvs)
+        time.sleep(1)
+
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_MEMBER")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set("PortChannel001|Ethernet1", fvs)
+        time.sleep(1)
+        tbl.set("PortChannel002|Ethernet2", fvs)
+        time.sleep(1)
+        tbl.set("PortChannel003|Ethernet3", fvs)
+        time.sleep(1)
+        tbl.set("PortChannel004|Ethernet4", fvs)
+        time.sleep(1)
+
+        tbl = swsscommon.Table(self.cdb, "PORTCHANNEL_INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        tbl.set("PortChannel001", fvs)
+        tbl.set("PortChannel001|40.0.0.0/31", fvs)
+        time.sleep(1)
+        tbl.set("PortChannel002", fvs)
+        tbl.set("PortChannel002|40.0.0.2/31", fvs)
+        time.sleep(1)
+        tbl.set("PortChannel003", fvs)
+        tbl.set("PortChannel003|40.0.0.4/31", fvs)
+        time.sleep(1)
+        tbl.set("PortChannel004", fvs)
+        tbl.set("PortChannel004|40.0.0.6/31", fvs)
+        time.sleep(1)
+
+        # check application database
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel001")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "40.0.0.0/31"
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel002")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "40.0.0.2/31"
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel003")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "40.0.0.4/31"
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel004")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+        assert intf_entries[0] == "40.0.0.6/31"
+
+        dvs.runcmd("arp -s 40.0.0.1 00:00:00:00:00:01")
+        time.sleep(1)
+        dvs.runcmd("arp -s 40.0.0.3 00:00:00:00:00:03")
+        time.sleep(1)
+        dvs.runcmd("arp -s 40.0.0.5 00:00:00:00:00:05")
+        time.sleep(1)
+        dvs.runcmd("arp -s 40.0.0.7 00:00:00:00:00:07")
+        time.sleep(1)
+
+        ps = swsscommon.ProducerStateTable(self.pdb, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("nexthop","40.0.0.1,40.0.0.3,40.0.0.5,40.0.0.7"), ("ifname", "PortChannel001,PortChannel002,PortChannel003,PortChannel004")])
+
+        ps.set("2.2.2.0/24", fvs)
+        time.sleep(1)
+
+        # check if route has propagated to ASIC DB
+        re_tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+
+        found_route = False
+        for key in re_tbl.getKeys():
+            route = json.loads(key)
+            print route
+            if route["dest"] == "2.2.2.0/24":
+               found_route = True
+               break
+
+        assert found_route
+
+        # check if route points to next hop group
+        nhg_tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
+        (status, fvs) = re_tbl.get(key)
+        for v in fvs:
+            if v[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
+                nhg_id = v[1]
+
+        (status, fvs) = nhg_tbl.get(nhg_id)
+        assert status
+
+        # check if next hop group consists of 4 members
+        nhg_member_tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        keys = nhg_member_tbl.getKeys()
+        assert len(keys) == 4
+
+        for key in keys:
+            (status, fvs) = nhg_member_tbl.get(key)
+            for v in fvs:
+                if v[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID":
+                    assert v[1] == nhg_id
+
