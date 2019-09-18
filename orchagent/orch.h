@@ -82,7 +82,7 @@ public:
 
     // Decorating Selectable
     int getFd() override { return m_selectable->getFd(); }
-    void readData() override { m_selectable->readData(); }
+    uint64_t readData() override { return m_selectable->readData(); }
     bool hasCachedData() override { return m_selectable->hasCachedData(); }
     bool initializedWithData() override { return m_selectable->initializedWithData(); }
     void updateAfterRead() override { m_selectable->updateAfterRead(); }

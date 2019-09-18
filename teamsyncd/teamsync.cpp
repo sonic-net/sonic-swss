@@ -316,7 +316,8 @@ int TeamSync::TeamPortSync::getFd()
     return team_get_event_fd(m_team);
 }
 
-void TeamSync::TeamPortSync::readData()
+uint64_t TeamSync::TeamPortSync::readData()
 {
     team_handle_events(m_team);
+    return 0;
 }
