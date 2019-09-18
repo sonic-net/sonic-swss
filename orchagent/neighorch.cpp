@@ -271,22 +271,6 @@ bool NeighOrch::getNeighborEntry(const IpAddress &ipAddress, NeighborEntry &neig
     return false;
 }
 
-bool NeighOrch::getNeighborEntry(const string &interface, NeighborEntry &neighborEntry, MacAddress &macAddress)
-{
-    for (const auto &entry : m_syncdNeighbors)
-    {
-        if (entry.first.alias == interface)
-        {
-            neighborEntry = entry.first;
-            macAddress = entry.second;
-            return true;
-        }
-    }
-
-    return false;
-}
-
-
 void NeighOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
