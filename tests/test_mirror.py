@@ -140,7 +140,7 @@ class TestMirror(object):
         # add route to mirror destination via 10.0.0.1
         self.add_route(dvs, "2.2.2.2", "10.0.0.1")
         assert self.get_mirror_session_state(session)["status"] == "active"
-        assert self.get_mirror_session_state(session)["monitor_port"] == dvs.asicdb.portnamemap["Ethernet16"]
+        assert self.get_mirror_session_state(session)["monitor_port"] == "Ethernet16"
         assert self.get_mirror_session_state(session)["dst_mac"] == "02:04:06:08:10:12"
         assert self.get_mirror_session_state(session)["route_prefix"] == "2.2.2.2/32"
 

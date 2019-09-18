@@ -15,6 +15,7 @@
 #define MIRROR_SESSION_STATUS               "status"
 #define MIRROR_SESSION_STATUS_ACTIVE        "active"
 #define MIRROR_SESSION_STATUS_INACTIVE      "inactive"
+#define MIRROR_SESSION_NEXT_HOP_IP          "next_hop_ip"
 #define MIRROR_SESSION_SRC_IP               "src_ip"
 #define MIRROR_SESSION_DST_IP               "dst_ip"
 #define MIRROR_SESSION_GRE_TYPE             "gre_type"
@@ -59,6 +60,7 @@ MirrorEntry::MirrorEntry(const string& platform) :
     }
 
     nexthopInfo.prefix = IpPrefix("0.0.0.0/0");
+    nexthopInfo.nexthop = IpAddress("0.0.0.0");
 }
 
 MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbConnector,
@@ -81,7 +83,7 @@ bool MirrorOrch::bake()
     SWSS_LOG_ENTER();
 
     // Freeze the route update during orchagent restoration
-    m_freezeUpdate = true;
+    m_freeze = true;
 
     deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
@@ -93,7 +95,7 @@ bool MirrorOrch::bake()
 
         bool active = false;
         string monitor_port;
-        string vlan_id;
+        string next_hop_ip;
 
         for (const auto &tuple : tuples)
         {
@@ -105,9 +107,9 @@ bool MirrorOrch::bake()
             {
                 monitor_port = fvValue(tuple);
             }
-            else if (fvField(tuple) == MIRROR_SESSION_VLAN_ID)
+            else if (fvField(tuple) == MIRROR_SESSION_NEXT_HOP_IP)
             {
-                vlan_id = fvValue(tuple);
+                next_hop_ip = fvValue(tuple);
             }
         }
 
@@ -116,10 +118,12 @@ bool MirrorOrch::bake()
             continue;
         }
 
-        SWSS_LOG_NOTICE("Found mirror session %s active before warm reboot");
+        SWSS_LOG_NOTICE("Found mirror session %s active before warm reboot",
+                key.c_str());
 
         // Recover saved active session's monitor port
-        m_recoverySessionPortMap.emplace(key, vlan_id + ":" + monitor_port);
+        m_recoverySessionMap.emplace(
+                key, monitor_port + state_db_key_delimiter + next_hop_ip);
     }
 
     return Orch::bake();
@@ -131,77 +135,13 @@ bool MirrorOrch::postBake()
 
     SWSS_LOG_NOTICE("Start MirrorOrch post-baking");
 
-    for (auto it = m_syncdMirrors.begin(); it != m_syncdMirrors.end(); ++it)
-    {
-        const string name = it->first;
-        auto& session = it->second;
+    // Unfreeze the route update
+    m_freeze = false;
 
-        if (m_recoverySessionPortMap.find(name) != m_recoverySessionPortMap.end())
-        {
-            auto tokens = tokenize(m_recoverySessionPortMap[name], ':');
-            string vlan_id = tokens[0];
-            string alias = tokens[1];
-
-            SWSS_LOG_NOTICE("Recover mirror session %s with monitor port %s",
-                    name.c_str(), alias.c_str());
-
-            Port port;
-            m_portsOrch->getPort(alias, port);
-
-            // If the port belongs to a VLAN
-            if (vlan_id != "0")
-            {
-                Port vlan;
-                m_portsOrch->getPort("Vlan" + vlan_id, vlan);
-
-                NeighborEntry neighbor_entry;
-                MacAddress mac;
-                m_neighOrch->getNeighborEntry(vlan.m_alias, neighbor_entry, mac);
-
-                SWSS_LOG_NOTICE("Monitor port %s belongs to neighbor %s with IP %s",
-                        port.m_alias.c_str(), vlan.m_alias.c_str(),
-                        neighbor_entry.ip_address.to_string().c_str());
-
-                session.nexthopInfo.nexthop = neighbor_entry.ip_address;
-            }
-            // If the port belongs to a LAG
-            if (port.m_lag_id)
-            {
-                Port lag;
-                m_portsOrch->getPort(port.m_lag_id, lag);
-
-                NeighborEntry neighbor_entry;
-                MacAddress mac;
-                m_neighOrch->getNeighborEntry(lag.m_alias, neighbor_entry, mac);
-
-                SWSS_LOG_NOTICE("Monitor port %s belongs to neighbor %s with IP %s",
-                        port.m_alias.c_str(), lag.m_alias.c_str(),
-                        neighbor_entry.ip_address.to_string().c_str());
-
-                session.nexthopInfo.nexthop = neighbor_entry.ip_address;
-            }
-            else
-            {
-                NeighborEntry neighbor_entry;
-                MacAddress mac;
-                m_neighOrch->getNeighborEntry(port.m_alias, neighbor_entry, mac);
-
-                SWSS_LOG_NOTICE("Neighbor %s has IP %s",
-                        port.m_alias.c_str(),
-                        neighbor_entry.ip_address.to_string().c_str());
-
-                session.nexthopInfo.nexthop = neighbor_entry.ip_address;
-            }
-
-            updateSession(name, session);
-        }
-    }
+    Orch::doTask();
 
     // Clean up the recovery cache
-    m_recoverySessionPortMap.clear();
-
-    // Unfreeze the route update
-    m_freezeUpdate = false;
+    m_recoverySessionMap.clear();
 
     return Orch::postBake();
 }
@@ -209,11 +149,6 @@ bool MirrorOrch::postBake()
 void MirrorOrch::update(SubjectType type, void *cntx)
 {
     SWSS_LOG_ENTER();
-
-    if (m_freezeUpdate)
-    {
-        return;
-    }
 
     assert(cntx);
 
@@ -492,6 +427,12 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
         fvVector.emplace_back(MIRROR_SESSION_VLAN_ID, value);
     }
 
+    if (attr.empty() || attr == MIRROR_SESSION_NEXT_HOP_IP)
+    {
+     value = session.nexthopInfo.nexthop.to_string();
+     fvVector.emplace_back(MIRROR_SESSION_NEXT_HOP_IP, value);
+    }
+
     m_mirrorTable.set(name, fvVector);
 }
 
@@ -534,13 +475,17 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
                 return false;
             }
 
-            // Recover the monitor port picked before warm reboot
-            if (m_recoverySessionPortMap.find(name) != m_recoverySessionPortMap.end())
+            // Recover the LAG member monitor port picked before warm reboot
+            // to minimalize the data plane changes across warm reboot.
+            if (m_recoverySessionMap.find(name) != m_recoverySessionMap.end())
             {
-                string alias = tokenize(m_recoverySessionPortMap[name], ':')[1];
+                string alias = tokenize(m_recoverySessionMap[name],
+                        state_db_key_delimiter, 1)[0];
                 Port member;
                 m_portsOrch->getPort(alias, member);
 
+                SWSS_LOG_NOTICE("Recover mirror session %s with LAG member port %s",
+                        name.c_str(), alias.c_str());
                 session.neighborInfo.portId = member.m_port_id;
             }
             else
@@ -560,13 +505,17 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
             SWSS_LOG_NOTICE("Get mirror session destination IP neighbor VLAN %d",
                     session.neighborInfo.port.m_vlan_info.vlan_id);
 
-            // Recover the monitor port picked before warm reboot
-            if (m_recoverySessionPortMap.find(name) != m_recoverySessionPortMap.end())
+            // Recover the VLAN member monitor port picked before warm reboot
+            // since the FDB entries are not yet learned on the hardware
+            if (m_recoverySessionMap.find(name) != m_recoverySessionMap.end())
             {
-                string alias = tokenize(m_recoverySessionPortMap[name], ':')[1];
+                string alias = tokenize(m_recoverySessionMap[name],
+                        state_db_key_delimiter, 1)[0];
                 Port member;
                 m_portsOrch->getPort(alias, member);
 
+                SWSS_LOG_NOTICE("Recover mirror session %s with VLAN member port %s",
+                        name.c_str(), alias.c_str());
                 session.neighborInfo.portId = member.m_port_id;
             }
             else
@@ -948,10 +897,35 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
 
         if (update.nexthopGroup != IpAddresses())
         {
-            SWSS_LOG_INFO("    next hop IPs: %s", update.nexthopGroup.to_string().c_str());
+            SWSS_LOG_NOTICE("    next hop IPs: %s", update.nexthopGroup.to_string().c_str());
 
-            // Pick the first one from the next hop group
-            session.nexthopInfo.nexthop = *update.nexthopGroup.getIpAddresses().begin();
+            // Recover the session based on the state database information
+            if (m_recoverySessionMap.find(name) != m_recoverySessionMap.end())
+            {
+                IpAddress nexthop = IpAddress(tokenize(m_recoverySessionMap[name],
+                            state_db_key_delimiter, 1)[1]);
+
+                // Check if recovered next hop IP is within the update's next hop IPs
+                if (update.nexthopGroup.getIpAddresses().count(nexthop))
+                {
+                    SWSS_LOG_NOTICE("Recover mirror session %s with next hop %s",
+                            name.c_str(), nexthop.to_string().c_str());
+                    session.nexthopInfo.nexthop = nexthop;
+                }
+                else
+                {
+                    // Correct the next hop IP
+                    SWSS_LOG_NOTICE("Correct mirror session %s next hop from %s to %s",
+                            name.c_str(), session.nexthopInfo.nexthop.to_string().c_str(),
+                    nexthop.to_string().c_str());
+                    session.nexthopInfo.nexthop = *update.nexthopGroup.getIpAddresses().begin();
+                }
+            }
+            else
+            {
+                // Pick the first one from the next hop group
+                session.nexthopInfo.nexthop = *update.nexthopGroup.getIpAddresses().begin();
+            }
         }
         else
         {
@@ -1136,6 +1110,11 @@ void MirrorOrch::updateVlanMember(const VlanMemberUpdate& update)
 void MirrorOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
+
+    if (m_freeze)
+    {
+        return;
+    }
 
     if (!gPortsOrch->allPortsReady())
     {
