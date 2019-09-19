@@ -60,8 +60,13 @@ private:
     void doTask(NotificationConsumer& consumer);
 
     void updateVlanMember(const VlanMemberUpdate&);
+    void updatePortStatus(const PortStatusUpdate&);
+    void updatePortStatusToDown(Port&);
+    void updatePortStatusToUp(Port&);
+
     bool addFdbEntry(const FdbEntry&, const string&, const string&);
     bool removeFdbEntry(const FdbEntry&);
+    bool flushFdbEntry(const Port& port, const string type="dynamic");
 
     bool storeFdbEntryState(const FdbUpdate& update);
 };

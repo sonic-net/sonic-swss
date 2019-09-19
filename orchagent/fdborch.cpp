@@ -217,6 +217,12 @@ void FdbOrch::update(SubjectType type, void *cntx)
             updateVlanMember(*update);
             break;
         }
+        case SUBJECT_TYPE_PORT_STATUS_CHANGE:
+        {
+            PortStatusUpdate *update = reinterpret_cast<PortStatusUpdate *>(cntx);
+            updatePortStatus(*update);
+            break;
+        }
         default:
             break;
     }
@@ -548,4 +554,101 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
     }
 
     return true;
+}
+
+void FdbOrch::updatePortStatusToUp(Port& port)
+{
+    //TODO: recover the static FDB entry when port up
+    return;
+}
+
+void FdbOrch::updatePortStatusToDown(Port& port)
+{
+    SWSS_LOG_ENTER();
+    //TODO: remove the static FDB entry when port down
+
+    flushFdbEntry(port);
+}
+
+void FdbOrch::updatePortStatus(const PortStatusUpdate& update)
+{
+    SWSS_LOG_ENTER();
+
+    Port updatePort = update.port;
+    switch (update.operStatus)
+    {
+        case SAI_PORT_OPER_STATUS_UP:
+        {
+            updatePortStatusToUp(updatePort);
+            break;
+        }
+        case SAI_PORT_OPER_STATUS_DOWN:
+        {
+            updatePortStatusToDown(updatePort);
+            break;
+        }
+        default:
+        {
+            SWSS_LOG_ERROR("Can`t processing oper status of %d", (int)update.operStatus);
+            break;
+        }
+    }
+    return;
+}
+
+bool FdbOrch::flushFdbEntry(const Port& port, const string type)
+{
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+
+    if (port.m_bridge_port_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_DEBUG("Port %s is not added to a bridge", port.m_alias.c_str());
+        return true;
+    }
+    if (port.m_vlan_members.empty())
+    {
+        SWSS_LOG_DEBUG("Port %s is not added to any vlan", port.m_alias.c_str());
+        return true;
+
+    }
+    for (const auto vlanInfo: port.m_vlan_members)
+    {
+        attrs.clear();
+        Port vlan;
+        if (!m_portsOrch->getVlanByVlanId(vlanInfo.first, vlan))
+        {
+            SWSS_LOG_ERROR("Failed to get vlan by vlan ID %d", vlanInfo.first);
+            continue;
+        }
+
+        attr.id = SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID;
+        attr.value.oid = port.m_bridge_port_id;
+        attrs.push_back(attr);
+
+        attr.id =  SAI_FDB_FLUSH_ATTR_BV_ID;
+        attr.value.oid = vlan.m_vlan_info.vlan_oid;
+        attrs.push_back(attr);
+
+        attr.id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
+        attr.value.s32 = (type == "dynamic") ? SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC : SAI_FDB_FLUSH_ENTRY_TYPE_STATIC;
+        attrs.push_back(attr);
+
+        sai_status_t status = sai_fdb_api->flush_fdb_entries(gSwitchId, (uint32_t)attrs.size(), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to fulsh fdb on port %s in Vlan %d",
+                            port.m_alias.c_str(), vlanInfo.first);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Success to fulsh fdb on port %s in Vlan %d",
+                            port.m_alias.c_str(), vlanInfo.first);
+        }
+
+    }
+
+    return true;
+
 }
