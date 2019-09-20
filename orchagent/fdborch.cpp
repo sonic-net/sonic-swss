@@ -529,13 +529,6 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     {
         uint32_t count;
         sai_fdb_event_notification_data_t *fdbevent = nullptr;
-        extern void handle_fdb_event(_In_ const std::string &data);
-
-        /* The sai_redis fdb handling is moved here so that both
-         * reference count updates (sai_redis and portsOrch)
-         * happen in same context to avoid any mismatch.
-         */
-        handle_fdb_event(data);
 
         sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
 
