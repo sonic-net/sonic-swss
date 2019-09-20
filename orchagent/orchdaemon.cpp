@@ -33,6 +33,7 @@ CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
+StpOrch *gStpOrch;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
         m_applDb(applDb),
@@ -72,21 +73,25 @@ bool OrchDaemon::init()
     const int portsorch_base_pri = 40;
 
     vector<table_name_with_pri_t> ports_tables = {
-        { APP_PORT_TABLE_NAME,                  portsorch_base_pri + 5 },
-        { APP_VLAN_TABLE_NAME,                  portsorch_base_pri + 2 },
-        { APP_VLAN_MEMBER_TABLE_NAME,           portsorch_base_pri     },
-        { APP_LAG_TABLE_NAME,                   portsorch_base_pri + 4 },
-        { APP_LAG_MEMBER_TABLE_NAME,            portsorch_base_pri     },
-        { APP_STP_VLAN_INSTANCE_TABLE_NAME,     portsorch_base_pri     },
-        { APP_STP_PORT_STATE_TABLE_NAME,        portsorch_base_pri     },
-        { APP_STP_FASTAGEING_FLUSH_TABLE_NAME,  portsorch_base_pri     },
+        { APP_PORT_TABLE_NAME,        portsorch_base_pri + 5 },
+        { APP_VLAN_TABLE_NAME,        portsorch_base_pri + 2 },
+        { APP_VLAN_MEMBER_TABLE_NAME, portsorch_base_pri     },
+        { APP_LAG_TABLE_NAME,         portsorch_base_pri + 4 },
+        { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri     }
     };
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
-    gPortsOrch = new PortsOrch(m_applDb, m_stateDb, ports_tables);
+    gPortsOrch = new PortsOrch(m_applDb, ports_tables);
     TableConnector applDbFdb(m_applDb, APP_FDB_TABLE_NAME);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
+
+    vector<string> stp_tables = {
+            APP_STP_VLAN_INSTANCE_TABLE_NAME,
+            APP_STP_PORT_STATE_TABLE_NAME,
+            APP_STP_FASTAGEING_FLUSH_TABLE_NAME
+    };
+    gStpOrch = new StpOrch(m_applDb, m_stateDb, stp_tables);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -189,7 +194,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap.
      * That is ensured implicitly by the order of map key, "LAG_TABLE" is smaller than "VLAN_TABLE" in lexicographic order.
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch };
+    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, gStpOrch };
 
 
     bool initialize_dtel = false;
