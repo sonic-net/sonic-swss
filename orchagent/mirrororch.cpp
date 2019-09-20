@@ -113,17 +113,17 @@ bool MirrorOrch::bake()
             }
         }
 
-        if (!active)
+        if (active)
         {
-            continue;
+            SWSS_LOG_NOTICE("Found mirror session %s active before warm reboot",
+                    key.c_str());
+
+            // Recover saved active session's monitor port
+            m_recoverySessionMap.emplace(
+                    key, monitor_port + state_db_key_delimiter + next_hop_ip);
         }
 
-        SWSS_LOG_NOTICE("Found mirror session %s active before warm reboot",
-                key.c_str());
-
-        // Recover saved active session's monitor port
-        m_recoverySessionMap.emplace(
-                key, monitor_port + state_db_key_delimiter + next_hop_ip);
+	removeSessionState(key);
     }
 
     return Orch::bake();
@@ -382,6 +382,8 @@ void MirrorOrch::deleteEntry(const string& name)
         m_policerOrch->decreaseRefCount(session.policer);
     }
 
+    removeSessionState(name);
+
     m_syncdMirrors.erase(sessionIter);
 
     SWSS_LOG_NOTICE("Removed mirror session %s", name.c_str());
@@ -434,6 +436,13 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
     }
 
     m_mirrorTable.set(name, fvVector);
+}
+
+void MirrorOrch::removeSessionState(const string& name)
+{
+	SWSS_LOG_ENTER();
+
+	m_mirrorTable.del(name);
 }
 
 bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
