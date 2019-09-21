@@ -28,6 +28,7 @@
 #include "watermarkorch.h"
 #include "policerorch.h"
 #include "directory.h"
+#include "thresholdorch.h"
 
 using namespace swss;
 

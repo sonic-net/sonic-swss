@@ -1524,6 +1524,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
             if (!m_initDone)
             {
                 m_initDone = true;
+                /* PG and queue maps per port need to be created
+                 * after this step for the threshold feature.
+                 */
+                generateQueueMap();
+                generatePriorityGroupMap();
                 SWSS_LOG_INFO("Get PortInitDone notification from portsyncd.");
             }
 

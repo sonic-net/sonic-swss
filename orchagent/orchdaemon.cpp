@@ -222,6 +222,12 @@ bool OrchDaemon::init()
     TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
     gAclOrch = new AclOrch(acl_table_connectors, stateDbSwitchTable, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
 
+    vector<string> thresOrch_tables = {
+        CFG_THRESHOLD_TABLE_NAME
+    };
+
+    ThresholdOrch *thres_orch = new ThresholdOrch(m_configDb, thresOrch_tables, gPortsOrch);
+
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);
     m_orchList.push_back(gAclOrch);
@@ -232,6 +238,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(cfg_vnet_rt_orch);
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
+    m_orchList.push_back(thres_orch);
 
     m_select = new Select();
 
