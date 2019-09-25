@@ -46,16 +46,25 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     unsigned int master_index = rtnl_route_get_table(route_obj);
     char master_name[IFNAMSIZ] = {0};
 
-    /* Get the name of the master device */
-    getIfName(master_index, master_name, IFNAMSIZ);
-    
-    /* If the master device name starts with VNET_PREFIX, it is a VNET route.
-       The VNET name is exactly the name of the associated master device. */
-    if (string(master_name).find(VNET_PREFIX) == 0)
+    /* if the table_id is not set in the route obj then route is for default vrf. */
+    if (master_index)
     {
-        onVnetRouteMsg(nlmsg_type, obj, string(master_name));
+        /* Get the name of the master device */
+        getIfName(master_index, master_name, IFNAMSIZ);
+    
+        /* If the master device name starts with VNET_PREFIX, it is a VNET route.
+           The VNET name is exactly the name of the associated master device. */
+        if (string(master_name).find(VNET_PREFIX) == 0)
+        {
+            onVnetRouteMsg(nlmsg_type, obj, string(master_name));
+        }
+        /* Otherwise, it is a regular route (include VRF route). */
+        else
+        {
+            onRouteMsg(nlmsg_type, obj);
+        }
+
     }
-    /* Otherwise, it is a regular route (include VRF route). */
     else
     {
         onRouteMsg(nlmsg_type, obj);

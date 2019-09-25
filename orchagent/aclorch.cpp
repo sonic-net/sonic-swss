@@ -3000,7 +3000,8 @@ void AclOrch::doTask(SelectableTimer &timer)
             swss::FieldValueTuple fvtb("Bytes", to_string(cnt.bytes));
             values.push_back(fvtb);
 
-            AclOrch::getCountersTable().set(table_it.second.id + ":" + rule_it.second->getId(), values, "");
+            AclOrch::getCountersTable().set(rule_it.second->getTableId() + ":"
+                    + rule_it.second->getId(), values, "");
         }
         values.clear();
     }
