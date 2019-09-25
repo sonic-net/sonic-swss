@@ -48,7 +48,7 @@ protected:
     TrapIdTrapGroupTable m_syncdTrapIds;
 
     TrapGroupHostIfMap m_trap_group_hostif_map;
-    TrapHostTblEntryMap m_trapId_hostTblEntry_map;
+    TrapIdHostIfTableMap m_trapid_hostif_table_map;
 
     void initDefaultHostIntfTable();
     void initDefaultTrapGroup();

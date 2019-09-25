@@ -213,9 +213,9 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
         }
         m_syncdTrapIds[trap_id] = trap_group_id;
 
-        auto hostTbl_entry = m_trapId_hostTblEntry_map.find(trap_id);
+        auto hostTbl_entry = m_trapid_hostif_table_map.find(trap_id);
 
-        if (hostTbl_entry == m_trapId_hostTblEntry_map.end())
+        if (hostTbl_entry == m_trapid_hostif_table_map.end())
         {
             auto hostif_map = m_trap_group_hostif_map.find(trap_group_id);
             if (hostif_map != m_trap_group_hostif_map.end())
@@ -250,7 +250,7 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
                     SWSS_LOG_ERROR("Failed to create hostif table entry failed, rv %d", status);
                     return false;
                 }
-                m_trapId_hostTblEntry_map[trap_id] = hostif_table_entry;
+                m_trapid_hostif_table_map[trap_id] = hostif_table_entry;
             }
         }
     }
@@ -391,8 +391,8 @@ bool CoppOrch::removeGenetlinkHostIf(string trap_group_name)
     {
         if (it.second == m_trap_group_map[trap_group_name])
         {
-            auto hostTableEntry = m_trapId_hostTblEntry_map.find(it.first);
-            if (hostTableEntry != m_trapId_hostTblEntry_map.end())
+            auto hostTableEntry = m_trapid_hostif_table_map.find(it.first);
+            if (hostTableEntry != m_trapid_hostif_table_map.end())
             {
                 sai_status = sai_hostif_api->remove_hostif_table_entry(hostTableEntry->second);
                 if(sai_status != SAI_STATUS_SUCCESS)
@@ -402,7 +402,7 @@ bool CoppOrch::removeGenetlinkHostIf(string trap_group_name)
                                    trap_group_name.c_str(), sai_status);
                     return false;
                 }
-                m_trapId_hostTblEntry_map.erase(it.first);
+                m_trapid_hostif_table_map.erase(it.first);
             }
         }
     }
