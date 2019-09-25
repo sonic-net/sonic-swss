@@ -94,17 +94,16 @@ struct mclag_fdb
 class MclagLink : public Selectable {
 public:
     const int MSG_BATCH_SIZE;
-    std::map<std::string, std:: string> *p_learn;
     ProducerStateTable * p_port_tbl;
     ProducerStateTable * p_lag_tbl;
     ProducerStateTable * p_tnl_tbl;
     ProducerStateTable * p_intf_tbl;
     ProducerStateTable *p_fdb_tbl;
-    ProducerStateTable *p_acl_tbl;
+    ProducerStateTable *p_acl_table_tbl;
     ProducerStateTable *p_acl_rule_tbl;
     DBConnector *p_appl_db;
-    RedisClient *p_redisClient_2_asic;
-    RedisClient *p_redisClient_2_counters;
+    RedisClient *p_redisClient_to_asic;/*redis client access to ASIC_DB*/
+    RedisClient *p_redisClient_to_counters;/*redis client access to COUNTERS_DB*/
     std::set <mclag_fdb> *p_old_fdb;
 
     MclagLink(int port = MCLAG_DEFAULT_PORT);
@@ -132,20 +131,20 @@ private:
     int m_server_socket;
     int m_connection_socket;
 
-    void mclagsyncd_get_oid_2_port_name_map(std::unordered_map<std::string, std:: string> & port_map);
-    void mclagsyncd_get_bridgePortId_2_attrPortId_map(std::map<std::string, std:: string> *oid_map);
-    void mclagsyncd_get_vid_by_bvid(std::string &bvid, std::string &vlanid);
-    void mclagsyncd_get_fdb_set(std::set<mclag_fdb> *fdb_set);
-    void mclagsyncd_set_port_isolate(char *msg);
-    void mclagsyncd_set_port_mac_learn_mode(char *msg);
-    void mclagsyncd_set_fdb_flush();
-    void mclagsyncd_set_fdb_flush_by_port(char *msg);
-    void mclagsyncd_set_intf_mac(char *msg);
-    void mclagsyncd_set_fdb_entry(char *msg, int msg_len);
-    ssize_t  mclagsyncd_get_fdb_changes(char *msg_buf);
-    void mclag_connection_lost_handle_port_isolate();
-    void mclag_connection_lost_handle_port_learn_mode();
-    void mclag_connection_lost();
+    void getOidToPortNameMap(std::unordered_map<std::string, std:: string> & port_map);
+    void getBridgePortIdToAttrPortIdMap(std::map<std::string, std:: string> *oid_map);
+    void getVidByBvid(std::string &bvid, std::string &vlanid);
+    void getFdbSet(std::set<mclag_fdb> *fdb_set);
+    void setPortIsolate(char *msg);
+    void setPortMacLearnMode(char *msg);
+    void setFdbFlush();
+    void setFdbFlushByPort(char *msg);
+    void setIntfMac(char *msg);
+    void setFdbEntry(char *msg, int msg_len);
+    ssize_t  getFdbChange(char *msg_buf);
+    void connectionLostHandlePortIsolate();
+    void connectionLostHandlePortLearnMode();
+    void connectionLost();
 };
 
 }

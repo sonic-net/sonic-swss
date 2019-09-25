@@ -39,12 +39,11 @@ int main(int argc, char **argv)
     ProducerStateTable tnl_tbl(&appl_db, APP_VXLAN_TUNNEL_TABLE_NAME);
     ProducerStateTable intf_tbl(&appl_db, APP_INTF_TABLE_NAME);
     ProducerStateTable fdb_tbl(&appl_db, APP_FDB_TABLE_NAME);
-    ProducerStateTable acl_tbl(&appl_db, APP_ACL_TABLE_TABLE_NAME);
+    ProducerStateTable acl_table_tbl(&appl_db, APP_ACL_TABLE_TABLE_NAME);
     ProducerStateTable acl_rule_tbl(&appl_db, APP_ACL_RULE_TABLE_NAME);
-    RedisClient redisClient_2_asicDb(&asic_db);
-    RedisClient redisClient_2_countersDb(&counters_db);
+    RedisClient redisClient_to_asicDb(&asic_db);
+    RedisClient redisClient_to_countersDb(&counters_db);
     map <string, string> isolate;
-    map <string, string> learn_mode;
     RedisPipeline pipeline(&appl_db);
     set <mclag_fdb> old_fdb;
 
@@ -55,17 +54,16 @@ int main(int argc, char **argv)
             MclagLink mclag;
             Select s;
 
-            mclag.p_learn = &learn_mode;
             mclag.p_port_tbl = &port_tbl;
             mclag.p_lag_tbl = &lag_tbl;
             mclag.p_tnl_tbl = &tnl_tbl;
             mclag.p_intf_tbl = &intf_tbl;
             mclag.p_fdb_tbl = &fdb_tbl;
-            mclag.p_acl_tbl = &acl_tbl;
+            mclag.p_acl_table_tbl = &acl_table_tbl;
             mclag.p_acl_rule_tbl = &acl_rule_tbl;
             mclag.p_appl_db = &appl_db;
-            mclag.p_redisClient_2_asic = &redisClient_2_asicDb;
-            mclag.p_redisClient_2_counters = &redisClient_2_countersDb;
+            mclag.p_redisClient_to_asic = &redisClient_to_asicDb;
+            mclag.p_redisClient_to_counters = &redisClient_to_countersDb;
             mclag.p_old_fdb = &old_fdb;
 
             cout << "Waiting for connection..." << endl;

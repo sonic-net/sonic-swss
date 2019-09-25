@@ -35,36 +35,10 @@
 using namespace swss;
 using namespace std;
 
-vector<string> string_split(const string& s, const string& delim)
-{
-    vector<string> elems;
-    size_t pos = 0;
-    size_t len = s.length();
-    size_t delim_len = delim.length();
-
-    if (delim_len == 0)
-        return elems;
-
-    while (pos < len)
-    {
-        size_t find_pos = s.find(delim, pos);
-
-        if (find_pos == string::npos)
-        {
-            elems.push_back(s.substr(pos, len - pos));
-            break;
-        }
-        elems.push_back(s.substr(pos, find_pos - pos));
-        pos = find_pos + delim_len;
-    }
-
-    return elems;
-}
-
-void MclagLink::mclagsyncd_get_oid_2_port_name_map(std::unordered_map<std::string, std:: string> & port_map)
+void MclagLink::getOidToPortNameMap(std::unordered_map<std::string, std:: string> & port_map)
 {
     std::unordered_map<std::string, std:: string>::iterator it;
-    auto hash = p_redisClient_2_counters->hgetall("COUNTERS_PORT_NAME_MAP");
+    auto hash = p_redisClient_to_counters->hgetall("COUNTERS_PORT_NAME_MAP");
 
     for (it = hash.begin(); it != hash.end(); ++it)
         port_map.insert(pair<string, string>(it->second, it->first));
@@ -72,21 +46,21 @@ void MclagLink::mclagsyncd_get_oid_2_port_name_map(std::unordered_map<std::strin
     return;
 }
 
-void MclagLink::mclagsyncd_get_bridgePortId_2_attrPortId_map(std::map<std::string, std:: string> *oid_map)
+void MclagLink::getBridgePortIdToAttrPortIdMap(std::map<std::string, std:: string> *oid_map)
 {
     std::string bridge_port_id;
     size_t pos1 = 0;
 
     std::unordered_map<string, string>::iterator attr_port_id;
 
-    auto keys = p_redisClient_2_asic->keys("ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT:*");
+    auto keys = p_redisClient_to_asic->keys("ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT:*");
 
     for (auto& key : keys)
     {
         pos1 = key.find("oid:", 0);
         bridge_port_id = key.substr(pos1);
 
-        auto hash = p_redisClient_2_asic->hgetall(key);
+        auto hash = p_redisClient_to_asic->hgetall(key);
         attr_port_id = hash.find("SAI_BRIDGE_PORT_ATTR_PORT_ID");
         if (attr_port_id == hash.end())
         {
@@ -101,13 +75,13 @@ void MclagLink::mclagsyncd_get_bridgePortId_2_attrPortId_map(std::map<std::strin
     return;
 }
 
-void MclagLink::mclagsyncd_get_vid_by_bvid(std::string &bvid, std::string &vlanid)
+void MclagLink::getVidByBvid(std::string &bvid, std::string &vlanid)
 {
     std::unordered_map<std::string, std::string>::iterator attr_vlan_id;
     std::string pre = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN:";
     std::string key = pre + bvid;
 
-    auto hash = p_redisClient_2_asic->hgetall(key.c_str());
+    auto hash = p_redisClient_to_asic->hgetall(key.c_str());
 
     attr_vlan_id = hash.find("SAI_VLAN_ATTR_VLAN_ID");
     if (attr_vlan_id == hash.end())
@@ -117,7 +91,7 @@ void MclagLink::mclagsyncd_get_vid_by_bvid(std::string &bvid, std::string &vlani
     return;
 }
 
-void MclagLink::mclagsyncd_get_fdb_set(std::set<mclag_fdb> *fdb_set)
+void MclagLink::getFdbSet(std::set<mclag_fdb> *fdb_set)
 {
     string bvid;
     string bri_port_id;
@@ -128,14 +102,14 @@ void MclagLink::mclagsyncd_get_fdb_set(std::set<mclag_fdb> *fdb_set)
     int vid;
     size_t pos1 = 0;
     size_t pos2 = 0;
-    std::unordered_map<std::string, std:: string> oid_2_portname_map;
-    std::map<std::string, std:: string> brPortId_2_attrPortId_map;
+    std::unordered_map<std::string, std:: string> oid_to_portname_map;
+    std::map<std::string, std:: string> brPortId_to_attrPortId_map;
     std::unordered_map<std::string, std::string>::iterator type_it;
     std::unordered_map<std::string, std::string>::iterator brPortId_it;
-    std::map<std::string, std::string>::iterator brPortId_2_attrPortId_it;
-    std::unordered_map<std::string, std::string>::iterator oid_2_portName_it;
+    std::map<std::string, std::string>::iterator brPortId_to_attrPortId_it;
+    std::unordered_map<std::string, std::string>::iterator oid_to_portName_it;
 
-    auto keys = p_redisClient_2_asic->keys("ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY:*");
+    auto keys = p_redisClient_to_asic->keys("ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY:*");
 
     for (auto& key : keys)
     {
@@ -152,7 +126,7 @@ void MclagLink::mclagsyncd_get_fdb_set(std::set<mclag_fdb> *fdb_set)
             pos1 = key.find("oid:", 0);
             pos2 = key.find(",", 0) - 2;
             bvid = key.substr(pos1, pos2 - pos1 + 1);
-            mclagsyncd_get_vid_by_bvid(bvid, vlanid);
+            getVidByBvid(bvid, vlanid);
         }
 
         vid = atoi(vlanid.c_str());
@@ -162,7 +136,7 @@ void MclagLink::mclagsyncd_get_fdb_set(std::set<mclag_fdb> *fdb_set)
         mac = key.substr(pos1, pos2 - pos1 + 1);
 
         /*get type*/
-        auto hash = p_redisClient_2_asic->hgetall(key);
+        auto hash = p_redisClient_to_asic->hgetall(key);
         type_it = hash.find("SAI_FDB_ENTRY_ATTR_TYPE");
         if (type_it == hash.end())
         {
@@ -175,26 +149,8 @@ void MclagLink::mclagsyncd_get_fdb_set(std::set<mclag_fdb> *fdb_set)
             type = "static";
 
         /*get port name*/
-        mclagsyncd_get_oid_2_port_name_map(oid_2_portname_map);
-#if 0
-        SWSS_LOG_NOTICE("oid_2_portname_map:");
-        {
-            std::unordered_map<std::string, std:: string>::iterator it;
-
-            for (it = oid_2_portname_map.begin(); it != oid_2_portname_map.end(); ++it)
-                SWSS_LOG_NOTICE("%s vs %s", it->first.c_str(), it->second.c_str());
-        }
-#endif
-        mclagsyncd_get_bridgePortId_2_attrPortId_map(&brPortId_2_attrPortId_map);
-#if 0
-        SWSS_LOG_NOTICE("brPortId_2_attrPortId_map:");
-        {
-            std::map<std::string, std:: string>::iterator it;
-
-            for (it = brPortId_2_attrPortId_map.begin(); it != brPortId_2_attrPortId_map.end(); ++it)
-                SWSS_LOG_NOTICE("%s vs %s", it->first.c_str(), it->second.c_str());
-        }
-#endif
+        getOidToPortNameMap(oid_to_portname_map);
+        getBridgePortIdToAttrPortIdMap(&brPortId_to_attrPortId_map);
         brPortId_it = hash.find("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID");
         if (brPortId_it == hash.end())
         {
@@ -202,29 +158,29 @@ void MclagLink::mclagsyncd_get_fdb_set(std::set<mclag_fdb> *fdb_set)
         }
         bri_port_id = brPortId_it->second;
 
-        brPortId_2_attrPortId_it = brPortId_2_attrPortId_map.find(bri_port_id);
-        if (brPortId_2_attrPortId_it == brPortId_2_attrPortId_map.end())
+        brPortId_to_attrPortId_it = brPortId_to_attrPortId_map.find(bri_port_id);
+        if (brPortId_to_attrPortId_it == brPortId_to_attrPortId_map.end())
         {
             continue;
         }
 
-        oid_2_portName_it = oid_2_portname_map.find(brPortId_2_attrPortId_it->second);
-        if (oid_2_portName_it == oid_2_portname_map.end())
+        oid_to_portName_it = oid_to_portname_map.find(brPortId_to_attrPortId_it->second);
+        if (oid_to_portName_it == oid_to_portname_map.end())
         {
             continue;
         }
 
-        port_name = oid_2_portName_it->second;
+        port_name = oid_to_portName_it->second;
 
         /*insert set*/
-        SWSS_LOG_NOTICE("read one fdb entry(mac:%s, vid:%d, port_name:%s, type:%s) from ASIC_DB and insert new_set.", mac.c_str(), vid, port_name.c_str(), type.c_str());
+        SWSS_LOG_DEBUG("read one fdb entry(mac:%s, vid:%d, port_name:%s, type:%s) from ASIC_DB and insert new_set.", mac.c_str(), vid, port_name.c_str(), type.c_str());
         fdb_set->insert(mclag_fdb(mac, vid, port_name, type));
     }
 
     return;
 }
 
-void MclagLink::mclagsyncd_set_port_isolate(char *msg)
+void MclagLink::setPortIsolate(char *msg)
 {
     mclag_sub_option_hdr_t *op_hdr = NULL;
     string isolate_src_port;
@@ -252,12 +208,10 @@ void MclagLink::mclagsyncd_set_port_isolate(char *msg)
     cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
     isolate_dst_port.insert(0, (const char*)cur, op_hdr->op_len);
 
-    SWSS_LOG_NOTICE("Enter mclagsyncd_set_port_isolate");
-
     if (op_hdr->op_len == 0)
     {
         /* If dst port is NULL, delete the acl table 'mclag' */
-        p_acl_tbl->del(acl_name);
+        p_acl_table_tbl->del(acl_name);
         acl_table_is_added = 0;
         SWSS_LOG_NOTICE("set port isolate, src port: %s, dst port is NULL",
                         isolate_src_port.c_str());
@@ -279,7 +233,7 @@ void MclagLink::mclagsyncd_set_port_isolate(char *msg)
         FieldValueTuple port_attr("ports", isolate_src_port);
         acl_attrs.push_back(port_attr);
 
-        p_acl_tbl->set(acl_name, acl_attrs);
+        p_acl_table_tbl->set(acl_name, acl_attrs);
 
         acl_table_is_added = 1;
         /*End create ACL table*/
@@ -301,14 +255,12 @@ void MclagLink::mclagsyncd_set_port_isolate(char *msg)
     return;
 }
 
-void MclagLink::mclagsyncd_set_port_mac_learn_mode(char *msg)
+void MclagLink::setPortMacLearnMode(char *msg)
 {
     string learn_port;
     string learn_mode;
     mclag_sub_option_hdr_t *op_hdr = NULL;
     char * cur = NULL;
-    map<string, string>::iterator it;
-    size_t index = 0;
 
     cur = msg;
 
@@ -327,35 +279,24 @@ void MclagLink::mclagsyncd_set_port_mac_learn_mode(char *msg)
 
     learn_port.insert(0, (const char*)cur, op_hdr->op_len);
 
-    std::vector<string> res = string_split(learn_port, ",");
+    vector<FieldValueTuple> attrs;
+    FieldValueTuple learn_attr("learn_mode", learn_mode);
+    attrs.push_back(learn_attr);
+    if (strncmp(learn_port.c_str(), PORTCHANNEL_PREFIX, strlen(PORTCHANNEL_PREFIX)) == 0)
+        p_lag_tbl->set(learn_port, attrs);
+    /*vxlan tunnel dont supported currently, for src_ip is the mandatory attribute*/
+    /*else if(strncmp(learn_port.c_str(),VXLAN_TUNNEL_PREFIX,5)==0)
+        p_tnl_tbl->set(learn_port, attrs); */
+    else
+        p_port_tbl->set(learn_port, attrs);
 
-    for (index = 0; index < res.size(); ++index)
-    {
-        it = p_learn->find(res[index]);
-        if (it == p_learn->end())
-            p_learn->insert(pair<string, string>(res[index], learn_mode));
-        else
-            it->second = learn_mode;
-
-        vector<FieldValueTuple> attrs;
-        FieldValueTuple learn_attr("learn_mode", learn_mode);
-        attrs.push_back(learn_attr);
-        if (strncmp(res[index].c_str(), PORTCHANNEL_PREFIX, strlen(PORTCHANNEL_PREFIX)) == 0)
-            p_lag_tbl->set(res[index], attrs);
-        /*vxlan tunnel dont supported currently, for src_ip is the mandatory attribute*/
-        /*else if(strncmp(res[index].c_str(),VXLAN_TUNNEL_PREFIX,5)==0)
-            p_tnl_tbl->set(res[index], attrs); */
-        else
-            p_port_tbl->set(res[index], attrs);
-
-        SWSS_LOG_NOTICE("set port mac learn mode, port: %s, learn-mode: %s",
-                        res[index].c_str(), learn_mode.c_str());
-    }
+    SWSS_LOG_NOTICE("set port mac learn mode, port: %s, learn-mode: %s",
+                    learn_port.c_str(), learn_mode.c_str());
 
     return;
 }
 
-void MclagLink::mclagsyncd_set_fdb_flush()
+void MclagLink::setFdbFlush()
 {
     swss::NotificationProducer flushFdb(p_appl_db, "FLUSHFDBREQUEST");
 
@@ -368,7 +309,7 @@ void MclagLink::mclagsyncd_set_fdb_flush()
     return;
 }
 
-void MclagLink::mclagsyncd_set_fdb_flush_by_port(char *msg)
+void MclagLink::setFdbFlushByPort(char *msg)
 {
     string port;
     char *cur = NULL;
@@ -389,7 +330,7 @@ void MclagLink::mclagsyncd_set_fdb_flush_by_port(char *msg)
     return;
 }
 
-void MclagLink::mclagsyncd_set_intf_mac(char *msg)
+void MclagLink::setIntfMac(char *msg)
 {
     mclag_sub_option_hdr_t *op_hdr = NULL;
     string intf_key;
@@ -419,7 +360,7 @@ void MclagLink::mclagsyncd_set_intf_mac(char *msg)
     return;
 }
 
-void MclagLink::mclagsyncd_set_fdb_entry(char *msg, int msg_len)
+void MclagLink::setFdbEntry(char *msg, int msg_len)
 {
     struct mclag_fdb_info * fdb_info = NULL;
     struct mclag_fdb fdb;
@@ -453,9 +394,6 @@ void MclagLink::mclagsyncd_set_fdb_entry(char *msg, int msg_len)
         else
             exist = 1;
 
-        if (exist)
-            SWSS_LOG_NOTICE("found fdb entry from old_set");
-
         snprintf(key, 64, "%s%d:%s", "Vlan", fdb_info->vid, fdb_info->mac);
         fdb_key = key;
 
@@ -479,6 +417,12 @@ void MclagLink::mclagsyncd_set_fdb_entry(char *msg, int msg_len)
             }
             else
             {
+                if (it->port_name == fdb.port_name && it->type == fdb.type)
+                {
+                    SWSS_LOG_NOTICE("All items of mac is same (mac =%s, vid =%d, portname :%s ==> %s, type:%s ==>%s), return.",
+                                fdb.mac.c_str(), fdb.vid, it->port_name.c_str(), fdb.port_name.c_str(), it->type.c_str(), fdb.type.c_str());
+                    return;
+                }
                 SWSS_LOG_NOTICE("modify node(mac =%s, vid =%d, portname :%s ==> %s, type:%s ==>%s)",
                                 fdb.mac.c_str(), fdb.vid, it->port_name.c_str(), fdb.port_name.c_str(), it->type.c_str(), fdb.type.c_str());
                 p_old_fdb->erase(it);
@@ -497,9 +441,9 @@ void MclagLink::mclagsyncd_set_fdb_entry(char *msg, int msg_len)
         {
             if (exist)
             {
-                p_old_fdb->erase(it);
                 SWSS_LOG_NOTICE("erase node(portname =%s, mac =%s, vid =%d, type =%s) from old_fdb_set",
                                 it->port_name.c_str(), it->mac.c_str(), it->vid, it->type.c_str());
+                p_old_fdb->erase(it);
             }
             p_fdb_tbl->del(fdb_key);
             SWSS_LOG_NOTICE("del fdb entry from ASIC_DB:key =%s", fdb_key.c_str());
@@ -509,7 +453,7 @@ void MclagLink::mclagsyncd_set_fdb_entry(char *msg, int msg_len)
     return;
 }
 
-ssize_t  MclagLink::mclagsyncd_get_fdb_changes(char *msg_buf)
+ssize_t  MclagLink::getFdbChange(char *msg_buf)
 {
     set <mclag_fdb> new_fdb;
     set <mclag_fdb> del_fdb;
@@ -527,7 +471,7 @@ ssize_t  MclagLink::mclagsyncd_get_fdb_changes(char *msg_buf)
 
     infor_len = infor_len + sizeof(mclag_msg_hdr_t);
 
-    mclagsyncd_get_fdb_set(p_new_fdb);
+    getFdbSet(p_new_fdb);
 
     set_difference(p_old_fdb->begin(), p_old_fdb->end(), p_new_fdb->begin(),
                    p_new_fdb->end(), inserter(del_fdb, del_fdb.begin()));
@@ -731,31 +675,31 @@ void MclagLink::readData()
         switch (hdr->msg_type)
         {
             case MCLAG_MSG_TYPE_PORT_ISOLATE:
-                mclagsyncd_set_port_isolate(msg);
+                setPortIsolate(msg);
                 break;
 
             case MCLAG_MSG_TYPE_PORT_MAC_LEARN_MODE:
-                mclagsyncd_set_port_mac_learn_mode(msg);
+                setPortMacLearnMode(msg);
                 break;
 
             case MCLAG_MSG_TYPE_FLUSH_FDB:
-                mclagsyncd_set_fdb_flush();
+                setFdbFlush();
                 break;
 
             case MCLAG_MSG_TYPE_FLUSH_FDB_BY_PORT:
-                mclagsyncd_set_fdb_flush_by_port(msg);
+                setFdbFlushByPort(msg);
                 break;
 
             case MCLAG_MSG_TYPE_SET_INTF_MAC:
-                mclagsyncd_set_intf_mac(msg);
+                setIntfMac(msg);
                 break;
 
             case MCLAG_MSG_TYPE_SET_FDB:
-                mclagsyncd_set_fdb_entry(msg, (int)(hdr->msg_len - sizeof(mclag_msg_hdr_t)));
+                setFdbEntry(msg, (int)(hdr->msg_len - sizeof(mclag_msg_hdr_t)));
                 break;
 
             case MCLAG_MSG_TYPE_GET_FDB_CHANGES:
-                write = mclagsyncd_get_fdb_changes(m_messageBuffer_send);
+                write = getFdbChange(m_messageBuffer_send);
                 if (write == 0)
                     throw MclagConnectionClosedException();
                 if (write < 0)
