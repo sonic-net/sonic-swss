@@ -8,10 +8,10 @@ class NextHopGroupKey
 public:
     NextHopGroupKey() = default;
 
-    /* ip_string|if_alias separated by ',' */
+    /* ip_string@if_alias separated by ',' */
     NextHopGroupKey(const std::string &nexthops)
     {
-        auto nhv = tokenize(nexthops, ',');
+        auto nhv = tokenize(nexthops, NHG_DELIMITER);
         for (const auto &nh : nhv)
         {
             m_nexthops.insert(nh);
@@ -110,7 +110,7 @@ public:
         {
             if (it != m_nexthops.begin())
             {
-                nhs_str += ",";
+                nhs_str += NHG_DELIMITER;
             }
 
             nhs_str += it->to_string();

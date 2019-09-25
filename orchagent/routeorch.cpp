@@ -402,10 +402,10 @@ void RouteOrch::doTask(Consumer& consumer)
                 continue;
             }
 
-            string nhg_str = ipv[0] + "|" + alsv[0];
+            string nhg_str = ipv[0] + NH_DELIMITER + alsv[0];
             for (uint32_t i = 1; i < ipv.size(); i++)
             {
-                nhg_str += "," + ipv[i] + "|" + alsv[i];
+                nhg_str += NHG_DELIMITER + ipv[i] + NH_DELIMITER + alsv[i];
             }
 
             NextHopGroupKey nhg(nhg_str);

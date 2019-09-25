@@ -4,6 +4,8 @@
 #include "ipaddress.h"
 #include "tokenize.h"
 
+#define NH_DELIMITER '@'
+#define NHG_DELIMITER ','
 #define VRF_PREFIX "Vrf"
 extern IntfsOrch *gIntfsOrch;
 
@@ -17,12 +19,12 @@ struct NextHopKey
     NextHopKey(const IpAddress &ip, const std::string &alias) : ip_address(ip), alias(alias) {}
     NextHopKey(const std::string &str)
     {
-        if (str.find(',') != string::npos)
+        if (str.find(NHG_DELIMITER) != string::npos)
         {
             std::string err = "Error converting " + str + " to NextHop";
             throw std::invalid_argument(err);
         }
-        auto keys = tokenize(str, '|');
+        auto keys = tokenize(str, NH_DELIMITER);
         if (keys.size() == 1)
         {
             ip_address = keys[0];
@@ -45,7 +47,7 @@ struct NextHopKey
     }
     const std::string to_string() const
     {
-        return ip_address.to_string() + "|" + alias;
+        return ip_address.to_string() + NH_DELIMITER + alias;
     }
 
     bool operator<(const NextHopKey &o) const

@@ -457,9 +457,9 @@ Stores rules associated with a specific ACL table on the switch.
                                                : name of physical port.          Example: "Ethernet10"
                                                : name of LAG port                Example: "PortChannel5"
                                                : next-hop ip address (in global) Example: "10.0.0.1"
-                                               : next-hop ip address and vrf     Example: "10.0.0.2|Vrf2"
-                                               : next-hop ip address and ifname  Example: "10.0.0.3|Ethernet1"
-                                               : next-hop group set of next-hop  Example: "10.0.0.1,10.0.0.3|Ethernet1"
+                                               : next-hop ip address and vrf     Example: "10.0.0.2@Vrf2"
+                                               : next-hop ip address and ifname  Example: "10.0.0.3@Ethernet1"
+                                               : next-hop group set of next-hop  Example: "10.0.0.1,10.0.0.3@Ethernet1"
 
     redirect_action = 1*255CHAR                ; redirect parameter
                                                ; This parameter defines a destination for redirected packets
