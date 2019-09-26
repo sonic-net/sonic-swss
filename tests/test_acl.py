@@ -1215,62 +1215,18 @@ class TestAcl(BaseTestAcl):
 
         self.remove_acl_table(acl_table)
 
-    def set_admin_status(self, interface, status):
-        tbl = swsscommon.Table(self.cdb, "PORT")
-        fvs = swsscommon.FieldValuePairs([("admin_status", status)])
-        tbl.set(interface, fvs)
-        time.sleep(1)
-
-    def create_l3_intf(self, interface, vrf_name):
-        tbl = swsscommon.Table(self.cdb, "INTERFACE")
-        if len(vrf_name) == 0:
-            fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
-        else:
-            fvs = swsscommon.FieldValuePairs([("vrf_name", vrf_name)])
-        tbl.set(interface, fvs)
-        time.sleep(1)
-
-    def remove_l3_intf(self, interface):
-        tbl = swsscommon.Table(self.cdb, "INTERFACE")
-        tbl._del(interface)
-        time.sleep(1)
-
-    def add_ip_address(self, interface, ip):
-        tbl = swsscommon.Table(self.cdb, "INTERFACE")
-        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
-        tbl.set(interface + "|" + ip, fvs)
-        time.sleep(1)
-
-    def remove_ip_address(self, interface, ip):
-        tbl = swsscommon.Table(self.cdb, "INTERFACE")
-        tbl._del(interface + "|" + ip)
-        time.sleep(1)
-
-    def add_neighbor(self, interface, ip, mac):
-        tbl = swsscommon.Table(self.cdb, "NEIGH")
-        fvs = swsscommon.FieldValuePairs([("neigh", mac)])
-        tbl.set(interface + "|" + ip, fvs)
-        time.sleep(1)
-
-    def remove_neighbor(self, interface, ip):
-        tbl = swsscommon.Table(self.cdb, "NEIGH")
-        tbl._del(interface + "|" + ip)
-        time.sleep(1)
-
     def test_AclRuleRedirectToNexthop(self, dvs, testlog):
+        dvs.setup_db()
         self.setup_db(dvs)
 
         # bring up interface
-        self.set_admin_status("Ethernet4", "up")
-
-        # create interface
-        self.create_l3_intf("Ethernet4", "")
+        dvs.set_interface_status("Ethernet4", "up")
 
         # assign IP to interface
-        self.add_ip_address("Ethernet4", "10.0.0.1/24")
+        dvs.add_ip_address("Ethernet4", "10.0.0.1/24")
 
         # add neighbor
-        self.add_neighbor("Ethernet4", "10.0.0.2", "00:01:02:03:04:05")
+        dvs.add_neighbor("Ethernet4", "10.0.0.2", "00:01:02:03:04:05")
 
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
         keys = atbl.getKeys()
@@ -1289,7 +1245,7 @@ class TestAcl(BaseTestAcl):
         fvs = swsscommon.FieldValuePairs([
                                         ("priority", "100"),
                                         ("L4_SRC_PORT", "65000"),
-                                        ("PACKET_ACTION", "REDIRECT:10.0.0.2|Ethernet4")])
+                                        ("PACKET_ACTION", "REDIRECT:10.0.0.2@Ethernet4")])
         tbl.set("test_redirect|test_rule1", fvs)
 
         time.sleep(1)
@@ -1340,16 +1296,13 @@ class TestAcl(BaseTestAcl):
         assert len(keys) >= 1
 
         # remove neighbor
-        self.remove_neighbor("Ethernet4", "10.0.0.2")
+        dvs.remove_neighbor("Ethernet4", "10.0.0.2")
 
         # remove interface ip
-        self.remove_ip_address("Ethernet4", "10.0.0.1/24")
-
-        # remove interface
-        self.remove_l3_intf("Ethernet4")
+        dvs.remove_ip_address("Ethernet4", "10.0.0.1/24")
 
         # bring down interface
-        self.set_admin_status("Ethernet4", "down")
+        dvs.set_interface_status("Ethernet4", "down")
 
 class TestAclRuleValidation(BaseTestAcl):
     """ Test class for cases that check if orchagent corectly validates

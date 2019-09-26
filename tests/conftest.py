@@ -758,6 +758,11 @@ class DockerVirtualSwitch(object):
         tbl.set(interface + ":" + ip, fvs)
         time.sleep(1)
 
+    def remove_neighbor(self, interface, ip):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "NEIGH_TABLE")
+        tbl._del(interface + ":" + ip)
+        time.sleep(1)
+
     def setup_db(self):
         self.pdb = swsscommon.DBConnector(0, self.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, self.redis_sock, 0)
