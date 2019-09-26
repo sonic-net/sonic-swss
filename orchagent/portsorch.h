@@ -91,6 +91,7 @@ public:
     bool removeAclTableGroup(const Port &p);
 private:
     unique_ptr<Table> m_counterTable;
+    unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_vlanTable;
     unique_ptr<Table> m_queueTable;

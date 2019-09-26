@@ -150,6 +150,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     /* Initialize counter table */
     m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
     m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
+    m_counterLagTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_LAG_NAME_MAP));
 
     /* Initialize port and vlan table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
@@ -3025,7 +3026,7 @@ bool PortsOrch::addLag(string lag_alias)
     FieldValueTuple tuple(lag_alias, sai_serialize_object_id(lag_id));
     vector<FieldValueTuple> fields;
     fields.push_back(tuple);
-    m_counterTable->set("",fields);
+    m_counterLagTable->set("", fields);
 
     PortUpdate update = { lag, true };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
@@ -3073,7 +3074,7 @@ bool PortsOrch::removeLag(Port lag)
     SWSS_LOG_NOTICE("Remove LAG %s lid:%lx", lag.m_alias.c_str(), lag.m_lag_id);
 
     /* Remove LAG name map from counter table */
-    m_counterTable->hdel("",lag.m_alias.c_str());
+    m_counterLagTable->hdel("", lag.m_alias.c_str());
 
     portOidToName.erase(lag.m_lag_id);
     m_portList.erase(lag.m_alias);
