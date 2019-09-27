@@ -129,18 +129,6 @@ static acl_ip_type_lookup_t aclIpTypeLookup =
     { IP_TYPE_ARP_REPLY,   SAI_ACL_IP_TYPE_ARP_REPLY }
 };
 
-inline string trim(const std::string& str, const std::string& whitespace = " \t")
-{
-    const auto strBegin = str.find_first_not_of(whitespace);
-    if (strBegin == std::string::npos)
-        return "";
-
-    const auto strEnd = str.find_last_not_of(whitespace);
-    const auto strRange = strEnd - strBegin + 1;
-
-    return str.substr(strBegin, strRange);
-}
-
 AclRule::AclRule(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
         m_pAclOrch(aclOrch),
         m_id(rule),
@@ -246,40 +234,19 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if (attr_name == MATCH_TCP_FLAGS)
         {
-            vector<string> flagsData;
-            string flags, mask;
-            int val;
-            char *endp = NULL;
-            errno = 0;
+            // Support both exact value match and value/mask match
+            auto flag_data = tokenize(attr_value, '/');
 
-            split(attr_value, flagsData, '/');
+            value.aclfield.data.u8 = to_uint<uint8_t>(flag_data[0], 0, 0x3F);
 
-            if (flagsData.size() != 2) // expect two parts flags and mask separated with '/'
+            if (flag_data.size() == 2)
             {
-                SWSS_LOG_ERROR("Invalid TCP flags format %s", attr_value.c_str());
-                return false;
+                value.aclfield.mask.u8 = to_uint<uint8_t>(flag_data[1], 0, 0x3F);
             }
-
-            flags = trim(flagsData[0]);
-            mask = trim(flagsData[1]);
-
-            val = (uint32_t)strtol(flags.c_str(), &endp, 0);
-            if (errno || (endp != flags.c_str() + flags.size()) ||
-                (val < 0) || (val > UCHAR_MAX))
+            else
             {
-                SWSS_LOG_ERROR("TCP flags parse error, value: %s(=%d), errno: %d", flags.c_str(), val, errno);
-                return false;
+                value.aclfield.mask.u8 = 0x3F;
             }
-            value.aclfield.data.u8 = (uint8_t)val;
-
-            val = (uint32_t)strtol(mask.c_str(), &endp, 0);
-            if (errno || (endp != mask.c_str() + mask.size()) ||
-                (val < 0) || (val > UCHAR_MAX))
-            {
-                SWSS_LOG_ERROR("TCP mask parse error, value: %s(=%d), errno: %d", mask.c_str(), val, errno);
-                return false;
-            }
-            value.aclfield.mask.u8 = (uint8_t)val;
         }
         else if (attr_name == MATCH_ETHER_TYPE || attr_name == MATCH_L4_SRC_PORT || attr_name == MATCH_L4_DST_PORT)
         {
