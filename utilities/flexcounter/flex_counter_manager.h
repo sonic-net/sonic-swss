@@ -34,8 +34,8 @@ class FlexCounterManager
         FlexCounterManager(const string &group_name,
                            const FlexCounterStatsMode stats_mode,
                            const int polling_interval);
-        DebugCounter(const DebugCounter&) = delete;
-        DebugCounter& operator=(const DebugCounter&) = delete;
+        FlexCounterManager(const FlexCounterManager&) = delete;
+        FlexCounterManager& operator=(const FlexCounterManager&) = delete;
         ~FlexCounterManager();
 
         void addFlexCounterStat(const FlexCounterType counter_type,
@@ -51,6 +51,7 @@ class FlexCounterManager
         string group_name;
         FlexCounterStatsMode stats_mode;
         int polling_interval;
+        bool status;
 
         unordered_map<sai_object_id_t, unordered_set<string>> object_stats;
 

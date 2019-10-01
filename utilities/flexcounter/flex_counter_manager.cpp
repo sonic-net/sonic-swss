@@ -23,6 +23,7 @@ FlexCounterManager::FlexCounterManager(const string &group_name,
     SWSS_LOG_ENTER();
     createFlexCounterGroup(flex_counter_group_table.get(), group_name,
             stats_mode, polling_interval);
+    status = false;
 }
 
 // ~FlexCounterManager tears down this FlexCounterManager. It will handle the
@@ -54,9 +55,16 @@ void FlexCounterManager::addFlexCounterStat(const FlexCounterType counter_type,
             counter_stats->second.emplace(counter_stat);
         }
 
+        SWSS_LOG_DEBUG("Adding flex stat '%s' to object '%s'", counter_stat.c_str(), sai_serialize_object_id(object_id).c_str());
         string flex_counter_stats = serializeCounterStats(counter_stats->second);
         setCounterIdList(flex_counter_table.get(), group_name, counter_type, 
                 object_id, flex_counter_stats);
+    }
+
+    if (!status && !object_stats.empty())
+    {
+        SWSS_LOG_DEBUG("New flex counter stats, enabling flex counter group '%s'", group_name.c_str());
+        enableFlexCounters(flex_counter_group_table.get(), group_name);
     }
 }
 
@@ -73,7 +81,7 @@ void FlexCounterManager::removeFlexCounterStat(const FlexCounterType counter_typ
         auto counter_stats = object_stats.find(object_id);
         if (counter_stats == object_stats.end()) 
         {
-            // TODO: add debug log
+            SWSS_LOG_DEBUG("Could not find flex stat '%s' on object '%s'", counter_stat.c_str(), sai_serialize_object_id(object_id).c_str());
             continue;
         }
 
@@ -83,16 +91,23 @@ void FlexCounterManager::removeFlexCounterStat(const FlexCounterType counter_typ
         // counter entirely.
         if (counter_stats->second.empty())
         {
-            // TODO: add debug log
+            SWSS_LOG_DEBUG("Flex stat is empty, removing flex counter from object '%s'", sai_serialize_object_id(object_id).c_str());
             object_stats.erase(counter_stats);
             removeFlexCounter(flex_counter_table.get(), group_name, object_id);
             continue;
         }
 
+        SWSS_LOG_DEBUG("Removing flex stat '%s' from object '%s'", counter_stat.c_str(), sai_serialize_object_id(object_id).c_str());
         string flex_counter_stats = serializeCounterStats(counter_stats->second);
         setCounterIdList(flex_counter_table.get(), group_name, counter_type, 
                 object_id, flex_counter_stats);
-    } 
+    }
+
+    if (status && object_stats.empty())
+    {
+        SWSS_LOG_DEBUG("No more flex counter stats, disabling flex counter group '%s'", group_name.c_str());
+        disableFlexCounters(flex_counter_group_table.get(), group_name);
+    }
 }
 
 // serializeCounterStats turns a list of stats into a format suitable for FLEX_COUNTER_DB.

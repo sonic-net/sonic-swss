@@ -17,7 +17,8 @@ extern sai_debug_counter_api_t *sai_debug_counter_api;
 // counter_name: The user-assigned name for this counter.
 // counter_type: The type of this counter. If this type is not a member of debug_counter_type_lookup
 //               then this constructor will throw a runtime error.
-DebugCounter::DebugCounter(const string &counter_name, const string &counter_type) : name(counter_name) {
+DebugCounter::DebugCounter(const string &counter_name, const string &counter_type) : name(counter_name)
+{
     SWSS_LOG_ENTER();
 
     auto counter_type_it = debug_counter_type_lookup.find(counter_type);
@@ -30,7 +31,8 @@ DebugCounter::DebugCounter(const string &counter_name, const string &counter_typ
 
 // ~DebugCounter uninitializes this counter.
 // It is expected that derived types delete this counter from the SAI.
-DebugCounter::~DebugCounter() {
+DebugCounter::~DebugCounter()
+{
     SWSS_LOG_ENTER();
 }
 
@@ -42,7 +44,8 @@ DebugCounter::~DebugCounter() {
 // serialized_attributes: A pointer to an array of SAI attributes for this debug counter.
 //                        Behavior is undefined if the length of serialized_attributes is
 //                        less than 1.
-void DebugCounter::serializeDebugCounterMetadata(sai_attribute_t *serialized_attributes) {
+void DebugCounter::serializeDebugCounterMetadata(sai_attribute_t *serialized_attributes)
+{
     SWSS_LOG_ENTER();
 
     auto type_it = debug_counter_type_lookup.find(this->type);
@@ -64,7 +67,8 @@ void DebugCounter::serializeDebugCounterMetadata(sai_attribute_t *serialized_att
 // num_attributes: The number of attributes in debug_counter_attributes. Behavior is undefined if num_attributes
 //                 is not equal to the number of attributes in debug_counter_attributes.
 // debug_counter_attributes: A list of attributes defining the new debug counter object.
-void DebugCounter::addDebugCounterToSAI(const int num_attributes, const sai_attribute_t *debug_counter_attributes) {
+void DebugCounter::addDebugCounterToSAI(const int num_attributes, const sai_attribute_t *debug_counter_attributes)
+{
     SWSS_LOG_ENTER();
 
     SWSS_LOG_DEBUG("Adding debug counter '%s' to SAI", this->name.c_str());
@@ -82,7 +86,8 @@ void DebugCounter::addDebugCounterToSAI(const int num_attributes, const sai_attr
 }
 
 // removeDebugCounterFromSAI deletes a debug counter object from the SAI.
-void DebugCounter::removeDebugCounterFromSAI() {
+void DebugCounter::removeDebugCounterFromSAI()
+{
     SWSS_LOG_ENTER();
 
     SWSS_LOG_DEBUG("Removing debug counter '%s' from SAI", this->name.c_str());

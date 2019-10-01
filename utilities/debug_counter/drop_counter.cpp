@@ -5,6 +5,7 @@
 #include "sai_serialize.h"
 
 using std::unordered_map;
+using std::runtime_error;
 
 extern sai_object_id_t gSwitchId;
 extern sai_debug_counter_api_t *sai_debug_counter_api;
@@ -63,7 +64,7 @@ std::string DropCounter::getDebugCounterSAIStat() const
     if (sai_debug_counter_api->get_debug_counter_attribute(this->counter_id, 1, &index_attribute) != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to get stat for debug counter '%s'", this->name.c_str());
-        throw std::runtime_error("Failed to get debug counter stat");
+        throw runtime_error("Failed to get debug counter stat");
     }
 
     auto index = index_attribute.value.u32;
@@ -86,7 +87,7 @@ std::string DropCounter::getDebugCounterSAIStat() const
     else
     {
         SWSS_LOG_ERROR("No stat found for debug counter '%s' of type '%s'", this->name.c_str(), this->type.c_str());
-        throw std::runtime_error("No stat found for debug counter");
+        throw runtime_error("No stat found for debug counter");
     }
 }
 
@@ -168,7 +169,7 @@ void DropCounter::serializeDropReasons(uint32_t drop_reason_count, int32_t *drop
             if (reason_it == ingress_drop_reason_lookup.end()) 
             {
                 SWSS_LOG_ERROR("Ingress drop reason '%s' not found", drop_reason.c_str());
-                throw std::runtime_error("Ingress drop reason not found");
+                throw runtime_error("Ingress drop reason not found");
             }
 
             drop_reason_list[index++] = static_cast<int32_t>(reason_it->second);
@@ -187,7 +188,7 @@ void DropCounter::serializeDropReasons(uint32_t drop_reason_count, int32_t *drop
                 if (reason_it == egress_drop_reason_lookup.end()) 
                 {
                     SWSS_LOG_ERROR("Egress drop reason '%s' not found", drop_reason.c_str());
-                    throw std::runtime_error("Egress drop reason not found");
+                    throw runtime_error("Egress drop reason not found");
                 }
 
                 drop_reason_list[index++] = static_cast<int32_t>(reason_it->second);
@@ -196,7 +197,7 @@ void DropCounter::serializeDropReasons(uint32_t drop_reason_count, int32_t *drop
     else 
     {
         SWSS_LOG_ERROR("Serialization undefined for drop counter type '%s'", this->type.c_str());
-        throw std::runtime_error("Failed to serialize drop counter attributes");
+        throw runtime_error("Failed to serialize drop counter attributes");
     }
 }
 
@@ -211,7 +212,7 @@ void DropCounter::updateDropReasonsInSAI()
     sai_attribute_t updated_drop_reasons;
     vector<int32_t> drop_reason_list(this->drop_reasons.size());
     this->serializeDropReasons(static_cast<uint32_t>(this->drop_reasons.size()), drop_reason_list.data(), &updated_drop_reasons);
-    if (sai_debug_counter_api->set_debug_counter_attribute(this->counter_id, updated_drop_reasons) != SAI_STATUS_SUCCESS)
+    if (sai_debug_counter_api->set_debug_counter_attribute(this->counter_id, &updated_drop_reasons) != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Could not update drop reasons for drop counter '%s'", this->name.c_str());
         throw runtime_error("Could not update drop reason list");

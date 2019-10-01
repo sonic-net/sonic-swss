@@ -253,7 +253,6 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string &counte
         return task_process_status::task_failed;
     }
 
-    SWSS_LOG_ERROR("Succesfully removed debug counter '%s'", counter_name.c_str());
     return task_process_status::task_success;
 }
 
