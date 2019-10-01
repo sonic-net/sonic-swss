@@ -242,7 +242,7 @@ vector<string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type
                                                    drop_reason_type,
                                                    &drop_reason_list) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("This device does not support querying drop reasons");
+        SWSS_LOG_NOTICE("This device does not support querying drop reasons");
         return {};
     }
 

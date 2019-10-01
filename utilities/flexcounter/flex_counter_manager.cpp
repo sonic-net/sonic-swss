@@ -65,6 +65,7 @@ void FlexCounterManager::addFlexCounterStat(const FlexCounterType counter_type,
     {
         SWSS_LOG_DEBUG("New flex counter stats, enabling flex counter group '%s'", group_name.c_str());
         enableFlexCounters(flex_counter_group_table.get(), group_name);
+        status = true;
     }
 }
 
@@ -107,6 +108,7 @@ void FlexCounterManager::removeFlexCounterStat(const FlexCounterType counter_typ
     {
         SWSS_LOG_DEBUG("No more flex counter stats, disabling flex counter group '%s'", group_name.c_str());
         disableFlexCounters(flex_counter_group_table.get(), group_name);
+        status = false;
     }
 }
 

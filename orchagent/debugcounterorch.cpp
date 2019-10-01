@@ -246,6 +246,7 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string &counte
         {
             m_counterNameToSwitchStatMap->hdel("", counter_name);
         }
+        SWSS_LOG_NOTICE("Succesfully deleted drop counter %s", counter_name.c_str());
     } 
     catch (const std::exception& e) 
     {
@@ -289,6 +290,7 @@ task_process_status DebugCounterOrch::addDropReason(const string &counter_name, 
     {
         DropCounter *counter = dynamic_cast<DropCounter*>(it->second.get());
         counter->addDropReason(drop_reason);
+        SWSS_LOG_NOTICE("Added drop reason %s to drop counter %s", drop_reason.c_str(), counter_name.c_str());
     } 
     catch (const std::exception& e) 
     {
@@ -329,6 +331,7 @@ task_process_status DebugCounterOrch::removeDropReason(const string &counter_nam
         }
 
         counter->removeDropReason(drop_reason);
+        SWSS_LOG_NOTICE("Removed drop reason %s from drop counter %s", drop_reason.c_str(), counter_name.c_str());
     } 
     catch (const std::exception& e) 
     {
@@ -427,6 +430,7 @@ void DebugCounterOrch::reconcileFreeDropCounters(const string &counter_name)
         createDropCounter(counter_name, counter_it->second, reasons_it->second);
         free_drop_counters.erase(counter_it);
         free_drop_reasons.erase(reasons_it);
+        SWSS_LOG_NOTICE("Succesfully created new drop counter %s", counter_name.c_str());
     }
 }
 
