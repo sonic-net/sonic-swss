@@ -4,6 +4,7 @@
 #include "tokenize.h"
 #include "logger.h"
 
+#include <inttypes.h>
 #include <sstream>
 #include <iostream>
 
@@ -60,7 +61,7 @@ static map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"neigh_discovery", SAI_HOSTIF_TRAP_TYPE_IPV6_NEIGHBOR_DISCOVERY},
     {"mld_v1_v2", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_V2},
     {"mld_v1_report", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_REPORT},
-    {"mld_v2_done", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_DONE},
+    {"mld_v1_done", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_DONE},
     {"mld_v2_report", SAI_HOSTIF_TRAP_TYPE_MLD_V2_REPORT},
     {"ip2me", SAI_HOSTIF_TRAP_TYPE_IP2ME},
     {"ssh", SAI_HOSTIF_TRAP_TYPE_SSH},
@@ -277,12 +278,12 @@ sai_object_id_t CoppOrch::getPolicer(string trap_group_name)
     {
         return SAI_NULL_OBJECT_ID;
     }
-    SWSS_LOG_DEBUG("trap group id:%lx", m_trap_group_map[trap_group_name]);
+    SWSS_LOG_DEBUG("trap group id:%" PRIx64, m_trap_group_map[trap_group_name]);
     if (m_trap_group_policer_map.find(m_trap_group_map[trap_group_name]) == m_trap_group_policer_map.end())
     {
         return SAI_NULL_OBJECT_ID;
     }
-    SWSS_LOG_DEBUG("trap group policer id:%lx", m_trap_group_policer_map[m_trap_group_map[trap_group_name]]);
+    SWSS_LOG_DEBUG("trap group policer id:%" PRIx64, m_trap_group_policer_map[m_trap_group_map[trap_group_name]]);
     return m_trap_group_policer_map[m_trap_group_map[trap_group_name]];
 }
 
@@ -456,12 +457,12 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 sai_object_id_t policer_id = getPolicer(trap_group_name);
                 if (SAI_NULL_OBJECT_ID == policer_id)
                 {
-                    SWSS_LOG_WARN("Creating policer for existing Trap group:%lx (name:%s).", m_trap_group_map[trap_group_name], trap_group_name.c_str());
+                    SWSS_LOG_WARN("Creating policer for existing Trap group:%" PRIx64 " (name:%s).", m_trap_group_map[trap_group_name], trap_group_name.c_str());
                     if (!createPolicer(trap_group_name, policer_attribs))
                     {
                         return task_process_status::task_failed;
                     }
-                    SWSS_LOG_DEBUG("Created policer:%lx for existing trap group", policer_id);
+                    SWSS_LOG_DEBUG("Created policer:%" PRIx64 " for existing trap group", policer_id);
                 }
                 else
                 {
@@ -487,7 +488,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 sai_status = sai_hostif_api->set_hostif_trap_group_attribute(m_trap_group_map[trap_group_name], &trap_gr_attr);
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
-                    SWSS_LOG_ERROR("Failed to apply attribute:%d to trap group:%lx, name:%s, error:%d\n", trap_gr_attr.id, m_trap_group_map[trap_group_name], trap_group_name.c_str(), sai_status);
+                    SWSS_LOG_ERROR("Failed to apply attribute:%d to trap group:%" PRIx64 ", name:%s, error:%d\n", trap_gr_attr.id, m_trap_group_map[trap_group_name], trap_group_name.c_str(), sai_status);
                     return task_process_status::task_failed;
                 }
                 SWSS_LOG_NOTICE("Set trap group %s to host interface", trap_group_name.c_str());
@@ -589,7 +590,7 @@ void CoppOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }

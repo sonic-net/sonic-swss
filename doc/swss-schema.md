@@ -459,7 +459,17 @@ Stores rules associated with a specific ACL table on the switch.
                                                : next-hop ip address             Example: "10.0.0.1"
                                                : next-hop group set of addresses Example: "10.0.0.1,10.0.0.3"
 
-    mirror_action = 1*255VCHAR                 ; refer to the mirror session
+    redirect_action = 1*255CHAR                ; redirect parameter
+                                               ; This parameter defines a destination for redirected packets
+                                               ; it could be:
+                                               : name of physical port.          Example: "Ethernet10"
+                                               : name of LAG port                Example: "PortChannel5"
+                                               : next-hop ip address             Example: "10.0.0.1"
+                                               : next-hop group set of addresses Example: "10.0.0.1,10.0.0.3"
+
+    mirror_action = 1*255VCHAR                 ; refer to the mirror session (by default it will be ingress mirror action)
+    mirror_ingress_action = 1*255VCHAR         ; refer to the mirror session
+    mirror_egress_action = 1*255VCHAR          ; refer to the mirror session
 
     ether_type    = h16                        ; Ethernet type field
 
@@ -809,7 +819,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     ;Stores application and orchdameon warm start status
     ;Status: work in progress
 
-    key             = WARM_RESTART_TABLE:process_name         ; process_name is a unique process identifier.
+    key             = WARM_RESTART_TABLE|process_name         ; process_name is a unique process identifier.
                                                               ; with exception of 'warm-shutdown' operation.
                                                               ; 'warm-shutdown' operation key is used to
                                                               ; track warm shutdown stages and results.
@@ -838,6 +848,33 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     ;State for neighbor table restoring process during warm reboot
     key                 = NEIGH_RESTORE_TABLE|Flags
     restored            = "true" / "false" ; restored state
+
+### BGP\_STATE\_TABLE
+    ;Stores bgp status
+    ;Status: work in progress
+
+    key             = BGP_STATE_TABLE|family|eoiu             ; family = "IPv4" / "IPv6"  ; address family.
+
+    state           = "unknown" / "reached" / "consumed"         ; unknown: eoiu state not fetched yet.
+                                                                 ; reached: bgp eoiu done.
+                                                                 ;
+                                                                 ; consumed: the reached state has been consumed by application.
+    timestamp       = time-stamp                                 ; "%Y-%m-%d %H:%M:%S", full-date and partial-time separated by
+                                                                 ; white space.  Example: 2019-04-25 09:39:19
+
+    ;value annotations
+    date-fullyear   = 4DIGIT
+    date-month      = 2DIGIT  ; 01-12
+    date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on
+                              ; month/year
+    time-hour       = 2DIGIT  ; 00-23
+    time-minute     = 2DIGIT  ; 00-59
+    time-second     = 2DIGIT  ; 00-58, 00-59, 00-60 based on leap second
+                              ; rules
+
+    partial-time    = time-hour ":" time-minute ":" time-second
+    full-date       = date-fullyear "-" date-month "-" date-mday
+    time-stamp      = full-date %x20 partial-time
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?

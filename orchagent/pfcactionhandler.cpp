@@ -4,6 +4,7 @@
 #include "sai_serialize.h"
 #include "portsorch.h"
 #include <vector>
+#include <inttypes.h>
 
 #define PFC_WD_QUEUE_STATUS             "PFC_WD_STATUS"
 #define PFC_WD_QUEUE_STATUS_OPERATIONAL "operational"
@@ -334,14 +335,14 @@ PfcWdLossyHandler::PfcWdLossyHandler(sai_object_id_t port, sai_object_id_t queue
 
     if (!gPortsOrch->getPortPfc(port, &pfcMask))
     {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port 0x%lx", port);
+        SWSS_LOG_ERROR("Failed to get PFC mask on port 0x%" PRIx64, port);
     }
 
     pfcMask = static_cast<uint8_t>(pfcMask & ~(1 << queueId));
 
     if (!gPortsOrch->setPortPfc(port, pfcMask))
     {
-        SWSS_LOG_ERROR("Failed to set PFC mask on port 0x%lx", port);
+        SWSS_LOG_ERROR("Failed to set PFC mask on port 0x%" PRIx64, port);
     }
 }
 
@@ -353,14 +354,14 @@ PfcWdLossyHandler::~PfcWdLossyHandler(void)
 
     if (!gPortsOrch->getPortPfc(getPort(), &pfcMask))
     {
-        SWSS_LOG_ERROR("Failed to get PFC mask on port 0x%lx", getPort());
+        SWSS_LOG_ERROR("Failed to get PFC mask on port 0x%" PRIx64, getPort());
     }
 
     pfcMask = static_cast<uint8_t>(pfcMask | (1 << getQueueId()));
 
     if (!gPortsOrch->setPortPfc(getPort(), pfcMask))
     {
-        SWSS_LOG_ERROR("Failed to set PFC mask on port 0x%lx", getPort());
+        SWSS_LOG_ERROR("Failed to set PFC mask on port 0x%" PRIx64, getPort());
     }
 }
 
@@ -391,7 +392,7 @@ bool PfcWdLossyHandler::getHwCounters(PfcWdHwStats& counters)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to fetch queue 0x%lx stats: %d", getQueue(), status);
+        SWSS_LOG_ERROR("Failed to fetch queue 0x%" PRIx64 " stats: %d", getQueue(), status);
         return false;
     }
 
@@ -399,11 +400,11 @@ bool PfcWdLossyHandler::getHwCounters(PfcWdHwStats& counters)
     Port portInstance;
     if (!gPortsOrch->getPort(getPort(), portInstance))
     {
-        SWSS_LOG_ERROR("Cannot get port by ID 0x%lx", getPort());
+        SWSS_LOG_ERROR("Cannot get port by ID 0x%" PRIx64, getPort());
         return false;
     }
 
-    sai_object_id_t pg = portInstance.m_priority_group_ids[getQueueId()];
+    sai_object_id_t pg = portInstance.m_priority_group_ids[static_cast <size_t> (getQueueId())];
     vector<uint64_t> pgStats;
     pgStats.resize(pgStatIds.size());
 
@@ -415,7 +416,7 @@ bool PfcWdLossyHandler::getHwCounters(PfcWdHwStats& counters)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to fetch pg 0x%lx stats: %d", pg, status);
+        SWSS_LOG_ERROR("Failed to fetch pg 0x%" PRIx64 " stats: %d", pg, status);
         return false;
     }
 
@@ -440,7 +441,7 @@ PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
     sai_status_t status = sai_queue_api->get_queue_attribute(queue, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get buffer profile ID on queue 0x%lx: %d", queue, status);
+        SWSS_LOG_ERROR("Failed to get buffer profile ID on queue 0x%" PRIx64 ": %d", queue, status);
         return;
     }
 
@@ -453,7 +454,7 @@ PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
     status = sai_queue_api->set_queue_attribute(queue, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%lx: %d", queue, status);
+        SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%" PRIx64 ": %d", queue, status);
         return;
     }
 
@@ -464,11 +465,11 @@ PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
     Port portInstance;
     if (!gPortsOrch->getPort(port, portInstance))
     {
-        SWSS_LOG_ERROR("Cannot get port by ID 0x%lx", port);
+        SWSS_LOG_ERROR("Cannot get port by ID 0x%" PRIx64, port);
         return;
     }
 
-    sai_object_id_t pg = portInstance.m_priority_group_ids[queueId];
+    sai_object_id_t pg = portInstance.m_priority_group_ids[static_cast <size_t> (queueId)];
 
     attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
 
@@ -476,7 +477,7 @@ PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
     status = sai_buffer_api->get_ingress_priority_group_attribute(pg, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get buffer profile ID on PG 0x%lx: %d", pg, status);
+        SWSS_LOG_ERROR("Failed to get buffer profile ID on PG 0x%" PRIx64 ": %d", pg, status);
         return;
     }
 
@@ -489,7 +490,7 @@ PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
     status = sai_buffer_api->set_ingress_priority_group_attribute(pg, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set buffer profile ID on pg 0x%lx: %d", pg, status);
+        SWSS_LOG_ERROR("Failed to set buffer profile ID on pg 0x%" PRIx64 ": %d", pg, status);
         return;
     }
 
@@ -509,18 +510,18 @@ PfcWdZeroBufferHandler::~PfcWdZeroBufferHandler(void)
     sai_status_t status = sai_queue_api->set_queue_attribute(getQueue(), &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%lx: %d", getQueue(), status);
+        SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%" PRIx64 ": %d", getQueue(), status);
         return;
     }
 
     Port portInstance;
     if (!gPortsOrch->getPort(getPort(), portInstance))
     {
-        SWSS_LOG_ERROR("Cannot get port by ID 0x%lx", getPort());
+        SWSS_LOG_ERROR("Cannot get port by ID 0x%" PRIx64, getPort());
         return;
     }
 
-    sai_object_id_t pg = portInstance.m_priority_group_ids[getQueueId()];
+    sai_object_id_t pg = portInstance.m_priority_group_ids[size_t(getQueueId())];
 
     attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
     attr.value.oid = m_originalPgBufferProfile;
@@ -529,7 +530,7 @@ PfcWdZeroBufferHandler::~PfcWdZeroBufferHandler(void)
     status = sai_buffer_api->set_ingress_priority_group_attribute(pg, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%lx: %d", getQueue(), status);
+        SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%" PRIx64 ": %d", getQueue(), status);
         return;
     }
 }

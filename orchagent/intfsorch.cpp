@@ -3,6 +3,7 @@
 #include <sstream>
 #include <map>
 #include <net/if.h>
+#include <inttypes.h>
 
 #include "sai_serialize.h"
 #include "intfsorch.h"
@@ -252,7 +253,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -856,7 +857,7 @@ void IntfsOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_DEBUG("Registering %ld new intfs", m_rifsToAdd.size());
+    SWSS_LOG_DEBUG("Registering %" PRId64 " new intfs", m_rifsToAdd.size());
     string value;
     for (auto it = m_rifsToAdd.begin(); it != m_rifsToAdd.end(); )
     {

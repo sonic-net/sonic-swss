@@ -127,10 +127,8 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin_state ? "up" : "down");
     FieldValueTuple o("oper_status", oper_state ? "up" : "down");
-    FieldValueTuple m("mtu", to_string(mtu));
     fvVector.push_back(a);
     fvVector.push_back(o);
-    fvVector.push_back(m);
     m_lagTable.set(lagName, fvVector);
 
     SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
@@ -318,7 +316,8 @@ int TeamSync::TeamPortSync::getFd()
     return team_get_event_fd(m_team);
 }
 
-void TeamSync::TeamPortSync::readData()
+uint64_t TeamSync::TeamPortSync::readData()
 {
     team_handle_events(m_team);
+    return 0;
 }

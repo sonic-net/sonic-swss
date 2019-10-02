@@ -221,7 +221,7 @@ fpm_msg_next (fpm_msg_hdr_t *hdr, size_t *len)
     *len -= msg_len;
   }
 
-  return (fpm_msg_hdr_t *) (((char*) hdr) + msg_len);
+  return reinterpret_cast<fpm_msg_hdr_t *>(static_cast<void *>(((char*) hdr) + msg_len));
 }
 
 /*
