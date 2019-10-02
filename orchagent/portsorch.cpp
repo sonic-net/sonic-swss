@@ -2219,13 +2219,11 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
                 }
-
-                /* Get port fdb learn mode*/
-                if (fvField(i) == "learn_mode")
+                else if (fvField(i) == "learn_mode")
                 {
                     learn_mode = fvValue(i);
-
-                if (fvField(i) == "oper_status")
+                }
+                else if (fvField(i) == "oper_status")
                 {
                     if (fvValue(i) == "down")
                     {
