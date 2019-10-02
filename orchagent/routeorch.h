@@ -15,6 +15,9 @@
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
 
+/* Length of the Interface Id value in EUI64 format */
+#define EUI64_INTF_ID_LEN 8
+
 typedef std::map<IpAddress, sai_object_id_t> NextHopGroupMembers;
 
 struct NextHopGroupEntry
@@ -83,6 +86,9 @@ private:
     void addTempRoute(IpPrefix, IpAddresses);
     bool addRoute(IpPrefix, IpAddresses);
     bool removeRoute(IpPrefix);
+
+    std::string getLinkLocalEui64Addr(void);
+    void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
 
     void doTask(Consumer& consumer);
 };

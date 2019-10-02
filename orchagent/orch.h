@@ -32,6 +32,7 @@ const char range_specifier     = '-';
 const char config_db_key_delimiter = '|';
 const char state_db_key_delimiter  = '|';
 
+#define INVM_PLATFORM_SUBSTRING "innovium"
 #define MLNX_PLATFORM_SUBSTRING "mellanox"
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
 #define BFN_PLATFORM_SUBSTRING  "barefoot"
@@ -81,7 +82,7 @@ public:
 
     // Decorating Selectable
     int getFd() override { return m_selectable->getFd(); }
-    void readData() override { m_selectable->readData(); }
+    uint64_t readData() override { return m_selectable->readData(); }
     bool hasCachedData() override { return m_selectable->hasCachedData(); }
     bool initializedWithData() override { return m_selectable->initializedWithData(); }
     void updateAfterRead() override { m_selectable->updateAfterRead(); }
@@ -182,6 +183,8 @@ public:
     // Prepare for warm start if Redis contains valid input data
     // otherwise fallback to cold start
     virtual bool bake();
+    // Clean up the state set in bake()
+    virtual bool postBake();
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     virtual void doTask();

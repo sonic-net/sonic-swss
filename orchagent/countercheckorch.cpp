@@ -4,6 +4,7 @@
 #include "notifier.h"
 #include "redisclient.h"
 #include "sai_serialize.h"
+#include <inttypes.h>
 
 #define COUNTER_CHECK_POLL_TIMEOUT_SEC   (5 * 60)
 
@@ -61,7 +62,7 @@ void CounterCheckOrch::mcCounterCheck()
         Port port;
         if (!gPortsOrch->getPort(oid, port))
         {
-            SWSS_LOG_ERROR("Invalid port oid 0x%lx", oid);
+            SWSS_LOG_ERROR("Invalid port oid 0x%" PRIx64, oid);
             continue;
         }
 
@@ -78,13 +79,13 @@ void CounterCheckOrch::mcCounterCheck()
             bool isLossy = ((1 << prio) & pfcMask) == 0;
             if (newMcCounters[prio] == numeric_limits<uint64_t>::max())
             {
-                SWSS_LOG_WARN("Could not retreive MC counters on queue %lu port %s",
+                SWSS_LOG_WARN("Could not retreive MC counters on queue %zu port %s",
                         prio,
                         port.m_alias.c_str());
             }
             else if (!isLossy && mcCounters[prio] < newMcCounters[prio])
             {
-                SWSS_LOG_WARN("Got Multicast %lu frame(s) on lossless queue %lu port %s",
+                SWSS_LOG_WARN("Got Multicast %" PRIu64 " frame(s) on lossless queue %zu port %s",
                         newMcCounters[prio] - mcCounters[prio],
                         prio,
                         port.m_alias.c_str());
@@ -109,7 +110,7 @@ void CounterCheckOrch::pfcFrameCounterCheck()
         Port port;
         if (!gPortsOrch->getPort(oid, port))
         {
-            SWSS_LOG_ERROR("Invalid port oid 0x%lx", oid);
+            SWSS_LOG_ERROR("Invalid port oid 0x%" PRIx64, oid);
             continue;
         }
 
@@ -124,13 +125,13 @@ void CounterCheckOrch::pfcFrameCounterCheck()
             bool isLossy = ((1 << prio) & pfcMask) == 0;
             if (newCounters[prio] == numeric_limits<uint64_t>::max())
             {
-                SWSS_LOG_WARN("Could not retreive PFC frame count on queue %lu port %s",
+                SWSS_LOG_WARN("Could not retreive PFC frame count on queue %zu port %s",
                         prio,
                         port.m_alias.c_str());
             }
             else if (isLossy && counters[prio] < newCounters[prio])
             {
-                SWSS_LOG_WARN("Got PFC %lu frame(s) on lossy queue %lu port %s",
+                SWSS_LOG_WARN("Got PFC %" PRIu64 " frame(s) on lossy queue %zu port %s",
                         newCounters[prio] - counters[prio],
                         prio,
                         port.m_alias.c_str());

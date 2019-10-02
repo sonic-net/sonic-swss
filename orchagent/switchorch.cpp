@@ -1,4 +1,5 @@
 #include <map>
+#include <inttypes.h>
 
 #include "switchorch.h"
 #include "converter.h"
@@ -200,9 +201,9 @@ bool SwitchOrch::setAgingFDB(uint32_t sec)
     auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set switch %lx fdb_aging_time attribute: %d", gSwitchId, status);
+        SWSS_LOG_ERROR("Failed to set switch %" PRIx64 " fdb_aging_time attribute: %d", gSwitchId, status);
         return false;
     }
-    SWSS_LOG_NOTICE("Set switch %lx fdb_aging_time %u sec", gSwitchId, sec);
+    SWSS_LOG_NOTICE("Set switch %" PRIx64 " fdb_aging_time %u sec", gSwitchId, sec);
     return true;
 }

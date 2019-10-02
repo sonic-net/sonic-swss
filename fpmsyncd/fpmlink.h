@@ -26,7 +26,7 @@ public:
     void accept();
 
     int getFd() override;
-    void readData() override;
+    uint64_t readData() override;
     /* readMe throws FpmConnectionClosedException when connection is lost */
     class FpmConnectionClosedException : public std::exception
     {

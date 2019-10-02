@@ -1,4 +1,5 @@
 #include <limits.h>
+#include <inttypes.h>
 #include <unordered_map>
 #include "pfcwdorch.h"
 #include "sai_serialize.h"
@@ -53,7 +54,7 @@ void PfcWdOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -352,7 +353,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
         if (entry.second.handler != nullptr)
         {
             SWSS_LOG_NOTICE(
-                    "PFC Watchdog BIG_RED_SWITCH mode disabled on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                    "PFC Watchdog BIG_RED_SWITCH mode disabled on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                     entry.second.portAlias.c_str(),
                     entry.second.index,
                     entry.first,
@@ -456,7 +457,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             if (entry->second.handler== nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog BIG_RED_SWITCH mode enabled on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog BIG_RED_SWITCH mode enabled on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -900,7 +901,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
     auto entry = m_entryMap.find(queueId);
     if (entry == m_entryMap.end())
     {
-        SWSS_LOG_ERROR("Queue 0x%lx is not registered", queueId);
+        SWSS_LOG_ERROR("Queue 0x%" PRIx64 " is not registered", queueId);
         return false;
     }
 
@@ -917,7 +918,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -939,7 +940,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -961,7 +962,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -989,7 +990,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         if (entry->second.handler != nullptr)
         {
             SWSS_LOG_NOTICE(
-                    "PFC Watchdog storm restored on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                    "PFC Watchdog storm restored on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
