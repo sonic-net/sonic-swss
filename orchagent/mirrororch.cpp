@@ -821,7 +821,7 @@ bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
 
     return true;
 
-#ifdef 0
+#if 0 // FIXME: Temporary work-around for mirror session set issue.
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
