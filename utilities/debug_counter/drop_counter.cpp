@@ -252,11 +252,11 @@ vector<string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type
         string drop_reason;
         if (drop_reason_type == SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST)
         {
-            drop_reason = sai_serialize_ingress_drop_reason(drop_reason_list.list[i]);
+            drop_reason = sai_serialize_ingress_drop_reason(static_cast<sai_in_drop_reason_t>(drop_reason_list.list[i]));
         }
         else
         {
-            drop_reason = sai_serialize_egress_drop_reason(drop_reason_list.list[i]);
+            drop_reason = sai_serialize_egress_drop_reason(static_cast<sai_out_drop_reason_t>(drop_reason_list.list[i]));
         }
         
         supported_drop_reasons.push_back(drop_reason);
