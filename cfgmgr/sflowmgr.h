@@ -62,7 +62,7 @@ private:
     void sflowCheckAndFillRate(std::string alias, std::vector<FieldValueTuple> &fvs);
     void sflowGetLocalFvs(std::vector<FieldValueTuple> &fvs, SflowLocalPortInfo &local_info);
     void sflowGetGlobalFvs(std::vector<FieldValueTuple> &fvs, std::string speed);
-    void sflowUpdateLocalPortInfo(std::string alias, std::ector<FieldValueTuple> &fvs);
+    void sflowUpdateLocalPortInfo(std::string alias, std::vector<FieldValueTuple> &fvs);
 };
 
 }
