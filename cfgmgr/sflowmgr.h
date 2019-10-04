@@ -30,19 +30,19 @@ namespace swss {
 
 struct SflowLocalPortInfo
 {
-    bool   local_conf;
-    string speed;
-    string local_rate;
-    string local_admin;
+    bool        local_conf;
+    std::string speed;
+    std::string local_rate;
+    std::string local_admin;
 };
 
 /* Port to Local config map  */
-typedef map<string, SflowLocalPortInfo> SflowPortLocalConfMap;
+typedef std::map<std::string, SflowLocalPortInfo> SflowPortLocalConfMap;
 
 class SflowMgr : public Orch
 {
 public:
-    SflowMgr(DBConnector *cfgDb, DBConnector *appDb, const vector<string> &tableNames);
+    SflowMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<std::string> &tableNames);
 
     using Orch::doTask;
 private:
@@ -59,10 +59,10 @@ private:
     void sflowUpdatePortInfo(Consumer &consumer);
     void sflowHandleSessionAll(bool enable);
     void sflowHandleSessionLocal(bool enable);
-    void sflowCheckAndFillRate(string alias, vector<FieldValueTuple> &fvs);
-    void sflowGetLocalFvs(vector<FieldValueTuple> &fvs, SflowLocalPortInfo &local_info);
-    void sflowGetGlobalFvs(vector<FieldValueTuple> &fvs, string speed);
-    void sflowUpdateLocalPortInfo(string alias, vector<FieldValueTuple> &fvs);
+    void sflowCheckAndFillRate(std::string alias, std::vector<FieldValueTuple> &fvs);
+    void sflowGetLocalFvs(std::vector<FieldValueTuple> &fvs, SflowLocalPortInfo &local_info);
+    void sflowGetGlobalFvs(std::vector<FieldValueTuple> &fvs, std::string speed);
+    void sflowUpdateLocalPortInfo(std::string alias, std::ector<FieldValueTuple> &fvs);
 };
 
 }

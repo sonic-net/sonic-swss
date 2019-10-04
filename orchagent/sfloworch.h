@@ -6,8 +6,6 @@
 #include "orch.h"
 #include "portsorch.h"
 
-using namespace std;
-
 struct SflowPortInfo
 {
     bool            admin_state;
@@ -21,15 +19,15 @@ struct SflowSession
 };
 
 /* SAI Port to Sflow Port Info Map */
-typedef map<sai_object_id_t, SflowPortInfo> SflowPortInfoMap;
+typedef std::map<sai_object_id_t, SflowPortInfo> SflowPortInfoMap;
 
 /* Sample-rate(unsigned int) to Sflow session map */
-typedef map<uint32_t, SflowSession> SflowRateSampleMap;
+typedef std::map<uint32_t, SflowSession> SflowRateSampleMap;
 
 class SflowOrch : public Orch
 {
 public:
-    SflowOrch(DBConnector* db, vector<string> &tableNames);
+    SflowOrch(DBConnector* db, std::vector<std::string> &tableNames);
 
 private:
     SflowPortInfoMap    m_sflowPortInfoMap;
@@ -45,5 +43,5 @@ private:
     bool sflowUpdateRate(sai_object_id_t port_id, uint32_t rate);
     uint32_t sflowSessionGetRate(sai_object_id_t sample_id);
     bool handleSflowSessionDel(sai_object_id_t port_id);
-    void sflowExtractFvs(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate);
+    void sflowExtractFvs(std::vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate);
 };
