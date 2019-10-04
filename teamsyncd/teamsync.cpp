@@ -109,8 +109,11 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     if (nlmsg_type == RTM_DELLINK)
     {
-        /* Remove LAG ports and delete LAG */
-        removeLag(lagName);
+        if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
+        {
+            /* Remove LAG ports and delete LAG */
+            removeLag(lagName);
+        }
         return;
     }
 
@@ -127,10 +130,8 @@ void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,
     std::vector<FieldValueTuple> fvVector;
     FieldValueTuple a("admin_status", admin_state ? "up" : "down");
     FieldValueTuple o("oper_status", oper_state ? "up" : "down");
-    FieldValueTuple m("mtu", to_string(mtu));
     fvVector.push_back(a);
     fvVector.push_back(o);
-    fvVector.push_back(m);
     m_lagTable.set(lagName, fvVector);
 
     SWSS_LOG_INFO("Add %s admin_status:%s oper_status:%s, mtu: %d",
@@ -318,7 +319,8 @@ int TeamSync::TeamPortSync::getFd()
     return team_get_event_fd(m_team);
 }
 
-void TeamSync::TeamPortSync::readData()
+uint64_t TeamSync::TeamPortSync::readData()
 {
     team_handle_events(m_team);
+    return 0;
 }

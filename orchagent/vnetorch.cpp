@@ -1165,7 +1165,7 @@ bool VNetBitmapObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
     Port port;
     RouteInfo routeInfo;
 
-    bool is_subnet = (!nh.ips.getSize()) ? true : false;
+    bool is_subnet = (!nh.ips.getSize() || nh.ips.contains("0.0.0.0")) ? true : false;
 
     if (is_subnet && (!gPortsOrch->getPort(nh.ifname, port) || (port.m_rif_id == SAI_NULL_OBJECT_ID)))
     {
@@ -1199,15 +1199,15 @@ bool VNetBitmapObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
     }
     else if (nh.ips.getSize() == 1)
     {
-        IpAddress ip_address(nh.ips.to_string());
-        if (gNeighOrch->hasNextHop(ip_address))
+        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
+        if (gNeighOrch->hasNextHop(nexthop))
         {
-            nh_id = gNeighOrch->getNextHopId(ip_address);
+            nh_id = gNeighOrch->getNextHopId(nexthop);
         }
         else
         {
             SWSS_LOG_INFO("Failed to get next hop %s for %s",
-                          ip_address.to_string().c_str(), ipPrefix.to_string().c_str());
+                          nexthop.to_string().c_str(), ipPrefix.to_string().c_str());
             return false;
         }
 
@@ -1721,7 +1721,7 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
         return true;
     }
 
-    bool is_subnet = (!nh.ips.getSize())?true:false;
+    bool is_subnet = (!nh.ips.getSize() || nh.ips.contains("0.0.0.0")) ? true : false;
 
     Port port;
     if (is_subnet && (!gPortsOrch->getPort(nh.ifname, port) || (port.m_rif_id == SAI_NULL_OBJECT_ID)))
@@ -1778,15 +1778,15 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
     }
     else if (nh.ips.getSize() == 1)
     {
-        IpAddress ip_address(nh.ips.to_string());
-        if (gNeighOrch->hasNextHop(ip_address))
+        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
+        if (gNeighOrch->hasNextHop(nexthop))
         {
-            nh_id = gNeighOrch->getNextHopId(ip_address);
+            nh_id = gNeighOrch->getNextHopId(nexthop);
         }
         else
         {
             SWSS_LOG_INFO("Failed to get next hop %s for %s",
-                           ip_address.to_string().c_str(), ipPrefix.to_string().c_str());
+                           nexthop.to_string().c_str(), ipPrefix.to_string().c_str());
             return false;
         }
     }

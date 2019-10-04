@@ -13,7 +13,7 @@ namespace swss {
 class IntfMgr : public Orch
 {
 public:
-    IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames);
+    IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
 
 private:
@@ -21,13 +21,13 @@ private:
     Table m_cfgIntfTable, m_cfgVlanIntfTable;
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
 
-    void setIntfIp(const string &alias, const string &opCmd, const IpPrefix &ipPrefix);
-    void setIntfMac(const string &alias, const string mac_str);
-    void setIntfVrf(const string &alias, const string vrfName);
-    bool doIntfGeneralTask(const vector<string>& keys, const vector<FieldValueTuple>& data, const string& op);
-    bool doIntfAddrTask(const vector<string>& keys, const vector<FieldValueTuple>& data, const string& op);
+    void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
+    void setIntfVrf(const std::string &alias, const std::string vrfName);
+    void setIntfMac(const std::string &alias, const std::string macAddr);
+    bool doIntfGeneralTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
+    bool doIntfAddrTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
     void doTask(Consumer &consumer);
-    bool isIntfStateOk(const string &alias);
+    bool isIntfStateOk(const std::string &alias);
 };
 
 }

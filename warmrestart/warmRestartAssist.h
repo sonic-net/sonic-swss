@@ -108,7 +108,7 @@ private:
     std::string m_appTableName;       // application table name
 
     bool m_warmStartInProgress;       // indicate if warm start is in progress
-    uint32_t m_reconcileTimer;        // reconcile timer value
+    time_t m_reconcileTimer;          // reconcile timer value
     SelectableTimer m_warmStartTimer; // reconcile timer
 
     // Set or get cache entry state

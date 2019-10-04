@@ -59,12 +59,18 @@ def get_created_entry(db, table, existed_entries):
     return new_entries[0]
 
 
-def get_created_entries(db, table, existed_entries, count):
+def get_all_created_entries(db, table, existed_entries):
     tbl =  swsscommon.Table(db, table)
     entries = set(tbl.getKeys())
     new_entries = list(entries - existed_entries)
-    assert len(new_entries) == count, "Wrong number of created entries."
+    assert len(new_entries) > 0, "No created entries."
     new_entries.sort()
+    return new_entries
+
+
+def get_created_entries(db, table, existed_entries, count):
+    new_entries = get_all_created_entries(db, table, existed_entries)
+    assert len(new_entries) == count, "Wrong number of created entries."
     return new_entries
 
 
@@ -894,12 +900,16 @@ class VnetBitmapVxlanTunnel(object):
         _vni = str(vni) if vni != 0 else self.vnet_map[name]['vni']
 
         if (mac,_vni) not in self.vnet_mac_vni_list:
-            new_fdb = get_created_entry(asic_db, self.ASIC_FDB_ENTRY, self.fdbs)
+            new_fdbs = get_all_created_entries(asic_db, self.ASIC_FDB_ENTRY, self.fdbs)
 
             expected_attrs = {
                 "SAI_FDB_ENTRY_ATTR_TYPE": "SAI_FDB_ENTRY_TYPE_STATIC",
                 "SAI_FDB_ENTRY_ATTR_ENDPOINT_IP": endpoint
             }
+
+            new_fdb = next(iter([fdb for fdb in new_fdbs if (mac if mac != "" else "00:00:00:00:00:00") in fdb]), None)
+            assert new_fdb, "Wrong number of created FDB entries."
+
             check_object(asic_db, self.ASIC_FDB_ENTRY, new_fdb, expected_attrs)
 
             self.fdbs.add(new_fdb)

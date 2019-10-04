@@ -1,4 +1,5 @@
 #include <iostream>
+#include <inttypes.h>
 #include "logger.h"
 #include "select.h"
 #include "selectabletimer.h"
@@ -84,7 +85,7 @@ int main(int argc, char **argv)
             if (warmStartEnabled)
             {
                 /* Obtain warm-restart timer defined for routing application */
-                uint32_t warmRestartIval = sync.m_warmStartHelper.getRestartTimer();
+                time_t warmRestartIval = sync.m_warmStartHelper.getRestartTimer();
                 if (!warmRestartIval)
                 {
                     warmStartTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
@@ -149,7 +150,7 @@ int main(int argc, char **argv)
                         if (eoiuFlagsSet(bgpStateTable))
                         {
                             /* Obtain eoiu hold timer defined for bgp docker */
-                            uint32_t eoiuHoldIval = WarmStart::getWarmStartTimer("eoiu_hold", "bgp");
+                            uintmax_t eoiuHoldIval = WarmStart::getWarmStartTimer("eoiu_hold", "bgp");
                             if (!eoiuHoldIval)
                             {
                                 eoiuHoldTimer.setInterval(timespec{DEFAULT_EOIU_HOLD_INTERVAL, 0});
@@ -157,11 +158,11 @@ int main(int argc, char **argv)
                             }
                             else
                             {
-                                eoiuHoldTimer.setInterval(timespec{eoiuHoldIval, 0});
+                                eoiuHoldTimer.setInterval(timespec{(time_t)eoiuHoldIval, 0});
                             }
                             eoiuHoldTimer.start();
                             s.addSelectable(&eoiuHoldTimer);
-                            SWSS_LOG_NOTICE("Warm-Restart started EOIU hold timer which is to expire in %d seconds.", eoiuHoldIval);
+                            SWSS_LOG_NOTICE("Warm-Restart started EOIU hold timer which is to expire in %" PRIuMAX " seconds.", eoiuHoldIval);
                             s.removeSelectable(&eoiuCheckTimer);
                             continue;
                         }
