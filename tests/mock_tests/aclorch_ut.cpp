@@ -628,16 +628,74 @@ namespace aclorch_test
         // consistency validation with CRM
         bool validateResourceCountWithCrm(const AclOrch *aclOrch, CrmOrch *crmOrch)
         {
-            auto resourceMap = Portal::CrmOrchInternal::getResourceMap(crmOrch);
-            auto ifpPortKey = Portal::CrmOrchInternal::getCrmAclKey(crmOrch, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_PORT);
-            auto efpPortKey = Portal::CrmOrchInternal::getCrmAclKey(crmOrch, SAI_ACL_STAGE_EGRESS, SAI_ACL_BIND_POINT_TYPE_PORT);
+             // ACL counter
+            {
+                auto const &resourceMap = Portal::CrmOrchInternal::getResourceMap(crmOrch);
+                uint32_t crm_acl_cnt = 0;
+                for (auto const &kv : resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap)
+                {
+                    crm_acl_cnt += kv.second.usedCounter;
+                }
 
-            auto ifpPortAclTableCount = resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap[ifpPortKey].usedCounter;
-            auto efpPortAclTableCount = resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap[efpPortKey].usedCounter;
+                if (crm_acl_cnt != Portal::AclOrchInternal::getAclTables(aclOrch).size())
+                {
+                    ADD_FAILURE() << "ACL table size is not consistent between CrmOrch (" << crm_acl_cnt
+                                  << ") and AclOrch " << Portal::AclOrchInternal::getAclTables(aclOrch).size();
+                    return false;
+                }
+            }
 
-            return ifpPortAclTableCount + efpPortAclTableCount == Portal::AclOrchInternal::getAclTables(aclOrch).size();
+            // Verify ACL Rules
+            //
+            // for each CRM_ACL_ENTRY and CRM_ACL_COUNTER's entry => the ACL TABLE should exist
+            //
+            for (auto acl_entry_or_counter : { CrmResourceType::CRM_ACL_ENTRY, CrmResourceType::CRM_ACL_COUNTER })
+            {
+                auto const &resourceMap = Portal::CrmOrchInternal::getResourceMap(crmOrch);
+                for (auto const &kv : resourceMap.at(acl_entry_or_counter).countersMap)
+                {
+                    auto acl_oid = kv.second.id;
+                    auto acl_id = sai_serialize_object_id(acl_oid);
 
-            // TODO: add rule check
+                    const auto &aclTables = Portal::AclOrchInternal::getAclTables(aclOrch);
+                    if (aclTables.find(acl_oid) == aclTables.end())
+                    {
+                        ADD_FAILURE() << "Can't found ACL (" << sai_serialize_object_id(acl_oid) << ")";
+                        return false;
+                    }
+
+                    if (kv.second.usedCounter != aclTables.at(acl_oid).rules.size())
+                    {
+                        ADD_FAILURE() << "CRM usedCounter (" << kv.second.usedCounter
+                                      << ") is not equal rule in ACL (" << aclTables.at(acl_oid).rules.size() << ")";
+                        return false;
+                    }
+                }
+            }
+
+            //
+            // for each ACL TABLE with rule count larger than one => it shoule exist a corresponding entry in CRM_ACL_ENTRY and CRM_ACL_COUNTER
+            //
+            for (const auto &kv : Portal::AclOrchInternal::getAclTables(aclOrch))
+            {
+                if (0 < kv.second.rules.size())
+                {
+                    auto key = Portal::CrmOrchInternal::getCrmAclTableKey(crmOrch, kv.first);
+                    for (auto acl_entry_or_counter : { CrmResourceType::CRM_ACL_ENTRY, CrmResourceType::CRM_ACL_COUNTER })
+                    {
+                        const auto &cntMap = Portal::CrmOrchInternal::getResourceMap(crmOrch).at(acl_entry_or_counter).countersMap;
+                        bool found = (cntMap.find(key) != cntMap.end());
+                        if (!found)
+                        {
+                            ADD_FAILURE() << "Can't found ACL (" << sai_serialize_object_id(kv.first)
+                                          << ") in " << (acl_entry_or_counter == CrmResourceType::CRM_ACL_ENTRY ? "CrmResourceType::CRM_ACL_ENTRY" : "CrmResourceType::CRM_ACL_COUNTER");
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            return true;
         }
 
         // leakage check
