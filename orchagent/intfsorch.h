@@ -22,6 +22,7 @@ struct IntfsEntry
 {
     std::set<IpPrefix>  ip_addresses;
     int                 ref_count;
+    sai_object_id_t     vrf_id;
 };
 
 typedef map<string, IntfsEntry> IntfsTable;
@@ -32,6 +33,7 @@ public:
     IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch);
 
     sai_object_id_t getRouterIntfsId(const string&);
+    string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");
 
     void increaseRouterIntfsRefCount(const string&);
     void decreaseRouterIntfsRefCount(const string&);

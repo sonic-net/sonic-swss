@@ -14,7 +14,7 @@ namespace swss {
 class VxlanMgr : public Orch
 {
 public:
-    VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<std::string> &tableNames);
+    VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
 
     typedef struct VxlanInfo

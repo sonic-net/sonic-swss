@@ -15,18 +15,18 @@ namespace swss {
 class VrfMgr : public Orch
 {
 public:
-    VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames);
+    VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
 
 private:
-    bool delLink(const string& vrfName);
-    bool setLink(const string& vrfName);
+    bool delLink(const std::string& vrfName);
+    bool setLink(const std::string& vrfName);
     void recycleTable(uint32_t table);
     uint32_t getFreeTable(void);
     void handleVnetConfigSet(KeyOpFieldsValuesTuple &t);
     void doTask(Consumer &consumer);
 
-    map<string, uint32_t> m_vrfTableMap;
+    std::map<std::string, uint32_t> m_vrfTableMap;
     set<uint32_t> m_freeTables;
 
     Table m_stateVrfTable;
