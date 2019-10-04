@@ -42,7 +42,8 @@ int main(int argc, char **argv)
     {
         vector<string> cfg_sflow_tables = {
             CFG_SFLOW_TABLE_NAME,
-            CFG_SFLOW_SESSION_TABLE_NAME
+            CFG_SFLOW_SESSION_TABLE_NAME,
+            CFG_PORT_TABLE_NAME
         };
 
         DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);

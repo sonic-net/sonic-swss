@@ -5,54 +5,36 @@
 using namespace std;
 using namespace swss;
 
-extern sai_samplepacket_api_t*   sai_samplepacket_api;
-extern sai_port_api_t*   sai_port_api;
-
-extern sai_object_id_t gSwitchId;
-extern PortsOrch* gPortsOrch;
-
-
-bool SflowOrch::sflowGetDefaultSampleRate(Port port, uint32_t &rate)
-{
-    auto speedRate = m_speedRateMap.find(port.m_speed);
-
-    if (speedRate == m_speedRateMap.end()) 
-    {
-        SWSS_LOG_ERROR("Unable to find default rate for speed %d", port.m_speed);
-        return false;
-    }
-
-    rate = speedRate->second;
-    return true;
-}
+extern sai_samplepacket_api_t* sai_samplepacket_api;
+extern sai_port_api_t*         sai_port_api;
+extern sai_object_id_t         gSwitchId;
+extern PortsOrch*              gPortsOrch;
 
 SflowOrch::SflowOrch(DBConnector* db, vector<string> &tableNames) :
     Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();
-    gEnable = true;
     sflowStatus = false;
 }
 
-bool SflowOrch::sflowCreateSession(SflowSession &session)
+bool SflowOrch::sflowCreateSession(uint32_t rate, SflowSession &session)
 {
     sai_attribute_t attr;
     sai_object_id_t session_id = SAI_NULL_OBJECT_ID;
     sai_status_t    sai_rc;
 
     attr.id = SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE;
-    attr.value.u32 = session.rate;
+    attr.value.u32 = rate;
 
     sai_rc = sai_samplepacket_api->create_samplepacket(&session_id, gSwitchId,
                                                        1, &attr);
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create sample packet session with rate %d",
-                       session.rate);
+        SWSS_LOG_ERROR("Failed to create sample packet session with rate %d", rate);
         return false;
     }
-
     session.m_sample_id = session_id;
+    session.ref_count = 0;
     return true;
 }
 
@@ -67,472 +49,196 @@ bool SflowOrch::sflowDestroySession(SflowSession &session)
                        session.m_sample_id);
         return false;
     }
-
     return true;
 }
 
 bool SflowOrch::sflowUpdateRate(sai_object_id_t port_id, uint32_t rate)
 {
-    auto old_session = m_sflowPortSessionMap.find(port_id);
-    auto sample_obj = m_sflowRateSampleMap.find(rate);
+    auto         port_info = m_sflowPortInfoMap.find(port_id);
+    auto         session = m_sflowRateSampleMap.find(rate);
     SflowSession new_session;
+    uint32_t     old_rate = sflowSessionGetRate(port_info->second.m_sample_id);
 
-    if (sample_obj ==  m_sflowRateSampleMap.end())
+    if (session == m_sflowRateSampleMap.end())
     {
-        new_session.rate = rate;
-        if (!sflowCreateSession(new_session))
+        if (!sflowCreateSession(rate, new_session))
         {
             SWSS_LOG_ERROR("Creating sflow session with rate %d failed", rate);
             return false;
         }
-        m_sflowRateSampleMap[rate] = new_session.m_sample_id;
-        m_sflowSampleRefMap[new_session.m_sample_id] = 0;
+        m_sflowRateSampleMap[rate] = new_session;
     }
     else
     {
-        new_session.m_sample_id = sample_obj->second;
+        new_session = session->second;
     }
 
-    if (old_session->second.adminState)
+    if (port_info->second.admin_state)
     {
-        if (!sflowAddPort(new_session, port_id))
+        if (!sflowAddPort(new_session.m_sample_id, port_id))
         {
             return false;
         }
     }
+    port_info->second.m_sample_id = new_session.m_sample_id;
 
-    m_sflowSampleRefMap[new_session.m_sample_id]++;
-    m_sflowSampleRefMap[old_session->second.m_sample_id]--;
-
-    if (m_sflowSampleRefMap[old_session->second.m_sample_id] == 0)
+    m_sflowRateSampleMap[rate].ref_count++;
+    m_sflowRateSampleMap[old_rate].ref_count--;
+    if (m_sflowRateSampleMap[old_rate].ref_count == 0)
     {
-        if (!sflowDestroySession(old_session->second))
+        if (!sflowDestroySession(m_sflowRateSampleMap[old_rate]))
         {
             SWSS_LOG_ERROR("Failed to clean old session %lx",
-                           old_session->second.m_sample_id);
+                           m_sflowRateSampleMap[old_rate].m_sample_id);
         }
         else
         {
-            m_sflowRateSampleMap.erase(old_session->second.rate);
-            m_sflowSampleRefMap.erase(old_session->second.m_sample_id);
+            m_sflowRateSampleMap.erase(old_rate);
         }
     }
-    new_session.globalConfigured = old_session->second.globalConfigured;
-    new_session.adminState = old_session->second.adminState;
-
-    m_sflowPortSessionMap[port_id] = new_session;
     return true;
 }
 
-bool SflowOrch::sflowAddPort(SflowSession &session, sai_object_id_t port_id)
+bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id)
 {
     sai_attribute_t attr;
     sai_status_t    sai_rc;
 
-    if (!sflowStatus)
-    {
-        return true;
-    }
-
     attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
-    attr.value.oid = session.m_sample_id;
-
+    attr.value.oid = sample_id;
     sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
 
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set session %lx on port %lx",
-                       session.m_sample_id, port_id);
+        SWSS_LOG_ERROR("Failed to set session %lx on port %lx", sample_id, port_id);
         return false;
     }
     return true;
 }
 
-bool SflowOrch::sflowDelPort(SflowSession &session, sai_object_id_t port_id)
+bool SflowOrch::sflowDelPort(sai_object_id_t port_id)
 {
     sai_attribute_t attr;
     sai_status_t    sai_rc;
-
-    if (!sflowStatus)
-    {
-        return true;
-    }
 
     attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
     attr.value.oid = SAI_NULL_OBJECT_ID;
-
     sai_rc = sai_port_api->set_port_attribute(port_id, &attr);
 
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to delete session %lx on port %lx",
-                       session.m_sample_id, port_id);
+        SWSS_LOG_ERROR("Failed to delete session on port %lx", port_id);
         return false;
     }
     return true;
 }
 
-bool SflowOrch::sflowGlobalConfigure(bool enable)
+void SflowOrch::sflowExtractFvs(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate)
 {
-    bool ret = true;
-
-    for(auto& pair: gPortsOrch->getAllPorts())
+    for (auto i : fvs)
     {
-        auto& port = pair.second;
-        if (port.m_type != Port::PHY)
+        if (fvField(i) == "admin_state")
         {
-            continue;
+            if (fvValue(i) == "enable")
+            {
+                admin = true;
+            } 
+            else if (fvValue(i) == "disable")
+            {
+                admin = false;
+            }
         }
-
-        auto sflowInfo = m_sflowPortSessionMap.find(port.m_port_id);
-        if (sflowInfo == m_sflowPortSessionMap.end())
+        else if (fvField(i) == "sample_rate")
         {
-            if (!enable)
+            if (fvValue(i) != "error")
             {
-                continue;
-            }
-            SflowSession session;
-            uint32_t     rate = 0;
-
-            sflowGetDefaultSampleRate(port, rate);
-            session.rate = rate;
-            session.globalConfigured = true;
-            session.adminState = true;
-            auto e_sampleObj = m_sflowRateSampleMap.find(rate);
-
-            if (e_sampleObj != m_sflowRateSampleMap.end())
-            {
-                session.m_sample_id = e_sampleObj->second;
-            }
-            else 
-            {
-                if (!sflowCreateSession(session))
-                {
-                    SWSS_LOG_NOTICE("Creating sflow session with rate %d failed", rate);
-                    ret = false;
-                    continue;
-                }
-                m_sflowRateSampleMap[rate] = session.m_sample_id;
-                m_sflowSampleRefMap[session.m_sample_id] = 0;
-            }
-
-            if (sflowAddPort(session, port.m_port_id))
-            {
-                m_sflowPortSessionMap[port.m_port_id] = session;
-                m_sflowSampleRefMap[session.m_sample_id]++;
+                rate = (uint32_t)stoul(fvValue(i));
             }
             else
             {
-                SWSS_LOG_ERROR("Failed to add port %s to global session",
-                               port.m_alias.c_str());
-                ret = false;
-
-                if (m_sflowSampleRefMap[session.m_sample_id] == 0)
-                {
-                    if (sflowDestroySession(session))
-                    {
-                        m_sflowSampleRefMap.erase(session.m_sample_id);
-                        m_sflowRateSampleMap.erase(rate);
-                    }
-                }
-            }
-        }
-        else
-        {
-            if (!sflowInfo->second.globalConfigured)
-            {
-                continue;
-            }
-            if (sflowInfo->second.adminState != enable)
-            {
-                if (!enable)
-                {
-                    if (sflowDelPort(sflowInfo->second, port.m_port_id))
-                    {
-                        sflowInfo->second.adminState = enable;
-                    }
-                    else 
-                    {
-                        SWSS_LOG_ERROR("Failed to disable global sflow on port %s",
-                                       port.m_alias.c_str());
-                        ret = false;
-                    }
-                }
-                else 
-                {
-                    if (sflowAddPort(sflowInfo->second, port.m_port_id))
-                    {
-                        sflowInfo->second.adminState = enable;
-                    }
-                    else 
-                    {
-                        SWSS_LOG_ERROR("Failed to enable global sflow on port %s",
-                                       port.m_alias.c_str());
-                        ret = false;
-                    }
-                }
+                rate = 0;
             }
         }
     }
-    return ret;
 }
 
-bool SflowOrch::sflowStatusSet(bool enable, bool remove_session)
+void SflowOrch::sflowStatusSet(Consumer &consumer)
 {
-    bool            ret = true;
-    sai_attribute_t attr;
-    sai_status_t    sai_rc;
+    auto it = consumer.m_toSync.begin();
 
-    attr.id = SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE;
-
-    if (enable)
+    while (it != consumer.m_toSync.end())
     {
-        if (!sflowGlobalConfigure(gEnable))
+        auto tuple = it->second;
+        string op = kfvOp(tuple);
+        uint32_t rate = 0;
+
+        if (op == SET_COMMAND)
         {
-            ret = false;
+            sflowExtractFvs (kfvFieldsValues(tuple), sflowStatus, rate);
         }
-    }
-
-    for (auto& pair: gPortsOrch->getAllPorts())
-    {
-        auto& port = pair.second;
-        if (port.m_type != Port::PHY) continue;
-
-        auto sflowInfo = m_sflowPortSessionMap.find(port.m_port_id);
-        if (sflowInfo != m_sflowPortSessionMap.end())
+        else if (op == DEL_COMMAND)
         {
-            if (sflowInfo->second.adminState)
-            {
-                if (!enable)
-                {
-                    attr.value.oid = SAI_NULL_OBJECT_ID;
-                }
-                else
-                {
-                    attr.value.oid = sflowInfo->second.m_sample_id;
-                }
-
-                sai_rc = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-
-                if (sai_rc != SAI_STATUS_SUCCESS)
-                {
-                    ret = false;
-                    SWSS_LOG_ERROR("Failed to re-configure sflow on port %s",
-                                    port.m_alias.c_str());
-                }
-            }
-
-            if (remove_session)
-            {
-                m_sflowSampleRefMap[sflowInfo->second.m_sample_id]--;
-                if (m_sflowSampleRefMap[sflowInfo->second.m_sample_id] == 0)
-                {
-                    if (sflowDestroySession(sflowInfo->second))
-                    {
-                        m_sflowSampleRefMap.erase(sflowInfo->second.m_sample_id);
-                        m_sflowRateSampleMap.erase(sflowInfo->second.rate);
-                    }
-                }
-                m_sflowPortSessionMap.erase(port.m_port_id);
-            }
+            sflowStatus = false;
         }
+        it = consumer.m_toSync.erase(it);
     }
-    return ret;
 }
 
-bool SflowOrch::sflowPortApplyGlobalSetting(Port port, SflowSession &session)
+uint32_t SflowOrch::sflowSessionGetRate(sai_object_id_t m_sample_id)
 {
-    uint32_t     rate = 0;
-
-    sflowGetDefaultSampleRate(port, rate);
-
-    if (rate != session.rate)
+    for (auto it: m_sflowRateSampleMap)
     {
-        if (!sflowUpdateRate(port.m_port_id, rate))
+        if (it.second.m_sample_id == m_sample_id)
         {
-            return false;
+            return it.first;
         }
     }
+    return 0;
+}
 
-    if (session.adminState != gEnable)
+bool SflowOrch::handleSflowSessionDel(sai_object_id_t port_id)
+{
+    auto sflowInfo = m_sflowPortInfoMap.find(port_id);
+
+    if (sflowInfo != m_sflowPortInfoMap.end())
     {
-        if (gEnable)
+        uint32_t rate = sflowSessionGetRate(sflowInfo->second.m_sample_id);
+        if (sflowInfo->second.admin_state)
         {
-            if (!sflowAddPort(session, port.m_port_id))
+            if (!sflowDelPort(port_id))
             {
-                SWSS_LOG_ERROR("Updating port with session %lx failed", session.m_sample_id);
                 return false;
             }
+            sflowInfo->second.admin_state = false;
         }
-        else
+
+        m_sflowPortInfoMap.erase(port_id);
+        m_sflowRateSampleMap[rate].ref_count--;
+        if (m_sflowRateSampleMap[rate].ref_count == 0)
         {
-            if (!sflowDelPort(session, port.m_port_id))
+            if (!sflowDestroySession(m_sflowRateSampleMap[rate]))
             {
-                SWSS_LOG_ERROR("Updating port with session %lx failed", session.m_sample_id);
                 return false;
             }
-
+            m_sflowRateSampleMap.erase(rate);
         }
     }
-    session.adminState = gEnable;
-    session.globalConfigured = true;
-
     return true;
-}
-
-bool SflowOrch::handleSflowStatus(KeyOpFieldsValuesTuple tuple)
-{
-    bool ret = true;
-    string op = kfvOp(tuple);
-
-    if (op == SET_COMMAND)
-    {
-        for (auto i : kfvFieldsValues(tuple))
-        {
-            if (fvField(i) == "admin_state")
-            {
-                if (fvValue(i) == "enable")
-                {
-                    if (sflowStatus)
-                    {
-                        continue;
-                    }
-                    sflowStatus = true;
-                } 
-                else if (fvValue(i) == "disable")
-                {
-                    if (!sflowStatus)
-                    {
-                        continue;
-                    }
-                    sflowStatus = false;
-                }
-                if (!sflowStatusSet(sflowStatus, false))
-                {
-                    ret = false;
-                    continue;
-                }
-            }
-        }
-    }
-    else if (op == DEL_COMMAND)
-    {
-        if (!sflowStatusSet(false, true))
-        {
-            ret = false;
-        }
-        sflowStatus = false;
-    }
-    return ret;
-}
-
-bool SflowOrch::handleGlobalConfig(KeyOpFieldsValuesTuple tuple)
-{
-    bool ret = true;
-    string op = kfvOp(tuple);
-
-    if (op == SET_COMMAND)
-    {
-        for (auto i : kfvFieldsValues(tuple))
-        {
-            if (fvField(i) == "admin_state")
-            {
-                if (fvValue(i) == "enable")
-                {
-                    gEnable = true;
-                } 
-                else if (fvValue(i) == "disable")
-                {
-                    gEnable = false;
-                }
-                if (!sflowGlobalConfigure(gEnable)) 
-                {
-                    ret = false;
-                    continue;
-                }
-            }
-            else
-            {
-                ret = false;
-            }
-        }
-    }
-    else if (op == DEL_COMMAND)
-    {
-        /* By default global configure is true*/
-        if (!sflowGlobalConfigure(true))
-        {
-            ret = false;
-        }
-        else 
-        {
-            gEnable = true;
-        }
-    }
-    return ret;
-}
-
-void SflowOrch::doSflowStatusTask(Consumer &consumer)
-{
-    auto it = consumer.m_toSync.begin();
-
-    while (it != consumer.m_toSync.end())
-    {
-        auto tuple = it->second;
-        string op = kfvOp(tuple);
-
-        if (!handleSflowStatus(tuple))
-        {
-            it++;
-            continue;
-        } 
-        it = consumer.m_toSync.erase(it);
-    }
-}
-
-void SflowOrch::sflowUpdateSpeedRateMap(Consumer &consumer)
-{
-    auto it = consumer.m_toSync.begin();
-    uint32_t speed = 0;
-    uint32_t rate = 0;
-
-    while (it != consumer.m_toSync.end())
-    {
-        auto tuple = it->second;
-        string op = kfvOp(tuple);
-
-        for (auto i : kfvFieldsValues(tuple))
-        {
-            speed = (uint32_t)stoul(fvField(i));
-            rate = (uint32_t)stoul(fvValue(i));
-            if (op == SET_COMMAND)
-            {
-                m_speedRateMap[speed] = rate;
-            }
-        }
-        it = consumer.m_toSync.erase(it);
-    }
 }
 
 void SflowOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-    Port port;
-
+    Port   port;
     string table_name = consumer.getTableName();
 
-    if (!gPortsOrch->allPortsReady())
+    if (table_name == APP_SFLOW_TABLE_NAME)
     {
+        sflowStatusSet(consumer);
         return;
     }
-
-    if (table_name == APP_SFLOW_SAMPLE_RATE_TABLE_NAME)
+    if (!gPortsOrch->allPortsReady())
     {
-        sflowUpdateSpeedRateMap(consumer);
-    }
-    else if (table_name == APP_SFLOW_TABLE_NAME)
-    {
-        doSflowStatusTask(consumer);
         return;
     }
 
@@ -541,160 +247,101 @@ void SflowOrch::doTask(Consumer &consumer)
     {
         auto tuple = it->second;
         string op = kfvOp(tuple);
-
         string alias = kfvKey(tuple);
 
-        if (alias == "all") 
-        {
-            if (handleGlobalConfig(tuple))
-            {
-                it = consumer.m_toSync.erase(it);
-            }
-            else
-            {
-                it++;
-            }
-            continue;
-        }
-
         gPortsOrch->getPort(alias, port);
-
         if (op == SET_COMMAND)
         {
-            bool      adminState = gEnable;
+            bool      admin_state = false;
             uint32_t  rate       = 0;
 
-            bool      rateSet    = false;
-            bool      adminSet   = false;
-
-            sflowGetDefaultSampleRate(port, rate);
-
-            for (auto i : kfvFieldsValues(tuple))
+            if (!sflowStatus)
             {
-                if (fvField(i) == "admin_state")
-                {
-                    if (fvValue(i) == "enable")
-                    {
-                        adminState = true;
-                    } 
-                    else if (fvValue(i) == "disable")
-                    {
-                        adminState = false;
-                    }
-                    adminSet = true;
-                }
-
-                if (fvField(i) == "sample_rate")
-                {
-                    rate = (uint32_t)stoul(fvValue(i));
-                    rateSet = true;
-                }
+                return;
             }
-            auto sflowInfo = m_sflowPortSessionMap.find(port.m_port_id);
-
-            if (sflowInfo == m_sflowPortSessionMap.end())
+            auto sflowInfo = m_sflowPortInfoMap.find(port.m_port_id);
+            if (sflowInfo != m_sflowPortInfoMap.end())
             {
-                SflowSession session;
-                
-                session.rate = rate;
-                session.adminState = adminState;
-                session.globalConfigured = false;
-                auto e_sampleObj = m_sflowRateSampleMap.find(rate);
+                rate = sflowSessionGetRate(sflowInfo->second.m_sample_id);
+                admin_state = sflowInfo->second.admin_state;
+            }
 
-                if (e_sampleObj != m_sflowRateSampleMap.end())
+            sflowExtractFvs(kfvFieldsValues(tuple), admin_state, rate);
+            if (sflowInfo == m_sflowPortInfoMap.end())
+            {
+                if (rate == 0)
                 {
-                    session.m_sample_id = e_sampleObj->second;
+                    it++;
+                    continue;
+                }
+
+                SflowPortInfo port_info;
+                auto          session_info = m_sflowRateSampleMap.find(rate);
+                if (session_info != m_sflowRateSampleMap.end())
+                {
+                    port_info.m_sample_id = session_info->second.m_sample_id;
                 }
                 else 
                 {
-                    if (!sflowCreateSession(session))
+                    SflowSession  session;
+                    if (!sflowCreateSession(rate, session))
                     {
                         it++;
                         continue;
                     }
-                    m_sflowRateSampleMap[rate] = session.m_sample_id;
-                    m_sflowSampleRefMap[session.m_sample_id] = 0;
+                    m_sflowRateSampleMap[rate] = session;
+                    port_info.m_sample_id = session.m_sample_id;
                 }
-                if (adminState == true)
+                if (admin_state)
                 {
-                    if (!sflowAddPort(session, port.m_port_id))
+                    if (!sflowAddPort(port_info.m_sample_id, port.m_port_id))
                     {
                         it++;
                         continue;
                     }
                 }
-                m_sflowPortSessionMap[port.m_port_id] = session;
-                m_sflowSampleRefMap[session.m_sample_id]++;
+                port_info.admin_state = admin_state;
+                m_sflowPortInfoMap[port.m_port_id] = port_info;
+                m_sflowRateSampleMap[rate].ref_count++;
             }
             else 
             {
-                if ((rateSet) && (rate != sflowInfo->second.rate))
+                if (rate != sflowSessionGetRate(sflowInfo->second.m_sample_id))
                 {
-                    if (sflowUpdateRate(port.m_port_id, rate))
+                    if (!sflowUpdateRate(port.m_port_id, rate))
                     {
                         it++;
                         continue;
                     }
                 }
-                if ((adminSet) && (adminState != sflowInfo->second.adminState))
+                if (admin_state != sflowInfo->second.admin_state)
                 {
-                    if (adminState)
+                    bool ret = false;
+                    if (admin_state)
                     {
-                        if (!sflowAddPort(sflowInfo->second, port.m_port_id))
-                        {
-                            it++;
-                            continue;
-                        }
+                        ret = sflowAddPort(sflowInfo->second.m_sample_id, port.m_port_id);
                     }
                     else
                     {
-                        if (!sflowDelPort(sflowInfo->second, port.m_port_id))
-                        {
-                            it++;
-                            continue;
-                        }
+                        ret = sflowDelPort(port.m_port_id);
                     }
-                    sflowInfo->second.adminState = adminState;
+                    if (!ret)
+                    {
+                        it++;
+                        continue;
+                    }
+                    sflowInfo->second.admin_state = admin_state;
                 }
-                sflowInfo->second.globalConfigured = false;
             }
-            it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
         {
-            auto sflowInfo = m_sflowPortSessionMap.find(port.m_port_id);
-            if (sflowInfo != m_sflowPortSessionMap.end())
+            if (!handleSflowSessionDel(port.m_port_id))
             {
-                if (gEnable)
-                {
-                    sflowPortApplyGlobalSetting(port, sflowInfo->second);
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-                if (sflowInfo->second.adminState)
-                {
-                    if (!sflowDelPort(sflowInfo->second, port.m_port_id))
-                    {
-                        it++;
-                        continue;
-                    }
-                    sflowInfo->second.adminState = false;
-                }
-
-                m_sflowPortSessionMap.erase(port.m_port_id);
-                m_sflowSampleRefMap[sflowInfo->second.m_sample_id]--;
-                if (m_sflowSampleRefMap[sflowInfo->second.m_sample_id] == 0)
-                {
-                    if (!sflowDestroySession(sflowInfo->second))
-                    {
-                        it++;
-                        continue;
-                    }
-                    m_sflowSampleRefMap.erase(sflowInfo->second.m_sample_id);
-                    m_sflowRateSampleMap.erase(sflowInfo->second.rate);
-                }
+                it++;
+                continue;
             }
-            it = consumer.m_toSync.erase(it);
         }
+        it = consumer.m_toSync.erase(it);
     }
 }
