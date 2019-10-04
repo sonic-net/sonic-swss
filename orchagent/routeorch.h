@@ -9,37 +9,37 @@
 #include "ipaddress.h"
 #include "ipaddresses.h"
 #include "ipprefix.h"
+#include "nexthopgroupkey.h"
 
 #include <map>
 
 /* Maximum next hop group number */
 #define NHGRP_MAX_SIZE 128
-
 /* Length of the Interface Id value in EUI64 format */
 #define EUI64_INTF_ID_LEN 8
 
-typedef std::map<IpAddress, sai_object_id_t> NextHopGroupMembers;
+typedef std::map<NextHopKey, sai_object_id_t> NextHopGroupMembers;
 
 struct NextHopGroupEntry
 {
     sai_object_id_t         next_hop_group_id;      // next hop group id
     int                     ref_count;              // reference count
-    NextHopGroupMembers     nhopgroup_members;      // ids of members indexed by ip address
+    NextHopGroupMembers     nhopgroup_members;      // ids of members indexed by <ip_address, if_alias>
 };
 
 struct NextHopUpdate
 {
     IpAddress destination;
     IpPrefix prefix;
-    IpAddresses nexthopGroup;
+    NextHopGroupKey nexthopGroup;
 };
 
 struct NextHopObserverEntry;
 
-/* NextHopGroupTable: next hop group IP addersses, NextHopGroupEntry */
-typedef std::map<IpAddresses, NextHopGroupEntry> NextHopGroupTable;
-/* RouteTable: destination network, next hop IP address(es) */
-typedef std::map<IpPrefix, IpAddresses> RouteTable;
+/* NextHopGroupTable: NextHopGroupKey, NextHopGroupEntry */
+typedef std::map<NextHopGroupKey, NextHopGroupEntry> NextHopGroupTable;
+/* RouteTable: destination network, NextHopGroupKey */
+typedef std::map<IpPrefix, NextHopGroupKey> RouteTable;
 /* NextHopObserverTable: Destination IP address, next hop observer entry */
 typedef std::map<IpAddress, NextHopObserverEntry> NextHopObserverTable;
 
@@ -54,23 +54,23 @@ class RouteOrch : public Orch, public Subject
 public:
     RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch);
 
-    bool hasNextHopGroup(const IpAddresses&) const;
-    sai_object_id_t getNextHopGroupId(const IpAddresses&);
+    bool hasNextHopGroup(const NextHopGroupKey&) const;
+    sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
 
     void attach(Observer *, const IpAddress&);
     void detach(Observer *, const IpAddress&);
 
-    void increaseNextHopRefCount(IpAddresses);
-    void decreaseNextHopRefCount(IpAddresses);
-    bool isRefCounterZero(const IpAddresses&) const;
+    void increaseNextHopRefCount(const NextHopGroupKey&);
+    void decreaseNextHopRefCount(const NextHopGroupKey&);
+    bool isRefCounterZero(const NextHopGroupKey&) const;
 
-    bool addNextHopGroup(IpAddresses);
-    bool removeNextHopGroup(IpAddresses);
+    bool addNextHopGroup(const NextHopGroupKey&);
+    bool removeNextHopGroup(const NextHopGroupKey&);
 
-    bool validnexthopinNextHopGroup(const IpAddress &);
-    bool invalidnexthopinNextHopGroup(const IpAddress &);
+    bool validnexthopinNextHopGroup(const NextHopKey&);
+    bool invalidnexthopinNextHopGroup(const NextHopKey&);
 
-    void notifyNextHopChangeObservers(IpPrefix, IpAddresses, bool);
+    void notifyNextHopChangeObservers(const IpPrefix&, const NextHopGroupKey&, bool);
 private:
     NeighOrch *m_neighOrch;
 
@@ -83,9 +83,9 @@ private:
 
     NextHopObserverTable m_nextHopObservers;
 
-    void addTempRoute(IpPrefix, IpAddresses);
-    bool addRoute(IpPrefix, IpAddresses);
-    bool removeRoute(IpPrefix);
+    void addTempRoute(const IpPrefix&, const NextHopGroupKey&);
+    bool addRoute(const IpPrefix&, const NextHopGroupKey&);
+    bool removeRoute(const IpPrefix&);
 
     std::string getLinkLocalEui64Addr(void);
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);

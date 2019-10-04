@@ -11,40 +11,40 @@
 
 struct TunnelTermEntry
 {
-    sai_object_id_t            tunnel_term_id;
-    string                     ip_address;
+    sai_object_id_t                 tunnel_term_id;
+    std::string                     ip_address;
 };
 
 struct TunnelEntry
 {
-    sai_object_id_t            tunnel_id;              // tunnel id
-    sai_object_id_t            overlay_intf_id;        // overlay interface id
-    vector<TunnelTermEntry>    tunnel_term_info;       // tunnel_entry ids related to the tunnel abd ips related to the tunnel (all ips for tunnel entries that refer to this tunnel)
+    sai_object_id_t                 tunnel_id;              // tunnel id
+    sai_object_id_t                 overlay_intf_id;        // overlay interface id
+    std::vector<TunnelTermEntry>    tunnel_term_info;       // tunnel_entry ids related to the tunnel abd ips related to the tunnel (all ips for tunnel entries that refer to this tunnel)
 };
 
 /* TunnelTable: key string, tunnel object id */
-typedef map<string, TunnelEntry> TunnelTable;
+typedef std::map<std::string, TunnelEntry> TunnelTable;
 
 /* ExistingIps: ips that currently have term entries */
-typedef unordered_set<string> ExistingIps;
+typedef std::unordered_set<std::string> ExistingIps;
 
 class TunnelDecapOrch : public Orch
 {
 public:
-    TunnelDecapOrch(DBConnector *db, string tableName);
+    TunnelDecapOrch(swss::DBConnector *db, std::string tableName);
 
 private:
     TunnelTable tunnelTable;
     ExistingIps existingIps;
 
-    bool addDecapTunnel(string key, string type, IpAddresses dst_ip, IpAddress* p_src_ip, string dscp, string ecn, string ttl);
-    bool removeDecapTunnel(string key);
+    bool addDecapTunnel(std::string key, std::string type, swss::IpAddresses dst_ip, swss::IpAddress* p_src_ip, std::string dscp, std::string ecn, std::string ttl);
+    bool removeDecapTunnel(std::string key);
 
-    bool addDecapTunnelTermEntries(string tunnelKey, IpAddresses dst_ip, sai_object_id_t tunnel_id);
-    bool removeDecapTunnelTermEntry(sai_object_id_t tunnel_term_id, string ip);
+    bool addDecapTunnelTermEntries(std::string tunnelKey, swss::IpAddresses dst_ip, sai_object_id_t tunnel_id);
+    bool removeDecapTunnelTermEntry(sai_object_id_t tunnel_term_id, std::string ip);
 
-    bool setTunnelAttribute(string field, string value, sai_object_id_t existing_tunnel_id);
-    bool setIpAttribute(string key, IpAddresses new_ip_addresses, sai_object_id_t tunnel_id);
+    bool setTunnelAttribute(std::string field, std::string value, sai_object_id_t existing_tunnel_id);
+    bool setIpAttribute(std::string key, swss::IpAddresses new_ip_addresses, sai_object_id_t tunnel_id);
 
     void doTask(Consumer& consumer);
 };
