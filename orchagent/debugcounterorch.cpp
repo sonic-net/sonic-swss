@@ -199,11 +199,11 @@ task_process_status DebugCounterOrch::installDebugCounter(const string &counter_
     // If you are adding support for a non-drop counter than it may make sense
     // to either: a) dispatch to different handlers in doTask or b) dispatch to
     // different helper methods in this method.
-    string counter_type = getDebugCounterType(attributes);
-    addFreeCounter(counter_name, counter_type);
 
     try 
     {
+        string counter_type = getDebugCounterType(attributes);
+        addFreeCounter(counter_name, counter_type);
         reconcileFreeDropCounters(counter_name);
     } 
     catch (const std::exception& e) 
@@ -265,6 +265,11 @@ task_process_status DebugCounterOrch::addDropReason(const string &counter_name, 
 {
     SWSS_LOG_ENTER();
 
+    if (!isDropReasonValid(drop_reason))
+    {
+        return task_failed;
+    }
+
     auto it = debug_counters.find(counter_name);
     if (it == debug_counters.end()) 
     {
@@ -313,6 +318,11 @@ task_process_status DebugCounterOrch::removeDropReason(const string &counter_nam
 {
     SWSS_LOG_ENTER();
 
+    if (!isDropReasonValid(drop_reason))
+    {
+        return task_failed;
+    }
+
     auto it = debug_counters.find(counter_name);
     if (it == debug_counters.end()) 
     {
@@ -349,6 +359,8 @@ task_process_status DebugCounterOrch::removeDropReason(const string &counter_nam
 // method has no effect if the counter has already been added to the free drop counter table.
 void DebugCounterOrch::addFreeCounter(const string &counter_name, const string &counter_type) 
 {
+    SWSS_LOG_ENTER();
+
     if (free_drop_counters.find(counter_name) != free_drop_counters.end()) 
     {
         SWSS_LOG_DEBUG("Debug counter '%s' is in free counter table", counter_name.c_str());
@@ -363,6 +375,8 @@ void DebugCounterOrch::addFreeCounter(const string &counter_name, const string &
 // if the counter has already been removed from the free drop counter table.
 void DebugCounterOrch::deleteFreeCounter(const string &counter_name) 
 {
+    SWSS_LOG_ENTER();
+
     if (free_drop_counters.find(counter_name) == free_drop_counters.end()) 
     {
         SWSS_LOG_DEBUG("Debug counter %s does not exist", counter_name.c_str());
@@ -378,6 +392,8 @@ void DebugCounterOrch::deleteFreeCounter(const string &counter_name)
 // if the drop reason has already added to the free drop reason table.
 void DebugCounterOrch::addFreeDropReason(const string &counter_name, const string &drop_reason) 
 {
+    SWSS_LOG_ENTER();
+    
     auto reasons_it = free_drop_reasons.find(counter_name);
 
     if (reasons_it == free_drop_reasons.end()) 
@@ -397,6 +413,8 @@ void DebugCounterOrch::addFreeDropReason(const string &counter_name, const strin
 // if the drop reason has already been removed from the free drop reason table.
 void DebugCounterOrch::deleteFreeDropReason(const string &counter_name, const string &drop_reason)
 {
+    SWSS_LOG_ENTER();
+    
     auto reasons_it = free_drop_reasons.find(counter_name);
 
     if (reasons_it == free_drop_reasons.end()) {
@@ -421,6 +439,8 @@ void DebugCounterOrch::deleteFreeDropReason(const string &counter_name, const st
 // If one of the entries is missing, this method has no effect.
 void DebugCounterOrch::reconcileFreeDropCounters(const string &counter_name) 
 {
+    SWSS_LOG_ENTER();
+    
     auto counter_it = free_drop_counters.find(counter_name);
     auto reasons_it = free_drop_reasons.find(counter_name);
 
@@ -439,6 +459,8 @@ void DebugCounterOrch::reconcileFreeDropCounters(const string &counter_name)
 // getFlexCounterType gets the FlexCounterType associated with the given counter type.
 FlexCounterType DebugCounterOrch::getFlexCounterType(const string &counter_type) 
 {
+    SWSS_LOG_ENTER();
+    
     auto flex_counter_type_it = flex_counter_type_lookup.find(counter_type);
     if (flex_counter_type_it == flex_counter_type_lookup.end()) 
     {
@@ -530,7 +552,7 @@ std::string DebugCounterOrch::getDebugCounterType(const std::vector<FieldValueTu
             auto counter_type_it = debug_counter_type_lookup.find(attr_value);
             if (counter_type_it == debug_counter_type_lookup.end())
             {
-                SWSS_LOG_ERROR("Failed to initialize debug counter of type '%s'", attr_value.c_str());
+                SWSS_LOG_ERROR("Debug counter type '%s' does not exist", attr_value.c_str());
                 throw std::runtime_error("Failed to initialize debug counter");
             }
 
@@ -574,4 +596,18 @@ void DebugCounterOrch::parseDropReasonUpdate(const string &key, const char delim
     SWSS_LOG_DEBUG("DEBUG_COUNTER COUNTER NAME = %s (%d, %zd)", counter_name->c_str(), 0, counter_end);
     *drop_reason = key.substr(counter_end + 1);
     SWSS_LOG_DEBUG("DEBUG_COUNTER RULE NAME = %s (%zd, %zd)", drop_reason->c_str(), counter_end + 1, key.length());
+}
+
+bool DebugCounterOrch::isDropReasonValid(const string &drop_reason) const
+{
+    SWSS_LOG_ENTER();
+
+    if (ingress_drop_reason_lookup.find(drop_reason) == ingress_drop_reason_lookup.end() &&
+        egress_drop_reason_lookup.find(drop_reason)  == egress_drop_reason_lookup.end())
+    {
+        SWSS_LOG_ERROR("Drop reason %s not found", drop_reason.c_str());
+        return false;
+    }
+
+    return true;
 }

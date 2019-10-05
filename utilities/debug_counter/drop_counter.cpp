@@ -1,6 +1,5 @@
 #include "drop_counter.h"
 
-#include <unordered_map>
 #include "logger.h"
 #include "sai_serialize.h"
 
@@ -9,22 +8,6 @@ using std::runtime_error;
 
 extern sai_object_id_t gSwitchId;
 extern sai_debug_counter_api_t *sai_debug_counter_api;
-
-// TODO: Finish adding all the supported SAI drop reasons.
-static unordered_map<string, sai_in_drop_reason_t> ingress_drop_reason_lookup = {
-    { SMAC_EQUALS_DMAC,    SAI_IN_DROP_REASON_SMAC_EQUALS_DMAC },
-    { SIP_LINK_LOCAL,      SAI_IN_DROP_REASON_SIP_LINK_LOCAL },
-    { DIP_LINK_LOCAL,      SAI_IN_DROP_REASON_DIP_LINK_LOCAL },
-    { L3_EGRESS_LINK_DOWN, SAI_IN_DROP_REASON_L3_EGRESS_LINK_DOWN },
-    { ACL_ANY,             SAI_IN_DROP_REASON_ACL_ANY},
-};
-
-static unordered_map<string, sai_out_drop_reason_t> egress_drop_reason_lookup = {
-    { L2_ANY,              SAI_OUT_DROP_REASON_L2_ANY },
-    { EGRESS_VLAN_FILTER,  SAI_OUT_DROP_REASON_EGRESS_VLAN_FILTER },
-    { L3_ANY,              SAI_OUT_DROP_REASON_L3_ANY },
-    { L3_EGRESS_LINK_DOWN, SAI_OUT_DROP_REASON_L3_EGRESS_LINK_DOWN },
-};
 
 // DropCounter initializes a new debug counter for tracking packet drops.
 //
@@ -107,8 +90,16 @@ void DropCounter::addDropReason(const std::string &drop_reason)
         return;
     }
     
-    this->drop_reasons.emplace(drop_reason);
-    this->updateDropReasonsInSAI();
+    try
+    {
+        this->drop_reasons.emplace(drop_reason);
+        this->updateDropReasonsInSAI();
+    }
+    catch (const std::exception& e) 
+    {
+        this->drop_reasons.erase(drop_reason);
+        throw e;
+    }
 }
 
 // removeDropReason removes a drop reason from this drop counter.
@@ -128,8 +119,16 @@ void DropCounter::removeDropReason(const std::string &drop_reason)
         return;
     }
     
-    this->updateDropReasonsInSAI();
-    this->drop_reasons.erase(drop_reason_it);
+    try
+    {
+        this->drop_reasons.erase(drop_reason_it);
+        this->updateDropReasonsInSAI();
+    }
+    catch (const std::exception& e) 
+    {
+        this->drop_reasons.emplace(drop_reason);
+        throw e;
+    }
 }
 
 // initializeDropCounterInSAI initializes this drop counter in the SAI.

@@ -23,6 +23,7 @@ FlexCounterManager::FlexCounterManager(const string &group_name,
     SWSS_LOG_ENTER();
     createFlexCounterGroup(flex_counter_group_table.get(), group_name,
             stats_mode, polling_interval);
+    disableFlexCounters(flex_counter_group_table.get(), group_name);
     status = false;
 }
 

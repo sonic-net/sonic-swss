@@ -9,6 +9,7 @@
 #include "orch.h"
 #include "flex_counter_manager.h"
 #include "debug_counter.h"
+#include "drop_counter.h"
 
 extern "C" {
 #include "sai.h"
@@ -55,6 +56,7 @@ private:
 
     // Debug Counter Configuration Helper Functions
     void parseDropReasonUpdate(const string &key, const char delimeter, string *counter_name, string *drop_reason) const;
+    bool isDropReasonValid(const string &drop_reason) const;
 
     // Data Members
     shared_ptr<DBConnector> m_stateDb = nullptr;
