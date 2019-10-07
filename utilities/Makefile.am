@@ -1,1 +1,1 @@
-SUBDIRS = flexcounter debug_counter
+SUBDIRS = flex_counter debug_counter

@@ -89,7 +89,7 @@ AC_CONFIG_FILES([
     cfgmgr/Makefile
     tests/Makefile
     utilities/Makefile
-    utilities/flexcounter/Makefile
+    utilities/flex_counter/Makefile
     utilities/debug_counter/Makefile
 ])
 

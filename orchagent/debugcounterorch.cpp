@@ -9,11 +9,11 @@
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
 
-static const unordered_map<string, FlexCounterType> flex_counter_type_lookup = {
-    { PORT_INGRESS_DROPS, FlexCounterType::PORT_DEBUG },
-    { PORT_EGRESS_DROPS, FlexCounterType::PORT_DEBUG },
-    { SWITCH_INGRESS_DROPS, FlexCounterType::SWITCH_DEBUG },
-    { SWITCH_EGRESS_DROPS, FlexCounterType::SWITCH_DEBUG },
+static const unordered_map<string, CounterType> flex_counter_type_lookup = {
+    { PORT_INGRESS_DROPS, CounterType::PORT_DEBUG },
+    { PORT_EGRESS_DROPS, CounterType::PORT_DEBUG },
+    { SWITCH_INGRESS_DROPS, CounterType::SWITCH_DEBUG },
+    { SWITCH_EGRESS_DROPS, CounterType::SWITCH_DEBUG },
 };
 
 // DebugCounterOrch creates a new instance of DebugCounterOrch.
@@ -22,7 +22,7 @@ static const unordered_map<string, FlexCounterType> flex_counter_type_lookup = {
 // object should only be initialized once.
 DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string> &table_names, int poll_interval) :
         Orch(db, table_names), 
-        flex_counter_manager(DEBUG_COUNTER_FLEX_COUNTER_GROUP, FlexCounterStatsMode::READ, poll_interval),
+        flex_counter_manager(DEBUG_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, poll_interval),
         m_stateDb(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
         m_debugCapabilitiesTable(new Table(m_stateDb.get(), STATE_DEBUG_COUNTER_CAPABILITIES_NAME)),
         m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
@@ -31,6 +31,7 @@ DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string> &table_
 {
     SWSS_LOG_ENTER();
     publishDropCounterCapabilities();
+    flex_counter_manager.enableFlexCounterGroup();
 }
 
 // ~DebugCounterOrch destroys this instance of DebugCounterOrch, freeing any
@@ -457,7 +458,7 @@ void DebugCounterOrch::reconcileFreeDropCounters(const string &counter_name)
 // Flex Counter Management Functions START HERE ----------------------------------------------------
 
 // getFlexCounterType gets the FlexCounterType associated with the given counter type.
-FlexCounterType DebugCounterOrch::getFlexCounterType(const string &counter_type) 
+CounterType DebugCounterOrch::getFlexCounterType(const string &counter_type) 
 {
     SWSS_LOG_ENTER();
     
@@ -476,24 +477,26 @@ void DebugCounterOrch::installDebugFlexCounters(const string &counter_type,
                                                 const string &counter_stat)
 {
     SWSS_LOG_ENTER();
-    FlexCounterType flex_counter_type = getFlexCounterType(counter_type); 
+    CounterType flex_counter_type = getFlexCounterType(counter_type); 
 
-    if (flex_counter_type == FlexCounterType::SWITCH_DEBUG)
+    if (flex_counter_type == CounterType::SWITCH_DEBUG)
     {
-        flex_counter_manager.addFlexCounterStat(flex_counter_type, { gSwitchId }, counter_stat);
+        flex_counter_manager.addFlexCounterStat(gSwitchId, flex_counter_type, counter_stat);
     } 
-    else if (flex_counter_type == FlexCounterType::PORT_DEBUG)
+    else if (flex_counter_type == CounterType::PORT_DEBUG)
     {
-        vector<sai_object_id_t> port_ids;
         for (auto const &curr : gPortsOrch->getAllPorts()) 
         {
             if (curr.second.m_type != Port::Type::PHY) 
             {
                 continue;
             }
-            port_ids.push_back(curr.second.m_port_id);
+
+            flex_counter_manager.addFlexCounterStat(
+                    curr.second.m_port_id,
+                    flex_counter_type, 
+                    counter_stat);
         }
-        flex_counter_manager.addFlexCounterStat(flex_counter_type, port_ids, counter_stat);
     }
 }
 
@@ -503,24 +506,26 @@ void DebugCounterOrch::uninstallDebugFlexCounters(const string &counter_type,
                                                   const string &counter_stat)
 {
     SWSS_LOG_ENTER();
-    FlexCounterType flex_counter_type = getFlexCounterType(counter_type);  
+    CounterType flex_counter_type = getFlexCounterType(counter_type);  
 
-    if (flex_counter_type == FlexCounterType::SWITCH_DEBUG)
+    if (flex_counter_type == CounterType::SWITCH_DEBUG)
     {
-        flex_counter_manager.removeFlexCounterStat(flex_counter_type, { gSwitchId }, counter_stat);
+        flex_counter_manager.removeFlexCounterStat(gSwitchId, flex_counter_type, counter_stat);
     } 
-    else if (flex_counter_type == FlexCounterType::PORT_DEBUG)
+    else if (flex_counter_type == CounterType::PORT_DEBUG)
     {
-        vector<sai_object_id_t> port_ids;
         for (auto const &curr : gPortsOrch->getAllPorts()) 
         {
             if (curr.second.m_type != Port::Type::PHY) 
             {
                 continue;
             }
-            port_ids.push_back(curr.second.m_port_id);
+
+            flex_counter_manager.removeFlexCounterStat(
+                curr.second.m_port_id,
+                flex_counter_type,
+                counter_stat);
         }
-        flex_counter_manager.removeFlexCounterStat(flex_counter_type, port_ids, counter_stat);
     }    
 }
 

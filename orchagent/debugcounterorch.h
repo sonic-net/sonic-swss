@@ -7,7 +7,7 @@
 #include <unordered_set>
 
 #include "orch.h"
-#include "flex_counter_manager.h"
+#include "dynamic_flex_counter_manager.h"
 #include "debug_counter.h"
 #include "drop_counter.h"
 
@@ -45,8 +45,7 @@ private:
     void reconcileFreeDropCounters(const string &counter_name);
 
     // Flex Counter Management Functions
-    FlexCounterType getFlexCounterType(const string &counter_type);
-    string getFlexCounterStats(const FlexCounterType counter_type);
+    CounterType getFlexCounterType(const string &counter_type);
     void installDebugFlexCounters(const string &counter_type, const string &counter_stat);
     void uninstallDebugFlexCounters(const string &counter_type, const string &counter_stat);
 
@@ -66,7 +65,7 @@ private:
     shared_ptr<Table> m_counterNameToPortStatMap = nullptr;
     shared_ptr<Table> m_counterNameToSwitchStatMap = nullptr;
 
-    FlexCounterManager flex_counter_manager;
+    DynamicFlexCounterManager flex_counter_manager;
 
     unordered_map<string, unique_ptr<DebugCounter>> debug_counters;
 
