@@ -6,6 +6,11 @@
 #include "drop_counter.h"
 #include <memory>
 
+using std::string;
+using std::unordered_map;
+using std::unordered_set;
+using std::vector;
+
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
 
@@ -16,8 +21,6 @@ static const unordered_map<string, CounterType> flex_counter_type_lookup = {
     { SWITCH_EGRESS_DROPS, CounterType::SWITCH_DEBUG },
 };
 
-// DebugCounterOrch creates a new instance of DebugCounterOrch.
-//
 // Initializing DebugCounterOrch creates a group entry in FLEX_COUNTER_DB, so this
 // object should only be initialized once.
 DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string> &table_names, int poll_interval) :
@@ -34,9 +37,6 @@ DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string> &table_
     flex_counter_manager.enableFlexCounterGroup();
 }
 
-// ~DebugCounterOrch destroys this instance of DebugCounterOrch, freeing any
-// resources that may have been allocated and returning the SAI to the state
-// it was in before this orchestrator was created.
 DebugCounterOrch::~DebugCounterOrch(void) 
 {
     SWSS_LOG_ENTER();
@@ -178,15 +178,10 @@ void DebugCounterOrch::publishDropCounterCapabilities()
 
 // doTask Handler Functions START HERE -------------------------------------------------------------
 
-// installDebugCounter creates a new debug counter given a set of attributes.
-//
-// This function will return task_success if the counter is created succesfully, or
-// if the counter already exists. If initialiation fails then it will return task_failed.
-//
 // Note that this function cannot be used to re-initialize a counter. To create a counter
 // with the same name but different attributes (e.g. type, drop reasons, etc.) you will need
 // to delete the original counter first or use a function like addDropReason, if available.
-task_process_status DebugCounterOrch::installDebugCounter(const string &counter_name, const std::vector<FieldValueTuple> &attributes) 
+task_process_status DebugCounterOrch::installDebugCounter(const string &counter_name, const vector<FieldValueTuple> &attributes) 
 {
     SWSS_LOG_ENTER();
 
@@ -216,10 +211,6 @@ task_process_status DebugCounterOrch::installDebugCounter(const string &counter_
     return task_process_status::task_success;
 }
 
-// uninstallDebugCounter deletes an existing debug counter.
-//
-// This function will return task_success if the counter is deleted succesfully, or if
-// the counter does not exist. If deletion fails then it will return task_failed.
 task_process_status DebugCounterOrch::uninstallDebugCounter(const string &counter_name) 
 {
     SWSS_LOG_ENTER();
@@ -258,10 +249,6 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string &counte
     return task_process_status::task_success;
 }
 
-// addDropReason adds a drop reason to an existing drop counter.
-//
-// This function will return task_success if the drop reason is succesfully added. If
-// the add fails then it will return task_failed.
 task_process_status DebugCounterOrch::addDropReason(const string &counter_name, const string &drop_reason)
 {
     SWSS_LOG_ENTER();
@@ -307,14 +294,8 @@ task_process_status DebugCounterOrch::addDropReason(const string &counter_name, 
     return task_process_status::task_success;
 }
 
-// removeDropReasons removes a drop reason from an existing drop counter.
-//
 // A drop counter must always contain at least one drop reason, so this function
 // will do nothing if you attempt to remove the last drop reason.
-//
-// This function will return task_success if the drop reason is succesfully removed.
-// If the removal of the given drop reason would render the list empty, then this
-// function will return task_ignore. If the removal fails then it will return task_failed.
 task_process_status DebugCounterOrch::removeDropReason(const string &counter_name, const string &drop_reason)
 {
     SWSS_LOG_ENTER();
@@ -355,9 +336,7 @@ task_process_status DebugCounterOrch::removeDropReason(const string &counter_nam
 
 // Free Table Management Functions START HERE ------------------------------------------------------
 
-// addFreeCounter adds a counter to the free drop counter table. Entries will remain in the table until
-// at least one drop reason is added to the counter, at which point a SAI counter will be created. This
-// method has no effect if the counter has already been added to the free drop counter table.
+// Note that entries will remain in the table until at least one drop reason is added to the counter.
 void DebugCounterOrch::addFreeCounter(const string &counter_name, const string &counter_type) 
 {
     SWSS_LOG_ENTER();
@@ -372,8 +351,6 @@ void DebugCounterOrch::addFreeCounter(const string &counter_name, const string &
     free_drop_counters.emplace(make_pair(counter_name, counter_type));
 }
 
-// deleteFreeCounter removes a counter from the free drop counter table. This method will have no effect
-// if the counter has already been removed from the free drop counter table.
 void DebugCounterOrch::deleteFreeCounter(const string &counter_name) 
 {
     SWSS_LOG_ENTER();
@@ -388,9 +365,7 @@ void DebugCounterOrch::deleteFreeCounter(const string &counter_name)
     free_drop_counters.erase(counter_name);
 }
 
-// addFreeDropReason adds a drop reason to the free drop reason table. Entries will remain in the table
-// until a drop counter is added, at which point a SAI counter will be created. This method has no effect
-// if the drop reason has already added to the free drop reason table.
+// Note that entries will remain in the table until a drop counter is added.
 void DebugCounterOrch::addFreeDropReason(const string &counter_name, const string &drop_reason) 
 {
     SWSS_LOG_ENTER();
@@ -410,8 +385,6 @@ void DebugCounterOrch::addFreeDropReason(const string &counter_name, const strin
     }
 }
 
-// deleteFreeDropReason removes a drop reason from the free drop reason table. This method will have no effect
-// if the drop reason has already been removed from the free drop reason table.
 void DebugCounterOrch::deleteFreeDropReason(const string &counter_name, const string &drop_reason)
 {
     SWSS_LOG_ENTER();
@@ -431,13 +404,6 @@ void DebugCounterOrch::deleteFreeDropReason(const string &counter_name, const st
     }
 }
 
-// reconcileFreeDropCounters attempts to combine entries from the free drop counter table and the free drop reason
-// table to create a SAI drop counter. 
-//
-// If there is an entry in each table under the same counter name then this method will create a new drop counter,
-// configure the flex counter to track this new counter, and delete the entries from each table.
-//
-// If one of the entries is missing, this method has no effect.
 void DebugCounterOrch::reconcileFreeDropCounters(const string &counter_name) 
 {
     SWSS_LOG_ENTER();
@@ -457,7 +423,6 @@ void DebugCounterOrch::reconcileFreeDropCounters(const string &counter_name)
 
 // Flex Counter Management Functions START HERE ----------------------------------------------------
 
-// getFlexCounterType gets the FlexCounterType associated with the given counter type.
 CounterType DebugCounterOrch::getFlexCounterType(const string &counter_type) 
 {
     SWSS_LOG_ENTER();
@@ -471,8 +436,6 @@ CounterType DebugCounterOrch::getFlexCounterType(const string &counter_type)
     return flex_counter_type_it->second; 
 }
 
-// installDebugFlexCounters adds the given counter stat to the flex counters
-// that are polling debug counter data.
 void DebugCounterOrch::installDebugFlexCounters(const string &counter_type, 
                                                 const string &counter_stat)
 {
@@ -500,8 +463,6 @@ void DebugCounterOrch::installDebugFlexCounters(const string &counter_type,
     }
 }
 
-// uninstallDebugFlexCounters removes the given counter stat from the flex counters
-// that are polling debug counter data.
 void DebugCounterOrch::uninstallDebugFlexCounters(const string &counter_type, 
                                                   const string &counter_stat)
 {
@@ -531,12 +492,10 @@ void DebugCounterOrch::uninstallDebugFlexCounters(const string &counter_type,
 
 // Debug Counter Initialization Helper Functions START HERE ----------------------------------------
 
-// getDebugCounterType extracts the counter type from a list of field/value pairs supplied by CONFIG_DB.
-//
 // NOTE: At this point COUNTER_TYPE is the only field from CONFIG_DB that we care about. In the future
 // if other fields become relevant it may make sense to extend this method and return a struct with the
 // relevant fields.
-std::string DebugCounterOrch::getDebugCounterType(const std::vector<FieldValueTuple> &values) const 
+std::string DebugCounterOrch::getDebugCounterType(const vector<FieldValueTuple> &values) const 
 {
     SWSS_LOG_ENTER();
 

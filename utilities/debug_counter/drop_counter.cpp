@@ -3,14 +3,15 @@
 #include "logger.h"
 #include "sai_serialize.h"
 
-using std::unordered_map;
 using std::runtime_error;
+using std::string;
+using std::unordered_map;
+using std::unordered_set;
+using std::vector;
 
 extern sai_object_id_t gSwitchId;
 extern sai_debug_counter_api_t *sai_debug_counter_api;
 
-// DropCounter initializes a new debug counter for tracking packet drops.
-//
 // If initialization fails, this constructor will throw a runtime error.
 DropCounter::DropCounter(const string &counter_name, const string &counter_type, const unordered_set<string> &drop_reasons) 
         : DebugCounter(counter_name, counter_type), drop_reasons(drop_reasons) 
@@ -19,7 +20,6 @@ DropCounter::DropCounter(const string &counter_name, const string &counter_type,
     this->initializeDropCounterInSAI();
 }
 
-// ~DropCounter deletes this drop counter from the SAI.
 DropCounter::~DropCounter() 
 {
     SWSS_LOG_ENTER();
@@ -33,9 +33,6 @@ DropCounter::~DropCounter()
     }
 }
 
-// getDebugCounterSAIStat returns the name of the stat in the SAI that contains 
-// the data for this drop counter.
-//
 // If we are unable to query the SAI or the type of counter is not supported
 // then this method throws a runtime error.
 std::string DropCounter::getDebugCounterSAIStat() const 
@@ -74,8 +71,6 @@ std::string DropCounter::getDebugCounterSAIStat() const
     }
 }
 
-// addDropReason adds a drop reason to this drop counter.
-// 
 // If the drop reason is already present on this counter, this method has no
 // effect.
 //
@@ -102,8 +97,6 @@ void DropCounter::addDropReason(const std::string &drop_reason)
     }
 }
 
-// removeDropReason removes a drop reason from this drop counter.
-//
 // If the drop reason is not present on this counter, this method has no
 // effect.
 //
@@ -131,8 +124,6 @@ void DropCounter::removeDropReason(const std::string &drop_reason)
     }
 }
 
-// initializeDropCounterInSAI initializes this drop counter in the SAI.
-//
 // If initialization fails for any reason, this method throws a runtime error.
 void DropCounter::initializeDropCounterInSAI() 
 {
@@ -200,9 +191,6 @@ void DropCounter::serializeDropReasons(uint32_t drop_reason_count, int32_t *drop
     }
 }
 
-// updateDropReasonsInSAI will push the set of drop reasons that are currently
-// attached to this counter to the SAI.
-// 
 // If the SAI update fails, this method throws a runtime error.
 void DropCounter::updateDropReasonsInSAI()
 {
@@ -220,9 +208,6 @@ void DropCounter::updateDropReasonsInSAI()
 
 // FREE FUNCTIONS START HERE ----------------------------------------------------------------------
 
-// getSupportedDropReasons queries the SAI and returns a list of the drop
-// reasons that are supported by this device.
-// 
 // Multiple calls to this function are guaranteed to return the same reasons
 // (assuming the device has not been rebooted between calls). The order of
 // the list of reasons is not guaranteed to be the same between calls.
@@ -287,9 +272,6 @@ string serializeSupportedDropReasons(vector<string> drop_reasons)
     return supported_drop_reasons + ']';
 }
 
-// getSupportedDebugCounterAmounts returns the number of currently available
-// debug counters of a given type.
-//
 // It is not guaranteed that the amount of available counters will change only
 // if counters are added or removed. Depending on the platform, debug counters
 // may share hardware resources with other ASIC objects in which case this

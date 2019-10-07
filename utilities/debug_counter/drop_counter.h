@@ -2,6 +2,7 @@
 #define SWSS_UTIL_DROP_COUNTER_H_
 
 #include <string>
+#include <vector>
 #include <unordered_set>
 #include <unordered_map>
 #include "debug_counter.h"
@@ -11,12 +12,8 @@ extern "C" {
 #include "sai.h"
 }
 
-using std::string;
-using std::unordered_set;
-using std::unordered_map;
-
 // TODO: Finish adding all the supported SAI drop reasons.
-static unordered_map<string, sai_in_drop_reason_t> ingress_drop_reason_lookup = {
+static std::unordered_map<std::string, sai_in_drop_reason_t> ingress_drop_reason_lookup = {
     { SMAC_EQUALS_DMAC,    SAI_IN_DROP_REASON_SMAC_EQUALS_DMAC },
     { SIP_LINK_LOCAL,      SAI_IN_DROP_REASON_SIP_LINK_LOCAL },
     { DIP_LINK_LOCAL,      SAI_IN_DROP_REASON_DIP_LINK_LOCAL },
@@ -24,7 +21,7 @@ static unordered_map<string, sai_in_drop_reason_t> ingress_drop_reason_lookup = 
     { ACL_ANY,             SAI_IN_DROP_REASON_ACL_ANY},
 };
 
-static unordered_map<string, sai_out_drop_reason_t> egress_drop_reason_lookup = {
+static std::unordered_map<std::string, sai_out_drop_reason_t> egress_drop_reason_lookup = {
     { L2_ANY,              SAI_OUT_DROP_REASON_L2_ANY },
     { EGRESS_VLAN_FILTER,  SAI_OUT_DROP_REASON_EGRESS_VLAN_FILTER },
     { L3_ANY,              SAI_OUT_DROP_REASON_L3_ANY },
@@ -32,35 +29,33 @@ static unordered_map<string, sai_out_drop_reason_t> egress_drop_reason_lookup = 
 };
 
 // DropCounter represents a SAI debug counter object that track packet drops.
-// It maintains a list of drop reasons and provides methods to add and remove
-// drop reasons from the counter.
 class DropCounter : public DebugCounter
 {
     public:
-        DropCounter(const string &counter_name, 
-                    const string &counter_type,
-                    const unordered_set<string> &drop_reasons);
+        DropCounter(const std::string &counter_name, 
+                    const std::string &counter_type,
+                    const std::unordered_set<std::string> &drop_reasons);
         DropCounter(const DropCounter&) = delete;
         DropCounter& operator=(const DropCounter&) = delete;
         virtual ~DropCounter();
 
-        const unordered_set<string> &getDropReasons() const { return drop_reasons; }
+        const std::unordered_set<std::string> &getDropReasons() const { return drop_reasons; }
 
-        virtual string getDebugCounterSAIStat() const;
+        virtual std::string getDebugCounterSAIStat() const;
 
-        void addDropReason(const string &drop_reason);
-        void removeDropReason(const string &drop_reason);
+        void addDropReason(const std::string &drop_reason);
+        void removeDropReason(const std::string &drop_reason);
 
     private:
         void initializeDropCounterInSAI();
         void serializeDropReasons(uint32_t drop_reason_count, int32_t *drop_reason_list, sai_attribute_t *drop_reason_attribute);
         void updateDropReasonsInSAI();
 
-        unordered_set<string> drop_reasons;
+        std::unordered_set<std::string> drop_reasons;
 };
 
-vector<string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type);
-string serializeSupportedDropReasons(vector<string> drop_reasons);
+std::vector<std::string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type);
+std::string serializeSupportedDropReasons(std::vector<std::string> drop_reasons);
 uint64_t getSupportedDebugCounterAmounts(sai_debug_counter_type_t counter_type);
 
 #endif // SWSS_UTIL_DROP_COUNTER_H_
