@@ -13,6 +13,9 @@
 
 #define OBJ_PREFIX "OBJ"
 
+using namespace std;
+using namespace swss;
+
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
 

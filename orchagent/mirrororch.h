@@ -108,6 +108,8 @@ private:
      * attr is the field name will be stored, if empty then all fields will be stored
      */
     void setSessionState(const std::string& name, const MirrorEntry& session, const std::string& attr = "");
+    void removeSessionState(const std::string& name);
+
     bool getNeighborInfo(const string&, MirrorEntry&);
 
     void updateNextHop(const NextHopUpdate&);

@@ -12,6 +12,9 @@
 #include "orch.h"
 #include "request_parser.h"
 
+using namespace std;
+using namespace swss;
+
 
 void Request::parse(const KeyOpFieldsValuesTuple& request)
 {

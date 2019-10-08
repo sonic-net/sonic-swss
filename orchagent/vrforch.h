@@ -38,7 +38,7 @@ public:
 class VRFOrch : public Orch2
 {
 public:
-    VRFOrch(DBConnector *appDb, const std::string& appTableName, DBConnector *stateDb, const std::string& stateTableName) :
+    VRFOrch(swss::DBConnector *appDb, const std::string& appTableName, swss::DBConnector *stateDb, const std::string& stateTableName) :
         Orch2(appDb, appTableName, request_),
         m_stateVrfTable(stateDb, stateTableName)
     {
@@ -61,11 +61,11 @@ public:
         }
     }
 
-    string getVRFname(sai_object_id_t vrf_id) const
+    std::string getVRFname(sai_object_id_t vrf_id) const
     {
         if (vrf_id == gVirtualRouterId)
         {
-            return string("");
+            return std::string("");
         }
         if (vrf_id_table_.find(vrf_id) != std::end(vrf_id_table_))
         {
@@ -73,7 +73,7 @@ public:
         }
         else
         {
-            return string("");
+            return std::string("");
         }
      }
 
@@ -116,7 +116,7 @@ private:
     VRFTable vrf_table_;
     VRFId2NameTable vrf_id_table_;
     VRFRequest request_;
-    Table m_stateVrfTable;
+    swss::Table m_stateVrfTable;
 };
 
 #endif // __VRFORCH_H

@@ -8,14 +8,14 @@ namespace swss {
 class ExecutableTimer : public Executor
 {
 public:
-    ExecutableTimer(SelectableTimer *timer, Orch *orch, const string &name)
+    ExecutableTimer(swss::SelectableTimer *timer, Orch *orch, const std::string &name)
         : Executor(timer, orch, name)
     {
     }
 
-    SelectableTimer *getSelectableTimer()
+    swss::SelectableTimer *getSelectableTimer()
     {
-        return static_cast<SelectableTimer *>(getSelectable());
+        return static_cast<swss::SelectableTimer *>(getSelectable());
     }
 
     void execute()

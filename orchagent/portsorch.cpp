@@ -2174,6 +2174,17 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
                 }
+                if (fvField(i) == "oper_status")
+                {
+                    if (fvValue(i) == "down")
+                    {
+                        gNeighOrch->ifChangeInformNextHop(alias, false);
+                    }
+                    else
+                    {
+                        gNeighOrch->ifChangeInformNextHop(alias, true);
+                    }
+                }
             }
 
             // Create a new LAG when the new alias comes

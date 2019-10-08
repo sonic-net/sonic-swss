@@ -12,31 +12,31 @@ extern "C" {
 #include "sai.h"
 }
 
-typedef vector<uint64_t> QueueMcCounters;
-typedef array<uint64_t, PFC_WD_TC_MAX> PfcFrameCounters;
+typedef std::vector<uint64_t> QueueMcCounters;
+typedef std::array<uint64_t, PFC_WD_TC_MAX> PfcFrameCounters;
 
 class CounterCheckOrch: public Orch
 {
 public:
-    static CounterCheckOrch& getInstance(DBConnector *db = nullptr);
-    virtual void doTask(SelectableTimer &timer);
+    static CounterCheckOrch& getInstance(swss::DBConnector *db = nullptr);
+    virtual void doTask(swss::SelectableTimer &timer);
     virtual void doTask(Consumer &consumer) {}
-    void addPort(const Port& port);
-    void removePort(const Port& port);
+    void addPort(const swss::Port& port);
+    void removePort(const swss::Port& port);
 
 private:
-    CounterCheckOrch(DBConnector *db, vector<string> &tableNames);
+    CounterCheckOrch(swss::DBConnector *db, std::vector<std::string> &tableNames);
     virtual ~CounterCheckOrch(void);
-    QueueMcCounters getQueueMcCounters(const Port& port);
+    QueueMcCounters getQueueMcCounters(const swss::Port& port);
     PfcFrameCounters getPfcFrameCounters(sai_object_id_t portId);
     void mcCounterCheck();
     void pfcFrameCounterCheck();
 
-    map<sai_object_id_t, QueueMcCounters> m_mcCountersMap;
-    map<sai_object_id_t, PfcFrameCounters> m_pfcFrameCountersMap;
+    std::map<sai_object_id_t, QueueMcCounters> m_mcCountersMap;
+    std::map<sai_object_id_t, PfcFrameCounters> m_pfcFrameCountersMap;
 
-    shared_ptr<DBConnector> m_countersDb = nullptr;
-    shared_ptr<Table> m_countersTable = nullptr;
+    std::shared_ptr<swss::DBConnector> m_countersDb = nullptr;
+    std::shared_ptr<swss::Table> m_countersTable = nullptr;
 };
 
 #endif
