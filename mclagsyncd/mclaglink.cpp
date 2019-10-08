@@ -640,7 +640,7 @@ int MclagLink::getFd()
     return m_connection_socket;
 }
 
-void MclagLink::readData()
+uint64_t MclagLink::readData()
 {
     mclag_msg_hdr_t *hdr = NULL;
     size_t msg_len = 0;
@@ -715,6 +715,7 @@ void MclagLink::readData()
 
     memmove(m_messageBuffer, m_messageBuffer + start, m_pos - start);
     m_pos = m_pos - (uint32_t)start;
-    return;
+
+    return 0;
 }
 

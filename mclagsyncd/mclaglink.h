@@ -113,7 +113,7 @@ public:
     void accept();
 
     int getFd() override;
-    void readData() override;
+    uint64_t readData() override;
 
     /* readMe throws MclagConnectionClosedException when connection is lost */
     class MclagConnectionClosedException : public std::exception
