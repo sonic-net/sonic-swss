@@ -571,7 +571,6 @@ void CrmOrch::checkCrmThresholds()
                 maxUsedCounter = cnt.usedCounter;
                 maxAvailableCounter = cnt.availableCounter;
             }
-
         } // end of counters loop
         if ((maxUtilization >= res.highThreshold) && (res.exceededLogCounter < CRM_EXCEEDED_MSG_MAX))
         {
