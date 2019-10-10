@@ -4,7 +4,6 @@
 #include <list>
 
 using namespace std;
-using namespace swss;
 
 enum SubjectType
 {

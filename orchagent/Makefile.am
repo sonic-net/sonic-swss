@@ -38,6 +38,7 @@ orchagent_SOURCES = \
             bufferorch.cpp \
             mirrororch.cpp \
             fdborch.cpp \
+            acltable.cpp \
             aclorch.cpp \
             saihelper.cpp \
             switchorch.cpp \
