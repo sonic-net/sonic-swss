@@ -74,7 +74,7 @@ protected:
 
     bool createGenetlinkHostIf(std::string trap_group_name, std::vector<sai_attribute_t> &hostif_attribs);
     bool removeGenetlinkHostIf(std::string trap_group_name);
-    bool createGenetlinkHostifTable(std::vector<std::string> &trap_id_name_list);
+    bool createGenetlinkHostIfTable(std::vector<std::string> &trap_id_name_list);
     void coppProcessSflow(Consumer& consumer);
 
     virtual void doTask(Consumer& consumer);

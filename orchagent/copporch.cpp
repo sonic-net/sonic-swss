@@ -191,7 +191,7 @@ void CoppOrch::getTrapIdList(vector<string> &trap_id_name_list, vector<sai_hosti
     }
 }
 
-bool CoppOrch::createGenetlinkHostifTable(vector<string> &trap_id_name_list)
+bool CoppOrch::createGenetlinkHostIfTable(vector<string> &trap_id_name_list)
 {
     SWSS_LOG_ENTER();
 
@@ -201,11 +201,11 @@ bool CoppOrch::createGenetlinkHostifTable(vector<string> &trap_id_name_list)
 
     for (auto trap_id : trap_id_list)
     {
-        auto hostTbl_entry = m_trapid_hostif_table_map.find(trap_id);
-        sai_object_id_t trap_group_id = m_syncdTrapIds[trap_id].trap_group_obj;
+        auto host_tbl_entry = m_trapid_hostif_table_map.find(trap_id);
 
-        if (hostTbl_entry == m_trapid_hostif_table_map.end())
+        if (host_tbl_entry == m_trapid_hostif_table_map.end())
         {
+            sai_object_id_t trap_group_id = m_syncdTrapIds[trap_id].trap_group_obj;
             auto hostif_map = m_trap_group_hostif_map.find(trap_group_id);
             if (hostif_map != m_trap_group_hostif_map.end())
             {
@@ -628,38 +628,6 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                     }
                 }
             }
-            if (!genetlink_attribs.empty())
-            {
-                auto hostif_map = m_trap_group_hostif_map.find(m_trap_group_map[trap_group_name]);
-
-                if (hostif_map != m_trap_group_hostif_map.end())
-                {
-                    for(sai_uint32_t idx = 0; idx < genetlink_attribs.size(); idx++)
-                    {
-                        auto hostif_attr = genetlink_attribs[idx];
-                        sai_status = sai_hostif_api->set_hostif_attribute(hostif_map->second,
-                                                                          &hostif_attr);
-                        if(sai_status != SAI_STATUS_SUCCESS)
-                        {
-                            SWSS_LOG_ERROR("Failed to apply attribute[%d].id=%d to hostif for \
-                                           trap group %s, error:%d", idx, hostif_attr.id,
-                                           trap_group_name.c_str(), sai_status);
-
-                            return task_process_status::task_ignore;
-                        }
-                    }
-                } 
-                else
-                {
-                    if (!genetlink_attribs.empty())
-                    {
-                        if (!createGenetlinkHostIf(trap_group_name, genetlink_attribs))
-                        {
-                            return task_process_status::task_failed;
-                        }
-                    }
-                }
-            }
 
             for (sai_uint32_t ind = 0; ind < trap_gr_attribs.size(); ind++)
             {
@@ -715,7 +683,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
 
         if (!genetlink_attribs.empty())
         {
-            if (!createGenetlinkHostifTable(trap_id_list))
+            if (!createGenetlinkHostIfTable(trap_id_list))
             {
                 return task_process_status::task_failed;
             }
@@ -804,6 +772,12 @@ void CoppOrch::coppProcessSflow(Consumer &consumer)
         auto tuple = it->second;
         string op = kfvOp(tuple);
 
+        /*
+         * Need to handled just 'config sflow enable' command to install the sflow trap group
+         * for the first time to ensure support of genetlink attributes. Rest of the fields or
+         * disable value or DEL command are not required to be handled
+         *
+         */
         if (op == SET_COMMAND)
         {
             for (auto i : kfvFieldsValues(tuple))
@@ -826,14 +800,14 @@ void CoppOrch::doTask(Consumer &consumer)
     SWSS_LOG_ENTER();
     string table_name = consumer.getTableName();
 
-    if (!gPortsOrch->allPortsReady())
-    {
-        return;
-    }
-
     if (table_name == CFG_SFLOW_TABLE_NAME)
     {
         coppProcessSflow(consumer);
+        return;
+    }
+
+    if (!gPortsOrch->allPortsReady())
+    {
         return;
     }
 
