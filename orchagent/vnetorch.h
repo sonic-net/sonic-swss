@@ -142,7 +142,14 @@ public:
 
     sai_object_id_t getDecapMapId() const
     {
-        return getVRidEgress();
+        if (std::find(vr_cntxt.begin(), vr_cntxt.end(), VR_TYPE::EGR_VR_VALID) != vr_cntxt.end())
+        {
+            return getVRidEgress();
+        }
+        else
+        {
+            return getVRidIngress();
+        }
     }
 
     sai_object_id_t getVRid() const

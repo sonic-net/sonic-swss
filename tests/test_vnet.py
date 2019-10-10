@@ -63,7 +63,7 @@ def get_all_created_entries(db, table, existed_entries):
     tbl =  swsscommon.Table(db, table)
     entries = set(tbl.getKeys())
     new_entries = list(entries - existed_entries)
-    assert len(new_entries) > 0, "No created entries."
+    assert len(new_entries) >= 0, "Get all could be no new created entries."
     new_entries.sort()
     return new_entries
 
@@ -529,13 +529,13 @@ class VnetVxlanVrfTunnel(object):
     def check_vnet_entry(self, dvs, name, peer_list=[]):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         #Check virtual router objects
-        assert how_many_entries_exist(asic_db, self.ASIC_VRF_TABLE) == (len(self.vnet_vr_ids) + 2),\
+        assert how_many_entries_exist(asic_db, self.ASIC_VRF_TABLE) == (len(self.vnet_vr_ids) + 1),\
                                      "The VR objects are not created"
 
-        new_vr_ids  = get_created_entries(asic_db, self.ASIC_VRF_TABLE, self.vnet_vr_ids, 2)
+        new_vr_ids  = get_created_entries(asic_db, self.ASIC_VRF_TABLE, self.vnet_vr_ids, 1)
 
         self.vnet_vr_ids.update(new_vr_ids)
-        self.vr_map[name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[1], 'peer':peer_list }
+        self.vr_map[name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[0], 'peer':peer_list }
 
     def check_default_vnet_entry(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -552,11 +552,7 @@ class VnetVxlanVrfTunnel(object):
     def vnet_route_ids(self, dvs, name, local=False):
         vr_set = set()
 
-        if local:
-            vr_set.add(self.vr_map[name].get('ing'))
-            vr_set.add(self.vr_map[name].get('egr'))
-        else:
-            vr_set.add(self.vr_map[name].get('ing'))
+        vr_set.add(self.vr_map[name].get('ing'))
 
         try:
             for peer in self.vr_map[name].get('peer'):
@@ -608,7 +604,10 @@ class VnetVxlanVrfTunnel(object):
 
         new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
 
-        #Check if the route is duplicated to egress VRF
+        #Routes are not replicated to egress VRF, return if count is 0, else check peering
+        if not count:
+            return
+
         asic_vrs = set()
         for idx in range(count):
             rt_key = json.loads(new_route[idx])
