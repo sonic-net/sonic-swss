@@ -69,7 +69,11 @@ static map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"router_custom_range", SAI_HOSTIF_TRAP_TYPE_ROUTER_CUSTOM_RANGE_BASE},
     {"l3_mtu_error", SAI_HOSTIF_TRAP_TYPE_L3_MTU_ERROR},
     {"ttl_error", SAI_HOSTIF_TRAP_TYPE_TTL_ERROR},
-    {"udld", SAI_HOSTIF_TRAP_TYPE_UDLD}
+    {"udld", SAI_HOSTIF_TRAP_TYPE_UDLD},
+    {"bfd", SAI_HOSTIF_TRAP_TYPE_BFD},
+    {"bfdv6", SAI_HOSTIF_TRAP_TYPE_BFDV6},
+    {"src_nat_miss", SAI_HOSTIF_TRAP_TYPE_SNAT_MISS},
+    {"dest_nat_miss", SAI_HOSTIF_TRAP_TYPE_DNAT_MISS}
 };
 
 static map<string, sai_packet_action_t> packet_action_map = {
