@@ -2446,6 +2446,21 @@ bool AclOrch::addAclTable(AclTable &newTable, string table_id)
             return false;
         }
     }
+    else
+    {
+        // If ACL table is new, check for the existence of current mirror tables
+        // Note: only one table per mirror type can be created
+        auto table_type = newTable.type;
+        if (table_type == ACL_TABLE_MIRROR || table_type == ACL_TABLE_MIRRORV6)
+        {
+            if ((table_type == ACL_TABLE_MIRROR && !m_mirrorTableId.empty()) ||
+                    (table_type == ACL_TABLE_MIRRORV6 && !m_mirrorV6TableId.empty()))
+            {
+                SWSS_LOG_ERROR("Mirror table has already been created");
+                return false;
+            }
+        }
+    }
 
     // Check if a separate mirror table is needed or not based on the platform
     if (newTable.type == ACL_TABLE_MIRROR || newTable.type == ACL_TABLE_MIRRORV6)
@@ -2876,15 +2891,6 @@ bool AclOrch::processAclTableType(string type, acl_table_type_t &table_type)
         if (!m_mirrorTableCapabilities[table_type])
         {
             SWSS_LOG_ERROR("Mirror table type %s is not supported", type.c_str());
-            return false;
-        }
-
-        // Check the existence of current mirror tables
-        // Note: only one table per type could be created
-        if ((table_type == ACL_TABLE_MIRROR && !m_mirrorTableId.empty()) ||
-                (table_type == ACL_TABLE_MIRRORV6 && !m_mirrorV6TableId.empty()))
-        {
-            SWSS_LOG_ERROR("Mirror table table_type %s has already been created", type.c_str());
             return false;
         }
     }
