@@ -259,6 +259,17 @@ class TestLagRouterInterfaceIpv4(object):
         tbl.set(interface, fvs)
         time.sleep(1)
 
+    # function to check vlan member and router interface mutual exclusion validation written in syslog
+    def check_syslog_for_rif_vlan_mutex_error(self, dvs, marker, alias, mutextype):
+        if mutextype == "vlanMember_on_rif":
+            (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep orchagent | grep 'router interface %s is not allowed' | wc -l" % (marker, alias)])
+            assert num.strip() == "1"
+        elif mutextype == "rif_on_vlanMember":
+            (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep orchagent | grep 'vlan member %s is not allowed' | wc -l" % (marker, alias)])
+            assert num.strip() == "1"
+        else:
+            assert "mutextype is unknown" == ""
+
     def test_InterfaceAddRemoveIpv4Address(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -388,6 +399,80 @@ class TestLagRouterInterfaceIpv4(object):
         # remove port channel members
         self.remove_port_channel_members(dvs, "PortChannel002", ["Ethernet0", "Ethernet4"])
 
+        # remove port channel
+        self.remove_port_channel(dvs, "PortChannel002")
+
+
+    def test_InterfaceAndVlanMutexCheck(self, dvs, testlog):
+        self.setup_db(dvs)
+        dvs.setup_db()
+
+        marker = dvs.add_log_marker()
+
+        # create port channel
+        self.create_port_channel(dvs, "PortChannel002")
+
+        # assign IP to interface
+        self.add_ip_address("PortChannel002", "30.0.0.4/31")
+
+        # check ASIC route database
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "30.0.0.4/31":
+                subnet_found = True
+            if route["dest"] == "30.0.0.4/32":
+                ip2me_found = True
+
+        assert subnet_found and ip2me_found
+
+        dvs.create_vlan("2")
+        # create vlan member.
+        # Note: schema validation above configDB should have prevented the operation of
+        # adding PortChannel002 to VLAN
+        # from being pushed to configDB, the mechanism is not available yet.
+        dvs.create_vlan_member("2", "PortChannel002")
+
+        # orchagent should have stopped the wrong configuration.
+        self.check_syslog_for_rif_vlan_mutex_error(dvs, marker, "PortChannel002", "vlanMember_on_rif")
+
+        # Have to remove vlan member to clean up configDB and appDB
+        dvs.remove_vlan_member("2", "PortChannel002")
+
+        # remove IP from interface
+        self.remove_ip_address("PortChannel002", "30.0.0.4/31")
+
+        #time.sleep(2)
+        dvs.create_vlan_member("2", "PortChannel002")
+
+        # assigning IP to interface on PortChannel002 which is a vlan member now is invalid operation.
+        self.add_ip_address("PortChannel002", "30.0.0.4/31")
+
+        # orchagent should have stopped the wrong configuration.
+        self.check_syslog_for_rif_vlan_mutex_error(dvs, marker, "PortChannel002", "rif_on_vlanMember")
+
+        # Unfortunately, the ip configuration went down to appDB
+        tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel002")
+        intf_entries = tbl.getKeys()
+        assert len(intf_entries) == 1
+
+        # check ASIC database, no subnet or ip2me router entry. Orchagent did its part correctly.
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        for key in tbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == "30.0.0.4/31":
+                assert False
+            if route["dest"] == "30.0.0.4/32":
+                assert False
+
+        # Have to remove ip config to clean up configDB and appDB
+        self.remove_ip_address("PortChannel002", "30.0.0.4/31")
+
+        # remove vlan member
+        dvs.remove_vlan_member("2", "PortChannel002")
+
+        # remvoe vlan
+        dvs.remove_vlan("2")
         # remove port channel
         self.remove_port_channel(dvs, "PortChannel002")
 

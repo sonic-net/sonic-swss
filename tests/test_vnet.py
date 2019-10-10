@@ -957,7 +957,6 @@ class TestVnetOrch(object):
         tunnel_name = 'tunnel_1'
 
         vnet_obj.fetch_exist_entries(dvs)
-
         create_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
         create_vnet_entry(dvs, 'Vnet_2000', tunnel_name, '2000', "")
 
@@ -989,14 +988,15 @@ class TestVnetOrch(object):
         vnet_obj.check_vnet_entry(dvs, 'Vnet_2001')
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_2001', '2001')
 
-        create_phy_interface(dvs, "Ethernet4", "Vnet_2001", "100.102.1.1/24")
+        # use Ethernet32 so it doesn't interfere with the following test cases.
+        create_phy_interface(dvs, "Ethernet32", "Vnet_2001", "100.102.1.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_2001')
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.2.1/32", 'Vnet_2001', '10.10.10.2', "00:12:34:56:78:9A")
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2001', '10.10.10.2', tunnel_name, "00:12:34:56:78:9A")
 
-        create_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet_2001', 'Ethernet4')
+        create_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet_2001', 'Ethernet32')
         vnet_obj.check_vnet_local_routes(dvs, 'Vnet_2001')
 
         # Clean-up and verify remove flows
