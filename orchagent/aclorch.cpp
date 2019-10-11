@@ -2459,7 +2459,7 @@ bool AclOrch::addAclTable(AclTable &newTable, string table_id)
                 mirror_type = TABLE_TYPE_MIRROR;
             }
 
-            if (table_type == ACL_TABLE_MIRRORV6 && !m_mirrorV6TableId.empty()))
+            if (table_type == ACL_TABLE_MIRRORV6 && !m_mirrorV6TableId.empty())
             {
                 mirror_type = TABLE_TYPE_MIRRORV6;
             }
