@@ -2453,10 +2453,20 @@ bool AclOrch::addAclTable(AclTable &newTable, string table_id)
         auto table_type = newTable.type;
         if (table_type == ACL_TABLE_MIRROR || table_type == ACL_TABLE_MIRRORV6)
         {
-            if ((table_type == ACL_TABLE_MIRROR && !m_mirrorTableId.empty()) ||
-                    (table_type == ACL_TABLE_MIRRORV6 && !m_mirrorV6TableId.empty()))
+            string mirror_type;
+            if ((table_type == ACL_TABLE_MIRROR && !m_mirrorTableId.empty()))
             {
-                SWSS_LOG_ERROR("Mirror table has already been created");
+                mirror_type = TABLE_TYPE_MIRROR;
+            }
+
+            if (table_type == ACL_TABLE_MIRRORV6 && !m_mirrorV6TableId.empty()))
+            {
+                mirror_type = TABLE_TYPE_MIRRORV6;
+            }
+
+            if (!mirror_type.empty())
+            {
+                SWSS_LOG_ERROR("Mirror table %s has already been created", mirror_type.c_str());
                 return false;
             }
         }
