@@ -30,7 +30,7 @@ private:
     std::map<std::string, uint32_t> m_vrfTableMap;
     std::set<uint32_t> m_freeTables;
 
-    Table m_stateVrfTable;
+    Table m_stateVrfTable, m_stateVrfObjectTable;
     ProducerStateTable m_appVrfTableProducer, m_appVnetTableProducer;
 };
 

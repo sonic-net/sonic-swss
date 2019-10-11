@@ -17,6 +17,8 @@ using namespace swss;
 #define VNET_PREFIX         "Vnet"
 #define VRF_PREFIX          "Vrf"
 
+#define LOOPBACK_DEFAULT_MTU_STR "65536"
+
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
         m_cfgIntfTable(cfgDb, CFG_INTF_TABLE_NAME),
@@ -84,7 +86,7 @@ void IntfMgr::addLoopbackIntf(const string &alias)
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link add " << alias << " mtu 65536 type dummy && ";
+    cmd << IP_CMD << " link add " << alias << " mtu " << LOOPBACK_DEFAULT_MTU_STR << " type dummy && ";
     cmd << IP_CMD << " link set " << alias << " up";
     int ret = swss::exec(cmd.str(), res);
     if (ret)
@@ -112,6 +114,9 @@ int IntfMgr::getIntfIpCount(const string &alias)
     string res;
 
     /* query ip address of the device with master name, it is much faster */
+    // ip address show {{intf_name}}
+    // $(ip link show {{intf_name}} | grep -o 'master [^\\s]*') ==> [master {{vrf_name}}]
+    // | grep inet | grep -v 'inet6 fe80:' | wc -l
     cmd << IP_CMD << " address show " << alias
         << " $(" << IP_CMD << " link show " << alias << " | grep -o 'master [^\\s]*')"
         << " | grep inet | grep -v 'inet6 fe80:' | wc -l";
@@ -126,7 +131,7 @@ int IntfMgr::getIntfIpCount(const string &alias)
     return std::stoi(res);
 }
 
-bool IntfMgr::isIntfGeneralDone(const string &alias)
+bool IntfMgr::isIntfCreated(const string &alias)
 {
     vector<FieldValueTuple> temp;
 
@@ -302,7 +307,7 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
          * Don't proceed if port/LAG/VLAN and intfGeneral are not ready yet.
          * The pending task will be checked periodically and retried.
          */
-        if (!isIntfStateOk(alias) || !isIntfGeneralDone(alias))
+        if (!isIntfStateOk(alias) || !isIntfCreated(alias))
         {
             SWSS_LOG_DEBUG("Interface is not ready, skipping %s", alias.c_str());
             return false;

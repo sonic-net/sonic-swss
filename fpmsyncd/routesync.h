@@ -33,7 +33,7 @@ private:
     struct nl_sock     *m_nl_sock;
 
     /* Handle regular route (include VRF route) */
-    void onRouteMsg(int nlmsg_type, struct nl_object *obj);
+    void onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf);
 
     /* Handle vnet route */
     void onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vnet);

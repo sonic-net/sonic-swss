@@ -61,13 +61,13 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
         /* Otherwise, it is a regular route (include VRF route). */
         else
         {
-            onRouteMsg(nlmsg_type, obj);
+            onRouteMsg(nlmsg_type, obj, master_name);
         }
 
     }
     else
     {
-        onRouteMsg(nlmsg_type, obj);
+        onRouteMsg(nlmsg_type, obj, NULL);
     }
 }
 
@@ -75,45 +75,31 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
  * Handle regular route (include VRF route) 
  * @arg nlmsg_type      Netlink message type
  * @arg obj             Netlink object
+ * @arg vrf             Vrf name
  */
-void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj)
+void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 {
     struct rtnl_route *route_obj = (struct rtnl_route *)obj;
     struct nl_addr *dip;
     char destipprefix[IFNAMSIZ + MAX_ADDR_SIZE + 2] = {0};
 
-    /*
-     * Here vrf_index is not real table id but vrf_id in zebra.
-     * It is vrf interface index in kernel for vrf route and VRF_DEFAULT(0) for global route.
-     * Now zebra fpm only fill in a uchar, ifindex limited to 255.
-     */
-    unsigned int vrf_index = rtnl_route_get_table(route_obj);
-    if (vrf_index)
+    if (vrf)
     {
-        if (!getIfName(vrf_index, destipprefix, IFNAMSIZ))
-        {
-            SWSS_LOG_ERROR("Fail to get the VRF name (ifindex %u)", vrf_index);
-            return;
-        }
         /*
          * Now vrf device name is required to start with VRF_PREFIX,
          * it is difficult to split vrf_name:ipv6_addr.
          */
-        if (memcmp(destipprefix, VRF_PREFIX, strlen(VRF_PREFIX)))
+        if (memcmp(vrf, VRF_PREFIX, strlen(VRF_PREFIX)))
         {
-            SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", destipprefix, vrf_index);
+            SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", vrf, rtnl_route_get_table(route_obj));
             return;
         }
-        destipprefix[strlen(destipprefix)] = ':';
+        memcpy(destipprefix, vrf, strlen(vrf));
+        destipprefix[strlen(vrf)] = ':';
     }
 
     dip = rtnl_route_get_dst(route_obj);
     nl_addr2str(dip, destipprefix + strlen(destipprefix), MAX_ADDR_SIZE);
-    /* Full mask route append prefix length, or else resync cannot match. */
-    if (nl_addr_get_prefixlen(dip) == (8 * nl_addr_get_len(dip)))
-    {
-        snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "/%u", nl_addr_get_prefixlen(dip));
-    }
     SWSS_LOG_DEBUG("Receive new route message dest ip prefix: %s", destipprefix);
 
     /*
@@ -226,11 +212,6 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
     struct nl_addr *dip = rtnl_route_get_dst(route_obj);
     char destipprefix[MAX_ADDR_SIZE + 1] = {0};
     nl_addr2str(dip, destipprefix, MAX_ADDR_SIZE);
-    /* Full mask route append prefix length, or else resync cannot match. */
-    if (nl_addr_get_prefixlen(dip) == (8 * nl_addr_get_len(dip)))
-    {
-        snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "/%u", nl_addr_get_prefixlen(dip));
-    }
 
     string vnet_dip =  vnet + string(":") + destipprefix;
     SWSS_LOG_DEBUG("Receive new vnet route message %s", vnet_dip.c_str());

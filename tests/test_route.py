@@ -521,11 +521,11 @@ class TestRoute(object):
         # check application database
         tbl = swsscommon.Table(self.pdb, "ROUTE_TABLE:Vrf_1")
         route_entries = tbl.getKeys()
-        assert "20.0.1.2/32" in route_entries
+        assert "20.0.1.2" in route_entries
 
         tbl = swsscommon.Table(self.pdb, "ROUTE_TABLE:Vrf_2")
         route_entries = tbl.getKeys()
-        assert "10.0.0.2/32" in route_entries
+        assert "10.0.0.2" in route_entries
 
         # check ASIC neighbor interface database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
@@ -576,11 +576,11 @@ class TestRoute(object):
         # check application database
         tbl = swsscommon.Table(self.pdb, "ROUTE_TABLE:Vrf_1")
         route_entries = tbl.getKeys()
-        assert "20.0.1.2/32" not in route_entries
+        assert "20.0.1.2" not in route_entries
 
         tbl = swsscommon.Table(self.pdb, "ROUTE_TABLE:Vrf_2")
         route_entries = tbl.getKeys()
-        assert "10.0.0.2/32" not in route_entries
+        assert "10.0.0.2" not in route_entries
 
         # check ASIC route database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")

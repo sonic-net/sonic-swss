@@ -10,7 +10,7 @@
 
 #define VRF_TABLE_START 1001
 #define VRF_TABLE_END 2000
-#define OBJ_PREFIX "OBJ"
+#define TABLE_LOCAL_PREF 1001 // after l3mdev-table
 
 using namespace swss;
 
@@ -18,7 +18,8 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         Orch(cfgDb, tableNames),
         m_appVrfTableProducer(appDb, APP_VRF_TABLE_NAME),
         m_appVnetTableProducer(appDb, APP_VNET_TABLE_NAME),
-        m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME)
+        m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
+        m_stateVrfObjectTable(stateDb, STATE_VRF_OBJECT_TABLE_NAME)
 {
     for (uint32_t i = VRF_TABLE_START; i < VRF_TABLE_END; i++)
     {
@@ -72,8 +73,8 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
     {
         cmd.str("");
         cmd.clear();
-        cmd << IP_CMD << " rule add pref 1001 table local && " << IP_CMD << " rule del pref 0 && "
-            << IP_CMD << " -6 rule add pref 1001 table local && " << IP_CMD << " -6 rule del pref 0";
+        cmd << IP_CMD << " rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD << " rule del pref 0 && "
+            << IP_CMD << " -6 rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD << " -6 rule del pref 0";
         EXEC_WITH_ERROR_THROW(cmd.str(), res);
     }
 }
@@ -155,9 +156,8 @@ bool VrfMgr::setLink(const string& vrfName)
 bool VrfMgr::isVrfObjExist(const string& vrfName)
 {
     vector<FieldValueTuple> temp;
-    string key = string(OBJ_PREFIX) + state_db_key_delimiter + vrfName;
 
-    if (m_stateVrfTable.get(key, temp))
+    if (m_stateVrfObjectTable.get(vrfName, temp))
     {
         SWSS_LOG_DEBUG("Vrf %s object exist", vrfName.c_str());
         return true;
@@ -203,7 +203,7 @@ void VrfMgr::doTask(Consumer &consumer)
             /*
              * Delay delLink until vrf object deleted in orchagent to ensure fpmsyncd can get vrf ifname.
              * Now state VRF_TABLE|Vrf represent vrf exist in appDB, if it exist vrf device is always effective.
-             * VRFOrch add/del state VRF_TABLE|OBJ|Vrf to represent object existence. VNETOrch is not do so now.
+             * VRFOrch add/del state VRF_OBJECT_TABLE|Vrf to represent object existence. VNETOrch is not do so now.
              */
             if (consumer.getTableName() == CFG_VRF_TABLE_NAME)
             {

@@ -878,6 +878,28 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     full-date       = date-fullyear "-" date-month "-" date-mday
     time-stamp      = full-date %x20 partial-time
 
+### INTERFACE_TABLE
+    ;State for interface status, including two types of key
+
+    key                 = INTERFACE_TABLE|ifname    ; ifname should be Ethernet,Portchannel,Vlan,Loopback
+    vrf                 = "" / vrf_name             ; interface has been created, global or vrf
+
+    key                 = INTERFACE_TABLE|ifname|IPprefix
+    state               = "ok"                      ; IP address has been set to interface
+
+### VRF_TABLE
+    ;State for vrf status, vrfmgrd has written it to app_db
+
+    key                 = VRF_TABLE|vrf_name        ; vrf_name start with 'Vrf' or 'Vnet' prefix
+    state               = "ok"                      ; vrf entry exist in app_db, if yes vrf device must exist
+
+### VRF_OBJECT_TABLE
+    ;State for vrf object status, vrf exist in vrforch
+
+    key                 = VRF_OBJECT_TABLE|vrf_name ; vrf_name start with 'Vrf' prefix
+    state               = "ok"                      ; vrf entry exist in orchagent
+
+
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?
 

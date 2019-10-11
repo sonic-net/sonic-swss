@@ -221,6 +221,8 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
      * delete IP with netmask /8. To handle this we in case of overlap
      * we should wait until entry with /8 netmask will be removed.
      * Time frame between those event is quite small.*/
+    /* NOTE: Overlap checking in this interface is not enough.
+     * So extend to check in all interfaces of this VRF */
     bool overlaps = false;
     for (const auto &intfsIt: m_syncdIntfses)
     {
@@ -390,14 +392,6 @@ void IntfsOrch::doTask(Consumer &consumer)
                 }
 
                 it = consumer.m_toSync.erase(it);
-                continue;
-            }
-
-            /* Wait for the Interface entry first */
-            auto it_intfs = m_syncdIntfses.find(alias);
-            if (ip_prefix_in_key && it_intfs == m_syncdIntfses.end())
-            {
-                it++;
                 continue;
             }
 

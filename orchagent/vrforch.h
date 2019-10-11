@@ -12,7 +12,7 @@ struct VrfEntry
 };
 
 typedef std::unordered_map<std::string, VrfEntry> VRFTable;
-typedef std::unordered_map<sai_object_id_t, std::string> VRFId2NameTable;
+typedef std::unordered_map<sai_object_id_t, std::string> VRFIdNameTable;
 
 const request_description_t request_description = {
     { REQ_T_STRING },
@@ -40,7 +40,7 @@ class VRFOrch : public Orch2
 public:
     VRFOrch(swss::DBConnector *appDb, const std::string& appTableName, swss::DBConnector *stateDb, const std::string& stateTableName) :
         Orch2(appDb, appTableName, request_),
-        m_stateVrfTable(stateDb, stateTableName)
+        m_stateVrfObjectTable(stateDb, stateTableName)
     {
     }
 
@@ -75,7 +75,7 @@ public:
         {
             return std::string("");
         }
-     }
+    }
 
     void increaseVrfRefCount(const std::string& name)
     {
@@ -114,9 +114,9 @@ private:
     virtual bool delOperation(const Request& request);
 
     VRFTable vrf_table_;
-    VRFId2NameTable vrf_id_table_;
+    VRFIdNameTable vrf_id_table_;
     VRFRequest request_;
-    swss::Table m_stateVrfTable;
+    swss::Table m_stateVrfObjectTable;
 };
 
 #endif // __VRFORCH_H

@@ -27,7 +27,7 @@ private:
     bool doIntfAddrTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
     void doTask(Consumer &consumer);
     bool isIntfStateOk(const std::string &alias);
-    bool isIntfGeneralDone(const std::string &alias);
+    bool isIntfCreated(const std::string &alias);
     bool isIntfChangeVrf(const std::string &alias, const std::string &vrfName);
     int getIntfIpCount(const std::string &alias);
     void addLoopbackIntf(const std::string &alias);
