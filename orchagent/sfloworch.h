@@ -32,7 +32,7 @@ public:
 private:
     SflowPortInfoMap    m_sflowPortInfoMap;
     SflowRateSampleMap  m_sflowRateSampleMap;
-    bool                sflowStatus;
+    bool                m_sflowStatus;
 
     virtual void doTask(Consumer& consumer);
     bool sflowCreateSession(uint32_t rate, SflowSession &session);
@@ -43,5 +43,5 @@ private:
     bool sflowUpdateRate(sai_object_id_t port_id, uint32_t rate);
     uint32_t sflowSessionGetRate(sai_object_id_t sample_id);
     bool handleSflowSessionDel(sai_object_id_t port_id);
-    void sflowExtractFvs(std::vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate);
+    void sflowExtractInfo(std::vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate);
 };

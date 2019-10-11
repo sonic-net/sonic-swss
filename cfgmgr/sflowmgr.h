@@ -32,8 +32,8 @@ struct SflowLocalPortInfo
 {
     bool        local_conf;
     std::string speed;
-    std::string local_rate;
-    std::string local_admin;
+    std::string rate;
+    std::string admin;
 };
 
 /* Port to Local config map  */
@@ -51,18 +51,17 @@ private:
     ProducerStateTable     m_appSflowTable;
     ProducerStateTable     m_appSflowSessionTable;
     SflowPortLocalConfMap  m_sflowPortLocalConfMap;
-    bool                   intf_all_conf;
-    bool                   gEnable;
+    bool                   m_intfAllConf;
+    bool                   m_gEnable;
 
     void doTask(Consumer &consumer);
     void sflowHandleService(bool enable);
     void sflowUpdatePortInfo(Consumer &consumer);
     void sflowHandleSessionAll(bool enable);
     void sflowHandleSessionLocal(bool enable);
-    void sflowCheckAndFillRate(std::string alias, std::vector<FieldValueTuple> &fvs);
-    void sflowGetLocalFvs(std::vector<FieldValueTuple> &fvs, SflowLocalPortInfo &local_info);
-    void sflowGetGlobalFvs(std::vector<FieldValueTuple> &fvs, std::string speed);
-    void sflowUpdateLocalPortInfo(std::string alias, std::vector<FieldValueTuple> &fvs);
+    void sflowCheckAndFillValues(std::string alias, std::vector<FieldValueTuple> &fvs);
+    void sflowGetLocalPortInfo(std::vector<FieldValueTuple> &fvs, SflowLocalPortInfo &local_info);
+    void sflowGetGlobalInfo(std::vector<FieldValueTuple> &fvs, std::string speed);
 };
 
 }

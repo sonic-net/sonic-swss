@@ -14,7 +14,7 @@ SflowOrch::SflowOrch(DBConnector* db, vector<string> &tableNames) :
     Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();
-    sflowStatus = false;
+    m_sflowStatus = false;
 }
 
 bool SflowOrch::sflowCreateSession(uint32_t rate, SflowSession &session)
@@ -88,8 +88,8 @@ bool SflowOrch::sflowUpdateRate(sai_object_id_t port_id, uint32_t rate)
     {
         if (!sflowDestroySession(m_sflowRateSampleMap[old_rate]))
         {
-            SWSS_LOG_ERROR("Failed to clean old session %lx",
-                           m_sflowRateSampleMap[old_rate].m_sample_id);
+            SWSS_LOG_ERROR("Failed to clean old session %lx with rate %d",
+                           m_sflowRateSampleMap[old_rate].m_sample_id, old_rate);
         }
         else
         {
@@ -133,7 +133,7 @@ bool SflowOrch::sflowDelPort(sai_object_id_t port_id)
     return true;
 }
 
-void SflowOrch::sflowExtractFvs(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate)
+void SflowOrch::sflowExtractInfo(vector<FieldValueTuple> &fvs, bool &admin, uint32_t &rate)
 {
     for (auto i : fvs)
     {
@@ -174,11 +174,11 @@ void SflowOrch::sflowStatusSet(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            sflowExtractFvs (kfvFieldsValues(tuple), sflowStatus, rate);
+            sflowExtractInfo(kfvFieldsValues(tuple), m_sflowStatus, rate);
         }
         else if (op == DEL_COMMAND)
         {
-            sflowStatus = false;
+            m_sflowStatus = false;
         }
         it = consumer.m_toSync.erase(it);
     }
@@ -252,10 +252,10 @@ void SflowOrch::doTask(Consumer &consumer)
         gPortsOrch->getPort(alias, port);
         if (op == SET_COMMAND)
         {
-            bool      admin_state = false;
+            bool      admin_state = m_sflowStatus;
             uint32_t  rate       = 0;
 
-            if (!sflowStatus)
+            if (!m_sflowStatus)
             {
                 return;
             }
@@ -266,7 +266,7 @@ void SflowOrch::doTask(Consumer &consumer)
                 admin_state = sflowInfo->second.admin_state;
             }
 
-            sflowExtractFvs(kfvFieldsValues(tuple), admin_state, rate);
+            sflowExtractInfo(kfvFieldsValues(tuple), admin_state, rate);
             if (sflowInfo == m_sflowPortInfoMap.end())
             {
                 if (rate == 0)
