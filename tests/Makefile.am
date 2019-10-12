@@ -2,7 +2,7 @@ CFLAGS_SAI = -I /usr/include/sai
 
 TESTS = tests
 
-bin_PROGRAMS = tests
+noinst_PROGRAMS = tests
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
