@@ -22,7 +22,7 @@ extern "C" {
 class DebugCounterOrch: public Orch
 {
 public:
-    DebugCounterOrch(DBConnector *db, const std::vector<std::string> &table_names, int poll_interval);
+    DebugCounterOrch(swss::DBConnector *db, const std::vector<std::string> &table_names, int poll_interval);
     virtual ~DebugCounterOrch(void);
 
     void doTask(Consumer &consumer);
@@ -32,7 +32,7 @@ private:
     void publishDropCounterCapabilities();
 
     // doTask Handler Functions
-    task_process_status installDebugCounter(const std::string &counter_name, const std::vector<FieldValueTuple> &attributes);
+    task_process_status installDebugCounter(const std::string &counter_name, const std::vector<swss::FieldValueTuple> &attributes);
     task_process_status uninstallDebugCounter(const std::string &counter_name);
     task_process_status addDropReason(const std::string &counter_name, const std::string &drop_reason);
     task_process_status removeDropReason(const std::string &counter_name, const std::string &drop_reason);
@@ -54,7 +54,7 @@ private:
             const std::string &counter_stat);
 
     // Debug Counter Initialization Helper Functions
-    string getDebugCounterType(const std::vector<FieldValueTuple> &values) const;
+    std::string getDebugCounterType(const std::vector<swss::FieldValueTuple> &values) const;
     void createDropCounter(
             const std::string &counter_name, 
             const std::string &counter_type, 
@@ -69,12 +69,12 @@ private:
     bool isDropReasonValid(const std::string &drop_reason) const;
 
     // Data Members
-    std::shared_ptr<DBConnector> m_stateDb = nullptr;
-    std::shared_ptr<Table> m_debugCapabilitiesTable = nullptr;
+    std::shared_ptr<swss::DBConnector> m_stateDb = nullptr;
+    std::shared_ptr<swss::Table> m_debugCapabilitiesTable = nullptr;
 
-    std::shared_ptr<DBConnector> m_countersDb = nullptr;
-    std::shared_ptr<Table> m_counterNameToPortStatMap = nullptr;
-    std::shared_ptr<Table> m_counterNameToSwitchStatMap = nullptr;
+    std::shared_ptr<swss::DBConnector> m_countersDb = nullptr;
+    std::shared_ptr<swss::Table> m_counterNameToPortStatMap = nullptr;
+    std::shared_ptr<swss::Table> m_counterNameToSwitchStatMap = nullptr;
 
     DynamicFlexCounterManager flex_counter_manager;
 
