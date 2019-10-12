@@ -28,7 +28,7 @@ namespace swss {
 
 #define SFLOW_ERROR_SPEED_STR "error"
 
-struct SflowLocalPortInfo
+struct SflowPortInfo
 {
     bool        local_conf;
     std::string speed;
@@ -37,7 +37,7 @@ struct SflowLocalPortInfo
 };
 
 /* Port to Local config map  */
-typedef std::map<std::string, SflowLocalPortInfo> SflowPortLocalConfMap;
+typedef std::map<std::string, SflowPortInfo> SflowPortConfMap;
 
 class SflowMgr : public Orch
 {
@@ -50,7 +50,7 @@ private:
     Table                  m_cfgSflowSessionTable;
     ProducerStateTable     m_appSflowTable;
     ProducerStateTable     m_appSflowSessionTable;
-    SflowPortLocalConfMap  m_sflowPortLocalConfMap;
+    SflowPortConfMap  m_sflowPortConfMap;
     bool                   m_intfAllConf;
     bool                   m_gEnable;
 
@@ -60,7 +60,7 @@ private:
     void sflowHandleSessionAll(bool enable);
     void sflowHandleSessionLocal(bool enable);
     void sflowCheckAndFillValues(std::string alias, std::vector<FieldValueTuple> &fvs);
-    void sflowGetLocalPortInfo(std::vector<FieldValueTuple> &fvs, SflowLocalPortInfo &local_info);
+    void sflowGetPortInfo(std::vector<FieldValueTuple> &fvs, SflowPortInfo &local_info);
     void sflowGetGlobalInfo(std::vector<FieldValueTuple> &fvs, std::string speed);
 };
 
