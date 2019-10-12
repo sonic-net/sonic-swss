@@ -6,8 +6,6 @@
 #include "notifier.h"
 #include "notificationproducer.h"
 #include "macaddress.h"
-#include "rediscommand.h"
-#include "sai_serialize.h"
 
 using namespace std;
 using namespace swss;
@@ -37,14 +35,11 @@ const map<string, sai_packet_action_t> packet_action_map =
 
 SwitchOrch::SwitchOrch(DBConnector *db, string tableName) :
         Orch(db, tableName),
-        m_db(db),
-        m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
-        m_switchNameMap(new Table(m_countersDb.get(), COUNTERS_SWITCH_NAME_MAP))
+        m_db(db)
 {
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
     auto restartCheckNotifier = new Notifier(m_restartCheckNotificationConsumer, this, "RESTARTCHECK");
     Orch::addExecutor(restartCheckNotifier);
-    m_switchNameMap->set("", { FieldValueTuple("switch", sai_serialize_object_id(gSwitchId)) });
 }
 
 void SwitchOrch::doTask(Consumer &consumer)

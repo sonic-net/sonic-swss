@@ -1,7 +1,6 @@
 #pragma once
 
 #include "orch.h"
-#include "producertable.h"
 
 struct WarmRestartCheck
 {
@@ -27,9 +26,6 @@ private:
     swss::NotificationConsumer* m_restartCheckNotificationConsumer;
     void doTask(swss::NotificationConsumer& consumer);
     swss::DBConnector *m_db;
-
-    std::shared_ptr<swss::DBConnector> m_countersDb;
-    std::shared_ptr<swss::Table> m_switchNameMap;
 
     // Information contained in the request from
     // external program for orchagent pre-shutdown state check
