@@ -8,6 +8,7 @@
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
+#include "chassisorch.h"
 
 using namespace std;
 using namespace swss;
@@ -111,6 +112,12 @@ bool OrchDaemon::init()
     gDirectory.set(vnet_rt_orch);
     VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(vrf_orch);
+
+    const vector<string> chassis_frontend_tables = {
+        CFG_PASS_THROUGH_ROUTE_TABLE_NAME,
+    };
+    ChassisOrch* chassis_frontend_orch = new ChassisOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
+    gDirectory.set(chassis_frontend_orch);
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch);
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch);
@@ -225,6 +232,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);
     m_orchList.push_back(gAclOrch);
+    m_orchList.push_back(chassis_frontend_orch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);

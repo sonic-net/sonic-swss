@@ -120,10 +120,10 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
+        dvs.runcmd("crm config polling interval 3")
         dvs.runcmd("crm config thresholds fdb high 90")
         dvs.runcmd("crm config thresholds fdb type free")
-        time.sleep(2)
+        time.sleep(3)
         check_syslog(dvs, marker, "FDB_ENTRY THRESHOLD_EXCEEDED for TH_FREE", 1)
 
         # enable ipv6 on server 2
@@ -183,10 +183,10 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
+        dvs.runcmd("crm config polling interval 3")
         dvs.runcmd("crm config thresholds ipv4 route high 90")
         dvs.runcmd("crm config thresholds ipv4 route type free")
-        time.sleep(2)
+        time.sleep(3)
         check_syslog(dvs, marker, "IPV4_ROUTE THRESHOLD_EXCEEDED for TH_FREE",1)
 
         intf_tbl._del("Ethernet0|10.0.0.0/31")
@@ -253,10 +253,10 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
+        dvs.runcmd("crm config polling interval 3")
         dvs.runcmd("crm config thresholds ipv6 route high 90")
         dvs.runcmd("crm config thresholds ipv6 route type free")
-        time.sleep(2)
+        time.sleep(3)
         check_syslog(dvs, marker, "IPV6_ROUTE THRESHOLD_EXCEEDED for TH_FREE",1)
 
         intf_tbl._del("Ethernet0|fc00::1/126")
@@ -308,10 +308,10 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
+        dvs.runcmd("crm config polling interval 3")
         dvs.runcmd("crm config thresholds ipv4 nexthop high 90")
         dvs.runcmd("crm config thresholds ipv4 nexthop type free")
-        time.sleep(2)
+        time.sleep(3)
         check_syslog(dvs, marker, "IPV4_NEXTHOP THRESHOLD_EXCEEDED for TH_FREE",1)
 
         intf_tbl._del("Ethernet0|10.0.0.0/31")
@@ -367,10 +367,10 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
+        dvs.runcmd("crm config polling interval 3")
         dvs.runcmd("crm config thresholds ipv6 nexthop high 90")
         dvs.runcmd("crm config thresholds ipv6 nexthop type free")
-        time.sleep(2)
+        time.sleep(3)
         check_syslog(dvs, marker, "IPV6_NEXTHOP THRESHOLD_EXCEEDED for TH_FREE",1)
 
         intf_tbl._del("Ethernet0|fc00::1/126")
@@ -422,10 +422,10 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
+        dvs.runcmd("crm config polling interval 3")
         dvs.runcmd("crm config thresholds ipv4 neighbor high 90")
         dvs.runcmd("crm config thresholds ipv4 neighbor type free")
-        time.sleep(2)
+        time.sleep(3)
         check_syslog(dvs, marker, "IPV4_NEIGHBOR THRESHOLD_EXCEEDED for TH_FREE",1)
 
         intf_tbl._del("Ethernet0|10.0.0.0/31")
@@ -481,10 +481,10 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
+        dvs.runcmd("crm config polling interval 3")
         dvs.runcmd("crm config thresholds ipv6 neighbor high 90")
         dvs.runcmd("crm config thresholds ipv6 neighbor type free")
-        time.sleep(2)
+        time.sleep(3)
         check_syslog(dvs, marker, "IPV6_NEIGHBOR THRESHOLD_EXCEEDED for TH_FREE",1)
 
         intf_tbl._del("Ethernet0|fc00::1/126")
@@ -549,10 +549,10 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
+        dvs.runcmd("crm config polling interval 3")
         dvs.runcmd("crm config thresholds nexthop group member high 90")
         dvs.runcmd("crm config thresholds nexthop group object type free")
-        time.sleep(2)
+        time.sleep(3)
         check_syslog(dvs, marker, "NEXTHOP_GROUP THRESHOLD_EXCEEDED for TH_FREE",1)
 
         intf_tbl._del("Ethernet0|10.0.0.0/31")
@@ -624,10 +624,10 @@ class TestCrm(object):
         assert new_avail_counter == avail_counter
 
         marker = dvs.add_log_marker()
-        dvs.runcmd("crm config polling interval 2")
+        dvs.runcmd("crm config polling interval 3")
         dvs.runcmd("crm config thresholds nexthop group member high 90")
         dvs.runcmd("crm config thresholds nexthop group member type free")
-        time.sleep(2)
+        time.sleep(3)
         check_syslog(dvs, marker, "NEXTHOP_GROUP_MEMBER THRESHOLD_EXCEEDED for TH_FREE",1)
 
         intf_tbl._del("Ethernet0|10.0.0.0/31")
