@@ -214,6 +214,30 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
             return false;
         }
         m_syncdTrapIds[trap_id] = trap_group_id;
+        m_trapIdObjectIds[trap_id] = hostif_trap_id;
+    }
+
+    return true;
+}
+
+bool CoppOrch::removeTrapIds(const vector<sai_hostif_trap_type_t> &trap_id_list)
+{
+    sai_object_id_t trap_id_object = SAI_NULL_OBJECT_ID;
+
+    for (auto trap_id : trap_id_list)
+    {
+        if (m_trapIdObjectIds.find(trap_id) != m_trapIdObjectIds.end())
+        {
+            trap_id_object = m_trapIdObjectIds[trap_id];
+            sai_status_t status = sai_hostif_api->remove_hostif_trap(trap_id_object);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove trap %d, rv:%d", trap_id, status);
+                return false;
+            }
+            m_trapIdObjectIds.erase(trap_id);
+            m_syncdTrapIds.erase(trap_id);
+        }
     }
 
     return true;
@@ -552,21 +576,10 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 trap_ids_to_reset.push_back(it.first);
             }
         }
-
-        sai_attribute_t attr;
-        vector<sai_attribute_t> default_trap_attrs;
-
-        attr.id = SAI_HOSTIF_TRAP_ATTR_PACKET_ACTION;
-        attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-        default_trap_attrs.push_back(attr);
-
-        attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_GROUP;
-        attr.value.oid = m_trap_group_map[default_trap_group];
-        default_trap_attrs.push_back(attr);
-
-        if (!applyAttributesToTrapIds(m_trap_group_map[default_trap_group], trap_ids_to_reset, default_trap_attrs))
+        
+        if (!removeTrapIds(trap_ids_to_reset))
         {
-            SWSS_LOG_ERROR("Failed to reset traps to default trap group with default attributes");
+            SWSS_LOG_ERROR("Failed to remove trap id with group %s",trap_group_name.c_str());
             return task_process_status::task_failed;
         }
 
