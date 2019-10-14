@@ -37,7 +37,7 @@ enum class CrmThresholdType
 class CrmOrch : public Orch
 {
 public:
-    CrmOrch(DBConnector *db, string tableName);
+    CrmOrch(swss::DBConnector *db, std::string tableName);
     void incCrmResUsedCounter(CrmResourceType resource);
     void decCrmResUsedCounter(CrmResourceType resource);
     // Increment "used" counter for the ACL table/group CRM resources
@@ -50,9 +50,9 @@ public:
     void decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_t tableId);
 
 private:
-    shared_ptr<DBConnector> m_countersDb = nullptr;
-    shared_ptr<Table> m_countersCrmTable = nullptr;
-    SelectableTimer *m_timer = nullptr;
+    std::shared_ptr<swss::DBConnector> m_countersDb = nullptr;
+    std::shared_ptr<swss::Table> m_countersCrmTable = nullptr;
+    swss::SelectableTimer *m_timer = nullptr;
 
     struct CrmResourceCounter
     {
@@ -63,29 +63,29 @@ private:
 
     struct CrmResourceEntry
     {
-        CrmResourceEntry(string name, CrmThresholdType thresholdType, uint32_t lowThreshold, uint32_t highThreshold);
+        CrmResourceEntry(std::string name, CrmThresholdType thresholdType, uint32_t lowThreshold, uint32_t highThreshold);
 
-        string name;
+        std::string name;
 
         CrmThresholdType thresholdType = CrmThresholdType::CRM_PERCENTAGE;
         uint32_t lowThreshold = 70;
         uint32_t highThreshold = 85;
 
-        map<string, CrmResourceCounter> countersMap;
+        std::map<std::string, CrmResourceCounter> countersMap;
 
         uint32_t exceededLogCounter = 0;
     };
 
-    chrono::seconds m_pollingInterval;
+    std::chrono::seconds m_pollingInterval;
 
-    map<CrmResourceType, CrmResourceEntry> m_resourcesMap;
+    std::map<CrmResourceType, CrmResourceEntry> m_resourcesMap;
 
     void doTask(Consumer &consumer);
-    void handleSetCommand(const string& key, const vector<FieldValueTuple>& data);
-    void doTask(SelectableTimer &timer);
+    void handleSetCommand(const std::string& key, const std::vector<swss::FieldValueTuple>& data);
+    void doTask(swss::SelectableTimer &timer);
     void getResAvailableCounters();
     void updateCrmCountersTable();
     void checkCrmThresholds();
-    string getCrmAclKey(sai_acl_stage_t stage, sai_acl_bind_point_type_t bindPoint);
-    string getCrmAclTableKey(sai_object_id_t id);
+    std::string getCrmAclKey(sai_acl_stage_t stage, sai_acl_bind_point_type_t bindPoint);
+    std::string getCrmAclTableKey(sai_object_id_t id);
 };

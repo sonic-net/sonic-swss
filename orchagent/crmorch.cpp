@@ -20,6 +20,7 @@ extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t *sai_acl_api;
 
 using namespace std;
+using namespace swss;
 
 
 const map<CrmResourceType, string> crmResTypeNameMap =

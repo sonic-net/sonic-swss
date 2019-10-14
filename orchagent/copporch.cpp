@@ -61,7 +61,7 @@ static map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"neigh_discovery", SAI_HOSTIF_TRAP_TYPE_IPV6_NEIGHBOR_DISCOVERY},
     {"mld_v1_v2", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_V2},
     {"mld_v1_report", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_REPORT},
-    {"mld_v2_done", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_DONE},
+    {"mld_v1_done", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_DONE},
     {"mld_v2_report", SAI_HOSTIF_TRAP_TYPE_MLD_V2_REPORT},
     {"ip2me", SAI_HOSTIF_TRAP_TYPE_IP2ME},
     {"ssh", SAI_HOSTIF_TRAP_TYPE_SSH},
@@ -69,7 +69,9 @@ static map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"router_custom_range", SAI_HOSTIF_TRAP_TYPE_ROUTER_CUSTOM_RANGE_BASE},
     {"l3_mtu_error", SAI_HOSTIF_TRAP_TYPE_L3_MTU_ERROR},
     {"ttl_error", SAI_HOSTIF_TRAP_TYPE_TTL_ERROR},
-    {"udld", SAI_HOSTIF_TRAP_TYPE_UDLD}
+    {"udld", SAI_HOSTIF_TRAP_TYPE_UDLD},
+    {"bfd", SAI_HOSTIF_TRAP_TYPE_BFD},
+    {"bfdv6", SAI_HOSTIF_TRAP_TYPE_BFDV6}
 };
 
 static map<string, sai_packet_action_t> packet_action_map = {

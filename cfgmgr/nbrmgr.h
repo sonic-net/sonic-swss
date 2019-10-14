@@ -17,16 +17,18 @@ namespace swss {
 class NbrMgr : public Orch
 {
 public:
-    NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames);
+    NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
 
+    bool isNeighRestoreDone();
+
 private:
-    bool isIntfStateOk(const string &alias);
-    bool setNeighbor(const string& alias, const IpAddress& ip, const MacAddress& mac);
+    bool isIntfStateOk(const std::string &alias);
+    bool setNeighbor(const std::string& alias, const IpAddress& ip, const MacAddress& mac);
 
     void doTask(Consumer &consumer);
 
-    Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateIntfTable;
+    Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateIntfTable, m_stateNeighRestoreTable;
     struct nl_sock *m_nl_sock;
 };
 
