@@ -234,7 +234,94 @@ def ping_new_ips(dvs):
             dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
             dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
 
+def create_mirror_session(dvs, name, src, dst, gre, dscp, ttl, queue):
+    tbl = swsscommon.Table(dvs.cdb, "MIRROR_SESSION")
+    fvs = swsscommon.FieldValuePairs([("src_ip", src),
+                                      ("dst_ip", dst),
+                                      ("gre_type", gre),
+                                      ("dscp", dscp),
+                                      ("ttl", ttl),
+                                      ("queue", queue)])
+    tbl.set(name, fvs)
+    time.sleep(1)
+
+def remove_mirror_session(dvs, name):
+    tbl = swsscommon.Table(dvs.cdb, "MIRROR_SESSION")
+    tbl._del(name)
+    time.sleep(1)
+
+def get_mirror_session_state(dvs, name):
+    tbl = swsscommon.Table(dvs.sdb, "MIRROR_SESSION_TABLE")
+    (status, fvs) = tbl.get(name)
+    assert status == True
+    assert len(fvs) > 0
+    return { fv[0]: fv[1] for fv in fvs }
+
+
 class TestWarmReboot(object):
+    def test_swss_mirror_post_baking(self, dvs, testlog):
+        dvs.setup_db()
+        adb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        cdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        sdb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+        dvs.runcmd("config warm_restart enable swss")
+
+        dvs.set_interface_status("Ethernet12", "up")
+        dvs.set_interface_status("Ethernet16", "up")
+        dvs.set_interface_status("Ethernet20", "up")
+
+        dvs.add_ip_address("Ethernet12", "10.0.0.0/31")
+        dvs.add_ip_address("Ethernet16", "11.0.0.0/31")
+        dvs.add_ip_address("Ethernet20", "12.0.0.0/31")
+
+        dvs.add_neighbor("Ethernet12", "10.0.0.1", "02:04:06:08:10:12")
+        dvs.add_neighbor("Ethernet16", "11.0.0.1", "03:04:06:08:10:12")
+        dvs.add_neighbor("Ethernet20", "12.0.0.1", "04:04:06:08:10:12")
+
+        # set test1 monitor port as Ethernet20
+        dvs.runcmd("ip route add 2.2.2.2 via 12.0.0.1")
+        create_mirror_session(dvs, "test1", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
+
+        # set test2 monitor port as Ethernet16
+        dvs.runcmd("ip route change 2.2.2.2 nexthop via 11.0.0.1 nexthop via 12.0.0.1")
+        create_mirror_session(dvs, "test2", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
+
+        # set test3 monitor port as Ethernet12
+        dvs.runcmd("ip route change 2.2.2.2 nexthop via 10.0.0.1 nexthop via 11.0.0.1 nexthop via 12.0.0.1")
+        create_mirror_session(dvs, "test3", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
+
+        test1_mp = get_mirror_session_state(dvs, "test1")["monitor_port"]
+        test2_mp = get_mirror_session_state(dvs, "test2")["monitor_port"]
+        test3_mp = get_mirror_session_state(dvs, "test3")["monitor_port"]
+
+        dvs.stop_swss()
+        dvs.start_swss()
+        time.sleep(5)
+
+        # after warm reboot, all monitor ports are not changed
+        assert test1_mp == get_mirror_session_state(dvs, "test1")["monitor_port"]
+        assert test2_mp == get_mirror_session_state(dvs, "test2")["monitor_port"]
+        assert test3_mp == get_mirror_session_state(dvs, "test3")["monitor_port"]
+
+        remove_mirror_session(dvs, "test1")
+        remove_mirror_session(dvs, "test2")
+        remove_mirror_session(dvs, "test3")
+
+        dvs.remove_route("2.2.2.2")
+
+        dvs.remove_neighbor("Ethernet12", "10.0.0.1")
+        dvs.remove_neighbor("Ethernet16", "11.0.0.1")
+        dvs.remove_neighbor("Ethernet20", "12.0.0.1")
+
+        dvs.remove_ip_address("Ethernet12", "10.0.0.0/31")
+        dvs.remove_ip_address("Ethernet16", "11.0.0.0/31")
+        dvs.remove_ip_address("Ethernet20", "12.0.0.0/31")
+
+        dvs.set_interface_status("Ethernet12", "down")
+        dvs.set_interface_status("Ethernet16", "down")
+        dvs.set_interface_status("Ethernet20", "down")
+
     def test_PortSyncdWarmRestart(self, dvs, testlog):
 
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
