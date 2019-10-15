@@ -45,16 +45,25 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     unsigned int master_index = rtnl_route_get_table(route_obj);
     char master_name[IFNAMSIZ] = {0};
 
-    /* Get the name of the master device */
-    getIfName(master_index, master_name, IFNAMSIZ);
-    
-    /* If the master device name starts with VNET_PREFIX, it is a VNET route.
-       The VNET name is exactly the name of the associated master device. */
-    if (string(master_name).find(VNET_PREFIX) == 0)
+    /* if the table_id is not set in the route obj then route is for default vrf. */
+    if (master_index)
     {
-        onVnetRouteMsg(nlmsg_type, obj, string(master_name));
+        /* Get the name of the master device */
+        getIfName(master_index, master_name, IFNAMSIZ);
+    
+        /* If the master device name starts with VNET_PREFIX, it is a VNET route.
+           The VNET name is exactly the name of the associated master device. */
+        if (string(master_name).find(VNET_PREFIX) == 0)
+        {
+            onVnetRouteMsg(nlmsg_type, obj, string(master_name));
+        }
+        /* Otherwise, it is a regular route (include VRF route). */
+        else
+        {
+            onRouteMsg(nlmsg_type, obj);
+        }
+
     }
-    /* Otherwise, it is a regular route (include VRF route). */
     else
     {
         onRouteMsg(nlmsg_type, obj);
@@ -324,6 +333,17 @@ string RouteSync::getNextHopGw(struct rtnl_route *route_obj)
             char gw_ip[MAX_ADDR_SIZE + 1] = {0};
             nl_addr2str(addr, gw_ip, MAX_ADDR_SIZE);
             result += gw_ip;
+        }
+        else
+        {
+            if (rtnl_route_get_family(route_obj) == AF_INET)
+            {
+                result += "0.0.0.0";
+            }
+            else
+            {
+                result += "::";
+            }
         }
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))

@@ -15,7 +15,7 @@ namespace swss {
 class VlanMgr : public Orch
 {
 public:
-    VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames);
+    VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
 
 private:
@@ -34,18 +34,18 @@ private:
     void doVlanMemberTask(Consumer &consumer);
     void doFdbTask(Consumer &consumer);
     void doSwitchTask(Consumer &consumer);
-    void processUntaggedVlanMembers(string vlan, const string &members);
+    void processUntaggedVlanMembers(std::string vlan, const std::string &members);
 
     bool addHostVlan(int vlan_id);
     bool removeHostVlan(int vlan_id);
-    bool setHostVlanAdminState(int vlan_id, const string &admin_status);
+    bool setHostVlanAdminState(int vlan_id, const std::string &admin_status);
     bool setHostVlanMtu(int vlan_id, uint32_t mtu);
-    bool addHostVlanMember(int vlan_id, const string &port_alias, const string& tagging_mode);
-    bool removeHostVlanMember(int vlan_id, const string &port_alias);
-    bool isMemberStateOk(const string &alias);
-    bool isVlanStateOk(const string &alias);
+    bool addHostVlanMember(int vlan_id, const std::string &port_alias, const std::string& tagging_mode);
+    bool removeHostVlanMember(int vlan_id, const std::string &port_alias);
+    bool isMemberStateOk(const std::string &alias);
+    bool isVlanStateOk(const std::string &alias);
     bool isVlanMacOk();
-    bool isVlanMemberStateOk(const string &vlanMemberKey);
+    bool isVlanMemberStateOk(const std::string &vlanMemberKey);
 };
 
 }

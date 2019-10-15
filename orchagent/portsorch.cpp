@@ -2190,6 +2190,14 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 }
                 if (fvField(i) == "oper_status")
                 {
+                    if (fvValue(i) == "down")
+                    {
+                        gNeighOrch->ifChangeInformNextHop(alias, false);
+                    }
+                    else
+                    {
+                        gNeighOrch->ifChangeInformNextHop(alias, true);
+                    }
                     oper_status = fvValue(i);
                 }
             }

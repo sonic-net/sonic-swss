@@ -31,8 +31,8 @@ typedef std::map<sai_vlan_id_t, VlanMemberEntry> vlan_members_t;
 
 struct VlanInfo
 {
-    sai_object_id_t     vlan_oid;
-    sai_vlan_id_t       vlan_id;
+    sai_object_id_t     vlan_oid = 0;
+    sai_vlan_id_t       vlan_id = 0;
 };
 
 class Port
