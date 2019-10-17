@@ -1,4 +1,5 @@
 #include <string.h>
+#include <iomanip>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -41,14 +42,14 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
     if (ipPrefix.isV4())
     {
         (prefixLen < 31) ?
-        (cmd << IP_CMD << " address " << opCmd << " " << ipPrefixStr << " broadcast " << broadcastIpStr <<" dev " << alias) :
-        (cmd << IP_CMD << " address " << opCmd << " " << ipPrefixStr << " dev " << alias);
+        (cmd << IP_CMD << " address " << quoted(opCmd) << " " << quoted(ipPrefixStr) << " broadcast " << quoted(broadcastIpStr) <<" dev " << quoted(alias)) :
+        (cmd << IP_CMD << " address " << quoted(opCmd) << " " << quoted(ipPrefixStr) << " dev " << quoted(alias));
     }
     else
     {
         (prefixLen < 127) ?
-        (cmd << IP_CMD << " -6 address " << opCmd << " " << ipPrefixStr << " broadcast " << broadcastIpStr << " dev " << alias) :
-        (cmd << IP_CMD << " -6 address " << opCmd << " " << ipPrefixStr << " dev " << alias);
+        (cmd << IP_CMD << " -6 address " << quoted(opCmd) << " " << quoted(ipPrefixStr) << " broadcast " << quoted(broadcastIpStr) << " dev " << quoted(alias)) :
+        (cmd << IP_CMD << " -6 address " << quoted(opCmd) << " " << quoted(ipPrefixStr) << " dev " << quoted(alias));
     }
 
     int ret = swss::exec(cmd.str(), res);
@@ -65,11 +66,11 @@ void IntfMgr::setIntfVrf(const string &alias, const string vrfName)
 
     if (!vrfName.empty())
     {
-        cmd << IP_CMD << " link set " << alias << " master " << vrfName;
+        cmd << IP_CMD << " link set " << quoted(alias) << " master " << quoted(vrfName);
     }
     else
     {
-        cmd << IP_CMD << " link set " << alias << " nomaster";
+        cmd << IP_CMD << " link set " << quoted(alias) << " nomaster";
     }
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }

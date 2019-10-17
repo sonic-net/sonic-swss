@@ -1,4 +1,5 @@
 #include <string.h>
+#include <iomanip>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -99,7 +100,7 @@ bool VrfMgr::delLink(const string& vrfName)
         return false;
     }
 
-    cmd << IP_CMD << " link del " << vrfName;
+    cmd << IP_CMD << " link del " << quoted(vrfName);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     recycleTable(m_vrfTableMap[vrfName]);
@@ -126,14 +127,14 @@ bool VrfMgr::setLink(const string& vrfName)
         return false;
     }
 
-    cmd << IP_CMD << " link add " << vrfName << " type vrf table " << table;
+    cmd << IP_CMD << " link add " << quoted(vrfName) << " type vrf table " << table;
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     m_vrfTableMap.emplace(vrfName, table);
 
     cmd.str("");
     cmd.clear();
-    cmd << IP_CMD << " link set " << vrfName << " up";
+    cmd << IP_CMD << " link set " << quoted(vrfName) << " up";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     return true;
