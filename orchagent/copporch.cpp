@@ -784,7 +784,7 @@ void CoppOrch::coppProcessSflow(Consumer &consumer)
             {
                 if (fvField(i) == "admin_state")
                 {
-                    if (fvValue(i) == "enable")
+                    if (fvValue(i) == "up")
                     {
                         enable_sflow_trap = true;
                     }
