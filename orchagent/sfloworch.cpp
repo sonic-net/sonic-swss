@@ -139,11 +139,11 @@ void SflowOrch::sflowExtractInfo(vector<FieldValueTuple> &fvs, bool &admin, uint
     {
         if (fvField(i) == "admin_state")
         {
-            if (fvValue(i) == "enable")
+            if (fvValue(i) == "up")
             {
                 admin = true;
-            } 
-            else if (fvValue(i) == "disable")
+            }
+            else if (fvValue(i) == "down")
             {
                 admin = false;
             }
@@ -281,7 +281,7 @@ void SflowOrch::doTask(Consumer &consumer)
                 {
                     port_info.m_sample_id = session_info->second.m_sample_id;
                 }
-                else 
+                else
                 {
                     SflowSession  session;
                     if (!sflowCreateSession(rate, session))
@@ -304,7 +304,7 @@ void SflowOrch::doTask(Consumer &consumer)
                 m_sflowPortInfoMap[port.m_port_id] = port_info;
                 m_sflowRateSampleMap[rate].ref_count++;
             }
-            else 
+            else
             {
                 if (rate != sflowSessionGetRate(sflowInfo->second.m_sample_id))
                 {

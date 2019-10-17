@@ -58,7 +58,7 @@ void SflowMgr::sflowHandleService(bool enable)
         SWSS_LOG_NOTICE("Starting hsflowd service");
         SWSS_LOG_INFO("Command '%s' succeeded", cmd.str().c_str());
     }
-            
+
 }
 
 void SflowMgr::sflowUpdatePortInfo(Consumer &consumer)
@@ -167,7 +167,7 @@ void SflowMgr::sflowHandleSessionLocal(bool enable)
 void SflowMgr::sflowGetGlobalInfo(vector<FieldValueTuple> &fvs, string speed)
 {
     string rate;
-    FieldValueTuple fv1("admin_state", "enable");
+    FieldValueTuple fv1("admin_state", "up");
     fvs.push_back(fv1);
 
     if (speed != SFLOW_ERROR_SPEED_STR)
@@ -239,7 +239,7 @@ void SflowMgr::sflowCheckAndFillValues(string alias, vector<FieldValueTuple> &fv
         if (m_sflowPortConfMap[alias].admin == "")
         {
             /* By default admin state is enable if not set explicitely */
-            m_sflowPortConfMap[alias].admin = "enable";
+            m_sflowPortConfMap[alias].admin = "up";
         }
         FieldValueTuple fv("admin_state", m_sflowPortConfMap[alias].admin);
         fvs.push_back(fv);
@@ -276,7 +276,7 @@ void SflowMgr::doTask(Consumer &consumer)
                     if (fvField(i) == "admin_state")
                     {
                         bool enable = false;
-                        if (fvValue(i) == "enable")
+                        if (fvValue(i) == "up")
                         {
                             enable = true;
                         }
@@ -305,7 +305,7 @@ void SflowMgr::doTask(Consumer &consumer)
                         {
                             bool enable = false;
 
-                            if (fvValue(i) == "enable")
+                            if (fvValue(i) == "up")
                             {
                                 enable = true;
                             }

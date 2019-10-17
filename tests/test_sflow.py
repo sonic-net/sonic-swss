@@ -8,7 +8,7 @@ class TestSflow(object):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
         ptbl = swsscommon.ProducerStateTable(self.pdb, "SFLOW_TABLE")
-        fvs = swsscommon.FieldValuePairs([("admin_state", "enable")])
+        fvs = swsscommon.FieldValuePairs([("admin_state", "up")])
         ptbl.set("global", fvs)
 
         time.sleep(1)
@@ -17,11 +17,11 @@ class TestSflow(object):
         self.setup_sflow(dvs)
         ptbl = swsscommon.ProducerStateTable(self.pdb, "SFLOW_SESSION_TABLE")
         gtbl = swsscommon.ProducerStateTable(self.pdb, "SFLOW_TABLE")
-        fvs = swsscommon.FieldValuePairs([("admin_state", "disable")])
+        fvs = swsscommon.FieldValuePairs([("admin_state", "down")])
         gtbl.set("global", fvs)
 
         time.sleep(1)
-        fvs = swsscommon.FieldValuePairs([("admin_state", "enable"),("sample_rate","1000")])
+        fvs = swsscommon.FieldValuePairs([("admin_state", "up"),("sample_rate","1000")])
         ptbl.set("Ethernet0", fvs)
 
         time.sleep(1)
@@ -39,7 +39,7 @@ class TestSflow(object):
 
         assert sample_session == ""
 
-        fvs = swsscommon.FieldValuePairs([("admin_state", "enable")])
+        fvs = swsscommon.FieldValuePairs([("admin_state", "up")])
         gtbl.set("global", fvs)
 
         time.sleep(1)
@@ -59,7 +59,7 @@ class TestSflow(object):
 
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET")
         (status, fvs) = atbl.get(sample_session)
-        
+
         assert status == True
 
         for fv in fvs:
@@ -72,7 +72,7 @@ class TestSflow(object):
         self.setup_sflow(dvs)
         ptbl = swsscommon.ProducerStateTable(self.pdb, "SFLOW_SESSION_TABLE")
         gtbl = swsscommon.ProducerStateTable(self.pdb, "SFLOW_TABLE")
-        fvs = swsscommon.FieldValuePairs([("admin_state", "enable"),("sample_rate","1000")])
+        fvs = swsscommon.FieldValuePairs([("admin_state", "up"),("sample_rate","1000")])
         ptbl.set("Ethernet0", fvs)
 
         time.sleep(1)
@@ -91,7 +91,7 @@ class TestSflow(object):
 
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET")
         (status, fvs) = atbl.get(sample_session)
-        
+
         assert status == True
 
         for fv in fvs:
@@ -103,7 +103,7 @@ class TestSflow(object):
     def test_ConfigDel(self, dvs, testlog):
         self.setup_sflow(dvs)
         ptbl = swsscommon.ProducerStateTable(self.pdb, "SFLOW_SESSION_TABLE")
-        fvs = swsscommon.FieldValuePairs([("admin_state", "enable"),("sample_rate","1000")])
+        fvs = swsscommon.FieldValuePairs([("admin_state", "up"),("sample_rate","1000")])
         ptbl.set("Ethernet0", fvs)
 
         time.sleep(1)
