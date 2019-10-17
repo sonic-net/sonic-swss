@@ -24,6 +24,9 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     mtu                 = 1*4DIGIT      ; port MTU
     fec                 = 1*64VCHAR     ; port fec mode
     autoneg             = BIT           ; auto-negotiation mode
+    preemphasis         = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
+    idriver             = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
+    ipredriver          = 1*8HEXDIG *( "," 1*8HEXDIG) ; list of hex values, one per lane
 
     ;QOS Mappings
     map_dscp_to_tc      = ref_hash_key_reference
@@ -110,14 +113,6 @@ For example (reorder output)
     admin_status        = "down" / "up"        ; admin status
     oper_status         = "down" / "up"        ; operating status
     mtu                 = 1*4DIGIT             ; MTU for the IP interface of the VLAN
-
----------------------------------------------
-### VLAN_MEMBER_TABLE
-    ;Defines interfaces which are members of a vlan
-    ;Status: work in progress
-
-    key                 = VLAN_MEMBER_TABLE:"Vlan"vlanid:ifname ; physical port "ifname" is a member of a VLAN "VlanX"
-    tagging_mode        = "untagged" / "tagged" / "priority_tagged" ; default value as untagged
 
 ---------------------------------------------
 ### LAG_TABLE
@@ -461,10 +456,22 @@ Stores rules associated with a specific ACL table on the switch.
                                                ; it could be:
                                                : name of physical port.          Example: "Ethernet10"
                                                : name of LAG port                Example: "PortChannel5"
+                                               : next-hop ip address (in global) Example: "10.0.0.1"
+                                               : next-hop ip address and vrf     Example: "10.0.0.2@Vrf2"
+                                               : next-hop ip address and ifname  Example: "10.0.0.3@Ethernet1"
+                                               : next-hop group set of next-hop  Example: "10.0.0.1,10.0.0.3@Ethernet1"
+
+    redirect_action = 1*255CHAR                ; redirect parameter
+                                               ; This parameter defines a destination for redirected packets
+                                               ; it could be:
+                                               : name of physical port.          Example: "Ethernet10"
+                                               : name of LAG port                Example: "PortChannel5"
                                                : next-hop ip address             Example: "10.0.0.1"
                                                : next-hop group set of addresses Example: "10.0.0.1,10.0.0.3"
 
-    mirror_action = 1*255VCHAR                 ; refer to the mirror session
+    mirror_action = 1*255VCHAR                 ; refer to the mirror session (by default it will be ingress mirror action)
+    mirror_ingress_action = 1*255VCHAR         ; refer to the mirror session
+    mirror_egress_action = 1*255VCHAR          ; refer to the mirror session
 
     ether_type    = h16                        ; Ethernet type field
 
@@ -570,12 +577,13 @@ Equivalent RedisDB entry:
 
 ----------------------------------------------
 
-### PORT\_MIRROR\_TABLE
-Stores information about mirroring session and its properties.
+### MIRROR\_SESSION\_TABLE
+Mirror session table
+Stores information about mirror sessions and their properties.
 
-    key       = PORT_MIRROR_TABLE:mirror_session_name ; mirror_session_name is
-                                                      ; unique session
-                                                      ; identifier
+    key       = MIRROR_SESSION_TABLE:mirror_session_name ; mirror_session_name is
+                                                         ; unique session
+                                                         ; identifier
     ; field   = value
     status    = "active"/"inactive"   ; Session state.
     src_ip    = ipv4_address          ; Session souce IP address
@@ -584,9 +592,11 @@ Stores information about mirroring session and its properties.
     dscp      = h8                    ; Session DSCP
     ttl       = h8                    ; Session TTL
     queue     = h8                    ; Session output queue
+    policer   = policer_name          ; Session policer name
 
     ;value annotations
     mirror_session_name = 1*255VCHAR
+    policer_name        = 1*255VCHAR
     h8                  = 1*2HEXDIG
     h16                 = 1*4HEXDIG
     ipv4_address        = dec-octet "." dec-octet "." dec-octet "." dec-octet “/” %d1-32
@@ -628,7 +638,45 @@ Equivalent RedisDB entry:
     10) "64"
     11) "queue"
     12) "0"
-    127.0.0.1:6379>
+
+---------------------------------------------
+
+### POLICER_TABLE
+Policer table
+Stores information about policers and their properties.
+
+packet_action = "drop" | "forward" | "copy" | "copy_cancel" | "trap" | "log" | "deny" | "transit"
+
+    ;Key
+    key = "POLICER_TABLE:name"
+
+    ;Field-Value tuples
+    meter_type  = "packets" | "bytes"
+    mode        = "sr_tcm" | "tr_tcm" | "storm"
+    color       = "aware" | "blind"
+    cbs         = number ;packets or bytes depending on the meter_type value
+    cir         = number ;packets or bytes depending on the meter_type value
+    pbs         = number ;packets or bytes depending on the meter_type value
+    pir         = number ;packets or bytes depending on the meter_type value
+
+    green_action   = packet_action
+    yellow_action  = packet_action
+    red_action     = packet_action
+
+    Example:
+    127.0.0.1:6379> hgetall "POLICER_TABLE:POLICER_1"
+     1) "cbs"
+     2) "600"
+     3) "cir"
+     4) "600"
+     5) "meter_type"
+     6) "packets"
+     7) "mode"
+     8) "sr_tcm"
+     9) "red_action"
+    10) "drop"
+
+----------------------------------------------
 
 ### VXLAN\_TUNNEL\_MAP
     ;Stores vxlan tunnel map configuration. Defines mapping between vxlan vni and vrf
@@ -695,10 +743,6 @@ Stores information for physical switch ports managed by the switch chip. Ports t
 
     key                 = WARM_RESTART:name ; name is the name of SONiC docker or "system" for global configuration.
 
-    enable              = "true" / "false"  ; Default value as false.
-                                            ; If "system" warm start knob is true, docker level knob will be ignored.
-                                            ; If "system" warm start knob is false, docker level knob takes effect.
-
     neighsyncd_timer    = 1*4DIGIT          ; neighsyncd_timer is the timer used for neighsyncd during the warm restart.
                                             ; Timer is started after we restored the neighborTable to internal data structures.
                                             ; neighborsyncd then starts to read all linux kernel entries and mark the entries in
@@ -715,8 +759,8 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                             ; Supported range: 1-3600.
 
     teamsyncd_timer     = 1*4DIGIT          ; teamsyncd_timer holds the time interval utilized by teamsyncd during warm-restart episodes.
-                                            ; The timer is started when teamsyncd starts. During the timer interval teamsyncd 
-                                            ; will preserver all LAG interface changes, but it will not apply them. The changes 
+                                            ; The timer is started when teamsyncd starts. During the timer interval teamsyncd
+                                            ; will preserver all LAG interface changes, but it will not apply them. The changes
                                             ; will only be applied when the timer expired. During the changes application the stale
                                             ; LAG entries will be removed, the new LAG entries will be created.
                                             ; Supported range: 1-9999. 0 is invalid
@@ -762,11 +806,22 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     key                 = MGMT_PORT_TABLE|ifname    ; ifname must be unique across PORT,INTF,VLAN,LAG TABLES
     oper_status         = "down" / "up" ; oper status
 
+### WARM\_RESTART\_ENABLE\_TABLE
+    ;Stores system warm start and docker warm start enable/disable configuration
+    ;The configuration is persistent across warm reboot but not cold reboot.
+    ;Status: work in progress
+
+    key                 = WARM_RESTART_ENABLE_TABLE:name ; name is the name of SONiC docker or "system" for global configuration.
+
+    enable              = "true" / "false"  ; Default value as false.
+                                            ; If "system" warm start knob is true, docker level knob will be ignored.
+                                            ; If "system" warm start knob is false, docker level knob takes effect.
+
 ### WARM\_RESTART\_TABLE
     ;Stores application and orchdameon warm start status
     ;Status: work in progress
 
-    key             = WARM_RESTART_TABLE:process_name         ; process_name is a unique process identifier.
+    key             = WARM_RESTART_TABLE|process_name         ; process_name is a unique process identifier.
                                                               ; with exception of 'warm-shutdown' operation.
                                                               ; 'warm-shutdown' operation key is used to
                                                               ; track warm shutdown stages and results.
@@ -795,6 +850,33 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     ;State for neighbor table restoring process during warm reboot
     key                 = NEIGH_RESTORE_TABLE|Flags
     restored            = "true" / "false" ; restored state
+
+### BGP\_STATE\_TABLE
+    ;Stores bgp status
+    ;Status: work in progress
+
+    key             = BGP_STATE_TABLE|family|eoiu             ; family = "IPv4" / "IPv6"  ; address family.
+
+    state           = "unknown" / "reached" / "consumed"         ; unknown: eoiu state not fetched yet.
+                                                                 ; reached: bgp eoiu done.
+                                                                 ;
+                                                                 ; consumed: the reached state has been consumed by application.
+    timestamp       = time-stamp                                 ; "%Y-%m-%d %H:%M:%S", full-date and partial-time separated by
+                                                                 ; white space.  Example: 2019-04-25 09:39:19
+
+    ;value annotations
+    date-fullyear   = 4DIGIT
+    date-month      = 2DIGIT  ; 01-12
+    date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on
+                              ; month/year
+    time-hour       = 2DIGIT  ; 00-23
+    time-minute     = 2DIGIT  ; 00-59
+    time-second     = 2DIGIT  ; 00-58, 00-59, 00-60 based on leap second
+                              ; rules
+
+    partial-time    = time-hour ":" time-minute ":" time-second
+    full-date       = date-fullyear "-" date-month "-" date-mday
+    time-stamp      = full-date %x20 partial-time
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?

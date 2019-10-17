@@ -1,4 +1,5 @@
 #include <sstream>
+#include <inttypes.h>
 
 #include "crmorch.h"
 #include "converter.h"
@@ -19,6 +20,7 @@ extern sai_switch_api_t *sai_switch_api;
 extern sai_acl_api_t *sai_acl_api;
 
 using namespace std;
+using namespace swss;
 
 
 const map<CrmResourceType, string> crmResTypeNameMap =
@@ -28,7 +30,7 @@ const map<CrmResourceType, string> crmResTypeNameMap =
     { CrmResourceType::CRM_IPV4_NEXTHOP, "IPV4_NEXTHOP" },
     { CrmResourceType::CRM_IPV6_NEXTHOP, "IPV6_NEXTHOP" },
     { CrmResourceType::CRM_IPV4_NEIGHBOR, "IPV4_NEIGHBOR" },
-    { CrmResourceType::CRM_IPV6_NEIGHBOR, "IPV6_Neighbor" },
+    { CrmResourceType::CRM_IPV6_NEIGHBOR, "IPV6_NEIGHBOR" },
     { CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER, "NEXTHOP_GROUP_MEMBER" },
     { CrmResourceType::CRM_NEXTHOP_GROUP, "NEXTHOP_GROUP" },
     { CrmResourceType::CRM_ACL_TABLE, "ACL_TABLE" },
@@ -215,7 +217,6 @@ void CrmOrch::doTask(Consumer &consumer)
         else if (op == DEL_COMMAND)
         {
             SWSS_LOG_ERROR("Unsupported operation type %s\n", op.c_str());
-            it = consumer.m_toSync.erase(it);
         }
         else
         {
@@ -240,7 +241,7 @@ void CrmOrch::handleSetCommand(const string& key, const vector<FieldValueTuple>&
             if (field == CRM_POLLING_INTERVAL)
             {
                 m_pollingInterval = chrono::seconds(to_uint<uint32_t>(value));
-                auto interv = timespec { .tv_sec = m_pollingInterval.count(), .tv_nsec = 0 };
+                auto interv = timespec { .tv_sec = (time_t)m_pollingInterval.count(), .tv_nsec = 0 };
                 m_timer->setInterval(interv);
                 m_timer->reset();
             }
@@ -337,21 +338,28 @@ void CrmOrch::decCrmAclUsedCounter(CrmResourceType resource, sai_acl_stage_t sta
     {
         m_resourcesMap.at(resource).countersMap[getCrmAclKey(stage, point)].usedCounter--;
 
-        // Remove ACL table related counters
+        // remove acl_entry and acl_counter in this acl table
         if (resource == CrmResourceType::CRM_ACL_TABLE)
         {
-            auto & cntMap = m_resourcesMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap;
-            for (auto it = cntMap.begin(); it != cntMap.end();)
+            for (auto &resourcesMap : m_resourcesMap)
             {
-                if (it->second.id == oid)
+                if ((resourcesMap.first == (CrmResourceType::CRM_ACL_ENTRY))
+                    || (resourcesMap.first == (CrmResourceType::CRM_ACL_COUNTER)))
                 {
-                    it = cntMap.erase(it);
-                }
-                else
-                {
-                    ++it;
+                    auto &cntMap = resourcesMap.second.countersMap;
+                    for (auto it = cntMap.begin(); it != cntMap.end(); ++it)
+                    {
+                        if (it->second.id == oid)
+                        {
+                            cntMap.erase(it);
+                            break;
+                        }
+                    }
                 }
             }
+
+            // remove ACL_TABLE_STATS in crm database
+            m_countersCrmTable->del(getCrmAclTableKey(oid));
         }
     }
     catch (...)
@@ -372,7 +380,7 @@ void CrmOrch::incCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_
     }
     catch (...)
     {
-        SWSS_LOG_ERROR("Failed to increment \"used\" counter for the %s CRM resource (tableId:%lx).", crmResTypeNameMap.at(resource).c_str(), tableId);
+        SWSS_LOG_ERROR("Failed to increment \"used\" counter for the %s CRM resource (tableId:%" PRIx64 ").", crmResTypeNameMap.at(resource).c_str(), tableId);
         return;
     }
 }
@@ -387,7 +395,7 @@ void CrmOrch::decCrmAclTableUsedCounter(CrmResourceType resource, sai_object_id_
     }
     catch (...)
     {
-        SWSS_LOG_ERROR("Failed to decrement \"used\" counter for the %s CRM resource (tableId:%lx).", crmResTypeNameMap.at(resource).c_str(), tableId);
+        SWSS_LOG_ERROR("Failed to decrement \"used\" counter for the %s CRM resource (tableId:%" PRIx64 ").", crmResTypeNameMap.at(resource).c_str(), tableId);
         return;
     }
 }
@@ -399,10 +407,6 @@ void CrmOrch::doTask(SelectableTimer &timer)
     getResAvailableCounters();
     updateCrmCountersTable();
     checkCrmThresholds();
-
-    auto interv = timespec { .tv_sec = m_pollingInterval.count(), .tv_nsec = 0 };
-    timer.setInterval(interv);
-    timer.reset();
 }
 
 void CrmOrch::getResAvailableCounters()

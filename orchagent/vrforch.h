@@ -30,7 +30,7 @@ public:
 class VRFOrch : public Orch2
 {
 public:
-    VRFOrch(DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_)
+    VRFOrch(swss::DBConnector *db, const std::string& tableName) : Orch2(db, tableName, request_)
     {
     }
 

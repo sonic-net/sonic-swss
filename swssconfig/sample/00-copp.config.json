@@ -22,7 +22,7 @@
     {
         "COPP_TABLE:trap.group.arp": {
             "trap_ids": "arp_req,arp_resp,neigh_discovery",
-            "trap_action":"trap",
+            "trap_action":"copy",
             "trap_priority":"4",
             "queue": "4",
             "meter_type":"packets",
@@ -34,8 +34,8 @@
         "OP": "SET"
     },
     {
-        "COPP_TABLE:trap.group.lldp.dhcp.udld": {
-            "trap_ids": "lldp,dhcp,udld",
+        "COPP_TABLE:trap.group.lldp.dhcp.dhcpv6.udld": {
+            "trap_ids": "lldp,dhcp,dhcpv6,udld",
             "trap_action":"trap",
             "trap_priority":"4",
             "queue": "4"

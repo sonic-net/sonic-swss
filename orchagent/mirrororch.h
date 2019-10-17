@@ -7,6 +7,7 @@
 #include "neighorch.h"
 #include "routeorch.h"
 #include "fdborch.h"
+#include "policerorch.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -30,11 +31,12 @@ struct MirrorEntry
     uint8_t dscp;
     uint8_t ttl;
     uint8_t queue;
+    string policer;
 
     struct
     {
         IpPrefix prefix;
-        IpAddress nexthop;
+        NextHopKey nexthop;
     } nexthopInfo;
 
     struct
@@ -65,8 +67,10 @@ class MirrorOrch : public Orch, public Observer, public Subject
 {
 public:
     MirrorOrch(TableConnector appDbConnector, TableConnector confDbConnector,
-               PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch);
+               PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch);
 
+    bool bake() override;
+    bool postBake() override;
     void update(SubjectType, void *);
     bool sessionExists(const string&);
     bool getSessionStatus(const string&, bool&);
@@ -79,10 +83,15 @@ private:
     RouteOrch *m_routeOrch;
     NeighOrch *m_neighOrch;
     FdbOrch *m_fdbOrch;
+    PolicerOrch *m_policerOrch;
 
     Table m_mirrorTable;
 
     MirrorTable m_syncdMirrors;
+    // session_name -> VLAN | monitor_port_alias | next_hop_ip
+    map<string, string> m_recoverySessionMap;
+
+    bool m_freeze = false;
 
     void createEntry(const string&, const vector<FieldValueTuple>&);
     void deleteEntry(const string&);
@@ -99,6 +108,8 @@ private:
      * attr is the field name will be stored, if empty then all fields will be stored
      */
     void setSessionState(const std::string& name, const MirrorEntry& session, const std::string& attr = "");
+    void removeSessionState(const std::string& name);
+
     bool getNeighborInfo(const string&, MirrorEntry&);
 
     void updateNextHop(const NextHopUpdate&);
