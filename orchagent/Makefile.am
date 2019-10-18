@@ -55,7 +55,8 @@ orchagent_SOURCES = \
             policerorch.cpp \
             sfloworch.cpp \
             chassisorch.cpp \
-            debugcounterorch.cpp
+            debugcounterorch.cpp \
+			errororch.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp

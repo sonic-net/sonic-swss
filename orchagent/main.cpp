@@ -294,8 +294,11 @@ int main(int argc, char **argv)
     DBConnector appl_db("APPL_DB", 0);
     DBConnector config_db("CONFIG_DB", 0);
     DBConnector state_db("STATE_DB", 0);
+    DBConnector counters_db("COUNTERS_DB", 0);
+    DBConnector asic_db("ASIC_DB", 0);
+    DBConnector error_db("ERROR_DB", 0);
 
-    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
+    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, &counters_db, &asic_db, &error_db);
 
     if (!orchDaemon->init())
     {

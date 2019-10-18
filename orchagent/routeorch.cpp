@@ -4,6 +4,14 @@
 #include "logger.h"
 #include "swssnet.h"
 #include "crmorch.h"
+#include "tokenize.h"
+#include  "errororch.h"
+#include "sai_serialize.h"
+#include "redisclient.h"
+
+#include "swss/json.hpp"
+using json = nlohmann::json;
+using namespace swss;
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
@@ -14,6 +22,10 @@ extern sai_switch_api_t*            sai_switch_api;
 
 extern PortsOrch *gPortsOrch;
 extern CrmOrch *gCrmOrch;
+extern ErrorOrch *gErrorOrch;
+extern std::shared_ptr<swss::RedisClient>   g_redisClientAppDb;
+extern std::shared_ptr<swss::RedisClient>   g_redisClientAsicDb;
+extern std::shared_ptr<swss::RedisClient>   g_redisClientCountersDb;
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
@@ -30,6 +42,12 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, In
         m_resync(false)
 {
     SWSS_LOG_ENTER();
+
+    if(gErrorOrch->mappingHandlerRegister(APP_ROUTE_TABLE_NAME, this) == false)
+    {
+        SWSS_LOG_ERROR("Failed to register with Error Handling Framework for %s",
+                APP_ROUTE_TABLE_NAME);
+    }
 
     sai_attribute_t attr;
     attr.id = SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS;
@@ -1187,3 +1205,59 @@ bool RouteOrch::removeRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
 
     return true;
 }
+
+bool RouteOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<FieldValueTuple> &asicValues,
+        std::vector<FieldValueTuple> &appValues)
+{
+    SWSS_LOG_ENTER();
+
+    if(object_type != SAI_OBJECT_TYPE_ROUTE_ENTRY)
+    {
+        return false;
+    }
+
+    /*
+       127.0.0.1:6379> hgetall "ROUTE_TABLE:1.1.1.0/24"
+       1) "nexthop"
+       2) "2.2.2.2"
+       3) "ifname"
+       4) "Ethernet0"
+
+       127.0.0.1:6379[1]> hgetall "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY:{\"dest\":\"1.1.1.0/24\",\"switch_id\":\"oid:0x21000000000000\",\"vr\":\"oid:0x3000000000028\"}"
+       1) "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"
+       2) "oid:0x40000000006fd"
+       127.0.0.1:6379[1]>
+
+     */
+
+    const auto& values = asicValues;
+    std::string asicKV, strNhopKey, strNextHopIP;
+    std::string strRifOid, strPrefix, strIntfName, strRtrIntfType;
+    for (size_t i = 0; i < values.size(); i++)
+    {
+        /* Extract IP prefix from the key */
+        if(fvField(values[i]) == "key")
+        {
+            asicKV = fvValue(values[i]);
+            auto tokens = tokenize(asicKV, ':', 1);
+            json j = json::parse(tokens[1]);
+            strPrefix = j["dest"];
+            SWSS_LOG_DEBUG("Prefix is %s", strPrefix.c_str());
+            break;
+        }
+    } /* End of for (i < values.size(); i++) */
+
+    appValues.emplace_back("key", strPrefix);
+    string strRouteTable = APP_ROUTE_TABLE_NAME;
+    string strAppKey = strRouteTable + ":" + strPrefix;
+    auto hashApp = g_redisClientAppDb->hgetall(strAppKey);
+    for (auto &kv: hashApp)
+    {
+        const std::string &skey = kv.first;
+        const std::string &svalue = kv.second;
+        appValues.emplace_back(skey, svalue);
+    }
+
+    return true;
+}
+

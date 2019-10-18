@@ -432,6 +432,12 @@ string Orch::dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
     return s;
 }
 
+bool Orch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<FieldValueTuple> &asicValues,
+        std::vector<FieldValueTuple> &appValues)
+{
+    return false;
+}
+
 ref_resolve_status Orch::resolveFieldRefArray(
     type_map &type_maps,
     const string &field_name,
