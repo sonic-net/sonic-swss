@@ -16,7 +16,23 @@ WarmStartHelper::WarmStartHelper(RedisPipeline      *pipeline,
     m_syncTable(syncTable),
     m_syncTableName(syncTableName),
     m_dockName(dockerName),
-    m_appName(appName)
+    m_appName(appName),
+    m_identicalVector(NULL)
+{
+    WarmStart::initialize(appName, dockerName);
+}
+WarmStartHelper::WarmStartHelper(RedisPipeline      *pipeline,
+                                 ProducerStateTable *syncTable,
+                                 const std::string  &syncTableName,
+                                 const std::string  &dockerName,
+                                 const std::string  &appName,
+                                 std::vector<KeyOpFieldsValuesTuple> *identicalVector) :
+    m_restorationTable(pipeline, syncTableName, false),
+    m_syncTable(syncTable),
+    m_syncTableName(syncTableName),
+    m_dockName(dockerName),
+    m_appName(appName),
+    m_identicalVector(identicalVector)
 {
     WarmStart::initialize(appName, dockerName);
 }
@@ -209,6 +225,10 @@ void WarmStartHelper::reconcile(void)
                 SWSS_LOG_INFO("Warm-Restart reconciliation: no changes needed for "
                               "existing entry %s",
                               printKFV(refreshedKey, refreshedFV).c_str());
+                if(m_identicalVector)
+                {
+                    m_identicalVector->push_back(restoredElem);
+                }
             }
         }
 

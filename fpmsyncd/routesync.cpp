@@ -21,7 +21,7 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
     m_vnet_routeTable(pipeline, APP_VNET_RT_TABLE_NAME, true),
     m_vnet_tunnelTable(pipeline, APP_VNET_RT_TUNNEL_TABLE_NAME, true),
-    m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp"),
+    m_warmStartHelper(pipeline, &m_routeTable, APP_ROUTE_TABLE_NAME, "bgp", "bgp", &dbExistVector),
     m_nl_sock(NULL), m_link_cache(NULL)
 {
     m_nl_sock = nl_socket_alloc();
@@ -387,4 +387,8 @@ string RouteSync::getNextHopIf(struct rtnl_route *route_obj)
     }
 
     return result;
+}
+uint32_t RouteSync::getIfIndex(const char *ifName)
+{
+    return( rtnl_link_name2i(m_link_cache, ifName));
 }
