@@ -1,4 +1,3 @@
-#include <iomanip>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -26,7 +25,7 @@ bool PortMgr::setPortMtu(const string &alias, const string &mtu)
     string res;
 
     // ip link set dev <port_name> mtu <mtu>
-    cmd << IP_CMD << " link set dev " << quoted(alias) << " mtu " << quoted(mtu);
+    cmd << IP_CMD << " link set dev " << shellquote(alias) << " mtu " << shellquote(mtu);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     // Set the port MTU in application database to update both
@@ -45,7 +44,7 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
     string res;
 
     // ip link set dev <port_name> [up|down]
-    cmd << IP_CMD << " link set dev " << quoted(alias) << (up ? " up" : " down");
+    cmd << IP_CMD << " link set dev " << shellquote(alias) << (up ? " up" : " down");
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     vector<FieldValueTuple> fvs;

@@ -62,7 +62,7 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
         {
             ostringstream cmd;
             string res;
-            cmd << "cat /sys/class/net/" << quoted(key) << "/operstate";
+            cmd << "cat /sys/class/net/" << shellquote(key) << "/operstate";
             try
             {
                 EXEC_WITH_ERROR_THROW(cmd.str(), res);

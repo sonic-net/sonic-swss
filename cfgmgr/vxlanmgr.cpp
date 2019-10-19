@@ -2,7 +2,6 @@
 #include <regex>
 #include <sstream>
 #include <string>
-#include <iomanip>
 #include <net/if.h>
 
 #include "logger.h"
@@ -46,14 +45,14 @@ static int cmdCreateVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & 
 {
     // ip link add {{VXLAN}} type vxlan id {{VNI}} [local {{SOURCE IP}}] dstport 4789
     ostringstream cmd;
-    cmd << IP_CMD " link add " 
-        << quoted(info.m_vxlan)
-        << " type vxlan id " 
-        << quoted(info.m_vni)
+    cmd << IP_CMD " link add "
+        << shellquote(info.m_vxlan)
+        << " type vxlan id "
+        << shellquote(info.m_vni)
         << " ";
     if (!info.m_sourceIp.empty())
     {
-        cmd << " local " << quoted(info.m_sourceIp);
+        cmd << " local " << shellquote(info.m_sourceIp);
     }
     cmd << " dstport 4789";
     return swss::exec(cmd.str(), res);
@@ -63,8 +62,8 @@ static int cmdUpVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // ip link set dev {{VXLAN}} up
     ostringstream cmd;
-    cmd << IP_CMD " link set dev " 
-        << quoted(info.m_vxlan)
+    cmd << IP_CMD " link set dev "
+        << shellquote(info.m_vxlan)
         << " up";
     return swss::exec(cmd.str(), res);
 }
@@ -74,7 +73,7 @@ static int cmdCreateVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string 
     // ip link add {{VXLAN_IF}} type bridge
     ostringstream cmd;
     cmd << IP_CMD " link add "
-        << quoted(info.m_vxlanIf)
+        << shellquote(info.m_vxlanIf)
         << " type bridge";
     return swss::exec(cmd.str(), res);
 }
@@ -84,9 +83,9 @@ static int cmdAddVxlanIntoVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::s
     // brctl addif {{VXLAN_IF}} {{VXLAN}}
     ostringstream cmd;
     cmd << BRCTL_CMD " addif "
-        << quoted(info.m_vxlanIf)
+        << shellquote(info.m_vxlanIf)
         << " "
-        << quoted(info.m_vxlan);
+        << shellquote(info.m_vxlan);
     return swss::exec(cmd.str(), res);
 }
 
@@ -95,9 +94,9 @@ static int cmdAttachVxlanIfToVnet(const swss::VxlanMgr::VxlanInfo & info, std::s
     // ip link set dev {{VXLAN_IF}} master {{VNET}}
     ostringstream cmd;
     cmd << IP_CMD " link set dev "
-        << quoted(info.m_vxlanIf)
+        << shellquote(info.m_vxlanIf)
         << " master "
-        << quoted(info.m_vnet);
+        << shellquote(info.m_vnet);
     return swss::exec(cmd.str(), res);
 }
 
@@ -106,7 +105,7 @@ static int cmdUpVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string & re
     // ip link set dev {{VXLAN_IF}} up
     ostringstream cmd;
     cmd << IP_CMD " link set dev "
-        << quoted(info.m_vxlanIf)
+        << shellquote(info.m_vxlanIf)
         << " up";
     return swss::exec(cmd.str(), res);
 }
@@ -116,7 +115,7 @@ static int cmdDeleteVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & 
     // ip link del dev {{VXLAN}}
     ostringstream cmd;
     cmd << IP_CMD " link del dev "
-        << quoted(info.m_vxlan);
+        << shellquote(info.m_vxlan);
     return swss::exec(cmd.str(), res);
 }
 
@@ -125,9 +124,9 @@ static int cmdDeleteVxlanFromVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std
     // brctl delif {{VXLAN_IF}} {{VXLAN}}
     ostringstream cmd;
     cmd << BRCTL_CMD " delif "
-        << quoted(info.m_vxlanIf)
+        << shellquote(info.m_vxlanIf)
         << " " 
-        << quoted(info.m_vxlan);
+        << shellquote(info.m_vxlan);
     return swss::exec(cmd.str(), res);
 }
 
@@ -136,7 +135,7 @@ static int cmdDeleteVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string 
     // ip link del {{VXLAN_IF}}
     ostringstream cmd;
     cmd << IP_CMD " link del "
-        << quoted(info.m_vxlanIf);
+        << shellquote(info.m_vxlanIf);
     return swss::exec(cmd.str(), res);
 }
 
@@ -145,7 +144,7 @@ static int cmdDetachVxlanIfFromVnet(const swss::VxlanMgr::VxlanInfo & info, std:
     // ip link set dev {{VXLAN_IF}} nomaster
     ostringstream cmd;
     cmd << IP_CMD " link set dev "
-        << quoted(info.m_vxlanIf)
+        << shellquote(info.m_vxlanIf)
         << " nomaster";
     return swss::exec(cmd.str(), res);
 }

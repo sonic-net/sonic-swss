@@ -1,5 +1,4 @@
 #include <string.h>
-#include <iomanip>
 #include "logger.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
@@ -42,14 +41,14 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
     if (ipPrefix.isV4())
     {
         (prefixLen < 31) ?
-        (cmd << IP_CMD << " address " << quoted(opCmd) << " " << quoted(ipPrefixStr) << " broadcast " << quoted(broadcastIpStr) <<" dev " << quoted(alias)) :
-        (cmd << IP_CMD << " address " << quoted(opCmd) << " " << quoted(ipPrefixStr) << " dev " << quoted(alias));
+        (cmd << IP_CMD << " address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " broadcast " << shellquote(broadcastIpStr) <<" dev " << shellquote(alias)) :
+        (cmd << IP_CMD << " address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias));
     }
     else
     {
         (prefixLen < 127) ?
-        (cmd << IP_CMD << " -6 address " << quoted(opCmd) << " " << quoted(ipPrefixStr) << " broadcast " << quoted(broadcastIpStr) << " dev " << quoted(alias)) :
-        (cmd << IP_CMD << " -6 address " << quoted(opCmd) << " " << quoted(ipPrefixStr) << " dev " << quoted(alias));
+        (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " broadcast " << shellquote(broadcastIpStr) << " dev " << shellquote(alias)) :
+        (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias));
     }
 
     int ret = swss::exec(cmd.str(), res);
@@ -66,11 +65,11 @@ void IntfMgr::setIntfVrf(const string &alias, const string vrfName)
 
     if (!vrfName.empty())
     {
-        cmd << IP_CMD << " link set " << quoted(alias) << " master " << quoted(vrfName);
+        cmd << IP_CMD << " link set " << shellquote(alias) << " master " << shellquote(vrfName);
     }
     else
     {
-        cmd << IP_CMD << " link set " << quoted(alias) << " nomaster";
+        cmd << IP_CMD << " link set " << shellquote(alias) << " nomaster";
     }
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }

@@ -1,6 +1,9 @@
 #ifndef __SHELLCMD__
 #define __SHELLCMD__
 
+#include <iomanip>
+#include <regex>
+
 #define IP_CMD               "/sbin/ip"
 #define BRIDGE_CMD           "/sbin/bridge"
 #define BRCTL_CMD            "/sbin/brctl"
@@ -17,5 +20,11 @@
         throw runtime_error(cmd + " : " + res); \
     }                                           \
 })
+
+static inline std::string shellquote(const std::string& str)
+{
+    static const std::regex re("([\\'])");
+    return "$'" + std::regex_replace(str, re, "\\$1") + "'";
+}
 
 #endif /* __SHELLCMD__ */
