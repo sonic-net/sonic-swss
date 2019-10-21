@@ -213,9 +213,36 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
 
         if (existing_entry->second.type == "static")
         {
-        	update.type = "static";
-        	saved_fdb_entries[update.port.m_alias].push_back({existing_entry->first.mac, vlan.m_vlan_info.vlan_id, "static"});
+            if (vlan.m_members.find(update.port.m_alias) == vlan.m_members.end())
+            {
+        	    update.type = "static";
+        	    saved_fdb_entries[update.port.m_alias].push_back({existing_entry->first.mac, vlan.m_vlan_info.vlan_id, "static"});
+            }
+            else
+            {
+                /*port added back to vlan before we receive delete
+                  notification for flush from SAI. Re-add entry to SAI
+                 */ 
+                sai_attribute_t attr;
+                vector<sai_attribute_t> attrs;
+
+                attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
+                attr.value.s32 = SAI_FDB_ENTRY_TYPE_STATIC;
+                attrs.push_back(attr);
+                attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
+                attr.value.oid = bridge_port_id;
+                attrs.push_back(attr);
+                auto status = sai_fdb_api->create_fdb_entry(entry, (uint32_t)attrs.size(), attrs.data());
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to create FDB %s on %s, rv:%d",
+                        existing_entry->first.mac.to_string().c_str(), update.port.m_alias.c_str(), status);
+                    return;
+                }
+                return;
+            }
         }
+
         update.add = false;
         storeFdbEntryState(update);
         update.port.m_fdb_count--;
@@ -669,16 +696,20 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     if(macUpdate)
     {
         SWSS_LOG_NOTICE("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s", entry.mac.to_string().c_str(), vlan.m_alias.c_str(), oldPort.m_alias.c_str(), port_name.c_str(), oldType.c_str(), type.c_str());
-        for(auto itr : attrs)
-        {
-            status = sai_fdb_api->set_fdb_entry_attribute(&fdb_entry, &itr);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("macUpdate-Failed for attr.id=0x%x for FDB %s in %s on %s, rv:%d",
-                            itr.id, entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str(), status);
-                return false;
-            }
+        status = sai_fdb_api->remove_fdb_entry(&fdb_entry);
+        if (status != SAI_STATUS_SUCCESS)
+        { 
+            SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: Failed to remove FDB entry. mac=%s, bv_id=0x%lx",
+                           entry.mac.to_string().c_str(), entry.bv_id);
         }
+        status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create %s FDB %s on %s, rv:%d",
+                    type.c_str(), entry.mac.to_string().c_str(), port_name.c_str(), status);
+            return false;
+        }
+
         if (oldPort.m_bridge_port_id != port.m_bridge_port_id)
         {
             oldPort.m_fdb_count--;
