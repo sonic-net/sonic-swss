@@ -38,8 +38,16 @@ class TestRoute(object):
 
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsub)
 
-        assert len(addobjs) == 1
+        assert len(addobjs) >= 1
 
-        rt_key = json.loads(addobjs[0]['key'])
+        adb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        keys = atbl.getKeys()
+        found = False
 
-        assert rt_key['dest'] == "2.2.2.0/24"
+        for key in keys:
+            route = json.loads(key)
+            if route['dest'] == "2.2.2.0/24":
+                found = True
+
+        assert found
