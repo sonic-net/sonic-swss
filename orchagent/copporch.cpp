@@ -4,6 +4,7 @@
 #include "tokenize.h"
 #include "logger.h"
 
+#include <inttypes.h>
 #include <sstream>
 #include <iostream>
 
@@ -17,23 +18,23 @@ extern sai_switch_api_t*    sai_switch_api;
 extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
 
-map<string, sai_meter_type_t> policer_meter_map = {
+static map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
     {"bytes", SAI_METER_TYPE_BYTES}
 };
 
-map<string, sai_policer_mode_t> policer_mode_map = {
+static map<string, sai_policer_mode_t> policer_mode_map = {
     {"sr_tcm", SAI_POLICER_MODE_SR_TCM},
     {"tr_tcm", SAI_POLICER_MODE_TR_TCM},
     {"storm",  SAI_POLICER_MODE_STORM_CONTROL}
 };
 
-map<string, sai_policer_color_source_t> policer_color_aware_map = {
+static map<string, sai_policer_color_source_t> policer_color_aware_map = {
     {"aware", SAI_POLICER_COLOR_SOURCE_AWARE},
     {"blind", SAI_POLICER_COLOR_SOURCE_BLIND}
 };
 
-map<string, sai_hostif_trap_type_t> trap_id_map = {
+static map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"stp", SAI_HOSTIF_TRAP_TYPE_STP},
     {"lacp", SAI_HOSTIF_TRAP_TYPE_LACP},
     {"eapol", SAI_HOSTIF_TRAP_TYPE_EAPOL},
@@ -60,7 +61,7 @@ map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"neigh_discovery", SAI_HOSTIF_TRAP_TYPE_IPV6_NEIGHBOR_DISCOVERY},
     {"mld_v1_v2", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_V2},
     {"mld_v1_report", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_REPORT},
-    {"mld_v2_done", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_DONE},
+    {"mld_v1_done", SAI_HOSTIF_TRAP_TYPE_IPV6_MLD_V1_DONE},
     {"mld_v2_report", SAI_HOSTIF_TRAP_TYPE_MLD_V2_REPORT},
     {"ip2me", SAI_HOSTIF_TRAP_TYPE_IP2ME},
     {"ssh", SAI_HOSTIF_TRAP_TYPE_SSH},
@@ -68,10 +69,12 @@ map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"router_custom_range", SAI_HOSTIF_TRAP_TYPE_ROUTER_CUSTOM_RANGE_BASE},
     {"l3_mtu_error", SAI_HOSTIF_TRAP_TYPE_L3_MTU_ERROR},
     {"ttl_error", SAI_HOSTIF_TRAP_TYPE_TTL_ERROR},
-    {"udld", SAI_HOSTIF_TRAP_TYPE_UDLD}
+    {"udld", SAI_HOSTIF_TRAP_TYPE_UDLD},
+    {"bfd", SAI_HOSTIF_TRAP_TYPE_BFD},
+    {"bfdv6", SAI_HOSTIF_TRAP_TYPE_BFDV6}
 };
 
-map<string, sai_packet_action_t> packet_action_map = {
+static map<string, sai_packet_action_t> packet_action_map = {
     {"drop", SAI_PACKET_ACTION_DROP},
     {"forward", SAI_PACKET_ACTION_FORWARD},
     {"copy", SAI_PACKET_ACTION_COPY},
@@ -210,7 +213,7 @@ bool CoppOrch::applyAttributesToTrapIds(sai_object_id_t trap_group_id,
             SWSS_LOG_ERROR("Failed to create trap %d, rv:%d", trap_id, status);
             return false;
         }
-        m_syncdTrapIds[trap_id] = hostif_trap_id;
+        m_syncdTrapIds[trap_id] = trap_group_id;
     }
 
     return true;
@@ -277,12 +280,12 @@ sai_object_id_t CoppOrch::getPolicer(string trap_group_name)
     {
         return SAI_NULL_OBJECT_ID;
     }
-    SWSS_LOG_DEBUG("trap group id:%lx", m_trap_group_map[trap_group_name]);
+    SWSS_LOG_DEBUG("trap group id:%" PRIx64, m_trap_group_map[trap_group_name]);
     if (m_trap_group_policer_map.find(m_trap_group_map[trap_group_name]) == m_trap_group_policer_map.end())
     {
         return SAI_NULL_OBJECT_ID;
     }
-    SWSS_LOG_DEBUG("trap group policer id:%lx", m_trap_group_policer_map[m_trap_group_map[trap_group_name]]);
+    SWSS_LOG_DEBUG("trap group policer id:%" PRIx64, m_trap_group_policer_map[m_trap_group_map[trap_group_name]]);
     return m_trap_group_policer_map[m_trap_group_map[trap_group_name]];
 }
 
@@ -456,12 +459,12 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 sai_object_id_t policer_id = getPolicer(trap_group_name);
                 if (SAI_NULL_OBJECT_ID == policer_id)
                 {
-                    SWSS_LOG_WARN("Creating policer for existing Trap group:%lx (name:%s).", m_trap_group_map[trap_group_name], trap_group_name.c_str());
+                    SWSS_LOG_WARN("Creating policer for existing Trap group:%" PRIx64 " (name:%s).", m_trap_group_map[trap_group_name], trap_group_name.c_str());
                     if (!createPolicer(trap_group_name, policer_attribs))
                     {
                         return task_process_status::task_failed;
                     }
-                    SWSS_LOG_DEBUG("Created policer:%lx for existing trap group", policer_id);
+                    SWSS_LOG_DEBUG("Created policer:%" PRIx64 " for existing trap group", policer_id);
                 }
                 else
                 {
@@ -487,7 +490,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 sai_status = sai_hostif_api->set_hostif_trap_group_attribute(m_trap_group_map[trap_group_name], &trap_gr_attr);
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
-                    SWSS_LOG_ERROR("Failed to apply attribute:%d to trap group:%lx, name:%s, error:%d\n", trap_gr_attr.id, m_trap_group_map[trap_group_name], trap_group_name.c_str(), sai_status);
+                    SWSS_LOG_ERROR("Failed to apply attribute:%d to trap group:%" PRIx64 ", name:%s, error:%d\n", trap_gr_attr.id, m_trap_group_map[trap_group_name], trap_group_name.c_str(), sai_status);
                     return task_process_status::task_failed;
                 }
                 SWSS_LOG_NOTICE("Set trap group %s to host interface", trap_group_name.c_str());
@@ -589,7 +592,7 @@ void CoppOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -604,7 +607,7 @@ void CoppOrch::doTask(Consumer &consumer)
         {
             task_status = processCoppRule(consumer);
         }
-        catch(const out_of_range e)
+        catch(const out_of_range& e)
         {
             SWSS_LOG_ERROR("processing copp rule threw out_of_range exception:%s", e.what());
             task_status = task_process_status::task_invalid_entry;
@@ -625,6 +628,7 @@ void CoppOrch::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 break;
             case task_process_status::task_failed:
+                it = consumer.m_toSync.erase(it);
                 SWSS_LOG_ERROR("Processing copp task item failed, exiting. ");
                 return;
             case task_process_status::task_need_retry:
@@ -632,6 +636,7 @@ void CoppOrch::doTask(Consumer &consumer)
                 it++;
                 break;
             default:
+                it = consumer.m_toSync.erase(it);
                 SWSS_LOG_ERROR("Invalid task status:%d", task_status);
                 return;
         }

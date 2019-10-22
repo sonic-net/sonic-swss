@@ -1,4 +1,5 @@
 #include <map>
+#include <inttypes.h>
 
 #include "switchorch.h"
 #include "converter.h"
@@ -11,6 +12,7 @@ using namespace swss;
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
+extern MacAddress gVxlanMacAddress;
 
 const map<string, sai_switch_attr_t> switch_attribute_map =
 {
@@ -100,6 +102,7 @@ void SwitchOrch::doTask(Consumer &consumer)
 
                     case SAI_SWITCH_ATTR_VXLAN_DEFAULT_ROUTER_MAC:
                         mac_addr = value;
+                        gVxlanMacAddress = mac_addr;
                         memcpy(attr.value.mac, mac_addr.getMac(), sizeof(sai_mac_t));
                         break;
 
@@ -198,9 +201,9 @@ bool SwitchOrch::setAgingFDB(uint32_t sec)
     auto status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set switch %lx fdb_aging_time attribute: %d", gSwitchId, status);
+        SWSS_LOG_ERROR("Failed to set switch %" PRIx64 " fdb_aging_time attribute: %d", gSwitchId, status);
         return false;
     }
-    SWSS_LOG_NOTICE("Set switch %lx fdb_aging_time %u sec", gSwitchId, sec);
+    SWSS_LOG_NOTICE("Set switch %" PRIx64 " fdb_aging_time %u sec", gSwitchId, sec);
     return true;
 }

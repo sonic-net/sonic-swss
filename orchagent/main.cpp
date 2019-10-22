@@ -12,6 +12,7 @@ extern "C" {
 #include <chrono>
 #include <getopt.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 #include <sys/time.h>
 #include "timestamp.h"
@@ -38,6 +39,7 @@ sai_object_id_t gVirtualRouterId;
 sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
+MacAddress gVxlanMacAddress;
 
 #define DEFAULT_BATCH_SIZE  128
 int gBatchSize = DEFAULT_BATCH_SIZE;
@@ -45,12 +47,14 @@ int gBatchSize = DEFAULT_BATCH_SIZE;
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
 bool gLogRotate = false;
+bool gSyncMode = false;
+
 ofstream gRecordOfs;
 string gRecordFile;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-s]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -60,6 +64,7 @@ void usage()
     cout << "    -d record_location: set record logs folder location (default .)" << endl;
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
+    cout << "    -s: enable synchronous mode" << endl;
 }
 
 void sighup_handler(int signo)
@@ -116,7 +121,7 @@ int main(int argc, char **argv)
 
     string record_location = ".";
 
-    while ((opt = getopt(argc, argv, "b:m:r:d:h")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:d:hs")) != -1)
     {
         switch (opt)
         {
@@ -161,6 +166,11 @@ int main(int argc, char **argv)
         case 'h':
             usage();
             exit(EXIT_SUCCESS);
+        case 's':
+            gSyncMode = true;
+            SWSS_LOG_NOTICE("Enabling synchronous mode");
+            break;
+
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -210,6 +220,18 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
+    // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
+    // since it is not using ASIC_DB, we can execute it before create_switch
+    // when g_syncMode is set to true here, create_switch will wait the response from syncd
+    if (gSyncMode)
+    {
+        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_MODE;
+        attr.value.booldata = true;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
+
+
     status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -245,7 +267,7 @@ int main(int argc, char **argv)
     }
 
     gVirtualRouterId = attr.value.oid;
-    SWSS_LOG_NOTICE("Get switch virtual router ID %lx", gVirtualRouterId);
+    SWSS_LOG_NOTICE("Get switch virtual router ID %" PRIx64, gVirtualRouterId);
 
     /* Create a loopback underlay router interface */
     vector<sai_attribute_t> underlay_intf_attrs;
@@ -266,7 +288,7 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    SWSS_LOG_NOTICE("Created underlay router interface ID %lx", gUnderlayIfId);
+    SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
 
     /* Initialize orchestration components */
     DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
@@ -275,33 +297,22 @@ int main(int argc, char **argv)
 
     auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
 
-    try
+    if (!orchDaemon->init())
     {
-        if (!orchDaemon->init())
-        {
-            SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
-            exit(EXIT_FAILURE);
-        }
+        SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
+        exit(EXIT_FAILURE);
+    }
 
-        /*
-        * In syncd view comparison solution, apply view has been sent
-        * immediately after restore is done
-        */
-        if (!WarmStart::isWarmStart())
-        {
-            syncd_apply_view();
-        }
+    /*
+    * In syncd view comparison solution, apply view has been sent
+    * immediately after restore is done
+    */
+    if (!WarmStart::isWarmStart())
+    {
+        syncd_apply_view();
+    }
 
-        orchDaemon->start();
-    }
-    catch (char const *e)
-    {
-        SWSS_LOG_ERROR("Exception: %s", e);
-    }
-    catch (exception& e)
-    {
-        SWSS_LOG_ERROR("Failed due to exception: %s", e.what());
-    }
+    orchDaemon->start();
 
     return 0;
 }

@@ -3,6 +3,7 @@
 #include <vector>
 #include <unordered_map>
 #include <utility>
+#include <inttypes.h>
 
 #include "logger.h"
 #include "tokenize.h"
@@ -57,18 +58,24 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
 {
     const FdbEntry& entry = update.entry;
     const Port& port = update.port;
-    sai_vlan_id_t vlan_id = port.m_port_vlan_id;
     const MacAddress& mac = entry.mac;
     string portName = port.m_alias;
+    Port vlan;
+
+    if (!m_portsOrch->getPort(entry.bv_id, vlan))
+    {
+        SWSS_LOG_NOTICE("FdbOrch notification: Failed to locate vlan port from bv_id 0x%" PRIx64, entry.bv_id);
+        return false;
+    }
 
     // ref: https://github.com/Azure/sonic-swss/blob/master/doc/swss-schema.md#fdb_table
-    string key = "Vlan" + to_string(vlan_id) + ":" + mac.to_string();
+    string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + mac.to_string();
 
     if (update.add)
     {
         auto inserted = m_entries.insert(entry);
 
-        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%lx",
+        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was inserted into bv_id 0x%" PRIx64,
                         entry.mac.to_string().c_str(), entry.bv_id);
 
         if (!inserted.second)
@@ -89,7 +96,7 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
     else
     {
         size_t erased = m_entries.erase(entry);
-        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
+        SWSS_LOG_DEBUG("FdbOrch notification: mac %s was removed from bv_id 0x%" PRIx64, entry.mac.to_string().c_str(), entry.bv_id);
 
         if (erased == 0)
         {
@@ -117,14 +124,14 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
     case SAI_FDB_EVENT_LEARNED:
         if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
         {
-            SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%lx", bridge_port_id);
+            SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64, bridge_port_id);
             return;
         }
 
         // we already have such entries
         if (m_entries.find(update.entry) != m_entries.end())
         {
-             SWSS_LOG_INFO("FdbOrch notification: mac %s is already in bv_id 0x%lx",
+             SWSS_LOG_INFO("FdbOrch notification: mac %s is already in bv_id 0x%" PRIx64,
                     update.entry.mac.to_string().c_str(), entry->bv_id);
              break;
         }
@@ -180,16 +187,16 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         else if (bridge_port_id && entry->bv_id == SAI_NULL_OBJECT_ID)
         {
             /*this is a placeholder for flush port fdb case, not supported yet.*/
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush port fdb action, port_id = 0x%lx, bv_id = 0x%lx.", bridge_port_id, entry->bv_id);
+            SWSS_LOG_ERROR("FdbOrch notification: not supported flush port fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
         }
         else if (bridge_port_id == SAI_NULL_OBJECT_ID && entry->bv_id != SAI_NULL_OBJECT_ID)
         {
             /*this is a placeholder for flush vlan fdb case, not supported yet.*/
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush vlan fdb action, port_id = 0x%lx, bv_id = 0x%lx.", bridge_port_id, entry->bv_id);
+            SWSS_LOG_ERROR("FdbOrch notification: not supported flush vlan fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
         }
         else
         {
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush fdb action, port_id = 0x%lx, bv_id = 0x%lx.", bridge_port_id, entry->bv_id);
+            SWSS_LOG_ERROR("FdbOrch notification: not supported flush fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
         }
         break;
     }
@@ -245,7 +252,7 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
 
     if (!m_portsOrch->getPortByBridgePortId(attr.value.oid, port))
     {
-        SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%lx", attr.value.oid);
+        SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64, attr.value.oid);
         return false;
     }
 
@@ -256,7 +263,7 @@ void FdbOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -336,7 +343,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -435,14 +442,6 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
 {
     SWSS_LOG_ENTER();
 
-    if (m_entries.count(entry) != 0) // we already have such entries
-    {
-        // FIXME: should we check that the entry are moving to another port?
-        // FIXME: should we check that the entry are changing its type?
-        SWSS_LOG_ERROR("FDB entry already exists. mac=%s bv_id=0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
-        return true;
-    }
-
     sai_fdb_entry_t fdb_entry;
 
     fdb_entry.switch_id = gSwitchId;
@@ -483,6 +482,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     attrs.push_back(attr);
 
+    if (m_entries.count(entry) != 0) // we already have such entries
+    {
+        removeFdbEntry(entry);
+    }
+
     sai_status_t status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -512,7 +516,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
 
     if (m_entries.count(entry) == 0)
     {
-        SWSS_LOG_ERROR("FDB entry isn't found. mac=%s bv_id=0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
+        SWSS_LOG_ERROR("FDB entry isn't found. mac=%s bv_id=0x%" PRIx64, entry.mac.to_string().c_str(), entry.bv_id);
         return true;
     }
 
@@ -525,7 +529,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
     status = sai_fdb_api->remove_fdb_entry(&fdb_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove FDB entry. mac=%s, bv_id=0x%lx",
+        SWSS_LOG_ERROR("Failed to remove FDB entry. mac=%s, bv_id=0x%" PRIx64,
                        entry.mac.to_string().c_str(), entry.bv_id);
         return true; //FIXME: it should be based on status. Some could be retried. some not
     }

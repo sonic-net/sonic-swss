@@ -8,6 +8,7 @@
 #include "portsorch.h"
 
 const string dscp_to_tc_field_name              = "dscp_to_tc_map";
+const string dot1p_to_tc_field_name             = "dot1p_to_tc_map";
 const string pfc_to_pg_map_name                 = "pfc_to_pg_map";
 const string pfc_to_queue_map_name              = "pfc_to_queue_map";
 const string pfc_enable_name                    = "pfc_enable";
@@ -36,6 +37,11 @@ const string scheduler_algo_STRICT              = "STRICT";
 const string scheduler_weight_field_name        = "weight";
 const string scheduler_priority_field_name      = "priority";
 
+const string scheduler_min_bandwidth_rate_field_name       = "cir";//Committed Information Rate
+const string scheduler_min_bandwidth_burst_rate_field_name = "cbs";//Committed Burst Size
+const string scheduler_max_bandwidth_rate_field_name       = "pir";//Peak Information Rate
+const string scheduler_max_bandwidth_burst_rate_field_name = "pbs";//Peak Burst Size
+
 const string ecn_field_name                     = "ecn";
 const string ecn_none                           = "ecn_none";
 const string ecn_red                            = "ecn_red";
@@ -60,8 +66,15 @@ public:
 class DscpToTcMapHandler : public QosMapHandler
 {
 public:
-    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes);
-    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes);
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
+};
+
+class Dot1pToTcMapHandler : public QosMapHandler
+{
+public:
+    bool convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tuple, vector<sai_attribute_t> &attributes) override;
+    sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) override;
 };
 
 class TcToQueueMapHandler : public QosMapHandler
@@ -114,6 +127,7 @@ public:
     static type_map& getTypeMap();
     static type_map m_qos_maps;
 private:
+    void doTask() override;
     virtual void doTask(Consumer& consumer);
 
     typedef task_process_status (QosOrch::*qos_table_handler)(Consumer& consumer);
@@ -128,6 +142,7 @@ private:
     void initTableHandlers();
 
     task_process_status handleDscpToTcTable(Consumer& consumer);
+    task_process_status handleDot1pToTcTable(Consumer& consumer);
     task_process_status handlePfcPrioToPgTable(Consumer& consumer);
     task_process_status handlePfcToQueueTable(Consumer& consumer);
     task_process_status handlePortQosMapTable(Consumer& consumer);

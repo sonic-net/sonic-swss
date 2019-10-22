@@ -20,6 +20,11 @@ AC_CHECK_LIB([team], [team_alloc],
    [AC_MSG_WARN([libteam is not installed.])
     AM_CONDITIONAL(HAVE_LIBTEAM, false)])
 
+AC_CHECK_LIB([sai], [sai_object_type_query],
+    AM_CONDITIONAL(HAVE_SAI, true),
+   [AC_MSG_WARN([libsai is not installed.])
+    AM_CONDITIONAL(HAVE_SAI, false)])
+
 AC_ARG_ENABLE(debug,
 [  --enable-debug      Compile with debugging flags],
 [case "${enableval}" in
@@ -28,15 +33,6 @@ AC_ARG_ENABLE(debug,
 	*) AC_MSG_ERROR(bad value ${enableval} for --enable-debug) ;;
 esac],[debug=false])
 AM_CONDITIONAL(DEBUG, test x$debug = xtrue)
-
-AC_ARG_ENABLE(gtest,
-[  --enable-gtest       Compile with googletest flags],
-[case "${enableval}" in
-	yes) gtest=true ;;
-	no)  gtest=false ;;
-	*) AC_MSG_ERROR(bad value ${enableval} for --enable-gtest) ;;
-esac],[gtest=false])
-AM_CONDITIONAL(GTEST, test x$gtest = xtrue)
 
 CFLAGS_COMMON="-std=c++11 -Wall -fPIC -Wno-write-strings -I/usr/include/libnl3 -I/usr/include/swss"
 
@@ -91,8 +87,12 @@ AC_CONFIG_FILES([
     teamsyncd/Makefile
     mclagsyncd/Makefile
     swssconfig/Makefile
-    tests/Makefile
     cfgmgr/Makefile
+    tests/Makefile
 ])
+
+# If no SAI library is installed, compile with SAIVS and run unit tests
+AM_COND_IF([HAVE_SAI],[],
+           [AC_CONFIG_FILES([tests/mock_tests/Makefile])])
 
 AC_OUTPUT

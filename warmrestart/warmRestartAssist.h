@@ -108,13 +108,15 @@ private:
     std::string m_appTableName;       // application table name
 
     bool m_warmStartInProgress;       // indicate if warm start is in progress
-    uint32_t m_reconcileTimer;        // reconcile timer value
+    time_t m_reconcileTimer;          // reconcile timer value
     SelectableTimer m_warmStartTimer; // reconcile timer
 
     // Set or get cache entry state
     std::string joinVectorString(const std::vector<FieldValueTuple> &fv);
     void setCacheEntryState(std::vector<FieldValueTuple> &fvVector, cache_state_t state);
     cache_state_t getCacheEntryState(const std::vector<FieldValueTuple> &fvVector);
+    bool contains(const std::vector<FieldValueTuple>& left,
+                  const std::vector<FieldValueTuple>& right);
 };
 
 }

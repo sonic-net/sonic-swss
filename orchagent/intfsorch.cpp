@@ -3,7 +3,9 @@
 #include <sstream>
 #include <map>
 #include <net/if.h>
+#include <inttypes.h>
 
+#include "sai_serialize.h"
 #include "intfsorch.h"
 #include "ipprefix.h"
 #include "logger.h"
@@ -30,18 +32,80 @@ extern BufferOrch *gBufferOrch;
 
 const int intfsorch_pri = 35;
 
+#define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
+#define UPDATE_MAPS_SEC 1
+
+static const vector<sai_router_interface_stat_t> rifStatIds =
+{
+    SAI_ROUTER_INTERFACE_STAT_IN_PACKETS,
+    SAI_ROUTER_INTERFACE_STAT_IN_OCTETS,
+    SAI_ROUTER_INTERFACE_STAT_IN_ERROR_PACKETS,
+    SAI_ROUTER_INTERFACE_STAT_IN_ERROR_OCTETS,
+    SAI_ROUTER_INTERFACE_STAT_OUT_PACKETS,
+    SAI_ROUTER_INTERFACE_STAT_OUT_OCTETS,
+    SAI_ROUTER_INTERFACE_STAT_OUT_ERROR_PACKETS,
+    SAI_ROUTER_INTERFACE_STAT_OUT_ERROR_OCTETS,
+};
+
 IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
         Orch(db, tableName, intfsorch_pri), m_vrfOrch(vrf_orch)
 {
     SWSS_LOG_ENTER();
+
+    /* Initialize DB connectors */ 
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_flex_db = shared_ptr<DBConnector>(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_asic_db = shared_ptr<DBConnector>(new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    /* Initialize COUNTER_DB tables */
+    m_rifNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_NAME_MAP));
+    m_rifTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_TYPE_MAP));
+
+    m_vidToRidTable = unique_ptr<Table>(new Table(m_asic_db.get(), "VIDTORID"));
+    auto intervT = timespec { .tv_sec = UPDATE_MAPS_SEC , .tv_nsec = 0 };
+    m_updateMapsTimer = new SelectableTimer(intervT);
+    auto executorT = new ExecutableTimer(m_updateMapsTimer, this, "UPDATE_MAPS_TIMER");
+    Orch::addExecutor(executorT);
+    /* Initialize FLEX_COUNTER_DB tables */
+    m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
+    m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
+
+    vector<FieldValueTuple> fieldValues;
+    fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
+    fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
+    m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
 }
 
 sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
 {
     Port port;
     gPortsOrch->getPort(alias, port);
-    assert(port.m_rif_id);
     return port.m_rif_id;
+}
+
+string IntfsOrch::getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name)
+{
+    sai_object_id_t vrf_id = gVirtualRouterId;
+
+    if (!vrf_name.empty())
+    {
+        vrf_id = m_vrfOrch->getVRFid(vrf_name);
+    }
+
+    for (const auto &it_intfs: m_syncdIntfses)
+    {
+        if (it_intfs.second.vrf_id != vrf_id)
+        {
+            continue;
+        }
+        for (const auto &prefixIt: it_intfs.second.ip_addresses)
+        {
+            if (prefixIt.isAddressInSubnet(ip))
+            {
+                return it_intfs.first;
+            }
+        }
+    }
+    return string();
 }
 
 void IntfsOrch::increaseRouterIntfsRefCount(const string &alias)
@@ -112,8 +176,10 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     {
         if (addRouterIntfs(vrf_id, port))
         {
+            gPortsOrch->increasePortRefCount(alias);
             IntfsEntry intfs_entry;
             intfs_entry.ref_count = 0;
+            intfs_entry.vrf_id = vrf_id;
             m_syncdIntfses[alias] = intfs_entry;
         }
         else
@@ -168,11 +234,52 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     return true;
 }
 
+bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix)
+{
+    SWSS_LOG_ENTER();
+
+    Port port;
+    if (!gPortsOrch->getPort(alias, port))
+    {
+        return false;
+    }
+
+    if (ip_prefix && m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
+    {
+        removeSubnetRoute(port, *ip_prefix);
+        removeIp2MeRoute(vrf_id, *ip_prefix);
+
+        if(port.m_type == Port::VLAN)
+        {
+            removeDirectedBroadcast(port, *ip_prefix);
+        }
+
+        m_syncdIntfses[alias].ip_addresses.erase(*ip_prefix);
+    }
+
+    /* Remove router interface that no IP addresses are associated with */
+    if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+    {
+        if (removeRouterIntfs(port))
+        {
+            gPortsOrch->decreasePortRefCount(alias);
+            m_syncdIntfses.erase(alias);
+            return true;
+        }
+        else
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 void IntfsOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -219,7 +326,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         sai_object_id_t vrf_id = gVirtualRouterId;
         if (!vrf_name.empty())
         {
-            if (m_vrfOrch->isVRFexists(vrf_name))
+            if (!m_vrfOrch->isVRFexists(vrf_name))
             {
                 it++;
                 continue;
@@ -247,6 +354,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                     IntfsEntry intfs_entry;
 
                     intfs_entry.ref_count = 0;
+                    intfs_entry.vrf_id = vrf_id;
                     intfs_entry.ip_addresses.insert(ip_prefix);
                     m_syncdIntfses[alias] = intfs_entry;
                     addIp2Me = true;
@@ -268,12 +376,25 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
+            /* Wait for the Interface entry first */
+            auto it_intfs = m_syncdIntfses.find(alias);
+            if (ip_prefix_in_key && it_intfs == m_syncdIntfses.end())
+            {
+                it++;
+                continue;
+            }
+
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
                 /* TODO: Resolve the dependency relationship and add ref_count to port */
                 it++;
                 continue;
+            }
+
+            if (m_vnetInfses.find(alias) != m_vnetInfses.end())
+            {
+                vnet_name = m_vnetInfses.at(alias);
             }
 
             if (!vnet_name.empty())
@@ -288,6 +409,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                 {
                     it++;
                     continue;
+                }
+
+                if (m_vnetInfses.find(alias) == m_vnetInfses.end())
+                {
+                    m_vnetInfses.emplace(alias, vnet_name);
                 }
             }
             else
@@ -331,41 +457,50 @@ void IntfsOrch::doTask(Consumer &consumer)
                 continue;
             }
 
-            vrf_id = port.m_vr_id;
-            if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
+            if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
             {
-                if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
+                /* Cannot locate the interface */
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+
+            if (m_vnetInfses.find(alias) != m_vnetInfses.end())
+            {
+                vnet_name = m_vnetInfses.at(alias);
+            }
+
+            if (!vnet_name.empty())
+            {
+                VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
+                if (!vnet_orch->isVnetExists(vnet_name))
                 {
-                    removeSubnetRoute(port, ip_prefix);
-                    removeIp2MeRoute(vrf_id, ip_prefix);
-
-                    if(port.m_type == Port::VLAN)
-                    {
-                        removeDirectedBroadcast(port, ip_prefix);
-                    }
-
-                    m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
+                    it++;
+                    continue;
                 }
 
-                /* Remove router interface that no IP addresses are associated with */
-                if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+                if (vnet_orch->delIntf(alias, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
-                    if (removeRouterIntfs(port))
-                    {
-                        m_syncdIntfses.erase(alias);
-                        it = consumer.m_toSync.erase(it);
-                    }
-                    else
-                        it++;
+                    m_vnetInfses.erase(alias);
+                    it = consumer.m_toSync.erase(it);
                 }
                 else
                 {
-                    it = consumer.m_toSync.erase(it);
+                    it++;
+                    continue;
                 }
             }
             else
-                /* Cannot locate the interface */
-                it = consumer.m_toSync.erase(it);
+            {
+                if (removeIntf(alias, port.m_vr_id, ip_prefix_in_key ? &ip_prefix : nullptr))
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                else
+                {
+                    it++;
+                    continue;
+                }
+            }
         }
     }
 }
@@ -445,6 +580,7 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     port.m_vr_id = vrf_id;
 
     gPortsOrch->setPort(port.m_alias, port);
+    m_rifsToAdd.push_back(port);
 
     SWSS_LOG_NOTICE("Create router interface %s MTU %u", port.m_alias.c_str(), port.m_mtu);
 
@@ -460,6 +596,9 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
         SWSS_LOG_NOTICE("Router interface is still referenced");
         return false;
     }
+
+    const auto id = sai_serialize_object_id(port.m_rif_id);
+    removeRifFromFlexCounter(id, port.m_alias);
 
     sai_status_t status = sai_router_intfs_api->remove_router_interface(port.m_rif_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -517,7 +656,7 @@ void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
-    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, IpAddresses(), true);
+    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, NextHopGroupKey(), true);
 }
 
 void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
@@ -531,9 +670,17 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     sai_status_t status = sai_route_api->remove_route_entry(&unicast_route_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove subnet route to %s from %s, rv:%d",
-                       ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
-        throw runtime_error("Failed to remove subnet route.");
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_ERROR("No subnet route found for %s", ip_prefix.to_string().c_str());
+            return;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove subnet route to %s from %s, rv:%d",
+                           ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
+            throw runtime_error("Failed to remove subnet route.");
+        }
     }
 
     SWSS_LOG_NOTICE("Remove subnet route to %s from %s",
@@ -549,7 +696,7 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
-    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, IpAddresses(), false);
+    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, NextHopGroupKey(), false);
 }
 
 void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
@@ -684,4 +831,97 @@ void IntfsOrch::removeDirectedBroadcast(const Port &port, const IpPrefix &ip_pre
     }
 
     SWSS_LOG_NOTICE("Remove broadcast route ip:%s", ip_addr.to_string().c_str());
+}
+
+void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const string &type)
+{
+    SWSS_LOG_ENTER();
+    /* update RIF maps in COUNTERS_DB */
+    vector<FieldValueTuple> rifNameVector;
+    vector<FieldValueTuple> rifTypeVector;
+
+    rifNameVector.emplace_back(name, id);
+    rifTypeVector.emplace_back(id, type);
+
+    m_rifNameTable->set("", rifNameVector);
+    m_rifTypeTable->set("", rifTypeVector);
+
+    /* update RIF in FLEX_COUNTER_DB */
+    string key = getRifFlexCounterTableKey(id);
+
+
+    std::ostringstream counters_stream;
+    for (const auto& it: rifStatIds)
+    {
+        counters_stream << sai_serialize_router_interface_stat(it) << comma;
+    }
+
+    /* check the state of intf, if registering the intf to FC will result in runtime error */
+    vector<FieldValueTuple> fieldValues;
+    fieldValues.emplace_back(RIF_COUNTER_ID_LIST, counters_stream.str());
+
+    m_flexCounterTable->set(key, fieldValues);
+    SWSS_LOG_DEBUG("Registered interface %s to Flex counter", name.c_str());
+}
+
+void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
+{
+    SWSS_LOG_ENTER();
+    /* remove it from COUNTERS_DB maps */
+    m_rifNameTable->hdel("", name);
+    m_rifTypeTable->hdel("", id);
+
+    /* remove it from FLEX_COUNTER_DB */
+    string key = getRifFlexCounterTableKey(id);
+
+    m_flexCounterTable->del(key);
+    SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
+}
+
+string IntfsOrch::getRifFlexCounterTableKey(string key)
+{
+    return string(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
+}
+
+void IntfsOrch::generateInterfaceMap()
+{
+    m_updateMapsTimer->start();
+}
+
+void IntfsOrch::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_DEBUG("Registering %" PRId64 " new intfs", m_rifsToAdd.size());
+    string value;
+    for (auto it = m_rifsToAdd.begin(); it != m_rifsToAdd.end(); )
+    {
+        const auto id = sai_serialize_object_id(it->m_rif_id);
+        SWSS_LOG_INFO("Registering %s, id %s", it->m_alias.c_str(), id.c_str());
+        std::string type;
+        switch(it->m_type)
+        {
+            case Port::PHY:
+            case Port::LAG:
+                type = "SAI_ROUTER_INTERFACE_TYPE_PORT";
+                break;
+            case Port::VLAN:
+                type = "SAI_ROUTER_INTERFACE_TYPE_VLAN";
+                break;
+            default:
+                SWSS_LOG_ERROR("Unsupported port type: %d", it->m_type);
+                type = "";
+                break;
+        }
+        if (m_vidToRidTable->hget("", id, value))
+        {
+            SWSS_LOG_INFO("Registering %s it is ready", it->m_alias.c_str());
+            addRifToFlexCounter(id, it->m_alias, type);
+            it = m_rifsToAdd.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
 }
