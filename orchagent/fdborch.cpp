@@ -695,6 +695,10 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
 
     if(macUpdate)
     {
+        /* delete and re-add fdb entry instead of update, 
+         * as entry may age out in HW/ASIC_DB before
+         * update, causing the update request to fail.
+         */
         SWSS_LOG_NOTICE("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s", entry.mac.to_string().c_str(), vlan.m_alias.c_str(), oldPort.m_alias.c_str(), port_name.c_str(), oldType.c_str(), type.c_str());
         status = sai_fdb_api->remove_fdb_entry(&fdb_entry);
         if (status != SAI_STATUS_SUCCESS)
