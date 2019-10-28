@@ -24,6 +24,9 @@ using namespace swss;
 #define VXLAN "vxlan"
 #define VXLAN_IF "vxlan_if"
 
+#define SWITCH "switch"
+#define VXLAN_ROUTER_MAC "vxlan_router_mac"
+
 #define VXLAN_NAME_PREFIX "Vxlan"
 #define VXLAN_IF_NAME_PREFIX "Brvxlan"
 
@@ -79,12 +82,21 @@ static int cmdCreateVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string 
 static int cmdAddVxlanIntoVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // brctl addif {{VXLAN_IF}} {{VXLAN}}
-    const std::string cmd = std::string("")
-        + BRCTL_CMD " addif "
-        + info.m_vxlanIf
-        + " "
-        + info.m_vxlan;
-    return EXECUTE(cmd, res);
+    ostringstream cmd;
+    cmd << BRCTL_CMD " addif "
+        << info.m_vxlanIf
+        << " "
+        << info.m_vxlan;
+
+    // Change the MAC address of Vxlan bridge interface to ensure it's same with switch's.
+    // Otherwise it will not response traceroute packets.
+    // ip link set dev {{VXLAN_IF}} address {{MAC_ADDRESS}}
+    cmd << " && " IP_CMD "link set dev"
+        << info.m_vxlanIf
+        << " address "
+        << info.m_macAddress;
+
+    return swss::exec(cmd.str(), res);
 }
 
 static int cmdAttachVxlanIfToVnet(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
@@ -153,6 +165,7 @@ VxlanMgr::VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
         Orch(cfgDb, tables),
         m_appVxlanTunnelTable(appDb, APP_VXLAN_TUNNEL_TABLE_NAME),
         m_appVxlanTunnelMapTable(appDb, APP_VXLAN_TUNNEL_MAP_TABLE_NAME),
+        m_appSwitchTable(appDb, APP_SWITCH_TABLE_NAME),
         m_cfgVxlanTunnelTable(cfgDb, CFG_VXLAN_TUNNEL_TABLE_NAME),
         m_cfgVnetTable(cfgDb, CFG_VNET_TABLE_NAME),
         m_stateVrfTable(stateDb, STATE_VRF_TABLE_NAME),
@@ -278,6 +291,15 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     {
         SWSS_LOG_DEBUG("Vrf %s has not been created", info.m_vnet.c_str());
         // Suspend this message util the vrf is created
+        return false;
+    }
+    
+    // If the mac address has been set
+    info.m_macAddress = getSwitchMacAddress();
+    if (info.m_macAddress.empty())
+    {
+        SWSS_LOG_DEBUG("Mac address is not ready");
+        // Suspend this message util the mac address is set
         return false;
     }
 
@@ -428,6 +450,27 @@ bool VxlanMgr::isVxlanStateOk(const std::string & vxlanName)
     }
     SWSS_LOG_DEBUG("Vxlan %s is not ready", vxlanName.c_str());
     return false;
+}
+
+std::string VxlanMgr::getSwitchMacAddress()
+{
+    std::vector<FieldValueTuple> temp;
+
+    if (m_appSwitchTable.get(SWITCH, temp))
+    {
+        auto itr = std::find_if(
+            temp.begin(),
+            temp.end(),
+            [](const FieldValueTuple &fvt) { return fvt.first == VXLAN_ROUTER_MAC; });
+        if (itr != temp.end() && !(itr->second.empty()))
+        {
+            SWSS_LOG_DEBUG("Mac address %s is ready", itr->second.c_str());
+            return itr->second;
+        }
+    }
+    
+    SWSS_LOG_DEBUG("Mac address is not ready");
+    return std::string();
 }
 
 bool VxlanMgr::createVxlan(const VxlanInfo & info)

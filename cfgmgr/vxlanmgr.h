@@ -25,6 +25,7 @@ public:
         std::string m_vni;
         std::string m_vxlan;
         std::string m_vxlanIf;
+        std::string m_macAddress;
     } VxlanInfo;
     ~VxlanMgr();
 private:
@@ -47,6 +48,7 @@ private:
     */
     bool isVrfStateOk(const std::string & vrfName);
     bool isVxlanStateOk(const std::string & vxlanName);
+    std::string getSwitchMacAddress();
 
     bool createVxlan(const VxlanInfo & info);
     bool deleteVxlan(const VxlanInfo & info);
@@ -54,7 +56,7 @@ private:
     void clearAllVxlanDevices();
 
     ProducerStateTable m_appVxlanTunnelTable,m_appVxlanTunnelMapTable;
-    Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable;
+    Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable, m_appSwitchTable;
 
     /*
     * Vxlan Tunnel Cache
