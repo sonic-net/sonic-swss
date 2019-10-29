@@ -763,6 +763,24 @@ class DockerVirtualSwitch(object):
         self.cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
         self.sdb = swsscommon.DBConnector(6, self.redis_sock, 0)
 
+    def getSwitchOid(self):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
+        keys = tbl.getKeys()
+        return str(keys[0])
+
+    def getVlanOid(self, vlanId):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_oid = None
+        keys = tbl.getKeys()
+        for k in keys:
+            (status, fvs) = tbl.get(k)
+            assert status == True, "Could not read vlan from DB"
+            for fv in fvs:
+                if fv[0] == "SAI_VLAN_ATTR_VLAN_ID" and fv[1] == str(vlanId):
+                    vlan_oid = str(k)
+                    break
+        return vlan_oid
+        
     def getCrmCounterValue(self, key, counter):
         counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, self.redis_sock, 0)
         crm_stats_table = swsscommon.Table(counters_db, 'CRM')
