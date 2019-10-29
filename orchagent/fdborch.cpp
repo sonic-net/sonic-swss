@@ -180,7 +180,6 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         if (!m_portsOrch->getPort(entry->bv_id, vlan))
         {
             SWSS_LOG_NOTICE("FdbOrch AGE notification: Failed to locate vlan port from bv_id 0x%lx", entry->bv_id);
-            return;
         }
 
         auto existing_entry = m_entries.find(update.entry);
@@ -195,7 +194,6 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
         {
             SWSS_LOG_NOTICE("FdbOrch AGE notification: Failed to get port by bridge port ID 0x%lx", bridge_port_id);
-            return;
         }
 
         if (existing_entry->second.bridge_port_id != bridge_port_id)
@@ -205,7 +203,6 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
             if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, update.port))
             {
                 SWSS_LOG_NOTICE("FdbOrch AGE notification: Failed to get port by bridge port ID 0x%lx", existing_entry->second.bridge_port_id);
-                return;
             }
             // dont return, let it delete just to bring SONiC and SAI in sync
             // return;
@@ -245,10 +242,16 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
 
         update.add = false;
         storeFdbEntryState(update);
-        update.port.m_fdb_count--;
-        m_portsOrch->setPort(update.port.m_alias, update.port);
-        vlan.m_fdb_count--;
-        m_portsOrch->setPort(vlan.m_alias, vlan);
+        if (!update.port.m_alias.empty())
+        { 
+            update.port.m_fdb_count--;
+            m_portsOrch->setPort(update.port.m_alias, update.port);
+        }
+        if (!vlan.m_alias.empty())
+        {
+            vlan.m_fdb_count--;
+            m_portsOrch->setPort(vlan.m_alias, vlan);
+        }
 
         for (auto observer: m_observers)
         {
@@ -281,15 +284,17 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         {
              SWSS_LOG_INFO("FdbOrch MOVE notification: mac %s is not found in bv_id 0x%lx",
                     update.entry.mac.to_string().c_str(), entry->bv_id);
-             break;
         }
-        if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, port_old))
+        else if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, port_old))
         {
             SWSS_LOG_ERROR("FdbOrch MOVE notification: Failed to get port by bridge port ID 0x%lx", existing_entry->second.bridge_port_id);
             return;
         }
-        port_old.m_fdb_count--;
-        m_portsOrch->setPort(port_old.m_alias, port_old);
+        if (!port_old.m_alias.empty())
+        {
+            port_old.m_fdb_count--;
+            m_portsOrch->setPort(port_old.m_alias, port_old);
+        }
         update.port.m_fdb_count++;
         m_portsOrch->setPort(update.port.m_alias, update.port);
 
@@ -319,15 +324,11 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
                 if (!m_portsOrch->getPortByBridgePortId(itr->second.bridge_port_id, update.port))
                 {
                     SWSS_LOG_ERROR("FdbOrch FLUSH notification: Failed to get port by bridge port ID 0x%lx", itr->second.bridge_port_id);
-                    itr++;
-                    continue;
                 }
 
                 if (!m_portsOrch->getPort(itr->first.bv_id, vlan))
                 {
                     SWSS_LOG_NOTICE("FdbOrch FLUSH notification: Failed to locate vlan port from bv_id 0x%lx", itr->first.bv_id);
-                    itr++;
-                    continue;
                 }
 
                 update.entry.mac = itr->first.mac;
@@ -339,10 +340,16 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
                 /* This will invalidate the current iterator hence itr++ is done before */
                 storeFdbEntryState(update);
 
-                update.port.m_fdb_count--;
-                m_portsOrch->setPort(update.port.m_alias, update.port);
-                vlan.m_fdb_count--;
-                m_portsOrch->setPort(vlan.m_alias, vlan);
+                if (!update.port.m_alias.empty())
+                {
+                    update.port.m_fdb_count--;
+                    m_portsOrch->setPort(update.port.m_alias, update.port);
+                }
+                if (!vlan.m_alias.empty())
+                {
+                    vlan.m_fdb_count--;
+                    m_portsOrch->setPort(vlan.m_alias, vlan);
+                }
 
                 SWSS_LOG_DEBUG("FdbOrch FLUSH notification: mac %s was removed", update.entry.mac.to_string().c_str());
 
