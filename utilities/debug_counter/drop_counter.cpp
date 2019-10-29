@@ -12,15 +12,17 @@ using std::vector;
 extern sai_object_id_t gSwitchId;
 extern sai_debug_counter_api_t *sai_debug_counter_api;
 
+const int maxDropReasons = 100;
+
 // If initialization fails, this constructor will throw a runtime error.
-DropCounter::DropCounter(const string &counter_name, const string &counter_type, const unordered_set<string> &drop_reasons) 
-        : DebugCounter(counter_name, counter_type), drop_reasons(drop_reasons) 
+DropCounter::DropCounter(const string &counter_name, const string &counter_type, const unordered_set<string> &drop_reasons)
+        : DebugCounter(counter_name, counter_type), drop_reasons(drop_reasons)
 {
     SWSS_LOG_ENTER();
     this->initializeDropCounterInSAI();
 }
 
-DropCounter::~DropCounter() 
+DropCounter::~DropCounter()
 {
     SWSS_LOG_ENTER();
     try
@@ -35,7 +37,7 @@ DropCounter::~DropCounter()
 
 // If we are unable to query the SAI or the type of counter is not supported
 // then this method throws a runtime error.
-std::string DropCounter::getDebugCounterSAIStat() const 
+std::string DropCounter::getDebugCounterSAIStat() const
 {
     SWSS_LOG_ENTER();
 
@@ -84,16 +86,16 @@ void DropCounter::addDropReason(const std::string &drop_reason)
         SWSS_LOG_DEBUG("Drop reason '%s' already present on '%s'", drop_reason.c_str(), this->name.c_str());
         return;
     }
-    
+
     try
     {
         this->drop_reasons.emplace(drop_reason);
         this->updateDropReasonsInSAI();
     }
-    catch (const std::exception& e) 
+    catch (const std::exception& e)
     {
         this->drop_reasons.erase(drop_reason);
-        throw e;
+        throw;
     }
 }
 
@@ -111,13 +113,13 @@ void DropCounter::removeDropReason(const std::string &drop_reason)
         SWSS_LOG_DEBUG("Drop reason '%s' not present on '%s'", drop_reason.c_str(), this->name.c_str());
         return;
     }
-    
+
     try
     {
         this->drop_reasons.erase(drop_reason_it);
         this->updateDropReasonsInSAI();
     }
-    catch (const std::exception& e) 
+    catch (const std::exception& e)
     {
         this->drop_reasons.emplace(drop_reason);
         throw e;
@@ -125,7 +127,7 @@ void DropCounter::removeDropReason(const std::string &drop_reason)
 }
 
 // If initialization fails for any reason, this method throws a runtime error.
-void DropCounter::initializeDropCounterInSAI() 
+void DropCounter::initializeDropCounterInSAI()
 {
     sai_attribute_t debug_counter_attributes[2];
     vector<int32_t> drop_reason_list(this->drop_reasons.size());
@@ -146,17 +148,17 @@ void DropCounter::serializeDropReasons(uint32_t drop_reason_count, int32_t *drop
 {
     SWSS_LOG_ENTER();
 
-    if (this->type == PORT_INGRESS_DROPS || this->type == SWITCH_INGRESS_DROPS) 
+    if (this->type == PORT_INGRESS_DROPS || this->type == SWITCH_INGRESS_DROPS)
     {
         drop_reason_attribute->id = SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST;
         drop_reason_attribute->value.s32list.count = drop_reason_count;
         drop_reason_attribute->value.s32list.list = drop_reason_list;
 
         int index = 0;
-        for (auto drop_reason: this->drop_reasons) 
+        for (auto drop_reason: this->drop_reasons)
         {
             auto reason_it = ingress_drop_reason_lookup.find(drop_reason);
-            if (reason_it == ingress_drop_reason_lookup.end()) 
+            if (reason_it == ingress_drop_reason_lookup.end())
             {
                 SWSS_LOG_ERROR("Ingress drop reason '%s' not found", drop_reason.c_str());
                 throw runtime_error("Ingress drop reason not found");
@@ -164,18 +166,18 @@ void DropCounter::serializeDropReasons(uint32_t drop_reason_count, int32_t *drop
 
             drop_reason_list[index++] = static_cast<int32_t>(reason_it->second);
         }
-    } 
-    else if (this->type == PORT_EGRESS_DROPS || this->type == SWITCH_EGRESS_DROPS) 
+    }
+    else if (this->type == PORT_EGRESS_DROPS || this->type == SWITCH_EGRESS_DROPS)
     {
             drop_reason_attribute->id = SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST;
             drop_reason_attribute->value.s32list.count = drop_reason_count;
             drop_reason_attribute->value.s32list.list = drop_reason_list;
 
             int index = 0;
-            for (auto drop_reason: this->drop_reasons) 
+            for (auto drop_reason: this->drop_reasons)
             {
                 auto reason_it = egress_drop_reason_lookup.find(drop_reason);
-                if (reason_it == egress_drop_reason_lookup.end()) 
+                if (reason_it == egress_drop_reason_lookup.end())
                 {
                     SWSS_LOG_ERROR("Egress drop reason '%s' not found", drop_reason.c_str());
                     throw runtime_error("Egress drop reason not found");
@@ -183,8 +185,8 @@ void DropCounter::serializeDropReasons(uint32_t drop_reason_count, int32_t *drop
 
                 drop_reason_list[index++] = static_cast<int32_t>(reason_it->second);
             }
-    } 
-    else 
+    }
+    else
     {
         SWSS_LOG_ERROR("Serialization undefined for drop counter type '%s'", this->type.c_str());
         throw runtime_error("Failed to serialize drop counter attributes");
@@ -212,17 +214,17 @@ void DropCounter::updateDropReasonsInSAI()
 // (assuming the device has not been rebooted between calls). The order of
 // the list of reasons is not guaranteed to be the same between calls.
 //
-// If the device does not support querying drop reasons, this method will 
+// If the device does not support querying drop reasons, this method will
 // return an empty list.
-vector<string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type) 
+vector<string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type)
 {
     sai_s32_list_t drop_reason_list;
-    int32_t        supported_reasons[100];
-    drop_reason_list.count = 100;
+    int32_t        supported_reasons[maxDropReasons];
+    drop_reason_list.count = maxDropReasons;
     drop_reason_list.list = supported_reasons;
 
-    if (sai_query_attribute_enum_values_capability(gSwitchId, 
-                                                   SAI_OBJECT_TYPE_DEBUG_COUNTER, 
+    if (sai_query_attribute_enum_values_capability(gSwitchId,
+                                                   SAI_OBJECT_TYPE_DEBUG_COUNTER,
                                                    drop_reason_type,
                                                    &drop_reason_list) != SAI_STATUS_SUCCESS)
     {
@@ -231,7 +233,7 @@ vector<string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type
     }
 
     vector<string> supported_drop_reasons;
-    for (uint32_t i = 0; i < drop_reason_list.count; i++) 
+    for (uint32_t i = 0; i < drop_reason_list.count; i++)
     {
         string drop_reason;
         if (drop_reason_type == SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST)
@@ -242,7 +244,7 @@ vector<string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type
         {
             drop_reason = sai_serialize_egress_drop_reason(static_cast<sai_out_drop_reason_t>(drop_reason_list.list[i]));
         }
-        
+
         supported_drop_reasons.push_back(drop_reason);
     }
 
@@ -256,11 +258,11 @@ vector<string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type
 // e.g. { } -> "[]"
 string serializeSupportedDropReasons(vector<string> drop_reasons)
 {
-    if (drop_reasons.size() == 0) 
+    if (drop_reasons.size() == 0)
     {
         return "[]";
     }
-    
+
     string supported_drop_reasons;
     for (auto const &drop_reason : drop_reasons)
     {

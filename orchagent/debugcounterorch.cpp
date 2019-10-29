@@ -24,7 +24,7 @@ static const unordered_map<string, CounterType> flex_counter_type_lookup = {
 // Initializing DebugCounterOrch creates a group entry in FLEX_COUNTER_DB, so this
 // object should only be initialized once.
 DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string> &table_names, int poll_interval) :
-        Orch(db, table_names), 
+        Orch(db, table_names),
         flex_counter_manager(DEBUG_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, poll_interval),
         m_stateDb(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
         m_debugCapabilitiesTable(new Table(m_stateDb.get(), STATE_DEBUG_COUNTER_CAPABILITIES_NAME)),
@@ -37,7 +37,7 @@ DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string> &table_
     flex_counter_manager.enableFlexCounterGroup();
 }
 
-DebugCounterOrch::~DebugCounterOrch(void) 
+DebugCounterOrch::~DebugCounterOrch(void)
 {
     SWSS_LOG_ENTER();
 }
@@ -58,20 +58,20 @@ DebugCounterOrch::~DebugCounterOrch(void)
 //
 // In addition, updates are idempotent - repeating the same request any number
 // of times will always result in the same external behavior.
-void DebugCounterOrch::doTask(Consumer &consumer) 
+void DebugCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-    
-    // Currently we depend on 1) the switch and 2) the ports being ready 
+
+    // Currently we depend on 1) the switch and 2) the ports being ready
     // before we can set up the counters. If debug counters for other
     // object types are added we may need to update this dependency.
-    if (!gPortsOrch->allPortsReady()) 
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
 
     auto it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end()) 
+    while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
@@ -80,7 +80,7 @@ void DebugCounterOrch::doTask(Consumer &consumer)
 
         auto table_name = consumer.getTableName();
         task_process_status task_status = task_process_status::task_ignore;
-        if (table_name == CFG_DEBUG_COUNTER_TABLE_NAME) 
+        if (table_name == CFG_DEBUG_COUNTER_TABLE_NAME)
         {
             if (op == SET_COMMAND)
             {
@@ -94,8 +94,8 @@ void DebugCounterOrch::doTask(Consumer &consumer)
             {
                 SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
             }
-        } 
-        else if (table_name == CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME) 
+        }
+        else if (table_name == CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME)
         {
             string counter_name, drop_reason;
             parseDropReasonUpdate(key, '|', &counter_name, &drop_reason);
@@ -112,13 +112,13 @@ void DebugCounterOrch::doTask(Consumer &consumer)
             {
                 SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
             }
-        } 
-        else 
+        }
+        else
         {
-            SWSS_LOG_WARN("DebugCounterOrch received update from unknown table '%s'", table_name.c_str());
-        }        
+            SWSS_LOG_ERROR("Received update from unknown table '%s'", table_name.c_str());
+        }
 
-        switch (task_status) 
+        switch (task_status)
         {
             case task_process_status::task_success:
                 consumer.m_toSync.erase(it++);
@@ -148,7 +148,7 @@ void DebugCounterOrch::doTask(Consumer &consumer)
 // publishDropCounterCapabilities queries the SAI for available drop counter
 // capabilities on this device and publishes the information to the
 // DROP_COUNTER_CAPABILITIES table in STATE_DB.
-void DebugCounterOrch::publishDropCounterCapabilities() 
+void DebugCounterOrch::publishDropCounterCapabilities()
 {
     string supported_ingress_drop_reasons = serializeSupportedDropReasons(getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST));
     string supported_egress_drop_reasons  = serializeSupportedDropReasons(getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST));
@@ -158,11 +158,11 @@ void DebugCounterOrch::publishDropCounterCapabilities()
         string num_counters = std::to_string(getSupportedDebugCounterAmounts(counter_type.second));
 
         string drop_reasons;
-        if (counter_type.first == PORT_INGRESS_DROPS || counter_type.first == SWITCH_INGRESS_DROPS) 
+        if (counter_type.first == PORT_INGRESS_DROPS || counter_type.first == SWITCH_INGRESS_DROPS)
         {
             drop_reasons = supported_ingress_drop_reasons;
-        } 
-        else 
+        }
+        else
         {
             drop_reasons = supported_egress_drop_reasons;
         }
@@ -185,7 +185,7 @@ task_process_status DebugCounterOrch::installDebugCounter(const string &counter_
 {
     SWSS_LOG_ENTER();
 
-    if (debug_counters.find(counter_name) != debug_counters.end()) 
+    if (debug_counters.find(counter_name) != debug_counters.end())
     {
         SWSS_LOG_DEBUG("Debug counter '%s' already exists", counter_name.c_str());
         return task_success;
@@ -196,13 +196,13 @@ task_process_status DebugCounterOrch::installDebugCounter(const string &counter_
     // to either: a) dispatch to different handlers in doTask or b) dispatch to
     // different helper methods in this method.
 
-    try 
+    try
     {
         string counter_type = getDebugCounterType(attributes);
         addFreeCounter(counter_name, counter_type);
         reconcileFreeDropCounters(counter_name);
-    } 
-    catch (const std::exception& e) 
+    }
+    catch (const std::runtime_error &e)
     {
         SWSS_LOG_ERROR("Failed to create debug counter '%s'", counter_name.c_str());
         return task_process_status::task_failed;
@@ -211,12 +211,12 @@ task_process_status DebugCounterOrch::installDebugCounter(const string &counter_
     return task_process_status::task_success;
 }
 
-task_process_status DebugCounterOrch::uninstallDebugCounter(const string &counter_name) 
+task_process_status DebugCounterOrch::uninstallDebugCounter(const string &counter_name)
 {
     SWSS_LOG_ENTER();
 
     auto it = debug_counters.find(counter_name);
-    if (it == debug_counters.end()) 
+    if (it == debug_counters.end())
     {
         SWSS_LOG_DEBUG("Debug counter %s does not exist", counter_name.c_str());
         return task_process_status::task_success;
@@ -226,12 +226,12 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string &counte
     string counter_type = counter->getCounterType();
     string counter_stat = counter->getDebugCounterSAIStat();
 
-    try 
+    try
     {
         debug_counters.erase(it);
         uninstallDebugFlexCounters(counter_type, counter_stat);
         if (counter_type == PORT_INGRESS_DROPS || counter_type == PORT_EGRESS_DROPS)
-        {   
+        {
             m_counterNameToPortStatMap->hdel("", counter_name);
         }
         else
@@ -239,8 +239,8 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string &counte
             m_counterNameToSwitchStatMap->hdel("", counter_name);
         }
         SWSS_LOG_NOTICE("Succesfully deleted drop counter %s", counter_name.c_str());
-    } 
-    catch (const std::exception& e) 
+    }
+    catch (const std::exception& e)
     {
         SWSS_LOG_ERROR("Failed to delete debug counter '%s'", counter_name.c_str());
         return task_process_status::task_failed;
@@ -259,18 +259,18 @@ task_process_status DebugCounterOrch::addDropReason(const string &counter_name, 
     }
 
     auto it = debug_counters.find(counter_name);
-    if (it == debug_counters.end()) 
+    if (it == debug_counters.end())
     {
         // In order to gracefully handle the case where the drop reason updates
         // are received before the create counter update, we keep track of reasons
         // we've seen in the free_drop_reasons table.
         addFreeDropReason(counter_name, drop_reason);
 
-        try 
+        try
         {
             reconcileFreeDropCounters(counter_name);
-        } 
-        catch (const std::exception& e) 
+        }
+        catch (const std::exception& e)
         {
             SWSS_LOG_ERROR("Failed to create debug counter '%s'", counter_name.c_str());
             return task_process_status::task_failed;
@@ -279,13 +279,13 @@ task_process_status DebugCounterOrch::addDropReason(const string &counter_name, 
         return task_process_status::task_success;
     }
 
-    try 
+    try
     {
         DropCounter *counter = dynamic_cast<DropCounter*>(it->second.get());
         counter->addDropReason(drop_reason);
         SWSS_LOG_NOTICE("Added drop reason %s to drop counter %s", drop_reason.c_str(), counter_name.c_str());
-    } 
-    catch (const std::exception& e) 
+    }
+    catch (const std::exception& e)
     {
         SWSS_LOG_ERROR("Failed to add drop reason '%s' to counter '%s'", drop_reason.c_str(), counter_name.c_str());
         return task_process_status::task_failed;
@@ -306,17 +306,17 @@ task_process_status DebugCounterOrch::removeDropReason(const string &counter_nam
     }
 
     auto it = debug_counters.find(counter_name);
-    if (it == debug_counters.end()) 
+    if (it == debug_counters.end())
     {
         deleteFreeDropReason(counter_name, drop_reason);
         return task_success;
     }
 
-    try 
+    try
     {
         DropCounter *counter = dynamic_cast<DropCounter*>(it->second.get());
         const unordered_set<string> &drop_reasons = counter->getDropReasons();
-        if (drop_reasons.size() <= 1) 
+        if (drop_reasons.size() <= 1)
         {
             SWSS_LOG_WARN("Attempted to remove all drop reasons from counter '%s'", counter_name.c_str());
             return task_ignore;
@@ -324,8 +324,8 @@ task_process_status DebugCounterOrch::removeDropReason(const string &counter_nam
 
         counter->removeDropReason(drop_reason);
         SWSS_LOG_NOTICE("Removed drop reason %s from drop counter %s", drop_reason.c_str(), counter_name.c_str());
-    } 
-    catch (const std::exception& e) 
+    }
+    catch (const std::exception& e)
     {
         SWSS_LOG_ERROR("Failed to remove drop reason '%s' from counter '%s'", drop_reason.c_str(), counter_name.c_str());
         return task_failed;
@@ -337,25 +337,25 @@ task_process_status DebugCounterOrch::removeDropReason(const string &counter_nam
 // Free Table Management Functions START HERE ------------------------------------------------------
 
 // Note that entries will remain in the table until at least one drop reason is added to the counter.
-void DebugCounterOrch::addFreeCounter(const string &counter_name, const string &counter_type) 
+void DebugCounterOrch::addFreeCounter(const string &counter_name, const string &counter_type)
 {
     SWSS_LOG_ENTER();
 
-    if (free_drop_counters.find(counter_name) != free_drop_counters.end()) 
+    if (free_drop_counters.find(counter_name) != free_drop_counters.end())
     {
         SWSS_LOG_DEBUG("Debug counter '%s' is in free counter table", counter_name.c_str());
         return;
     }
 
     SWSS_LOG_DEBUG("Adding debug counter '%s' to free counter table", counter_name.c_str());
-    free_drop_counters.emplace(make_pair(counter_name, counter_type));
+    free_drop_counters.emplace(counter_name, counter_type);
 }
 
-void DebugCounterOrch::deleteFreeCounter(const string &counter_name) 
+void DebugCounterOrch::deleteFreeCounter(const string &counter_name)
 {
     SWSS_LOG_ENTER();
 
-    if (free_drop_counters.find(counter_name) == free_drop_counters.end()) 
+    if (free_drop_counters.find(counter_name) == free_drop_counters.end())
     {
         SWSS_LOG_DEBUG("Debug counter %s does not exist", counter_name.c_str());
         return;
@@ -366,19 +366,19 @@ void DebugCounterOrch::deleteFreeCounter(const string &counter_name)
 }
 
 // Note that entries will remain in the table until a drop counter is added.
-void DebugCounterOrch::addFreeDropReason(const string &counter_name, const string &drop_reason) 
+void DebugCounterOrch::addFreeDropReason(const string &counter_name, const string &drop_reason)
 {
     SWSS_LOG_ENTER();
-    
+
     auto reasons_it = free_drop_reasons.find(counter_name);
 
-    if (reasons_it == free_drop_reasons.end()) 
+    if (reasons_it == free_drop_reasons.end())
     {
         SWSS_LOG_DEBUG("Creating free drop reason table for counter '%s'", counter_name.c_str());
         unordered_set<string> new_reasons = { drop_reason };
         free_drop_reasons.emplace(make_pair(counter_name, new_reasons));
-    } 
-    else 
+    }
+    else
     {
         SWSS_LOG_DEBUG("Adding additional drop reasons to free drop reason table for counter '%s'", counter_name.c_str());
         reasons_it->second.emplace(drop_reason);
@@ -388,7 +388,7 @@ void DebugCounterOrch::addFreeDropReason(const string &counter_name, const strin
 void DebugCounterOrch::deleteFreeDropReason(const string &counter_name, const string &drop_reason)
 {
     SWSS_LOG_ENTER();
-    
+
     auto reasons_it = free_drop_reasons.find(counter_name);
 
     if (reasons_it == free_drop_reasons.end()) {
@@ -404,14 +404,14 @@ void DebugCounterOrch::deleteFreeDropReason(const string &counter_name, const st
     }
 }
 
-void DebugCounterOrch::reconcileFreeDropCounters(const string &counter_name) 
+void DebugCounterOrch::reconcileFreeDropCounters(const string &counter_name)
 {
     SWSS_LOG_ENTER();
-    
+
     auto counter_it = free_drop_counters.find(counter_name);
     auto reasons_it = free_drop_reasons.find(counter_name);
 
-    if (counter_it != free_drop_counters.end() && reasons_it != free_drop_reasons.end()) 
+    if (counter_it != free_drop_counters.end() && reasons_it != free_drop_reasons.end())
     {
         SWSS_LOG_DEBUG("Found counter '%s' and drop reasons, creating the counter", counter_name.c_str());
         createDropCounter(counter_name, counter_it->second, reasons_it->second);
@@ -423,61 +423,61 @@ void DebugCounterOrch::reconcileFreeDropCounters(const string &counter_name)
 
 // Flex Counter Management Functions START HERE ----------------------------------------------------
 
-CounterType DebugCounterOrch::getFlexCounterType(const string &counter_type) 
+CounterType DebugCounterOrch::getFlexCounterType(const string &counter_type)
 {
     SWSS_LOG_ENTER();
-    
+
     auto flex_counter_type_it = flex_counter_type_lookup.find(counter_type);
-    if (flex_counter_type_it == flex_counter_type_lookup.end()) 
+    if (flex_counter_type_it == flex_counter_type_lookup.end())
     {
         SWSS_LOG_ERROR("Flex counter type '%s' not found", counter_type.c_str());
         throw runtime_error("Flex counter type not found");
     }
-    return flex_counter_type_it->second; 
+    return flex_counter_type_it->second;
 }
 
-void DebugCounterOrch::installDebugFlexCounters(const string &counter_type, 
+void DebugCounterOrch::installDebugFlexCounters(const string &counter_type,
                                                 const string &counter_stat)
 {
     SWSS_LOG_ENTER();
-    CounterType flex_counter_type = getFlexCounterType(counter_type); 
+    CounterType flex_counter_type = getFlexCounterType(counter_type);
 
     if (flex_counter_type == CounterType::SWITCH_DEBUG)
     {
         flex_counter_manager.addFlexCounterStat(gSwitchId, flex_counter_type, counter_stat);
-    } 
+    }
     else if (flex_counter_type == CounterType::PORT_DEBUG)
     {
-        for (auto const &curr : gPortsOrch->getAllPorts()) 
+        for (auto const &curr : gPortsOrch->getAllPorts())
         {
-            if (curr.second.m_type != Port::Type::PHY) 
+            if (curr.second.m_type != Port::Type::PHY)
             {
                 continue;
             }
 
             flex_counter_manager.addFlexCounterStat(
                     curr.second.m_port_id,
-                    flex_counter_type, 
+                    flex_counter_type,
                     counter_stat);
         }
     }
 }
 
-void DebugCounterOrch::uninstallDebugFlexCounters(const string &counter_type, 
+void DebugCounterOrch::uninstallDebugFlexCounters(const string &counter_type,
                                                   const string &counter_stat)
 {
     SWSS_LOG_ENTER();
-    CounterType flex_counter_type = getFlexCounterType(counter_type);  
+    CounterType flex_counter_type = getFlexCounterType(counter_type);
 
     if (flex_counter_type == CounterType::SWITCH_DEBUG)
     {
         flex_counter_manager.removeFlexCounterStat(gSwitchId, flex_counter_type, counter_stat);
-    } 
+    }
     else if (flex_counter_type == CounterType::PORT_DEBUG)
     {
-        for (auto const &curr : gPortsOrch->getAllPorts()) 
+        for (auto const &curr : gPortsOrch->getAllPorts())
         {
-            if (curr.second.m_type != Port::Type::PHY) 
+            if (curr.second.m_type != Port::Type::PHY)
             {
                 continue;
             }
@@ -487,7 +487,7 @@ void DebugCounterOrch::uninstallDebugFlexCounters(const string &counter_type,
                 flex_counter_type,
                 counter_stat);
         }
-    }    
+    }
 }
 
 // Debug Counter Initialization Helper Functions START HERE ----------------------------------------
@@ -532,13 +532,13 @@ std::string DebugCounterOrch::getDebugCounterType(const vector<FieldValueTuple> 
 //
 // If SAI initialization fails or flex counter installation fails then this
 // method will throw an exception.
-void DebugCounterOrch::createDropCounter(const string &counter_name, const string &counter_type, const unordered_set<string> &drop_reasons) 
+void DebugCounterOrch::createDropCounter(const string &counter_name, const string &counter_type, const unordered_set<string> &drop_reasons)
 {
-    std::unique_ptr<DropCounter> counter = std::unique_ptr<DropCounter>(new DropCounter(counter_name, counter_type, drop_reasons));
+    auto counter = std::unique_ptr<DropCounter>(new DropCounter(counter_name, counter_type, drop_reasons));
     std::string counter_stat = counter->getDebugCounterSAIStat();
     debug_counters.emplace(counter_name, std::move(counter));
     installDebugFlexCounters(counter_type, counter_stat);
-    
+
     if (counter_type == PORT_INGRESS_DROPS || counter_type == PORT_EGRESS_DROPS)
     {
         m_counterNameToPortStatMap->set("", { FieldValueTuple(counter_name, counter_stat) });
@@ -553,7 +553,7 @@ void DebugCounterOrch::createDropCounter(const string &counter_name, const strin
 
 // parseDropReasonUpdate takes a key from CONFIG_DB and returns the 1) the counter name being targeted and
 // 2) the drop reason to be added or removed via output parameters.
-void DebugCounterOrch::parseDropReasonUpdate(const string &key, const char delimeter, string *counter_name, string *drop_reason) const 
+void DebugCounterOrch::parseDropReasonUpdate(const string &key, const char delimeter, string *counter_name, string *drop_reason) const
 {
     size_t counter_end = key.find(delimeter);
     *counter_name = key.substr(0, counter_end);

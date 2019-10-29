@@ -32,7 +32,7 @@ static std::unordered_map<std::string, sai_out_drop_reason_t> egress_drop_reason
 class DropCounter : public DebugCounter
 {
     public:
-        DropCounter(const std::string &counter_name, 
+        DropCounter(const std::string &counter_name,
                     const std::string &counter_type,
                     const std::unordered_set<std::string> &drop_reasons);
         DropCounter(const DropCounter&) = delete;

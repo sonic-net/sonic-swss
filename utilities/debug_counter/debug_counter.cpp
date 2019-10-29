@@ -21,13 +21,13 @@ using swss::FieldValueTuple;
 extern sai_object_id_t gSwitchId;
 extern sai_debug_counter_api_t *sai_debug_counter_api;
 
-// It is expected that derived types populate any relevant fields and 
+// It is expected that derived types populate any relevant fields and
 // initialize the counter in the SAI.
 //
-// If counter_type is not a member of debug_counter_type_lookup then this 
+// If counter_type is not a member of debug_counter_type_lookup then this
 // constructor will throw a runtime error.
 DebugCounter::DebugCounter(
-        const string &counter_name, 
+        const string &counter_name,
         const string &counter_type)
     : name(counter_name)
 {
@@ -48,7 +48,7 @@ DebugCounter::~DebugCounter()
     SWSS_LOG_ENTER();
 }
 
-// serializeDebugCounterMetadata populates ONLY the type field in 
+// serializeDebugCounterMetadata populates ONLY the type field in
 // serialized_attributes.
 //
 // Behavior is undefined if the length of serialized_attributes is less than 1.
@@ -75,9 +75,9 @@ void DebugCounter::addDebugCounterToSAI(const int num_attributes, const sai_attr
 
     SWSS_LOG_DEBUG("Adding debug counter '%s' to SAI", this->name.c_str());
     sai_object_id_t debug_counter_id;
-    if (sai_debug_counter_api->create_debug_counter(&debug_counter_id, 
-                                                    gSwitchId, 
-                                                    num_attributes, 
+    if (sai_debug_counter_api->create_debug_counter(&debug_counter_id,
+                                                    gSwitchId,
+                                                    num_attributes,
                                                     debug_counter_attributes) != SAI_STATUS_SUCCESS) {
         SWSS_LOG_ERROR("Failed to create debug counter '%s'", this->name.c_str());
         throw std::runtime_error("Failed to create debug counter");

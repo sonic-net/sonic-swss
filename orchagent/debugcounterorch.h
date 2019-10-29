@@ -56,8 +56,8 @@ private:
     // Debug Counter Initialization Helper Functions
     std::string getDebugCounterType(const std::vector<swss::FieldValueTuple> &values) const;
     void createDropCounter(
-            const std::string &counter_name, 
-            const std::string &counter_type, 
+            const std::string &counter_name,
+            const std::string &counter_type,
             const std::unordered_set<std::string> &drop_reasons);
 
     // Debug Counter Configuration Helper Functions

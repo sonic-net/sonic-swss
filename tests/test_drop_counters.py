@@ -121,7 +121,7 @@ class TestDropCounters(object):
                         return False
             else:
                 return False
-        
+
         return True
 
     def create_drop_counter(self, name, counter_type):
@@ -169,7 +169,7 @@ class TestDropCounters(object):
                     assert len(capability_contents) >= 0
                 else:
                     assert False
-    
+
     def test_flexCounterGroupInitialized(self, dvs, testlog):
         self.setup_db(dvs)
         self.checkFlexCounterGroup()
@@ -371,7 +371,7 @@ class TestDropCounters(object):
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason1)
         self.remove_drop_reason(name, reason2)
-    
+
     def test_addInvalidDropReason(self, dvs, testlog):
         self.setup_db(dvs)
 
