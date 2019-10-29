@@ -86,6 +86,48 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
         EXEC_WITH_ERROR_THROW(echo_cmd_backup, res);
     }
+
+    // Create dummy interface
+    const std::string dummy_cmds = std::string("")
+      + IP_CMD + " link show dummy  2>/dev/null";
+
+    ret = swss::exec(dummy_cmds, res);
+    if (ret == 0)
+    {
+        // Don't create dummy interface as it already exists.
+        SWSS_LOG_DEBUG("vlanmgrd dummy interface already exists.");
+    }
+    else
+    {
+        // Create Linux dot1q bridge dummy interface.
+        // The command should be generated as:
+        // /bin/bash -c "/sbin/ip link add dummy type dummy"
+        //
+        const std::string dummy_if_cmds = std::string("")
+          + BASH_CMD + " -c \""
+          + IP_CMD + " link add dummy type dummy\"";
+
+        ret = swss::exec(dummy_if_cmds, res);
+        if (ret != 0)
+        {
+          SWSS_LOG_INFO("vlanmgrd failed to create dummy interface.");
+          return;
+        }
+    }
+
+    // dot1q bridge dummy interface - to make the Bridge interface UP all the time.
+    // The command should be generated as:
+    // /bin/bash -c "/sbin/ip link set dummy master Bridge"
+    //
+    const std::string dummy_ifup_cmds = std::string("")
+      + BASH_CMD + " -c \""
+      + IP_CMD + " link set dummy up master Bridge\"";
+
+    ret = swss::exec(dummy_ifup_cmds, res);
+    if (ret != 0)
+    {
+        SWSS_LOG_INFO("vlanmgrd failed to set dummy interface to make the Bridge interface always UP.");
+    }
 }
 
 bool VlanMgr::addHostVlan(int vlan_id)
@@ -195,7 +237,7 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
 
     // The command should be generated as:
     // /bin/bash -c '/sbin/bridge vlan del vid {{vlan_id}} dev {{port_alias}} &&
-    //               ( /sbin/bridge vlan show dev {{port_alias}} | /bin/grep -q None;
+    //               ( /sbin/bridge vlan show dev {{port_alias}} | /bin/sed -n '/^$/=' | /bin/grep -q -c ^3$;
     //               ret=$?; if [ $ret -eq 0 ]; then
     //               /sbin/ip link set {{port_alias}} nomaster;
     //               elif [ $ret -eq 1 ]; then exit 0;
@@ -206,7 +248,8 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
       + BASH_CMD + " -c \'"
       + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + port_alias + " && ( "
       + BRIDGE_CMD + " vlan show dev " + port_alias + " | "
-      + GREP_CMD + " -q None; ret=$?; if [ $ret -eq 0 ]; then "
+      + SED_CMD  + " -n \'/^$/=\' " + " | "
+      + GREP_CMD + " -q -c ^3$; ret=$?; if [ $ret -eq 0 ]; then "
       + IP_CMD + " link set " + port_alias + " nomaster; "
       + "elif [ $ret -eq 1 ]; then exit 0; "
       + "else exit $ret; fi )\'";
