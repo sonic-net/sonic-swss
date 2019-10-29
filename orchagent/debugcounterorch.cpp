@@ -188,7 +188,7 @@ task_process_status DebugCounterOrch::installDebugCounter(const string &counter_
     if (debug_counters.find(counter_name) != debug_counters.end())
     {
         SWSS_LOG_DEBUG("Debug counter '%s' already exists", counter_name.c_str());
-        return task_success;
+        return task_process_status::task_success;
     }
 
     // Note: this method currently assumes that all counters are drop counters.
@@ -218,8 +218,16 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string &counte
     auto it = debug_counters.find(counter_name);
     if (it == debug_counters.end())
     {
-        SWSS_LOG_DEBUG("Debug counter %s does not exist", counter_name.c_str());
-        return task_process_status::task_success;
+        if (free_drop_counters.find(counter_name) != free_drop_counters.end())
+        {
+            deleteFreeCounter(counter_name);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Debug counter %s does not exist", counter_name.c_str());
+        }
+
+        return task_process_status::task_ignore;
     }
 
     DebugCounter *counter = it->second.get();
@@ -357,7 +365,7 @@ void DebugCounterOrch::deleteFreeCounter(const string &counter_name)
 
     if (free_drop_counters.find(counter_name) == free_drop_counters.end())
     {
-        SWSS_LOG_DEBUG("Debug counter %s does not exist", counter_name.c_str());
+        SWSS_LOG_ERROR("Debug counter %s does not exist", counter_name.c_str());
         return;
     }
 
