@@ -3,8 +3,10 @@
 #define private public
 #define protected public
 
+#include "orch.h"
 #include "aclorch.h"
 #include "crmorch.h"
+#include "directory.h"
 
 #undef protected
 #undef private
@@ -57,6 +59,22 @@ struct Portal
         static void getResAvailableCounters(CrmOrch *crmOrch)
         {
             crmOrch->getResAvailableCounters();
+        }
+    };
+
+    struct ConsumerInternal
+    {
+        static size_t addToSync(Consumer *consumer, const deque<KeyOpFieldsValuesTuple> &entries)
+        {
+            return consumer->addToSync(const_cast<deque<KeyOpFieldsValuesTuple> &>(entries));
+        }
+    };
+
+    struct DirectoryInternal
+    {
+        static void clearValues(Directory<Orch *> *directory)
+        {
+            directory->m_values.clear();
         }
     };
 };
