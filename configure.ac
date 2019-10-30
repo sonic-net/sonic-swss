@@ -97,8 +97,6 @@ AC_CONFIG_FILES([
     swssconfig/Makefile
     cfgmgr/Makefile
     tests/Makefile
-    utilities/Makefile
-    utilities/flex_counter/Makefile
 ])
 
 # If no SAI library is installed, compile with SAIVS and run unit tests
