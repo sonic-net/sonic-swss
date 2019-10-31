@@ -18,7 +18,7 @@ using swss::ProducerTable;
 static const string FLEX_COUNTER_ENABLE("enable");
 static const string FLEX_COUNTER_DISABLE("disable");
 
-const unordered_map<StatsMode, string> FlexCounterManager::stats_mode_lookup = 
+const unordered_map<StatsMode, string> FlexCounterManager::stats_mode_lookup =
 {
     { StatsMode::READ, STATS_MODE_READ },
 };
@@ -42,7 +42,7 @@ FlexCounterManager::FlexCounterManager(
 {
     SWSS_LOG_ENTER();
 
-    vector<FieldValueTuple> field_values = 
+    vector<FieldValueTuple> field_values =
     {
         FieldValueTuple(STATS_MODE_FIELD, stats_mode_lookup.at(stats_mode)),
         FieldValueTuple(POLL_INTERVAL_FIELD, std::to_string(polling_interval)),
@@ -72,7 +72,7 @@ void FlexCounterManager::updateGroupPollingInterval(
     SWSS_LOG_ENTER();
 
     vector<FieldValueTuple> field_values =
-    { 
+    {
         FieldValueTuple(POLL_INTERVAL_FIELD, std::to_string(polling_interval))
     };
     flex_counter_group_table->set(group_name, field_values);
@@ -92,14 +92,14 @@ void FlexCounterManager::enableFlexCounterGroup()
         return;
     }
 
-    vector<FieldValueTuple> field_values = 
+    vector<FieldValueTuple> field_values =
     {
-        FieldValueTuple(FLEX_COUNTER_STATUS_FIELD, FLEX_COUNTER_ENABLE) 
+        FieldValueTuple(FLEX_COUNTER_STATUS_FIELD, FLEX_COUNTER_ENABLE)
     };
     flex_counter_group_table->set(group_name, field_values);
     enabled = true;
 
-    SWSS_LOG_DEBUG("Enabling flex counters for group '%s'.", 
+    SWSS_LOG_DEBUG("Enabling flex counters for group '%s'.",
             group_name.c_str());
 }
 
@@ -121,7 +121,7 @@ void FlexCounterManager::disableFlexCounterGroup()
     flex_counter_group_table->set(group_name, field_values);
     enabled = false;
 
-    SWSS_LOG_DEBUG("Disabling flex counters for group '%s'.", 
+    SWSS_LOG_DEBUG("Disabling flex counters for group '%s'.",
             group_name.c_str());
 }
 
@@ -146,16 +146,15 @@ void FlexCounterManager::setCounterIdList(
     {
         FieldValueTuple(counter_type_it->second, serializeCounterStats(counter_stats))
     };
-    flex_counter_table->set(
-            getFlexCounterTableKey(group_name, object_id), field_values);
+    flex_counter_table->set(getFlexCounterTableKey(group_name, object_id), field_values);
     installed_counters.insert(object_id);
 
-    SWSS_LOG_DEBUG("Updated flex counter id list for object '%lu' in group '%s'.", 
+    SWSS_LOG_DEBUG("Updated flex counter id list for object '%lu' in group '%s'.",
             object_id,
             group_name.c_str());
 }
 
-// clearCounterIdList clears all stats that are currently being polled from 
+// clearCounterIdList clears all stats that are currently being polled from
 // the given object.
 void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
 {
@@ -164,7 +163,7 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
     auto counter_it = installed_counters.find(object_id);
     if (counter_it == installed_counters.end())
     {
-        SWSS_LOG_DEBUG("No counters found on object '%lu' in group '%s'.",
+        SWSS_LOG_WARN("No counters found on object '%lu' in group '%s'.",
                 object_id,
                 group_name.c_str());
         return;
@@ -179,12 +178,12 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
 }
 
 string FlexCounterManager::getFlexCounterTableKey(
-        const string &group_name, 
+        const string &group_name,
         const sai_object_id_t object_id) const
 {
     SWSS_LOG_ENTER();
 
-    return group_name + ':' + sai_serialize_object_id(object_id);
+    return group_name + flex_counter_table->getTableNameSeparator() + sai_serialize_object_id(object_id);
 }
 
 // serializeCounterStats turns a set of stats into a format suitable for FLEX_COUNTER_DB.
@@ -194,10 +193,12 @@ string FlexCounterManager::serializeCounterStats(
     SWSS_LOG_ENTER();
 
     string stats_string;
-    for (const auto &stat : counter_stats) 
+    for (const auto &stat : counter_stats)
     {
+        // We will trim the very first comma at the end
         stats_string.append(",");
         stats_string.append(stat);
     }
+
     return stats_string.substr(1);
 }

@@ -55,7 +55,7 @@ orchagent_SOURCES = \
             policerorch.cpp \
             chassisorch.cpp
 
-orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/dynamic_flex_counter_manager.cpp
+orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

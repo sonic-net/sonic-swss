@@ -1,5 +1,5 @@
-#ifndef SWSS_UTIL_FLEX_COUNTER_MANAGER_H
-#define SWSS_UTIL_FLEX_COUNTER_MANAGER_H
+#ifndef ORCHAGENT_FLEX_COUNTER_MANAGER_H
+#define ORCHAGENT_FLEX_COUNTER_MANAGER_H
 
 #include <string>
 #include <unordered_set>
@@ -11,12 +11,12 @@ extern "C" {
 #include "sai.h"
 }
 
-enum class StatsMode 
+enum class StatsMode
 {
     READ
 };
 
-enum class CounterType 
+enum class CounterType
 {
     PORT_DEBUG,
     SWITCH_DEBUG
@@ -51,7 +51,7 @@ class FlexCounterManager
 
     private:
         std::string getFlexCounterTableKey(
-                const std::string &group_name, 
+                const std::string &group_name,
                 const sai_object_id_t object_id) const;
         std::string serializeCounterStats(
                 const std::unordered_set<std::string> &counter_stats) const;
@@ -68,4 +68,4 @@ class FlexCounterManager
         static const std::unordered_map<CounterType, std::string> counter_id_field_lookup;
 };
 
-#endif // SWSS_UTIL_FLEX_COUNTER_MANAGER_H
+#endif // ORCHAGENT_FLEX_COUNTER_MANAGER_H
