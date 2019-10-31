@@ -288,7 +288,7 @@ uint64_t getSupportedDebugCounterAmounts(sai_debug_counter_type_t counter_type)
 
     attr.id = SAI_DEBUG_COUNTER_ATTR_TYPE;
     attr.value.s32 = counter_type;
-    if (sai_object_type_get_availability(gSwitchId, SAI_OBJECT_TYPE_DEBUG_COUNTER, 1, &attr, &count) != SAI_STATUS_SUCCESS) 
+    if (sai_object_type_get_availability(gSwitchId, SAI_OBJECT_TYPE_DEBUG_COUNTER, 1, &attr, &count) != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_NOTICE("This device does not support querying the number of drop counters");
         return 0;

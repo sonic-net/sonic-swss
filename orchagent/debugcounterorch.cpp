@@ -167,12 +167,16 @@ void DebugCounterOrch::publishDropCounterCapabilities()
             drop_reasons = supported_egress_drop_reasons;
         }
 
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.push_back(FieldValueTuple("count", num_counters));
-        fieldValues.push_back(FieldValueTuple("reasons", drop_reasons));
+        // Only include available capabilities in State DB
+        if (num_counters != "0" && !drop_reasons.empty())
+        {
+            vector<FieldValueTuple> fieldValues;
+            fieldValues.push_back(FieldValueTuple("count", num_counters));
+            fieldValues.push_back(FieldValueTuple("reasons", drop_reasons));
 
-        SWSS_LOG_DEBUG("Setting '%s' capabilities to count='%s', reasons='%s'", counter_type.first.c_str(), num_counters.c_str(), drop_reasons.c_str());
-        m_debugCapabilitiesTable->set(counter_type.first, fieldValues);
+            SWSS_LOG_DEBUG("Setting '%s' capabilities to count='%s', reasons='%s'", counter_type.first.c_str(), num_counters.c_str(), drop_reasons.c_str());
+            m_debugCapabilitiesTable->set(counter_type.first, fieldValues);
+        }
     }
 }
 
