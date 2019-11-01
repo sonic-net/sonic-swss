@@ -814,7 +814,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry)
     {
         SWSS_LOG_ERROR("FdbOrch RemoveFDBEntry: Failed to remove FDB entry. mac=%s, bv_id=0x%lx",
                        entry.mac.to_string().c_str(), entry.bv_id);
-        return true; //FIXME: it should be based on status. Some could be retried. some not
+        return false; //FIXME: it should be based on status. Some could be retried. some not
     }
     port.m_fdb_count--;
     m_portsOrch->setPort(port.m_alias, port);
