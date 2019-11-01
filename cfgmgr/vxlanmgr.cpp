@@ -91,7 +91,7 @@ static int cmdAddVxlanIntoVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::s
     // Change the MAC address of Vxlan bridge interface to ensure it's same with switch's.
     // Otherwise it will not response traceroute packets.
     // ip link set dev {{VXLAN_IF}} address {{MAC_ADDRESS}}
-    cmd << " && " IP_CMD "link set dev"
+    cmd << " && " IP_CMD " link set dev "
         << info.m_vxlanIf
         << " address "
         << info.m_macAddress;
