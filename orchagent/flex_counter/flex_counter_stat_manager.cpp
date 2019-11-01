@@ -1,4 +1,4 @@
-#include "dynamic_flex_counter_manager.h"
+#include "flex_counter_stat_manager.h"
 
 #include "schema.h"
 #include "rediscommand.h"
