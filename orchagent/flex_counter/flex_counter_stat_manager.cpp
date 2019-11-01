@@ -36,7 +36,7 @@ void FlexCounterStatManager::addFlexCounterStat(
     if (counter_stats == object_stats.end())
     {
         unordered_set<string> new_stats = { counter_stat };
-        counter_stats = object_stats.emplace(object_id, new_stats)->first;
+        counter_stats = object_stats.emplace(object_id, new_stats).first;
     }
     else
     {
