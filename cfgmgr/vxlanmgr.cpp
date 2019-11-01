@@ -43,40 +43,42 @@ static std::string getVxlanIfName(const swss::VxlanMgr::VxlanInfo & info)
 // Commands
 
 #define RET_SUCCESS 0
-#define EXECUTE(CMD, RESULT) swss::exec(std::string() + BASH_CMD + " -c \"" + CMD + "\"", RESULT);
 
 static int cmdCreateVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // ip link add {{VXLAN}} type vxlan id {{VNI}} [local {{SOURCE IP}}] dstport 4789
-    const std::string cmd = std::string("")
-         + IP_CMD " link add " 
-         + info.m_vxlan 
-         + " type vxlan id " 
-         + info.m_vni 
-         + " "
-         + (info.m_sourceIp.empty() ? "" : (" local " + info.m_sourceIp))
-         + " dstport 4789";
-    return EXECUTE(cmd, res);
+    ostringstream cmd;
+    cmd << IP_CMD " link add "
+        << shellquote(info.m_vxlan)
+        << " type vxlan id "
+        << shellquote(info.m_vni)
+        << " ";
+    if (!info.m_sourceIp.empty())
+    {
+        cmd << " local " << shellquote(info.m_sourceIp);
+    }
+    cmd << " dstport 4789";
+    return swss::exec(cmd.str(), res);
 }
 
 static int cmdUpVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // ip link set dev {{VXLAN}} up
-    const std::string cmd = std::string("")
-        + IP_CMD " link set dev " 
-        + info.m_vxlan
-        + " up";
-    return EXECUTE(cmd, res);
+    ostringstream cmd;
+    cmd << IP_CMD " link set dev "
+        << shellquote(info.m_vxlan)
+        << " up";
+    return swss::exec(cmd.str(), res);
 }
 
 static int cmdCreateVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // ip link add {{VXLAN_IF}} type bridge
-    const std::string cmd = std::string("")
-        + IP_CMD " link add "
-        + info.m_vxlanIf
-        + " type bridge";
-    return EXECUTE(cmd, res);
+    ostringstream cmd;
+    cmd << IP_CMD " link add "
+        << shellquote(info.m_vxlanIf)
+        << " type bridge";
+    return swss::exec(cmd.str(), res);
 }
 
 static int cmdAddVxlanIntoVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
@@ -84,79 +86,77 @@ static int cmdAddVxlanIntoVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::s
     // brctl addif {{VXLAN_IF}} {{VXLAN}}
     ostringstream cmd;
     cmd << BRCTL_CMD " addif "
-        << info.m_vxlanIf
+        << shellquote(info.m_vxlanIf)
         << " "
-        << info.m_vxlan;
-
+        << shellquote(info.m_vxlan);
     // Change the MAC address of Vxlan bridge interface to ensure it's same with switch's.
     // Otherwise it will not response traceroute packets.
     // ip link set dev {{VXLAN_IF}} address {{MAC_ADDRESS}}
     cmd << " && " IP_CMD " link set dev "
-        << info.m_vxlanIf
+        << shellquote(info.m_vxlanIf)
         << " address "
-        << info.m_macAddress;
-
+        << shellquote(info.m_macAddress);
     return swss::exec(cmd.str(), res);
 }
 
 static int cmdAttachVxlanIfToVnet(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // ip link set dev {{VXLAN_IF}} master {{VNET}}
-    const std::string cmd = std::string("")
-        + IP_CMD " link set dev "
-        + info.m_vxlanIf
-        + " master "
-        + info.m_vnet;
-    return EXECUTE(cmd, res);
+    ostringstream cmd;
+    cmd << IP_CMD " link set dev "
+        << shellquote(info.m_vxlanIf)
+        << " master "
+        << shellquote(info.m_vnet);
+    return swss::exec(cmd.str(), res);
 }
 
 static int cmdUpVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // ip link set dev {{VXLAN_IF}} up
-    const std::string cmd = std::string("")
-        + IP_CMD " link set dev "
-        + info.m_vxlanIf
-        + " up";
-    return EXECUTE(cmd, res);
+    ostringstream cmd;
+    cmd << IP_CMD " link set dev "
+        << shellquote(info.m_vxlanIf)
+        << " up";
+    return swss::exec(cmd.str(), res);
 }
 
 static int cmdDeleteVxlan(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // ip link del dev {{VXLAN}}
-    const std::string cmd = std::string("")
-        + IP_CMD " link del dev "
-        + info.m_vxlan;
-    return EXECUTE(cmd, res);
+    ostringstream cmd;
+    cmd << IP_CMD " link del dev "
+        << shellquote(info.m_vxlan);
+    return swss::exec(cmd.str(), res);
 }
 
 static int cmdDeleteVxlanFromVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // brctl delif {{VXLAN_IF}} {{VXLAN}}
-    const std::string cmd = std::string("")
-        + BRCTL_CMD " delif "
-        + info.m_vxlanIf
-        + " "
-        + info.m_vxlan;
-    return EXECUTE(cmd, res);
+    ostringstream cmd;
+    cmd << BRCTL_CMD " delif "
+        << shellquote(info.m_vxlanIf)
+        << " " 
+        << shellquote(info.m_vxlan);
+    return swss::exec(cmd.str(), res);
 }
 
 static int cmdDeleteVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // ip link del {{VXLAN_IF}}
-    const std::string cmd = std::string("")
-        + IP_CMD " link del "
-        + info.m_vxlanIf;
-    return EXECUTE(cmd, res);
+    ostringstream cmd;
+    cmd << IP_CMD " link del "
+        << shellquote(info.m_vxlanIf);
+    return swss::exec(cmd.str(), res);
 }
 
 static int cmdDetachVxlanIfFromVnet(const swss::VxlanMgr::VxlanInfo & info, std::string & res)
 {
     // ip link set dev {{VXLAN_IF}} nomaster
-    const std::string cmd = std::string("")
-        + IP_CMD " link set dev "
-        + info.m_vxlanIf
-        + " nomaster";
-    return EXECUTE(cmd, res);
+    ostringstream cmd;
+    cmd << IP_CMD " link set dev "
+        << shellquote(info.m_vxlanIf)
+        << " nomaster";
+    return swss::exec(cmd.str(), res);
 }
 
 // Vxlanmgr
@@ -583,7 +583,7 @@ void VxlanMgr::clearAllVxlanDevices()
 {
     std::string stdout;
     const std::string cmd = std::string("") + IP_CMD + " link";
-    int ret = EXECUTE(cmd, stdout);
+    int ret = swss::exec(cmd, stdout);
     if (ret != 0)
     {
         SWSS_LOG_ERROR("Cannot get devices by command : %s", cmd.c_str());
@@ -613,4 +613,3 @@ void VxlanMgr::clearAllVxlanDevices()
         }
     }
 }
-
