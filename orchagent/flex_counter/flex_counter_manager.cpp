@@ -195,10 +195,15 @@ string FlexCounterManager::serializeCounterStats(
     string stats_string;
     for (const auto &stat : counter_stats)
     {
-        // We will trim the very first comma at the end
-        stats_string.append(",");
         stats_string.append(stat);
+        stats_string.append(",");
     }
 
-    return stats_string.substr(1);
+    if (!stats_string.empty())
+    {
+        // Fence post: remove the trailing comma
+        stats_string.pop_back();
+    }
+
+    return stats_string;
 }
