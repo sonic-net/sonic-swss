@@ -220,7 +220,6 @@ struct RouteInfo
 struct VnetIntfInfo
 {
     sai_object_id_t vnetTableEntryId;
-    map<IpPrefix, RouteInfo> pfxMap;
 };
 
 
