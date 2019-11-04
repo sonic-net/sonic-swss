@@ -113,7 +113,7 @@ bool VrfMgr::delLink(const string& vrfName)
         return false;
     }
 
-    cmd << IP_CMD << " link del " << vrfName;
+    cmd << IP_CMD << " link del " << shellquote(vrfName);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     recycleTable(m_vrfTableMap[vrfName]);
@@ -140,14 +140,14 @@ bool VrfMgr::setLink(const string& vrfName)
         return false;
     }
 
-    cmd << IP_CMD << " link add " << vrfName << " type vrf table " << table;
+    cmd << IP_CMD << " link add " << shellquote(vrfName) << " type vrf table " << table;
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     m_vrfTableMap.emplace(vrfName, table);
 
     cmd.str("");
     cmd.clear();
-    cmd << IP_CMD << " link set " << vrfName << " up";
+    cmd << IP_CMD << " link set " << shellquote(vrfName) << " up";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     return true;

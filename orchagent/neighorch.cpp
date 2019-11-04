@@ -317,27 +317,27 @@ void NeighOrch::doTask(Consumer &consumer)
             continue;
         }
 
-        Port p;
-        if (!gPortsOrch->getPort(alias, p))
-        {
-            SWSS_LOG_INFO("Port %s doesn't exist", alias.c_str());
-            it++;
-            continue;
-        }
-
-        if (!p.m_rif_id)
-        {
-            SWSS_LOG_INFO("Router interface doesn't exist on %s", alias.c_str());
-            it++;
-            continue;
-        }
-
         IpAddress ip_address(key.substr(found+1));
 
         NeighborEntry neighbor_entry = { ip_address, alias };
 
         if (op == SET_COMMAND)
         {
+            Port p;
+            if (!gPortsOrch->getPort(alias, p))
+            {
+                SWSS_LOG_INFO("Port %s doesn't exist", alias.c_str());
+                it++;
+                continue;
+            }
+
+            if (!p.m_rif_id)
+            {
+                SWSS_LOG_INFO("Router interface doesn't exist on %s", alias.c_str());
+                it++;
+                continue;
+            }
+
             MacAddress mac_address;
             for (auto i = kfvFieldsValues(t).begin();
                  i  != kfvFieldsValues(t).end(); i++)

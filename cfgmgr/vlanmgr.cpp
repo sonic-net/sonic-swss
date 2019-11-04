@@ -134,11 +134,11 @@ bool VlanMgr::setHostVlanAdminState(int vlan_id, const string &admin_status)
 
     // The command should be generated as:
     // /sbin/ip link set Vlan{{vlan_id}} {{admin_status}}
-    const std::string cmds = std::string("")
-      + IP_CMD + " link set " + VLAN_PREFIX + std::to_string(vlan_id) + " " + admin_status;
+    ostringstream cmds;
+    cmds << IP_CMD " link set " VLAN_PREFIX + std::to_string(vlan_id) + " " << shellquote(admin_status);
 
     std::string res;
-    EXEC_WITH_ERROR_THROW(cmds, res);
+    EXEC_WITH_ERROR_THROW(cmds.str(), res);
 
     return true;
 }
@@ -177,14 +177,14 @@ bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const str
     // /bin/bash -c "/sbin/ip link set {{port_alias}} master Bridge &&
     //               /sbin/bridge vlan del vid 1 dev {{ port_alias }} &&
     //               /sbin/bridge vlan add vid {{vlan_id}} dev {{port_alias}} {{tagging_mode}}"
-    const std::string cmds = std::string("")
-      + BASH_CMD + " -c \""
-      + IP_CMD + " link set " + port_alias + " master " + DOT1Q_BRIDGE_NAME + " && "
-      + BRIDGE_CMD + " vlan del vid " + DEFAULT_VLAN_ID + " dev " + port_alias + " && "
-      + BRIDGE_CMD + " vlan add vid " + std::to_string(vlan_id) + " dev " + port_alias + " " + tagging_cmd + "\"";
+    ostringstream cmds, inner;
+    inner << IP_CMD " link set " << shellquote(port_alias) << " master " DOT1Q_BRIDGE_NAME " && "
+      BRIDGE_CMD " vlan del vid " DEFAULT_VLAN_ID " dev " << shellquote(port_alias) << " && "
+      BRIDGE_CMD " vlan add vid " + std::to_string(vlan_id) + " dev " << shellquote(port_alias) << " " + tagging_cmd;
+    cmds << BASH_CMD " -c " << shellquote(inner.str());
 
     std::string res;
-    EXEC_WITH_ERROR_THROW(cmds, res);
+    EXEC_WITH_ERROR_THROW(cmds.str(), res);
 
     return true;
 }
@@ -202,17 +202,17 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
     //               else exit $ret; fi )'
 
     // When port is not member of any VLAN, it shall be detached from Dot1Q bridge!
-    const std::string cmds = std::string("")
-      + BASH_CMD + " -c \'"
-      + BRIDGE_CMD + " vlan del vid " + std::to_string(vlan_id) + " dev " + port_alias + " && ( "
-      + BRIDGE_CMD + " vlan show dev " + port_alias + " | "
-      + GREP_CMD + " -q None; ret=$?; if [ $ret -eq 0 ]; then "
-      + IP_CMD + " link set " + port_alias + " nomaster; "
-      + "elif [ $ret -eq 1 ]; then exit 0; "
-      + "else exit $ret; fi )\'";
+    ostringstream cmds, inner;
+    inner << BRIDGE_CMD " vlan del vid " + std::to_string(vlan_id) + " dev " << shellquote(port_alias) << " && ( "
+      BRIDGE_CMD " vlan show dev " << shellquote(port_alias) << " | "
+      GREP_CMD " -q None; ret=$?; if [ $ret -eq 0 ]; then "
+      IP_CMD " link set " << shellquote(port_alias) << " nomaster; "
+      "elif [ $ret -eq 1 ]; then exit 0; "
+      "else exit $ret; fi )";
+    cmds << BASH_CMD " -c " << shellquote(cmds.str());
 
     std::string res;
-    EXEC_WITH_ERROR_THROW(cmds, res);
+    EXEC_WITH_ERROR_THROW(cmds.str(), res);
 
     return true;
 }

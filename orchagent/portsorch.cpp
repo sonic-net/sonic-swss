@@ -400,6 +400,17 @@ bool PortsOrch::isInitDone()
     return m_initDone;
 }
 
+bool PortsOrch::isPortAdminUp(const string &alias)
+{
+    auto it = m_portList.find(alias);
+    if (it == m_portList.end())
+    {
+        SWSS_LOG_ERROR("Failed to get Port object by port alias: %s", alias.c_str());
+        return false;
+    }
+
+    return it->second.m_admin_state_up;
+}
 
 map<string, Port>& PortsOrch::getAllPorts()
 {
@@ -1458,6 +1469,16 @@ bool PortsOrch::bake()
 
         cleanPortTable(keys);
         return false;
+    }
+
+    for (const auto& alias: keys)
+    {
+        if (alias == "PortConfigDone" || alias == "PortInitDone")
+        {
+            continue;
+        }
+
+        m_pendingPortSet.emplace(alias);
     }
 
     addExistingData(m_portTable.get());
