@@ -295,7 +295,7 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     }
     
     // If the mac address has been set
-    info.m_macAddress = getSwitchMacAddress();
+    info.m_macAddress = getVxlanRouterMacAddress();
     if (info.m_macAddress.empty())
     {
         SWSS_LOG_DEBUG("Mac address is not ready");
@@ -452,7 +452,7 @@ bool VxlanMgr::isVxlanStateOk(const std::string & vxlanName)
     return false;
 }
 
-std::string VxlanMgr::getSwitchMacAddress()
+std::string VxlanMgr::getVxlanRouterMacAddress()
 {
     std::vector<FieldValueTuple> temp;
 

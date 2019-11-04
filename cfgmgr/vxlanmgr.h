@@ -48,7 +48,7 @@ private:
     */
     bool isVrfStateOk(const std::string & vrfName);
     bool isVxlanStateOk(const std::string & vxlanName);
-    std::string getSwitchMacAddress();
+    std::string getVxlanRouterMacAddress();
 
     bool createVxlan(const VxlanInfo & info);
     bool deleteVxlan(const VxlanInfo & info);
