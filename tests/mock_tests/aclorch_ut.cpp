@@ -352,7 +352,7 @@ namespace aclorch_test
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
 
             ASSERT_EQ(gVrfOrch, nullptr);
-            gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME);
+            gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
 
             ASSERT_EQ(gIntfsOrch, nullptr);
             gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch);
@@ -361,7 +361,7 @@ namespace aclorch_test
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch);
 
             ASSERT_EQ(gRouteOrch, nullptr);
-            gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gNeighOrch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gNeighOrch, gIntfsOrch, gVrfOrch);
 
             TableConnector applDbFdb(m_app_db.get(), APP_FDB_TABLE_NAME);
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
