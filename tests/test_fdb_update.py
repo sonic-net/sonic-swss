@@ -102,7 +102,7 @@ def test_FDBAddedAndUpdated(dvs, testlog):
     assert bp_after - bp_before == 1, "The bridge port wasn't created"
     assert vm_after - vm_before == 1, "The vlan member wasn't added"
 
-    # Get bvid form vlanid
+    # Get bvid from vlanid
     ok, bvid = dvs.get_vlan_oid(dvs.adb, "2")
     assert ok, bvid
 

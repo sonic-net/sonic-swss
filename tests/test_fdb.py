@@ -342,7 +342,7 @@ class TestFdb(object):
         dvs.create_vlan("2")
         time.sleep(1)
 
-        # Get bvid form vlanid
+        # Get bvid from vlanid
         ok, bvid = dvs.get_vlan_oid(dvs.adb, "2")
         assert ok, bvid
 
