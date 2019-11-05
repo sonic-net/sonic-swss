@@ -14,7 +14,7 @@
 #include "observer.h"
 
 #define VNET_BITMAP_SIZE 32
-#define VNET_TUNNEL_SIZE 512
+#define VNET_TUNNEL_SIZE 3072
 #define VNET_NEIGHBOR_MAX 0xffff
 #define VXLAN_ENCAP_TTL 128
 

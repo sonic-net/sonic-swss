@@ -115,6 +115,20 @@ static acl_stage_type_lookup_t aclStageLookUp =
     {STAGE_EGRESS,  ACL_STAGE_EGRESS }
 };
 
+static const acl_capabilities_t defaultAclActionsSupported =
+{
+    {
+        ACL_STAGE_INGRESS,
+        {
+            SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+            SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
+        }
+    },
+    {
+        ACL_STAGE_EGRESS, {}
+    }
+};
+
 static acl_ip_type_lookup_t aclIpTypeLookup =
 {
     { IP_TYPE_ANY,         SAI_ACL_IP_TYPE_ANY },
@@ -2129,68 +2143,59 @@ void AclOrch::queryAclActionCapability()
     sai_status_t status {SAI_STATUS_FAILURE};
     sai_attribute_t attr;
     vector<int32_t> action_list;
-    vector<FieldValueTuple> fvVector;
 
     attr.id = SAI_SWITCH_ATTR_MAX_ACL_ACTION_COUNT;
     status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
+    if (status == SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_THROW("AclOrch initialization failed: "
-                       "failed to query maximum ACL action count");
-    }
+        const auto max_action_count = attr.value.u32;
 
-    const auto max_action_count = attr.value.u32;
-
-    for (auto stage_attr: {SAI_SWITCH_ATTR_ACL_STAGE_INGRESS, SAI_SWITCH_ATTR_ACL_STAGE_EGRESS})
-    {
-        auto stage = (stage_attr == SAI_SWITCH_ATTR_ACL_STAGE_INGRESS ? ACL_STAGE_INGRESS : ACL_STAGE_EGRESS);
-        auto stage_str = (stage_attr == SAI_SWITCH_ATTR_ACL_STAGE_INGRESS ? STAGE_INGRESS : STAGE_EGRESS);
-        action_list.resize(static_cast<size_t>(max_action_count));
-
-        attr.id = stage_attr;
-        attr.value.aclcapability.action_list.list  = action_list.data();
-        attr.value.aclcapability.action_list.count = max_action_count;
-
-        status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
-        if (status != SAI_STATUS_SUCCESS)
+        for (auto stage_attr: {SAI_SWITCH_ATTR_ACL_STAGE_INGRESS, SAI_SWITCH_ATTR_ACL_STAGE_EGRESS})
         {
-            SWSS_LOG_THROW("AclOrch initialization failed: "
-                           "failed to query supported %s ACL actions", stage_str);
-        }
+            auto stage = (stage_attr == SAI_SWITCH_ATTR_ACL_STAGE_INGRESS ? ACL_STAGE_INGRESS : ACL_STAGE_EGRESS);
+            auto stage_str = (stage_attr == SAI_SWITCH_ATTR_ACL_STAGE_INGRESS ? STAGE_INGRESS : STAGE_EGRESS);
+            action_list.resize(static_cast<size_t>(max_action_count));
 
-        SWSS_LOG_INFO("Supported %s action count %d:", stage_str,
-                      attr.value.aclcapability.action_list.count);
+            attr.id = stage_attr;
+            attr.value.aclcapability.action_list.list  = action_list.data();
+            attr.value.aclcapability.action_list.count = max_action_count;
 
-        for (size_t i = 0; i < static_cast<size_t>(attr.value.aclcapability.action_list.count); i++)
-        {
-            auto action = static_cast<sai_acl_action_type_t>(action_list[i]);
-            m_aclCapabilities[stage].insert(action);
-            SWSS_LOG_INFO("    %s", sai_serialize_enum(action, &sai_metadata_enum_sai_acl_action_type_t).c_str());
-        }
-
-        // put capabilities in state DB
-
-        auto field = std::string("ACL_ACTIONS") + '|' + stage_str;
-        auto& acl_action_set = m_aclCapabilities[stage];
-
-        string delimiter;
-        ostringstream acl_action_value_stream;
-
-        for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup})
-        {
-            for (const auto& it: action_map)
+            status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+            if (status == SAI_STATUS_SUCCESS)
             {
-                auto saiAction = getAclActionFromAclEntry(it.second);
-                if (acl_action_set.find(saiAction) != acl_action_set.cend())
+
+                SWSS_LOG_INFO("Supported %s action count %d:", stage_str,
+                              attr.value.aclcapability.action_list.count);
+
+                for (size_t i = 0; i < static_cast<size_t>(attr.value.aclcapability.action_list.count); i++)
                 {
-                    acl_action_value_stream << delimiter << it.first;
-                    delimiter = comma;
+                    auto action = static_cast<sai_acl_action_type_t>(action_list[i]);
+                    m_aclCapabilities[stage].insert(action);
+                    SWSS_LOG_INFO("    %s", sai_serialize_enum(action, &sai_metadata_enum_sai_acl_action_type_t).c_str());
                 }
             }
-        }
+            else
+            {
+                SWSS_LOG_WARN("Failed to query ACL %s action capabilities - "
+                        "API assumed to be not implemented, using defaults",
+                        stage_str);
+                initDefaultAclActionCapabilities(stage);
+            }
 
-        fvVector.emplace_back(field, acl_action_value_stream.str());
-        m_switchTable.set("switch", fvVector);
+            // put capabilities in state DB
+            putAclActionCapabilityInDB(stage);
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to query maximum ACL action count - "
+                "API assumed to be not implemented, using defaults capabilities for both %s and %s",
+                STAGE_INGRESS, STAGE_EGRESS);
+        for (auto stage: {ACL_STAGE_INGRESS, ACL_STAGE_EGRESS})
+        {
+            initDefaultAclActionCapabilities(stage);
+            putAclActionCapabilityInDB(stage);
+        }
     }
 
     /* For those ACL action entry attributes for which acl parameter is enumeration (metadata->isenum == true)
@@ -2207,6 +2212,50 @@ void AclOrch::queryAclActionCapability()
     queryAclActionAttrEnumValues(ACTION_DTEL_FLOW_OP,
                                  aclDTelActionLookup,
                                  aclDTelFlowOpTypeLookup);
+}
+
+void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
+{
+    vector<FieldValueTuple> fvVector;
+    auto stage_str = (stage == ACL_STAGE_INGRESS ? STAGE_INGRESS : STAGE_EGRESS);
+
+    auto field = std::string("ACL_ACTIONS") + '|' + stage_str;
+    auto& acl_action_set = m_aclCapabilities[stage];
+
+    string delimiter;
+    ostringstream acl_action_value_stream;
+
+    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup})
+    {
+        for (const auto& it: action_map)
+        {
+            auto saiAction = getAclActionFromAclEntry(it.second);
+            if (acl_action_set.find(saiAction) != acl_action_set.cend())
+            {
+                acl_action_value_stream << delimiter << it.first;
+                delimiter = comma;
+            }
+        }
+    }
+
+    fvVector.emplace_back(field, acl_action_value_stream.str());
+    m_switchTable.set("switch", fvVector);
+}
+
+void AclOrch::initDefaultAclActionCapabilities(acl_stage_type_t stage)
+{
+    m_aclCapabilities[stage] = defaultAclActionsSupported.at(stage);
+
+    SWSS_LOG_INFO("Assumed %s %zu actions to be supported:",
+            stage == ACL_STAGE_INGRESS ? STAGE_INGRESS : STAGE_EGRESS,
+            m_aclCapabilities[stage].size());
+
+    for (auto action: m_aclCapabilities[stage])
+    {
+        SWSS_LOG_INFO("    %s", sai_serialize_enum(action, &sai_metadata_enum_sai_acl_action_type_t).c_str());
+    }
+    // put capabilities in state DB
+    putAclActionCapabilityInDB(stage);
 }
 
 template<typename AclActionAttrLookupT>
@@ -2251,15 +2300,23 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
                                                                  SAI_OBJECT_TYPE_ACL_ENTRY,
                                                                  acl_attr,
                                                                  &values);
-        if (status != SAI_STATUS_SUCCESS)
+        if (status == SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_THROW("sai_query_attribute_enum_values_capability failed for %s",
-                           action_name.c_str());
+            for (size_t i = 0; i < values.count; i++)
+            {
+                m_aclEnumActionCapabilities[acl_action].insert(values.list[i]);
+            }
         }
-
-        for (size_t i = 0; i < values.count; i++)
+        else
         {
-            m_aclEnumActionCapabilities[acl_action].insert(values.list[i]);
+            SWSS_LOG_WARN("Failed to query enum values supported for ACL action %s - ",
+                    "API is not implemented, assuming all values are supported for this action",
+                    action_name.c_str());
+            /* assume all enum values are supported */
+            for (size_t i = 0; i < meta->enummetadata->valuescount; i++)
+            {
+                m_aclEnumActionCapabilities[acl_action].insert(meta->enummetadata->values[i]);
+            }
         }
 #else
         /* assume all enum values are supported untill sai object api is available */

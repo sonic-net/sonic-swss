@@ -419,6 +419,8 @@ private:
 
     void queryMirrorTableCapability();
     void queryAclActionCapability();
+    void initDefaultAclActionCapabilities(acl_stage_type_t);
+    void putAclActionCapabilityInDB(acl_stage_type_t);
 
     template<typename AclActionAttrLookupT>
     void queryAclActionAttrEnumValues(const string& action_name,
