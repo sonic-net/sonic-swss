@@ -447,12 +447,26 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
 
     stringstream cmd;
     string res;
+    string PoId, PoId2;
+    size_t found = lag.find('l');
+    if (found == string::npos)
+    {
+        SWSS_LOG_ERROR("Failed to parse %s", lag.c_str());
+        return task_failed;
+    }
+    PoId = lag.substr(found+1);
+    /* Ignore all 0's in the Port-channel id*/
+    PoId2 = PoId.erase(0, min(PoId.find_first_not_of('0'), PoId.size()-1));
 
     // Set admin down LAG member (required by teamd) and enslave it
     // ip link set dev <member> down;
     // teamdctl <port_channel_name> port add <member>;
     cmd << IP_CMD << " link set dev " << shellquote(member) << " down; ";
-    cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port add " << shellquote(member);
+    cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port config update " << shellquote(member) 
+        << " '{\"lacp_key\":"
+        << shellquote(PoId2)
+        << ",\"link_watch\": {\"name\": \"ethtool\"} }'; ";
+    cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port add " << shellquote(member) << ";";
 
     if (exec(cmd.str(), res) != 0)
     {
