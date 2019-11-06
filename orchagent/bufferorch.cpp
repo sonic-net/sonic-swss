@@ -264,7 +264,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             if (field == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
             else if (field == buffer_pool_type_field_name)
@@ -307,7 +307,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             }
             else if (field == buffer_pool_xoff_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_POOL_ATTR_XOFF_SIZE;
                 attribs.push_back(attr);
             }
@@ -414,19 +414,19 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             }
             else if (field == buffer_xon_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xon_offset_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_OFFSET_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xoff_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XOFF_TH;
                 attribs.push_back(attr);
             }
@@ -453,7 +453,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
                 attribs.push_back(attr);
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
             else
