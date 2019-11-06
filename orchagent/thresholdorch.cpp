@@ -57,10 +57,6 @@ ThresholdOrch::ThresholdOrch(DBConnector *db, vector<string> &tableNames, PortsO
     }
 
     /* Create TAM collector object */
-    /* Create TAM collector object */  
-    /* Using a random source ip */
-//    sai_ip_address_t src_ip_addr = {SAI_IP_ADDR_FAMILY_IPV4, .addr.ip4 = 0x0a0a0a0a }; 
-//    sai_ip_address_t dst_ip_addr = {SAI_IP_ADDR_FAMILY_IPV4, .addr.ip4 = 0x7f000001 };
     sai_ip_address_t src_ip_addr; 
     sai_ip_address_t dst_ip_addr;
     IpAddress src_ip(0x0a0a0a0a);
@@ -453,9 +449,6 @@ bool ThresholdOrch::updateCfgThreshold(thresEventType_t eventType, string alias,
                 break;
             }
         }
-
-        /* Find and elete entry from bind list */
-       // tamEntryData->bind_list.erase(bindList);
     }
     else
     {
