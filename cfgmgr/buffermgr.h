@@ -14,22 +14,22 @@ namespace swss {
 #define LOSSLESS_PGS "3-4"
 
 typedef struct{
-    string size;
-    string xon;
-    string xon_offset;
-    string xoff;
-    string threshold;
+    std::string size;
+    std::string xon;
+    std::string xon_offset;
+    std::string xoff;
+    std::string threshold;
 } pg_profile_t;
 
-typedef map<string, pg_profile_t> speed_map_t;
-typedef map<string, speed_map_t> pg_profile_lookup_t;
+typedef std::map<std::string, pg_profile_t> speed_map_t;
+typedef std::map<std::string, speed_map_t> pg_profile_lookup_t;
 
-typedef map<string, string> port_cable_length_t;
+typedef std::map<std::string, std::string> port_cable_length_t;
 
 class BufferMgr : public Orch
 {
 public:
-    BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, string pg_lookup_file, const vector<string> &tableNames);
+    BufferMgr(DBConnector *cfgDb, DBConnector *stateDb, std::string pg_lookup_file, const std::vector<std::string> &tableNames);
     using Orch::doTask;
 
 private:
@@ -44,8 +44,8 @@ private:
     port_cable_length_t m_cableLenLookup;
     std::string getPgPoolMode();
     void readPgProfileLookupFile(std::string);
-    task_process_status doCableTask(string port, string cable_length);
-    task_process_status doSpeedUpdateTask(string port, string speed);
+    task_process_status doCableTask(std::string port, std::string cable_length);
+    task_process_status doSpeedUpdateTask(std::string port, std::string speed);
 
     void doTask(Consumer &consumer);
 };

@@ -79,8 +79,33 @@ sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
 {
     Port port;
     gPortsOrch->getPort(alias, port);
-    assert(port.m_rif_id);
     return port.m_rif_id;
+}
+
+string IntfsOrch::getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name)
+{
+    sai_object_id_t vrf_id = gVirtualRouterId;
+
+    if (!vrf_name.empty())
+    {
+        vrf_id = m_vrfOrch->getVRFid(vrf_name);
+    }
+
+    for (const auto &it_intfs: m_syncdIntfses)
+    {
+        if (it_intfs.second.vrf_id != vrf_id)
+        {
+            continue;
+        }
+        for (const auto &prefixIt: it_intfs.second.ip_addresses)
+        {
+            if (prefixIt.isAddressInSubnet(ip))
+            {
+                return it_intfs.first;
+            }
+        }
+    }
+    return string();
 }
 
 void IntfsOrch::increaseRouterIntfsRefCount(const string &alias)
@@ -154,6 +179,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
             gPortsOrch->increasePortRefCount(alias);
             IntfsEntry intfs_entry;
             intfs_entry.ref_count = 0;
+            intfs_entry.vrf_id = vrf_id;
             m_syncdIntfses[alias] = intfs_entry;
         }
         else
@@ -328,6 +354,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                     IntfsEntry intfs_entry;
 
                     intfs_entry.ref_count = 0;
+                    intfs_entry.vrf_id = vrf_id;
                     intfs_entry.ip_addresses.insert(ip_prefix);
                     m_syncdIntfses[alias] = intfs_entry;
                     addIp2Me = true;
@@ -629,7 +656,7 @@ void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
-    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, IpAddresses(), true);
+    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, NextHopGroupKey(), true);
 }
 
 void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
@@ -643,9 +670,17 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
     sai_status_t status = sai_route_api->remove_route_entry(&unicast_route_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to remove subnet route to %s from %s, rv:%d",
-                       ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
-        throw runtime_error("Failed to remove subnet route.");
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_ERROR("No subnet route found for %s", ip_prefix.to_string().c_str());
+            return;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove subnet route to %s from %s, rv:%d",
+                           ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
+            throw runtime_error("Failed to remove subnet route.");
+        }
     }
 
     SWSS_LOG_NOTICE("Remove subnet route to %s from %s",
@@ -661,7 +696,7 @@ void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
     }
 
-    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, IpAddresses(), false);
+    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, NextHopGroupKey(), false);
 }
 
 void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)

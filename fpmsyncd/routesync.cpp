@@ -334,6 +334,17 @@ string RouteSync::getNextHopGw(struct rtnl_route *route_obj)
             nl_addr2str(addr, gw_ip, MAX_ADDR_SIZE);
             result += gw_ip;
         }
+        else
+        {
+            if (rtnl_route_get_family(route_obj) == AF_INET)
+            {
+                result += "0.0.0.0";
+            }
+            else
+            {
+                result += "::";
+            }
+        }
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))
         {

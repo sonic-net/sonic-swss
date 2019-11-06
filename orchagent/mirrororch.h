@@ -36,7 +36,7 @@ struct MirrorEntry
     struct
     {
         IpPrefix prefix;
-        IpAddress nexthop;
+        NextHopKey nexthop;
     } nexthopInfo;
 
     struct
@@ -94,7 +94,7 @@ private:
     bool m_freeze = false;
 
     void createEntry(const string&, const vector<FieldValueTuple>&);
-    void deleteEntry(const string&);
+    task_process_status deleteEntry(const string&);
 
     bool activateSession(const string&, MirrorEntry&);
     bool deactivateSession(const string&, MirrorEntry&);
@@ -108,6 +108,8 @@ private:
      * attr is the field name will be stored, if empty then all fields will be stored
      */
     void setSessionState(const std::string& name, const MirrorEntry& session, const std::string& attr = "");
+    void removeSessionState(const std::string& name);
+
     bool getNeighborInfo(const string&, MirrorEntry&);
 
     void updateNextHop(const NextHopUpdate&);

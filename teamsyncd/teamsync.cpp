@@ -109,8 +109,11 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     if (nlmsg_type == RTM_DELLINK)
     {
-        /* Remove LAG ports and delete LAG */
-        removeLag(lagName);
+        if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
+        {
+            /* Remove LAG ports and delete LAG */
+            removeLag(lagName);
+        }
         return;
     }
 

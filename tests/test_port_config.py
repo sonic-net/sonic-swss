@@ -55,44 +55,89 @@ class TestPortConfig(object):
 
     def test_port_breakout(self, dvs, port_config):
 
-        # check port_config.ini
-        (exitcode, output) = dvs.runcmd(['sh', '-c', "cat %s | tail -n 1" % (port_config)])
-        try:
-            name_str, lanes_str, alias_str, index_str, speed_str = list(output.split())
-        except:
-            print "parse port_config.ini fail"
+        # Breakout the port from 1 to 4
+        '''
+        "Ethernet0": {
+            "alias": "fortyGigE0/0",
+            "index": "0",
+            "lanes": "25,26,27,28",
+            "speed": "40000"
+        },
 
-        LANES_L = list(lanes_str.split(","))
-        assert len(LANES_L) == 4
-        assert int(speed_str) == 40000
+        to:
+        "Ethernet0": {
+            "alias": "tenGigE0",
+            "index": "0",
+            "lanes": "25",
+            "speed": "10000"
+        },
 
-        # modify port_config.ini
-        eth = int(name_str.replace("Ethernet", ""))
-        index = int(index_str)
-        speed_str = "tenGigE0"
-        speed = 10000
-        dvs.runcmd("sed -i '$d' %s" % (port_config)) == 0
-        for i in range(0,4):
-            dvs.runcmd("sed -i '$a Ethernet%-7d %-17d %s/%-8d %-11d %d' %s" %
-                       (eth+i, int(LANES_L[i]), speed_str, eth+i, index+i, speed, port_config)) == 0
+        "Ethernet1": {
+            "alias": "tenGigE1",
+            "index": "0",
+            "lanes": "26",
+            "speed": "10000"
+        },
 
-        # delete port config
+        "Ethernet2": {
+            "alias": "tenGigE2",
+            "index": "0",
+            "lanes": "27",
+            "speed": "10000"
+        },
+
+        "Ethernet3": {
+            "alias": "tenGigE3",
+            "index": "0",
+            "lanes": "28",
+            "speed": "10000"
+        },
+        '''
+        # Get port config from configDB
         conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
         portTbl = swsscommon.Table(conf_db, swsscommon.CFG_PORT_TABLE_NAME)
-        keys = portTbl.getKeys()
-        assert  len(keys) > 0
-        for key in keys:
-            portTbl._del(key)
 
-        # restart to apply new port_config.ini
+        chg_port = "Ethernet0"
+
+        keys = portTbl.getKeys()
+        assert chg_port in keys
+
+        (status, fvs) = portTbl.get(chg_port)
+        assert(status == True)
+
+        for fv in fvs:
+            if fv[0] == "index":
+                new_index = fv[1]
+            if fv[0] == "lanes":
+                new_lanes = fv[1].split(",")
+
+        # Stop swss before modifing the configDB
         dvs.stop_swss()
+        time.sleep(1)
+
+        # breakout the port in configDB
+        portTbl._del(chg_port)
+
+        new_ports = ["Ethernet0","Ethernet1","Ethernet2","Ethernet3"]
+        new_speed = "10000"
+        new_alias = ["tenGigE0", "tenGigE1", "tenGigE2", "tenGigE3"]
+
+        for i in range (0 ,4):
+            fvs = swsscommon.FieldValuePairs([("alias", new_alias[i]),
+                                ("lanes", new_lanes[i]),
+                                ("speed", new_speed),
+                                ("index", new_index)])
+
+            portTbl.set(new_ports[i], fvs)
+
+        # start to apply new port_config.ini
         dvs.start_swss()
         time.sleep(5)
 
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
         for i in range(0,4):
-            port_name = 'Ethernet{0}'.format(eth+i)
+            port_name = 'Ethernet{0}'.format(i)
             port_oid = self.getPortOid(dvs, port_name)
             port_tbl = swsscommon.Table(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_PORT:{0}'.format(port_oid))
             hw_lane_value = None
@@ -102,6 +147,6 @@ class TestPortConfig(object):
                     hw_lane_value = k[1]
 
             assert hw_lane_value, "Can't get hw_lane list"
-            assert hw_lane_value == "1:%s" % (LANES_L[i])
+            assert hw_lane_value == "1:%s" % (new_lanes[i])
 
 

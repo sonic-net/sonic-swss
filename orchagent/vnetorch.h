@@ -6,13 +6,15 @@
 #include <unordered_map>
 #include <algorithm>
 #include <bitset>
+#include <tuple>
 
 #include "request_parser.h"
 #include "ipaddresses.h"
 #include "producerstatetable.h"
+#include "observer.h"
 
 #define VNET_BITMAP_SIZE 32
-#define VNET_TUNNEL_SIZE 512
+#define VNET_TUNNEL_SIZE 3072
 #define VNET_NEIGHBOR_MAX 0xffff
 #define VXLAN_ENCAP_TTL 128
 
@@ -142,7 +144,14 @@ public:
 
     sai_object_id_t getDecapMapId() const
     {
-        return getVRidEgress();
+        if (std::find(vr_cntxt.begin(), vr_cntxt.end(), VR_TYPE::EGR_VR_VALID) != vr_cntxt.end())
+        {
+            return getVRidEgress();
+        }
+        else
+        {
+            return getVRidIngress();
+        }
     }
 
     sai_object_id_t getVRid() const
@@ -361,7 +370,27 @@ public:
     VNetRouteRequest() : Request(vnet_route_description, ':') { }
 };
 
-class VNetRouteOrch : public Orch2
+struct VNetNextHopUpdate
+{
+    std::string op;
+    std::string vnet;
+    IpAddress destination;
+    IpPrefix prefix;
+    nextHop nexthop;
+};
+/* VNetEntry: vnet name, next hop IP address(es)  */
+typedef std::map<std::string, nextHop> VNetEntry;
+/* VNetRouteTable: destination network, vnet name, next hop IP address(es) */
+typedef std::map<IpPrefix, VNetEntry > VNetRouteTable;
+struct VNetNextHopObserverEntry
+{
+    VNetRouteTable routeTable;
+    list<Observer*> observers;
+};
+/* NextHopObserverTable: Destination IP address, next hop observer entry */
+typedef std::map<IpAddress, VNetNextHopObserverEntry> VNetNextHopObserverTable;
+
+class VNetRouteOrch : public Orch2, public Subject
 {
 public:
     VNetRouteOrch(DBConnector *db, vector<string> &tableNames, VNetOrch *);
@@ -369,9 +398,15 @@ public:
     typedef pair<string, bool (VNetRouteOrch::*) (const Request& )> handler_pair;
     typedef map<string, bool (VNetRouteOrch::*) (const Request& )> handler_map;
 
+    void attach(Observer* observer, const IpAddress& dstAddr);
+    void detach(Observer* observer, const IpAddress& dstAddr);
+
 private:
     virtual bool addOperation(const Request& request);
     virtual bool delOperation(const Request& request);
+
+    void addRoute(const std::string & vnet, const IpPrefix & ipPrefix, const nextHop& nh);
+    void delRoute(const IpPrefix& ipPrefix);
 
     bool handleRoutes(const Request&);
     bool handleTunnel(const Request&);
@@ -385,6 +420,9 @@ private:
     VNetOrch *vnet_orch_;
     VNetRouteRequest request_;
     handler_map handler_map_;
+
+    VNetRouteTable syncd_routes_;
+    VNetNextHopObserverTable next_hop_observers_;
 };
 
 class VNetCfgRouteOrch : public Orch

@@ -579,7 +579,19 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
     }
     else
     {
-        SWSS_LOG_ERROR("Queue profile '%s' was inserted after BufferOrch init", key.c_str());
+        // If a buffer queue profile is not in the initial CONFIG_DB BUFFER_QUEUE table
+        // at BufferOrch object instantiation, it is considered being applied
+        // at run time, and, in this case, is not tracked in the m_ready_list. It is up to
+        // the application to guarantee the set order that the buffer queue profile
+        // should be applied to a physical port before the physical port is brought up to
+        // carry traffic. Here, we alert to application through syslog when such a wrong
+        // set order is detected.
+        for (const auto &port_name : port_names)
+        {
+            if (gPortsOrch->isPortAdminUp(port_name)) {
+                SWSS_LOG_ERROR("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+            }
+        }
     }
 
     return task_process_status::task_success;
@@ -666,7 +678,19 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     }
     else
     {
-        SWSS_LOG_ERROR("PG profile '%s' was inserted after BufferOrch init", key.c_str());
+        // If a buffer pg profile is not in the initial CONFIG_DB BUFFER_PG table
+        // at BufferOrch object instantiation, it is considered being applied
+        // at run time, and, in this case, is not tracked in the m_ready_list. It is up to
+        // the application to guarantee the set order that the buffer pg profile
+        // should be applied to a physical port before the physical port is brought up to
+        // carry traffic. Here, we alert to application through syslog when such a wrong
+        // set order is detected.
+        for (const auto &port_name : port_names)
+        {
+            if (gPortsOrch->isPortAdminUp(port_name)) {
+                SWSS_LOG_ERROR("PG profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+            }
+        }
     }
 
     return task_process_status::task_success;
@@ -806,7 +830,7 @@ void BufferOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isConfigDone())
     {
         return;
     }

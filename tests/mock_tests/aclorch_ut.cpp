@@ -643,16 +643,16 @@ namespace aclorch_test
         // leakage check
         bool validateResourceCountWithLowerLayerDb(const AclOrch *aclOrch)
         {
-            // TODO: Using the need to include "sai_vs_state.h". That will need the include path from `configure`
-            //       Do this later ...
+        // TODO: Using the need to include "sai_vs_state.h". That will need the include path from `configure`
+        //       Do this later ...
 #if WITH_SAI == LIBVS
-            // {
-            //     auto& aclTableHash = g_switch_state_map.at(gSwitchId)->objectHash.at(SAI_OBJECT_TYPE_ACL_TABLE);
-            //
-            //     return aclTableHash.size() == Portal::AclOrchInternal::getAclTables(aclOrch).size();
-            // }
-            //
-            // TODO: add rule check
+        // {
+        //     auto& aclTableHash = g_switch_state_map.at(gSwitchId)->objectHash.at(SAI_OBJECT_TYPE_ACL_TABLE);
+        //
+        //     return aclTableHash.size() == Portal::AclOrchInternal::getAclTables(aclOrch).size();
+        // }
+        //
+        // TODO: add rule check
 #endif
 
             return true;

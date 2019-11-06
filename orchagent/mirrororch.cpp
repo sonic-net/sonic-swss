@@ -60,7 +60,7 @@ MirrorEntry::MirrorEntry(const string& platform) :
     }
 
     nexthopInfo.prefix = IpPrefix("0.0.0.0/0");
-    nexthopInfo.nexthop = IpAddress("0.0.0.0");
+    nexthopInfo.nexthop = NextHopKey("0.0.0.0", "");
 }
 
 MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbConnector,
@@ -113,17 +113,17 @@ bool MirrorOrch::bake()
             }
         }
 
-        if (!active)
+        if (active)
         {
-            continue;
+            SWSS_LOG_NOTICE("Found mirror session %s active before warm reboot",
+                    key.c_str());
+
+            // Recover saved active session's monitor port
+            m_recoverySessionMap.emplace(
+                    key, monitor_port + state_db_key_delimiter + next_hop_ip);
         }
 
-        SWSS_LOG_NOTICE("Found mirror session %s active before warm reboot",
-                key.c_str());
-
-        // Recover saved active session's monitor port
-        m_recoverySessionMap.emplace(
-                key, monitor_port + state_db_key_delimiter + next_hop_ip);
+	removeSessionState(key);
     }
 
     return Orch::bake();
@@ -352,29 +352,35 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
     m_routeOrch->attach(this, entry.dstIp);
 }
 
-void MirrorOrch::deleteEntry(const string& name)
+task_process_status MirrorOrch::deleteEntry(const string& name)
 {
     SWSS_LOG_ENTER();
 
     auto sessionIter = m_syncdMirrors.find(name);
     if (sessionIter == m_syncdMirrors.end())
     {
-        SWSS_LOG_ERROR("Failed to delete session. Session %s doesn't exist.\n", name.c_str());
-        return;
+        SWSS_LOG_ERROR("Failed to remove non-existent mirror session %s",
+                name.c_str());
+        return task_process_status::task_invalid_entry;
     }
 
     auto& session = sessionIter->second;
 
     if (session.refCount)
     {
-        SWSS_LOG_ERROR("Failed to delete session. Session %s in use.\n", name.c_str());
-        return;
+        SWSS_LOG_WARN("Failed to remove still referenced mirror session %s, retry...",
+                name.c_str());
+        return task_process_status::task_need_retry;
     }
 
     if (session.status)
     {
         m_routeOrch->detach(this, session.dstIp);
-        deactivateSession(name, session);
+        if (!deactivateSession(name, session))
+        {
+            SWSS_LOG_ERROR("Failed to remove mirror session %s", name.c_str());
+            return task_process_status::task_failed;
+        }
     }
 
     if (!session.policer.empty())
@@ -382,9 +388,13 @@ void MirrorOrch::deleteEntry(const string& name)
         m_policerOrch->decreaseRefCount(session.policer);
     }
 
+    removeSessionState(name);
+
     m_syncdMirrors.erase(sessionIter);
 
     SWSS_LOG_NOTICE("Removed mirror session %s", name.c_str());
+
+    return task_process_status::task_success;
 }
 
 void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session, const string& attr)
@@ -436,6 +446,13 @@ void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session,
     m_mirrorTable.set(name, fvVector);
 }
 
+void MirrorOrch::removeSessionState(const string& name)
+{
+	SWSS_LOG_ENTER();
+
+	m_mirrorTable.del(name);
+}
+
 bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
@@ -447,7 +464,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
     // 3) Otherwise, return false.
     if (!m_neighOrch->getNeighborEntry(session.dstIp,
                 session.neighborInfo.neighbor, session.neighborInfo.mac) &&
-            (session.nexthopInfo.nexthop.isZero() ||
+            (session.nexthopInfo.nexthop.ip_address.isZero() ||
             !m_neighOrch->getNeighborEntry(session.nexthopInfo.nexthop,
                 session.neighborInfo.neighbor, session.neighborInfo.mac)))
     {
@@ -885,8 +902,8 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
 
         // This is the ECMP scenario that the new next hop group contains the previous
         // next hop. There is no need to update this session's monitor port.
-        if (update.nexthopGroup != IpAddresses() &&
-                update.nexthopGroup.getIpAddresses().count(session.nexthopInfo.nexthop))
+        if (update.nexthopGroup != NextHopGroupKey() &&
+                update.nexthopGroup.getNextHops().count(session.nexthopInfo.nexthop))
 
         {
             continue;
@@ -895,18 +912,18 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         SWSS_LOG_NOTICE("Updating mirror session %s with route %s",
                 name.c_str(), update.prefix.to_string().c_str());
 
-        if (update.nexthopGroup != IpAddresses())
+        if (update.nexthopGroup != NextHopGroupKey())
         {
             SWSS_LOG_NOTICE("    next hop IPs: %s", update.nexthopGroup.to_string().c_str());
 
             // Recover the session based on the state database information
             if (m_recoverySessionMap.find(name) != m_recoverySessionMap.end())
             {
-                IpAddress nexthop = IpAddress(tokenize(m_recoverySessionMap[name],
+                NextHopKey nexthop = NextHopKey(tokenize(m_recoverySessionMap[name],
                             state_db_key_delimiter, 1)[1]);
 
                 // Check if recovered next hop IP is within the update's next hop IPs
-                if (update.nexthopGroup.getIpAddresses().count(nexthop))
+                if (update.nexthopGroup.getNextHops().count(nexthop))
                 {
                     SWSS_LOG_NOTICE("Recover mirror session %s with next hop %s",
                             name.c_str(), nexthop.to_string().c_str());
@@ -918,18 +935,18 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
                     SWSS_LOG_NOTICE("Correct mirror session %s next hop from %s to %s",
                             name.c_str(), session.nexthopInfo.nexthop.to_string().c_str(),
                     nexthop.to_string().c_str());
-                    session.nexthopInfo.nexthop = *update.nexthopGroup.getIpAddresses().begin();
+                    session.nexthopInfo.nexthop = *update.nexthopGroup.getNextHops().begin();
                 }
             }
             else
             {
                 // Pick the first one from the next hop group
-                session.nexthopInfo.nexthop = *update.nexthopGroup.getIpAddresses().begin();
+                session.nexthopInfo.nexthop = *update.nexthopGroup.getNextHops().begin();
             }
         }
         else
         {
-            session.nexthopInfo.nexthop = IpAddress(0);
+            session.nexthopInfo.nexthop = NextHopKey("0.0.0.0", "");
         }
 
         // Resolve the neighbor of the new next hop
@@ -951,7 +968,7 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
         // Check if the session's destination IP matches the neighbor's update IP
         // or if the session's next hop IP matches the neighbor's update IP
         if (session.dstIp != update.entry.ip_address &&
-                session.nexthopInfo.nexthop != update.entry.ip_address)
+                session.nexthopInfo.nexthop.ip_address != update.entry.ip_address)
         {
             continue;
         }
@@ -1135,7 +1152,13 @@ void MirrorOrch::doTask(Consumer& consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            deleteEntry(key);
+            auto task_status = deleteEntry(key);
+            // Specifically retry the task when asked
+            if (task_status == task_process_status::task_need_retry)
+            {
+                it++;
+                continue;
+            }
         }
         else
         {

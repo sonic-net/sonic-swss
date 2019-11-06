@@ -2,14 +2,14 @@
 
 class Notifier : public Executor {
 public:
-    Notifier(NotificationConsumer *select, Orch *orch, const string &name)
+    Notifier(swss::NotificationConsumer *select, Orch *orch, const std::string &name)
         : Executor(select, orch, name)
     {
     }
 
-    NotificationConsumer *getNotificationConsumer() const
+    swss::NotificationConsumer *getNotificationConsumer() const
     {
-        return static_cast<NotificationConsumer *>(getSelectable());
+        return static_cast<swss::NotificationConsumer *>(getSelectable());
     }
 
     void execute()
