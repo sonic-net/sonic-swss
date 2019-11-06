@@ -702,49 +702,53 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
 
     if(macUpdate)
     {
-        /* delete and re-add fdb entry instead of update, 
+        /* delete and re-add fdb entry instead of update,
          * as entry may age out in HW/ASIC_DB before
          * update, causing the update request to fail.
          */
         SWSS_LOG_NOTICE("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s", entry.mac.to_string().c_str(), vlan.m_alias.c_str(), oldPort.m_alias.c_str(), port_name.c_str(), oldType.c_str(), type.c_str());
         status = sai_fdb_api->remove_fdb_entry(&fdb_entry);
         if (status != SAI_STATUS_SUCCESS)
-        { 
+        {
             SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: Failed to remove FDB entry. mac=%s, bv_id=0x%lx",
                            entry.mac.to_string().c_str(), entry.bv_id);
         }
-        status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to create %s FDB %s on %s, rv:%d",
-                    type.c_str(), entry.mac.to_string().c_str(), port_name.c_str(), status);
-            return false;
-        }
-
-        if (oldPort.m_bridge_port_id != port.m_bridge_port_id)
+        else
         {
             oldPort.m_fdb_count--;
             m_portsOrch->setPort(oldPort.m_alias, oldPort);
-            port.m_fdb_count++;
-            m_portsOrch->setPort(port.m_alias, port);
-        }
-    }
-    else
-    {
-        SWSS_LOG_INFO("MAC-Create %s FDB %s in %s on %s", type.c_str(), entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
+            if (oldPort.m_bridge_port_id == port.m_bridge_port_id)
+            {
+                port.m_fdb_count--;
+                m_portsOrch->setPort(port.m_alias, port);
+            }
+            vlan.m_fdb_count--;
+            m_portsOrch->setPort(vlan.m_alias, vlan);
+            (void)m_entries.erase(entry);
+            // Remove in StateDb
+            m_fdbStateTable.del(key);
 
-        status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to create %s FDB %s on %s, rv:%d",
-                    type.c_str(), entry.mac.to_string().c_str(), port_name.c_str(), status);
-            return false; //FIXME: it should be based on status. Some could be retried, some not
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
+            FdbUpdate update = {entry, port, type, true};
+            for (auto observer: m_observers)
+            {
+                observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+            }
         }
-        port.m_fdb_count++;
-        m_portsOrch->setPort(port.m_alias, port);
-        vlan.m_fdb_count++;
-        m_portsOrch->setPort(vlan.m_alias, vlan);
     }
+    SWSS_LOG_INFO("MAC-Create %s FDB %s in %s on %s", type.c_str(), entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
+
+    status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create %s FDB %s on %s, rv:%d",
+                type.c_str(), entry.mac.to_string().c_str(), port_name.c_str(), status);
+        return false; //FIXME: it should be based on status. Some could be retried, some not
+    }
+    port.m_fdb_count++;
+    m_portsOrch->setPort(port.m_alias, port);
+    vlan.m_fdb_count++;
+    m_portsOrch->setPort(vlan.m_alias, vlan);
 
     const FdbData fdbdata = {port.m_bridge_port_id, type};
     m_entries[entry] = fdbdata;
