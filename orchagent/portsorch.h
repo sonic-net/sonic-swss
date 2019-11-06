@@ -57,6 +57,7 @@ public:
 
     bool allPortsReady();
     bool isInitDone();
+    bool isConfigDone();
     bool isPortAdminUp(const string &alias);
 
     map<string, Port>& getAllPorts();
@@ -116,7 +117,14 @@ private:
     sai_object_id_t m_default1QBridge;
     sai_object_id_t m_defaultVlan;
 
-    bool m_portConfigDone = false;
+    typedef enum
+    {
+        PORT_CONFIG_MISSING,
+        PORT_CONFIG_RECEIVED,
+        PORT_CONFIG_DONE,
+    } port_config_state_t;
+
+    port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;
     sai_uint32_t m_portCount;
     map<set<int>, sai_object_id_t> m_portListLaneMap;
     map<set<int>, tuple<string, uint32_t, int, string>> m_lanesAliasSpeedMap;

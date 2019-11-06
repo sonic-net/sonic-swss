@@ -394,10 +394,21 @@ bool PortsOrch::allPortsReady()
     return m_initDone && m_pendingPortSet.empty();
 }
 
-/* Upon receiving PortInitDone, all the configured ports have been created*/
+/* Upon receiving PortInitDone, all the configured ports have been created in both hardware and kernel*/
 bool PortsOrch::isInitDone()
 {
     return m_initDone;
+}
+
+// Upon m_portConfigState transiting to PORT_CONFIG_DONE state, all physical ports have been "created" in hardware.
+// Because of the asynchronous nature of sairedis calls, "create" in the strict sense means that the SAI create_port()
+// function is called and the create port event has been pushed to the sairedis pipeline. Because sairedis pipeline
+// preserves the order of the events received, any event that depends on the physical port being created first, e.g.,
+// buffer profile apply, will be popped in the FIFO fashion, processed in the right order after the physical port is
+// physically created in the ASIC, and thus can be issued safely when this function call returns true.
+bool PortsOrch::isConfigDone()
+{
+    return m_portConfigState == PORT_CONFIG_DONE;
 }
 
 bool PortsOrch::isPortAdminUp(const string &alias)
@@ -1513,14 +1524,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (alias == "PortConfigDone")
         {
-            if (m_portConfigDone)
+            if (m_portConfigState != PORT_CONFIG_MISSING)
             {
-                // Already done, ignore this task
+                // Already received, ignore this task
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
 
-            m_portConfigDone = true;
+            m_portConfigState = PORT_CONFIG_RECEIVED;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -1652,7 +1663,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
              * 2. Create new ports
              * 3. Initialize all ports
              */
-            if (m_portConfigDone && (m_lanesAliasSpeedMap.size() == m_portCount))
+            if (m_portConfigState == PORT_CONFIG_RECEIVED && (m_lanesAliasSpeedMap.size() == m_portCount))
             {
                 for (auto it = m_portListLaneMap.begin(); it != m_portListLaneMap.end();)
                 {
@@ -1697,9 +1708,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     it = m_lanesAliasSpeedMap.erase(it);
                 }
+
+                m_portConfigState = PORT_CONFIG_DONE;
             }
 
-            if (!m_portConfigDone)
+            if (m_portConfigState != PORT_CONFIG_DONE)
             {
                 // Not yet receive PortConfigDone. Save it for future retry
                 it++;
