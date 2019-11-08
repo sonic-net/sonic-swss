@@ -700,6 +700,8 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
     attrs.push_back(attr);
 
+    string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
+    
     if(macUpdate)
     {
         /* delete and re-add fdb entry instead of update,
@@ -752,8 +754,6 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
 
     const FdbData fdbdata = {port.m_bridge_port_id, type};
     m_entries[entry] = fdbdata;
-
-    string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
 
     // Write to StateDb
     std::vector<FieldValueTuple> fvs;
