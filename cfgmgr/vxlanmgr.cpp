@@ -89,13 +89,16 @@ static int cmdAddVxlanIntoVxlanIf(const swss::VxlanMgr::VxlanInfo & info, std::s
         << shellquote(info.m_vxlanIf)
         << " "
         << shellquote(info.m_vxlan);
-    // Change the MAC address of Vxlan bridge interface to ensure it's same with switch's.
-    // Otherwise it will not response traceroute packets.
-    // ip link set dev {{VXLAN_IF}} address {{MAC_ADDRESS}}
-    cmd << " && " IP_CMD " link set dev "
-        << shellquote(info.m_vxlanIf)
-        << " address "
-        << shellquote(info.m_macAddress);
+    if (!info.m_macAddress.empty())
+    {
+        // Change the MAC address of Vxlan bridge interface to ensure it's same with switch's.
+        // Otherwise it will not response traceroute packets.
+        // ip link set dev {{VXLAN_IF}} address {{MAC_ADDRESS}}
+        cmd << " && " IP_CMD " link set dev "
+            << shellquote(info.m_vxlanIf)
+            << " address "
+            << shellquote(info.m_macAddress);
+    }
     return swss::exec(cmd.str(), res);
 }
 
@@ -295,13 +298,14 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     }
     
     // If the mac address has been set
-    info.m_macAddress = getVxlanRouterMacAddress();
-    if (info.m_macAddress.empty())
+    auto macAddress = getVxlanRouterMacAddress();
+    if (macAddress.first)
     {
         SWSS_LOG_DEBUG("Mac address is not ready");
         // Suspend this message util the mac address is set
         return false;
     }
+    info.m_macAddress = macAddress.second;
 
     auto sourceIp = std::find_if(
         it->second.begin(),
@@ -452,7 +456,7 @@ bool VxlanMgr::isVxlanStateOk(const std::string & vxlanName)
     return false;
 }
 
-std::string VxlanMgr::getVxlanRouterMacAddress()
+std::pair<bool, std::string> VxlanMgr::getVxlanRouterMacAddress()
 {
     std::vector<FieldValueTuple> temp;
 
@@ -465,12 +469,14 @@ std::string VxlanMgr::getVxlanRouterMacAddress()
         if (itr != temp.end() && !(itr->second.empty()))
         {
             SWSS_LOG_DEBUG("Mac address %s is ready", itr->second.c_str());
-            return itr->second;
+            return std::make_pair(true, itr->second);
         }
+        SWSS_LOG_DEBUG("Mac address will be automatically set");
+        return std::make_pair(true, "");
     }
     
     SWSS_LOG_DEBUG("Mac address is not ready");
-    return std::string();
+    return std::make_pair(false, "");
 }
 
 bool VxlanMgr::createVxlan(const VxlanInfo & info)
