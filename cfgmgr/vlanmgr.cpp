@@ -452,7 +452,15 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             /* set up host env .... */
             for (auto i : kfvFieldsValues(t))
             {
-                if (fvField(i) == "mtu")
+                /* Set vlan admin status */
+                if (fvField(i) == "admin_status")	
+                {	
+                    admin_status = fvValue(i);	
+                    setHostVlanAdminState(vlan_id, admin_status);	
+                    fvVector.push_back(i);	
+                }	
+                /* Set vlan mtu */	
+                else if (fvField(i) == "mtu")
                 {
                     mtu = fvValue(i);
                     /*
