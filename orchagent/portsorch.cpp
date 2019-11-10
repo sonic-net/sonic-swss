@@ -1288,7 +1288,6 @@ void PortsOrch::updateDbVlanOperStatus(const Port& vlan, string status) const
     vector<FieldValueTuple> tuples;
     FieldValueTuple tuple("oper_status", status);
     tuples.push_back(tuple);
-    m_vlanTable->set(vlan.m_alias, tuples);
 
     std::vector<swss::FieldValueTuple> entry;
 
