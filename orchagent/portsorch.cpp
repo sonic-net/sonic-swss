@@ -40,6 +40,7 @@ extern BufferOrch *gBufferOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
+#define MAX_VALID_VLAN_ID   4094
 #define PORT_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 #define QUEUE_FLEX_STAT_COUNTER_POLL_MSECS "10000"
 #define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
@@ -394,12 +395,34 @@ bool PortsOrch::allPortsReady()
     return m_initDone && m_pendingPortSet.empty();
 }
 
-/* Upon receiving PortInitDone, all the configured ports have been created*/
+/* Upon receiving PortInitDone, all the configured ports have been created in both hardware and kernel*/
 bool PortsOrch::isInitDone()
 {
     return m_initDone;
 }
 
+// Upon m_portConfigState transiting to PORT_CONFIG_DONE state, all physical ports have been "created" in hardware.
+// Because of the asynchronous nature of sairedis calls, "create" in the strict sense means that the SAI create_port()
+// function is called and the create port event has been pushed to the sairedis pipeline. Because sairedis pipeline
+// preserves the order of the events received, any event that depends on the physical port being created first, e.g.,
+// buffer profile apply, will be popped in the FIFO fashion, processed in the right order after the physical port is
+// physically created in the ASIC, and thus can be issued safely when this function call returns true.
+bool PortsOrch::isConfigDone()
+{
+    return m_portConfigState == PORT_CONFIG_DONE;
+}
+
+bool PortsOrch::isPortAdminUp(const string &alias)
+{
+    auto it = m_portList.find(alias);
+    if (it == m_portList.end())
+    {
+        SWSS_LOG_ERROR("Failed to get Port object by port alias: %s", alias.c_str());
+        return false;
+    }
+
+    return it->second.m_admin_state_up;
+}
 
 map<string, Port>& PortsOrch::getAllPorts()
 {
@@ -524,6 +547,101 @@ bool PortsOrch::getAclBindPortId(string alias, sai_object_id_t &port_id)
     {
         return false;
     }
+}
+
+bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp, const uint32_t &mtu)
+{
+    size_t found = alias.find(VLAN_SUB_INTERFACE_SEPARATOR);
+    if (found == string::npos)
+    {
+        SWSS_LOG_ERROR("%s is not a sub interface", alias.c_str());
+        return false;
+    }
+    string parentAlias = alias.substr(0, found);
+    string vlanId = alias.substr(found + 1);
+    sai_vlan_id_t vlan_id;
+    try
+    {
+        vlan_id = static_cast<sai_vlan_id_t>(stoul(vlanId));
+    }
+    catch (const std::invalid_argument &e)
+    {
+        SWSS_LOG_ERROR("Invalid argument %s to %s()", vlanId.c_str(), e.what());
+        return false;
+    }
+    catch (const std::out_of_range &e)
+    {
+        SWSS_LOG_ERROR("Out of range argument %s to %s()", vlanId.c_str(), e.what());
+        return false;
+    }
+    if (vlan_id > MAX_VALID_VLAN_ID)
+    {
+        SWSS_LOG_ERROR("sub interface %s Port object creation: invalid VLAN id %u", alias.c_str(), vlan_id);
+        return false;
+    }
+
+    auto it = m_portList.find(parentAlias);
+    if (it == m_portList.end())
+    {
+        SWSS_LOG_NOTICE("Sub interface %s Port object creation: parent port %s is not ready", alias.c_str(), parentAlias.c_str());
+        return false;
+    }
+    Port &parentPort = it->second;
+
+    Port p(alias, Port::SUBPORT);
+
+    p.m_admin_state_up = adminUp;
+
+    if (mtu)
+    {
+        p.m_mtu = mtu;
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Sub interface %s inherits mtu size %u from parent port %s", alias.c_str(), parentPort.m_mtu, parentAlias.c_str());
+        p.m_mtu = parentPort.m_mtu;
+    }
+
+    p.m_parent_port_id = parentPort.m_port_id;
+    p.m_vlan_info.vlan_id = vlan_id;
+
+    parentPort.m_child_ports.insert(p.m_alias);
+
+    m_portList[alias] = p;
+    port = p;
+    return true;
+}
+
+bool PortsOrch::removeSubPort(const string &alias)
+{
+    auto it = m_portList.find(alias);
+    if (it == m_portList.end())
+    {
+        SWSS_LOG_WARN("Sub interface %s Port object not found", alias.c_str());
+        return false;
+    }
+    Port &port = it->second;
+
+    if (port.m_type != Port::SUBPORT)
+    {
+        SWSS_LOG_ERROR("Sub interface %s not of type sub port", alias.c_str());
+        return false;
+    }
+
+    Port parentPort;
+    if (!getPort(port.m_parent_port_id, parentPort))
+    {
+        SWSS_LOG_WARN("Sub interface %s: parent Port object not found", alias.c_str());
+    }
+
+    if (!parentPort.m_child_ports.erase(alias))
+    {
+        SWSS_LOG_WARN("Sub interface %s not associated to parent port %s", alias.c_str(), parentPort.m_alias.c_str());
+    }
+    m_portList[parentPort.m_alias] = parentPort;
+
+    m_portList.erase(it);
+    return true;
 }
 
 void PortsOrch::setPort(string alias, Port p)
@@ -1460,6 +1578,16 @@ bool PortsOrch::bake()
         return false;
     }
 
+    for (const auto& alias: keys)
+    {
+        if (alias == "PortConfigDone" || alias == "PortInitDone")
+        {
+            continue;
+        }
+
+        m_pendingPortSet.emplace(alias);
+    }
+
     addExistingData(m_portTable.get());
     addExistingData(APP_LAG_TABLE_NAME);
     addExistingData(APP_LAG_MEMBER_TABLE_NAME);
@@ -1492,14 +1620,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (alias == "PortConfigDone")
         {
-            if (m_portConfigDone)
+            if (m_portConfigState != PORT_CONFIG_MISSING)
             {
-                // Already done, ignore this task
+                // Already received, ignore this task
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
 
-            m_portConfigDone = true;
+            m_portConfigState = PORT_CONFIG_RECEIVED;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -1631,7 +1759,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
              * 2. Create new ports
              * 3. Initialize all ports
              */
-            if (m_portConfigDone && (m_lanesAliasSpeedMap.size() == m_portCount))
+            if (m_portConfigState == PORT_CONFIG_RECEIVED && (m_lanesAliasSpeedMap.size() == m_portCount))
             {
                 for (auto it = m_portListLaneMap.begin(); it != m_portListLaneMap.end();)
                 {
@@ -1676,9 +1804,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     it = m_lanesAliasSpeedMap.erase(it);
                 }
+
+                m_portConfigState = PORT_CONFIG_DONE;
             }
 
-            if (!m_portConfigDone)
+            if (m_portConfigState != PORT_CONFIG_DONE)
             {
                 // Not yet receive PortConfigDone. Save it for future retry
                 it++;

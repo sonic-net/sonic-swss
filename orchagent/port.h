@@ -44,6 +44,7 @@ public:
         LOOPBACK,
         VLAN,
         LAG,
+        SUBPORT,
         UNKNOWN
     } ;
 
@@ -86,8 +87,10 @@ public:
     sai_object_id_t     m_ingress_acl_table_group_id = 0;
     sai_object_id_t     m_egress_acl_table_group_id = 0;
     vlan_members_t      m_vlan_members;
+    sai_object_id_t     m_parent_port_id = 0;
     sai_port_oper_status_t m_oper_status = SAI_PORT_OPER_STATUS_UNKNOWN;
     std::set<std::string> m_members;
+    std::set<std::string> m_child_ports;
     std::vector<sai_object_id_t> m_queue_ids;
     std::vector<sai_object_id_t> m_priority_group_ids;
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;

@@ -372,19 +372,6 @@ public:
     void update(SubjectType, void *);
 };
 
-template <class Iterable>
-inline void split(string str, Iterable& out, char delim = ' ')
-{
-    string val;
-
-    istringstream input(str);
-
-    while (getline(input, val, delim))
-    {
-        out.push_back(val);
-    }
-}
-
 class AclOrch : public Orch, public Observer
 {
 public:
@@ -432,6 +419,8 @@ private:
 
     void queryMirrorTableCapability();
     void queryAclActionCapability();
+    void initDefaultAclActionCapabilities(acl_stage_type_t);
+    void putAclActionCapabilityInDB(acl_stage_type_t);
 
     template<typename AclActionAttrLookupT>
     void queryAclActionAttrEnumValues(const string& action_name,

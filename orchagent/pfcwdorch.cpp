@@ -759,6 +759,11 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
     PfcWdOrch<DropHandler, ForwardHandler>::doTask(consumer);
 
+    if (!gPortsOrch->allPortsReady())
+    {
+        return;
+    }
+
     if ((consumer.getDbId() == APPL_DB) && (consumer.getTableName() == APP_PFC_WD_TABLE_NAME))
     {
         auto it = consumer.m_toSync.begin();

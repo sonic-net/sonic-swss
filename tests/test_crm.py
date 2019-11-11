@@ -60,7 +60,7 @@ def setReadOnlyAttr(dvs, obj, attr, val):
 
 def check_syslog(dvs, marker, err_log, expected_cnt):
     (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
-    assert num.strip() == str(expected_cnt)
+    assert num.strip() >= str(expected_cnt)
 
 class TestCrm(object):
     def test_CrmFdbEntry(self, dvs, testlog):
