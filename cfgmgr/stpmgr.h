@@ -1,7 +1,19 @@
 /*
- * Copyright 2019 Broadcom. All rights reserved.
- * The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
- */ 
+ * Copyright 2019 Broadcom. The term "Broadcom" refers to Broadcom Inc. and/or
+ * its subsidiaries.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 #pragma once
 
@@ -62,8 +74,8 @@ public:
 private:
     Table m_cfgStpGlobalTable;
     Table m_cfgStpVlanTable;
-    Table m_cfgStpVlanIntfTable;
-    Table m_cfgStpIntfTable;
+    Table m_cfgStpVlanPortTable;
+    Table m_cfgStpPortTable;
     Table m_cfgLagMemberTable;
     Table m_cfgVlanMemberTable;
     Table m_stateVlanTable;
@@ -81,29 +93,29 @@ private:
 
     bool stpGlobalTask;
     bool stpVlanTask;
-    bool stpVlanIntfTask;
-    bool stpIntfTask;
+    bool stpVlanPortTask;
+    bool stpPortTask;
 
     void doTask(Consumer &consumer);
     void doStpGlobalTask(Consumer &consumer);
     void doStpVlanTask(Consumer &consumer);
-    void doStpVlanIntfTask(Consumer &consumer);
-    void doStpIntfTask(Consumer &consumer);
+    void doStpVlanPortTask(Consumer &consumer);
+    void doStpPortTask(Consumer &consumer);
     void doVlanMemUpdateTask(Consumer &consumer);
     void doLagMemUpdateTask(Consumer &consumer);
 
     bool isVlanStateOk(const string &alias);
     bool isLagStateOk(const string &alias);
-    bool isStpIntfEmpty();
+    bool isStpPortEmpty();
     bool isStpEnabled(const string &intf_name);
     int getAllVlanMem(const string &vlanKey, vector<PORT_ATTR>&port_list);
-    int getAllIntfVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list);
+    int getAllPortVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list);
     int8_t getVlanMemMode(const string &key);
     int allocL2Instance(uint32_t vlan_id);
     void deallocL2Instance(uint32_t vlan_id);
     bool isLagEmpty(const string &key);
-    void processStpIntfAttr(const string op, vector<FieldValueTuple>&tupEntry, const string intfName);
-    void processStpVlanIntfAttr(const string op, uint32_t vlan_id, const string intfName,
+    void processStpPortAttr(const string op, vector<FieldValueTuple>&tupEntry, const string intfName);
+    void processStpVlanPortAttr(const string op, uint32_t vlan_id, const string intfName,
                     vector<FieldValueTuple>&tupEntry);
 };
 

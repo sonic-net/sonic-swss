@@ -1,6 +1,18 @@
 /*
- * Copyright 2019 Broadcom. All rights reserved.
- * The term "Broadcom" refers to Broadcom Inc. and/or its subsidiaries.
+ * Copyright 2019 Broadcom. The term "Broadcom" refers to Broadcom Inc. and/or
+ * its subsidiaries.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
 
 #include "exec.h"
@@ -27,8 +39,8 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     Orch(tables),
     m_cfgStpGlobalTable(confDb, CFG_STP_GLOBAL_TABLE_NAME),
     m_cfgStpVlanTable(confDb, CFG_STP_VLAN_TABLE_NAME),
-    m_cfgStpVlanIntfTable(confDb, CFG_STP_VLAN_INTF_TABLE_NAME),
-    m_cfgStpIntfTable(confDb, CFG_STP_INTF_TABLE_NAME),
+    m_cfgStpVlanPortTable(confDb, CFG_STP_VLAN_PORT_TABLE_NAME),
+    m_cfgStpPortTable(confDb, CFG_STP_PORT_TABLE_NAME),
     m_cfgLagMemberTable(confDb, CFG_LAG_MEMBER_TABLE_NAME),
     m_cfgVlanMemberTable(confDb, CFG_VLAN_MEMBER_TABLE_NAME),
     m_stateVlanTable(statDb, STATE_VLAN_TABLE_NAME),
@@ -39,7 +51,7 @@ StpMgr::StpMgr(DBConnector *confDb, DBConnector *applDb, DBConnector *statDb,
     SWSS_LOG_ENTER();
     l2ProtoEnabled = L2_NONE;
 
-    stpGlobalTask = stpVlanTask = stpVlanIntfTask = stpIntfTask = false;
+    stpGlobalTask = stpVlanTask = stpVlanPortTask = stpPortTask = false;
 
     // Initialize all VLANs to Invalid instance
     fill_n(m_vlanInstMap, MAX_VLANS, INVALID_INSTANCE);
@@ -58,10 +70,10 @@ void StpMgr::doTask(Consumer &consumer)
         doStpGlobalTask(consumer);
     else if (table == CFG_STP_VLAN_TABLE_NAME)
         doStpVlanTask(consumer);
-    else if (table == CFG_STP_VLAN_INTF_TABLE_NAME)
-        doStpVlanIntfTask(consumer);
-    else if (table == CFG_STP_INTF_TABLE_NAME)
-        doStpIntfTask(consumer);
+    else if (table == CFG_STP_VLAN_PORT_TABLE_NAME)
+        doStpVlanPortTask(consumer);
+    else if (table == CFG_STP_PORT_TABLE_NAME)
+        doStpPortTask(consumer);
     else if (table == CFG_LAG_MEMBER_TABLE_NAME)
         doLagMemUpdateTask(consumer);
     else if (table == STATE_VLAN_MEMBER_TABLE_NAME)
@@ -152,7 +164,7 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (stpGlobalTask == false || (stpIntfTask == false && !isStpIntfEmpty()))
+    if (stpGlobalTask == false || (stpPortTask == false && !isStpPortEmpty()))
         return;
 
     if (stpVlanTask == false)
@@ -309,11 +321,11 @@ void StpMgr::doStpVlanTask(Consumer &consumer)
     }
 }
 
-void StpMgr::processStpVlanIntfAttr(const string op, uint32_t vlan_id, const string intfName,
+void StpMgr::processStpVlanPortAttr(const string op, uint32_t vlan_id, const string intfName,
         vector<FieldValueTuple>&tupEntry)
 {
-    STP_VLAN_INTF_CONFIG_MSG msg;
-    memset(&msg, 0, sizeof(STP_VLAN_INTF_CONFIG_MSG));
+    STP_VLAN_PORT_CONFIG_MSG msg;
+    memset(&msg, 0, sizeof(STP_VLAN_PORT_CONFIG_MSG));
 
     msg.vlan_id = vlan_id;
     msg.inst_id = m_vlanInstMap[vlan_id];
@@ -342,24 +354,24 @@ void StpMgr::processStpVlanIntfAttr(const string op, uint32_t vlan_id, const str
         msg.opcode = STP_DEL_COMMAND;
     }
 
-    sendMsgStpd(STP_VLAN_INTF_CONFIG, sizeof(msg), (void *)&msg);
+    sendMsgStpd(STP_VLAN_PORT_CONFIG, sizeof(msg), (void *)&msg);
 }
 
-void StpMgr::doStpVlanIntfTask(Consumer &consumer)
+void StpMgr::doStpVlanPortTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (stpGlobalTask == false || stpVlanTask == false || stpIntfTask == false)
+    if (stpGlobalTask == false || stpVlanTask == false || stpPortTask == false)
         return;
 
-    if (stpVlanIntfTask == false)
-        stpVlanIntfTask = true;
+    if (stpVlanPortTask == false)
+        stpVlanPortTask = true;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        STP_VLAN_INTF_CONFIG_MSG msg;
-        memset(&msg, 0, sizeof(STP_VLAN_INTF_CONFIG_MSG));
+        STP_VLAN_PORT_CONFIG_MSG msg;
+        memset(&msg, 0, sizeof(STP_VLAN_PORT_CONFIG_MSG));
 
         KeyOpFieldsValuesTuple t = it->second;
 
@@ -410,24 +422,24 @@ void StpMgr::doStpVlanIntfTask(Consumer &consumer)
             continue;
         }
 
-        processStpVlanIntfAttr(op, vlan_id, intfName, kfvFieldsValues(t));
+        processStpVlanPortAttr(op, vlan_id, intfName, kfvFieldsValues(t));
 
         it = consumer.m_toSync.erase(it);
     }
 }
 
-void StpMgr::processStpIntfAttr(const string op, vector<FieldValueTuple>&tupEntry, const string intfName)
+void StpMgr::processStpPortAttr(const string op, vector<FieldValueTuple>&tupEntry, const string intfName)
 {
-    STP_INTF_CONFIG_MSG *msg;
+    STP_PORT_CONFIG_MSG *msg;
     uint32_t len = 0;
     int vlanCnt = 0;
     vector<VLAN_ATTR> vlan_list;
 
     if (op == SET_COMMAND)
-        vlanCnt = getAllIntfVlan(intfName, vlan_list);
+        vlanCnt = getAllPortVlan(intfName, vlan_list);
 
-    len = (uint32_t)(sizeof(STP_INTF_CONFIG_MSG) + (vlanCnt * sizeof(VLAN_ATTR)));
-    msg = (STP_INTF_CONFIG_MSG *)calloc(1, len);
+    len = (uint32_t)(sizeof(STP_PORT_CONFIG_MSG) + (vlanCnt * sizeof(VLAN_ATTR)));
+    msg = (STP_PORT_CONFIG_MSG *)calloc(1, len);
     if (!msg)
     {
         SWSS_LOG_ERROR("mem failed for %s", intfName.c_str());
@@ -499,20 +511,20 @@ void StpMgr::processStpIntfAttr(const string op, vector<FieldValueTuple>&tupEntr
         msg->enabled = 0;
     }
 
-    sendMsgStpd(STP_INTF_CONFIG, len, (void *)msg);
+    sendMsgStpd(STP_PORT_CONFIG, len, (void *)msg);
     if (msg)
         free(msg);
 }
 
-void StpMgr::doStpIntfTask(Consumer &consumer)
+void StpMgr::doStpPortTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
     if (stpGlobalTask == false)
         return;
 
-    if (stpIntfTask == false)
-        stpIntfTask = true;
+    if (stpPortTask == false)
+        stpPortTask = true;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -546,8 +558,8 @@ void StpMgr::doStpIntfTask(Consumer &consumer)
             }
         }
 
-        SWSS_LOG_INFO("STP intf key:%s op:%s", key.c_str(), op.c_str());
-        processStpIntfAttr(op, kfvFieldsValues(t), key);
+        SWSS_LOG_INFO("STP port key:%s op:%s", key.c_str(), op.c_str());
+        processStpPortAttr(op, kfvFieldsValues(t), key);
 
         it = consumer.m_toSync.erase(it);
     }
@@ -605,10 +617,10 @@ void StpMgr::doVlanMemUpdateTask(Consumer &consumer)
 
                 msg.enabled = isStpEnabled(intfName);
 
-                vector<FieldValueTuple> stpVlanIntfEntry;
-                if (m_cfgStpVlanIntfTable.get(key, stpVlanIntfEntry))
+                vector<FieldValueTuple> stpVlanPortEntry;
+                if (m_cfgStpVlanPortTable.get(key, stpVlanPortEntry))
                 {
-                    for (auto entry : stpVlanIntfEntry)
+                    for (auto entry : stpVlanPortEntry)
                     {
                         if (entry.first == "priority")
                             msg.priority = stoi(entry.second);
@@ -706,20 +718,20 @@ void StpMgr::doLagMemUpdateTask(Consumer &consumer)
             vector<VLAN_ATTR> vlan_list;
             vector<FieldValueTuple> tupEntry;
 
-            if (m_cfgStpIntfTable.get(po_name, tupEntry))
+            if (m_cfgStpPortTable.get(po_name, tupEntry))
             {
-                //Push STP_INTF configs for this interface
-                processStpIntfAttr(op, tupEntry, po_name);
+                //Push STP_PORT configs for this port
+                processStpPortAttr(op, tupEntry, po_name);
                             
-                getAllIntfVlan(po_name, vlan_list);
-                //Push STP_VLAN_INTF configs for this interface
+                getAllPortVlan(po_name, vlan_list);
+                //Push STP_VLAN_PORT configs for this port
                 for (auto p = vlan_list.begin(); p != vlan_list.end(); p++)
                 {
-                    vector<FieldValueTuple> vlanIntfTup;
+                    vector<FieldValueTuple> vlanPortTup;
 
-                    string vlanIntfKey = "Vlan" + to_string(p->vlan_id) + "|" + po_name;
-                    if (m_cfgStpVlanIntfTable.get(vlanIntfKey, vlanIntfTup))
-                        processStpVlanIntfAttr(op, p->vlan_id, po_name, vlanIntfTup);
+                    string vlanPortKey = "Vlan" + to_string(p->vlan_id) + "|" + po_name;
+                    if (m_cfgStpVlanPortTable.get(vlanPortKey, vlanPortTup))
+                        processStpVlanPortAttr(op, p->vlan_id, po_name, vlanPortTup);
                 }
             }
         }
@@ -851,7 +863,7 @@ int StpMgr::getAllVlanMem(const string &vlanKey, vector<PORT_ATTR>&port_list)
     return (int)port_list.size();
 }
 
-int StpMgr::getAllIntfVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list)
+int StpMgr::getAllPortVlan(const string &intfKey, vector<VLAN_ATTR>&vlan_list)
 {
     VLAN_ATTR vlan;
     vector<FieldValueTuple> vmEntry;
@@ -1005,18 +1017,18 @@ bool StpMgr::isLagEmpty(const string &key)
     return false;
 }
 
-bool StpMgr::isStpIntfEmpty()
+bool StpMgr::isStpPortEmpty()
 {
-    vector<string> intfKeys;
-    m_cfgStpIntfTable.getKeys(intfKeys);
+    vector<string> portKeys;
+    m_cfgStpPortTable.getKeys(portKeys);
 
-    if (intfKeys.empty())
+    if (portKeys.empty())
     {
-        SWSS_LOG_NOTICE("stp intf empty");
+        SWSS_LOG_NOTICE("stp port empty");
         return true;
     }
 
-    SWSS_LOG_NOTICE("stp intf not empty");
+    SWSS_LOG_NOTICE("stp port not empty");
     return false;
 }
 
@@ -1024,7 +1036,7 @@ bool StpMgr::isStpEnabled(const string &intf_name)
 {
     vector<FieldValueTuple> temp;
 
-    if (m_cfgStpIntfTable.get(intf_name, temp))
+    if (m_cfgStpPortTable.get(intf_name, temp))
     {
         for (auto entry : temp)
         {
