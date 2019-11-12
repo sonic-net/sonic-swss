@@ -44,6 +44,7 @@ private:
 
     bool setLagAdminStatus(const std::string &alias, const std::string &admin_status);
     bool setLagMtu(const std::string &alias, const std::string &mtu);
+    bool setLagLearnMode(const std::string &alias, const std::string &learn_mode);
 
     bool isPortEnslaved(const std::string &);
     bool findPortMaster(std::string &, const std::string &);

@@ -40,6 +40,6 @@ namespace swss
 
     int DBConnector::getDbId() const
     {
-        return 12345;
+        return m_dbId;
     }
 }

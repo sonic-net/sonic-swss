@@ -579,7 +579,7 @@ void PfcWdZeroBufferHandler::ZeroBufferProfile::createZeroBufferProfile(bool ing
 
     // Create zero pool
     attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-    attr.value.u32 = 0;
+    attr.value.u64 = 0;
     attribs.push_back(attr);
 
     attr.id = SAI_BUFFER_POOL_ATTR_TYPE;

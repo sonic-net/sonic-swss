@@ -18,6 +18,8 @@
 
 #include <iostream>
 #include <set>
+#include <sstream>
+#include <iomanip>
 
 using namespace std;
 using namespace swss;
@@ -58,11 +60,12 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
          * This piece of information is used by SNMP. */
         if (!key.compare(0, MGMT_PREFIX.length(), MGMT_PREFIX))
         {
-            string cmd, res;
-            cmd = "cat /sys/class/net/" + key + "/operstate";
+            ostringstream cmd;
+            string res;
+            cmd << "cat /sys/class/net/" << shellquote(key) << "/operstate";
             try
             {
-                EXEC_WITH_ERROR_THROW(cmd, res);
+                EXEC_WITH_ERROR_THROW(cmd.str(), res);
             }
             catch (...)
             {
@@ -132,13 +135,14 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
 
             m_ifindexOldNameMap[idx_p->if_index] = key;
 
-            string cmd, res;
+            ostringstream cmd;
+            string res;
             /* Bring down the existing kernel interfaces */
             SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
-            cmd = "ip link set " + key + " down";
+            cmd << "ip link set " << quoted(key) << " down";
             try
             {
-                swss::exec(cmd, res);
+                swss::exec(cmd.str(), res);
             }
             catch (...)
             {
