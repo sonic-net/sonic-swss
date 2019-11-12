@@ -7,7 +7,7 @@
 #include <unordered_set>
 
 #include "orch.h"
-#include "dynamic_flex_counter_manager.h"
+#include "flex_counter_stat_manager.h"
 #include "debug_counter.h"
 #include "drop_counter.h"
 
@@ -76,7 +76,7 @@ private:
     std::shared_ptr<swss::Table> m_counterNameToPortStatMap = nullptr;
     std::shared_ptr<swss::Table> m_counterNameToSwitchStatMap = nullptr;
 
-    DynamicFlexCounterManager flex_counter_manager;
+    FlexCounterStatManager flex_counter_manager;
 
     std::unordered_map<std::string, std::unique_ptr<DebugCounter>> debug_counters;
 
