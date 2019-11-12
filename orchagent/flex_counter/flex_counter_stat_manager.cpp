@@ -11,7 +11,7 @@ using std::unordered_set;
 using swss::FieldValueTuple;
 
 FlexCounterStatManager::FlexCounterStatManager(
-        const string &group_name,
+        const string& group_name,
         const StatsMode stats_mode,
         const int polling_interval) :
     FlexCounterManager(group_name, stats_mode, polling_interval)
@@ -28,7 +28,7 @@ FlexCounterStatManager::~FlexCounterStatManager()
 void FlexCounterStatManager::addFlexCounterStat(
         const sai_object_id_t object_id,
         const CounterType counter_type,
-        const string &counter_stat)
+        const string& counter_stat)
 {
     SWSS_LOG_ENTER();
 
@@ -53,7 +53,7 @@ void FlexCounterStatManager::addFlexCounterStat(
 void FlexCounterStatManager::removeFlexCounterStat(
         const sai_object_id_t object_id,
         const CounterType counter_type,
-        const string &counter_stat)
+        const string& counter_stat)
 {
     SWSS_LOG_ENTER();
 

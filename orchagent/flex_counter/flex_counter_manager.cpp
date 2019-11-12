@@ -1,6 +1,7 @@
 #include "flex_counter_manager.h"
 
 #include <vector>
+
 #include "schema.h"
 #include "rediscommand.h"
 #include "logger.h"
@@ -15,8 +16,8 @@ using swss::DBConnector;
 using swss::FieldValueTuple;
 using swss::ProducerTable;
 
-static const string FLEX_COUNTER_ENABLE("enable");
-static const string FLEX_COUNTER_DISABLE("disable");
+const string FLEX_COUNTER_ENABLE("enable");
+const string FLEX_COUNTER_DISABLE("disable");
 
 const unordered_map<StatsMode, string> FlexCounterManager::stats_mode_lookup =
 {
@@ -31,7 +32,7 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
 
 // This constructor will create a group that is disabled by default.
 FlexCounterManager::FlexCounterManager(
-        const string &group_name,
+        const string& group_name,
         const StatsMode stats_mode,
         const uint polling_interval) :
     group_name(group_name),
@@ -57,11 +58,12 @@ FlexCounterManager::~FlexCounterManager()
 {
     SWSS_LOG_ENTER();
 
-    flex_counter_group_table->del(group_name);
-    for (const auto &counter: installed_counters)
+    for (const auto& counter: installed_counters)
     {
         flex_counter_table->del(getFlexCounterTableKey(group_name, counter));
     }
+
+    flex_counter_group_table->del(group_name);
 
     SWSS_LOG_DEBUG("Deleted flex counter group '%s'.", group_name.c_str());
 }
@@ -130,7 +132,7 @@ void FlexCounterManager::disableFlexCounterGroup()
 void FlexCounterManager::setCounterIdList(
         const sai_object_id_t object_id,
         const CounterType counter_type,
-        const unordered_set<string> &counter_stats)
+        const unordered_set<string>& counter_stats)
 {
     SWSS_LOG_ENTER();
 
@@ -178,7 +180,7 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
 }
 
 string FlexCounterManager::getFlexCounterTableKey(
-        const string &group_name,
+        const string& group_name,
         const sai_object_id_t object_id) const
 {
     SWSS_LOG_ENTER();
@@ -188,12 +190,12 @@ string FlexCounterManager::getFlexCounterTableKey(
 
 // serializeCounterStats turns a set of stats into a format suitable for FLEX_COUNTER_DB.
 string FlexCounterManager::serializeCounterStats(
-        const unordered_set<string> &counter_stats) const
+        const unordered_set<string>& counter_stats) const
 {
     SWSS_LOG_ENTER();
 
     string stats_string;
-    for (const auto &stat : counter_stats)
+    for (const auto& stat : counter_stats)
     {
         stats_string.append(stat);
         stats_string.append(",");

@@ -31,7 +31,7 @@ class FlexCounterManager
 {
     public:
         FlexCounterManager(
-                const std::string &group_name,
+                const std::string& group_name,
                 const StatsMode stats_mode,
                 const uint polling_interval);
 
@@ -46,15 +46,15 @@ class FlexCounterManager
         void setCounterIdList(
                 const sai_object_id_t object_id,
                 const CounterType counter_type,
-                const std::unordered_set<std::string> &counter_stats);
+                const std::unordered_set<std::string>& counter_stats);
         void clearCounterIdList(const sai_object_id_t object_id);
 
     private:
         std::string getFlexCounterTableKey(
-                const std::string &group_name,
+                const std::string& group_name,
                 const sai_object_id_t object_id) const;
         std::string serializeCounterStats(
-                const std::unordered_set<std::string> &counter_stats) const;
+                const std::unordered_set<std::string>& counter_stats) const;
 
         std::string group_name;
         bool enabled;

@@ -9,7 +9,7 @@ class FlexCounterStatManager : public FlexCounterManager
 {
     public:
         FlexCounterStatManager(
-                const std::string &group_name,
+                const std::string& group_name,
                 const StatsMode stats_mode,
                 const int polling_interval);
 
@@ -20,11 +20,11 @@ class FlexCounterStatManager : public FlexCounterManager
         void addFlexCounterStat(
                 const sai_object_id_t object_id,
                 const CounterType counter_type,
-                const std::string &counter_stat);
+                const std::string& counter_stat);
         void removeFlexCounterStat(
                 const sai_object_id_t object_id,
                 const CounterType counter_type,
-                const std::string &counter_stat);
+                const std::string& counter_stat);
 
     private:
         std::unordered_map<sai_object_id_t, std::unordered_set<std::string>> object_stats;
