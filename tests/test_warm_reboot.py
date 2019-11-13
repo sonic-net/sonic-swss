@@ -234,7 +234,12 @@ def ping_new_ips(dvs):
             dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
             dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
 
+
 def create_mirror_session(dvs, name, src, dst, gre, dscp, ttl, queue):
+    """
+        Creates a mirror session. This method will wait 1 second to allow
+        redis updates to propagate.
+    """
     tbl = swsscommon.Table(dvs.cdb, "MIRROR_SESSION")
     fvs = swsscommon.FieldValuePairs([("src_ip", src),
                                       ("dst_ip", dst),
@@ -245,28 +250,48 @@ def create_mirror_session(dvs, name, src, dst, gre, dscp, ttl, queue):
     tbl.set(name, fvs)
     time.sleep(1)
 
+
 def remove_mirror_session(dvs, name):
+    """
+        Deletes a mirror session. This method will wait 1 second to allow
+        redis updates to propagate.
+    """
     tbl = swsscommon.Table(dvs.cdb, "MIRROR_SESSION")
     tbl._del(name)
     time.sleep(1)
 
+
 def get_mirror_session_state(dvs, name):
+    """
+        Gets the current state of a mirror session. This method will cause
+        your test to fail if the given mirror session does not exist.
+
+        Example output:
+        {
+            "src_ip": "10.0.0.0",
+            "dst_ip": "192.168.1.1",
+            ...
+        }
+    """
     tbl = swsscommon.Table(dvs.sdb, "MIRROR_SESSION_TABLE")
     (status, fvs) = tbl.get(name)
-    assert status == True
+    assert status
     assert len(fvs) > 0
-    return { fv[0]: fv[1] for fv in fvs }
+    return {fv[0]: fv[1] for fv in fvs}
 
 
 class TestWarmReboot(object):
-    def test_swss_mirror_post_baking(self, dvs, testlog):
-        dvs.setup_db()
-        adb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        cdb = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-        sdb = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+    def test_MirrorSessionWarmReboot(self, dvs, testlog):
+        """
+            This test verifies that mirror session monitor ports are not
+            changed after warm reboot.
+        """
 
+        # Setup the virtual switch
+        dvs.setup_db()
         dvs.runcmd("config warm_restart enable swss")
 
+        # Setup neighbors for the test
         dvs.set_interface_status("Ethernet12", "up")
         dvs.set_interface_status("Ethernet16", "up")
         dvs.set_interface_status("Ethernet20", "up")
@@ -279,34 +304,36 @@ class TestWarmReboot(object):
         dvs.add_neighbor("Ethernet16", "11.0.0.1", "03:04:06:08:10:12")
         dvs.add_neighbor("Ethernet20", "12.0.0.1", "04:04:06:08:10:12")
 
-        # set test1 monitor port as Ethernet20
-        dvs.runcmd("ip route add 2.2.2.2 via 12.0.0.1")
-        create_mirror_session(dvs, "test1", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
+        # Set test_session1 monitor port as Ethernet12
+        dvs.add_route("2.2.2.2", "10.0.0.1")
+        create_mirror_session(dvs, "test_session1", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
 
-        # set test2 monitor port as Ethernet16
-        dvs.runcmd("ip route change 2.2.2.2 nexthop via 11.0.0.1 nexthop via 12.0.0.1")
-        create_mirror_session(dvs, "test2", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
+        # Set test_session2 monitor port as Ethernet16
+        dvs.update_route_ecmp("2.2.2.2", ["11.0.0.1", "10.0.0.1"])
+        create_mirror_session(dvs, "test_session2", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
 
-        # set test3 monitor port as Ethernet12
-        dvs.runcmd("ip route change 2.2.2.2 nexthop via 10.0.0.1 nexthop via 11.0.0.1 nexthop via 12.0.0.1")
-        create_mirror_session(dvs, "test3", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
+        # Set test_session3 monitor port as Ethernet20
+        dvs.update_route_ecmp("2.2.2.2", ["12.0.0.1", "11.0.0.1", "10.0.0.1"])
+        create_mirror_session(dvs, "test_session3", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
 
-        test1_mp = get_mirror_session_state(dvs, "test1")["monitor_port"]
-        test2_mp = get_mirror_session_state(dvs, "test2")["monitor_port"]
-        test3_mp = get_mirror_session_state(dvs, "test3")["monitor_port"]
+        test_session1_mp = get_mirror_session_state(dvs, "test_session1")["monitor_port"]
+        test_session2_mp = get_mirror_session_state(dvs, "test_session2")["monitor_port"]
+        test_session3_mp = get_mirror_session_state(dvs, "test_session3")["monitor_port"]
 
+        # Perform the warm reboot
         dvs.stop_swss()
         dvs.start_swss()
         time.sleep(5)
 
-        # after warm reboot, all monitor ports are not changed
-        assert test1_mp == get_mirror_session_state(dvs, "test1")["monitor_port"]
-        assert test2_mp == get_mirror_session_state(dvs, "test2")["monitor_port"]
-        assert test3_mp == get_mirror_session_state(dvs, "test3")["monitor_port"]
+        # Verify that all monitor ports are still the same after warm reboot
+        assert test_session1_mp == get_mirror_session_state(dvs, "test_session1")["monitor_port"]
+        assert test_session2_mp == get_mirror_session_state(dvs, "test_session2")["monitor_port"]
+        assert test_session3_mp == get_mirror_session_state(dvs, "test_session3")["monitor_port"]
 
-        remove_mirror_session(dvs, "test1")
-        remove_mirror_session(dvs, "test2")
-        remove_mirror_session(dvs, "test3")
+        # Teardown the mirror sessions and routes
+        remove_mirror_session(dvs, "test_session1")
+        remove_mirror_session(dvs, "test_session2")
+        remove_mirror_session(dvs, "test_session3")
 
         dvs.remove_route("2.2.2.2")
 
@@ -411,7 +438,6 @@ class TestWarmReboot(object):
         intf_tbl._del("Ethernet16")
         intf_tbl._del("Ethernet20")
         time.sleep(2)
-
 
     def test_VlanMgrdWarmRestart(self, dvs, testlog):
 
@@ -901,7 +927,6 @@ class TestWarmReboot(object):
         intf_tbl._del("{}".format(intfs[0]))
         intf_tbl._del("{}".format(intfs[1]))
         time.sleep(2)
-
 
     # TODO: The condition of warm restart readiness check is still under discussion.
     def test_OrchagentWarmRestartReadyCheck(self, dvs, testlog):

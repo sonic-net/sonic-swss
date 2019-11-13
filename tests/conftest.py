@@ -777,15 +777,36 @@ class DockerVirtualSwitch(object):
         time.sleep(1)
 
     def remove_neighbor(self, interface, ip):
+        """
+            Removes a neighbor from the device. This method will wait 1 second
+            to allow redis updates to propagate.
+        """
         tbl = swsscommon.ProducerStateTable(self.pdb, "NEIGH_TABLE")
         tbl._del(interface + ":" + ip)
         time.sleep(1)
 
     def add_route(self, prefix, nexthop):
+        """
+            Adds a route from nexthop to prefix. This method will wait 1 second
+            to allow redis updates to propagate.
+        """
         self.runcmd("ip route add " + prefix + " via " + nexthop)
         time.sleep(1)
 
+    def update_route(self, prefix, nexthop):
+        """
+            Adds a route from nexthop to prefix, overwriting an existing route
+            to prefix. This method will wait 1 second to allow redis updates
+            to propagate.
+        """
+        self.runcmd("ip route change " + prefix + " via " + nexthop)
+        time.sleep(1)
+
     def add_route_ecmp(self, prefix, nexthops):
+        """
+            Adds an ecmp route from any of the provided nexthops to prefix.
+            This method will wait 1 second to allow redis updates to propagate.
+        """
         cmd = ""
         for nexthop in nexthops:
             cmd += " nexthop via " + nexthop
@@ -793,7 +814,24 @@ class DockerVirtualSwitch(object):
         self.runcmd("ip route add " + prefix + cmd)
         time.sleep(1)
 
+    def update_route_ecmp(self, prefix, nexthops):
+        """
+            Adds an ecmp route from any of the provided nexthops to prefix,
+            overwriting an existing ecmp route to prefix. This method will wait
+            1 second to allow redis updates to propagate.
+        """
+        cmd = ""
+        for nexthop in nexthops:
+            cmd += " nexthop via " + nexthop
+
+        self.runcmd("ip route change " + prefix + cmd)
+        time.sleep(1)
+
     def remove_route(self, prefix):
+        """
+            Removes a route to prefix. This method will wait 1 second to allow
+            redis updates to propagate.
+        """
         self.runcmd("ip route del " + prefix)
         time.sleep(1)
 
