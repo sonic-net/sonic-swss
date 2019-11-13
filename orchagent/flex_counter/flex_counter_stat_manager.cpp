@@ -43,6 +43,12 @@ void FlexCounterStatManager::addFlexCounterStat(
         counter_stats->second.emplace(counter_stat);
     }
 
+    // FIXME: Currently the state of the flex counter group is lost if all
+    // stats are removed from a flex counter group. This will be fixed once
+    // syncd flex counters are refactored. For now, we can workaround this
+    // by re-applying the group configuration when we set the counter id list.
+    FlexCounterManager::applyGroupConfiguration();
+
     FlexCounterManager::setCounterIdList(object_id, counter_type, counter_stats->second);
 
     SWSS_LOG_DEBUG("Added flex stat '%s' to object '%s'", counter_stat.c_str(), sai_serialize_object_id(object_id).c_str());

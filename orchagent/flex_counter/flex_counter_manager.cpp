@@ -24,6 +24,12 @@ const unordered_map<StatsMode, string> FlexCounterManager::stats_mode_lookup =
     { StatsMode::READ, STATS_MODE_READ },
 };
 
+const unordered_map<bool, string> FlexCounterManager::status_lookup =
+{
+    { false, FLEX_COUNTER_DISABLE },
+    { true,  FLEX_COUNTER_ENABLE }
+};
+
 const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lookup =
 {
     { CounterType::PORT_DEBUG,   PORT_DEBUG_COUNTER_ID_LIST },
@@ -36,6 +42,8 @@ FlexCounterManager::FlexCounterManager(
         const StatsMode stats_mode,
         const uint polling_interval) :
     group_name(group_name),
+    stats_mode(stats_mode),
+    polling_interval(polling_interval),
     enabled(false),
     flex_counter_db(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
     flex_counter_group_table(new ProducerTable(flex_counter_db.get(), FLEX_COUNTER_GROUP_TABLE)),
@@ -43,13 +51,7 @@ FlexCounterManager::FlexCounterManager(
 {
     SWSS_LOG_ENTER();
 
-    vector<FieldValueTuple> field_values =
-    {
-        FieldValueTuple(STATS_MODE_FIELD, stats_mode_lookup.at(stats_mode)),
-        FieldValueTuple(POLL_INTERVAL_FIELD, std::to_string(polling_interval)),
-        FieldValueTuple(FLEX_COUNTER_STATUS_FIELD, FLEX_COUNTER_DISABLE)
-    };
-    flex_counter_group_table->set(group_name, field_values);
+    applyGroupConfiguration();
 
     SWSS_LOG_DEBUG("Initialized flex counter group '%s'.", group_name.c_str());
 }
@@ -66,6 +68,18 @@ FlexCounterManager::~FlexCounterManager()
     flex_counter_group_table->del(group_name);
 
     SWSS_LOG_DEBUG("Deleted flex counter group '%s'.", group_name.c_str());
+}
+
+void FlexCounterManager::applyGroupConfiguration()
+{
+    vector<FieldValueTuple> field_values =
+    {
+        FieldValueTuple(STATS_MODE_FIELD, stats_mode_lookup.at(stats_mode)),
+        FieldValueTuple(POLL_INTERVAL_FIELD, std::to_string(polling_interval)),
+        FieldValueTuple(FLEX_COUNTER_STATUS_FIELD, status_lookup.at(enabled))
+    };
+
+    flex_counter_group_table->set(group_name, field_values);
 }
 
 void FlexCounterManager::updateGroupPollingInterval(

@@ -49,6 +49,9 @@ class FlexCounterManager
                 const std::unordered_set<std::string>& counter_stats);
         void clearCounterIdList(const sai_object_id_t object_id);
 
+    protected:
+        void applyGroupConfiguration();
+
     private:
         std::string getFlexCounterTableKey(
                 const std::string& group_name,
@@ -57,6 +60,8 @@ class FlexCounterManager
                 const std::unordered_set<std::string>& counter_stats) const;
 
         std::string group_name;
+        StatsMode stats_mode;
+        uint polling_interval;
         bool enabled;
         std::unordered_set<sai_object_id_t> installed_counters;
 
@@ -65,6 +70,7 @@ class FlexCounterManager
         std::shared_ptr<swss::ProducerTable> flex_counter_table = nullptr;
 
         static const std::unordered_map<StatsMode, std::string> stats_mode_lookup;
+        static const std::unordered_map<bool, std::string> status_lookup;
         static const std::unordered_map<CounterType, std::string> counter_id_field_lookup;
 };
 
