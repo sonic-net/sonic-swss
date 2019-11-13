@@ -27,6 +27,7 @@
 #include "flexcounterorch.h"
 #include "watermarkorch.h"
 #include "policerorch.h"
+#include "sfloworch.h"
 #include "directory.h"
 #include "stporch.h"
 

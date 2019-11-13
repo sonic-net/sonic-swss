@@ -456,10 +456,24 @@ Stores rules associated with a specific ACL table on the switch.
                                                ; it could be:
                                                : name of physical port.          Example: "Ethernet10"
                                                : name of LAG port                Example: "PortChannel5"
-                                               : next-hop ip address             Example: "10.0.0.1"
-                                               : next-hop group set of addresses Example: "10.0.0.1,10.0.0.3"
+                                               : next-hop ip address (in global) Example: "10.0.0.1"
+                                               : next-hop ip address and vrf     Example: "10.0.0.2@Vrf2"
+                                               : next-hop ip address and ifname  Example: "10.0.0.3@Ethernet1"
+                                               : next-hop group set of next-hop  Example: "10.0.0.1,10.0.0.3@Ethernet1"
 
-    mirror_action = 1*255VCHAR                 ; refer to the mirror session
+    redirect_action = 1*255CHAR                ; redirect parameter
+                                               ; This parameter defines a destination for redirected packets
+                                               ; it could be:
+                                               : name of physical port.          Example: "Ethernet10"
+                                               : name of LAG port                Example: "PortChannel5"
+                                               : next-hop ip address (in global) Example: "10.0.0.1"
+                                               : next-hop ip address and vrf     Example: "10.0.0.2@Vrf2"
+                                               : next-hop ip address and ifname  Example: "10.0.0.3@Ethernet1"
+                                               : next-hop group set of next-hop  Example: "10.0.0.1,10.0.0.3@Ethernet1"
+
+    mirror_action = 1*255VCHAR                 ; refer to the mirror session (by default it will be ingress mirror action)
+    mirror_ingress_action = 1*255VCHAR         ; refer to the mirror session
+    mirror_egress_action = 1*255VCHAR          ; refer to the mirror session
 
     ether_type    = h16                        ; Ethernet type field
 
@@ -865,6 +879,28 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     partial-time    = time-hour ":" time-minute ":" time-second
     full-date       = date-fullyear "-" date-month "-" date-mday
     time-stamp      = full-date %x20 partial-time
+
+### INTERFACE_TABLE
+    ;State for interface status, including two types of key
+
+    key                 = INTERFACE_TABLE|ifname    ; ifname should be Ethernet,Portchannel,Vlan,Loopback
+    vrf                 = "" / vrf_name             ; interface has been created, global or vrf
+
+    key                 = INTERFACE_TABLE|ifname|IPprefix
+    state               = "ok"                      ; IP address has been set to interface
+
+### VRF_TABLE
+    ;State for vrf status, vrfmgrd has written it to app_db
+
+    key                 = VRF_TABLE|vrf_name        ; vrf_name start with 'Vrf' or 'Vnet' prefix
+    state               = "ok"                      ; vrf entry exist in app_db, if yes vrf device must exist
+
+### VRF_OBJECT_TABLE
+    ;State for vrf object status, vrf exist in vrforch
+
+    key                 = VRF_OBJECT_TABLE|vrf_name ; vrf_name start with 'Vrf' prefix
+    state               = "ok"                      ; vrf entry exist in orchagent
+
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?

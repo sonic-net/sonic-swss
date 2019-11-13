@@ -57,6 +57,8 @@ public:
 
     bool allPortsReady();
     bool isInitDone();
+    bool isConfigDone();
+    bool isPortAdminUp(const string &alias);
 
     map<string, Port>& getAllPorts();
     bool bake() override;
@@ -86,7 +88,12 @@ public:
 
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
+
     bool addBridgePort(Port &port);
+
+    bool addSubPort(Port &port, const string &alias, const bool &adminUp = true, const uint32_t &mtu = 0);
+    bool removeSubPort(const string &alias);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
@@ -116,15 +123,22 @@ private:
     sai_object_id_t m_default1QBridge;
     sai_object_id_t m_defaultVlan;
 
-    bool m_portConfigDone = false;
+    typedef enum
+    {
+        PORT_CONFIG_MISSING,
+        PORT_CONFIG_RECEIVED,
+        PORT_CONFIG_DONE,
+    } port_config_state_t;
+
+    port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;
     sai_uint32_t m_portCount;
     map<set<int>, sai_object_id_t> m_portListLaneMap;
     map<set<int>, tuple<string, uint32_t, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
     map<string, uint32_t> m_port_ref_count;
-
     unordered_set<string> m_pendingPortSet;
 
+	
     NotificationConsumer* m_portStatusNotificationConsumer;
 
     void doTask(Consumer &consumer);
@@ -147,6 +161,7 @@ private:
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
     bool removeBridgePort(Port &port);
+    bool setBridgePortLearnMode(Port &port, string learn_mode);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);

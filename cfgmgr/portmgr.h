@@ -17,7 +17,7 @@ namespace swss {
 class PortMgr : public Orch
 {
 public:
-    PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames);
+    PortMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
 
     using Orch::doTask;
 private:
@@ -26,12 +26,13 @@ private:
     Table m_statePortTable;
     ProducerStateTable m_appPortTable;
 
-    set<string> m_portList;
+    std::set<std::string> m_portList;
 
     void doTask(Consumer &consumer);
-    bool setPortMtu(const string &alias, const string &mtu);
-    bool setPortAdminStatus(const string &alias, const bool up);
-    bool isPortStateOk(const string &alias);
+    bool setPortMtu(const std::string &alias, const std::string &mtu);
+    bool setPortAdminStatus(const std::string &alias, const bool up);
+    bool setPortLearnMode(const std::string &alias, const std::string &learn_mode);
+    bool isPortStateOk(const std::string &alias);
 };
 
 }

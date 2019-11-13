@@ -10,6 +10,7 @@
 #include "tokenize.h"
 #include "timer.h"
 #include "crmorch.h"
+#include "sai_serialize.h"
 
 using namespace std;
 using namespace swss;
@@ -60,14 +61,19 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_INNER_L4_DST_PORT, SAI_ACL_ENTRY_ATTR_FIELD_INNER_L4_DST_PORT }
 };
 
-acl_rule_attr_lookup_t aclL3ActionLookup =
+static acl_rule_attr_lookup_t aclL3ActionLookup =
 {
-    { PACKET_ACTION_FORWARD,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
-    { PACKET_ACTION_DROP,                       SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
-    { PACKET_ACTION_REDIRECT,                   SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT }
+    { ACTION_PACKET_ACTION,                    SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION },
+    { ACTION_REDIRECT_ACTION,                  SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT },
 };
 
-acl_rule_attr_lookup_t aclDTelActionLookup =
+static acl_rule_attr_lookup_t aclMirrorStageLookup =
+{
+    { ACTION_MIRROR_INGRESS_ACTION, SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS},
+    { ACTION_MIRROR_EGRESS_ACTION,  SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS},
+};
+
+static acl_rule_attr_lookup_t aclDTelActionLookup =
 {
     { ACTION_DTEL_FLOW_OP,                  SAI_ACL_ENTRY_ATTR_ACTION_ACL_DTEL_FLOW_OP },
     { ACTION_DTEL_INT_SESSION,              SAI_ACL_ENTRY_ATTR_ACTION_DTEL_INT_SESSION },
@@ -77,7 +83,13 @@ acl_rule_attr_lookup_t aclDTelActionLookup =
     { ACTION_DTEL_REPORT_ALL_PACKETS,       SAI_ACL_ENTRY_ATTR_ACTION_DTEL_REPORT_ALL_PACKETS }
 };
 
-acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
+static acl_packet_action_lookup_t aclPacketActionLookup =
+{
+    { PACKET_ACTION_FORWARD, SAI_PACKET_ACTION_FORWARD },
+    { PACKET_ACTION_DROP,    SAI_PACKET_ACTION_DROP },
+};
+
+static acl_dtel_flow_op_type_lookup_t aclDTelFlowOpTypeLookup =
 {
     { DTEL_FLOW_OP_NOP,                SAI_ACL_DTEL_FLOW_OP_NOP },
     { DTEL_FLOW_OP_POSTCARD,           SAI_ACL_DTEL_FLOW_OP_POSTCARD },
@@ -99,8 +111,22 @@ static acl_table_type_lookup_t aclTableTypeLookUp =
 
 static acl_stage_type_lookup_t aclStageLookUp =
 {
-    {TABLE_INGRESS, ACL_STAGE_INGRESS },
-    {TABLE_EGRESS,  ACL_STAGE_EGRESS }
+    {STAGE_INGRESS, ACL_STAGE_INGRESS },
+    {STAGE_EGRESS,  ACL_STAGE_EGRESS }
+};
+
+static const acl_capabilities_t defaultAclActionsSupported =
+{
+    {
+        ACL_STAGE_INGRESS,
+        {
+            SAI_ACL_ACTION_TYPE_PACKET_ACTION,
+            SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
+        }
+    },
+    {
+        ACL_STAGE_EGRESS, {}
+    }
 };
 
 static acl_ip_type_lookup_t aclIpTypeLookup =
@@ -116,18 +142,6 @@ static acl_ip_type_lookup_t aclIpTypeLookup =
     { IP_TYPE_ARP_REQUEST, SAI_ACL_IP_TYPE_ARP_REQUEST },
     { IP_TYPE_ARP_REPLY,   SAI_ACL_IP_TYPE_ARP_REPLY }
 };
-
-inline string trim(const std::string& str, const std::string& whitespace = " \t")
-{
-    const auto strBegin = str.find_first_not_of(whitespace);
-    if (strBegin == std::string::npos)
-        return "";
-
-    const auto strEnd = str.find_last_not_of(whitespace);
-    const auto strRange = strEnd - strBegin + 1;
-
-    return str.substr(strBegin, strRange);
-}
 
 AclRule::AclRule(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
         m_pAclOrch(aclOrch),
@@ -234,40 +248,19 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         }
         else if (attr_name == MATCH_TCP_FLAGS)
         {
-            vector<string> flagsData;
-            string flags, mask;
-            int val;
-            char *endp = NULL;
-            errno = 0;
+            // Support both exact value match and value/mask match
+            auto flag_data = tokenize(attr_value, '/');
 
-            split(attr_value, flagsData, '/');
+            value.aclfield.data.u8 = to_uint<uint8_t>(flag_data[0], 0, 0x3F);
 
-            if (flagsData.size() != 2) // expect two parts flags and mask separated with '/'
+            if (flag_data.size() == 2)
             {
-                SWSS_LOG_ERROR("Invalid TCP flags format %s", attr_value.c_str());
-                return false;
+                value.aclfield.mask.u8 = to_uint<uint8_t>(flag_data[1], 0, 0x3F);
             }
-
-            flags = trim(flagsData[0]);
-            mask = trim(flagsData[1]);
-
-            val = (uint32_t)strtol(flags.c_str(), &endp, 0);
-            if (errno || (endp != flags.c_str() + flags.size()) ||
-                (val < 0) || (val > UCHAR_MAX))
+            else
             {
-                SWSS_LOG_ERROR("TCP flags parse error, value: %s(=%d), errno: %d", flags.c_str(), val, errno);
-                return false;
+                value.aclfield.mask.u8 = 0x3F;
             }
-            value.aclfield.data.u8 = (uint8_t)val;
-
-            val = (uint32_t)strtol(mask.c_str(), &endp, 0);
-            if (errno || (endp != mask.c_str() + mask.size()) ||
-                (val < 0) || (val > UCHAR_MAX))
-            {
-                SWSS_LOG_ERROR("TCP mask parse error, value: %s(=%d), errno: %d", mask.c_str(), val, errno);
-                return false;
-            }
-            value.aclfield.mask.u8 = (uint8_t)val;
         }
         else if (attr_name == MATCH_ETHER_TYPE || attr_name == MATCH_L4_SRC_PORT || attr_name == MATCH_L4_DST_PORT)
         {
@@ -376,6 +369,39 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
     m_matches[aclMatchLookup[attr_name]] = value;
 
+    return true;
+}
+
+bool AclRule::validateAddAction(string attr_name, string attr_value)
+{
+    for (const auto& it: m_actions)
+    {
+        if (!AclRule::isActionSupported(it.first))
+        {
+            SWSS_LOG_ERROR("Action %s:%s is not supported by ASIC",
+                           attr_name.c_str(), attr_value.c_str());
+            return false;
+        }
+
+        // check if ACL action attribute entry parameter is an enum value
+        const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_ENTRY, it.first);
+        if (meta == nullptr)
+        {
+            SWSS_LOG_THROW("Metadata null pointer returned by sai_metadata_get_attr_metadata for action %s",
+                           attr_name.c_str());
+        }
+        if (meta->isenum)
+        {
+            // if ACL action attribute requires enum value check if value is supported by the ASIC
+            if (!m_pAclOrch->isAclActionEnumValueSupported(AclOrch::getAclActionFromAclEntry(it.first),
+                                                           it.second.aclaction.parameter))
+            {
+                SWSS_LOG_ERROR("Action %s:%s is not supported by ASIC",
+                               attr_name.c_str(), attr_value.c_str());
+                return false;
+            }
+        }
+    }
     return true;
 }
 
@@ -501,12 +527,12 @@ void AclRule::decreaseNextHopRefCount()
 {
     if (!m_redirect_target_next_hop.empty())
     {
-        m_pAclOrch->m_neighOrch->decreaseNextHopRefCount(IpAddress(m_redirect_target_next_hop));
+        m_pAclOrch->m_neighOrch->decreaseNextHopRefCount(NextHopKey(m_redirect_target_next_hop));
         m_redirect_target_next_hop.clear();
     }
     if (!m_redirect_target_next_hop_group.empty())
     {
-        IpAddresses target = IpAddresses(m_redirect_target_next_hop_group);
+        NextHopGroupKey target = NextHopGroupKey(m_redirect_target_next_hop_group);
         m_pAclOrch->m_routeOrch->decreaseNextHopRefCount(target);
         // remove next hop group in case it's not used by anything else
         if (m_pAclOrch->m_routeOrch->isRefCounterZero(target))
@@ -525,6 +551,17 @@ void AclRule::decreaseNextHopRefCount()
     }
 
     return;
+}
+
+bool AclRule::isActionSupported(sai_acl_entry_attr_t action) const
+{
+    auto action_type = AclOrch::getAclActionFromAclEntry(action);
+    const auto* pTable = m_pAclOrch->getTableByOid(m_tableOid);
+    if (pTable == nullptr)
+    {
+        SWSS_LOG_THROW("ACL table does not exist for oid %lu", m_tableOid);
+    }
+    return m_pAclOrch->isAclActionSupported(pTable->stage, action_type);
 }
 
 bool AclRule::remove()
@@ -584,12 +621,11 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
     {
         string attr_name = to_upper(fvField(itr));
         string attr_value = fvValue(itr);
-        if (attr_name == ACTION_PACKET_ACTION || attr_name == ACTION_MIRROR_ACTION ||
-            attr_name == ACTION_DTEL_FLOW_OP || attr_name == ACTION_DTEL_INT_SESSION ||
-            attr_name == ACTION_DTEL_DROP_REPORT_ENABLE ||
-            attr_name == ACTION_DTEL_TAIL_DROP_REPORT_ENABLE ||
-            attr_name == ACTION_DTEL_FLOW_SAMPLE_PERCENT ||
-            attr_name == ACTION_DTEL_REPORT_ALL_PACKETS)
+        if (aclL3ActionLookup.find(attr_name) != aclL3ActionLookup.cend() ||
+            aclMirrorStageLookup.find(attr_name) != aclMirrorStageLookup.cend() ||
+            /* handle "MIRROR_ACTION" key without mirror stage specified for backward compatibility */
+            attr_name == ACTION_MIRROR_ACTION ||
+            aclDTelActionLookup.find(attr_name) != aclDTelActionLookup.cend())
         {
             action_found = true;
             action = attr_name;
@@ -614,7 +650,8 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
     }
 
     /* Mirror rules can exist in both tables */
-    if (action == ACTION_MIRROR_ACTION)
+    if (aclMirrorStageLookup.find(action) != aclMirrorStageLookup.cend() ||
+        action == ACTION_MIRROR_ACTION /* implicitly ingress in old schema */)
     {
         return make_shared<AclRuleMirror>(acl, mirror, rule, table, type);
     }
@@ -736,24 +773,37 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
     string attr_value = to_upper(_attr_value);
     sai_attribute_value_t value;
 
-    if (attr_name != ACTION_PACKET_ACTION)
-    {
-        return false;
-    }
+    auto action_str = attr_name;
 
-    if (attr_value == PACKET_ACTION_FORWARD)
+    if (attr_name == ACTION_PACKET_ACTION)
     {
-        value.aclaction.parameter.s32 = SAI_PACKET_ACTION_FORWARD;
-    }
-    else if (attr_value == PACKET_ACTION_DROP)
-    {
-        value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
-    }
-    else if (attr_value.find(PACKET_ACTION_REDIRECT) != string::npos)
-    {
-        // resize attr_value to remove argument, _attr_value still has the argument
-        attr_value.resize(string(PACKET_ACTION_REDIRECT).length());
+        const auto it = aclPacketActionLookup.find(attr_value);
+        if (it != aclPacketActionLookup.cend())
+        {
+            value.aclaction.parameter.s32 = it->second;
+        }
+        // handle PACKET_ACTION_REDIRECT in ACTION_PACKET_ACTION for backward compatibility
+        else if (attr_value.find(PACKET_ACTION_REDIRECT) != string::npos)
+        {
+            // resize attr_value to remove argument, _attr_value still has the argument
+            attr_value.resize(string(PACKET_ACTION_REDIRECT).length());
 
+            sai_object_id_t param_id = getRedirectObjectId(_attr_value);
+            if (param_id == SAI_NULL_OBJECT_ID)
+            {
+                return false;
+            }
+            value.aclaction.parameter.oid = param_id;
+
+            action_str = ACTION_REDIRECT_ACTION;
+        }
+        else
+        {
+            return false;
+        }
+    }
+    else if (attr_name == ACTION_REDIRECT_ACTION)
+    {
         sai_object_id_t param_id = getRedirectObjectId(_attr_value);
         if (param_id == SAI_NULL_OBJECT_ID)
         {
@@ -765,11 +815,12 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
     {
         return false;
     }
+
     value.aclaction.enable = true;
 
-    m_actions[aclL3ActionLookup[attr_value]] = value;
+    m_actions[aclL3ActionLookup[action_str]] = value;
 
-    return true;
+    return AclRule::validateAddAction(attr_name, attr_value);
 }
 
 // This method should return sai attribute id of the redirect destination
@@ -810,44 +861,44 @@ sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
         }
     }
 
-    // Try to parse nexthop ip address
+    // Try to parse nexthop ip address and interface name
     try
     {
-        IpAddress ip(target);
-        if (!m_pAclOrch->m_neighOrch->hasNextHop(ip))
+        NextHopKey nh(target);
+        if (!m_pAclOrch->m_neighOrch->hasNextHop(nh))
         {
-            SWSS_LOG_ERROR("ACL Redirect action target next hop ip: '%s' doesn't exist on the switch", ip.to_string().c_str());
+            SWSS_LOG_ERROR("ACL Redirect action target next hop ip: '%s' doesn't exist on the switch", nh.to_string().c_str());
             return SAI_NULL_OBJECT_ID;
         }
 
         m_redirect_target_next_hop = target;
-        m_pAclOrch->m_neighOrch->increaseNextHopRefCount(ip);
-        return m_pAclOrch->m_neighOrch->getNextHopId(ip);
+        m_pAclOrch->m_neighOrch->increaseNextHopRefCount(nh);
+        return m_pAclOrch->m_neighOrch->getNextHopId(nh);
     }
     catch (...)
     {
         // no error, just try next variant
     }
 
-    // try to parse nh group ip addresses
+    // try to parse nh group the set of <ip address, interface name>
     try
     {
-        IpAddresses ips(target);
-        if (!m_pAclOrch->m_routeOrch->hasNextHopGroup(ips))
+        NextHopGroupKey nhg(target);
+        if (!m_pAclOrch->m_routeOrch->hasNextHopGroup(nhg))
         {
-            SWSS_LOG_INFO("ACL Redirect action target next hop group: '%s' doesn't exist on the switch. Creating it.", ips.to_string().c_str());
+            SWSS_LOG_INFO("ACL Redirect action target next hop group: '%s' doesn't exist on the switch. Creating it.", nhg.to_string().c_str());
 
-            if (!m_pAclOrch->m_routeOrch->addNextHopGroup(ips))
+            if (!m_pAclOrch->m_routeOrch->addNextHopGroup(nhg))
             {
-                SWSS_LOG_ERROR("Can't create required target next hop group '%s'", ips.to_string().c_str());
+                SWSS_LOG_ERROR("Can't create required target next hop group '%s'", nhg.to_string().c_str());
                 return SAI_NULL_OBJECT_ID;
             }
-            SWSS_LOG_DEBUG("Created acl redirect target next hop group '%s'", ips.to_string().c_str());
+            SWSS_LOG_DEBUG("Created acl redirect target next hop group '%s'", nhg.to_string().c_str());
         }
 
         m_redirect_target_next_hop_group = target;
-        m_pAclOrch->m_routeOrch->increaseNextHopRefCount(ips);
-        return m_pAclOrch->m_routeOrch->getNextHopGroupId(ips);
+        m_pAclOrch->m_routeOrch->increaseNextHopRefCount(nhg);
+        return m_pAclOrch->m_routeOrch->getNextHopGroupId(nhg);
     }
     catch (...)
     {
@@ -957,19 +1008,35 @@ bool AclRuleMirror::validateAddAction(string attr_name, string attr_value)
 {
     SWSS_LOG_ENTER();
 
-    if (attr_name != ACTION_MIRROR_ACTION)
-    {
-        return false;
-    }
+    sai_acl_entry_attr_t action;
 
-    if (!m_pMirrorOrch->sessionExists(attr_value))
+    const auto it = aclMirrorStageLookup.find(attr_name);
+    if (it != aclMirrorStageLookup.cend())
+    {
+        action = it->second;
+    }
+    // handle ACTION_MIRROR_ACTION as ingress by default for backward compatibility
+    else if (attr_name == ACTION_MIRROR_ACTION)
+    {
+        action = SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS;
+    }
+    else
     {
         return false;
     }
 
     m_sessionName = attr_value;
 
-    return true;
+    if (!m_pMirrorOrch->sessionExists(m_sessionName))
+    {
+        SWSS_LOG_ERROR("Mirror rule reference mirror session that does not exists %s", m_sessionName.c_str());
+        return false;
+    }
+
+    // insert placeholder value, we'll set the session oid in AclRuleMirror::create()
+    m_actions[action] = sai_attribute_value_t{};
+
+    return AclRule::validateAddAction(attr_name, attr_value);
 }
 
 bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
@@ -1049,20 +1116,19 @@ bool AclRuleMirror::create()
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_value_t value;
-    bool state = false;
     sai_object_id_t oid = SAI_NULL_OBJECT_ID;
+    bool state = false;
 
     if (!m_pMirrorOrch->getSessionStatus(m_sessionName, state))
     {
-        throw runtime_error("Failed to get mirror session state");
+        SWSS_LOG_THROW("Failed to get mirror session state for session %s", m_sessionName.c_str());
     }
 
     // Increase session reference count regardless of state to deny
     // attempt to remove mirror session with attached ACL rules.
     if (!m_pMirrorOrch->increaseRefCount(m_sessionName))
     {
-        throw runtime_error("Failed to increase mirror session reference count");
+        SWSS_LOG_THROW("Failed to increase mirror session reference count for session %s", m_sessionName.c_str());
     }
 
     if (!state)
@@ -1072,15 +1138,15 @@ bool AclRuleMirror::create()
 
     if (!m_pMirrorOrch->getSessionOid(m_sessionName, oid))
     {
-        throw runtime_error("Failed to get mirror session OID");
+        SWSS_LOG_THROW("Failed to get mirror session OID for session %s", m_sessionName.c_str());
     }
 
-    value.aclaction.enable = true;
-    value.aclaction.parameter.objlist.list = &oid;
-    value.aclaction.parameter.objlist.count = 1;
-
-    m_actions.clear();
-    m_actions[SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS] = value;
+    for (auto& it: m_actions)
+    {
+        it.second.aclaction.enable = true;
+        it.second.aclaction.parameter.objlist.list = &oid;
+        it.second.aclaction.parameter.objlist.count = 1;
+    }
 
     if (!AclRule::create())
     {
@@ -1665,7 +1731,7 @@ bool AclRuleDTelFlowWatchListEntry::validateAddAction(string attr_name, string a
 
     m_actions[aclDTelActionLookup[attr_name]] = value;
 
-    return true;
+    return AclRule::validateAddAction(attr_name, attr_value);
 }
 
 bool AclRuleDTelFlowWatchListEntry::validate()
@@ -1824,7 +1890,7 @@ bool AclRuleDTelDropWatchListEntry::validateAddAction(string attr_name, string a
 
     m_actions[aclDTelActionLookup[attr_name]] = value;
 
-    return true;
+    return AclRule::validateAddAction(attr_name, attr_value);
 }
 
 bool AclRuleDTelDropWatchListEntry::validate()
@@ -2055,6 +2121,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
         throw "AclOrch initialization failure";
     }
 
+    queryAclActionCapability();
+
     // Attach observers
     m_mirrorOrch->attach(this);
     gPortsOrch->attach(this);
@@ -2067,6 +2135,224 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     Orch::addExecutor(executor);
     timer->start();
 }
+
+void AclOrch::queryAclActionCapability()
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status {SAI_STATUS_FAILURE};
+    sai_attribute_t attr;
+    vector<int32_t> action_list;
+
+    attr.id = SAI_SWITCH_ATTR_MAX_ACL_ACTION_COUNT;
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status == SAI_STATUS_SUCCESS)
+    {
+        const auto max_action_count = attr.value.u32;
+
+        for (auto stage_attr: {SAI_SWITCH_ATTR_ACL_STAGE_INGRESS, SAI_SWITCH_ATTR_ACL_STAGE_EGRESS})
+        {
+            auto stage = (stage_attr == SAI_SWITCH_ATTR_ACL_STAGE_INGRESS ? ACL_STAGE_INGRESS : ACL_STAGE_EGRESS);
+            auto stage_str = (stage_attr == SAI_SWITCH_ATTR_ACL_STAGE_INGRESS ? STAGE_INGRESS : STAGE_EGRESS);
+            action_list.resize(static_cast<size_t>(max_action_count));
+
+            attr.id = stage_attr;
+            attr.value.aclcapability.action_list.list  = action_list.data();
+            attr.value.aclcapability.action_list.count = max_action_count;
+
+            status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+            if (status == SAI_STATUS_SUCCESS)
+            {
+
+                SWSS_LOG_INFO("Supported %s action count %d:", stage_str,
+                              attr.value.aclcapability.action_list.count);
+
+                for (size_t i = 0; i < static_cast<size_t>(attr.value.aclcapability.action_list.count); i++)
+                {
+                    auto action = static_cast<sai_acl_action_type_t>(action_list[i]);
+                    m_aclCapabilities[stage].insert(action);
+                    SWSS_LOG_INFO("    %s", sai_serialize_enum(action, &sai_metadata_enum_sai_acl_action_type_t).c_str());
+                }
+            }
+            else
+            {
+                SWSS_LOG_WARN("Failed to query ACL %s action capabilities - "
+                        "API assumed to be not implemented, using defaults",
+                        stage_str);
+                initDefaultAclActionCapabilities(stage);
+            }
+
+            // put capabilities in state DB
+            putAclActionCapabilityInDB(stage);
+        }
+    }
+    else
+    {
+        SWSS_LOG_WARN("Failed to query maximum ACL action count - "
+                "API assumed to be not implemented, using defaults capabilities for both %s and %s",
+                STAGE_INGRESS, STAGE_EGRESS);
+        for (auto stage: {ACL_STAGE_INGRESS, ACL_STAGE_EGRESS})
+        {
+            initDefaultAclActionCapabilities(stage);
+            putAclActionCapabilityInDB(stage);
+        }
+    }
+
+    /* For those ACL action entry attributes for which acl parameter is enumeration (metadata->isenum == true)
+     * we can query enum values which are implemented by vendor SAI.
+     * For this purpose we may want to use "sai_query_attribute_enum_values_capability"
+     * from SAI object API call (saiobject.h).
+     * However, right now libsairedis does not support SAI object API, so we will just
+     * put all values as supported for now.
+     */
+
+    queryAclActionAttrEnumValues(ACTION_PACKET_ACTION,
+                                 aclL3ActionLookup,
+                                 aclPacketActionLookup);
+    queryAclActionAttrEnumValues(ACTION_DTEL_FLOW_OP,
+                                 aclDTelActionLookup,
+                                 aclDTelFlowOpTypeLookup);
+}
+
+void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
+{
+    vector<FieldValueTuple> fvVector;
+    auto stage_str = (stage == ACL_STAGE_INGRESS ? STAGE_INGRESS : STAGE_EGRESS);
+
+    auto field = std::string("ACL_ACTIONS") + '|' + stage_str;
+    auto& acl_action_set = m_aclCapabilities[stage];
+
+    string delimiter;
+    ostringstream acl_action_value_stream;
+
+    for (const auto& action_map: {aclL3ActionLookup, aclMirrorStageLookup, aclDTelActionLookup})
+    {
+        for (const auto& it: action_map)
+        {
+            auto saiAction = getAclActionFromAclEntry(it.second);
+            if (acl_action_set.find(saiAction) != acl_action_set.cend())
+            {
+                acl_action_value_stream << delimiter << it.first;
+                delimiter = comma;
+            }
+        }
+    }
+
+    fvVector.emplace_back(field, acl_action_value_stream.str());
+    m_switchTable.set("switch", fvVector);
+}
+
+void AclOrch::initDefaultAclActionCapabilities(acl_stage_type_t stage)
+{
+    m_aclCapabilities[stage] = defaultAclActionsSupported.at(stage);
+
+    SWSS_LOG_INFO("Assumed %s %zu actions to be supported:",
+            stage == ACL_STAGE_INGRESS ? STAGE_INGRESS : STAGE_EGRESS,
+            m_aclCapabilities[stage].size());
+
+    for (auto action: m_aclCapabilities[stage])
+    {
+        SWSS_LOG_INFO("    %s", sai_serialize_enum(action, &sai_metadata_enum_sai_acl_action_type_t).c_str());
+    }
+    // put capabilities in state DB
+    putAclActionCapabilityInDB(stage);
+}
+
+template<typename AclActionAttrLookupT>
+void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
+                                           const acl_rule_attr_lookup_t& ruleAttrLookupMap,
+                                           const AclActionAttrLookupT lookupMap)
+{
+    vector<FieldValueTuple> fvVector;
+    auto acl_attr = ruleAttrLookupMap.at(action_name);
+    auto acl_action = getAclActionFromAclEntry(acl_attr);
+
+    /* if the action is not supported then no need to do secondary query for
+     * supported values
+     */
+    if (isAclActionSupported(ACL_STAGE_INGRESS, acl_action) ||
+        isAclActionSupported(ACL_STAGE_EGRESS, acl_action))
+    {
+        string delimiter;
+        ostringstream acl_action_value_stream;
+        auto field = std::string("ACL_ACTION") + '|' + action_name;
+
+        const auto* meta = sai_metadata_get_attr_metadata(SAI_OBJECT_TYPE_ACL_ENTRY, acl_attr);
+        if (meta == nullptr)
+        {
+            SWSS_LOG_THROW("Metadata null pointer returned by sai_metadata_get_attr_metadata for action %s",
+                           action_name.c_str());
+        }
+
+        if (!meta->isenum)
+        {
+            SWSS_LOG_THROW("%s is not an enum", action_name.c_str());
+        }
+
+        // TODO: once sai object api is available make this code compile
+#ifdef SAIREDIS_SUPPORT_OBJECT_API
+        vector<int32_t> values_list(meta->enummetadata->valuescount);
+        sai_s32_list_t values;
+        values.count = static_cast<uint32_t>(values_list.size());
+        values.list = values_list.data();
+
+        auto status = sai_query_attribute_enum_values_capability(gSwitchId,
+                                                                 SAI_OBJECT_TYPE_ACL_ENTRY,
+                                                                 acl_attr,
+                                                                 &values);
+        if (status == SAI_STATUS_SUCCESS)
+        {
+            for (size_t i = 0; i < values.count; i++)
+            {
+                m_aclEnumActionCapabilities[acl_action].insert(values.list[i]);
+            }
+        }
+        else
+        {
+            SWSS_LOG_WARN("Failed to query enum values supported for ACL action %s - ",
+                    "API is not implemented, assuming all values are supported for this action",
+                    action_name.c_str());
+            /* assume all enum values are supported */
+            for (size_t i = 0; i < meta->enummetadata->valuescount; i++)
+            {
+                m_aclEnumActionCapabilities[acl_action].insert(meta->enummetadata->values[i]);
+            }
+        }
+#else
+        /* assume all enum values are supported untill sai object api is available */
+        for (size_t i = 0; i < meta->enummetadata->valuescount; i++)
+        {
+            m_aclEnumActionCapabilities[acl_action].insert(meta->enummetadata->values[i]);
+        }
+#endif
+
+        // put supported values in DB
+        for (const auto& it: lookupMap)
+        {
+            const auto foundIt = m_aclEnumActionCapabilities[acl_action].find(it.second);
+            if (foundIt == m_aclEnumActionCapabilities[acl_action].cend())
+            {
+                continue;
+            }
+            acl_action_value_stream << delimiter << it.first;
+            delimiter = comma;
+        }
+
+        fvVector.emplace_back(field, acl_action_value_stream.str());
+    }
+
+    m_switchTable.set("switch", fvVector);
+}
+
+sai_acl_action_type_t AclOrch::getAclActionFromAclEntry(sai_acl_entry_attr_t attr)
+{
+    if (attr < SAI_ACL_ENTRY_ATTR_ACTION_START || attr > SAI_ACL_ENTRY_ATTR_ACTION_END)
+    {
+        SWSS_LOG_THROW("Invalid ACL entry attribute passed in: %d", attr);
+    }
+
+    return static_cast<sai_acl_action_type_t>(attr - SAI_ACL_ENTRY_ATTR_ACTION_START);
+};
 
 AclOrch::AclOrch(vector<TableConnector>& connectors, TableConnector switchTable,
         PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *dtelOrch) :
@@ -2182,6 +2468,31 @@ bool AclOrch::addAclTable(AclTable &newTable, string table_id)
             SWSS_LOG_ERROR("Failed to remove exsiting ACL table %s before adding the new one",
                     table_id.c_str());
             return false;
+        }
+    }
+    else
+    {
+        // If ACL table is new, check for the existence of current mirror tables
+        // Note: only one table per mirror type can be created
+        auto table_type = newTable.type;
+        if (table_type == ACL_TABLE_MIRROR || table_type == ACL_TABLE_MIRRORV6)
+        {
+            string mirror_type;
+            if ((table_type == ACL_TABLE_MIRROR && !m_mirrorTableId.empty()))
+            {
+                mirror_type = TABLE_TYPE_MIRROR;
+            }
+
+            if (table_type == ACL_TABLE_MIRRORV6 && !m_mirrorV6TableId.empty())
+            {
+                mirror_type = TABLE_TYPE_MIRRORV6;
+            }
+
+            if (!mirror_type.empty())
+            {
+                SWSS_LOG_ERROR("Mirror table %s has already been created", mirror_type.c_str());
+                return false;
+            }
         }
     }
 
@@ -2318,6 +2629,26 @@ bool AclOrch::removeAclRule(string table_id, string rule_id)
 bool AclOrch::isCombinedMirrorV6Table()
 {
     return m_isCombinedMirrorV6Table;
+}
+
+bool AclOrch::isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const
+{
+    const auto& it = m_aclCapabilities.find(stage);
+    if (it == m_aclCapabilities.cend())
+    {
+        return false;
+    }
+    return it->second.find(action) != it->second.cend();
+}
+
+bool AclOrch::isAclActionEnumValueSupported(sai_acl_action_type_t action, sai_acl_action_parameter_t param) const
+{
+    const auto& it = m_aclEnumActionCapabilities.find(action);
+    if (it == m_aclEnumActionCapabilities.cend())
+    {
+        return false;
+    }
+    return it->second.find(param.s32) != it->second.cend();
 }
 
 void AclOrch::doAclTableTask(Consumer &consumer)
@@ -2596,15 +2927,6 @@ bool AclOrch::processAclTableType(string type, acl_table_type_t &table_type)
             SWSS_LOG_ERROR("Mirror table type %s is not supported", type.c_str());
             return false;
         }
-
-        // Check the existence of current mirror tables
-        // Note: only one table per type could be created
-        if ((table_type == ACL_TABLE_MIRROR && !m_mirrorTableId.empty()) ||
-                (table_type == ACL_TABLE_MIRRORV6 && !m_mirrorV6TableId.empty()))
-        {
-            SWSS_LOG_ERROR("Mirror table table_type %s has already been created", type.c_str());
-            return false;
-        }
     }
 
     return true;
@@ -2658,6 +2980,16 @@ sai_object_id_t AclOrch::getTableById(string table_id)
     return SAI_NULL_OBJECT_ID;
 }
 
+const AclTable *AclOrch::getTableByOid(sai_object_id_t oid) const
+{
+   const auto& it = m_AclTables.find(oid);
+   if (it == m_AclTables.cend())
+   {
+       return nullptr;
+   }
+   return &it->second;
+}
+
 bool AclOrch::createBindAclTable(AclTable &aclTable, sai_object_id_t &table_oid)
 {
     SWSS_LOG_ENTER();
@@ -2708,7 +3040,8 @@ void AclOrch::doTask(SelectableTimer &timer)
             swss::FieldValueTuple fvtb("Bytes", to_string(cnt.bytes));
             values.push_back(fvtb);
 
-            AclOrch::getCountersTable().set(table_it.second.id + ":" + rule_it.second->getId(), values, "");
+            AclOrch::getCountersTable().set(rule_it.second->getTableId() + ":"
+                    + rule_it.second->getId(), values, "");
         }
         values.clear();
     }

@@ -16,6 +16,7 @@ using namespace swss;
 
 #define VXLAN_IF_NAME_PREFIX    "Brvxlan"
 #define VNET_PREFIX             "Vnet"
+#define VRF_PREFIX              "Vrf"
 
 RouteSync::RouteSync(RedisPipeline *pipeline) :
     m_routeTable(pipeline, APP_ROUTE_TABLE_NAME, true),
@@ -45,19 +46,28 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
     unsigned int master_index = rtnl_route_get_table(route_obj);
     char master_name[IFNAMSIZ] = {0};
 
-    /* Get the name of the master device */
-    getIfName(master_index, master_name, IFNAMSIZ);
-    
-    /* If the master device name starts with VNET_PREFIX, it is a VNET route.
-       The VNET name is exactly the name of the associated master device. */
-    if (string(master_name).find(VNET_PREFIX) == 0)
+    /* if the table_id is not set in the route obj then route is for default vrf. */
+    if (master_index)
     {
-        onVnetRouteMsg(nlmsg_type, obj, string(master_name));
+        /* Get the name of the master device */
+        getIfName(master_index, master_name, IFNAMSIZ);
+    
+        /* If the master device name starts with VNET_PREFIX, it is a VNET route.
+           The VNET name is exactly the name of the associated master device. */
+        if (string(master_name).find(VNET_PREFIX) == 0)
+        {
+            onVnetRouteMsg(nlmsg_type, obj, string(master_name));
+        }
+        /* Otherwise, it is a regular route (include VRF route). */
+        else
+        {
+            onRouteMsg(nlmsg_type, obj, master_name);
+        }
+
     }
-    /* Otherwise, it is a regular route (include VRF route). */
     else
     {
-        onRouteMsg(nlmsg_type, obj);
+        onRouteMsg(nlmsg_type, obj, NULL);
     }
 }
 
@@ -65,15 +75,31 @@ void RouteSync::onMsg(int nlmsg_type, struct nl_object *obj)
  * Handle regular route (include VRF route) 
  * @arg nlmsg_type      Netlink message type
  * @arg obj             Netlink object
+ * @arg vrf             Vrf name
  */
-void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj)
+void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 {
     struct rtnl_route *route_obj = (struct rtnl_route *)obj;
     struct nl_addr *dip;
-    char destipprefix[MAX_ADDR_SIZE + 1] = {0};
+    char destipprefix[IFNAMSIZ + MAX_ADDR_SIZE + 2] = {0};
+
+    if (vrf)
+    {
+        /*
+         * Now vrf device name is required to start with VRF_PREFIX,
+         * it is difficult to split vrf_name:ipv6_addr.
+         */
+        if (memcmp(vrf, VRF_PREFIX, strlen(VRF_PREFIX)))
+        {
+            SWSS_LOG_ERROR("Invalid VRF name %s (ifindex %u)", vrf, rtnl_route_get_table(route_obj));
+            return;
+        }
+        memcpy(destipprefix, vrf, strlen(vrf));
+        destipprefix[strlen(vrf)] = ':';
+    }
 
     dip = rtnl_route_get_dst(route_obj);
-    nl_addr2str(dip, destipprefix, MAX_ADDR_SIZE);
+    nl_addr2str(dip, destipprefix + strlen(destipprefix), MAX_ADDR_SIZE);
     SWSS_LOG_DEBUG("Receive new route message dest ip prefix: %s", destipprefix);
 
     /*
@@ -324,6 +350,17 @@ string RouteSync::getNextHopGw(struct rtnl_route *route_obj)
             char gw_ip[MAX_ADDR_SIZE + 1] = {0};
             nl_addr2str(addr, gw_ip, MAX_ADDR_SIZE);
             result += gw_ip;
+        }
+        else
+        {
+            if (rtnl_route_get_family(route_obj) == AF_INET)
+            {
+                result += "0.0.0.0";
+            }
+            else
+            {
+                result += "::";
+            }
         }
 
         if (i + 1 < rtnl_route_get_nnexthops(route_obj))

@@ -3,7 +3,7 @@ CFLAGS_SAI = -I /usr/include/sai
 LIBNL_CFLAGS = -I/usr/include/libnl3
 LIBNL_LIBS = -lnl-genl-3 -lnl-route-3 -lnl-3
 
-bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd
+bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd
 
 if HAVE_STP
 bin_PROGRAMS += stpmgrd
@@ -55,9 +55,16 @@ vxlanmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 vxlanmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 vxlanmgrd_LDADD = -lswsscommon
 
+
 if HAVE_STP
 stpmgrd_SOURCES = stpmgrd.cpp stpmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp shellcmd.h
 stpmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(COV_CFLAGS)
 stpmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(COV_CFLAGS)
 stpmgrd_LDADD = -lswsscommon $(COV_LDFLAGS)
 endif
+
+sflowmgrd_SOURCES = sflowmgrd.cpp sflowmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp shellcmd.h
+sflowmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+sflowmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+sflowmgrd_LDADD = -lswsscommon
+
