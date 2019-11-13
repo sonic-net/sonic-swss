@@ -386,30 +386,43 @@ void StpOrch::doStpTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             string stp_instance;
+            uint16_t instance = STP_INVALID_INSTANCE;
+
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "stp_instance")
+                {
                     stp_instance = fvValue(i);
+                    instance = (uint16_t)std::stoi(stp_instance);
+                }
+            }
 
-                uint16_t instance = (uint16_t)std::stoi(stp_instance);
-                if(addVlanToStpInstance(vlan_alias, instance))
-                    it = consumer.m_toSync.erase(it);
-                else
+            if(instance == STP_INVALID_INSTANCE)
+            {
+                SWSS_LOG_ERROR("No instance found for VLAN %s", vlan_alias.c_str());
+            }
+            else
+            {
+                if(!addVlanToStpInstance(vlan_alias, instance))
+                {
                     it++;
+                    continue;
+                }
             }
         }
         else if (op == DEL_COMMAND)
         {
-            if(removeVlanFromStpInstance(vlan_alias, 0))
-                it = consumer.m_toSync.erase(it);
-            else
+            if(!removeVlanFromStpInstance(vlan_alias, 0))
+            {
                 it++;
+                continue;
+            }
         }
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-            it = consumer.m_toSync.erase(it);
         }
+        it = consumer.m_toSync.erase(it);
     }
 }
 
@@ -444,31 +457,44 @@ void StpOrch::doStpPortStateTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            string stp_state;
+            uint8_t state = STP_STATE_INVALID;
+
             for (auto i : kfvFieldsValues(t))
             {
-                string stp_state;
                 if (fvField(i) == "state")
+                {
                     stp_state = fvValue(i);
+                    state = (uint8_t)std::stoi(stp_state);
+                }
+            }
 
-                uint8_t state = (uint8_t)std::stoi(stp_state);
-                if(updateStpPortState(port, instance, state))
-                    it = consumer.m_toSync.erase(it);
-                else
+            if(state == STP_STATE_INVALID)
+            {
+                SWSS_LOG_ERROR("No stp state found for instance %u port %s", instance, port_alias.c_str());
+            }
+            else
+            {
+                if(!updateStpPortState(port, instance, state))
+                {
                     it++;
+                    continue;
+                }
             }
         }
         else if (op == DEL_COMMAND)
         {
-            if(removeStpPort(port, instance))
-                it = consumer.m_toSync.erase(it);
-            else
+            if(!removeStpPort(port, instance))
+            {
                 it++;
+                continue;
+            }
         }
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
-            it = consumer.m_toSync.erase(it);
         }
+        it = consumer.m_toSync.erase(it);
     }
 }
 
@@ -487,16 +513,16 @@ void StpOrch::doStpFastageTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
+            string state;
             for (auto i : kfvFieldsValues(t))
             {
-                string state;
                 if (fvField(i) == "state")
                     state = fvValue(i);
+            }
 
-                if(state.compare("true") == 0)
-                {
-                    stpVlanFdbFlush(vlan_alias);
-                }
+            if(state.compare("true") == 0)
+            {
+                stpVlanFdbFlush(vlan_alias);
             }
         }
         else if (op == DEL_COMMAND)

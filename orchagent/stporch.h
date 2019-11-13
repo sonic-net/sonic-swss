@@ -5,13 +5,16 @@
 #include <set>
 #include "orch.h"
 
+#define STP_INVALID_INSTANCE 0xFFFF
+
 typedef enum _stp_state
 {
     STP_STATE_DISABLED				= 0,
 	STP_STATE_BLOCKING				= 1,
 	STP_STATE_LISTENING				= 2,
 	STP_STATE_LEARNING				= 3,
-	STP_STATE_FORWARDING			= 4
+	STP_STATE_FORWARDING			= 4,
+	STP_STATE_INVALID               = 5
 }stp_state;
 
 
@@ -23,6 +26,7 @@ public:
     bool updateMaxStpInstance(uint32_t max_stp_instance);
     bool removeStpPorts(Port &port);
     bool removeVlanFromStpInstance(string vlan, sai_uint16_t stp_instance);
+    bool stpVlanPortFdbFlush(string port_alias, string vlan_alias);
 
 private:
     unique_ptr<Table> m_stpTable;
@@ -32,6 +36,7 @@ private:
     void doStpTask(Consumer &consumer);
     void doStpPortStateTask(Consumer &consumer);
     void doStpFastageTask(Consumer &consumer);
+    void doStpVlanIntfFlushTask(Consumer &consumer);
     
     sai_object_id_t addStpInstance(sai_uint16_t stp_instance);
     bool removeStpInstance(sai_uint16_t stp_instance);
