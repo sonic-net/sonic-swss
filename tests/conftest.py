@@ -221,6 +221,10 @@ class DockerVirtualSwitch(object):
                     network_mode="container:%s" % self.ctn_sw.name,
                     volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
 
+        self.dst_dbconfig_path = "{}/sonic-db".format(self.mount)
+        self.src_dbconfig_file = "/var/run/redis/sonic-db/database_config.json"
+        os.system("mkdir -p {}".format(self.dst_dbconfig_path))
+        os.system("cp {} {}".format(self.src_dbconfig_file, self.dst_dbconfig_path))
         self.appldb = None
         self.redis_sock = self.mount + '/' + "redis.sock"
         try:
