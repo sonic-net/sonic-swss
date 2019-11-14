@@ -78,19 +78,19 @@ const std::unordered_map<std::string, sai_out_drop_reason_t> egress_drop_reason_
 class DropCounter : public DebugCounter
 {
     public:
-        DropCounter(const std::string &counter_name,
-                    const std::string &counter_type,
-                    const std::unordered_set<std::string> &drop_reasons);
+        DropCounter(const std::string& counter_name,
+                    const std::string& counter_type,
+                    const std::unordered_set<std::string>& drop_reasons);
         DropCounter(const DropCounter&) = delete;
         DropCounter& operator=(const DropCounter&) = delete;
         virtual ~DropCounter();
 
-        const std::unordered_set<std::string> &getDropReasons() const { return drop_reasons; }
+        const std::unordered_set<std::string>& getDropReasons() const { return drop_reasons; }
 
         virtual std::string getDebugCounterSAIStat() const;
 
-        void addDropReason(const std::string &drop_reason);
-        void removeDropReason(const std::string &drop_reason);
+        void addDropReason(const std::string& drop_reason);
+        void removeDropReason(const std::string& drop_reason);
 
     private:
         void initializeDropCounterInSAI();

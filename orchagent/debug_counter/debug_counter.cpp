@@ -27,8 +27,8 @@ extern sai_debug_counter_api_t *sai_debug_counter_api;
 // If counter_type is not a member of debug_counter_type_lookup then this
 // constructor will throw a runtime error.
 DebugCounter::DebugCounter(
-        const string &counter_name,
-        const string &counter_type)
+        const string& counter_name,
+        const string& counter_type)
     : name(counter_name)
 {
     SWSS_LOG_ENTER();

@@ -22,51 +22,51 @@ extern "C" {
 class DebugCounterOrch: public Orch
 {
 public:
-    DebugCounterOrch(swss::DBConnector *db, const std::vector<std::string> &table_names, int poll_interval);
+    DebugCounterOrch(swss::DBConnector *db, const std::vector<std::string>& table_names, int poll_interval);
     virtual ~DebugCounterOrch(void);
 
-    void doTask(Consumer &consumer);
+    void doTask(Consumer& consumer);
 
 private:
     // Debug Capability Reporting Functions
     void publishDropCounterCapabilities();
 
     // doTask Handler Functions
-    task_process_status installDebugCounter(const std::string &counter_name, const std::vector<swss::FieldValueTuple> &attributes);
-    task_process_status uninstallDebugCounter(const std::string &counter_name);
-    task_process_status addDropReason(const std::string &counter_name, const std::string &drop_reason);
-    task_process_status removeDropReason(const std::string &counter_name, const std::string &drop_reason);
+    task_process_status installDebugCounter(const std::string& counter_name, const std::vector<swss::FieldValueTuple>& attributes);
+    task_process_status uninstallDebugCounter(const std::string& counter_name);
+    task_process_status addDropReason(const std::string& counter_name, const std::string& drop_reason);
+    task_process_status removeDropReason(const std::string& counter_name, const std::string& drop_reason);
 
     // Free Table Management Functions
-    void addFreeCounter(const std::string &counter_name, const std::string &counter_type);
-    void deleteFreeCounter(const std::string &counter_name);
-    void addFreeDropReason(const std::string &counter_name, const std::string &drop_reason);
-    void deleteFreeDropReason(const std::string &counter_name, const std::string &drop_reason);
-    void reconcileFreeDropCounters(const std::string &counter_name);
+    void addFreeCounter(const std::string& counter_name, const std::string& counter_type);
+    void deleteFreeCounter(const std::string& counter_name);
+    void addFreeDropReason(const std::string& counter_name, const std::string& drop_reason);
+    void deleteFreeDropReason(const std::string& counter_name, const std::string& drop_reason);
+    void reconcileFreeDropCounters(const std::string& counter_name);
 
     // Flex Counter Management Functions
-    CounterType getFlexCounterType(const std::string &counter_type);
+    CounterType getFlexCounterType(const std::string& counter_type);
     void installDebugFlexCounters(
-            const std::string &counter_type,
-            const std::string &counter_stat);
+            const std::string& counter_type,
+            const std::string& counter_stat);
     void uninstallDebugFlexCounters(
-            const std::string &counter_type,
-            const std::string &counter_stat);
+            const std::string& counter_type,
+            const std::string& counter_stat);
 
     // Debug Counter Initialization Helper Functions
-    std::string getDebugCounterType(const std::vector<swss::FieldValueTuple> &values) const;
+    std::string getDebugCounterType(const std::vector<swss::FieldValueTuple>& values) const;
     void createDropCounter(
-            const std::string &counter_name,
-            const std::string &counter_type,
-            const std::unordered_set<std::string> &drop_reasons);
+            const std::string& counter_name,
+            const std::string& counter_type,
+            const std::unordered_set<std::string>& drop_reasons);
 
     // Debug Counter Configuration Helper Functions
     void parseDropReasonUpdate(
-            const std::string &key,
+            const std::string& key,
             const char delimeter,
             std::string *counter_name,
             std::string *drop_reason) const;
-    bool isDropReasonValid(const std::string &drop_reason) const;
+    bool isDropReasonValid(const std::string& drop_reason) const;
 
     // Data Members
     std::shared_ptr<swss::DBConnector> m_stateDb = nullptr;

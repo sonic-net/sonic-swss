@@ -15,7 +15,7 @@ extern sai_debug_counter_api_t *sai_debug_counter_api;
 const int maxDropReasons = 100;
 
 // If initialization fails, this constructor will throw a runtime error.
-DropCounter::DropCounter(const string &counter_name, const string &counter_type, const unordered_set<string> &drop_reasons)
+DropCounter::DropCounter(const string& counter_name, const string& counter_type, const unordered_set<string>& drop_reasons)
         : DebugCounter(counter_name, counter_type), drop_reasons(drop_reasons)
 {
     SWSS_LOG_ENTER();
@@ -77,7 +77,7 @@ std::string DropCounter::getDebugCounterSAIStat() const
 // effect.
 //
 // If the update fails, this method throws a runtime error.
-void DropCounter::addDropReason(const std::string &drop_reason)
+void DropCounter::addDropReason(const std::string& drop_reason)
 {
     SWSS_LOG_ENTER();
 
@@ -103,7 +103,7 @@ void DropCounter::addDropReason(const std::string &drop_reason)
 // effect.
 //
 // If the update fails, this method throws a runtime error.
-void DropCounter::removeDropReason(const std::string &drop_reason)
+void DropCounter::removeDropReason(const std::string& drop_reason)
 {
     SWSS_LOG_ENTER();
 

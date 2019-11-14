@@ -41,7 +41,7 @@ static const std::unordered_map<std::string, sai_debug_counter_type_t> debug_cou
 class DebugCounter
 {
     public:
-        DebugCounter(const std::string &counter_name, const std::string &counter_type);
+        DebugCounter(const std::string& counter_name, const std::string& counter_type);
         DebugCounter(const DebugCounter&) = delete;
         DebugCounter& operator=(const DebugCounter&) = delete;
         virtual ~DebugCounter();
