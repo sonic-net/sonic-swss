@@ -754,6 +754,7 @@ class DockerVirtualSwitch(object):
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         tbl._del(interface + "|" + ip);
+        tbl._del(interface);
         time.sleep(1)
 
     def set_mtu(self, interface, mtu):
@@ -773,6 +774,11 @@ class DockerVirtualSwitch(object):
         fvs = swsscommon.FieldValuePairs([("neigh", mac),
                                           ("family", "IPv4")])
         tbl.set(interface + ":" + ip, fvs)
+        time.sleep(1)
+
+    def remove_neighbor(self, interface, ip):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "NEIGH_TABLE")
+        tbl._del(interface + ":" + ip)
         time.sleep(1)
 
     def setup_db(self):
