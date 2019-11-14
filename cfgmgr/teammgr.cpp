@@ -378,11 +378,13 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
 
     const string dump_path = "/var/warmboot/teamd/";
     MacAddress mac_boot = m_mac;
-    /*set portchannel mac same with mac before warmStart ,when warmStart there is a file written by teamd*/
+
+    // set portchannel mac same with mac before warmStart, when warmStart and there
+    // is a file written by teamd.
     ifstream aliasfile(dump_path + alias);
     if (WarmStart::isWarmStart() && aliasfile.is_open())
     {
-# define PARTNER_SYSTEM_ID_OFFSET 40
+        const int partner_system_id_offset = 40;
         string line;
 
         while (getline(aliasfile, line))
@@ -393,8 +395,8 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
             if (!memberfile.is_open())
                 continue;
 
-            memberfile.seekg(PARTNER_SYSTEM_ID_OFFSET, std::ios::beg);
-            memberfile.read((char *)mac_temp, ETHER_ADDR_LEN);
+            memberfile.seekg(partner_system_id_offset, std::ios::beg);
+            memberfile.read(reinterpret_cast<char*>(mac_temp), ETHER_ADDR_LEN);
             mac_boot = MacAddress(mac_temp);
             break;
         }
