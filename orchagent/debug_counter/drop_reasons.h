@@ -5,6 +5,7 @@
 #define L2_ANY               "L2_ANY"
 #define SMAC_MULTICAST       "SMAC_MULTICAST"
 #define SMAC_EQUALS_DMAC     "SMAC_EQUALS_DMAC"
+#define DMAC_RESERVED        "DMAC_RESERVED"
 #define VLAN_TAG_NOT_ALLOWED "VLAN_TAG_NOT_ALLOWED"
 #define INGRESS_VLAN_FILTER  "INGRESS_VLAN_FILTER"
 #define EGRESS_VLAN_FILTER   "EGRESS_VLAN_FILTER"
@@ -14,12 +15,12 @@
 #define L2_LOOPBACK_FILTER   "L2_LOOPBACK_FILTER"
 #define EXCEEDS_L2_MTU       "EXCEEDS_L2_MTU"
 
-// L3 Ingress Drop Reasons
+// L3 Drop Reasons
 #define L3_ANY              "L3_ANY"
 #define EXCEEDS_L3_MTU      "EXCEEDS_L3_MTU"
 #define TTL                 "TTL"
 #define L3_LOOPBACK_FILTER  "L3_LOOPBACK_FILTER"
-#define REASON_NON_ROUTABLE "REASON_NON_ROUTABLE"
+#define NON_ROUTABLE        "NON_ROUTABLE"
 #define NO_L3_HEADER        "NO_L3_HEADER"
 #define IP_HEADER_ERROR     "IP_HEADER_ERROR"
 #define UC_DIP_MC_DMAC      "UC_DIP_MC_DMAC"
@@ -44,6 +45,8 @@
 #define BLACKHOLE_ARP       "BLACKHOLE_ARP"
 #define UNRESOLVED_NEXT_HOP "UNRESOLVED_NEXT_HOP"
 #define L3_EGRESS_LINK_DOWN "L3_EGRESS_LINK_DOWN"
+
+// Tunnel Drop Reasons
 #define DECAP_ERROR         "DECAP_ERROR"
 
 // ACL Drop Reasons
