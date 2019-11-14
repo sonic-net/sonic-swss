@@ -155,7 +155,6 @@ class TestDropCounters(object):
 
             counter_capabilities = self.genericGetAndAssert(capabilities_table, counter_type)
 
-            # TODO: Extend vslib to return mock capabilities we can check for here.
             for capability in counter_capabilities:
                 assert len(capability) == 2
                 capability_name = capability[0]
@@ -164,9 +163,9 @@ class TestDropCounters(object):
                 assert capability_name in SUPPORTED_COUNTER_CAPABILITIES
 
                 if capability_name == CAP_COUNT:
-                    assert int(capability_contents) >= 0
+                    assert int(capability_contents) == 3
                 elif capability_name == CAP_REASONS:
-                    assert len(capability_contents) >= 0
+                    assert len(capability_contents) >= 2
                 else:
                     assert False
 
@@ -181,7 +180,7 @@ class TestDropCounters(object):
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
 
         name = 'TEST'
-        reason = 'SMAC_EQUALS_DMAC'
+        reason = 'L3_ANY'
 
         self.create_drop_counter(name, PORT_INGRESS_DROPS)
         assert len(asic_state_table.getKeys()) == 0
@@ -212,7 +211,7 @@ class TestDropCounters(object):
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
 
         name = 'TEST'
-        reason = 'SMAC_EQUALS_DMAC'
+        reason = 'L3_ANY'
 
         self.add_drop_reason(name, reason)
         assert len(asic_state_table.getKeys()) == 0
@@ -243,7 +242,7 @@ class TestDropCounters(object):
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
 
         name = 'BAD_CTR'
-        reason = 'SMAC_EQUALS_DMAC'
+        reason = 'L3_ANY'
 
         self.create_drop_counter(name, 'THIS_IS_DEFINITELY_NOT_A_VALID_COUNTER_TYPE')
         self.add_drop_reason(name, reason)
@@ -283,7 +282,7 @@ class TestDropCounters(object):
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
 
         name = 'ADD_TEST'
-        reason1 = 'SMAC_EQUALS_DMAC'
+        reason1 = 'L3_ANY'
 
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason1)
@@ -314,7 +313,7 @@ class TestDropCounters(object):
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
 
         name = 'ADD_TEST'
-        reason1 = 'SMAC_EQUALS_DMAC'
+        reason1 = 'L3_ANY'
         reason2 = 'ACL_ANY'
 
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
@@ -345,7 +344,7 @@ class TestDropCounters(object):
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
 
         name = 'ADD_TEST'
-        reason1 = 'SMAC_EQUALS_DMAC'
+        reason1 = 'L3_ANY'
 
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason1)
@@ -379,7 +378,7 @@ class TestDropCounters(object):
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
 
         name = 'ADD_TEST'
-        reason1 = 'SMAC_EQUALS_DMAC'
+        reason1 = 'L3_ANY'
 
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
         self.add_drop_reason(name, reason1)
@@ -414,7 +413,7 @@ class TestDropCounters(object):
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
 
         name = 'ADD_TEST'
-        reason1 = 'SMAC_EQUALS_DMAC'
+        reason1 = 'L3_ANY'
         reason2 = 'ACL_ANY'
 
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
@@ -448,7 +447,7 @@ class TestDropCounters(object):
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
 
         name = 'ADD_TEST'
-        reason1 = 'SMAC_EQUALS_DMAC'
+        reason1 = 'L3_ANY'
         reason2 = 'ACL_ANY'
 
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
@@ -478,7 +477,7 @@ class TestDropCounters(object):
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
 
         name = 'ADD_TEST'
-        reason1 = 'SMAC_EQUALS_DMAC'
+        reason1 = 'L3_ANY'
         bogus_reason = 'LIVE_LAUGH_LOVE'
 
         self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
@@ -508,7 +507,7 @@ class TestDropCounters(object):
         flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
 
         name1 = 'DEBUG_0'
-        reason1 = 'SMAC_EQUALS_DMAC'
+        reason1 = 'L3_ANY'
 
         name2 = 'DEBUG_1'
         reason2 = 'ACL_ANY'
