@@ -21,6 +21,15 @@ extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 
 extern void syncd_apply_view();
+
+/*
+ * Global supported objects variables
+ */
+extern int32_t  gSupportedObjectTypeList[SAI_OBJECT_TYPE_MAX];
+extern uint32_t gSupportedObjectTypeListCount;
+/* Global threshold support flag */
+bool gIsThresholdSupported = false;
+
 /*
  * Global orch daemon variables
  */
@@ -41,6 +50,76 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
         m_stateDb(stateDb)
 {
     SWSS_LOG_ENTER();
+    if (gSupportedObjectTypeListCount)
+    {
+        bool isTamCollectorSupported = false;
+        bool isTamReportSupported = false;
+        bool isTamTransportSupported = false;
+        bool isTamSupported = false;
+        bool isTamEventSupported = false;
+        bool isTamEventActionSupported = false;
+        bool isTamEventThresholdSupported = false;
+
+        /* Run through supported objects and check if all objects needed for IFA feature are supported or not */
+        for (uint32_t iter = 0; iter < gSupportedObjectTypeListCount; iter++)
+        {
+            switch (gSupportedObjectTypeList[iter])
+            {
+                case SAI_OBJECT_TYPE_TAM_COLLECTOR:
+                {
+                    isTamCollectorSupported = true;
+                    break;
+                }
+                case SAI_OBJECT_TYPE_TAM_REPORT:
+                {
+                    isTamReportSupported = true;
+                    break;
+                }
+                case SAI_OBJECT_TYPE_TAM_TRANSPORT:
+                {
+                    isTamTransportSupported = true;
+                    break;
+                }
+                case SAI_OBJECT_TYPE_TAM_EVENT_ACTION:
+                {
+                    isTamEventActionSupported = true;
+                    break;
+                }
+
+                case SAI_OBJECT_TYPE_TAM_EVENT_THRESHOLD:
+                {
+                    isTamEventThresholdSupported = true;
+                    break;
+                }
+
+                case SAI_OBJECT_TYPE_TAM_EVENT:
+                {
+                    isTamEventSupported = true;
+                    break;
+                }
+                case SAI_OBJECT_TYPE_TAM:
+                {
+                    isTamSupported = true;
+                    break;
+                }
+            }
+        }
+
+        if (isTamCollectorSupported && isTamReportSupported &&
+            isTamSupported && isTamEventSupported && isTamEventThresholdSupported && isTamEventActionSupported )
+        {
+            /* Add threshold support field in APP DB's switch table */
+            Table m_appSwitchTable(m_applDb, APP_SWITCH_TABLE_NAME);
+            string key = SWITCH_TABLE_KEY;
+            vector<FieldValueTuple> fvVector;
+            FieldValueTuple threshold_support(THRESHOLD_SUPPORTED_FIELD, "True");
+            fvVector.push_back(threshold_support);
+
+            m_appSwitchTable.set(key, fvVector);
+
+            gIsThresholdSupported = true;
+        }
+    }
 }
 
 OrchDaemon::~OrchDaemon()
@@ -244,11 +323,15 @@ bool OrchDaemon::init()
     TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
     gAclOrch = new AclOrch(acl_table_connectors, stateDbSwitchTable, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
 
-    vector<string> thresOrch_tables = {
-        CFG_THRESHOLD_TABLE_NAME
-    };
+    ThresholdOrch *thres_orch = NULL;
+    if (gIsThresholdSupported == true)
+    {
+        vector<string> thresOrch_tables = {
+            CFG_THRESHOLD_TABLE_NAME
+        };
 
-    ThresholdOrch *thres_orch = new ThresholdOrch(m_configDb, thresOrch_tables, gPortsOrch);
+        thres_orch = new ThresholdOrch(m_configDb, thresOrch_tables, gPortsOrch);
+    }
 
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);
@@ -261,7 +344,11 @@ bool OrchDaemon::init()
     m_orchList.push_back(cfg_vnet_rt_orch);
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
-    m_orchList.push_back(thres_orch);
+
+    if (gIsThresholdSupported == true)
+    {
+        m_orchList.push_back(thres_orch);
+    }
 
     m_select = new Select();
 
