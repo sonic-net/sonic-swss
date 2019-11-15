@@ -33,6 +33,7 @@
 #define TABLE_TYPE_CTRLPLANE            "CTRLPLANE"
 #define TABLE_TYPE_DTEL_FLOW_WATCHLIST  "DTEL_FLOW_WATCHLIST"
 #define TABLE_TYPE_DTEL_DROP_WATCHLIST  "DTEL_DROP_WATCHLIST"
+#define TABLE_TYPE_MCLAG                "MCLAG"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
@@ -109,7 +110,8 @@ typedef enum
     ACL_TABLE_PFCWD,
     ACL_TABLE_CTRLPLANE,
     ACL_TABLE_DTEL_FLOW_WATCHLIST,
-    ACL_TABLE_DTEL_DROP_WATCHLIST
+    ACL_TABLE_DTEL_DROP_WATCHLIST,
+    ACL_TABLE_MCLAG
 } acl_table_type_t;
 
 typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
@@ -313,6 +315,14 @@ public:
 
 protected:
     DTelOrch *m_pDTelOrch;
+};
+
+class AclRuleMclag: public AclRuleL3
+{
+public:
+    AclRuleMclag(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = false);
+    bool validateAddMatch(string attr_name, string attr_value);
+    bool validate();
 };
 
 class AclTable {

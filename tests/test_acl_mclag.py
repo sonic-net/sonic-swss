@@ -105,7 +105,7 @@ class TestMclagAcl(object):
 
     def test_AclTableCreation(self, dvs, testlog):
         """
-        hmset ACL_TABLE_TABLE:mclag policy_desc "Mclag egress port isolate acl" type L3 ports Ethernet0,Ethernet4
+        hmset ACL_TABLE_TABLE:mclag policy_desc "Mclag egress port isolate acl" type MCLAG ports Ethernet0,Ethernet4
         """
         self.setup_db(dvs)
 
@@ -116,7 +116,7 @@ class TestMclagAcl(object):
             "ACL_TABLE_TABLE", "mclag",
             [
                 ("policy_desc", "Mclag egress port isolate acl"),
-                ("type", "L3"),
+                ("type", "MCLAG"),
                 ("ports", ",".join(bind_ports)),
             ]
         )
