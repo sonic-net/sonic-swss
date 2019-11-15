@@ -40,8 +40,6 @@ sai_object_id_t gUnderlayIfId;
 sai_object_id_t gSwitchId = SAI_NULL_OBJECT_ID;
 MacAddress gMacAddress;
 MacAddress gVxlanMacAddress;
-int32_t gSupportedObjectTypeList[SAI_OBJECT_TYPE_MAX];
-uint32_t gSupportedObjectTypeListCount;
 
 #define DEFAULT_BATCH_SIZE  128
 int gBatchSize = DEFAULT_BATCH_SIZE;
@@ -291,22 +289,6 @@ int main(int argc, char **argv)
     }
 
     SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
-
-    sai_attribute_t obj_attr_get;
-
-    obj_attr_get.id = SAI_SWITCH_ATTR_SUPPORTED_OBJECT_TYPE_LIST;
-    obj_attr_get.value.s32list.count = SAI_OBJECT_TYPE_MAX;
-    obj_attr_get.value.s32list.list= gSupportedObjectTypeList;
-
-    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &obj_attr_get);
-    if (SAI_STATUS_SUCCESS != status)
-    {
-        SWSS_LOG_ERROR("get_switch_attribute failed with error %d\n", status);
-        exit(EXIT_FAILURE);
-    }
-
-    gSupportedObjectTypeListCount = obj_attr_get.value.s32list.count;
-
 
     /* Initialize orchestration components */
     DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
