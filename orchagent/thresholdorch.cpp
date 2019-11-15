@@ -36,51 +36,89 @@ ThresholdOrch::ThresholdOrch(DBConnector *db, vector<string> &tableNames, PortsO
     m_tamEventAction = SAI_NULL_OBJECT_ID;
     m_tamTransport = SAI_NULL_OBJECT_ID;
     m_tamCollector = SAI_NULL_OBJECT_ID;
-
-    /* Create TAM report type object. */
-    if (tamReportCreate(SAI_TAM_REPORT_TYPE_PROTO, &m_tamReport) != true)
-    {
-        SWSS_LOG_ERROR("Unable to create TAM report object.");
-    }
-
-    /* Create TAM event object */
-    if (tamEventActionCreate(m_tamReport, &m_tamEventAction) != true)
-    {
-        SWSS_LOG_ERROR("Unable to create TAM event action object.");
-    }
-
-    /* Create TAM transport object */
-    if (tamTransportCreate(THRESHOLD_ORCH_SAI_TAM_THRESHOLD_DST_PORT, THRESHOLD_ORCH_SAI_TAM_TRANSPORT_SRC_PORT,
-                              &m_tamTransport ) != true)
-    {
-        SWSS_LOG_ERROR("Unable to create TAM transport object.");
-    }
-
-    /* Create TAM collector object */
-    sai_ip_address_t src_ip_addr; 
-    sai_ip_address_t dst_ip_addr;
-    IpAddress src_ip(0x0a0a0a0a);
-    IpAddress dst_ip(0x7f000001);
-
-    copy (dst_ip_addr, dst_ip);
-    copy (src_ip_addr, src_ip);
-
-    if (tamCollectorCreate(src_ip_addr, dst_ip_addr, m_tamTransport, &m_tamCollector) != true)
-    {
-        SWSS_LOG_ERROR("Unable to create TAM collector object.");
-    }
 }
 
 ThresholdOrch::~ThresholdOrch()
 {
     m_portsOrch->detach(this);
- 
+
     /* Delete TAM objects. */
-    (void) tamReportDelete(m_tamReport); 
-    (void) tamEventActionDelete(m_tamEventAction);
-    (void) tamTransportDelete(m_tamTransport);
-    (void) tamCollectorDelete(m_tamCollector);
+    if (m_tamReport != SAI_NULL_OBJECT_ID)
+    {
+        (void) tamReportDelete(m_tamReport);
+    }
+
+    if (m_tamEventAction != SAI_NULL_OBJECT_ID)
+    {
+        (void) tamEventActionDelete(m_tamEventAction);
+    }
+
+    if (m_tamTransport != SAI_NULL_OBJECT_ID)
+    {
+        (void) tamTransportDelete(m_tamTransport);
+    }
+
+    if (m_tamCollector != SAI_NULL_OBJECT_ID)
+    {
+        (void) tamCollectorDelete(m_tamCollector);
+    }
 }
+
+bool ThresholdOrch::createCommonTamObjects()
+{
+    if (m_tamReport == SAI_NULL_OBJECT_ID)
+    {
+        /* Create TAM report type object. */
+        if (tamReportCreate(SAI_TAM_REPORT_TYPE_PROTO, &m_tamReport) != true)
+        {
+            SWSS_LOG_ERROR("Unable to create TAM report object.");
+            return false;
+        }
+    }
+
+    if (m_tamEventAction == SAI_NULL_OBJECT_ID)
+    {
+        /* Create TAM event object */
+        if (tamEventActionCreate(m_tamReport, &m_tamEventAction) != true)
+        {
+            SWSS_LOG_ERROR("Unable to create TAM event action object.");
+            return false;
+        }
+    }
+
+    if (m_tamTransport == SAI_NULL_OBJECT_ID)
+    {
+        /* Create TAM transport object */
+        if (tamTransportCreate(THRESHOLD_ORCH_SAI_TAM_THRESHOLD_DST_PORT, THRESHOLD_ORCH_SAI_TAM_TRANSPORT_SRC_PORT,
+                                &m_tamTransport ) != true)
+        {
+            SWSS_LOG_ERROR("Unable to create TAM transport object.");
+            return false;
+        }
+    }
+
+    if (m_tamCollector == SAI_NULL_OBJECT_ID)
+    {
+        /* Create TAM collector object */
+        /* Using a random source ip */
+        sai_ip_address_t src_ip_addr;
+        sai_ip_address_t dst_ip_addr;
+        IpAddress src_ip(0x0a0a0a0a);
+        IpAddress dst_ip(0x7f000001);
+
+        copy (dst_ip_addr, dst_ip);
+        copy (src_ip_addr, src_ip);
+
+        if (tamCollectorCreate(src_ip_addr, dst_ip_addr, m_tamTransport, &m_tamCollector) != true)
+        {
+            SWSS_LOG_ERROR("Unable to create TAM collector object.");
+            return false;
+        }
+    }
+
+    return true;
+}
+
 
 void ThresholdOrch::update(SubjectType type, void *cntx)
 {
@@ -160,6 +198,19 @@ bool ThresholdOrch::addTamObjEntry(thresTamObjEntry tamObjEntry)
     }
 
     tamThdObj = m_thresTamThdTable[threshold].m_thresTamThd;
+
+    /* Create common TAM objects */
+    if ((m_tamEventAction == SAI_NULL_OBJECT_ID) || (m_tamCollector == SAI_NULL_OBJECT_ID))
+    {
+        if (createCommonTamObjects() != true)
+        {
+            SWSS_LOG_ERROR("Unable to create tam event object.");
+            /* Destroy the threshold event object created earlier. */
+            if (thdCreated == true)
+                (void) deleteTamThdObjEntry(threshold);
+            return false;
+        }
+    }
 
     /* Create a new TAM object entry */
 

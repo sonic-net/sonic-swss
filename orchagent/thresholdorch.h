@@ -163,6 +163,7 @@ private:
                                      uint32_t threshold);
     bool updateCfgThreshold(thresEventType_t eventType, string alias, uint32_t index,
                                         uint32_t cfgThreshold, uint32_t threshold);
+    bool createCommonTamObjects();
 };
 #endif /* SWSS_THRESHOLDORCH_H */
 
