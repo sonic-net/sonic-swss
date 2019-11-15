@@ -227,7 +227,7 @@ void MclagLink::setPortIsolate(char *msg)
         FieldValueTuple desc_attr("policy_desc", "Mclag egress port isolate acl");
         acl_attrs.push_back(desc_attr);
 
-        FieldValueTuple type_attr("type", "L3");
+        FieldValueTuple type_attr("type", "MCLAG");
         acl_attrs.push_back(type_attr);
 
         FieldValueTuple port_attr("ports", isolate_src_port);
