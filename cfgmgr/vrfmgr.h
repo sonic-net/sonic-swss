@@ -21,15 +21,16 @@ public:
 private:
     bool delLink(const std::string& vrfName);
     bool setLink(const std::string& vrfName);
+    bool isVrfObjExist(const std::string& vrfName);
     void recycleTable(uint32_t table);
     uint32_t getFreeTable(void);
     void handleVnetConfigSet(KeyOpFieldsValuesTuple &t);
     void doTask(Consumer &consumer);
 
     std::map<std::string, uint32_t> m_vrfTableMap;
-    set<uint32_t> m_freeTables;
+    std::set<uint32_t> m_freeTables;
 
-    Table m_stateVrfTable;
+    Table m_stateVrfTable, m_stateVrfObjectTable;
     ProducerStateTable m_appVrfTableProducer, m_appVnetTableProducer;
 };
 

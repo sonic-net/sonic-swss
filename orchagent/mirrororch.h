@@ -94,7 +94,7 @@ private:
     bool m_freeze = false;
 
     void createEntry(const string&, const vector<FieldValueTuple>&);
-    void deleteEntry(const string&);
+    task_process_status deleteEntry(const string&);
 
     bool activateSession(const string&, MirrorEntry&);
     bool deactivateSession(const string&, MirrorEntry&);

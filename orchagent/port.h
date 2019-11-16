@@ -44,6 +44,7 @@ public:
         LOOPBACK,
         VLAN,
         LAG,
+        SUBPORT,
         UNKNOWN
     } ;
 
@@ -71,6 +72,7 @@ public:
     int                 m_index = 0;    // PHY_PORT: index
     uint32_t            m_mtu = DEFAULT_MTU;
     uint32_t            m_speed = 0;    // Mbps
+    std::string         m_learn_mode = "hardware";
     bool                m_autoneg = false;
     bool                m_admin_state_up = false;
     sai_object_id_t     m_port_id = 0;
@@ -86,8 +88,10 @@ public:
     sai_object_id_t     m_ingress_acl_table_group_id = 0;
     sai_object_id_t     m_egress_acl_table_group_id = 0;
     vlan_members_t      m_vlan_members;
+    sai_object_id_t     m_parent_port_id = 0;
     sai_port_oper_status_t m_oper_status = SAI_PORT_OPER_STATUS_UNKNOWN;
     std::set<std::string> m_members;
+    std::set<std::string> m_child_ports;
     std::vector<sai_object_id_t> m_queue_ids;
     std::vector<sai_object_id_t> m_priority_group_ids;
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;

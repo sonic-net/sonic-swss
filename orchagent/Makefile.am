@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart
+INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I flex_counter
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -52,7 +52,11 @@ orchagent_SOURCES = \
             dtelorch.cpp \
             flexcounterorch.cpp \
             watermarkorch.cpp \
-            policerorch.cpp
+            policerorch.cpp \
+            sfloworch.cpp \
+            chassisorch.cpp
+
+orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)

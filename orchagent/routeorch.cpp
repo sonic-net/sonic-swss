@@ -13,7 +13,6 @@ extern sai_route_api_t*             sai_route_api;
 extern sai_switch_api_t*            sai_switch_api;
 
 extern PortsOrch *gPortsOrch;
-extern IntfsOrch *gIntfsOrch;
 extern CrmOrch *gCrmOrch;
 
 /* Default maximum number of next hop groups */
@@ -22,9 +21,11 @@ extern CrmOrch *gCrmOrch;
 
 const int routeorch_pri = 5;
 
-RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
+RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
         Orch(db, tableName, routeorch_pri),
         m_neighOrch(neighOrch),
+        m_intfsOrch(intfsOrch),
+        m_vrfOrch(vrfOrch),
         m_nextHopGroupCount(0),
         m_resync(false)
 {
@@ -82,7 +83,7 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
 
     /* Add default IPv4 route into the m_syncdRoutes */
-    m_syncdRoutes[default_ip_prefix] = NextHopGroupKey();
+    m_syncdRoutes[gVirtualRouterId][default_ip_prefix] = NextHopGroupKey();
 
     SWSS_LOG_NOTICE("Create IPv4 default route with packet action drop");
 
@@ -101,7 +102,7 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch) :
     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
 
     /* Add default IPv6 route into the m_syncdRoutes */
-    m_syncdRoutes[v6_default_ip_prefix] = NextHopGroupKey();
+    m_syncdRoutes[gVirtualRouterId][v6_default_ip_prefix] = NextHopGroupKey();
 
     SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
 
@@ -202,39 +203,32 @@ sai_object_id_t RouteOrch::getNextHopGroupId(const NextHopGroupKey& nexthops)
     return m_syncdNextHopGroups[nexthops].next_hop_group_id;
 }
 
-void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
+void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr, sai_object_id_t vrf_id)
 {
     SWSS_LOG_ENTER();
 
-    auto observerEntry = m_nextHopObservers.find(dstAddr);
+    Host host = std::make_pair(vrf_id, dstAddr);
+    auto observerEntry = m_nextHopObservers.find(host);
 
     /* Create a new observer entry if no current observer is observing this
      * IP address */
     if (observerEntry == m_nextHopObservers.end())
     {
-        m_nextHopObservers.emplace(dstAddr, NextHopObserverEntry());
-        observerEntry = m_nextHopObservers.find(dstAddr);
+        m_nextHopObservers.emplace(host, NextHopObserverEntry());
+        observerEntry = m_nextHopObservers.find(host);
 
         /* Find the prefixes that cover the destination IP */
-        for (auto route : m_syncdRoutes)
+        if (m_syncdRoutes.find(vrf_id) != m_syncdRoutes.end())
         {
-            if (route.first.isAddressInSubnet(dstAddr))
+            for (auto route : m_syncdRoutes.at(vrf_id))
             {
-                SWSS_LOG_INFO("Prefix %s covers destination address",
-                        route.first.to_string().c_str());
-                observerEntry->second.routeTable.emplace(
-                        route.first, route.second);
-            }
-        }
-
-        /* Find the subnets that cover the destination IP
-         * The next hop of the subnet routes is left empty */
-        for (auto prefix : gIntfsOrch->getSubnetRoutes())
-        {
-            if (prefix.isAddressInSubnet(dstAddr))
-            {
-                observerEntry->second.routeTable.emplace(
-                        prefix, NextHopGroupKey());
+                if (route.first.isAddressInSubnet(dstAddr))
+                {
+                    SWSS_LOG_INFO("Prefix %s covers destination address",
+                            route.first.to_string().c_str());
+                    observerEntry->second.routeTable.emplace(
+                            route.first, route.second);
+                }
             }
         }
     }
@@ -249,16 +243,16 @@ void RouteOrch::attach(Observer *observer, const IpAddress& dstAddr)
         SWSS_LOG_NOTICE("Attached next hop observer of route %s for destination IP %s",
                 observerEntry->second.routeTable.rbegin()->first.to_string().c_str(),
                 dstAddr.to_string().c_str());
-        NextHopUpdate update = { dstAddr, route->first, route->second };
+        NextHopUpdate update = { vrf_id, dstAddr, route->first, route->second };
         observer->update(SUBJECT_TYPE_NEXTHOP_CHANGE, static_cast<void *>(&update));
     }
 }
 
-void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr)
+void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr, sai_object_id_t vrf_id)
 {
     SWSS_LOG_ENTER();
 
-    auto observerEntry = m_nextHopObservers.find(dstAddr);
+    auto observerEntry = m_nextHopObservers.find(std::make_pair(vrf_id, dstAddr));
 
     if (observerEntry == m_nextHopObservers.end())
     {
@@ -398,11 +392,22 @@ void RouteOrch::doTask(Consumer& consumer)
             {
                 /* Mark all current routes as dirty (DEL) in consumer.m_toSync map */
                 SWSS_LOG_NOTICE("Start resync routes\n");
-                for (auto i : m_syncdRoutes)
+                for (auto j : m_syncdRoutes)
                 {
-                    vector<FieldValueTuple> v;
-                    auto x = KeyOpFieldsValuesTuple(i.first.to_string(), DEL_COMMAND, v);
-                    consumer.m_toSync[i.first.to_string()] = x;
+                    string vrf;
+
+                    if (j.first != gVirtualRouterId)
+                    {
+                        vrf = m_vrfOrch->getVRFname(j.first) + ":";
+                    }
+
+                    for (auto i : j.second)
+                    {
+                        vector<FieldValueTuple> v;
+                        key = vrf + i.first.to_string();
+                        auto x = KeyOpFieldsValuesTuple(key, DEL_COMMAND, v);
+                        consumer.m_toSync[key] = x;
+                    }
                 }
                 m_resync = true;
             }
@@ -422,7 +427,27 @@ void RouteOrch::doTask(Consumer& consumer)
             continue;
         }
 
-        IpPrefix ip_prefix = IpPrefix(key);
+        sai_object_id_t vrf_id;
+        IpPrefix ip_prefix;
+
+        if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+        {
+            size_t found = key.find(':');
+            string vrf_name = key.substr(0, found);
+
+            if (!m_vrfOrch->isVRFexists(vrf_name))
+            {
+                it++;
+                continue;
+            }
+            vrf_id = m_vrfOrch->getVRFid(vrf_name);
+            ip_prefix = IpPrefix(key.substr(found+1));
+        }
+        else
+        {
+            vrf_id = gVirtualRouterId;
+            ip_prefix = IpPrefix(key);
+        }
 
         if (op == SET_COMMAND)
         {
@@ -455,15 +480,10 @@ void RouteOrch::doTask(Consumer& consumer)
             {
                 /* If any existing routes are updated to point to the
                  * above interfaces, remove them from the ASIC. */
-                if (m_syncdRoutes.find(ip_prefix) != m_syncdRoutes.end())
-                {
-                    if (removeRoute(ip_prefix))
-                        it = consumer.m_toSync.erase(it);
-                    else
-                        it++;
-                }
-                else
+                if (removeRoute(vrf_id, ip_prefix))
                     it = consumer.m_toSync.erase(it);
+                else
+                    it++;
                 continue;
             }
 
@@ -477,13 +497,43 @@ void RouteOrch::doTask(Consumer& consumer)
 
             if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
             {
-                it = consumer.m_toSync.erase(it);
+                /* blackhole to be done */
+                if (alsv[0] == "unknown")
+                {
+                    /* add addBlackholeRoute or addRoute support empty nhg */
+                    it = consumer.m_toSync.erase(it);
+                }
+                /* directly connected route to VRF interface which come from kernel */
+                else if (!alsv[0].compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                /* skip prefix which is linklocal or multicast */
+                else if (ip_prefix.getIp().getAddrScope() != IpAddress::GLOBAL_SCOPE)
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                /* fullmask subnet route is same as ip2me route */
+                else if (ip_prefix.isFullMask() && m_intfsOrch->isPrefixSubnet(ip_prefix, alsv[0]))
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                /* subnet route, vrf leaked route, etc */
+                else
+                {
+                    if (addRoute(vrf_id, ip_prefix, nhg))
+                        it = consumer.m_toSync.erase(it);
+                    else
+                        it++;
+                }
                 continue;
             }
 
-            if (m_syncdRoutes.find(ip_prefix) == m_syncdRoutes.end() || m_syncdRoutes[ip_prefix] != nhg)
+            if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
+                m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
+                m_syncdRoutes.at(vrf_id).at(ip_prefix) != nhg)
             {
-                if (addRoute(ip_prefix, nhg))
+                if (addRoute(vrf_id, ip_prefix, nhg))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;
@@ -494,16 +544,11 @@ void RouteOrch::doTask(Consumer& consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (m_syncdRoutes.find(ip_prefix) != m_syncdRoutes.end())
-            {
-                if (removeRoute(ip_prefix))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
-            }
-            else
-                /* Cannot locate the route */
+            /* Cannot locate the route or remove succeed */
+            if (removeRoute(vrf_id, ip_prefix))
                 it = consumer.m_toSync.erase(it);
+            else
+                it++;
         }
         else
         {
@@ -513,13 +558,13 @@ void RouteOrch::doTask(Consumer& consumer)
     }
 }
 
-void RouteOrch::notifyNextHopChangeObservers(const IpPrefix &prefix, const NextHopGroupKey &nexthops, bool add)
+void RouteOrch::notifyNextHopChangeObservers(sai_object_id_t vrf_id, const IpPrefix &prefix, const NextHopGroupKey &nexthops, bool add)
 {
     SWSS_LOG_ENTER();
 
     for (auto& entry : m_nextHopObservers)
     {
-        if (!prefix.isAddressInSubnet(entry.first))
+        if (vrf_id != entry.first.first || !prefix.isAddressInSubnet(entry.first.second))
         {
             continue;
         }
@@ -527,7 +572,7 @@ void RouteOrch::notifyNextHopChangeObservers(const IpPrefix &prefix, const NextH
         if (add)
         {
             bool update_required = false;
-            NextHopUpdate update = { entry.first, prefix, nexthops };
+            NextHopUpdate update = { vrf_id, entry.first.second, prefix, nexthops };
 
             /* Table should not be empty. Default route should always exists. */
             assert(!entry.second.routeTable.empty());
@@ -578,7 +623,7 @@ void RouteOrch::notifyNextHopChangeObservers(const IpPrefix &prefix, const NextH
                     assert(!entry.second.routeTable.empty());
 
                     auto route = entry.second.routeTable.rbegin();
-                    NextHopUpdate update = { entry.first, route->first, route->second };
+                    NextHopUpdate update = { vrf_id, entry.first.second, route->first, route->second };
 
                     for (auto observer : entry.second.observers)
                     {
@@ -604,7 +649,10 @@ void RouteOrch::increaseNextHopRefCount(const NextHopGroupKey &nexthops)
     else if (nexthops.getSize() == 1)
     {
         NextHopKey nexthop(nexthops.to_string());
-        m_neighOrch->increaseNextHopRefCount(nexthop);
+        if (nexthop.ip_address.isZero())
+            m_intfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
+        else
+            m_neighOrch->increaseNextHopRefCount(nexthop);
     }
     else
     {
@@ -621,7 +669,10 @@ void RouteOrch::decreaseNextHopRefCount(const NextHopGroupKey &nexthops)
     else if (nexthops.getSize() == 1)
     {
         NextHopKey nexthop(nexthops.to_string());
-        m_neighOrch->decreaseNextHopRefCount(nexthop);
+        if (nexthop.ip_address.isZero())
+            m_intfsOrch->decreaseRouterIntfsRefCount(nexthop.alias);
+        else
+            m_neighOrch->decreaseNextHopRefCount(nexthop);
     }
     else
     {
@@ -816,7 +867,7 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     return true;
 }
 
-void RouteOrch::addTempRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+void RouteOrch::addTempRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
 
@@ -845,30 +896,51 @@ void RouteOrch::addTempRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &ne
 
     /* Set the route's temporary next hop to be the randomly picked one */
     NextHopGroupKey tmp_next_hop((*it).to_string());
-    addRoute(ipPrefix, tmp_next_hop);
+    addRoute(vrf_id, ipPrefix, tmp_next_hop);
 }
 
-bool RouteOrch::addRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
 
     /* next_hop_id indicates the next hop id or next hop group id of this route */
     sai_object_id_t next_hop_id;
-    auto it_route = m_syncdRoutes.find(ipPrefix);
+
+    if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end())
+    {
+        m_syncdRoutes.emplace(vrf_id, RouteTable());
+        m_vrfOrch->increaseVrfRefCount(vrf_id);
+    }
+
+    auto it_route = m_syncdRoutes.at(vrf_id).find(ipPrefix);
 
     /* The route is pointing to a next hop */
     if (nextHops.getSize() == 1)
     {
         NextHopKey nexthop(nextHops.to_string());
-        if (m_neighOrch->hasNextHop(nexthop))
+        if (nexthop.ip_address.isZero())
         {
-            next_hop_id = m_neighOrch->getNextHopId(nexthop);
+            next_hop_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
+            /* rif is not created yet */
+            if (next_hop_id == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                        nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
+                return false;
+            }
         }
         else
         {
-            SWSS_LOG_INFO("Failed to get next hop %s for %s",
-                    nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
-            return false;
+            if (m_neighOrch->hasNextHop(nexthop))
+            {
+                next_hop_id = m_neighOrch->getNextHopId(nexthop);
+            }
+            else
+            {
+                SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                        nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
+                return false;
+            }
         }
     }
     /* The route is pointing to a next hop group */
@@ -884,7 +956,7 @@ bool RouteOrch::addRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHo
 
                 /* If the current next hop is part of the next hop group to sync,
                  * then return false and no need to add another temporary route. */
-                if (it_route != m_syncdRoutes.end() && it_route->second.getSize() == 1)
+                if (it_route != m_syncdRoutes.at(vrf_id).end() && it_route->second.getSize() == 1)
                 {
                     NextHopKey nexthop(it_route->second.to_string());
                     if (nextHops.contains(nexthop))
@@ -896,7 +968,7 @@ bool RouteOrch::addRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHo
                 /* Add a temporary route when a next hop group cannot be added,
                  * and there is no temporary route right now or the current temporary
                  * route is not pointing to a member of the next hop group to sync. */
-                addTempRoute(ipPrefix, nextHops);
+                addTempRoute(vrf_id, ipPrefix, nextHops);
                 /* Return false since the original route is not successfully added */
                 return false;
             }
@@ -907,7 +979,7 @@ bool RouteOrch::addRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHo
 
     /* Sync the route entry */
     sai_route_entry_t route_entry;
-    route_entry.vr_id = gVirtualRouterId;
+    route_entry.vr_id = vrf_id;
     route_entry.switch_id = gSwitchId;
     copy(route_entry.destination, ipPrefix);
 
@@ -919,7 +991,7 @@ bool RouteOrch::addRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHo
      * (group) id. The old next hop (group) is then not used and the reference
      * count will decrease by 1.
      */
-    if (it_route == m_syncdRoutes.end())
+    if (it_route == m_syncdRoutes.at(vrf_id).end())
     {
         route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
         route_attr.value.oid = next_hop_id;
@@ -996,18 +1068,33 @@ bool RouteOrch::addRoute(const IpPrefix &ipPrefix, const NextHopGroupKey &nextHo
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
 
-    m_syncdRoutes[ipPrefix] = nextHops;
+    m_syncdRoutes[vrf_id][ipPrefix] = nextHops;
 
-    notifyNextHopChangeObservers(ipPrefix, nextHops, true);
+    notifyNextHopChangeObservers(vrf_id, ipPrefix, nextHops, true);
     return true;
 }
 
-bool RouteOrch::removeRoute(const IpPrefix &ipPrefix)
+bool RouteOrch::removeRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
 {
     SWSS_LOG_ENTER();
 
+    auto it_route_table = m_syncdRoutes.find(vrf_id);
+    if (it_route_table == m_syncdRoutes.end())
+    {
+        SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%lx\n", vrf_id);
+        return true;
+    }
+
+    auto it_route = it_route_table->second.find(ipPrefix);
+    if (it_route == it_route_table->second.end())
+    {
+        SWSS_LOG_INFO("Failed to find route entry, vrf_id 0x%lx, prefix %s\n", vrf_id,
+                ipPrefix.to_string().c_str());
+        return true;
+    }
+
     sai_route_entry_t route_entry;
-    route_entry.vr_id = gVirtualRouterId;
+    route_entry.vr_id = vrf_id;
     route_entry.switch_id = gSwitchId;
     copy(route_entry.destination, ipPrefix);
 
@@ -1060,39 +1147,42 @@ bool RouteOrch::removeRoute(const IpPrefix &ipPrefix)
         }
 
     }
-    /* Remove next hop group entry if ref_count is zero */
-    auto it_route = m_syncdRoutes.find(ipPrefix);
-    if (it_route != m_syncdRoutes.end())
+
+    /*
+     * Decrease the reference count only when the route is pointing to a next hop.
+     * Decrease the reference count when the route is pointing to a next hop group,
+     * and check whether the reference count decreases to zero. If yes, then we need
+     * to remove the next hop group.
+     */
+    decreaseNextHopRefCount(it_route->second);
+    if (it_route->second.getSize() > 1
+        && m_syncdNextHopGroups[it_route->second].ref_count == 0)
     {
-        /*
-         * Decrease the reference count only when the route is pointing to a next hop.
-         * Decrease the reference count when the route is pointing to a next hop group,
-         * and check whether the reference count decreases to zero. If yes, then we need
-         * to remove the next hop group.
-         */
-        decreaseNextHopRefCount(it_route->second);
-        if (it_route->second.getSize() > 1
-            && m_syncdNextHopGroups[it_route->second].ref_count == 0)
-        {
-            removeNextHopGroup(it_route->second);
-        }
+        removeNextHopGroup(it_route->second);
     }
+
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.to_string().c_str());
 
     if (ipPrefix.isDefaultRoute())
     {
-        m_syncdRoutes[ipPrefix] = NextHopGroupKey();
+        it_route_table->second[ipPrefix] = NextHopGroupKey();
 
         /* Notify about default route next hop change */
-        notifyNextHopChangeObservers(ipPrefix, m_syncdRoutes[ipPrefix], true);
+        notifyNextHopChangeObservers(vrf_id, ipPrefix, it_route_table->second[ipPrefix], true);
     }
     else
     {
-        m_syncdRoutes.erase(ipPrefix);
+        it_route_table->second.erase(ipPrefix);
 
         /* Notify about the route next hop removal */
-        notifyNextHopChangeObservers(ipPrefix, NextHopGroupKey(), false);
+        notifyNextHopChangeObservers(vrf_id, ipPrefix, NextHopGroupKey(), false);
+
+        if (it_route_table->second.size() == 0)
+        {
+            m_syncdRoutes.erase(vrf_id);
+            m_vrfOrch->decreaseVrfRefCount(vrf_id);
+        }
     }
 
     return true;
