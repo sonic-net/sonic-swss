@@ -93,7 +93,7 @@ DropCounter::~DropCounter()
     {
         DebugCounter::removeDebugCounterFromSAI();
     }
-    catch (const std::exception& e)
+    catch (const std::runtime_error& e)
     {
         SWSS_LOG_ERROR("Failed to remove drop counter '%s' from SAI", name.c_str());
     }
@@ -156,7 +156,7 @@ void DropCounter::addDropReason(const std::string& drop_reason)
         drop_reasons.emplace(drop_reason);
         updateDropReasonsInSAI();
     }
-    catch (const std::exception& e)
+    catch (const std::runtime_error& e)
     {
         drop_reasons.erase(drop_reason);
         throw;
@@ -183,7 +183,7 @@ void DropCounter::removeDropReason(const std::string& drop_reason)
         drop_reasons.erase(drop_reason_it);
         updateDropReasonsInSAI();
     }
-    catch (const std::exception& e)
+    catch (const std::runtime_error& e)
     {
         drop_reasons.emplace(drop_reason);
         throw e;
