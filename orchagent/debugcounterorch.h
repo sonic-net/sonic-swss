@@ -45,7 +45,7 @@ private:
     void reconcileFreeDropCounters(const std::string& counter_name);
 
     // Flex Counter Management Functions
-    CounterType getFlexCounterType(const std::string& counter_type);
+    CounterType getFlexCounterType(const std::string& counter_type) noexcept(false);
     void installDebugFlexCounters(
             const std::string& counter_type,
             const std::string& counter_stat);
@@ -54,11 +54,12 @@ private:
             const std::string& counter_stat);
 
     // Debug Counter Initialization Helper Functions
-    std::string getDebugCounterType(const std::vector<swss::FieldValueTuple>& values) const;
+    std::string getDebugCounterType(
+            const std::vector<swss::FieldValueTuple>& values) const noexcept(false);
     void createDropCounter(
             const std::string& counter_name,
             const std::string& counter_type,
-            const std::unordered_set<std::string>& drop_reasons);
+            const std::unordered_set<std::string>& drop_reasons) noexcept(false);
 
     // Debug Counter Configuration Helper Functions
     void parseDropReasonUpdate(

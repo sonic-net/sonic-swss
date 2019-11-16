@@ -76,7 +76,7 @@ void DebugCounterOrch::doTask(Consumer& consumer)
         KeyOpFieldsValuesTuple t = it->second;
         string key = kfvKey(t);
         string op = kfvOp(t);
-        std::vector<FieldValueTuple> fvt = kfvFieldsValues(t);
+        std::vector<FieldValueTuple> values = kfvFieldsValues(t);
 
         auto table_name = consumer.getTableName();
         task_process_status task_status = task_process_status::task_ignore;
@@ -84,11 +84,27 @@ void DebugCounterOrch::doTask(Consumer& consumer)
         {
             if (op == SET_COMMAND)
             {
-                task_status = installDebugCounter(key, fvt);
+                try
+                {
+                    task_status = installDebugCounter(key, values);
+                }
+                catch (const std::runtime_error& e)
+                {
+                    SWSS_LOG_ERROR("Failed to create debug counter '%s'", key.c_str());
+                    task_status = task_process_status::task_failed;
+                }
             }
             else if (op == DEL_COMMAND)
             {
-                task_status = uninstallDebugCounter(key);
+                try
+                {
+                    task_status = uninstallDebugCounter(key);
+                }
+                catch (const std::runtime_error& e)
+                {
+                    SWSS_LOG_ERROR("Failed to delete debug counter '%s'", key.c_str());
+                    task_status = task_process_status::task_failed;
+                }
             }
             else
             {
@@ -102,11 +118,27 @@ void DebugCounterOrch::doTask(Consumer& consumer)
 
             if (op == SET_COMMAND)
             {
-                task_status = addDropReason(counter_name, drop_reason);
+                try
+                {
+                    task_status = addDropReason(counter_name, drop_reason);
+                }
+                catch (const std::runtime_error& e)
+                {
+                    SWSS_LOG_ERROR("Failed to add drop reason '%s' to counter '%s'", drop_reason.c_str(), counter_name.c_str());
+                    task_status = task_process_status::task_failed;
+                }
             }
             else if (op == DEL_COMMAND)
             {
-                task_status = removeDropReason(counter_name, drop_reason);
+                try
+                {
+                    task_status = removeDropReason(counter_name, drop_reason);
+                }
+                catch (const std::runtime_error& e)
+                {
+                    SWSS_LOG_ERROR("Failed to remove drop reason '%s' from counter '%s'", drop_reason.c_str(), counter_name.c_str());
+                    task_status = task_process_status::task_failed;
+                }
             }
             else
             {
@@ -150,12 +182,14 @@ void DebugCounterOrch::doTask(Consumer& consumer)
 // DROP_COUNTER_CAPABILITIES table in STATE_DB.
 void DebugCounterOrch::publishDropCounterCapabilities()
 {
-    string supported_ingress_drop_reasons = serializeSupportedDropReasons(getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST));
-    string supported_egress_drop_reasons  = serializeSupportedDropReasons(getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST));
+    string supported_ingress_drop_reasons = DropCounter::serializeSupportedDropReasons(
+            DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST));
+    string supported_egress_drop_reasons  = DropCounter::serializeSupportedDropReasons(
+            DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST));
 
-    for (auto const &counter_type : debug_counter_type_lookup)
+    for (auto const &counter_type : DebugCounter::getDebugCounterTypeLookup())
     {
-        string num_counters = std::to_string(getSupportedDebugCounterAmounts(counter_type.second));
+        string num_counters = std::to_string(DropCounter::getSupportedDebugCounterAmounts(counter_type.second));
 
         string drop_reasons;
         if (counter_type.first == PORT_INGRESS_DROPS || counter_type.first == SWITCH_INGRESS_DROPS)
@@ -200,18 +234,11 @@ task_process_status DebugCounterOrch::installDebugCounter(const string& counter_
     // to either: a) dispatch to different handlers in doTask or b) dispatch to
     // different helper methods in this method.
 
-    try
-    {
-        string counter_type = getDebugCounterType(attributes);
-        addFreeCounter(counter_name, counter_type);
-        reconcileFreeDropCounters(counter_name);
-    }
-    catch (const std::runtime_error& e)
-    {
-        SWSS_LOG_ERROR("Failed to create debug counter '%s'", counter_name.c_str());
-        return task_process_status::task_failed;
-    }
+    string counter_type = getDebugCounterType(attributes);
+    addFreeCounter(counter_name, counter_type);
+    reconcileFreeDropCounters(counter_name);
 
+    SWSS_LOG_NOTICE("Succesfully created drop counter %s", counter_name.c_str());
     return task_process_status::task_success;
 }
 
@@ -238,26 +265,19 @@ task_process_status DebugCounterOrch::uninstallDebugCounter(const string& counte
     string counter_type = counter->getCounterType();
     string counter_stat = counter->getDebugCounterSAIStat();
 
-    try
+    debug_counters.erase(it);
+    uninstallDebugFlexCounters(counter_type, counter_stat);
+
+    if (counter_type == PORT_INGRESS_DROPS || counter_type == PORT_EGRESS_DROPS)
     {
-        debug_counters.erase(it);
-        uninstallDebugFlexCounters(counter_type, counter_stat);
-        if (counter_type == PORT_INGRESS_DROPS || counter_type == PORT_EGRESS_DROPS)
-        {
-            m_counterNameToPortStatMap->hdel("", counter_name);
-        }
-        else
-        {
-            m_counterNameToSwitchStatMap->hdel("", counter_name);
-        }
-        SWSS_LOG_NOTICE("Succesfully deleted drop counter %s", counter_name.c_str());
+        m_counterNameToPortStatMap->hdel("", counter_name);
     }
-    catch (const std::exception& e)
+    else
     {
-        SWSS_LOG_ERROR("Failed to delete debug counter '%s'", counter_name.c_str());
-        return task_process_status::task_failed;
+        m_counterNameToSwitchStatMap->hdel("", counter_name);
     }
 
+    SWSS_LOG_NOTICE("Succesfully deleted drop counter %s", counter_name.c_str());
     return task_process_status::task_success;
 }
 
@@ -277,32 +297,16 @@ task_process_status DebugCounterOrch::addDropReason(const string& counter_name, 
         // are received before the create counter update, we keep track of reasons
         // we've seen in the free_drop_reasons table.
         addFreeDropReason(counter_name, drop_reason);
+        reconcileFreeDropCounters(counter_name);
 
-        try
-        {
-            reconcileFreeDropCounters(counter_name);
-        }
-        catch (const std::exception& e)
-        {
-            SWSS_LOG_ERROR("Failed to create debug counter '%s'", counter_name.c_str());
-            return task_process_status::task_failed;
-        }
-
+        SWSS_LOG_NOTICE("Succesfully created drop counter %s", counter_name.c_str());
         return task_process_status::task_success;
     }
 
-    try
-    {
-        DropCounter *counter = dynamic_cast<DropCounter*>(it->second.get());
-        counter->addDropReason(drop_reason);
-        SWSS_LOG_NOTICE("Added drop reason %s to drop counter %s", drop_reason.c_str(), counter_name.c_str());
-    }
-    catch (const std::exception& e)
-    {
-        SWSS_LOG_ERROR("Failed to add drop reason '%s' to counter '%s'", drop_reason.c_str(), counter_name.c_str());
-        return task_process_status::task_failed;
-    }
+    DropCounter *counter = dynamic_cast<DropCounter*>(it->second.get());
+    counter->addDropReason(drop_reason);
 
+    SWSS_LOG_NOTICE("Added drop reason %s to drop counter %s", drop_reason.c_str(), counter_name.c_str());
     return task_process_status::task_success;
 }
 
@@ -324,25 +328,18 @@ task_process_status DebugCounterOrch::removeDropReason(const string& counter_nam
         return task_success;
     }
 
-    try
-    {
-        DropCounter *counter = dynamic_cast<DropCounter*>(it->second.get());
-        const unordered_set<string>& drop_reasons = counter->getDropReasons();
-        if (drop_reasons.size() <= 1)
-        {
-            SWSS_LOG_WARN("Attempted to remove all drop reasons from counter '%s'", counter_name.c_str());
-            return task_ignore;
-        }
+    DropCounter *counter = dynamic_cast<DropCounter*>(it->second.get());
+    const unordered_set<string>& drop_reasons = counter->getDropReasons();
 
-        counter->removeDropReason(drop_reason);
-        SWSS_LOG_NOTICE("Removed drop reason %s from drop counter %s", drop_reason.c_str(), counter_name.c_str());
-    }
-    catch (const std::exception& e)
+    if (drop_reasons.size() <= 1)
     {
-        SWSS_LOG_ERROR("Failed to remove drop reason '%s' from counter '%s'", drop_reason.c_str(), counter_name.c_str());
-        return task_failed;
+        SWSS_LOG_WARN("Attempted to remove all drop reasons from counter '%s'", counter_name.c_str());
+        return task_ignore;
     }
 
+    counter->removeDropReason(drop_reason);
+
+    SWSS_LOG_NOTICE("Removed drop reason %s from drop counter %s", drop_reason.c_str(), counter_name.c_str());
     return task_success;
 }
 
@@ -515,6 +512,7 @@ std::string DebugCounterOrch::getDebugCounterType(const vector<FieldValueTuple>&
     for (auto attr : values)
     {
         std::string attr_name = fvField(attr);
+        auto supported_debug_counter_attributes = DebugCounter::getSupportedDebugCounterAttributes();
         auto attr_name_it = supported_debug_counter_attributes.find(attr_name);
         if (attr_name_it == supported_debug_counter_attributes.end())
         {
@@ -525,6 +523,7 @@ std::string DebugCounterOrch::getDebugCounterType(const vector<FieldValueTuple>&
         std::string attr_value = fvValue(attr);
         if (attr_name == "type")
         {
+            auto debug_counter_type_lookup = DebugCounter::getDebugCounterTypeLookup();
             auto counter_type_it = debug_counter_type_lookup.find(attr_value);
             if (counter_type_it == debug_counter_type_lookup.end())
             {
@@ -578,8 +577,8 @@ bool DebugCounterOrch::isDropReasonValid(const string& drop_reason) const
 {
     SWSS_LOG_ENTER();
 
-    if (ingress_drop_reason_lookup.find(drop_reason) == ingress_drop_reason_lookup.end() &&
-        egress_drop_reason_lookup.find(drop_reason)  == egress_drop_reason_lookup.end())
+    if (!DropCounter::isIngressDropReasonValid(drop_reason) &&
+        !DropCounter::isEgressDropReasonValid(drop_reason))
     {
         SWSS_LOG_ERROR("Drop reason %s not found", drop_reason.c_str());
         return false;

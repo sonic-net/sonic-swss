@@ -12,6 +12,70 @@ using std::vector;
 extern sai_object_id_t gSwitchId;
 extern sai_debug_counter_api_t *sai_debug_counter_api;
 
+const unordered_map<string, sai_in_drop_reason_t> DropCounter::ingress_drop_reason_lookup =
+{
+    { L2_ANY,               SAI_IN_DROP_REASON_L2_ANY },
+    { SMAC_MULTICAST,       SAI_IN_DROP_REASON_SMAC_MULTICAST },
+    { SMAC_EQUALS_DMAC,     SAI_IN_DROP_REASON_SMAC_EQUALS_DMAC },
+    { DMAC_RESERVED,        SAI_IN_DROP_REASON_DMAC_RESERVED },
+    { VLAN_TAG_NOT_ALLOWED, SAI_IN_DROP_REASON_VLAN_TAG_NOT_ALLOWED },
+    { INGRESS_VLAN_FILTER,  SAI_IN_DROP_REASON_INGRESS_VLAN_FILTER },
+    { INGRESS_STP_FILTER,   SAI_IN_DROP_REASON_INGRESS_STP_FILTER },
+    { FDB_UC_DISCARD,       SAI_IN_DROP_REASON_FDB_UC_DISCARD },
+    { FDB_MC_DISCARD,       SAI_IN_DROP_REASON_FDB_MC_DISCARD },
+    { L2_LOOPBACK_FILTER,   SAI_IN_DROP_REASON_L2_LOOPBACK_FILTER },
+    { EXCEEDS_L2_MTU,       SAI_IN_DROP_REASON_EXCEEDS_L2_MTU },
+    { L3_ANY,               SAI_IN_DROP_REASON_L3_ANY },
+    { EXCEEDS_L3_MTU,       SAI_IN_DROP_REASON_EXCEEDS_L3_MTU },
+    { TTL,                  SAI_IN_DROP_REASON_TTL },
+    { L3_LOOPBACK_FILTER,   SAI_IN_DROP_REASON_L3_LOOPBACK_FILTER },
+    { NON_ROUTABLE,         SAI_IN_DROP_REASON_NON_ROUTABLE },
+    { NO_L3_HEADER,         SAI_IN_DROP_REASON_NO_L3_HEADER },
+    { IP_HEADER_ERROR,      SAI_IN_DROP_REASON_IP_HEADER_ERROR },
+    { UC_DIP_MC_DMAC,       SAI_IN_DROP_REASON_UC_DIP_MC_DMAC },
+    { DIP_LOOPBACK,         SAI_IN_DROP_REASON_DIP_LOOPBACK },
+    { SIP_LOOPBACK,         SAI_IN_DROP_REASON_SIP_LOOPBACK },
+    { SIP_MC,               SAI_IN_DROP_REASON_SIP_MC },
+    { SIP_CLASS_E,          SAI_IN_DROP_REASON_SIP_CLASS_E },
+    { SIP_UNSPECIFIED,      SAI_IN_DROP_REASON_SIP_UNSPECIFIED },
+    { MC_DMAC_MISMATCH,     SAI_IN_DROP_REASON_MC_DMAC_MISMATCH },
+    { SIP_EQUALS_DIP,       SAI_IN_DROP_REASON_SIP_EQUALS_DIP },
+    { SIP_BC,               SAI_IN_DROP_REASON_SIP_BC },
+    { DIP_LOCAL,            SAI_IN_DROP_REASON_DIP_LOCAL },
+    { DIP_LINK_LOCAL,       SAI_IN_DROP_REASON_DIP_LINK_LOCAL },
+    { SIP_LINK_LOCAL,       SAI_IN_DROP_REASON_SIP_LINK_LOCAL },
+    { IPV6_MC_SCOPE0,       SAI_IN_DROP_REASON_IPV6_MC_SCOPE0 },
+    { IPV6_MC_SCOPE1,       SAI_IN_DROP_REASON_IPV6_MC_SCOPE1 },
+    { IRIF_DISABLED,        SAI_IN_DROP_REASON_IRIF_DISABLED },
+    { ERIF_DISABLED,        SAI_IN_DROP_REASON_ERIF_DISABLED },
+    { LPM4_MISS,            SAI_IN_DROP_REASON_LPM4_MISS },
+    { LPM6_MISS,            SAI_IN_DROP_REASON_LPM6_MISS },
+    { BLACKHOLE_ROUTE,      SAI_IN_DROP_REASON_BLACKHOLE_ROUTE },
+    { BLACKHOLE_ARP,        SAI_IN_DROP_REASON_BLACKHOLE_ARP },
+    { UNRESOLVED_NEXT_HOP,  SAI_IN_DROP_REASON_UNRESOLVED_NEXT_HOP },
+    { L3_EGRESS_LINK_DOWN,  SAI_IN_DROP_REASON_L3_EGRESS_LINK_DOWN },
+    { DECAP_ERROR,          SAI_IN_DROP_REASON_DECAP_ERROR },
+    { ACL_ANY,              SAI_IN_DROP_REASON_ACL_ANY},
+    { ACL_INGRESS_PORT,     SAI_IN_DROP_REASON_ACL_INGRESS_PORT },
+    { ACL_INGRESS_LAG,      SAI_IN_DROP_REASON_ACL_INGRESS_LAG },
+    { ACL_INGRESS_VLAN,     SAI_IN_DROP_REASON_ACL_INGRESS_VLAN },
+    { ACL_INGRESS_RIF,      SAI_IN_DROP_REASON_ACL_INGRESS_RIF },
+    { ACL_INGRESS_SWITCH,   SAI_IN_DROP_REASON_ACL_INGRESS_SWITCH },
+    { ACL_EGRESS_PORT,      SAI_IN_DROP_REASON_ACL_EGRESS_PORT },
+    { ACL_EGRESS_LAG,       SAI_IN_DROP_REASON_ACL_EGRESS_LAG },
+    { ACL_EGRESS_VLAN,      SAI_IN_DROP_REASON_ACL_EGRESS_VLAN },
+    { ACL_EGRESS_RIF,       SAI_IN_DROP_REASON_ACL_EGRESS_RIF },
+    { ACL_EGRESS_SWITCH,    SAI_IN_DROP_REASON_ACL_EGRESS_SWITCH }
+};
+
+const unordered_map<string, sai_out_drop_reason_t> DropCounter::egress_drop_reason_lookup =
+{
+    { L2_ANY,              SAI_OUT_DROP_REASON_L2_ANY },
+    { EGRESS_VLAN_FILTER,  SAI_OUT_DROP_REASON_EGRESS_VLAN_FILTER },
+    { L3_ANY,              SAI_OUT_DROP_REASON_L3_ANY },
+    { L3_EGRESS_LINK_DOWN, SAI_OUT_DROP_REASON_L3_EGRESS_LINK_DOWN },
+};
+
 const int maxDropReasons = 100;
 
 // If initialization fails, this constructor will throw a runtime error.
@@ -19,7 +83,7 @@ DropCounter::DropCounter(const string& counter_name, const string& counter_type,
         : DebugCounter(counter_name, counter_type), drop_reasons(drop_reasons)
 {
     SWSS_LOG_ENTER();
-    this->initializeDropCounterInSAI();
+    initializeDropCounterInSAI();
 }
 
 DropCounter::~DropCounter()
@@ -31,7 +95,7 @@ DropCounter::~DropCounter()
     }
     catch (const std::exception& e)
     {
-        SWSS_LOG_ERROR("Failed to remove drop counter '%s' from SAI", this->name.c_str());
+        SWSS_LOG_ERROR("Failed to remove drop counter '%s' from SAI", name.c_str());
     }
 }
 
@@ -43,32 +107,32 @@ std::string DropCounter::getDebugCounterSAIStat() const
 
     sai_attribute_t index_attribute;
     index_attribute.id = SAI_DEBUG_COUNTER_ATTR_INDEX;
-    if (sai_debug_counter_api->get_debug_counter_attribute(this->counter_id, 1, &index_attribute) != SAI_STATUS_SUCCESS)
+    if (sai_debug_counter_api->get_debug_counter_attribute(counter_id, 1, &index_attribute) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get stat for debug counter '%s'", this->name.c_str());
+        SWSS_LOG_ERROR("Failed to get stat for debug counter '%s'", name.c_str());
         throw runtime_error("Failed to get debug counter stat");
     }
 
     auto index = index_attribute.value.u32;
-    if (this->type == PORT_INGRESS_DROPS)
+    if (type == PORT_INGRESS_DROPS)
     {
         return sai_serialize_port_stat(static_cast<sai_port_stat_t>(SAI_PORT_STAT_IN_DROP_REASON_RANGE_BASE + index));
     }
-    else if (this->type == PORT_EGRESS_DROPS)
+    else if (type == PORT_EGRESS_DROPS)
     {
         return sai_serialize_port_stat(static_cast<sai_port_stat_t>(SAI_PORT_STAT_OUT_DROP_REASON_RANGE_BASE + index));
     }
-    else if (this->type == SWITCH_INGRESS_DROPS)
+    else if (type == SWITCH_INGRESS_DROPS)
     {
         return sai_serialize_switch_stat(static_cast<sai_switch_stat_t>(SAI_SWITCH_STAT_IN_DROP_REASON_RANGE_BASE + index));
     }
-    else if (this->type == SWITCH_EGRESS_DROPS)
+    else if (type == SWITCH_EGRESS_DROPS)
     {
         return sai_serialize_switch_stat(static_cast<sai_switch_stat_t>(SAI_SWITCH_STAT_OUT_DROP_REASON_RANGE_BASE + index));
     }
     else
     {
-        SWSS_LOG_ERROR("No stat found for debug counter '%s' of type '%s'", this->name.c_str(), this->type.c_str());
+        SWSS_LOG_ERROR("No stat found for debug counter '%s' of type '%s'", name.c_str(), type.c_str());
         throw runtime_error("No stat found for debug counter");
     }
 }
@@ -81,20 +145,20 @@ void DropCounter::addDropReason(const std::string& drop_reason)
 {
     SWSS_LOG_ENTER();
 
-    if (this->drop_reasons.find(drop_reason) != this->drop_reasons.end())
+    if (drop_reasons.find(drop_reason) != drop_reasons.end())
     {
-        SWSS_LOG_DEBUG("Drop reason '%s' already present on '%s'", drop_reason.c_str(), this->name.c_str());
+        SWSS_LOG_DEBUG("Drop reason '%s' already present on '%s'", drop_reason.c_str(), name.c_str());
         return;
     }
 
     try
     {
-        this->drop_reasons.emplace(drop_reason);
-        this->updateDropReasonsInSAI();
+        drop_reasons.emplace(drop_reason);
+        updateDropReasonsInSAI();
     }
     catch (const std::exception& e)
     {
-        this->drop_reasons.erase(drop_reason);
+        drop_reasons.erase(drop_reason);
         throw;
     }
 }
@@ -107,32 +171,42 @@ void DropCounter::removeDropReason(const std::string& drop_reason)
 {
     SWSS_LOG_ENTER();
 
-    auto drop_reason_it = this->drop_reasons.find(drop_reason);
-    if (drop_reason_it == this->drop_reasons.end())
+    auto drop_reason_it = drop_reasons.find(drop_reason);
+    if (drop_reason_it == drop_reasons.end())
     {
-        SWSS_LOG_DEBUG("Drop reason '%s' not present on '%s'", drop_reason.c_str(), this->name.c_str());
+        SWSS_LOG_DEBUG("Drop reason '%s' not present on '%s'", drop_reason.c_str(), name.c_str());
         return;
     }
 
     try
     {
-        this->drop_reasons.erase(drop_reason_it);
-        this->updateDropReasonsInSAI();
+        drop_reasons.erase(drop_reason_it);
+        updateDropReasonsInSAI();
     }
     catch (const std::exception& e)
     {
-        this->drop_reasons.emplace(drop_reason);
+        drop_reasons.emplace(drop_reason);
         throw e;
     }
+}
+
+bool DropCounter::isIngressDropReasonValid(const std::string& drop_reason)
+{
+    return ingress_drop_reason_lookup.find(drop_reason) != ingress_drop_reason_lookup.end();
+}
+
+bool DropCounter::isEgressDropReasonValid(const std::string& drop_reason)
+{
+    return egress_drop_reason_lookup.find(drop_reason) != egress_drop_reason_lookup.end();
 }
 
 // If initialization fails for any reason, this method throws a runtime error.
 void DropCounter::initializeDropCounterInSAI()
 {
     sai_attribute_t debug_counter_attributes[2];
-    vector<int32_t> drop_reason_list(this->drop_reasons.size());
-    DebugCounter::serializeDebugCounterMetadata(debug_counter_attributes);
-    DropCounter::serializeDropReasons(static_cast<uint32_t>(this->drop_reasons.size()), drop_reason_list.data(), debug_counter_attributes + 1);
+    vector<int32_t> drop_reason_list(drop_reasons.size());
+    DebugCounter::serializeDebugCounterType(debug_counter_attributes[0]);
+    DropCounter::serializeDropReasons(static_cast<uint32_t>(drop_reasons.size()), drop_reason_list.data(), debug_counter_attributes + 1);
     DebugCounter::addDebugCounterToSAI(2, debug_counter_attributes);
 }
 
@@ -148,14 +222,14 @@ void DropCounter::serializeDropReasons(uint32_t drop_reason_count, int32_t *drop
 {
     SWSS_LOG_ENTER();
 
-    if (this->type == PORT_INGRESS_DROPS || this->type == SWITCH_INGRESS_DROPS)
+    if (type == PORT_INGRESS_DROPS || type == SWITCH_INGRESS_DROPS)
     {
         drop_reason_attribute->id = SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST;
         drop_reason_attribute->value.s32list.count = drop_reason_count;
         drop_reason_attribute->value.s32list.list = drop_reason_list;
 
         int index = 0;
-        for (auto drop_reason: this->drop_reasons)
+        for (auto drop_reason: drop_reasons)
         {
             auto reason_it = ingress_drop_reason_lookup.find(drop_reason);
             if (reason_it == ingress_drop_reason_lookup.end())
@@ -167,14 +241,14 @@ void DropCounter::serializeDropReasons(uint32_t drop_reason_count, int32_t *drop
             drop_reason_list[index++] = static_cast<int32_t>(reason_it->second);
         }
     }
-    else if (this->type == PORT_EGRESS_DROPS || this->type == SWITCH_EGRESS_DROPS)
+    else if (type == PORT_EGRESS_DROPS || type == SWITCH_EGRESS_DROPS)
     {
             drop_reason_attribute->id = SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST;
             drop_reason_attribute->value.s32list.count = drop_reason_count;
             drop_reason_attribute->value.s32list.list = drop_reason_list;
 
             int index = 0;
-            for (auto drop_reason: this->drop_reasons)
+            for (auto drop_reason: drop_reasons)
             {
                 auto reason_it = egress_drop_reason_lookup.find(drop_reason);
                 if (reason_it == egress_drop_reason_lookup.end())
@@ -188,7 +262,7 @@ void DropCounter::serializeDropReasons(uint32_t drop_reason_count, int32_t *drop
     }
     else
     {
-        SWSS_LOG_ERROR("Serialization undefined for drop counter type '%s'", this->type.c_str());
+        SWSS_LOG_ERROR("Serialization undefined for drop counter type '%s'", type.c_str());
         throw runtime_error("Failed to serialize drop counter attributes");
     }
 }
@@ -199,16 +273,14 @@ void DropCounter::updateDropReasonsInSAI()
     SWSS_LOG_ENTER();
 
     sai_attribute_t updated_drop_reasons;
-    vector<int32_t> drop_reason_list(this->drop_reasons.size());
-    this->serializeDropReasons(static_cast<uint32_t>(this->drop_reasons.size()), drop_reason_list.data(), &updated_drop_reasons);
-    if (sai_debug_counter_api->set_debug_counter_attribute(this->counter_id, &updated_drop_reasons) != SAI_STATUS_SUCCESS)
+    vector<int32_t> drop_reason_list(drop_reasons.size());
+    serializeDropReasons(static_cast<uint32_t>(drop_reasons.size()), drop_reason_list.data(), &updated_drop_reasons);
+    if (sai_debug_counter_api->set_debug_counter_attribute(counter_id, &updated_drop_reasons) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Could not update drop reasons for drop counter '%s'", this->name.c_str());
+        SWSS_LOG_ERROR("Could not update drop reasons for drop counter '%s'", name.c_str());
         throw runtime_error("Could not update drop reason list");
     }
 }
-
-// FREE FUNCTIONS START HERE ----------------------------------------------------------------------
 
 // Multiple calls to this function are guaranteed to return the same reasons
 // (assuming the device has not been rebooted between calls). The order of
@@ -216,7 +288,7 @@ void DropCounter::updateDropReasonsInSAI()
 //
 // If the device does not support querying drop reasons, this method will
 // return an empty list.
-vector<string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type)
+vector<string> DropCounter::getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type)
 {
     sai_s32_list_t drop_reason_list;
     int32_t        supported_reasons[maxDropReasons];
@@ -256,7 +328,7 @@ vector<string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type
 //
 // e.g. { "SMAC_EQUALS_DMAC", "INGRESS_VLAN_FILTER" } -> "["SMAC_EQUALS_DMAC","INGRESS_VLAN_FILTER"]"
 // e.g. { } -> "[]"
-string serializeSupportedDropReasons(vector<string> drop_reasons)
+string DropCounter::serializeSupportedDropReasons(vector<string> drop_reasons)
 {
     if (drop_reasons.size() == 0)
     {
@@ -281,7 +353,7 @@ string serializeSupportedDropReasons(vector<string> drop_reasons)
 //
 // If the device does not support querying counter availability, this method
 // will return 0.
-uint64_t getSupportedDebugCounterAmounts(sai_debug_counter_type_t counter_type)
+uint64_t DropCounter::getSupportedDebugCounterAmounts(sai_debug_counter_type_t counter_type)
 {
     sai_attribute_t attr;
     uint64_t count;
