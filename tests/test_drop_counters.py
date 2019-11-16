@@ -410,6 +410,40 @@ class TestDropCounters(object):
         self.delete_drop_counter(name)
         self.remove_drop_reason(name, reason1)
 
+    def test_removeAllDropReasons(self, dvs, testlog):
+        """
+            This test verifies that it is not possible to remove all drop
+            reasons from a drop counter.
+        """
+        self.setup_db(dvs)
+
+        asic_state_table = swsscommon.Table(self.asic_db, ASIC_STATE_TABLE)
+        flex_counter_table = swsscommon.Table(self.flex_db, FLEX_COUNTER_TABLE)
+
+        name = 'ADD_TEST'
+        reason1 = 'L3_ANY'
+
+        self.create_drop_counter(name, SWITCH_INGRESS_DROPS)
+        self.add_drop_reason(name, reason1)
+        time.sleep(3)
+
+        # Verify that a counter has been created. We will verify the state of
+        # the counter in the next step.
+        assert len(asic_state_table.getKeys()) == 1
+        self.checkFlexState([SWITCH_STAT_BASE], SWITCH_DEBUG_COUNTER_LIST)
+
+        self.remove_drop_reason(name, reason1)
+        time.sleep(3)
+
+        # Verify that the drop counter has been added to ASIC DB, including the
+        # last reason that we attempted to remove.
+        asic_keys = asic_state_table.getKeys()
+        assert len(asic_keys) == 1
+        assert self.checkASICState(asic_keys[0], ASIC_COUNTER_SWITCH_IN_TYPE, [reason1])
+
+        # Cleanup for the next test.
+        self.delete_drop_counter(name)
+
     def test_addDropReasonMultipleTimes(self, dvs, testlog):
         """
             This test verifies that the same drop reason can be added multiple
