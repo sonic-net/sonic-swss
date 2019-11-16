@@ -60,7 +60,7 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
     }
 }
 
-void IntfMgr::setIntfMac(const string &alias, const string mac_str)
+void IntfMgr::setIntfMac(const string &alias, const string &mac_str)
 {
     stringstream cmd;
     string res;
