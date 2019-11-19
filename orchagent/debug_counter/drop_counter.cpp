@@ -80,11 +80,6 @@ const unordered_map<string, sai_out_drop_reason_t> DropCounter::egress_drop_reas
 // gives us plenty of space for both ingress and egress drop reasons.
 const uint32_t maxDropReasons = 100;
 
-// There are currently 8 stats for each type of drop counter in the SAI, if
-// any vendor supports more than this number of counter the SAI will need to
-// be updated.
-const uint32_t maxSerializableStats = 8;
-
 // If initialization fails, this constructor will throw a runtime error.
 DropCounter::DropCounter(const string& counter_name, const string& counter_type, const unordered_set<string>& drop_reasons)
         : DebugCounter(counter_name, counter_type), drop_reasons(drop_reasons)
@@ -121,12 +116,6 @@ std::string DropCounter::getDebugCounterSAIStat() const
     }
 
     auto index = index_attribute.value.u32;
-    if (index >= maxSerializableStats)
-    {
-        SWSS_LOG_ERROR("Failed to get stat for debug counter '%s', not enough enums in SAI!", name.c_str());
-        throw runtime_error("Failed to get debug counter stat");
-    }
-
     if (type == PORT_INGRESS_DROPS)
     {
         return sai_serialize_port_stat(static_cast<sai_port_stat_t>(SAI_PORT_STAT_IN_DROP_REASON_RANGE_BASE + index));
