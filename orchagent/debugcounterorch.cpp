@@ -26,9 +26,9 @@ static const unordered_map<string, CounterType> flex_counter_type_lookup = {
 DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string>& table_names, int poll_interval) :
         Orch(db, table_names),
         flex_counter_manager(DEBUG_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, poll_interval),
-        m_stateDb(new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+        m_stateDb(new DBConnector("STATE_DB", 0)),
         m_debugCapabilitiesTable(new Table(m_stateDb.get(), STATE_DEBUG_COUNTER_CAPABILITIES_NAME)),
-        m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+        m_countersDb(new DBConnector("COUNTERS_DB", 0)),
         m_counterNameToPortStatMap(new Table(m_countersDb.get(), COUNTERS_DEBUG_NAME_PORT_STAT_MAP)),
         m_counterNameToSwitchStatMap(new Table(m_countersDb.get(), COUNTERS_DEBUG_NAME_SWITCH_STAT_MAP))
 {

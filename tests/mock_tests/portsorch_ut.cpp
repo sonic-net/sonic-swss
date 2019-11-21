@@ -19,11 +19,11 @@ namespace portsorch_test
         {
             // FIXME: move out from constructor
             m_app_db = make_shared<swss::DBConnector>(
-                APPL_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
+                "APPL_DB", 0);
             m_config_db = make_shared<swss::DBConnector>(
-                CONFIG_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
+                "CONFIG_DB", 0);
             m_state_db = make_shared<swss::DBConnector>(
-                STATE_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
+                "STATE_DB", 0);
         }
 
         virtual void SetUp() override
