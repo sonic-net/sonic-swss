@@ -559,7 +559,7 @@ bool AclRule::isActionSupported(sai_acl_entry_attr_t action) const
     const auto* pTable = m_pAclOrch->getTableByOid(m_tableOid);
     if (pTable == nullptr)
     {
-        SWSS_LOG_THROW("ACL table does not exist for oid %lu", m_tableOid);
+        SWSS_LOG_THROW("ACL table does not exist for oid %" PRIu64, m_tableOid);
     }
     return m_pAclOrch->isAclActionSupported(pTable->stage, action_type);
 }
