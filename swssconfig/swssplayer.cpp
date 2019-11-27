@@ -9,11 +9,8 @@
 using namespace std;
 using namespace swss;
 
-constexpr int DB_PORT = 6379;
-constexpr char* DB_HOSTNAME = "localhost";
-
 static int line_index = 0;
-static DBConnector db(APPL_DB, DB_HOSTNAME, DB_PORT, 0);
+static DBConnector db("APPL_DB", 0, true);
 
 void usage()
 {

@@ -36,10 +36,10 @@ type_map BufferOrch::m_buffer_type_maps = {
 
 BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) :
     Orch(db, tableNames),
-    m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
-    m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersDbRedisClient(m_countersDb.get())
 {
     SWSS_LOG_ENTER();
@@ -264,7 +264,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             if (field == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
             else if (field == buffer_pool_type_field_name)
@@ -307,7 +307,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             }
             else if (field == buffer_pool_xoff_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_POOL_ATTR_XOFF_SIZE;
                 attribs.push_back(attr);
             }
@@ -414,19 +414,19 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             }
             else if (field == buffer_xon_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xon_offset_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_OFFSET_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xoff_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XOFF_TH;
                 attribs.push_back(attr);
             }
@@ -453,7 +453,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
                 attribs.push_back(attr);
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
             else
@@ -579,14 +579,26 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
     }
     else
     {
-        SWSS_LOG_ERROR("Queue profile '%s' was inserted after BufferOrch init", key.c_str());
+        // If a buffer queue profile is not in the initial CONFIG_DB BUFFER_QUEUE table
+        // at BufferOrch object instantiation, it is considered being applied
+        // at run time, and, in this case, is not tracked in the m_ready_list. It is up to
+        // the application to guarantee the set order that the buffer queue profile
+        // should be applied to a physical port before the physical port is brought up to
+        // carry traffic. Here, we alert to application through syslog when such a wrong
+        // set order is detected.
+        for (const auto &port_name : port_names)
+        {
+            if (gPortsOrch->isPortAdminUp(port_name)) {
+                SWSS_LOG_ERROR("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+            }
+        }
     }
 
     return task_process_status::task_success;
 }
 
 /*
-Input sample "BUFFER_PG_TABLE|Ethernet4,Ethernet45|10-15"
+Input sample "BUFFER_PG|Ethernet4,Ethernet45|10-15"
 */
 task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
 {
@@ -666,7 +678,19 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     }
     else
     {
-        SWSS_LOG_ERROR("PG profile '%s' was inserted after BufferOrch init", key.c_str());
+        // If a buffer pg profile is not in the initial CONFIG_DB BUFFER_PG table
+        // at BufferOrch object instantiation, it is considered being applied
+        // at run time, and, in this case, is not tracked in the m_ready_list. It is up to
+        // the application to guarantee the set order that the buffer pg profile
+        // should be applied to a physical port before the physical port is brought up to
+        // carry traffic. Here, we alert to application through syslog when such a wrong
+        // set order is detected.
+        for (const auto &port_name : port_names)
+        {
+            if (gPortsOrch->isPortAdminUp(port_name)) {
+                SWSS_LOG_ERROR("PG profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+            }
+        }
     }
 
     return task_process_status::task_success;
@@ -806,7 +830,7 @@ void BufferOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isConfigDone())
     {
         return;
     }

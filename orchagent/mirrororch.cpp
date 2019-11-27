@@ -352,29 +352,35 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
     m_routeOrch->attach(this, entry.dstIp);
 }
 
-void MirrorOrch::deleteEntry(const string& name)
+task_process_status MirrorOrch::deleteEntry(const string& name)
 {
     SWSS_LOG_ENTER();
 
     auto sessionIter = m_syncdMirrors.find(name);
     if (sessionIter == m_syncdMirrors.end())
     {
-        SWSS_LOG_ERROR("Failed to delete session. Session %s doesn't exist.\n", name.c_str());
-        return;
+        SWSS_LOG_ERROR("Failed to remove non-existent mirror session %s",
+                name.c_str());
+        return task_process_status::task_invalid_entry;
     }
 
     auto& session = sessionIter->second;
 
     if (session.refCount)
     {
-        SWSS_LOG_ERROR("Failed to delete session. Session %s in use.\n", name.c_str());
-        return;
+        SWSS_LOG_WARN("Failed to remove still referenced mirror session %s, retry...",
+                name.c_str());
+        return task_process_status::task_need_retry;
     }
 
     if (session.status)
     {
         m_routeOrch->detach(this, session.dstIp);
-        deactivateSession(name, session);
+        if (!deactivateSession(name, session))
+        {
+            SWSS_LOG_ERROR("Failed to remove mirror session %s", name.c_str());
+            return task_process_status::task_failed;
+        }
     }
 
     if (!session.policer.empty())
@@ -387,6 +393,8 @@ void MirrorOrch::deleteEntry(const string& name)
     m_syncdMirrors.erase(sessionIter);
 
     SWSS_LOG_NOTICE("Removed mirror session %s", name.c_str());
+
+    return task_process_status::task_success;
 }
 
 void MirrorOrch::setSessionState(const string& name, const MirrorEntry& session, const string& attr)
@@ -1144,7 +1152,13 @@ void MirrorOrch::doTask(Consumer& consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            deleteEntry(key);
+            auto task_status = deleteEntry(key);
+            // Specifically retry the task when asked
+            if (task_status == task_process_status::task_need_retry)
+            {
+                it++;
+                continue;
+            }
         }
         else
         {

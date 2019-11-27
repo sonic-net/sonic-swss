@@ -51,12 +51,11 @@ int main(int argc, char **argv)
     swss::Logger::linkToDbNative("fpmsyncd");
     try
     {
-	DBConnector db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-	DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-	RedisPipeline pipeline(&db);
-	RouteSync sync(&pipeline);
-
-    DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+	  DBConnector db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+	  DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+	  RedisPipeline pipeline(&db);
+	  RouteSync sync(&pipeline);
+    DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
