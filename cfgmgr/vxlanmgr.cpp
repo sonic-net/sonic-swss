@@ -299,7 +299,7 @@ bool VxlanMgr::doVxlanCreateTask(const KeyOpFieldsValuesTuple & t)
     
     // If the mac address has been set
     auto macAddress = getVxlanRouterMacAddress();
-    if (macAddress.first)
+    if (!macAddress.first)
     {
         SWSS_LOG_DEBUG("Mac address is not ready");
         // Suspend this message util the mac address is set
