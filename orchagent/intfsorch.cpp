@@ -382,8 +382,6 @@ void IntfsOrch::doTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple t = it->second;
-        MacAddress mac;
-
         vector<string> keys = tokenize(kfvKey(t), ':');
         string alias(keys[0]);
 
@@ -406,6 +404,7 @@ void IntfsOrch::doTask(Consumer &consumer)
 
         const vector<FieldValueTuple>& data = kfvFieldsValues(t);
         string vrf_name = "", vnet_name = "";
+        MacAddress mac;
         uint32_t mtu;
         bool adminUp;
         for (auto idx : data)
