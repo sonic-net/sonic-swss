@@ -6,15 +6,16 @@ import json
 class TestRouterInterfaceMac(object):
     def add_ip_address(self, dvs, interface, ip):
         tbl = swsscommon.Table(dvs.cdb, "INTERFACE")
-        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        fvs = swsscommon.FieldValuePairs([("mac_addr", "00:00:00:00:00:00")])
         tbl.set(interface, fvs)
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
         tbl.set(interface + "|" + ip, fvs)
         time.sleep(1)
 
     def remove_ip_address(self, dvs, interface, ip):
         tbl = swsscommon.Table(dvs.cdb, "INTERFACE")
         tbl._del(interface + "|" + ip);
-        tbl.hdel(interface, "NULL")
+        tbl.hdel(interface, "mac_addr")
         time.sleep(1)
 
     def set_mac(self, dvs, interface, mac):
@@ -59,6 +60,8 @@ class TestRouterInterfaceMac(object):
         values = dict(fvs)
         assert values["mac_addr"] == "6C:EC:5A:11:22:33"
 
+        time.sleep(3)
+
         # check ASIC router interface database
         src_mac_addr_found = self.find_mac(dvs, "Ethernet8", "6C:EC:5A:11:22:33")
         assert src_mac_addr_found == True
@@ -87,6 +90,8 @@ class TestRouterInterfaceMac(object):
         assert status == True
         values = dict(fvs)
         assert values["mac_addr"] == "6C:EC:5A:33:44:55"
+        
+        time.sleep(3)
 
         # check ASIC router interface database
         src_mac_addr_found = self.find_mac(dvs, "Ethernet12", "6C:EC:5A:33:44:55")
@@ -126,15 +131,16 @@ class TestLagRouterInterfaceMac(object):
 
     def add_ip_address(self, dvs, interface, ip):
         tbl = swsscommon.Table(dvs.cdb, "PORTCHANNEL_INTERFACE")
-        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        fvs = swsscommon.FieldValuePairs([("mac_addr", "00:00:00:00:00:00")])
         tbl.set(interface, fvs)
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
         tbl.set(interface + "|" + ip, fvs)
         time.sleep(1)
 
     def remove_ip_address(self, dvs, interface, ip):
         tbl = swsscommon.Table(dvs.cdb, "PORTCHANNEL_INTERFACE")
         tbl._del(interface + "|" + ip);
-        tbl.hdel(interface, "NULL")
+        tbl.hdel(interface, "mac_addr")
         time.sleep(1)
 
     def set_mac(self, dvs, interface, mac):
@@ -188,6 +194,8 @@ class TestLagRouterInterfaceMac(object):
         assert len(lag_entries) == 1
         lag_oid = lag_entries[0]
 
+        time.sleep(3)
+
         # check ASIC router interface database
         src_mac_addr_found = self.find_mac(dvs, lag_oid, "6C:EC:5A:11:22:33")
         assert src_mac_addr_found == True
@@ -229,6 +237,8 @@ class TestLagRouterInterfaceMac(object):
         # At this point there should be only one lag in the system, which is PortChannel002.
         assert len(lag_entries) == 1
         lag_oid = lag_entries[0]
+        
+        time.sleep(3)
 
         # check ASIC router interface database
         src_mac_addr_found = self.find_mac(dvs, lag_oid, "6C:EC:5A:33:44:55")

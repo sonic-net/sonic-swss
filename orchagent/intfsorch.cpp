@@ -421,7 +421,15 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else if (field == "mac_addr")
             {
-                mac = MacAddress(value);
+                try
+                {
+                    mac = MacAddress(value);
+                }
+                catch (const std::invalid_argument &e)
+                {
+                    SWSS_LOG_ERROR("Invalid mac argument %s to %s()", value.c_str(), e.what());
+                    continue;
+                }
             }
             else if (field == "mtu")
             {

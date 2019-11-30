@@ -7,6 +7,7 @@
 #include "intfmgr.h"
 #include "exec.h"
 #include "shellcmd.h"
+#include "macaddress.h"
 
 using namespace std;
 using namespace swss;
@@ -461,7 +462,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         }
         else
         {
-            FieldValueTuple fvTuple("mac", mac);
+            FieldValueTuple fvTuple("mac_addr", MacAddress().to_string());
             data.push_back(fvTuple);
         }
         
