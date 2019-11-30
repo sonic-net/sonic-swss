@@ -23,8 +23,8 @@ WatermarkOrch::WatermarkOrch(DBConnector *db, const vector<string> &tables):
 {
     SWSS_LOG_ENTER();
 
-    m_countersDb = make_shared<DBConnector>(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    m_appDb = make_shared<DBConnector>(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    m_countersDb = make_shared<DBConnector>("COUNTERS_DB", 0);
+    m_appDb = make_shared<DBConnector>("APPL_DB", 0);
     m_countersTable = make_shared<Table>(m_countersDb.get(), COUNTERS_TABLE);
     m_periodicWatermarkTable = make_shared<Table>(m_countersDb.get(), PERIODIC_WATERMARKS_TABLE);
     m_persistentWatermarkTable = make_shared<Table>(m_countersDb.get(), PERSISTENT_WATERMARKS_TABLE);

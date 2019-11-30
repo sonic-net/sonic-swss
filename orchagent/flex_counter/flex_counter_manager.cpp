@@ -45,7 +45,7 @@ FlexCounterManager::FlexCounterManager(
     stats_mode(stats_mode),
     polling_interval(polling_interval),
     enabled(false),
-    flex_counter_db(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    flex_counter_db(new DBConnector("FLEX_COUNTER_DB", 0)),
     flex_counter_group_table(new ProducerTable(flex_counter_db.get(), FLEX_COUNTER_GROUP_TABLE)),
     flex_counter_table(new ProducerTable(flex_counter_db.get(), FLEX_COUNTER_TABLE))
 {

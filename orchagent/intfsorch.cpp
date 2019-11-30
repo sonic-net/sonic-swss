@@ -55,9 +55,9 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
     SWSS_LOG_ENTER();
 
     /* Initialize DB connectors */ 
-    m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
-    m_flex_db = shared_ptr<DBConnector>(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
-    m_asic_db = shared_ptr<DBConnector>(new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    m_flex_db = shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0));
+    m_asic_db = shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
     /* Initialize COUNTER_DB tables */
     m_rifNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_NAME_MAP));
     m_rifTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_TYPE_MAP));
