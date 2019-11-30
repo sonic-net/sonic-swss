@@ -401,7 +401,6 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     }
     bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
     string mac = "";
-
     string vrf_name = "";
     string mtu = "";
     string adminStatus = "";
@@ -460,7 +459,12 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             setIntfMac(alias, mac);
         }
-
+        else
+        {
+            FieldValueTuple fvTuple("mac", mac);
+            data.push_back(fvTuple);
+        }
+        
         if (!subIntfAlias.empty())
         {
             if (m_subIntfList.find(subIntfAlias) == m_subIntfList.end())
