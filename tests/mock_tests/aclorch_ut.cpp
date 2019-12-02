@@ -628,22 +628,21 @@ namespace aclorch_test
         // consistency validation with CRM
         bool validateResourceCountWithCrm(const AclOrch *aclOrch, CrmOrch *crmOrch)
         {
-             // Verify ACL Tables
+             // Verify ACL Tables            
+            auto const &resourceMap = Portal::CrmOrchInternal::getResourceMap(crmOrch);
+            uint32_t crm_acl_table_cnt = 0;
+            for (auto const &kv : resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap)
             {
-                auto const &resourceMap = Portal::CrmOrchInternal::getResourceMap(crmOrch);
-                uint32_t crm_acl_table_cnt = 0;
-                for (auto const &kv : resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap)
-                {
-                    crm_acl_table_cnt += kv.second.usedCounter;
-                }
-
-                if (crm_acl_table_cnt != Portal::AclOrchInternal::getAclTables(aclOrch).size())
-                {
-                    ADD_FAILURE() << "ACL table size is not consistent between CrmOrch (" << crm_acl_table_cnt
-                                  << ") and AclOrch " << Portal::AclOrchInternal::getAclTables(aclOrch).size();
-                    return false;
-                }
+                crm_acl_table_cnt += kv.second.usedCounter;
             }
+
+            if (crm_acl_table_cnt != Portal::AclOrchInternal::getAclTables(aclOrch).size())
+            {
+                ADD_FAILURE() << "ACL table size is not consistent between CrmOrch (" << crm_acl_table_cnt
+                                << ") and AclOrch " << Portal::AclOrchInternal::getAclTables(aclOrch).size();
+                return false;
+            }
+            
 
             // Verify ACL Rules
             //
