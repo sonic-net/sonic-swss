@@ -683,7 +683,7 @@ namespace aclorch_test
                     for (auto acl_entry_or_counter : { CrmResourceType::CRM_ACL_ENTRY, CrmResourceType::CRM_ACL_COUNTER })
                     {
                         const auto &cntMap = Portal::CrmOrchInternal::getResourceMap(crmOrch).at(acl_entry_or_counter).countersMap;
-                        if (!(cntMap.find(key) != cntMap.end()))
+                        if (cntMap.find(key) == cntMap.end())
                         {
                             ADD_FAILURE() << "Can't find ACL (" << sai_serialize_object_id(kv.first)
                                           << ") in " << (acl_entry_or_counter == CrmResourceType::CRM_ACL_ENTRY ? "CrmResourceType::CRM_ACL_ENTRY" : "CrmResourceType::CRM_ACL_COUNTER");
