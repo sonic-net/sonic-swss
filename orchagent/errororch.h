@@ -1,5 +1,6 @@
 /*
- * Copyright 2019 Broadcom Inc.
+ * Copyright 2019 Broadcom.  The term Broadcom refers to Broadcom Inc. and/or
+ * its subsidiaries.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,8 +21,10 @@
 #include "orch.h"
 #include "notificationproducer.h"
 #include "notificationconsumer.h"
-
 #include <map>
+
+using namespace std;
+using namespace swss;
 
 typedef enum {
     ERRORORCH_FLAGS_NOTIF_SEND = 0x1,
@@ -31,21 +34,20 @@ class ErrorOrch: public Orch
 {
     public:
         ErrorOrch(DBConnector *asicDb, DBConnector *errorDb, vector<string> &tableNames);
-        ~ErrorOrch();
         string getErrorListenerChannelName(string &appDbTableName);
         string getErrorTableName(string &appDbTableName);
         string getAppTableName(string &errDbTableName);
         bool mappingHandlerRegister(string tableName, Orch* orch);
         bool mappingHandlerDeRegister(string tableName);
-        bool createTableObject(string &tableName);
-        bool deleteTableObject(string &tableName);
+        bool createTableObject(string &errTableName);
+        bool deleteTableObject(string &errTableName);
         bool applNotificationEnabled(_In_ sai_object_type_t object_type);
         void sendNotification(_In_ string& tableName, _In_ string& op,
-                _In_ string& data, _In_ std::vector<swss::FieldValueTuple> &entry);
+                _In_ string& data, _In_ vector<FieldValueTuple> &entry);
         void sendNotification(_In_ string& tableName,
                 _In_ string& op, _In_ string& data);
         void addErrorEntry(sai_object_type_t object_type,
-                std::vector<FieldValueTuple> &appValues, uint32_t flags);
+                vector<FieldValueTuple> &appValues, uint32_t flags);
 
     private:
         shared_ptr<DBConnector> m_errorDb;
@@ -53,14 +55,16 @@ class ErrorOrch: public Orch
         NotificationConsumer* m_errorFlushNotificationConsumer;
         /* Table ID to Orchestration agent object map */
         map<string, Orch*>  m_TableOrchMap;
-        map<string, std::shared_ptr<Table>> m_TableNameObjMap;
-        std::unordered_map<string, std::shared_ptr<swss::NotificationProducer>> m_TableChannel;
+        map<string, shared_ptr<Table>> m_TableNameObjMap;
+        unordered_map<string, shared_ptr<NotificationProducer>> m_TableChannel;
 
         void doTask(Consumer &consumer);
         void doTask(NotificationConsumer& consumer);
+        void extractEntry(vector<FieldValueTuple> &values,
+                const string &field, string &value);
         int flushErrorDb(const string &op, const string &tableName);
         void updateErrorDb(string &tableName, const string &key,
-                std::vector<FieldValueTuple> &values);
+                vector<FieldValueTuple> &values);
 
 };
 

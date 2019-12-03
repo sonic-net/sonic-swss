@@ -8,10 +8,12 @@
 #include  "errororch.h"
 #include "sai_serialize.h"
 #include "redisclient.h"
+#include "vrforch.h"
 
 #include "swss/json.hpp"
 using json = nlohmann::json;
 using namespace swss;
+#define VRF_PREFIX          "Vrf"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
@@ -26,6 +28,8 @@ extern ErrorOrch *gErrorOrch;
 extern std::shared_ptr<swss::RedisClient>   g_redisClientAppDb;
 extern std::shared_ptr<swss::RedisClient>   g_redisClientAsicDb;
 extern std::shared_ptr<swss::RedisClient>   g_redisClientCountersDb;
+
+const char route_table_key_delimiter = ':';
 
 /* Default maximum number of next hop groups */
 #define DEFAULT_NUMBER_OF_ECMP_GROUPS   128
@@ -1231,26 +1235,59 @@ bool RouteOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<F
      */
 
     const auto& values = asicValues;
-    std::string asicKV, strNhopKey, strNextHopIP;
-    std::string strRifOid, strPrefix, strIntfName, strRtrIntfType;
+    std::string asicKV;
+    std::string strPrefix;
+    std::string vrfName = "";
+    sai_object_id_t vrf_object_id;
     for (size_t i = 0; i < values.size(); i++)
     {
         /* Extract IP prefix from the key */
         if(fvField(values[i]) == "key")
         {
             asicKV = fvValue(values[i]);
-            auto tokens = tokenize(asicKV, ':', 1);
+            auto tokens = tokenize(asicKV, route_table_key_delimiter, 1);
             json j = json::parse(tokens[1]);
-            strPrefix = j["dest"];
-            SWSS_LOG_DEBUG("Prefix is %s", strPrefix.c_str());
+
+            /* Extract VRF Name */
+            for (json::iterator it = j.begin(); it != j.end(); ++it)
+            {
+                string field = it.key();
+                string value = it.value();
+                SWSS_LOG_DEBUG("Field values  %s : %s", field.c_str(), value.c_str());
+
+                if(field == "dest")
+                {
+                    strPrefix = value;
+                }
+                if(field == "vr")
+                {
+                    sai_deserialize_object_id(value, vrf_object_id);
+                    vrfName = m_vrfOrch->getVRFname(vrf_object_id);
+                    break;
+                }
+            }
+
+            SWSS_LOG_DEBUG("VRF is \"%s\", Prefix is %s", vrfName.c_str(), strPrefix.c_str());
             break;
         }
     } /* End of for (i < values.size(); i++) */
 
-    appValues.emplace_back("key", strPrefix);
-    string strRouteTable = APP_ROUTE_TABLE_NAME;
-    string strAppKey = strRouteTable + ":" + strPrefix;
-    auto hashApp = g_redisClientAppDb->hgetall(strAppKey);
+    if(strPrefix.empty())
+    {
+        return false;
+    }
+
+    std::string strRouteTable = APP_ROUTE_TABLE_NAME;
+    std::string strAppKey = "";
+    if(!vrfName.empty())
+    {
+        strAppKey += vrfName;
+        strAppKey += route_table_key_delimiter;
+    }
+    strAppKey += strPrefix;
+    appValues.emplace_back("key", strAppKey);
+    /* Get the entries from APP DB Table */
+    auto hashApp = g_redisClientAppDb->hgetall(strRouteTable + ":" + strAppKey);
     for (auto &kv: hashApp)
     {
         const std::string &skey = kv.first;

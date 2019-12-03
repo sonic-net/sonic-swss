@@ -1,5 +1,6 @@
 /*
- * Copyright 2019 Broadcom Inc.
+ * Copyright 2019 Broadcom.  The term Broadcom refers to Broadcom Inc. and/or
+ * its subsidiaries.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,6 +30,8 @@
 #include "swss/json.hpp"
 using json = nlohmann::json;
 
+#define EHF_OPERATION_SAIAPI_STATUS "saiapi_status"
+
 /* Error handling framework currently handling only the following
  * tables and can be extended to other tables */
 static map<string, string> m_ObjTableMap = {
@@ -49,33 +52,26 @@ ErrorOrch::ErrorOrch(DBConnector *asicDb, DBConnector *errorDb, vector<string> &
     }
 
     /* Clear ERROR DB entries request from user interface */
-    m_errorFlushNotificationConsumer = new swss::NotificationConsumer(asicDb, "FLUSH_ERROR_DB");
+    m_errorFlushNotificationConsumer = new NotificationConsumer(asicDb, "FLUSH_ERROR_DB");
     auto errorNotifier = new Notifier(m_errorFlushNotificationConsumer, this, "FLUSH_ERROR_DB");
     Orch::addExecutor(errorNotifier);
 
     /* Add SAI API status error notifications support from Syncd */
-    m_errorNotificationConsumer = new swss::NotificationConsumer(asicDb, "ERROR_NOTIFICATIONS");
+    m_errorNotificationConsumer = new NotificationConsumer(asicDb, "ERROR_NOTIFICATIONS");
     errorNotifier = new Notifier(m_errorNotificationConsumer, this, "SYNCD_ERROR_NOTIFICATIONS");
     Orch::addExecutor(errorNotifier);
 
     /* Create notification channels through which errors are sent to
      * the applications via error listerner */
-    std::shared_ptr<swss::NotificationProducer> errorNotifications;
+    shared_ptr<NotificationProducer> errorNotifications;
     for(auto objTable = m_ObjTableMap.begin(); objTable!= m_ObjTableMap.end(); objTable++)
     {
         string strChannel = getErrorListenerChannelName(objTable->second);
-        errorNotifications = std::make_shared<swss::NotificationProducer>(errorDb, strChannel);
+        errorNotifications = make_shared<NotificationProducer>(errorDb, strChannel);
         m_TableChannel[objTable->second] = errorNotifications;
         SWSS_LOG_INFO("Notification channel %s is created for %s", strChannel.c_str(), objTable->second.c_str());
     }
-    SWSS_LOG_INFO("EHF is ready to receive status reports from Syncd");
-}
-
-ErrorOrch::~ErrorOrch()
-{
-    SWSS_LOG_ENTER();
-    delete m_errorNotificationConsumer;
-    delete m_errorFlushNotificationConsumer;
+    SWSS_LOG_INFO("Ready to receive status notifications");
 }
 
 void ErrorOrch::doTask(NotificationConsumer& consumer)
@@ -84,35 +80,26 @@ void ErrorOrch::doTask(NotificationConsumer& consumer)
 
     string op;
     string data;
-    std::vector<swss::FieldValueTuple> values;
-    Orch *orch;
-    std::shared_ptr<Table> table;
+    vector<FieldValueTuple> values;
 
     consumer.pop(op, data, values);
 
-    SWSS_LOG_DEBUG("EHF received operation: %s data : %s", op.c_str(), data.c_str());
-    if (&consumer == m_errorNotificationConsumer && op == "saiapi_status")
+    SWSS_LOG_DEBUG("Received operation: %s data : %s", op.c_str(), data.c_str());
+    if (&consumer == m_errorNotificationConsumer && op == EHF_OPERATION_SAIAPI_STATUS)
     {
-        /*
-         * The following steps are performed:
-         * Extract object type from the received data
-         * Map the object type to registrant
-         * Invoke mapper function to convert the data to application friendly format
-         * Update DB if the notification is about failure
-         * Send notification to error listener class
-         */
-
         json j = json::parse(data);
 
         string asicKey = j["key"];
+        /* Extract SAI object type */
         const string &str_object_type = asicKey.substr(0, asicKey.find(":"));
 
         sai_object_type_t object_type;
         sai_deserialize_object_type(str_object_type, object_type);
 
+        /* Find out the table object based on the object type */
         if(m_ObjTableMap.find(str_object_type) == m_ObjTableMap.end())
         {
-            SWSS_LOG_INFO("EHF does not support SAI object type %s",
+            SWSS_LOG_INFO("Unsupported SAI object type %s",
                     str_object_type.c_str());
             return;
         }
@@ -124,6 +111,7 @@ void ErrorOrch::doTask(NotificationConsumer& consumer)
             return;
         }
 
+        Orch *orch;
         orch = m_TableOrchMap[tableName];
         if(orch == NULL)
         {
@@ -131,8 +119,8 @@ void ErrorOrch::doTask(NotificationConsumer& consumer)
             return;
         }
 
-        std::vector<FieldValueTuple> asicValues;
-        std::vector<FieldValueTuple> appValues;
+        vector<FieldValueTuple> asicValues;
+        vector<FieldValueTuple> appValues;
         for (json::iterator it = j.begin(); it != j.end(); ++it)
         {
             asicValues.emplace_back(it.key(), it.value());
@@ -157,31 +145,15 @@ void ErrorOrch::doTask(NotificationConsumer& consumer)
         /* SAI operation could be create/remove/set */
         appValues.emplace_back("operation", j["operation"]);
 
-        string errKey;
+        /* Update error database if the notification is about failure */
+        string errKeyVal;
         auto dbValues = appValues;
+        extractEntry(dbValues, "key", errKeyVal);
+        updateErrorDb(tableName, errKeyVal, dbValues);
 
-        /* Remove key from FV as it's passed explicitly while updating DB */
-        auto iu = dbValues.begin();
-        while (iu != dbValues.end())
-        {
-            if(fvField(*iu) == "key")
-            {
-                errKey = fvValue(*iu);
-                iu = dbValues.erase(iu);
-                break;
-            }
-            else
-            {
-                iu++;
-            }
-        }
-
-        /* Update Error Database */
-        updateErrorDb(tableName, errKey, dbValues);
-
+        /* Send the notification to registered applications */
         if (applNotificationEnabled(object_type))
         {
-            /* Write the entry into Notification channel */
             json js;
             for (const auto &v: appValues)
             {
@@ -208,7 +180,8 @@ void ErrorOrch::doTask(NotificationConsumer& consumer)
 
 int ErrorOrch::flushErrorDb(const string &op, const string &data)
 {
-    std::shared_ptr<Table> table;
+    SWSS_LOG_ENTER();
+    shared_ptr<Table> table;
     vector<string> keys;
     SWSS_LOG_DEBUG("ERROR DB flush request received, op %s, data %s", op.c_str(), data.c_str());
 
@@ -223,7 +196,7 @@ int ErrorOrch::flushErrorDb(const string &op, const string &data)
         table = iter->second;
         if(table == NULL)
         {
-            SWSS_LOG_INFO("Invalid EHF Table object found for %s", iter->first.c_str());
+            SWSS_LOG_INFO("Invalid Table object found for %s", iter->first.c_str());
             continue;
         }
 
@@ -250,10 +223,10 @@ void ErrorOrch::sendNotification(
         _In_ string& tableName,
         _In_ string& op,
         _In_ string& data,
-        _In_ std::vector<swss::FieldValueTuple> &entry)
+        _In_ vector<FieldValueTuple> &entry)
 {
-    int64_t rv = 0;
     SWSS_LOG_ENTER();
+    int64_t rv = 0;
 
     SWSS_LOG_INFO("%s %s", op.c_str(), data.c_str());
 
@@ -269,7 +242,7 @@ void ErrorOrch::sendNotification(
         return;
     }
 
-    std::shared_ptr<swss::NotificationProducer> notifications = tableChannel->second;
+    shared_ptr<swss::NotificationProducer> notifications = tableChannel->second;
 
     rv = notifications->send(op, data, entry);
 
@@ -283,7 +256,7 @@ void ErrorOrch::sendNotification(
 {
     SWSS_LOG_ENTER();
 
-    std::vector<swss::FieldValueTuple> entry;
+    vector<FieldValueTuple> entry;
 
     sendNotification(tableName, op, data, entry);
 }
@@ -322,12 +295,12 @@ bool ErrorOrch::mappingHandlerRegister(string tableName, Orch* orch)
     SWSS_LOG_ENTER();
     if(m_TableOrchMap.find(tableName) != m_TableOrchMap.end())
     {
-        SWSS_LOG_ERROR("Mapper for %s already exists in EHF", tableName.c_str());
+        SWSS_LOG_ERROR("Mapper for %s already exists", tableName.c_str());
         return false;
     }
     m_TableOrchMap[tableName] = orch;
 
-    SWSS_LOG_INFO("Mapper for %s is registered with EHF", tableName.c_str());
+    SWSS_LOG_INFO("Mapper for %s is registered", tableName.c_str());
     return true;
 }
 
@@ -349,189 +322,47 @@ bool ErrorOrch::mappingHandlerDeRegister(string tableName)
     return true;
 }
 
-bool ErrorOrch::createTableObject(string &tableName)
+bool ErrorOrch::createTableObject(string &errTableName)
 {
     SWSS_LOG_ENTER();
-    if(m_TableNameObjMap.find(tableName) != m_TableNameObjMap.end())
+    if(m_TableNameObjMap.find(errTableName) != m_TableNameObjMap.end())
     {
-        SWSS_LOG_ERROR("EHF Table object for %s already exists", tableName.c_str());
+        SWSS_LOG_ERROR("Table object for %s already exists", errTableName.c_str());
         return false;
     }
-    m_TableNameObjMap[tableName] = shared_ptr<Table>(new Table(m_errorDb.get(), tableName));
+    m_TableNameObjMap[errTableName] = shared_ptr<Table>(new Table(m_errorDb.get(), errTableName));
 
-    SWSS_LOG_DEBUG("Created EHF Table object for %s", tableName.c_str());
+    SWSS_LOG_DEBUG("Created Table object for %s", errTableName.c_str());
     return true;
 }
 
-bool ErrorOrch::deleteTableObject(string &tableName)
+bool ErrorOrch::deleteTableObject(string &errTableName)
 {
     SWSS_LOG_ENTER();
 
-    string appTableName = getAppTableName(tableName);
-    if(m_TableNameObjMap.find(appTableName) == m_TableNameObjMap.end())
+    if(m_TableNameObjMap.find(errTableName) == m_TableNameObjMap.end())
     {
-        SWSS_LOG_ERROR("Failed to remove EHF Table object for %s", tableName.c_str());
+        SWSS_LOG_ERROR("Failed to remove Table object for %s", errTableName.c_str());
         return false;
     }
 
-    m_TableNameObjMap.erase(tableName);
-    SWSS_LOG_DEBUG("Removed EHF Table object for %s", tableName.c_str());
+    m_TableNameObjMap.erase(errTableName);
+    SWSS_LOG_DEBUG("Removed Table object for %s", errTableName.c_str());
 
     return true;
 }
 
-void ErrorOrch::updateErrorDb(string &tableName, const string &key,
-         std::vector<FieldValueTuple> &values)
- {
-     SWSS_LOG_ENTER();
-     string strOp, strRc;
-     bool entryFound = false;
-     bool addEntry = false;
-     bool removeEntry = false;
-     bool updateEntry = false;
-
-     /* Extract current return code and operation */
-     for (size_t i = 0; i < values.size(); i++)
-     {
-         if(fvField(values[i]) == "operation")
-         {
-             strOp = fvValue(values[i]);
-         }
-         else if(fvField(values[i]) == "rc")
-         {
-             strRc = fvValue(values[i]);
-         }
-     }
-
-     /* Get ERROR DB table object */
-     std::shared_ptr<Table> table;
-     string errTableName = getErrorTableName(tableName);
-     if(m_TableNameObjMap.find(errTableName) == m_TableNameObjMap.end())
-     {
-         SWSS_LOG_INFO("Failed to find EHF Table object for %s", errTableName.c_str());
-         return;
-     }
-
-     table = m_TableNameObjMap[errTableName];
-     if(table == NULL)
-     {
-         SWSS_LOG_INFO("Invalid EHF Table object found for %s", errTableName.c_str());
-         return;
-     }
-
-     /* Check if the entry with the key is present in ERROR DB */
-     std::vector<FieldValueTuple> ovalues;
-     if(table->get(key, ovalues))
-     {
-         entryFound = true;
-     }
-
-     if(strRc == "SWSS_RC_SUCCESS")
-     {
-         /* Remove the entry if present in error database */
-         if(entryFound == true)
-         {
-             removeEntry = true;
-         }
-     }
-     else
-     {
-         if(strOp == "create")
-         {
-             addEntry = true;
-         }
-         else if(strOp == "remove")
-         {
-             if(entryFound == true)
-             {
-                 removeEntry = true;
-             }
-             else
-             {
-                 addEntry = true;
-             }
-         }
-         else if(strOp == "set")
-         {
-             if(entryFound == true)
-             {
-                 updateEntry = true;
-             }
-             else
-             {
-                 addEntry = true;
-             }
-         }
-     }
-     SWSS_LOG_DEBUG("key %s operation %s RC %s Entry in DB %d add:remove:update %d:%d:%d ",
-             key.c_str(), strOp.c_str(), strRc.c_str(),
-             entryFound, addEntry, removeEntry, updateEntry);
-     if(addEntry == true || updateEntry == true)
-     {
-         /* Create/Update the database entry */
-         table->set(key, values);
-         SWSS_LOG_INFO("Publish %s(ok) to error db", key.c_str());
-     }
-     else if (removeEntry == true)
-     {
-         /* Remove the entry from database */
-         table->del(key);
-         SWSS_LOG_INFO("Removed %s(ok) from error db", key.c_str());
-     }
-
-     return;
- }
-
-/* The following function is used by other Orch Agents to add the entry into *
- * error database and optionally send a notification to the applications     */
-void ErrorOrch::addErrorEntry(sai_object_type_t object_type,
-        std::vector<FieldValueTuple> &appValues, uint32_t flags)
+/* Extract the requested entry and erase it from the input list */
+void ErrorOrch::extractEntry(vector<FieldValueTuple> &values,
+        const string &field, string &value)
 {
-    SWSS_LOG_ENTER();
-
-    std::shared_ptr<Table> table;
-
-    /*
-     * The following steps are performed:
-     * Find out the table object based on the object type
-     * Update DB if the notification is about failure
-     * Send notification to error listener class if the flag is set
-     */
-
-    std::string str_object_type = sai_serialize_object_type(object_type);
-    SWSS_LOG_DEBUG("Field values received for %s: ", str_object_type.c_str());
-    for (size_t i = 0; i < appValues.size(); i++)
+    auto iu = values.begin();
+    while (iu != values.end())
     {
-        SWSS_LOG_DEBUG("%s -> %s", fvField(appValues[i]).c_str(),
-                fvValue(appValues[i]).c_str());
-    }
-
-    if(m_ObjTableMap.find(str_object_type) == m_ObjTableMap.end())
-    {
-        SWSS_LOG_INFO("EHF does not support SAI object type %s",
-                str_object_type.c_str());
-        return;
-    }
-
-    string tableName = m_ObjTableMap[str_object_type];
-    if(m_TableOrchMap.find(tableName) == m_TableOrchMap.end())
-    {
-        SWSS_LOG_INFO("EHF does not support error handling for %s",
-                tableName.c_str());
-        return;
-    }
-
-    string errKey;
-    auto dbValues = appValues;
-
-    /* Remove key from FV as it's passed explicitly while updating DB */
-    auto iu = dbValues.begin();
-    while (iu != dbValues.end())
-    {
-        if(fvField(*iu) == "key")
+        if(fvField(*iu) == field)
         {
-            errKey = fvValue(*iu);
-            iu = dbValues.erase(iu);
+            value = fvValue(*iu);
+            iu = values.erase(iu);
             break;
         }
         else
@@ -539,11 +370,149 @@ void ErrorOrch::addErrorEntry(sai_object_type_t object_type,
             iu++;
         }
     }
+    return;
+}
 
-    /* Update Error Database */
-    updateErrorDb(tableName, errKey, dbValues);
+void ErrorOrch::updateErrorDb(string &tableName, const string &key,
+         vector<FieldValueTuple> &values)
+{
+    SWSS_LOG_ENTER();
+    string strOp, strRc;
+    bool entryFound = false;
+    bool removeEntry = false;
+    bool updateEntry = false;
 
-    /* Write the entry into Notificaition channel */
+    /* Extract current return code and operation */
+    for (size_t i = 0; i < values.size(); i++)
+    {
+        if(fvField(values[i]) == "operation")
+        {
+            strOp = fvValue(values[i]);
+        }
+        else if(fvField(values[i]) == "rc")
+        {
+            strRc = fvValue(values[i]);
+        }
+    }
+
+    /* Get ERROR DB table object */
+    shared_ptr<Table> table;
+    string errTableName = getErrorTableName(tableName);
+    if(m_TableNameObjMap.find(errTableName) == m_TableNameObjMap.end())
+    {
+        SWSS_LOG_INFO("Failed to find Table object for %s", errTableName.c_str());
+        return;
+    }
+
+    table = m_TableNameObjMap[errTableName];
+    if(table == NULL)
+    {
+        SWSS_LOG_INFO("Invalid Table object found for %s", errTableName.c_str());
+        return;
+    }
+
+    /* Check if the entry with the key is present in ERROR DB */
+    vector<FieldValueTuple> ovalues;
+    if(table->get(key, ovalues))
+    {
+        entryFound = true;
+    }
+
+    if(strRc == "SWSS_RC_SUCCESS")
+    {
+        /* Remove the entry if present in error database */
+        if(entryFound == true)
+        {
+            removeEntry = true;
+        }
+    }
+    else
+    {
+        if(strOp == "create")
+        {
+            /* Add new entry into error database */
+            updateEntry = true;
+        }
+        else if(strOp == "remove")
+        {
+            if(entryFound == true)
+            {
+                /* Remove operation has failed due to the previous
+                 * create/update operation failure */
+                removeEntry = true;
+            }
+            else
+            {
+                /* Add new entry into error database */
+                updateEntry = true;
+            }
+        }
+        else if(strOp == "set")
+        {
+            /* Add/Update entry in the error database */
+            updateEntry = true;
+        }
+    }
+    SWSS_LOG_DEBUG("key %s operation %s RC %s Entry found %d update %d remove %d ",
+            key.c_str(), strOp.c_str(), strRc.c_str(),
+            entryFound, updateEntry, removeEntry);
+    if(updateEntry == true)
+    {
+        /* Create/Update the database entry */
+        table->set(key, values);
+        SWSS_LOG_INFO("Publish %s(ok) to error db", key.c_str());
+    }
+    else if (removeEntry == true)
+    {
+        /* Remove the entry from database */
+        table->del(key);
+        SWSS_LOG_INFO("Removed %s(ok) from error db", key.c_str());
+    }
+
+    return;
+}
+
+/* This is used by other Orch Agents to add the entry into error database
+ * and optionally send a notification to the applications     */
+void ErrorOrch::addErrorEntry(sai_object_type_t object_type,
+        vector<FieldValueTuple> &appValues, uint32_t flags)
+{
+    SWSS_LOG_ENTER();
+
+    shared_ptr<Table> table;
+
+    /* Extract SAI object type */
+    string str_object_type = sai_serialize_object_type(object_type);
+    SWSS_LOG_DEBUG("Field values received for %s: ", str_object_type.c_str());
+    for (size_t i = 0; i < appValues.size(); i++)
+    {
+        SWSS_LOG_DEBUG("%s -> %s", fvField(appValues[i]).c_str(),
+                fvValue(appValues[i]).c_str());
+    }
+
+    /* Find out the table object based on the object type */
+    if(m_ObjTableMap.find(str_object_type) == m_ObjTableMap.end())
+    {
+        SWSS_LOG_INFO("Unsupported SAI object type %s",
+                str_object_type.c_str());
+        return;
+    }
+
+    string tableName = m_ObjTableMap[str_object_type];
+    if(m_TableOrchMap.find(tableName) == m_TableOrchMap.end())
+    {
+        SWSS_LOG_INFO("Error handling is not supported for %s",
+                tableName.c_str());
+        return;
+    }
+
+    /* Update error database if the notification is about failure */
+    string errKeyVal;
+    auto dbValues = appValues;
+    extractEntry(dbValues, "key", errKeyVal);
+    updateErrorDb(tableName, errKeyVal, dbValues);
+
+    /* Send the notification to registered applications */
     if ((flags & ERRORORCH_FLAGS_NOTIF_SEND) && (applNotificationEnabled(object_type)))
     {
         json js;

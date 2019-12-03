@@ -196,8 +196,8 @@ public:
     static void recordTuple(Consumer &consumer, swss::KeyOpFieldsValuesTuple &tuple);
 
     void dumpPendingTasks(std::vector<std::string> &ts);
-    virtual bool mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<FieldValueTuple> &asicValues,
-            std::vector<FieldValueTuple> &appValues);
+    virtual bool mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<swss::FieldValueTuple> &asicValues,
+            std::vector<swss::FieldValueTuple> &appValues);
 protected:
     ConsumerMap m_consumerMap;
 
