@@ -23,48 +23,47 @@
 #include "notificationconsumer.h"
 #include <map>
 
-using namespace std;
-using namespace swss;
-
 typedef enum {
     ERRORORCH_FLAGS_NOTIF_SEND = 0x1,
     ERRORORCH_FLAGS_LAST
 } errororch_flags_t;
+
 class ErrorOrch: public Orch
 {
     public:
-        ErrorOrch(DBConnector *asicDb, DBConnector *errorDb, vector<string> &tableNames);
-        string getErrorListenerChannelName(string &appDbTableName);
-        string getErrorTableName(string &appDbTableName);
-        string getAppTableName(string &errDbTableName);
-        bool mappingHandlerRegister(string tableName, Orch* orch);
-        bool mappingHandlerDeRegister(string tableName);
-        bool createTableObject(string &errTableName);
-        bool deleteTableObject(string &errTableName);
+        ErrorOrch(swss::DBConnector *asicDb, swss::DBConnector *errorDb, std::vector<std::string> &tableNames);
+        std::string getOperation(std::string &tableName);
+        std::string getErrorListenerChannelName(std::string &appDbTableName);
+        std::string getErrorTableName(std::string &appDbTableName);
+        std::string getAppTableName(std::string &errDbTableName);
+        bool mappingHandlerRegister(std::string tableName, Orch* orch);
+        bool mappingHandlerDeRegister(std::string tableName);
+        bool createTableObject(std::string &errTableName);
+        bool deleteTableObject(std::string &errTableName);
         bool applNotificationEnabled(_In_ sai_object_type_t object_type);
-        void sendNotification(_In_ string& tableName, _In_ string& op,
-                _In_ string& data, _In_ vector<FieldValueTuple> &entry);
-        void sendNotification(_In_ string& tableName,
-                _In_ string& op, _In_ string& data);
+        void sendNotification(_In_ std::string& tableName, _In_ std::string& op,
+                _In_ std::string& data, _In_ std::vector<swss::FieldValueTuple> &entry);
+        void sendNotification(_In_ std::string& tableName,
+                _In_ std::string& op, _In_ std::string& data);
         void addErrorEntry(sai_object_type_t object_type,
-                vector<FieldValueTuple> &appValues, uint32_t flags);
+                std::vector<swss::FieldValueTuple> &appValues, uint32_t flags);
 
     private:
-        shared_ptr<DBConnector> m_errorDb;
-        NotificationConsumer* m_errorNotificationConsumer;
-        NotificationConsumer* m_errorFlushNotificationConsumer;
+        std::shared_ptr<swss::DBConnector> m_errorDb;
+        std::unique_ptr<swss::NotificationConsumer> m_errorNotificationConsumer;
+        std::unique_ptr<swss::NotificationConsumer> m_errorFlushNotificationConsumer;
         /* Table ID to Orchestration agent object map */
-        map<string, Orch*>  m_TableOrchMap;
-        map<string, shared_ptr<Table>> m_TableNameObjMap;
-        unordered_map<string, shared_ptr<NotificationProducer>> m_TableChannel;
+        std::map<std::string, Orch*>  m_TableOrchMap;
+        std::map<std::string, std::shared_ptr<swss::Table>> m_TableNameObjMap;
+        std::unordered_map<std::string, std::shared_ptr<swss::NotificationProducer>> m_TableChannel;
 
         void doTask(Consumer &consumer);
-        void doTask(NotificationConsumer& consumer);
-        void extractEntry(vector<FieldValueTuple> &values,
-                const string &field, string &value);
-        int flushErrorDb(const string &op, const string &tableName);
-        void updateErrorDb(string &tableName, const string &key,
-                vector<FieldValueTuple> &values);
+        void doTask(swss::NotificationConsumer& consumer);
+        void extractEntry(std::vector<swss::FieldValueTuple> &values,
+                const std::string &field, std::string &value);
+        int flushErrorDb(const std::string &op, const std::string &tableName);
+        void updateErrorDb(std::string &tableName, const std::string &key,
+                std::vector<swss::FieldValueTuple> &values);
 
 };
 

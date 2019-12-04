@@ -37,7 +37,8 @@ using namespace swss;
 class OrchDaemon
 {
 public:
-    OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *, DBConnector *);
+    OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb,
+            DBConnector *countersDb, DBConnector *asicDb, DBConnector *errorDb);
     ~OrchDaemon();
 
     bool init();

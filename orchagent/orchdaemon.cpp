@@ -40,7 +40,8 @@ std::shared_ptr<swss::RedisClient>          g_redisClientAppDb;
 std::shared_ptr<swss::RedisClient>          g_redisClientAsicDb;
 std::shared_ptr<swss::RedisClient>          g_redisClientCountersDb;
 
-OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *countersDb, DBConnector *asicDb, DBConnector *errorDb) :
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb,
+        DBConnector *countersDb, DBConnector *asicDb, DBConnector *errorDb) :
         m_applDb(applDb),
         m_configDb(configDb),
         m_stateDb(stateDb),

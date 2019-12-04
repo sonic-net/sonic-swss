@@ -5,7 +5,7 @@
 #include "swssnet.h"
 #include "crmorch.h"
 #include "tokenize.h"
-#include  "errororch.h"
+#include "errororch.h"
 #include "sai_serialize.h"
 #include "redisclient.h"
 #include "vrforch.h"
@@ -1239,7 +1239,7 @@ bool RouteOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<F
     std::string strPrefix;
     std::string vrfName = "";
     sai_object_id_t vrf_object_id;
-    for (size_t i = 0; i < values.size(); i++)
+    for(size_t i = 0; i < values.size(); i++)
     {
         /* Extract IP prefix from the key */
         if(fvField(values[i]) == "key")
@@ -1249,7 +1249,7 @@ bool RouteOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<F
             json j = json::parse(tokens[1]);
 
             /* Extract VRF Name */
-            for (json::iterator it = j.begin(); it != j.end(); ++it)
+            for(json::iterator it = j.begin(); it != j.end(); ++it)
             {
                 string field = it.key();
                 string value = it.value();
@@ -1270,7 +1270,7 @@ bool RouteOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<F
             SWSS_LOG_DEBUG("VRF is \"%s\", Prefix is %s", vrfName.c_str(), strPrefix.c_str());
             break;
         }
-    } /* End of for (i < values.size(); i++) */
+    } /* End of for(i < values.size(); i++) */
 
     if(strPrefix.empty())
     {
@@ -1288,7 +1288,7 @@ bool RouteOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<F
     appValues.emplace_back("key", strAppKey);
     /* Get the entries from APP DB Table */
     auto hashApp = g_redisClientAppDb->hgetall(strRouteTable + ":" + strAppKey);
-    for (auto &kv: hashApp)
+    for(auto &kv: hashApp)
     {
         const std::string &skey = kv.first;
         const std::string &svalue = kv.second;

@@ -628,7 +628,7 @@ bool NeighOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<F
     const auto& values = asicValues;
     std::string asicKV, strNbrIP, strRifOid, strMac;
     std::string strIntfName, strRtrIntfType;
-    for (size_t i = 0; i < values.size(); i++)
+    for(size_t i = 0; i < values.size(); i++)
     {
         if(fvField(values[i]) == "key")
         {
@@ -659,7 +659,7 @@ bool NeighOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<F
              */
 
             auto hashRif = g_redisClientAsicDb->hgetall(strRtrIfKey);
-            for (auto &kv: hashRif)
+            for(auto &kv: hashRif)
             {
                 const std::string &skey = kv.first;
                 const std::string &svalue = kv.second;
@@ -680,7 +680,7 @@ bool NeighOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<F
             if(strRtrIntfType == "SAI_ROUTER_INTERFACE_TYPE_PORT")
             {
                 auto hashCntr = g_redisClientCountersDb->hgetall("COUNTERS_PORT_NAME_MAP");
-                for (auto &kv: hashCntr)
+                for(auto &kv: hashCntr)
                 {
                     const std::string &skey = kv.first;
                     const std::string &svalue = kv.second;
@@ -691,11 +691,11 @@ bool NeighOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<F
                     }
                 }
             }
-            else if (strRtrIntfType == "SAI_ROUTER_INTERFACE_TYPE_VLAN")
+            else if(strRtrIntfType == "SAI_ROUTER_INTERFACE_TYPE_VLAN")
             {
                 std::string strVlanKey = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN:" + strIntfOid;
                 auto hashVlan = g_redisClientAsicDb->hgetall(strVlanKey);
-                for (auto &kv: hashVlan)
+                for(auto &kv: hashVlan)
                 {
                     const std::string &skey = kv.first;
                     const std::string &svalue = kv.second;
@@ -714,7 +714,7 @@ bool NeighOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<F
         {
             strMac = fvValue(values[i]);
         }
-    } /* End of for (size_t i = 0; i < values.size(); i++) */
+    } /* End of for(size_t i = 0; i < values.size(); i++) */
 
     std::string appKey = strIntfName + ":" + strNbrIP;
     appValues.emplace_back("key", appKey);
