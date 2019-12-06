@@ -278,7 +278,7 @@ sai_object_id_t Dot1pToTcMapHandler::addQosItem(const vector<sai_attribute_t> &a
         SWSS_LOG_ERROR("Failed to create dot1p_to_tc map. status: %s", sai_serialize_status(sai_status).c_str());
         return SAI_NULL_OBJECT_ID;
     }
-    SWSS_LOG_DEBUG("created QosMap object: 0x%lx", object_id);
+    SWSS_LOG_DEBUG("created QosMap object: 0x%" PRIx64, object_id);
     return object_id;
 }
 

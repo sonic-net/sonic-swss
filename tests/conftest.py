@@ -232,6 +232,7 @@ class DockerVirtualSwitch(object):
             self.init_asicdb_validator()
             self.appldb = ApplDbValidator(self)
         except:
+            self.get_logs()
             self.destroy()
             raise
 

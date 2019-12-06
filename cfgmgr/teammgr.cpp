@@ -7,6 +7,8 @@
 #include "portmgr.h"
 
 #include <algorithm>
+#include <iostream>
+#include <fstream>
 #include <sstream>
 #include <thread>
 
@@ -396,8 +398,35 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
     string res;
 
     stringstream conf;
+
+    const string dump_path = "/var/warmboot/teamd/";
+    MacAddress mac_boot = m_mac;
+
+    // set portchannel mac same with mac before warmStart, when warmStart and there
+    // is a file written by teamd.
+    ifstream aliasfile(dump_path + alias);
+    if (WarmStart::isWarmStart() && aliasfile.is_open())
+    {
+        const int partner_system_id_offset = 40;
+        string line;
+
+        while (getline(aliasfile, line))
+        {
+            ifstream memberfile(dump_path + line, ios::binary);
+            uint8_t mac_temp[ETHER_ADDR_LEN];
+
+            if (!memberfile.is_open())
+                continue;
+
+            memberfile.seekg(partner_system_id_offset, std::ios::beg);
+            memberfile.read(reinterpret_cast<char*>(mac_temp), ETHER_ADDR_LEN);
+            mac_boot = MacAddress(mac_temp);
+            break;
+        }
+    }
+
     conf << "'{\"device\":\"" << alias << "\","
-         << "\"hwaddr\":\"" << m_mac.to_string() << "\","
+         << "\"hwaddr\":\"" << mac_boot.to_string() << "\","
          << "\"runner\":{"
          << "\"active\":true,"
          << "\"name\":\"lacp\"";
@@ -418,7 +447,6 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
             alias.c_str(), conf.str().c_str());
 
     string warmstart_flag = WarmStart::isWarmStart() ? " -w -o " : " -r ";
-    const string dump_path = "/var/warmboot/teamd/";
 
     cmd << TEAMD_CMD
         << warmstart_flag

@@ -36,10 +36,10 @@ type_map BufferOrch::m_buffer_type_maps = {
 
 BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) :
     Orch(db, tableNames),
-    m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
-    m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersDbRedisClient(m_countersDb.get())
 {
     SWSS_LOG_ENTER();
