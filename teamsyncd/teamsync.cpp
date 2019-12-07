@@ -27,6 +27,22 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_lagMemberTable(db, APP_LAG_MEMBER_TABLE_NAME),
     m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME)
 {
+    m_nl_sock = nl_socket_alloc();
+    if (!m_nl_sock)
+    {
+        SWSS_LOG_ERROR("Unable to allocate netlink socket");
+    } else {
+        nl_connect(m_nl_sock, NETLINK_ROUTE);
+        int err = rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+        if (err < 0)
+        {
+            SWSS_LOG_ERROR("Unable to allocate link cache: %s", nl_geterror(err));
+            nl_close(m_nl_sock);
+            nl_socket_free(m_nl_sock);
+            m_nl_sock = NULL;
+        }
+    }
+
     WarmStart::initialize(TEAMSYNCD_APP_NAME, "teamd");
     WarmStart::checkWarmStart(TEAMSYNCD_APP_NAME, "teamd");
     m_warmstart = WarmStart::isWarmStart();
@@ -41,6 +57,32 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
         WarmStart::setWarmStartState(TEAMSYNCD_APP_NAME, WarmStart::INITIALIZED);
         SWSS_LOG_NOTICE("Starting in warmstart mode");
     }
+}
+
+/*
+ * Get interface name based on interface index
+ * Return ifindex in string format if interface don't exist, or no cache
+ *        else return the corresponding interface name.
+ */
+string TeamSync::ifindexToName(int ifindex)
+{
+    char ifName[TeamPortSync::MAX_IFNAME + 1] = {0};
+
+    /* nl_socket, cache create failed earlier */
+    if (!m_nl_sock) {
+        /* Returns ifindex as string / */
+        return to_string(ifindex);
+    }
+ 
+    /* Refill cache and check for ifindex */
+    nl_cache_refill(m_nl_sock ,m_link_cache);
+    if (rtnl_link_i2name(m_link_cache, ifindex, ifName, TeamPortSync::MAX_IFNAME) == NULL)
+    {
+        /* Returns ifindex as string / */
+        return to_string(ifindex);
+    }
+
+    return string(ifName);
 }
 
 void TeamSync::periodic()
@@ -104,10 +146,34 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     string lagName = rtnl_link_get_name(link);
 
+    unsigned int flags = rtnl_link_get_flags(link);
+    bool admin = flags & IFF_UP;
+    bool oper = flags & IFF_LOWER_UP;
+
     /* Listens to LAG messages */
     char *type = rtnl_link_get_type(link);
     if (!type || (strcmp(type, TEAM_DRV_NAME) != 0))
         return;
+
+    /* Get the interface index */
+    unsigned int ifindex = rtnl_link_get_ifindex(link);
+
+    /* Check if the interface name is valid */
+    if(lagName.empty()) {
+        SWSS_LOG_WARN("Lag intf name in Netlink message is empty");
+        return;
+    }
+
+    if (type)
+    {
+        SWSS_LOG_INFO("nlmsg type:%d key:%s admin:%d oper:%d ifindex:%d type:%s",
+                       nlmsg_type, lagName.c_str(), admin, oper, ifindex, type);
+    }
+    else
+    {
+        SWSS_LOG_INFO("nlmsg type:%d key:%s admin:%d oper:%d ifindex:%d",
+                       nlmsg_type, lagName.c_str(), admin, oper, ifindex);
+    }
 
     if (nlmsg_type == RTM_DELLINK)
     {
@@ -119,10 +185,19 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
         return;
     }
 
+    /* 
+     * We are here because this is a NEW link create netlink message from kernel. 
+     * Fetch and compare the interface name using ifindex from kernel cache. 
+     */
+    string cacheName = ifindexToName(ifindex);
+    if(cacheName.compare(0, cacheName.size(), lagName) != 0) {
+        SWSS_LOG_WARN("Lag intf name ( %s ) doesn't match with name got from kernel( %s )",
+                       lagName.c_str(), cacheName.c_str());
+        return;
+    }
+
     unsigned int mtu = rtnl_link_get_mtu(link);
-    addLag(lagName, rtnl_link_get_ifindex(link),
-           rtnl_link_get_flags(link) & IFF_UP,
-           rtnl_link_get_flags(link) & IFF_LOWER_UP, mtu);
+    addLag(lagName, ifindex, admin, oper, mtu);
 }
 
 void TeamSync::addLag(const string &lagName, int ifindex, bool admin_state,

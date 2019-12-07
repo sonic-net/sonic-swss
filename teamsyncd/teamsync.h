@@ -65,11 +65,16 @@ protected:
     /* Handle all selectables add/removal events */
     void doSelectableTask();
 
+    /* Get the interface name for ifindex */
+    std::string ifindexToName(int ifindex);
+
 private:
     Select *m_select;
     ProducerStateTable m_lagTable;
     ProducerStateTable m_lagMemberTable;
     Table m_stateLagTable;
+    nl_cache *m_link_cache;
+    nl_sock *m_nl_sock;
 
     bool m_warmstart;
     std::unordered_map<std::string, std::vector<FieldValueTuple>> m_stateLagTablePreserved;
