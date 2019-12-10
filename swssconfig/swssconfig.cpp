@@ -15,8 +15,6 @@ using namespace std;
 using namespace swss;
 using json = nlohmann::json;
 
-int db_port                          = 6379;
-const char* const hostname           = "localhost";
 const char* const op_name            = "OP";
 const char* const name_delimiter     = ":";
 const int el_count = 2;
@@ -43,7 +41,7 @@ void dump_db_item(KeyOpFieldsValuesTuple &db_item)
 
 bool write_db_data(vector<KeyOpFieldsValuesTuple> &db_items)
 {
-    DBConnector db(APPL_DB, hostname, db_port, 0);
+    DBConnector db("APPL_DB", 0, true);
     for (auto &db_item : db_items)
     {
         dump_db_item(db_item);

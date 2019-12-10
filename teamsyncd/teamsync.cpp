@@ -12,6 +12,8 @@
 #include "warm_restart.h"
 #include "teamsync.h"
 
+#include <unistd.h>
+
 using namespace std;
 using namespace std::chrono;
 using namespace swss;
@@ -203,32 +205,54 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
     m_lagName(lagName),
     m_ifindex(ifindex)
 {
-    m_team = team_alloc();
-    if (!m_team)
-    {
-        SWSS_LOG_ERROR("Unable to allocated team socket");
-        throw system_error(make_error_code(errc::address_not_available),
-                           "Unable to allocated team socket");
-    }
+    int count = 0;
+    int max_retries = 3;
 
-    int err = team_init(m_team, ifindex);
-    if (err)
+    while (true)
     {
-        team_free(m_team);
-        m_team = NULL;
-        SWSS_LOG_ERROR("Unable to init team socket");
-        throw system_error(make_error_code(errc::address_not_available),
-                           "Unable to init team socket");
-    }
+        try
+        {
+            m_team = team_alloc();
+            if (!m_team)
+            {
+                throw system_error(make_error_code(errc::address_not_available),
+                                   "Unable to allocate team socket");
+            }
 
-    err = team_change_handler_register(m_team, &gPortChangeHandler, this);
-    if (err)
-    {
-        team_free(m_team);
-        m_team = NULL;
-        SWSS_LOG_ERROR("Unable to register port change event");
-        throw system_error(make_error_code(errc::address_not_available),
-                           "Unable to register port change event");
+            int err = team_init(m_team, ifindex);
+            if (err)
+            {
+                team_free(m_team);
+                m_team = NULL;
+                throw system_error(make_error_code(errc::address_not_available),
+                                   "Unable to initialize team socket");
+            }
+
+            err = team_change_handler_register(m_team, &gPortChangeHandler, this);
+            if (err)
+            {
+                team_free(m_team);
+                m_team = NULL;
+                throw system_error(make_error_code(errc::address_not_available),
+                                   "Unable to register port change event");
+            }
+
+            break;
+        }
+        catch (const system_error& e)
+        {
+            if (++count == max_retries)
+            {
+                throw;
+            }
+            else
+            {
+                SWSS_LOG_WARN("Failed to initialize team handler. LAG=%s error=%d:%s, attempt=%d",
+                              lagName.c_str(), e.code().value(), e.what(), count);
+            }
+
+            sleep(1);
+        }
     }
 
     /* Sync LAG at first */

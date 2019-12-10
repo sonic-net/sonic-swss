@@ -2,7 +2,9 @@ CFLAGS_SAI = -I /usr/include/sai
 
 TESTS = tests
 
+if !HAVE_SAI
 SUBDIRS = mock_tests
+endif
 
 noinst_PROGRAMS = tests
 

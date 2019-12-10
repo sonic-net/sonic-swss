@@ -14,7 +14,7 @@
 #include "observer.h"
 
 #define VNET_BITMAP_SIZE 32
-#define VNET_TUNNEL_SIZE 3072
+#define VNET_TUNNEL_SIZE 40960
 #define VNET_NEIGHBOR_MAX 0xffff
 #define VXLAN_ENCAP_TTL 128
 
@@ -305,7 +305,7 @@ class VNetOrch : public Orch2
 public:
     VNetOrch(DBConnector *db, const std::string&, VNET_EXEC op = VNET_EXEC::VNET_EXEC_VRF);
 
-    bool setIntf(const string& alias, const string name, const IpPrefix *prefix = nullptr);
+    bool setIntf(const string& alias, const string name, const IpPrefix *prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0);
     bool delIntf(const string& alias, const string name, const IpPrefix *prefix = nullptr);
 
     bool isVnetExists(const std::string& name) const

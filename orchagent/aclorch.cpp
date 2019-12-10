@@ -22,7 +22,7 @@ bool AclOrch::m_bCollectCounters = true;
 sai_uint32_t AclRule::m_minPriority = 0;
 sai_uint32_t AclRule::m_maxPriority = 0;
 
-swss::DBConnector AclOrch::m_db(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+swss::DBConnector AclOrch::m_db("COUNTERS_DB", 0);
 swss::Table AclOrch::m_countersTable(&m_db, "COUNTERS");
 
 extern sai_acl_api_t*    sai_acl_api;
@@ -559,7 +559,7 @@ bool AclRule::isActionSupported(sai_acl_entry_attr_t action) const
     const auto* pTable = m_pAclOrch->getTableByOid(m_tableOid);
     if (pTable == nullptr)
     {
-        SWSS_LOG_THROW("ACL table does not exist for oid %lu", m_tableOid);
+        SWSS_LOG_THROW("ACL table does not exist for oid %" PRIu64, m_tableOid);
     }
     return m_pAclOrch->isAclActionSupported(pTable->stage, action_type);
 }

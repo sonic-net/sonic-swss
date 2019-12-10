@@ -111,7 +111,7 @@ bool OrchDaemon::init()
     gDirectory.set(cfg_vnet_rt_orch);
     VNetRouteOrch *vnet_rt_orch = new VNetRouteOrch(m_applDb, vnet_tables, vnet_orch);
     gDirectory.set(vnet_rt_orch);
-    VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME);
+    VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(vrf_orch);
 
     const vector<string> chassis_frontend_tables = {
@@ -122,7 +122,7 @@ bool OrchDaemon::init()
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch);
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch);
-    gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gNeighOrch);
+    gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gNeighOrch, gIntfsOrch, vrf_orch);
 
     TableConnector confDbSflowTable(m_configDb, CFG_SFLOW_TABLE_NAME);
     TableConnector appCoppTable(m_applDb, APP_COPP_TABLE_NAME);
@@ -201,6 +201,13 @@ bool OrchDaemon::init()
     };
     SflowOrch *sflow_orch = new SflowOrch(m_applDb,  sflow_tables);
 
+    vector<string> debug_counter_tables = {
+        CFG_DEBUG_COUNTER_TABLE_NAME,
+        CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME
+    };
+
+    DebugCounterOrch *debug_counter_orch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
+
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
@@ -209,8 +216,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap.
      * That is ensured implicitly by the order of map key, "LAG_TABLE" is smaller than "VLAN_TABLE" in lexicographic order.
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch};
-
+    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)

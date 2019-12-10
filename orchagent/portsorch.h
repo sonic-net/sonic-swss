@@ -88,6 +88,9 @@ public:
 
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
+
+    bool addSubPort(Port &port, const string &alias, const bool &adminUp = true, const uint32_t &mtu = 0);
+    bool removeSubPort(const string &alias);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
@@ -130,9 +133,9 @@ private:
     map<set<int>, tuple<string, uint32_t, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
     map<string, uint32_t> m_port_ref_count;
-
     unordered_set<string> m_pendingPortSet;
 
+	
     NotificationConsumer* m_portStatusNotificationConsumer;
 
     void doTask(Consumer &consumer);
@@ -156,6 +159,7 @@ private:
 
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
+    bool setBridgePortLearnMode(Port &port, string learn_mode);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);

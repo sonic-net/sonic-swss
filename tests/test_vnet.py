@@ -254,6 +254,10 @@ def delete_vlan_interface(dvs, ifname, ipaddr):
 
     time.sleep(2)
 
+    delete_entry_tbl(conf_db, "VLAN_INTERFACE", ifname)
+
+    time.sleep(2)
+
 
 def create_phy_interface(dvs, ifname, vnet_name, ipaddr):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -293,6 +297,10 @@ def delete_phy_interface(dvs, ifname, ipaddr):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     delete_entry_tbl(conf_db, "INTERFACE", "%s|%s" % (ifname, ipaddr))
+
+    time.sleep(2)
+
+    delete_entry_tbl(conf_db, "INTERFACE", ifname)
 
     time.sleep(2)
 
@@ -544,8 +552,7 @@ class VnetVxlanVrfTunnel(object):
     def vnet_route_ids(self, dvs, name, local=False):
         vr_set = set()
 
-        if not local:
-            vr_set.add(self.vr_map[name].get('ing'))
+        vr_set.add(self.vr_map[name].get('ing'))
 
         try:
             for peer in self.vr_map[name].get('peer'):
@@ -575,8 +582,8 @@ class VnetVxlanVrfTunnel(object):
         new_rif = get_created_entry(asic_db, self.ASIC_RIF_TABLE, self.rifs)
         check_object(asic_db, self.ASIC_RIF_TABLE, new_rif, expected_attr)
 
-        #IP2ME and subnet routes will be created with every router interface
-        new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, 2)
+        #IP2ME route will be created with every router interface
+        new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, 1)
 
         self.rifs.add(new_rif)
         self.routes.update(new_route)
