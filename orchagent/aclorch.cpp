@@ -1427,7 +1427,7 @@ bool AclTable::create()
     attr.value.s32 = acl_stage;
     table_attrs.push_back(attr);
 
-    if (type == ACL_TABLE_MIRROR)
+    if (type == ACL_TABLE_MIRROR || type == ACL_TABLE_MIRRORV6)
     {
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
         attr.value.booldata = true;
