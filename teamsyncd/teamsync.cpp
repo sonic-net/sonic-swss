@@ -30,17 +30,30 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_nl_sock = nl_socket_alloc();
     if (!m_nl_sock)
     {
-        SWSS_LOG_ERROR("Unable to allocate netlink socket");
-    } else {
-        nl_connect(m_nl_sock, NETLINK_ROUTE);
-        int err = rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
-        if (err < 0)
-        {
-            SWSS_LOG_ERROR("Unable to allocate link cache: %s", nl_geterror(err));
-            nl_close(m_nl_sock);
-            nl_socket_free(m_nl_sock);
-            m_nl_sock = NULL;
-        }
+        SWSS_LOG_ERROR("Unable to allocated netlink socket");
+        throw system_error(make_error_code(errc::address_not_available),
+                           "Unable to allocated netlink socket");
+    }
+
+    int err = nl_connect(m_nl_sock, NETLINK_ROUTE);
+    if (err < 0)
+    {
+        SWSS_LOG_ERROR("Unable to connect netlink socket: %s", nl_geterror(err));
+        nl_socket_free(m_nl_sock);
+        m_nl_sock = NULL;
+        throw system_error(make_error_code(errc::address_not_available),
+                           "Unable to connect netlink socket");
+    }
+
+    err = rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
+    if (err < 0)
+    {
+        SWSS_LOG_ERROR("Unable to allocate link cache: %s", nl_geterror(err));
+        nl_close(m_nl_sock);
+        nl_socket_free(m_nl_sock);
+        m_nl_sock = NULL;
+        throw system_error(make_error_code(errc::address_not_available),
+                           "Unable to connect netlink socket");
     }
 
     WarmStart::initialize(TEAMSYNCD_APP_NAME, "teamd");
@@ -64,25 +77,29 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
  * Return ifindex in string format if interface don't exist, or no cache
  *        else return the corresponding interface name.
  */
-string TeamSync::ifindexToName(int ifindex)
+bool TeamSync::checkIfindexToName(int ifindex, const string &name)
 {
     char ifName[TeamPortSync::MAX_IFNAME + 1] = {0};
 
-    /* nl_socket, cache create failed earlier */
-    if (!m_nl_sock) {
-        /* Returns ifindex as string / */
-        return to_string(ifindex);
-    }
- 
-    /* Refill cache and check for ifindex */
-    nl_cache_refill(m_nl_sock ,m_link_cache);
-    if (rtnl_link_i2name(m_link_cache, ifindex, ifName, TeamPortSync::MAX_IFNAME) == NULL)
+    /* Refill the cache */
+    int err = nl_cache_refill(m_nl_sock ,m_link_cache);
+    if(err < 0) 
     {
-        /* Returns ifindex as string / */
-        return to_string(ifindex);
+       SWSS_LOG_WARN("Lag interface %s nl_cache_refill failure", name.c_str());
+       return true;
     }
 
-    return string(ifName);
+    /* If interface present in cache, check if it is same as input interface name */
+    if (rtnl_link_i2name(m_link_cache, ifindex, ifName, TeamPortSync::MAX_IFNAME) != NULL) 
+    {
+        if(string(ifName) == name) 
+        {
+            SWSS_LOG_INFO("Lag interface %s exists in cache", ifName);
+            return true;
+        }
+    }
+ 
+    return false;
 }
 
 void TeamSync::periodic()
@@ -144,8 +161,15 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if ((nlmsg_type != RTM_NEWLINK) && (nlmsg_type != RTM_DELLINK))
         return;
 
-    string lagName = rtnl_link_get_name(link);
+    /* Introduce check if the interface name is NULL */
+    char *ifName = rtnl_link_get_name(link);
+    if(ifName == NULL) 
+    {
+        SWSS_LOG_WARN("The LAG interface name in Netlink message is empty");
+        return;
+    } 
 
+    string lagName = ifName;
     unsigned int flags = rtnl_link_get_flags(link);
     bool admin = flags & IFF_UP;
     bool oper = flags & IFF_LOWER_UP;
@@ -157,12 +181,6 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     /* Get the interface index */
     unsigned int ifindex = rtnl_link_get_ifindex(link);
-
-    /* Check if the interface name is valid */
-    if(lagName.empty()) {
-        SWSS_LOG_WARN("Lag intf name in Netlink message is empty");
-        return;
-    }
 
     if (type)
     {
@@ -189,10 +207,8 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
      * We are here because this is a NEW link create netlink message from kernel. 
      * Fetch and compare the interface name using ifindex from kernel cache. 
      */
-    string cacheName = ifindexToName(ifindex);
-    if(cacheName.compare(0, cacheName.size(), lagName) != 0) {
-        SWSS_LOG_WARN("Lag intf name ( %s ) doesn't match with name got from kernel( %s )",
-                       lagName.c_str(), cacheName.c_str());
+    if(!checkIfindexToName(ifindex, lagName)) {
+        SWSS_LOG_WARN(" Lag interface ( %s ) don't exist in cache", lagName.c_str());
         return;
     }
 

@@ -65,8 +65,8 @@ protected:
     /* Handle all selectables add/removal events */
     void doSelectableTask();
 
-    /* Get the interface name for ifindex */
-    std::string ifindexToName(int ifindex);
+    /* Compare the interface name with that retrieved with ifindex */
+    bool checkIfindexToName(int ifindex, const std::string &name);
 
 private:
     Select *m_select;
