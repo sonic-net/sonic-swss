@@ -76,6 +76,8 @@ public:
     bool invalidnexthopinNextHopGroup(const NextHopKey&);
 
     void notifyNextHopChangeObservers(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&, bool);
+
+    void vrfDefaultRoute(sai_object_id_t vrf_id, string op);
 private:
     NeighOrch *m_neighOrch;
     IntfsOrch *m_intfsOrch;
