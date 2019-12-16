@@ -768,7 +768,7 @@ void VlanMgr::doTask(NotificationConsumer &consumer)
 
     if (&consumer != m_VlanStateNotificationConsumer)
     {
-        SWSS_LOG_WARN("received incorrect notification message);
+        SWSS_LOG_WARN("received incorrect notification message");
         return;
     }
 
