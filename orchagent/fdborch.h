@@ -62,10 +62,10 @@ public:
     void update(sai_fdb_event_t, const sai_fdb_entry_t *, sai_object_id_t);
     void update(SubjectType type, void *cntx);
     bool getPort(const MacAddress&, uint16_t, Port&);
-    int flushFdbByPortVlan(const string &, const string &, bool flush_static);
-    int flushFdbByVlan(const string &, bool flush_static);
-    int flushFdbByPort(const string &, bool flush_static);
-    int flushFdbAll(bool flush_static);
+    bool flushFdbByPortVlan(const string &, const string &, bool flush_static);
+    bool flushFdbByVlan(const string &, bool flush_static);
+    bool flushFdbByPort(const string &, bool flush_static);
+    bool flushFdbAll(bool flush_static);
     bool removeFdbEntry(const FdbEntry&);
 
 private:

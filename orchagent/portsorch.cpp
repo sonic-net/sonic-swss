@@ -1512,7 +1512,7 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
 
             p.m_index = static_cast<int32_t>(m_portList.size()); // TODO: Assume no deletion of physical port
             p.m_port_id = id;
-            
+
             /* Initialize the port and create corresponding host interface */
             if (initializePort(p))
             {
@@ -2315,11 +2315,11 @@ void PortsOrch::doVlanMemberTask(Consumer &consumer)
             {
                 ret = removeVlanMember(vlan, port);
             }
-            if ((ret == true) && port.m_vlan_members.empty())
+            if ((ret) && port.m_vlan_members.empty())
             {
                 ret = removeBridgePort(port);
             }
-            if (ret == true)
+            if (ret)
             {
                 it = consumer.m_toSync.erase(it);
             }

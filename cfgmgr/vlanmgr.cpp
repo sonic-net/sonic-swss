@@ -18,6 +18,7 @@ using namespace swss;
 #define DEFAULT_VLAN_ID     "1"
 #define DEFAULT_MTU_STR     "9100"
 #define VLAN_HLEN            4
+#define MAX_VLAN_ID          4095
 
 extern MacAddress gMacAddress;
 
@@ -259,7 +260,7 @@ void VlanMgr::doSwitchTask(Consumer &consumer)
         /* Ensure the key starts with "switch" otherwise ignore */
         if (key != SWITCH_STR)
         {
-            SWSS_LOG_INFO("Ignoring SWITCH key %s", key.c_str());
+            SWSS_LOG_NOTICE("Ignoring SWITCH key %s", key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -270,13 +271,13 @@ void VlanMgr::doSwitchTask(Consumer &consumer)
         {
             if (fvField(i) == "fdb_aging_time")
             {
-                int agingTime = 0;
+                long agingTime = 0;
                 SWSS_LOG_DEBUG("attribute:fdb_aging_time");
                 if (op == SET_COMMAND)
                 {
                     SWSS_LOG_DEBUG("operation:set");
-                    agingTime = atoi(fvValue(i).c_str());
-                    if(agingTime < 0)
+                    agingTime = strtol(fvValue(i).c_str(), NULL, 0);
+                    if (agingTime < 0)
                     {
                         SWSS_LOG_ERROR("Invalid fdb_aging_time %s", fvValue(i).c_str());
                         break;
@@ -286,7 +287,7 @@ void VlanMgr::doSwitchTask(Consumer &consumer)
                 else if (op == DEL_COMMAND)
                 {
                     SWSS_LOG_DEBUG("operation:del");
-                    agingTime=0;
+                    agingTime = 0;
                 }
                 else
                 {
@@ -308,13 +309,6 @@ void VlanMgr::doSwitchTask(Consumer &consumer)
 
 void VlanMgr::doFdbTask(Consumer &consumer)
 {
-    if (!isVlanMacOk())
-    {
-        SWSS_LOG_DEBUG("VLAN mac not ready, delaying FDB task");
-        SWSS_LOG_DEBUG("VLAN mac not ready, delaying VLAN task");
-        return;
-    }
-
     auto it = consumer.m_toSync.begin();
 
     while (it != consumer.m_toSync.end())
@@ -334,10 +328,10 @@ void VlanMgr::doFdbTask(Consumer &consumer)
             continue;
         }
 
-        int vlan_id;
-        vlan_id = stoi(keys[0].substr(4));
+        unsigned long vlan_id;
+        vlan_id = strtoul(keys[0].substr(strlen(VLAN_PREFIX)).c_str(), NULL, 0);
 
-        if ((vlan_id <= 0) || (vlan_id > 4095))
+        if ((vlan_id <= 0) || (vlan_id > MAX_VLAN_ID))
         {
             SWSS_LOG_ERROR("Invalid key format. Vlan is out of range: %s", keys[0].c_str());
             it = consumer.m_toSync.erase(it);
@@ -453,7 +447,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             for (auto i : kfvFieldsValues(t))
             {
                 /* Set vlan admin status */
-                if (fvField(i) == "admin_status")	
+                if (fvField(i) == "admin_status")
                 {	
                     admin_status = fvValue(i);	
                     setHostVlanAdminState(vlan_id, admin_status);	
@@ -774,18 +768,20 @@ void VlanMgr::doTask(NotificationConsumer &consumer)
 
     if (&consumer != m_VlanStateNotificationConsumer)
     {
+        SWSS_LOG_WARN("received incorrect notification message);
         return;
     }
 
     consumer.pop(op, data, values);
 
-    int vlan_id = stoi(data.substr(4));
+    unsigned long vlan_id = strtoul(data.substr(strlen(VLAN_PREFIX)).c_str(), NULL, 0);
 
-    SWSS_LOG_NOTICE("vlanmgr received port status notification state %s vlan %s id %d",
-        op.c_str(), data.c_str(), vlan_id);
+    SWSS_LOG_NOTICE("vlanmgr received port status notification state %s vlan %s",
+        op.c_str(), data.c_str());
 
-    if (isVlanStateOk(data)) {
-        setHostVlanAdminState(vlan_id, op);
+    if (isVlanStateOk(data))
+    {
+        setHostVlanAdminState((int)vlan_id, op);
     }
     else
     {
