@@ -19,6 +19,7 @@ extern int gBatchSize;
 extern bool gSwssRecord;
 extern bool gSairedisRecord;
 extern bool gLogRotate;
+extern bool gSaiRedisLogRotate;
 extern ofstream gRecordOfs;
 extern string gRecordFile;
 
