@@ -47,6 +47,7 @@ int gBatchSize = DEFAULT_BATCH_SIZE;
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
 bool gLogRotate = false;
+bool gSaiRedisLogRotate = false;
 bool gSyncMode = false;
 
 ofstream gRecordOfs;
@@ -73,15 +74,7 @@ void sighup_handler(int signo)
      * Don't do any logging since they are using mutexes.
      */
     gLogRotate = true;
-
-    sai_attribute_t attr;
-    attr.id = SAI_REDIS_SWITCH_ATTR_PERFORM_LOG_ROTATE;
-    attr.value.booldata = true;
-
-    if (sai_switch_api != NULL)
-    {
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    }
+    gSaiRedisLogRotate = true;
 }
 
 void syncd_apply_view()

@@ -19,6 +19,7 @@ using namespace swss;
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
+extern bool                        gSaiRedisLogRotate;
 
 extern void syncd_apply_view();
 /*
@@ -399,6 +400,19 @@ void OrchDaemon::flush()
     {
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
         exit(EXIT_FAILURE);
+    }
+
+    // check if logroate is requested
+    if (gSaiRedisLogRotate)
+    {
+        SWSS_LOG_NOTICE("performing log rotate");
+
+        gSaiRedisLogRotate = false;
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_PERFORM_LOG_ROTATE;
+        attr.value.booldata = true;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     }
 }
 
