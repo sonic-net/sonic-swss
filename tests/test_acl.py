@@ -329,7 +329,7 @@ class TestAcl(BaseTestAcl):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_AclRuleInPortsNonexistentInterface(self, dvs, testlog):
+    def test_AclRuleInPortsNonExistingInterface(self, dvs, testlog):
         self.setup_db(dvs)
 
         # Create ACL rule with a completely wrong interface
@@ -364,7 +364,7 @@ class TestAcl(BaseTestAcl):
         tbl._del("test|foo_bar_baz")
         time.sleep(1)
 
-    def test_AclRuleOutPortsNonexistentInterface(self, dvs, testlog):
+    def test_AclRuleOutPortsNonExistingInterface(self, dvs, testlog):
         self.setup_db(dvs)
 
         # Create ACL rule with a completely wrong interface
