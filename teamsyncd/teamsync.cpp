@@ -233,14 +233,18 @@ void TeamSync::cleanTeamProcesses(int signo)
        fd = open(file_path.c_str(), O_RDONLY);
        if (fd > 0)
        {
-           sz = read(fd, pid_str, MAX_PID_STRLEN);
-           if(sz) {
-               pid_str[sz] = '\0';
+           memset(pid_str, 0, MAX_PID_STRLEN);
+           sz = read(fd, pid_str, MAX_PID_STRLEN-1);
+           if(sz > 0)
+           {
                pid = (pid_t)strtol(pid_str, &endptr, 10);
-               kill(pid, signo);
+               if(pid > 0) 
+               {
+                   kill(pid, signo);
+               }
            }
+           close(fd);
        }
-       close(fd);
        file_path.clear();
     }
     return;
