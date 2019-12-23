@@ -12,6 +12,10 @@
 #include "warm_restart.h"
 #include "teamsync.h"
 
+#include <signal.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 using namespace std;
@@ -20,6 +24,7 @@ using namespace swss;
 
 /* Taken from drivers/net/team/team.c */
 #define TEAM_DRV_NAME "team"
+#define PID_FILE_PATH "/var/run/teamd/"
 
 TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
     m_select(select),
@@ -109,6 +114,22 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (!type || (strcmp(type, TEAM_DRV_NAME) != 0))
         return;
 
+    unsigned int flags = rtnl_link_get_flags(link);
+    bool admin = flags & IFF_UP;
+    bool oper = flags & IFF_LOWER_UP;
+    unsigned int ifindex = rtnl_link_get_ifindex(link);
+
+    if (type)
+    {
+        SWSS_LOG_INFO(" nlmsg type:%d key:%s admin:%d oper:%d ifindex:%d type:%s",
+                       nlmsg_type, lagName.c_str(), admin, oper, ifindex, type);
+    }
+    else
+    {
+        SWSS_LOG_INFO(" nlmsg type:%d key:%s admin:%d oper:%d ifindex:%d",
+                       nlmsg_type, lagName.c_str(), admin, oper, ifindex);
+    }
+
     if (nlmsg_type == RTM_DELLINK)
     {
         if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
@@ -192,6 +213,37 @@ void TeamSync::removeLag(const string &lagName)
     }
 
     m_selectablesToRemove.insert(lagName);
+}
+
+#define MAX_PID_STRLEN 10
+void TeamSync::cleanTeamProcesses(int signo)
+{
+    ssize_t sz = 0;
+    int fd, pid;
+    char pid_str[MAX_PID_STRLEN] = {0};
+    char *endptr = NULL;
+    string file_path;
+
+    for (auto it=m_teamSelectables.begin(); it!=m_teamSelectables.end(); ++it)
+    {
+       /* There are PID files created for each teamd process in /var/run/teamd DIR */
+       file_path = string(PID_FILE_PATH) + it->first + string(".pid");
+
+       /* Open the file, get the PID and send signal to the process */
+       fd = open(file_path.c_str(), O_RDONLY);
+       if (fd > 0)
+       {
+           sz = read(fd, pid_str, MAX_PID_STRLEN);
+           if(sz) {
+               pid_str[sz] = '\0';
+               pid = (pid_t)strtol(pid_str, &endptr, 10);
+               kill(pid, signo);
+           }
+       }
+       close(fd);
+       file_path.clear();
+    }
+    return;
 }
 
 const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {
