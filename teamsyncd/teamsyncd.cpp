@@ -1,5 +1,6 @@
 #include <iostream>
 #include <team.h>
+#include <signal.h>
 #include "logger.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -9,6 +10,19 @@
 using namespace std;
 using namespace swss;
 
+TeamSync *syncPtr = NULL;
+
+void sig_handler(int signo)
+{
+    /* Stop the teamd processes present */
+    if(syncPtr)
+    {
+        syncPtr->cleanTeamProcesses(signo);
+    }
+
+    return;
+}
+
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative(TEAMSYNCD_APP_NAME);
@@ -16,9 +30,15 @@ int main(int argc, char **argv)
     DBConnector stateDb("STATE_DB", 0);
     Select s;
     TeamSync sync(&db, &stateDb, &s);
+    syncPtr = &sync;
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
+
+    /* Register the signal handler for various signals */
+    signal(SIGTERM, sig_handler);
+    signal(SIGINT, sig_handler);
+    signal(SIGQUIT, sig_handler);
 
     while (1)
     {
