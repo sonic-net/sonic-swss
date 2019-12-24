@@ -20,6 +20,11 @@ AC_CHECK_LIB([team], [team_alloc],
    [AC_MSG_WARN([libteam is not installed.])
     AM_CONDITIONAL(HAVE_LIBTEAM, false)])
 
+AC_CHECK_FILE([/usr/include/stp_ipc.h], 
+    AM_CONDITIONAL(HAVE_STP, true),
+   [AC_MSG_WARN([stp is not installed.])
+    AM_CONDITIONAL(HAVE_STP, false)])
+
 AC_CHECK_LIB([sai], [sai_object_type_query],
     AM_CONDITIONAL(HAVE_SAI, true),
    [AC_MSG_WARN([libsai is not installed.])

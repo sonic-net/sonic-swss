@@ -34,6 +34,8 @@ struct VlanInfo
     sai_vlan_id_t       vlan_id = 0;
 };
 
+typedef std::map<sai_uint16_t, sai_object_id_t> stp_port_ids_t;
+
 class Port
 {
 public:
@@ -79,6 +81,8 @@ public:
     sai_port_fec_mode_t m_fec_mode = SAI_PORT_FEC_MODE_NONE;
     VlanInfo            m_vlan_info;
     sai_object_id_t     m_bridge_port_id = 0;   // TODO: port could have multiple bridge port IDs
+    stp_port_ids_t      m_stp_port_ids;         //STP Port object ids for each STP instance
+    sai_int16_t         m_stp_id = -1;           //STP instance for the VLAN
     sai_vlan_id_t       m_port_vlan_id = DEFAULT_PORT_VLAN_ID;  // Port VLAN ID
     sai_object_id_t     m_rif_id = 0;
     sai_object_id_t     m_vr_id = 0;

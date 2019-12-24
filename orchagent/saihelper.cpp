@@ -21,6 +21,7 @@ sai_bridge_api_t*           sai_bridge_api;
 sai_virtual_router_api_t*   sai_virtual_router_api;
 sai_port_api_t*             sai_port_api;
 sai_vlan_api_t*             sai_vlan_api;
+sai_stp_api_t*              sai_stp_api;
 sai_router_interface_api_t* sai_router_intfs_api;
 sai_hostif_api_t*           sai_hostif_api;
 sai_neighbor_api_t*         sai_neighbor_api;
@@ -113,6 +114,7 @@ void initSaiApi()
     sai_api_query(SAI_API_PORT,                 (void **)&sai_port_api);
     sai_api_query(SAI_API_FDB,                  (void **)&sai_fdb_api);
     sai_api_query(SAI_API_VLAN,                 (void **)&sai_vlan_api);
+    sai_api_query(SAI_API_STP,                  (void **)&sai_stp_api);
     sai_api_query(SAI_API_HOSTIF,               (void **)&sai_hostif_api);
     sai_api_query(SAI_API_MIRROR,               (void **)&sai_mirror_api);
     sai_api_query(SAI_API_ROUTER_INTERFACE,     (void **)&sai_router_intfs_api);

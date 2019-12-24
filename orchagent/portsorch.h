@@ -89,8 +89,11 @@ public:
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
 
+    bool addBridgePort(Port &port);
+
     bool addSubPort(Port &port, const string &alias, const bool &adminUp = true, const uint32_t &mtu = 0);
     bool removeSubPort(const string &alias);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
@@ -157,7 +160,6 @@ private:
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
-    bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
     bool setBridgePortLearnMode(Port &port, string learn_mode);
 
@@ -210,6 +212,7 @@ private:
 
     bool setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
                                 vector<uint32_t> &serdes_val);
+
 };
 #endif /* SWSS_PORTSORCH_H */
 

@@ -2,6 +2,7 @@
 #include "intfsorch.h"
 #include "bufferorch.h"
 #include "neighorch.h"
+#include "stporch.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -37,6 +38,7 @@ extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
+extern StpOrch *gStpOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -2894,6 +2896,9 @@ bool PortsOrch::removeBridgePort(Port &port)
         return false;
     }
 
+    /* Remove STP ports before bridge port deletion*/
+    gStpOrch->removeStpPorts(port);
+
     /* Flush FDB entries pointing to this bridge port */
     // TODO: Remove all FDB entries associated with this bridge port before
     //       removing the bridge port itself
@@ -2994,6 +2999,12 @@ bool PortsOrch::removeVlan(Port vlan)
     {
         SWSS_LOG_ERROR("Failed to remove non-empty VLAN %s", vlan.m_alias.c_str());
         return false;
+    }
+    
+    /* If STP instance is associated with VLAN remove VLAN from STP before deletion */
+    if(vlan.m_stp_id != -1)
+    {
+        gStpOrch->removeVlanFromStpInstance(vlan.m_alias, 0);
     }
 
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
