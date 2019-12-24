@@ -67,6 +67,8 @@ private:
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
 
     void doTask(Consumer &consumer);
+    bool mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<FieldValueTuple> &asicValues,
+            std::vector<FieldValueTuple> &appValues);
 };
 
 #endif /* SWSS_NEIGHORCH_H */

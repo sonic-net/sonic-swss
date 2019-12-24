@@ -23,6 +23,7 @@
 #include "vrforch.h"
 #include "vxlanorch.h"
 #include "vnetorch.h"
+#include "errororch.h"
 #include "countercheckorch.h"
 #include "flexcounterorch.h"
 #include "watermarkorch.h"
@@ -36,7 +37,8 @@ using namespace swss;
 class OrchDaemon
 {
 public:
-    OrchDaemon(DBConnector *, DBConnector *, DBConnector *);
+    OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb,
+            DBConnector *countersDb, DBConnector *asicDb, DBConnector *errorDb);
     ~OrchDaemon();
 
     bool init();
@@ -50,6 +52,9 @@ private:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
     DBConnector *m_stateDb;
+    DBConnector *m_countersDb;
+    DBConnector *m_asicDb;
+    DBConnector *m_errorDb;
 
     std::vector<Orch *> m_orchList;
     Select *m_select;

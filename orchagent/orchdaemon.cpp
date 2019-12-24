@@ -34,14 +34,26 @@ AclOrch *gAclOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
+ErrorOrch *gErrorOrch;
 Directory<Orch*> gDirectory;
 
-OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
+std::shared_ptr<swss::RedisClient>          g_redisClientAppDb;
+std::shared_ptr<swss::RedisClient>          g_redisClientAsicDb;
+std::shared_ptr<swss::RedisClient>          g_redisClientCountersDb;
+
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb,
+        DBConnector *countersDb, DBConnector *asicDb, DBConnector *errorDb) :
         m_applDb(applDb),
         m_configDb(configDb),
-        m_stateDb(stateDb)
+        m_stateDb(stateDb),
+        m_countersDb(countersDb),
+        m_asicDb(asicDb),
+        m_errorDb(errorDb)
 {
     SWSS_LOG_ENTER();
+    g_redisClientAppDb = std::make_shared<swss::RedisClient>(applDb);
+    g_redisClientAsicDb = std::make_shared<swss::RedisClient>(asicDb);
+    g_redisClientCountersDb = std::make_shared<swss::RedisClient>(countersDb);
 }
 
 OrchDaemon::~OrchDaemon()
@@ -69,6 +81,11 @@ bool OrchDaemon::init()
 
     string platform = getenv("platform") ? getenv("platform") : "";
 
+    vector<string> error_tables = {
+        { ERROR_ROUTE_TABLE_NAME},
+        { ERROR_NEIGH_TABLE_NAME}
+    };
+    gErrorOrch = new ErrorOrch(m_asicDb, m_errorDb, error_tables);
     gSwitchOrch = new SwitchOrch(m_applDb, APP_SWITCH_TABLE_NAME);
 
     const int portsorch_base_pri = 40;
@@ -216,7 +233,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap.
      * That is ensured implicitly by the order of map key, "LAG_TABLE" is smaller than "VLAN_TABLE" in lexicographic order.
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch};
+    m_orchList = { gErrorOrch, gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)

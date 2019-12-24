@@ -98,6 +98,8 @@ private:
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
 
     void doTask(Consumer& consumer);
+    bool mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<FieldValueTuple> &asicValues,
+            std::vector<FieldValueTuple> &appValues);
 };
 
 #endif /* SWSS_ROUTEORCH_H */

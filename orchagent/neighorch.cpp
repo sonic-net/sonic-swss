@@ -4,6 +4,13 @@
 #include "swssnet.h"
 #include "crmorch.h"
 #include "routeorch.h"
+#include "errororch.h"
+#include "tokenize.h"
+#include "sai_serialize.h"
+#include "redisclient.h"
+
+#include "swss/json.hpp"
+using json = nlohmann::json;
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
@@ -12,6 +19,9 @@ extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 extern RouteOrch *gRouteOrch;
+extern ErrorOrch *gErrorOrch;
+extern std::shared_ptr<swss::RedisClient>   g_redisClientAsicDb;
+extern std::shared_ptr<swss::RedisClient>   g_redisClientCountersDb;
 
 const int neighorch_pri = 30;
 
@@ -19,6 +29,12 @@ NeighOrch::NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch) :
         Orch(db, tableName, neighorch_pri), m_intfsOrch(intfsOrch)
 {
     SWSS_LOG_ENTER();
+
+    if(gErrorOrch->mappingHandlerRegister(APP_NEIGH_TABLE_NAME, this) == false)
+    {
+        SWSS_LOG_ERROR("Failed to register with Error Handling Framework for %s",
+                APP_NEIGH_TABLE_NAME);
+    }
 }
 
 bool NeighOrch::hasNextHop(const NextHopKey &nexthop)
@@ -581,3 +597,129 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry)
 
     return true;
 }
+
+bool NeighOrch::mapToErrorDbFormat(sai_object_type_t& object_type, std::vector<FieldValueTuple> &asicValues,
+        std::vector<FieldValueTuple> &appValues)
+{
+    SWSS_LOG_ENTER();
+
+    if(object_type != SAI_OBJECT_TYPE_NEIGHBOR_ENTRY)
+    {
+        return false;
+    }
+
+    /*
+       127.0.0.1:6379> hgetall "NEIGH_TABLE:Ethernet0:2.2.2.2"
+       1) "neigh"
+       2) "00:00:3a:3e:9e:a7"
+       3) "family"
+       4) "IPv4"
+
+       127.0.0.1:6379[1]> hgetall "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY:{\"ip\":\"2.2.2.2\",\"rif\":\"oid:0x60000000006f3\",\"switch_id\":\"oid:0x21000000000000\"}"
+       1) "SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS"
+       2) "00:00:3A:3E:9E:A7"
+       127.0.0.1:6379[1]>
+
+       127.0.0.1:6379[2]> hgetall "COUNTERS_PORT_NAME_MAP"
+       25) "Ethernet0"
+       26) "oid:0x100000000000e"
+    */
+
+    const auto& values = asicValues;
+    std::string asicKV, strNbrIP, strRifOid, strMac;
+    std::string strIntfName, strRtrIntfType;
+    for(size_t i = 0; i < values.size(); i++)
+    {
+        if(fvField(values[i]) == "key")
+        {
+            /* Extract Neighbor IP and Router Interface ID from the "key" field */
+            asicKV = fvValue(values[i]);
+            auto tokens = tokenize(asicKV, ':', 1);
+            json j = json::parse(tokens[1]);
+            strNbrIP = j["ip"];
+            strRifOid = j["rif"];
+            SWSS_LOG_DEBUG("Neighbor IP is %s, router interface ID is %s",
+                    strNbrIP.c_str(), strRifOid.c_str());
+
+            /* Extract Port OID from Router Interface OID */
+            std::string strRtrIfKey = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE:" + strRifOid;
+            std::string strIntfOid;
+            /* OID in neighbor entry points to ROUTER_INTERFACE
+             * Port based routing interface
+             * ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x60000000006d9
+             *   SAI_ROUTER_INTERFACE_ATTR_TYPE = SAI_ROUTER_INTERFACE_TYPE_PORT
+             *   SAI_ROUTER_INTERFACE_ATTR_PORT_ID = oid:0x100000000000e
+             *   Check above oid in COUNTERS_PORT_NAME_MAP in COUNTERS_DB to get the physical interface name
+             *
+             * VLAN based routing interface
+             * ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE:oid:0x60000000006f6
+             *  SAI_ROUTER_INTERFACE_ATTR_TYPE -> SAI_ROUTER_INTERFACE_TYPE_VLAN
+             *  SAI_ROUTER_INTERFACE_ATTR_VLAN_ID -> oid:0x260000000006f3
+             *  Check above oid in "ASIC_STATE:SAI_OBJECT_TYPE_VLAN:oid:0x260000000006f3"
+             */
+
+            auto hashRif = g_redisClientAsicDb->hgetall(strRtrIfKey);
+            for(auto &kv: hashRif)
+            {
+                const std::string &skey = kv.first;
+                const std::string &svalue = kv.second;
+
+                if(skey == "SAI_ROUTER_INTERFACE_ATTR_TYPE")
+                {
+                    strRtrIntfType = svalue;
+                }
+                if(skey == "SAI_ROUTER_INTERFACE_ATTR_PORT_ID" || skey == "SAI_ROUTER_INTERFACE_ATTR_VLAN_ID")
+                {
+                    strIntfOid = svalue;
+                }
+            }
+            SWSS_LOG_DEBUG("Router interface type is %s, interface ID is %s",
+                    strRtrIntfType.c_str(), strIntfOid.c_str());
+
+            /* Extract Port name from the Port OID */
+            if(strRtrIntfType == "SAI_ROUTER_INTERFACE_TYPE_PORT")
+            {
+                auto hashCntr = g_redisClientCountersDb->hgetall("COUNTERS_PORT_NAME_MAP");
+                for(auto &kv: hashCntr)
+                {
+                    const std::string &skey = kv.first;
+                    const std::string &svalue = kv.second;
+                    if(svalue == strIntfOid)
+                    {
+                        strIntfName = skey;
+                        break;
+                    }
+                }
+            }
+            else if(strRtrIntfType == "SAI_ROUTER_INTERFACE_TYPE_VLAN")
+            {
+                std::string strVlanKey = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN:" + strIntfOid;
+                auto hashVlan = g_redisClientAsicDb->hgetall(strVlanKey);
+                for(auto &kv: hashVlan)
+                {
+                    const std::string &skey = kv.first;
+                    const std::string &svalue = kv.second;
+                    if(skey == "SAI_VLAN_ATTR_VLAN_ID")
+                    {
+                        strIntfName = "Vlan" + svalue;
+                        break;
+                    }
+                }
+            }
+            SWSS_LOG_DEBUG("Interface name is %s", strIntfName.c_str());
+        } /* End of if(fvField(values[i]) == "key") */
+
+        /* Extract MAC address */
+        if(fvField(values[i]) == "SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS")
+        {
+            strMac = fvValue(values[i]);
+        }
+    } /* End of for(size_t i = 0; i < values.size(); i++) */
+
+    std::string appKey = strIntfName + ":" + strNbrIP;
+    appValues.emplace_back("key", appKey);
+    appValues.emplace_back("neigh", strMac);
+
+    return true;
+}
+

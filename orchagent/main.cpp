@@ -284,11 +284,15 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
 
     /* Initialize orchestration components */
-    DBConnector appl_db("APPL_DB", 0);
-    DBConnector config_db("CONFIG_DB", 0);
-    DBConnector state_db("STATE_DB", 0);
+    DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector config_db(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector counters_db(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector asic_db(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector error_db(ERROR_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
+
+    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, &counters_db, &asic_db, &error_db);
 
     if (!orchDaemon->init())
     {
