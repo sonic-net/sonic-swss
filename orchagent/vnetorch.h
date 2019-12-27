@@ -61,7 +61,7 @@ extern std::vector<VR_TYPE> vr_cntxt;
 class VNetRequest : public Request
 {
 public:
-    VNetRequest() : Request(vnet_request_description, ':') { }
+    VNetRequest() : Request(vnet_request_description, '|') { }
 };
 
 struct tunnelEndpoint
@@ -367,7 +367,7 @@ const request_description_t vnet_route_description = {
 class VNetRouteRequest : public Request
 {
 public:
-    VNetRouteRequest() : Request(vnet_route_description, ':') { }
+    VNetRouteRequest() : Request(vnet_route_description, '|') { }
 };
 
 struct VNetNextHopUpdate
