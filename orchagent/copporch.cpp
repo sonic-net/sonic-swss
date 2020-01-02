@@ -415,7 +415,7 @@ bool CoppOrch::removeGenetlinkHostIf(string trap_group_name)
                 sai_status = sai_hostif_api->remove_hostif_table_entry(hostTableEntry->second);
                 if(sai_status != SAI_STATUS_SUCCESS)
                 {
-                    SWSS_LOG_ERROR("Failed to delete hostif table entry %ld \
+                    SWSS_LOG_ERROR("Failed to delete hostif table entry %" PRId64 " \
                                    on trap group %s. rc=%d", hostTableEntry->second,
                                    trap_group_name.c_str(), sai_status);
                     return false;
@@ -431,7 +431,7 @@ bool CoppOrch::removeGenetlinkHostIf(string trap_group_name)
         sai_status = sai_hostif_api->remove_hostif(hostInfo->second);
         if(sai_status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to delete host info %ld on trap group %s. rc=%d",
+            SWSS_LOG_ERROR("Failed to delete host info %" PRId64 " on trap group %s. rc=%d",
                            hostInfo->second, trap_group_name.c_str(), sai_status);
             return false;
         }
@@ -724,7 +724,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             sai_status = sai_hostif_api->remove_hostif_trap(it.second.trap_obj);
             if (sai_status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to remove trap object %ld", it.second.trap_obj);
+                SWSS_LOG_ERROR("Failed to remove trap object %" PRId64 "", it.second.trap_obj);
                 return task_process_status::task_failed;
             }
         }

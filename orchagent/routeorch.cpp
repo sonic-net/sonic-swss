@@ -1081,14 +1081,14 @@ bool RouteOrch::removeRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
     auto it_route_table = m_syncdRoutes.find(vrf_id);
     if (it_route_table == m_syncdRoutes.end())
     {
-        SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%lx\n", vrf_id);
+        SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%" PRIx64 "\n", vrf_id);
         return true;
     }
 
     auto it_route = it_route_table->second.find(ipPrefix);
     if (it_route == it_route_table->second.end())
     {
-        SWSS_LOG_INFO("Failed to find route entry, vrf_id 0x%lx, prefix %s\n", vrf_id,
+        SWSS_LOG_INFO("Failed to find route entry, vrf_id 0x%" PRIx64 ", prefix %s\n", vrf_id,
                 ipPrefix.to_string().c_str());
         return true;
     }

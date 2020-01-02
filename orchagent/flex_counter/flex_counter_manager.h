@@ -1,6 +1,9 @@
 #ifndef ORCHAGENT_FLEX_COUNTER_MANAGER_H
 #define ORCHAGENT_FLEX_COUNTER_MANAGER_H
 
+#define __STDC_FORMAT_MACROS
+#include <inttypes.h>
+
 #include <string>
 #include <unordered_set>
 #include <unordered_map>

@@ -165,7 +165,7 @@ void FlexCounterManager::setCounterIdList(
     flex_counter_table->set(getFlexCounterTableKey(group_name, object_id), field_values);
     installed_counters.insert(object_id);
 
-    SWSS_LOG_DEBUG("Updated flex counter id list for object '%lu' in group '%s'.",
+    SWSS_LOG_DEBUG("Updated flex counter id list for object '%" PRIu64 "' in group '%s'.",
             object_id,
             group_name.c_str());
 }
@@ -179,7 +179,7 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
     auto counter_it = installed_counters.find(object_id);
     if (counter_it == installed_counters.end())
     {
-        SWSS_LOG_WARN("No counters found on object '%lu' in group '%s'.",
+        SWSS_LOG_WARN("No counters found on object '%" PRIu64 "' in group '%s'.",
                 object_id,
                 group_name.c_str());
         return;
@@ -188,7 +188,7 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
     flex_counter_table->del(getFlexCounterTableKey(group_name, object_id));
     installed_counters.erase(counter_it);
 
-    SWSS_LOG_DEBUG("Cleared flex counter id list for object '%lu' in group '%s'.",
+    SWSS_LOG_DEBUG("Cleared flex counter id list for object '%" PRIu64 "' in group '%s'.",
             object_id,
             group_name.c_str());
 }
