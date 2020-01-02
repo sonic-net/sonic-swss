@@ -216,37 +216,55 @@ void TeamSync::removeLag(const string &lagName)
 }
 
 #define MAX_PID_STRLEN 10
+/* This API will be called from the teamsyncd signal handler. This will 
+ * do the cleanup of teamd processes and exit.
+ */
 void TeamSync::cleanTeamProcesses(int signo)
 {
     ssize_t sz = 0;
     int fd, pid;
-    char pid_str[MAX_PID_STRLEN] = {0};
     char *endptr = NULL;
     string file_path;
 
-    for (auto it=m_teamSelectables.begin(); it!=m_teamSelectables.end(); ++it)
+    for (const auto& it: m_teamSelectables)
     {
-       /* There are PID files created for each teamd process in /var/run/teamd DIR */
-       file_path = string(PID_FILE_PATH) + it->first + string(".pid");
+       /* There are PID files created for each teamd process at "/var/run/teamd" */
+       file_path = string(PID_FILE_PATH) + it.first + string(".pid");
 
        /* Open the file, get the PID and send signal to the process */
        fd = open(file_path.c_str(), O_RDONLY);
        if (fd > 0)
        {
-           memset(pid_str, 0, MAX_PID_STRLEN);
+           char pid_str[MAX_PID_STRLEN] = {0};
            sz = read(fd, pid_str, MAX_PID_STRLEN-1);
            if(sz > 0)
            {
+               errno = 0;
                pid = (pid_t)strtol(pid_str, &endptr, 10);
-               if(pid > 0) 
+               if ((errno == ERANGE) || (errno != 0 && pid == 0))
                {
+                   SWSS_LOG_WARN("No valid PID extracted from file %s", file_path.c_str());
+               }
+               else
+               {
+                   /* Sending the SIGNAL to the Process */
+                   SWSS_LOG_INFO("Sending SIGTERM to PID [%d]", pid);
                    kill(pid, signo);
                }
            }
+           else
+           {
+               SWSS_LOG_WARN("No bytes read from the file [%s]", file_path.c_str());
+           }
            close(fd);
+       }
+       else
+       {
+           SWSS_LOG_WARN("Could not open the file %s", file_path.c_str());
        }
        file_path.clear();
     }
+
     return;
 }
 

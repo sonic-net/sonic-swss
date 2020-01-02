@@ -10,16 +10,12 @@
 using namespace std;
 using namespace swss;
 
-TeamSync *syncPtr = NULL;
+/* Introducing a flag to indicate the receipt of signal */
+bool received_sigterm = false;
 
 void sig_handler(int signo)
 {
-    /* Stop the teamd processes present */
-    if(syncPtr)
-    {
-        syncPtr->cleanTeamProcesses(signo);
-    }
-
+    received_sigterm = true;
     return;
 }
 
@@ -30,15 +26,12 @@ int main(int argc, char **argv)
     DBConnector stateDb("STATE_DB", 0);
     Select s;
     TeamSync sync(&db, &stateDb, &s);
-    syncPtr = &sync;
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
-    /* Register the signal handler for various signals */
+    /* Register the signal handler for SIGTERM */
     signal(SIGTERM, sig_handler);
-    signal(SIGINT, sig_handler);
-    signal(SIGQUIT, sig_handler);
 
     while (1)
     {
@@ -53,6 +46,12 @@ int main(int argc, char **argv)
             s.addSelectable(&netlink);
             while (true)
             {
+                if(received_sigterm)
+                {
+                  sync.cleanTeamProcesses(SIGTERM);
+                  received_sigterm = false;
+                }
+
                 Selectable *temps;
                 s.select(&temps, 1000); // block for a second
                 sync.periodic();
