@@ -8,13 +8,14 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 
 namespace swss {
 
 class VxlanMgr : public Orch
 {
 public:
-    VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<std::string> &tableNames);
+    VxlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
 
     typedef struct VxlanInfo
@@ -25,6 +26,7 @@ public:
         std::string m_vni;
         std::string m_vxlan;
         std::string m_vxlanIf;
+        std::string m_macAddress;
     } VxlanInfo;
     ~VxlanMgr();
 private:
@@ -47,6 +49,7 @@ private:
     */
     bool isVrfStateOk(const std::string & vrfName);
     bool isVxlanStateOk(const std::string & vxlanName);
+    std::pair<bool, std::string> getVxlanRouterMacAddress();
 
     bool createVxlan(const VxlanInfo & info);
     bool deleteVxlan(const VxlanInfo & info);
@@ -54,7 +57,7 @@ private:
     void clearAllVxlanDevices();
 
     ProducerStateTable m_appVxlanTunnelTable,m_appVxlanTunnelMapTable;
-    Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable;
+    Table m_cfgVxlanTunnelTable,m_cfgVnetTable,m_stateVrfTable,m_stateVxlanTable, m_appSwitchTable;
 
     /*
     * Vxlan Tunnel Cache

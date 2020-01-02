@@ -12,6 +12,7 @@ extern "C" {
 #include <chrono>
 #include <getopt.h>
 #include <unistd.h>
+#include <inttypes.h>
 
 #include <sys/time.h>
 #include "timestamp.h"
@@ -46,12 +47,15 @@ int gBatchSize = DEFAULT_BATCH_SIZE;
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
 bool gLogRotate = false;
+bool gSaiRedisLogRotate = false;
+bool gSyncMode = false;
+
 ofstream gRecordOfs;
 string gRecordFile;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-s]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -61,6 +65,7 @@ void usage()
     cout << "    -d record_location: set record logs folder location (default .)" << endl;
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
+    cout << "    -s: enable synchronous mode" << endl;
 }
 
 void sighup_handler(int signo)
@@ -69,15 +74,7 @@ void sighup_handler(int signo)
      * Don't do any logging since they are using mutexes.
      */
     gLogRotate = true;
-
-    sai_attribute_t attr;
-    attr.id = SAI_REDIS_SWITCH_ATTR_PERFORM_LOG_ROTATE;
-    attr.value.booldata = true;
-
-    if (sai_switch_api != NULL)
-    {
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    }
+    gSaiRedisLogRotate = true;
 }
 
 void syncd_apply_view()
@@ -117,7 +114,7 @@ int main(int argc, char **argv)
 
     string record_location = ".";
 
-    while ((opt = getopt(argc, argv, "b:m:r:d:h")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:d:hs")) != -1)
     {
         switch (opt)
         {
@@ -162,6 +159,11 @@ int main(int argc, char **argv)
         case 'h':
             usage();
             exit(EXIT_SUCCESS);
+        case 's':
+            gSyncMode = true;
+            SWSS_LOG_NOTICE("Enabling synchronous mode");
+            break;
+
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -211,6 +213,18 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
+    // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
+    // since it is not using ASIC_DB, we can execute it before create_switch
+    // when g_syncMode is set to true here, create_switch will wait the response from syncd
+    if (gSyncMode)
+    {
+        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_MODE;
+        attr.value.booldata = true;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
+
+
     status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -246,7 +260,7 @@ int main(int argc, char **argv)
     }
 
     gVirtualRouterId = attr.value.oid;
-    SWSS_LOG_NOTICE("Get switch virtual router ID %lx", gVirtualRouterId);
+    SWSS_LOG_NOTICE("Get switch virtual router ID %" PRIx64, gVirtualRouterId);
 
     /* Create a loopback underlay router interface */
     vector<sai_attribute_t> underlay_intf_attrs;
@@ -267,12 +281,12 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    SWSS_LOG_NOTICE("Created underlay router interface ID %lx", gUnderlayIfId);
+    SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
 
     /* Initialize orchestration components */
-    DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector config_db(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector appl_db("APPL_DB", 0);
+    DBConnector config_db("CONFIG_DB", 0);
+    DBConnector state_db("STATE_DB", 0);
 
     auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
 

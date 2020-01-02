@@ -7,6 +7,8 @@
 #include "sai_serialize.h"
 #include "pfcwdorch.h"
 #include "bufferorch.h"
+#include "flexcounterorch.h"
+#include "debugcounterorch.h"
 
 extern sai_port_api_t *sai_port_api;
 
@@ -25,12 +27,13 @@ unordered_map<string, string> flexCounterGroupMap =
     {"PG_WATERMARK", PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {BUFFER_POOL_WATERMARK_KEY, BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
 };
 
 
 FlexCounterOrch::FlexCounterOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
-    m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE))
 {
     SWSS_LOG_ENTER();

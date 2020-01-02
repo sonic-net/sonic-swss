@@ -70,6 +70,11 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ipStr;
 
     int state = rtnl_neigh_get_state(neigh);
+    if (state == NUD_NOARP)
+    {
+        return;
+    }
+
     bool delete_key = false;
     if ((nlmsg_type == RTM_DELNEIGH) || (state == NUD_INCOMPLETE) ||
         (state == NUD_FAILED))

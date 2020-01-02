@@ -38,7 +38,7 @@ public:
         ~TeamPortSync();
 
         int getFd() override;
-        void readData() override;
+        uint64_t readData() override;
 
         /* member_name -> enabled|disabled */
         std::map<std::string, bool> m_lagMembers;

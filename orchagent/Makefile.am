@@ -1,10 +1,11 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart
+INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I flex_counter -I debug_counter
 
 CFLAGS_SAI = -I /usr/include/sai
 
 swssdir = $(datadir)/swss
 
 dist_swss_DATA = \
+		 pfc_detect_innovium.lua  \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
 		 pfc_detect_barefoot.lua \
@@ -51,11 +52,17 @@ orchagent_SOURCES = \
             dtelorch.cpp \
             flexcounterorch.cpp \
             watermarkorch.cpp \
-            policerorch.cpp
+            policerorch.cpp \
+            sfloworch.cpp \
+            chassisorch.cpp \
+            debugcounterorch.cpp
+
+orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
+orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp
 
 orchagent_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 orchagent_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
-orchagent_LDADD = -lnl-3 -lnl-route-3 -lpthread -lsairedis -lswsscommon -lsaimetadata
+orchagent_LDADD = -lnl-3 -lnl-route-3 -lpthread -lsairedis -lswsscommon -lsaimeta -lsaimetadata
 
 routeresync_SOURCES = routeresync.cpp
 routeresync_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON)

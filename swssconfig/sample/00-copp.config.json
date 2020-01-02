@@ -34,8 +34,8 @@
         "OP": "SET"
     },
     {
-        "COPP_TABLE:trap.group.lldp.dhcp.udld": {
-            "trap_ids": "lldp,dhcp,udld",
+        "COPP_TABLE:trap.group.lldp.dhcp.dhcpv6.udld": {
+            "trap_ids": "lldp,dhcp,dhcpv6,udld",
             "trap_action":"trap",
             "trap_priority":"4",
             "queue": "4"
@@ -50,8 +50,8 @@
             "queue": "1",
             "meter_type":"packets",
             "mode":"sr_tcm",
-            "cir":"600",
-            "cbs":"600",
+            "cir":"6000",
+            "cbs":"6000",
             "red_action":"drop"
         },
         "OP": "SET"

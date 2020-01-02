@@ -98,7 +98,7 @@ namespace aclorch_test
 
         AclTest()
         {
-            m_config_db = make_shared<swss::DBConnector>(CONFIG_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
+            m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
         }
 
         void SetUp() override
@@ -235,9 +235,9 @@ namespace aclorch_test
         AclOrchTest()
         {
             // FIXME: move out from constructor
-            m_app_db = make_shared<swss::DBConnector>(APPL_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
-            m_config_db = make_shared<swss::DBConnector>(CONFIG_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
-            m_state_db = make_shared<swss::DBConnector>(STATE_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
+            m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+            m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
+            m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
         }
 
         static map<string, string> gProfileMap;
@@ -352,7 +352,7 @@ namespace aclorch_test
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
 
             ASSERT_EQ(gVrfOrch, nullptr);
-            gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME);
+            gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
 
             ASSERT_EQ(gIntfsOrch, nullptr);
             gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch);
@@ -361,7 +361,7 @@ namespace aclorch_test
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch);
 
             ASSERT_EQ(gRouteOrch, nullptr);
-            gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gNeighOrch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gNeighOrch, gIntfsOrch, gVrfOrch);
 
             TableConnector applDbFdb(m_app_db.get(), APP_FDB_TABLE_NAME);
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
@@ -643,16 +643,16 @@ namespace aclorch_test
         // leakage check
         bool validateResourceCountWithLowerLayerDb(const AclOrch *aclOrch)
         {
-            // TODO: Using the need to include "sai_vs_state.h". That will need the include path from `configure`
-            //       Do this later ...
+        // TODO: Using the need to include "sai_vs_state.h". That will need the include path from `configure`
+        //       Do this later ...
 #if WITH_SAI == LIBVS
-            // {
-            //     auto& aclTableHash = g_switch_state_map.at(gSwitchId)->objectHash.at(SAI_OBJECT_TYPE_ACL_TABLE);
-            //
-            //     return aclTableHash.size() == Portal::AclOrchInternal::getAclTables(aclOrch).size();
-            // }
-            //
-            // TODO: add rule check
+        // {
+        //     auto& aclTableHash = g_switch_state_map.at(gSwitchId)->objectHash.at(SAI_OBJECT_TYPE_ACL_TABLE);
+        //
+        //     return aclTableHash.size() == Portal::AclOrchInternal::getAclTables(aclOrch).size();
+        // }
+        //
+        // TODO: add rule check
 #endif
 
             return true;
