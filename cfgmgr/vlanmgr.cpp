@@ -50,19 +50,19 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     // Initialize Linux dot1q bridge and enable vlan filtering
     // The command should be generated as:
     // /bin/bash -c "/sbin/ip link del Bridge 2>/dev/null ;
-    //               /sbin/ip link add Bridge up type bridge &&
+    //               /sbin/ip link add Bridge up mtu 9100 type bridge &&
     //               /sbin/bridge vlan del vid 1 dev Bridge self;
     //               /sbin/ip link del dummy 2>/dev/null;
-    //               /sbin/ip link add dummy type dummy &&
+    //               /sbin/ip link add dummy mtu 9100 type dummy &&
     //               sbin/ip link set dummy master Bridge"
 
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
       + IP_CMD + " link del " + DOT1Q_BRIDGE_NAME + " 2>/dev/null; "
-      + IP_CMD + " link add " + DOT1Q_BRIDGE_NAME + " up type bridge && "
+      + IP_CMD + " link add " + DOT1Q_BRIDGE_NAME + " up mtu " + DEFAULT_MTU_STR + " type bridge && "
       + BRIDGE_CMD + " vlan del vid " + DEFAULT_VLAN_ID + " dev " + DOT1Q_BRIDGE_NAME + " self; "
       + IP_CMD + " link del dev dummy 2>/dev/null; "
-      + IP_CMD + " link add dummy type dummy && "
+      + IP_CMD + " link add dummy mtu " + DEFAULT_MTU_STR + " type dummy && "
       + IP_CMD + " link set dummy master " + DOT1Q_BRIDGE_NAME + "\"";
 
     std::string res;
