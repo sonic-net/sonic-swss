@@ -17,6 +17,8 @@ public:
             const std::vector<TableConnector> &tables);
 
     using Orch::doTask;
+    void cleanTeamProcesses(int signo);
+
 private:
     Table m_cfgMetadataTable;   // To retrieve MAC address
     Table m_cfgPortTable;
@@ -29,6 +31,7 @@ private:
     ProducerStateTable m_appLagTable;
 
     std::set<std::string> m_lagList;
+    std::map<std::string, int> m_lagPIDList;
 
     MacAddress m_mac;
 
@@ -45,6 +48,10 @@ private:
     bool setLagAdminStatus(const std::string &alias, const std::string &admin_status);
     bool setLagMtu(const std::string &alias, const std::string &mtu);
     bool setLagLearnMode(const std::string &alias, const std::string &learn_mode);
+ 
+    int getTeamPid(const string &alias);
+    void addLagPid(const string &alias);
+    void removeLagPid(const string &alias);
 
     bool isPortEnslaved(const std::string &);
     bool findPortMaster(std::string &, const std::string &);

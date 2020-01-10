@@ -10,7 +10,6 @@
 using namespace std;
 using namespace swss;
 
-/* Introducing a flag to indicate the receipt of signal */
 bool received_sigterm = false;
 
 void sig_handler(int signo)
@@ -48,7 +47,7 @@ int main(int argc, char **argv)
             {
                 if(received_sigterm)
                 {
-                  sync.cleanTeamProcesses(SIGTERM);
+                  sync.cleanTeamSync();
                   received_sigterm = false;
                 }
 

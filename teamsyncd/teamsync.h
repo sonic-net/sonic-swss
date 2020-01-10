@@ -25,7 +25,7 @@ public:
     TeamSync(DBConnector *db, DBConnector *stateDb, Select *select);
 
     void periodic();
-    void cleanTeamProcesses(int signo);
+    void cleanTeamSync();
 
     /* Listen to RTM_NEWLINK, RTM_DELLINK to track team devices */
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);

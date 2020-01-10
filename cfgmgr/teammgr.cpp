@@ -8,11 +8,16 @@
 
 #include <algorithm>
 #include <sstream>
+#include <fstream>
 #include <thread>
 
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <signal.h>
+
+#define PID_FILE_PATH "/var/run/teamd/"
 
 using namespace std;
 using namespace swss;
@@ -108,6 +113,77 @@ void TeamMgr::doTask(Consumer &consumer)
     }
 }
 
+
+#define MAX_PID_STRLEN 10
+int TeamMgr::getTeamPid(const string &alias)
+{
+    SWSS_LOG_ENTER();
+    int pid = 0;
+
+    string file = string(PID_FILE_PATH) + alias + string(".pid");
+    ifstream infile(file);
+    if (!infile.is_open())
+    {
+        SWSS_LOG_WARN("The LAG PID file: %s is not readable", file.c_str());
+        return 0;
+    }
+
+    string line;
+    getline(infile, line);
+    if (line.empty())
+    {
+        SWSS_LOG_WARN("The LAG PID file: %s is empty", file.c_str());
+    }
+    else 
+    {
+        /*Store the PID value */
+        pid = stoi(line, nullptr, 10);
+    }
+
+    /* Close the file and return */
+    infile.close();
+
+    return pid;
+}
+
+
+#define MAX_PID_STRLEN 10
+void TeamMgr::addLagPid(const string &alias)
+{
+    SWSS_LOG_ENTER();
+    m_lagPIDList[alias] = getTeamPid(alias);
+}
+
+void TeamMgr::removeLagPid(const string &alias)
+{
+    SWSS_LOG_ENTER();
+    m_lagPIDList.erase(alias);
+}
+
+void TeamMgr::cleanTeamProcesses(int signo)
+{
+    int pid = 0;
+
+    for (const auto& it: m_lagList)
+    {
+        pid = m_lagPIDList[it];
+        if(!pid) {
+            SWSS_LOG_WARN("Invalid PID found for LaG %s ", it.c_str());
+
+            /* Try to get the PID again */
+            pid = getTeamPid(it);
+        }
+
+        if(pid > 0)
+        {
+            SWSS_LOG_WARN("Cleaning Process(PID: %d) for LaG %s ", pid, it.c_str());
+            kill(pid, signo);
+        }
+    }
+
+    return;
+}
+
 void TeamMgr::doLagTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -171,6 +247,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 }
 
                 m_lagList.insert(alias);
+                addLagPid(alias);
             }
 
             setLagAdminStatus(alias, admin_status);
@@ -187,6 +264,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
             {
                 removeLag(alias);
                 m_lagList.erase(alias);
+                removeLagPid(alias);
             }
         }
 
