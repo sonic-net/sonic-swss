@@ -49,9 +49,9 @@ private:
     bool setLagMtu(const std::string &alias, const std::string &mtu);
     bool setLagLearnMode(const std::string &alias, const std::string &learn_mode);
  
-    int getTeamPid(const string &alias);
-    void addLagPid(const string &alias);
-    void removeLagPid(const string &alias);
+    int getTeamPid(const std::string &alias);
+    void addLagPid(const std::string &alias);
+    void removeLagPid(const std::string &alias);
 
     bool isPortEnslaved(const std::string &);
     bool findPortMaster(std::string &, const std::string &);
