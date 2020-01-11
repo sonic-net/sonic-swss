@@ -173,12 +173,12 @@ void TeamMgr::cleanTeamProcesses(int signo)
 
         if(pid > 0)
         {
-            SWSS_LOG_WARN("Sending Signal to (PID: %d) for LaG %s ", pid, it.c_str());
+            SWSS_LOG_INFO("Sending TERM Signal to (PID: %d) for LaG %s ", pid, it.c_str());
             kill(pid, signo);
         }
         else
         {
-            SWSS_LOG_WARN("Cound not find PID corresponding to LaG %s ", it.c_str());
+            SWSS_LOG_ERROR("Can't send TERM signal to LAG %s. PID wasn't found", it.c_str());
         }
     }
 
