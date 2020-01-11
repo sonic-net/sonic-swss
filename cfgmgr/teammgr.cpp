@@ -14,7 +14,6 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <signal.h>
 
 #define PID_FILE_PATH "/var/run/teamd/"
@@ -114,11 +113,10 @@ void TeamMgr::doTask(Consumer &consumer)
 }
 
 
-#define MAX_PID_STRLEN 10
-int TeamMgr::getTeamPid(const string &alias)
+pid_t TeamMgr::getTeamPid(const string &alias)
 {
     SWSS_LOG_ENTER();
-    int pid = 0;
+    pid_t pid = 0;
 
     string file = string(PID_FILE_PATH) + alias + string(".pid");
     ifstream infile(file);
@@ -147,7 +145,6 @@ int TeamMgr::getTeamPid(const string &alias)
 }
 
 
-#define MAX_PID_STRLEN 10
 void TeamMgr::addLagPid(const string &alias)
 {
     SWSS_LOG_ENTER();
@@ -162,7 +159,7 @@ void TeamMgr::removeLagPid(const string &alias)
 
 void TeamMgr::cleanTeamProcesses(int signo)
 {
-    int pid = 0;
+    pid_t pid = 0;
 
     for (const auto& it: m_lagList)
     {
@@ -176,8 +173,12 @@ void TeamMgr::cleanTeamProcesses(int signo)
 
         if(pid > 0)
         {
-            SWSS_LOG_WARN("Cleaning Process(PID: %d) for LaG %s ", pid, it.c_str());
+            SWSS_LOG_WARN("Sending Signal to (PID: %d) for LaG %s ", pid, it.c_str());
             kill(pid, signo);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Cound not find PID corresponding to LaG %s ", it.c_str());
         }
     }
 

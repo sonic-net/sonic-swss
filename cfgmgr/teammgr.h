@@ -7,6 +7,7 @@
 #include "netmsg.h"
 #include "orch.h"
 #include "producerstatetable.h"
+#include <sys/types.h>
 
 namespace swss {
 
@@ -31,7 +32,7 @@ private:
     ProducerStateTable m_appLagTable;
 
     std::set<std::string> m_lagList;
-    std::map<std::string, int> m_lagPIDList;
+    std::map<std::string, pid_t> m_lagPIDList;
 
     MacAddress m_mac;
 
@@ -49,7 +50,7 @@ private:
     bool setLagMtu(const std::string &alias, const std::string &mtu);
     bool setLagLearnMode(const std::string &alias, const std::string &learn_mode);
  
-    int getTeamPid(const std::string &alias);
+    pid_t getTeamPid(const std::string &alias);
     void addLagPid(const std::string &alias);
     void removeLagPid(const std::string &alias);
 
