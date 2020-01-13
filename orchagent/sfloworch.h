@@ -1,10 +1,8 @@
 #pragma once
 
-#define __STDC_FORMAT_MACROS
-#include <inttypes.h>
-
 #include <map>
 #include <string>
+#include <inttypes.h>
 
 #include "orch.h"
 #include "portsorch.h"

@@ -1,14 +1,12 @@
 #ifndef ORCHAGENT_FLEX_COUNTER_MANAGER_H
 #define ORCHAGENT_FLEX_COUNTER_MANAGER_H
 
-#define __STDC_FORMAT_MACROS
-#include <inttypes.h>
-
 #include <string>
 #include <unordered_set>
 #include <unordered_map>
 #include "dbconnector.h"
 #include "producertable.h"
+#include <inttypes.h>
 
 extern "C" {
 #include "sai.h"

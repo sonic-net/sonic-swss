@@ -4,7 +4,6 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#define __STDC_FORMAT_MACROS
 #include <inttypes.h>
 
 
