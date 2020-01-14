@@ -1,4 +1,4 @@
-sonic-swss-common-build[![sonic-swss-common-build](https://sonic-jenkins.westus2.cloudapp.azure.com/job/common/job/sonic-swss-common-build/badge/icon)](https://https://sonic-jenkins.westus2.cloudapp.azure.com/job/common/job/sonic-swss-common-build/)
+vs[![vs](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/sonic-swss-build/badge/icon)](https://https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/sonic-swss-build/)
 
 # SONiC - SWitch State Service - SWSS
 
