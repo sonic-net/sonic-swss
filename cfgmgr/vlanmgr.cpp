@@ -209,7 +209,7 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
       IP_CMD " link set " << shellquote(port_alias) << " nomaster; "
       "elif [ $ret -eq 1 ]; then exit 0; "
       "else exit $ret; fi )";
-    cmds << BASH_CMD " -c " << shellquote(cmds.str());
+    cmds << BASH_CMD " -c " << shellquote(inner.str());
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds.str(), res);
