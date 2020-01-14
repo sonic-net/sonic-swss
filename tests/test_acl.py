@@ -524,7 +524,7 @@ class TestAcl(BaseTestAcl):
         tbl = swsscommon.Table(db, "ACL_TABLE")
         tbl._del("test")
 
-        time.sleep(1)
+        time.sleep(2)
 
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
