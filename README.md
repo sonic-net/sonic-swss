@@ -1,6 +1,4 @@
-Broadcom[![Broadcom](https://sonic-jenkins.westus2.cloudapp.azure.com/job/broadcom/job/sonic-swss-build/badge/icon)](https://sonic-jenkins.westus2.cloudapp.azure.com/job/broadcom/job/sonic-swss-build/)
-Mellanox[![Mellanox](https://sonic-jenkins.westus2.cloudapp.azure.com/job/mellanox/job/sonic-swss-build/badge/icon)](https://sonic-jenkins.westus2.cloudapp.azure.com/job/mellanox/job/sonic-swss-build/)
-VS[![VS](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/sonic-swss-build/badge/icon)](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/sonic-swss-build/)
+sonic-swss-common-build[![sonic-swss-common-build](https://sonic-jenkins.westus2.cloudapp.azure.com/job/common/job/sonic-swss-common-build/badge/icon)](https://https://sonic-jenkins.westus2.cloudapp.azure.com/job/common/job/sonic-swss-common-build/)
 
 # SONiC - SWitch State Service - SWSS
 
