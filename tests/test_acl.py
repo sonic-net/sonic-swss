@@ -329,136 +329,136 @@ class TestAcl(BaseTestAcl):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_AclRuleInPortsNonExistingInterface(self, dvs, testlog):
-        self.setup_db(dvs)
+    # def test_AclRuleInPortsNonExistingInterface(self, dvs, testlog):
+    #     self.setup_db(dvs)
 
-        # Create ACL rule with a completely wrong interface
-        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
-        fvs = swsscommon.FieldValuePairs([("priority", "55"),
-                                          ("PACKET_ACTION", "FORWARD"),
-                                          ("IN_PORTS", "FOO_BAR_BAZ")])
-        tbl.set("test|foo_bar_baz", fvs)
-        time.sleep(1)
+    #     # Create ACL rule with a completely wrong interface
+    #     tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+    #     fvs = swsscommon.FieldValuePairs([("priority", "55"),
+    #                                       ("PACKET_ACTION", "FORWARD"),
+    #                                       ("IN_PORTS", "FOO_BAR_BAZ")])
+    #     tbl.set("test|foo_bar_baz", fvs)
+    #     time.sleep(1)
 
-        # Make sure no rules were created
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
-        keys = atbl.getKeys()
-        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
-        assert len(acl_entry) == 0
+    #     # Make sure no rules were created
+    #     atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+    #     keys = atbl.getKeys()
+    #     acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+    #     assert len(acl_entry) == 0
 
-        # Create ACL rule with a correct interface and a completely wrong interface
-        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
-        fvs = swsscommon.FieldValuePairs([("priority", "55"),
-                                          ("PACKET_ACTION", "FORWARD"),
-                                          ("IN_PORTS", "Ethernet0,FOO_BAR_BAZ")])
-        tbl.set("test|foo_bar_baz", fvs)
-        time.sleep(1)
+    #     # Create ACL rule with a correct interface and a completely wrong interface
+    #     tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+    #     fvs = swsscommon.FieldValuePairs([("priority", "55"),
+    #                                       ("PACKET_ACTION", "FORWARD"),
+    #                                       ("IN_PORTS", "Ethernet0,FOO_BAR_BAZ")])
+    #     tbl.set("test|foo_bar_baz", fvs)
+    #     time.sleep(1)
 
-        # Make sure no rules were created
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
-        keys = atbl.getKeys()
-        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
-        assert len(acl_entry) == 0
+    #     # Make sure no rules were created
+    #     atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+    #     keys = atbl.getKeys()
+    #     acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+    #     assert len(acl_entry) == 0
 
-        # Delete rule
-        tbl._del("test|foo_bar_baz")
-        time.sleep(1)
+    #     # Delete rule
+    #     tbl._del("test|foo_bar_baz")
+    #     time.sleep(1)
 
-    def test_AclRuleOutPortsNonExistingInterface(self, dvs, testlog):
-        self.setup_db(dvs)
+    # def test_AclRuleOutPortsNonExistingInterface(self, dvs, testlog):
+    #     self.setup_db(dvs)
 
-        # Create ACL rule with a completely wrong interface
-        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
-        fvs = swsscommon.FieldValuePairs([("priority", "55"),
-                                          ("PACKET_ACTION", "FORWARD"),
-                                          ("OUT_PORTS", "FOO_BAR_BAZ")])
-        tbl.set("test|foo_bar_baz", fvs)
-        time.sleep(1)
+    #     # Create ACL rule with a completely wrong interface
+    #     tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+    #     fvs = swsscommon.FieldValuePairs([("priority", "55"),
+    #                                       ("PACKET_ACTION", "FORWARD"),
+    #                                       ("OUT_PORTS", "FOO_BAR_BAZ")])
+    #     tbl.set("test|foo_bar_baz", fvs)
+    #     time.sleep(1)
 
-        # Make sure no rules were created
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
-        keys = atbl.getKeys()
-        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
-        assert len(acl_entry) == 0
+    #     # Make sure no rules were created
+    #     atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+    #     keys = atbl.getKeys()
+    #     acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+    #     assert len(acl_entry) == 0
 
-        # Create ACL rule with a correct interface and a completely wrong interface
-        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
-        fvs = swsscommon.FieldValuePairs([("priority", "55"),
-                                          ("PACKET_ACTION", "FORWARD"),
-                                          ("OUT_PORTS", "Ethernet0,FOO_BAR_BAZ")])
-        tbl.set("test|foo_bar_baz", fvs)
-        time.sleep(1)
+    #     # Create ACL rule with a correct interface and a completely wrong interface
+    #     tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+    #     fvs = swsscommon.FieldValuePairs([("priority", "55"),
+    #                                       ("PACKET_ACTION", "FORWARD"),
+    #                                       ("OUT_PORTS", "Ethernet0,FOO_BAR_BAZ")])
+    #     tbl.set("test|foo_bar_baz", fvs)
+    #     time.sleep(1)
 
-        # Make sure no rules were created
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
-        keys = atbl.getKeys()
-        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
-        assert len(acl_entry) == 0
+    #     # Make sure no rules were created
+    #     atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+    #     keys = atbl.getKeys()
+    #     acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+    #     assert len(acl_entry) == 0
 
-        # Delete rule
-        tbl._del("test|foo_bar_baz")
-        time.sleep(1)
+    #     # Delete rule
+    #     tbl._del("test|foo_bar_baz")
+    #     time.sleep(1)
 
-    def test_AclRuleInPortsInvalidInterface(self, dvs, testlog):
-        self.setup_db(dvs)
+    # def test_AclRuleInPortsInvalidInterface(self, dvs, testlog):
+    #     self.setup_db(dvs)
 
-        # Setup portchannel
-        # TODO: make some sort of shared portchannel library or add functions
-        # for these to DVS so that all the different test files can share
-        # the setup and teardown code
-        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
-        fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "1500")])
-        tbl.set("PortChannel0001", fvs)
-        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
-        fvs = swsscommon.FieldValuePairs([("status", "enabled")])
-        tbl.set("PortChannel0001:Ethernet1", fvs)
-        time.sleep(1)
+    #     # Setup portchannel
+    #     # TODO: make some sort of shared portchannel library or add functions
+    #     # for these to DVS so that all the different test files can share
+    #     # the setup and teardown code
+    #     tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
+    #     fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "1500")])
+    #     tbl.set("PortChannel0001", fvs)
+    #     tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
+    #     fvs = swsscommon.FieldValuePairs([("status", "enabled")])
+    #     tbl.set("PortChannel0001:Ethernet1", fvs)
+    #     time.sleep(1)
 
-        # Make sure the portchannel actually exists
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
-        lags = tbl.getKeys()
-        assert len(lags) == 1
+    #     # Make sure the portchannel actually exists
+    #     tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG")
+    #     lags = tbl.getKeys()
+    #     assert len(lags) == 1
 
-        # Create ACL rule with a completely wrong interface
-        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
-        fvs = swsscommon.FieldValuePairs([("priority", "55"),
-                                          ("PACKET_ACTION", "FORWARD"),
-                                          ("IN_PORTS", "PortChannel0001")])
-        tbl.set("test|foo_bar_baz", fvs)
-        time.sleep(1)
+    #     # Create ACL rule with a completely wrong interface
+    #     tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+    #     fvs = swsscommon.FieldValuePairs([("priority", "55"),
+    #                                       ("PACKET_ACTION", "FORWARD"),
+    #                                       ("IN_PORTS", "PortChannel0001")])
+    #     tbl.set("test|foo_bar_baz", fvs)
+    #     time.sleep(1)
 
-        # Make sure no rules were created
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
-        keys = atbl.getKeys()
-        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
-        assert len(acl_entry) == 0
+    #     # Make sure no rules were created
+    #     atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+    #     keys = atbl.getKeys()
+    #     acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+    #     assert len(acl_entry) == 0
 
-        # Create ACL rule with a correct interface and a completely wrong interface
-        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
-        fvs = swsscommon.FieldValuePairs([("priority", "55"),
-                                          ("PACKET_ACTION", "FORWARD"),
-                                          ("IN_PORTS", "Ethernet0,PortChannel0001")])
-        tbl.set("test|foo_bar_baz", fvs)
-        time.sleep(1)
+    #     # Create ACL rule with a correct interface and a completely wrong interface
+    #     tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+    #     fvs = swsscommon.FieldValuePairs([("priority", "55"),
+    #                                       ("PACKET_ACTION", "FORWARD"),
+    #                                       ("IN_PORTS", "Ethernet0,PortChannel0001")])
+    #     tbl.set("test|foo_bar_baz", fvs)
+    #     time.sleep(1)
 
-        # Make sure no rules were created
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
-        keys = atbl.getKeys()
-        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
-        assert len(acl_entry) == 0
+    #     # Make sure no rules were created
+    #     atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+    #     keys = atbl.getKeys()
+    #     acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+    #     assert len(acl_entry) == 0
 
-        # Delete rule
-        tbl._del("test|foo_bar_baz")
-        time.sleep(1)
+    #     # Delete rule
+    #     tbl._del("test|foo_bar_baz")
+    #     time.sleep(1)
 
-        # Delete portchannel
-        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
-        tbl._del("PortChannel0001:Ethernet0")
-        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
-        tbl._del("PortChannel0001")
-        time.sleep(1)
+    #     # Delete portchannel
+    #     tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
+    #     tbl._del("PortChannel0001:Ethernet0")
+    #     tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
+    #     tbl._del("PortChannel0001")
+    #     time.sleep(1)
 
-    def test_AclRuleOutPortsInvalidInterface(self, dvs, testlog):
+    # def test_AclRuleOutPortsInvalidInterface(self, dvs, testlog):
         self.setup_db(dvs)
 
         # Setup portchannel
@@ -524,7 +524,7 @@ class TestAcl(BaseTestAcl):
         tbl = swsscommon.Table(db, "ACL_TABLE")
         tbl._del("test")
 
-        time.sleep(2)
+        time.sleep(1)
 
         atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
