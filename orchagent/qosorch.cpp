@@ -947,25 +947,25 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             else if (fvField(*i) == scheduler_min_bandwidth_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_RATE;
-                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_min_bandwidth_burst_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_BURST_RATE;
-                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_max_bandwidth_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE;
-                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_max_bandwidth_burst_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_BURST_RATE;
-                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else {
