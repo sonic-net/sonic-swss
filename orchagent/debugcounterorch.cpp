@@ -25,7 +25,7 @@ static const unordered_map<string, CounterType> flex_counter_type_lookup = {
 // object should only be initialized once.
 DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string>& table_names, int poll_interval) :
         Orch(db, table_names),
-        flex_counter_manager(DEBUG_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, poll_interval),
+        flex_counter_manager(DEBUG_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, poll_interval, true),
         m_stateDb(new DBConnector("STATE_DB", 0)),
         m_debugCapabilitiesTable(new Table(m_stateDb.get(), STATE_DEBUG_COUNTER_CAPABILITIES_NAME)),
         m_countersDb(new DBConnector("COUNTERS_DB", 0)),
@@ -34,7 +34,6 @@ DebugCounterOrch::DebugCounterOrch(DBConnector *db, const vector<string>& table_
 {
     SWSS_LOG_ENTER();
     publishDropCounterCapabilities();
-    flex_counter_manager.enableFlexCounterGroup();
 }
 
 DebugCounterOrch::~DebugCounterOrch(void)

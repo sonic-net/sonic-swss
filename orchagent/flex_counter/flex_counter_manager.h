@@ -18,6 +18,8 @@ enum class StatsMode
 
 enum class CounterType
 {
+    PORT,
+    QUEUE,
     PORT_DEBUG,
     SWITCH_DEBUG
 };
@@ -33,7 +35,8 @@ class FlexCounterManager
         FlexCounterManager(
                 const std::string& group_name,
                 const StatsMode stats_mode,
-                const uint polling_interval);
+                const uint polling_interval,
+                const bool enabled);
 
         FlexCounterManager(const FlexCounterManager&) = delete;
         FlexCounterManager& operator=(const FlexCounterManager&) = delete;

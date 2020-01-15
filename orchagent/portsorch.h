@@ -9,6 +9,7 @@
 #include "observer.h"
 #include "macaddress.h"
 #include "producertable.h"
+#include "flex_counter_manager.h"
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
@@ -104,13 +105,14 @@ private:
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
-    std::string getQueueFlexCounterTableKey(std::string s);
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
-    std::string getPortFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
 
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
+
+    FlexCounterManager port_stat_manager;
+    FlexCounterManager queue_stat_manager;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 
