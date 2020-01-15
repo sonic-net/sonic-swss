@@ -406,10 +406,10 @@ class TestAcl(BaseTestAcl):
         # TODO: make some sort of shared portchannel library or add functions
         # for these to DVS so that all the different test files can share
         # the setup and teardown code
-        tbl = swsscommon.Table(self.pdb, "LAG_TABLE")
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
         fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "1500")])
         tbl.set("PortChannel0001", fvs)
-        tbl = swsscommon.Table(self.pdb, "LAG_MEMBER_TABLE")
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
         fvs = swsscommon.FieldValuePairs([("status", "enabled")])
         tbl.set("PortChannel0001:Ethernet1", fvs)
         time.sleep(1)
@@ -452,9 +452,9 @@ class TestAcl(BaseTestAcl):
         time.sleep(1)
 
         # Delete portchannel
-        tbl = swsscommon.Table(self.pdb, "LAG_MEMBER_TABLE")
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
         tbl._del("PortChannel0001:Ethernet0")
-        tbl = swsscommon.Table(self.pdb, "LAG_TABLE")
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
         tbl._del("PortChannel0001")
         time.sleep(1)
 
@@ -462,10 +462,10 @@ class TestAcl(BaseTestAcl):
         self.setup_db(dvs)
 
         # Setup portchannel
-        tbl = swsscommon.Table(self.pdb, "LAG_TABLE")
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
         fvs = swsscommon.FieldValuePairs([("admin", "up"), ("mtu", "1500")])
         tbl.set("PortChannel0001", fvs)
-        tbl = swsscommon.Table(self.pdb, "LAG_MEMBER_TABLE")
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
         fvs = swsscommon.FieldValuePairs([("status", "enabled")])
         tbl.set("PortChannel0001:Ethernet1", fvs)
         time.sleep(1)
@@ -508,9 +508,9 @@ class TestAcl(BaseTestAcl):
         time.sleep(1)
 
         # Delete portchannel
-        tbl = swsscommon.Table(self.pdb, "LAG_MEMBER_TABLE")
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_MEMBER_TABLE")
         tbl._del("PortChannel0001:Ethernet0")
-        tbl = swsscommon.Table(self.pdb, "LAG_TABLE")
+        tbl = swsscommon.ProducerStateTable(self.pdb, "LAG_TABLE")
         tbl._del("PortChannel0001")
         time.sleep(1)
 
@@ -525,7 +525,7 @@ class TestAcl(BaseTestAcl):
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
         # only the default table was left along with DTel tables
-        assert len(keys) >= 1
+        assert len(keys) == 3
 
     def test_V6AclTableCreation(self, dvs, testlog):
 
