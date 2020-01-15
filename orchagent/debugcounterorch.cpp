@@ -182,35 +182,46 @@ void DebugCounterOrch::doTask(Consumer& consumer)
 // DROP_COUNTER_CAPABILITIES table in STATE_DB.
 void DebugCounterOrch::publishDropCounterCapabilities()
 {
-    string supported_ingress_drop_reasons = DropCounter::serializeSupportedDropReasons(
-            DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST));
-    string supported_egress_drop_reasons  = DropCounter::serializeSupportedDropReasons(
-            DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST));
+    supported_ingress_drop_reasons = DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST);
+    supported_egress_drop_reasons  = DropCounter::getSupportedDropReasons(SAI_DEBUG_COUNTER_ATTR_OUT_DROP_REASON_LIST);
+
+    string ingress_drop_reason_str = DropCounter::serializeSupportedDropReasons(supported_ingress_drop_reasons);
+    string egress_drop_reason_str = DropCounter::serializeSupportedDropReasons(supported_egress_drop_reasons);
 
     for (auto const &counter_type : DebugCounter::getDebugCounterTypeLookup())
     {
-        string num_counters = std::to_string(DropCounter::getSupportedDebugCounterAmounts(counter_type.second));
-
         string drop_reasons;
         if (counter_type.first == PORT_INGRESS_DROPS || counter_type.first == SWITCH_INGRESS_DROPS)
         {
-            drop_reasons = supported_ingress_drop_reasons;
+            drop_reasons = ingress_drop_reason_str;
         }
         else
         {
-            drop_reasons = supported_egress_drop_reasons;
+            drop_reasons = egress_drop_reason_str;
         }
 
-        // Only include available capabilities in State DB
-        if (num_counters != "0" && !drop_reasons.empty())
+        // Don't bother publishing counters that have no drop reasons
+        if (drop_reasons.empty())
         {
-            vector<FieldValueTuple> fieldValues;
-            fieldValues.push_back(FieldValueTuple("count", num_counters));
-            fieldValues.push_back(FieldValueTuple("reasons", drop_reasons));
-
-            SWSS_LOG_DEBUG("Setting '%s' capabilities to count='%s', reasons='%s'", counter_type.first.c_str(), num_counters.c_str(), drop_reasons.c_str());
-            m_debugCapabilitiesTable->set(counter_type.first, fieldValues);
+            continue;
         }
+
+        string num_counters = std::to_string(DropCounter::getSupportedDebugCounterAmounts(counter_type.second));
+
+        // Don't bother publishing counters that aren't available.
+        if (num_counters == "0")
+        {
+            continue;
+        }
+
+        supported_counter_types.emplace(counter_type.first);
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.push_back(FieldValueTuple("count", num_counters));
+        fieldValues.push_back(FieldValueTuple("reasons", drop_reasons));
+
+        SWSS_LOG_DEBUG("Setting '%s' capabilities to count='%s', reasons='%s'", counter_type.first.c_str(), num_counters.c_str(), drop_reasons.c_str());
+        m_debugCapabilitiesTable->set(counter_type.first, fieldValues);
     }
 }
 
@@ -229,12 +240,19 @@ task_process_status DebugCounterOrch::installDebugCounter(const string& counter_
         return task_process_status::task_success;
     }
 
-    // Note: this method currently assumes that all counters are drop counters.
+    // NOTE: this method currently assumes that all counters are drop counters.
     // If you are adding support for a non-drop counter than it may make sense
     // to either: a) dispatch to different handlers in doTask or b) dispatch to
     // different helper methods in this method.
 
     string counter_type = getDebugCounterType(attributes);
+
+    if (supported_counter_types.find(counter_type) == supported_counter_types.end())
+    {
+        SWSS_LOG_ERROR("Specified counter type '%s' is not supported.", counter_type.c_str());
+        return task_process_status::task_failed;
+    }
+
     addFreeCounter(counter_name, counter_type);
     reconcileFreeDropCounters(counter_name);
 
@@ -287,7 +305,15 @@ task_process_status DebugCounterOrch::addDropReason(const string& counter_name, 
 
     if (!isDropReasonValid(drop_reason))
     {
-        return task_failed;
+        SWSS_LOG_ERROR("Specified drop reason '%s' is invalid.", drop_reason.c_str());
+        return task_process_status::task_failed;
+    }
+
+    if (supported_ingress_drop_reasons.find(drop_reason) == supported_ingress_drop_reasons.end() &&
+        supported_egress_drop_reasons.find(drop_reason) == supported_egress_drop_reasons.end())
+    {
+        SWSS_LOG_ERROR("Specified drop reason '%s' is not supported.", drop_reason.c_str());
+        return task_process_status::task_failed;
     }
 
     auto it = debug_counters.find(counter_name);
