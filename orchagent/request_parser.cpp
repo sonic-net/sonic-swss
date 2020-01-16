@@ -12,6 +12,9 @@
 #include "orch.h"
 #include "request_parser.h"
 
+using namespace std;
+using namespace swss;
+
 
 void Request::parse(const KeyOpFieldsValuesTuple& request)
 {
@@ -112,9 +115,9 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
     for (auto i = kfvFieldsValues(request).begin();
          i != kfvFieldsValues(request).end(); i++)
     {
-        if (fvField(*i) == "empty")
+        if (fvField(*i) == "empty" || fvField(*i) == "NULL")
         {
-            // if name of the attribute is 'empty', just skip it.
+            // if name of the attribute is 'empty' or 'NULL', just skip it.
             // it's used when we don't have any attributes, but we have to provide one for redis
             continue;
         }

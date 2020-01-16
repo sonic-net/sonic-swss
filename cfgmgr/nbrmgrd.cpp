@@ -3,14 +3,19 @@
 #include <mutex>
 #include <fstream>
 #include <iostream>
+#include <chrono>
 
 #include "select.h"
 #include "exec.h"
 #include "schema.h"
 #include "nbrmgr.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
+
+#define RESTORE_NEIGH_WAIT_TIME_OUT 120
+#define RESTORE_NEIGH_WAIT_TIME_INT 10
 
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
@@ -44,11 +49,32 @@ int main(int argc, char **argv)
             CFG_NEIGH_TABLE_NAME,
         };
 
-        DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-        DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-        DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+        DBConnector cfgDb("CONFIG_DB", 0);
+        DBConnector appDb("APPL_DB", 0);
+        DBConnector stateDb("STATE_DB", 0);
 
         NbrMgr nbrmgr(&cfgDb, &appDb, &stateDb, cfg_nbr_tables);
+
+        WarmStart::initialize("nbrmgrd", "swss");
+        WarmStart::checkWarmStart("nbrmgrd", "swss");
+
+        if (WarmStart::isWarmStart())
+        {
+            chrono::steady_clock::time_point starttime = chrono::steady_clock::now();
+            while (!nbrmgr.isNeighRestoreDone())
+            {
+                chrono::duration<double> time_span = chrono::duration_cast<chrono::duration<double>>
+                                                     (chrono::steady_clock::now() - starttime);
+                int pasttime = int(time_span.count());
+                SWSS_LOG_INFO("Kernel neighbor table restoration waited for %d seconds", pasttime);
+                if (pasttime > RESTORE_NEIGH_WAIT_TIME_OUT)
+                {
+                    SWSS_LOG_WARN("Kernel neighbor table restore is not finished!");
+                    break;
+                }
+                sleep(RESTORE_NEIGH_WAIT_TIME_INT);
+            }
+        }
 
         std::vector<Orch *> cfgOrchList = {&nbrmgr};
 

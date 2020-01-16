@@ -4,6 +4,7 @@
 #include "notifier.h"
 #include "converter.h"
 #include "bufferorch.h"
+#include <inttypes.h>
 
 #define DEFAULT_TELEMETRY_INTERVAL 120
 
@@ -22,8 +23,8 @@ WatermarkOrch::WatermarkOrch(DBConnector *db, const vector<string> &tables):
 {
     SWSS_LOG_ENTER();
 
-    m_countersDb = make_shared<DBConnector>(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    m_appDb = make_shared<DBConnector>(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    m_countersDb = make_shared<DBConnector>("COUNTERS_DB", 0);
+    m_appDb = make_shared<DBConnector>("APPL_DB", 0);
     m_countersTable = make_shared<Table>(m_countersDb.get(), COUNTERS_TABLE);
     m_periodicWatermarkTable = make_shared<Table>(m_countersDb.get(), PERIODIC_WATERMARKS_TABLE);
     m_persistentWatermarkTable = make_shared<Table>(m_countersDb.get(), PERSISTENT_WATERMARKS_TABLE);
@@ -50,7 +51,7 @@ void WatermarkOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -97,7 +98,7 @@ void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vect
         {
             if (i.first == "interval")
             {
-                auto intervT = timespec { .tv_sec = to_uint<uint32_t>(i.second.c_str()) , .tv_nsec = 0 };
+                auto intervT = timespec { .tv_sec = static_cast<time_t>(to_uint<uint32_t>(i.second.c_str())), .tv_nsec = 0 };
                 m_telemetryTimer->setInterval(intervT);
                 // reset the timer interval when current timer expires
                 m_timerChanged = true;
@@ -141,7 +142,7 @@ void WatermarkOrch::handleFcConfigUpdate(const std::string &key, const std::vect
 void WatermarkOrch::doTask(NotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -294,7 +295,7 @@ void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_objec
 {
     /* Zero-out some WM in some table for some vector of object ids*/
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("clear WM %s, for %ld obj ids", wm_name.c_str(), obj_ids.size());
+    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids", wm_name.c_str(), obj_ids.size());
 
     vector<FieldValueTuple> vfvt = {{wm_name, "0"}};
 

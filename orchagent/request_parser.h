@@ -30,7 +30,7 @@ typedef struct _request_description
 class Request
 {
 public:
-    void parse(const KeyOpFieldsValuesTuple& request);
+    void parse(const swss::KeyOpFieldsValuesTuple& request);
     void clear();
 
     const std::string& getOperation() const
@@ -51,19 +51,19 @@ public:
         return key_item_strings_.at(position);
     }
 
-    const MacAddress& getKeyMacAddress(int position) const
+    const swss::MacAddress& getKeyMacAddress(int position) const
     {
         assert(is_parsed_);
         return key_item_mac_addresses_.at(position);
     }
 
-    const IpAddress& getKeyIpAddress(int position) const
+    const swss::IpAddress& getKeyIpAddress(int position) const
     {
         assert(is_parsed_);
         return key_item_ip_addresses_.at(position);
     }
 
-    const IpPrefix& getKeyIpPrefix(int position) const
+    const swss::IpPrefix& getKeyIpPrefix(int position) const
     {
         assert(is_parsed_);
         return key_item_ip_prefix_.at(position);
@@ -93,7 +93,7 @@ public:
         return attr_item_bools_.at(attr_name);
     }
 
-    const MacAddress& getAttrMacAddress(const std::string& attr_name) const
+    const swss::MacAddress& getAttrMacAddress(const std::string& attr_name) const
     {
         assert(is_parsed_);
         return attr_item_mac_addresses_.at(attr_name);
@@ -111,7 +111,7 @@ public:
         return attr_item_vlan_.at(attr_name);
     }
 
-    IpAddress getAttrIP(const std::string& attr_name) const
+    swss::IpAddress getAttrIP(const std::string& attr_name) const
     {
         assert(is_parsed_);
         return attr_item_ip_.at(attr_name);
@@ -123,7 +123,7 @@ public:
         return attr_item_uint_.at(attr_name);
     }
 
-    const set<string>& getAttrSet(const std::string& attr_name) const
+    const std::set<std::string>& getAttrSet(const std::string& attr_name) const
     {
         assert(is_parsed_);
         return attr_item_set_.at(attr_name);
@@ -151,16 +151,16 @@ protected:
 
 
 private:
-    void parseOperation(const KeyOpFieldsValuesTuple& request);
-    void parseKey(const KeyOpFieldsValuesTuple& request);
-    void parseAttrs(const KeyOpFieldsValuesTuple& request);
+    void parseOperation(const swss::KeyOpFieldsValuesTuple& request);
+    void parseKey(const swss::KeyOpFieldsValuesTuple& request);
+    void parseAttrs(const swss::KeyOpFieldsValuesTuple& request);
     bool parseBool(const std::string& str);
-    MacAddress parseMacAddress(const std::string& str);
-    IpAddress parseIpAddress(const std::string& str);
-    IpPrefix parseIpPrefix(const std::string& str);
+    swss::MacAddress parseMacAddress(const std::string& str);
+    swss::IpAddress parseIpAddress(const std::string& str);
+    swss::IpPrefix parseIpPrefix(const std::string& str);
     uint64_t parseUint(const std::string& str);
     uint16_t parseVlan(const std::string& str);
-    set<string> parseSet(const std::string& str);
+    std::set<std::string> parseSet(const std::string& str);
 
     sai_packet_action_t parsePacketAction(const std::string& str);
 
@@ -173,20 +173,20 @@ private:
     std::string operation_;
     std::string full_key_;
     std::unordered_map<int, std::string> key_item_strings_;
-    std::unordered_map<int, MacAddress> key_item_mac_addresses_;
-    std::unordered_map<int, IpAddress> key_item_ip_addresses_;
-    std::unordered_map<int, IpPrefix> key_item_ip_prefix_;
+    std::unordered_map<int, swss::MacAddress> key_item_mac_addresses_;
+    std::unordered_map<int, swss::IpAddress> key_item_ip_addresses_;
+    std::unordered_map<int, swss::IpPrefix> key_item_ip_prefix_;
     std::unordered_map<int, uint64_t> key_item_uint_;
     std::unordered_set<std::string> attr_names_;
     // FIXME: Make one union with all the values, except string
     std::unordered_map<std::string, std::string> attr_item_strings_;
     std::unordered_map<std::string, bool> attr_item_bools_;
-    std::unordered_map<std::string, MacAddress> attr_item_mac_addresses_;
+    std::unordered_map<std::string, swss::MacAddress> attr_item_mac_addresses_;
     std::unordered_map<std::string, sai_packet_action_t> attr_item_packet_actions_;
     std::unordered_map<std::string, uint16_t> attr_item_vlan_;
-    std::unordered_map<std::string, IpAddress> attr_item_ip_;
+    std::unordered_map<std::string, swss::IpAddress> attr_item_ip_;
     std::unordered_map<std::string, uint64_t> attr_item_uint_;
-    std::unordered_map<std::string, set<string>> attr_item_set_;
+    std::unordered_map<std::string, std::set<std::string>> attr_item_set_;
 };
 
 #endif // __REQUEST_PARSER_H

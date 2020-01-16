@@ -18,6 +18,8 @@
 
 #include <iostream>
 #include <set>
+#include <sstream>
+#include <iomanip>
 
 using namespace std;
 using namespace swss;
@@ -58,11 +60,12 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
          * This piece of information is used by SNMP. */
         if (!key.compare(0, MGMT_PREFIX.length(), MGMT_PREFIX))
         {
-            string cmd, res;
-            cmd = "cat /sys/class/net/" + key + "/operstate";
+            ostringstream cmd;
+            string res;
+            cmd << "cat /sys/class/net/" << shellquote(key) << "/operstate";
             try
             {
-                EXEC_WITH_ERROR_THROW(cmd, res);
+                EXEC_WITH_ERROR_THROW(cmd.str(), res);
             }
             catch (...)
             {
@@ -95,19 +98,26 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
     if (!WarmStart::isWarmStart())
     {
         /* See the comments for g_portSet in portsyncd.cpp */
-        for (string port : g_portSet)
+        for (auto port_iter = g_portSet.begin(); port_iter != g_portSet.end();)
         {
+            string port = *port_iter;
             vector<FieldValueTuple> temp;
+            bool portFound = false;
             if (m_portTable.get(port, temp))
             {
                 for (auto it : temp)
                 {
                     if (fvField(it) == "admin_status")
                     {
-                        g_portSet.erase(port);
+                        port_iter = g_portSet.erase(port_iter);
+                        portFound = true;
                         break;
                     }
                 }
+            }
+            if (!portFound)
+            {
+                ++port_iter;
             }
         }
 
@@ -125,13 +135,14 @@ LinkSync::LinkSync(DBConnector *appl_db, DBConnector *state_db) :
 
             m_ifindexOldNameMap[idx_p->if_index] = key;
 
-            string cmd, res;
+            ostringstream cmd;
+            string res;
             /* Bring down the existing kernel interfaces */
             SWSS_LOG_INFO("Bring down old interface %s(%d)", key.c_str(), idx_p->if_index);
-            cmd = "ip link set " + key + " down";
+            cmd << "ip link set " << quoted(key) << " down";
             try
             {
-                swss::exec(cmd, res);
+                swss::exec(cmd.str(), res);
             }
             catch (...)
             {

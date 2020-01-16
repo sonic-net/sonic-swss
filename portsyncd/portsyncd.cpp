@@ -35,9 +35,9 @@ bool g_init = false;
 
 void usage()
 {
-    cout << "Usage: portsyncd [-p port_config.ini]" << endl;
-    cout << "       -p port_config.ini: import port lane mapping" << endl;
-    cout << "                           use configDB data if not specified" << endl;
+    cout << "Usage: portsyncd" << endl;
+    cout << "       port lane mapping is from configDB" << endl;
+    cout << "       this program will exit if configDB does not contain that info" << endl;
 }
 
 void handlePortConfigFile(ProducerStateTable &p, string file, bool warm);
@@ -50,16 +50,12 @@ int main(int argc, char **argv)
 {
     Logger::linkToDbNative("portsyncd");
     int opt;
-    string port_config_file;
     map<string, KeyOpFieldsValuesTuple> port_cfg_map;
 
-    while ((opt = getopt(argc, argv, "p:v:h")) != -1 )
+    while ((opt = getopt(argc, argv, "v:h")) != -1 )
     {
         switch (opt)
         {
-        case 'p':
-            port_config_file.assign(optarg);
-            break;
         case 'h':
             usage();
             return 1;
@@ -69,19 +65,15 @@ int main(int argc, char **argv)
         }
     }
 
-    DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector cfgDb("CONFIG_DB", 0);
+    DBConnector appl_db("APPL_DB", 0);
+    DBConnector state_db("STATE_DB", 0);
     ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
     SubscriberStateTable portCfg(&cfgDb, CFG_PORT_TABLE_NAME);
 
     WarmStart::initialize("portsyncd", "swss");
     WarmStart::checkWarmStart("portsyncd", "swss");
     const bool warm = WarmStart::isWarmStart();
-
-    LinkSync sync(&appl_db, &state_db);
-    NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
-    NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
     try
     {
@@ -95,12 +87,14 @@ int main(int argc, char **argv)
         if (!handlePortConfigFromConfigDB(p, cfgDb, warm))
         {
             // if port config is missing in ConfigDB
-            // attempt to use port_config.ini
-            if (!port_config_file.empty())
-            {
-                handlePortConfigFile(p, port_config_file, warm);
-            }
+            // program will exit with failure
+            SWSS_LOG_THROW("ConfigDB does not have port information, exiting...");
+            return EXIT_FAILURE;
         }
+
+        LinkSync sync(&appl_db, &state_db);
+        NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
+        NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
 
         s.addSelectable(&netlink);
         s.addSelectable(&portCfg);
@@ -163,7 +157,12 @@ int main(int argc, char **argv)
     }
     catch (const std::exception& e)
     {
-        cerr << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
+        cerr << "Exception \"" << e.what() << "\" was thrown in daemon" << endl;
+        return EXIT_FAILURE;
+    }
+    catch (...)
+    {
+        cerr << "Exception was thrown in daemon" << endl;
         return EXIT_FAILURE;
     }
 
@@ -214,97 +213,6 @@ bool handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
     }
 
     return true;
-}
-
-void handlePortConfigFile(ProducerStateTable &p, string file, bool warm)
-{
-    cout << "Read port configuration file..." << endl;
-
-    ifstream infile(file);
-    if (!infile.is_open())
-    {
-        usage();
-        throw "Port configuration file not found!";
-    }
-
-    list<string> header = {"name", "lanes", "alias", "speed", "autoneg", "fec"};
-    string line;
-    while (getline(infile, line))
-    {
-        if (line.at(0) == '#')
-        {
-            // Take this line as column header line
-            istringstream iss_hdr(line.substr(1));
-            string hdr;
-
-            header.clear();
-            while (! iss_hdr.eof()) {
-                iss_hdr >> hdr;
-                cout << "Adding column header '" << hdr << "'" << endl;
-                header.push_back(hdr);
-            }
-
-            continue;
-        }
-
-        istringstream iss(line);
-        map<string, string> entry;
-
-        /* Read port configuration entry */
-        for (auto column : header)
-        {
-            iss >> entry[column];
-        }
-
-        if (!warm)
-        {
-            /* If port has no alias, then use its name as alias */
-            string alias;
-            if ((entry.find("alias") != entry.end()) && (entry["alias"] != ""))
-            {
-                alias = entry["alias"];
-            }
-            else
-            {
-                alias = entry["name"];
-            }
-
-            FieldValueTuple lanes_attr("lanes", entry["lanes"]);
-            FieldValueTuple alias_attr("alias", alias);
-
-            vector<FieldValueTuple> attrs;
-            attrs.push_back(lanes_attr);
-            attrs.push_back(alias_attr);
-
-            if ((entry.find("speed") != entry.end()) && (entry["speed"] != ""))
-            {
-                FieldValueTuple speed_attr("speed", entry["speed"]);
-                attrs.push_back(speed_attr);
-            }
-
-            if ((entry.find("autoneg") != entry.end()) && (entry["autoneg"] != ""))
-            {
-                FieldValueTuple autoneg_attr("autoneg", entry["autoneg"]);
-                attrs.push_back(autoneg_attr);
-            }
-
-            if ((entry.find("fec") != entry.end()) && (entry["fec"] != ""))
-            {
-                FieldValueTuple fec_attr("fec", entry["fec"]);
-                attrs.push_back(fec_attr);
-            }
-
-            p.set(entry["name"], attrs);
-        }
-
-        g_portSet.insert(entry["name"]);
-    }
-
-    infile.close();
-    if (!warm)
-    {
-        notifyPortConfigDone(p);
-    }
 }
 
 void handlePortConfig(ProducerStateTable &p, map<string, KeyOpFieldsValuesTuple> &port_cfg_map)

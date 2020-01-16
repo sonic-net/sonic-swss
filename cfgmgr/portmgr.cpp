@@ -25,7 +25,7 @@ bool PortMgr::setPortMtu(const string &alias, const string &mtu)
     string res;
 
     // ip link set dev <port_name> mtu <mtu>
-    cmd << IP_CMD << " link set dev " << alias << " mtu " << mtu;
+    cmd << IP_CMD << " link set dev " << shellquote(alias) << " mtu " << shellquote(mtu);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     // Set the port MTU in application database to update both
@@ -44,11 +44,22 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
     string res;
 
     // ip link set dev <port_name> [up|down]
-    cmd << IP_CMD << " link set dev " << alias << (up ? " up" : " down");
+    cmd << IP_CMD << " link set dev " << shellquote(alias) << (up ? " up" : " down");
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     vector<FieldValueTuple> fvs;
     FieldValueTuple fv("admin_status", (up ? "up" : "down"));
+    fvs.push_back(fv);
+    m_appPortTable.set(alias, fvs);
+
+    return true;
+}
+
+bool PortMgr::setPortLearnMode(const string &alias, const string &learn_mode)
+{
+    // Set the port MAC learn mode in application database
+    vector<FieldValueTuple> fvs;
+    FieldValueTuple fv("learn_mode", learn_mode);
     fvs.push_back(fv);
     m_appPortTable.set(alias, fvs);
 
@@ -91,7 +102,7 @@ void PortMgr::doTask(Consumer &consumer)
                 continue;
             }
 
-            string admin_status, mtu;
+            string admin_status, mtu, learn_mode;
 
             bool configured = (m_portList.find(alias) != m_portList.end());
 
@@ -116,6 +127,10 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     admin_status = fvValue(i);
                 }
+                else if (fvField(i) == "learn_mode")
+                {
+                    learn_mode = fvValue(i);
+                }
             }
 
             if (!mtu.empty())
@@ -128,6 +143,12 @@ void PortMgr::doTask(Consumer &consumer)
             {
                 setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
+            }
+
+            if (!learn_mode.empty())
+            {
+                setPortLearnMode(alias, learn_mode);
+                SWSS_LOG_NOTICE("Configure %s MAC learn mode to %s", alias.c_str(), learn_mode.c_str());
             }
         }
 

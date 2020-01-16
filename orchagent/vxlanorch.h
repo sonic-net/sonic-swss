@@ -121,7 +121,7 @@ private:
     string tunnel_name_;
     bool active_ = false;
 
-    tunnel_ids_t ids_;
+    tunnel_ids_t ids_ = {0, 0, 0, 0};
     std::pair<MAP_T, MAP_T> tunnel_map_ = { MAP_T::MAP_TO_INVALID, MAP_T::MAP_TO_INVALID };
 
     TunnelMapEntries tunnel_map_entries_;

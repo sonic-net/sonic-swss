@@ -1,4 +1,5 @@
 #include <limits.h>
+#include <inttypes.h>
 #include <unordered_map>
 #include "pfcwdorch.h"
 #include "sai_serialize.h"
@@ -35,7 +36,7 @@ extern PortsOrch *gPortsOrch;
 template <typename DropHandler, typename ForwardHandler>
 PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
-    m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE))
 {
     SWSS_LOG_ENTER();
@@ -53,7 +54,7 @@ void PfcWdOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -352,7 +353,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
         if (entry.second.handler != nullptr)
         {
             SWSS_LOG_NOTICE(
-                    "PFC Watchdog BIG_RED_SWITCH mode disabled on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                    "PFC Watchdog BIG_RED_SWITCH mode disabled on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                     entry.second.portAlias.c_str(),
                     entry.second.index,
                     entry.first,
@@ -456,7 +457,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::enableBigRedSwitchMode()
             if (entry->second.handler== nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog BIG_RED_SWITCH mode enabled on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog BIG_RED_SWITCH mode enabled on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -651,14 +652,14 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         const vector<sai_queue_attr_t> &queueAttrIds,
         int pollInterval):
     PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
-    m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     c_portStatIds(portStatIds),
     c_queueStatIds(queueStatIds),
     c_queueAttrIds(queueAttrIds),
     m_pollInterval(pollInterval),
-    m_applDb(make_shared<DBConnector>(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_applDb(make_shared<DBConnector>("APPL_DB", 0)),
     m_applTable(make_shared<Table>(m_applDb.get(), APP_PFC_WD_TABLE_NAME "_INSTORM")),
     m_applDbRedisClient(m_applDb.get())
 {
@@ -757,6 +758,11 @@ template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
     PfcWdOrch<DropHandler, ForwardHandler>::doTask(consumer);
+
+    if (!gPortsOrch->allPortsReady())
+    {
+        return;
+    }
 
     if ((consumer.getDbId() == APPL_DB) && (consumer.getTableName() == APP_PFC_WD_TABLE_NAME))
     {
@@ -900,7 +906,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
     auto entry = m_entryMap.find(queueId);
     if (entry == m_entryMap.end())
     {
-        SWSS_LOG_ERROR("Queue 0x%lx is not registered", queueId);
+        SWSS_LOG_ERROR("Queue 0x%" PRIx64 " is not registered", queueId);
         return false;
     }
 
@@ -917,7 +923,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -939,7 +945,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -961,7 +967,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             if (entry->second.handler == nullptr)
             {
                 SWSS_LOG_NOTICE(
-                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                        "PFC Watchdog detected PFC storm on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,
@@ -989,7 +995,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
         if (entry->second.handler != nullptr)
         {
             SWSS_LOG_NOTICE(
-                    "PFC Watchdog storm restored on port %s, queue index %d, queue id 0x%lx and port id 0x%lx.",
+                    "PFC Watchdog storm restored on port %s, queue index %d, queue id 0x%" PRIx64 " and port id 0x%" PRIx64 ".",
                         entry->second.portAlias.c_str(),
                         entry->second.index,
                         entry->first,

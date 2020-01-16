@@ -62,7 +62,10 @@
 #define MATCH_INNER_L4_DST_PORT "INNER_L4_DST_PORT"
 
 #define ACTION_PACKET_ACTION                "PACKET_ACTION"
+#define ACTION_REDIRECT_ACTION              "REDIRECT_ACTION"
 #define ACTION_MIRROR_ACTION                "MIRROR_ACTION"
+#define ACTION_MIRROR_INGRESS_ACTION        "MIRROR_INGRESS_ACTION"
+#define ACTION_MIRROR_EGRESS_ACTION         "MIRROR_EGRESS_ACTION"
 #define ACTION_DTEL_FLOW_OP                 "FLOW_OP"
 #define ACTION_DTEL_INT_SESSION             "INT_SESSION"
 #define ACTION_DTEL_DROP_REPORT_ENABLE      "DROP_REPORT_ENABLE"
@@ -113,7 +116,10 @@ typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
 typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
 typedef map<string, sai_acl_dtel_flow_op_t> acl_dtel_flow_op_type_lookup_t;
+typedef map<string, sai_packet_action_t> acl_packet_action_lookup_t;
 typedef tuple<sai_acl_range_type_t, int, int> acl_range_properties_t;
+typedef map<acl_stage_type_t, set<sai_acl_action_type_t>> acl_capabilities_t;
+typedef map<sai_acl_action_type_t, set<int32_t>> acl_action_enum_values_capabilities_t;
 
 class AclOrch;
 
@@ -170,7 +176,7 @@ public:
     AclRule(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = true);
     virtual bool validateAddPriority(string attr_name, string attr_value);
     virtual bool validateAddMatch(string attr_name, string attr_value);
-    virtual bool validateAddAction(string attr_name, string attr_value) = 0;
+    virtual bool validateAddAction(string attr_name, string attr_value);
     virtual bool validate() = 0;
     bool processIpType(string type, sai_uint32_t &ip_type);
     inline static void setRulePriorities(sai_uint32_t min, sai_uint32_t max)
@@ -208,6 +214,8 @@ protected:
     virtual bool removeRanges();
 
     void decreaseNextHopRefCount();
+
+    bool isActionSupported(sai_acl_entry_attr_t) const;
 
     static sai_uint32_t m_minPriority;
     static sai_uint32_t m_maxPriority;
@@ -272,10 +280,10 @@ public:
     AclRuleCounters getCounters();
 
 protected:
-    bool m_state;
+    bool m_state {false};
     string m_sessionName;
     AclRuleCounters counters;
-    MirrorOrch *m_pMirrorOrch;
+    MirrorOrch *m_pMirrorOrch {nullptr};
 };
 
 class AclRuleDTelFlowWatchListEntry: public AclRule
@@ -364,19 +372,6 @@ public:
     void update(SubjectType, void *);
 };
 
-template <class Iterable>
-inline void split(string str, Iterable& out, char delim = ' ')
-{
-    string val;
-
-    istringstream input(str);
-
-    while (getline(input, val, delim))
-    {
-        out.push_back(val);
-    }
-}
-
 class AclOrch : public Orch, public Observer
 {
 public:
@@ -386,6 +381,7 @@ public:
     void update(SubjectType, void *);
 
     sai_object_id_t getTableById(string table_id);
+    const AclTable* getTableByOid(sai_object_id_t oid) const;
 
     static swss::Table& getCountersTable()
     {
@@ -406,9 +402,13 @@ public:
     bool removeAclRule(string table_id, string rule_id);
 
     bool isCombinedMirrorV6Table();
+    bool isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const;
+    bool isAclActionEnumValueSupported(sai_acl_action_type_t action, sai_acl_action_parameter_t param) const;
 
     bool m_isCombinedMirrorV6Table = true;
     map<acl_table_type_t, bool> m_mirrorTableCapabilities;
+
+    static sai_acl_action_type_t getAclActionFromAclEntry(sai_acl_entry_attr_t attr);
 
 private:
     void doTask(Consumer &consumer);
@@ -418,6 +418,14 @@ private:
     void init(vector<TableConnector>& connectors, PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch);
 
     void queryMirrorTableCapability();
+    void queryAclActionCapability();
+    void initDefaultAclActionCapabilities(acl_stage_type_t);
+    void putAclActionCapabilityInDB(acl_stage_type_t);
+
+    template<typename AclActionAttrLookupT>
+    void queryAclActionAttrEnumValues(const string& action_name,
+                                      const acl_rule_attr_lookup_t& ruleAttrLookupMap,
+                                      const AclActionAttrLookupT lookupMap);
 
     static void collectCountersThread(AclOrch *pAclOrch);
 
@@ -444,6 +452,9 @@ private:
 
     string m_mirrorTableId;
     string m_mirrorV6TableId;
+
+    acl_capabilities_t m_aclCapabilities;
+    acl_action_enum_values_capabilities_t m_aclEnumActionCapabilities;
 };
 
 #endif /* SWSS_ACLORCH_H */
