@@ -390,13 +390,19 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
         while (getline(aliasfile, line))
         {
             ifstream memberfile(dump_path + line, ios::binary);
-            uint8_t mac_temp[ETHER_ADDR_LEN];
+            uint8_t mac_temp[ETHER_ADDR_LEN] = {0};
+            uint8_t null_mac[ETHER_ADDR_LEN] = {0};
 
             if (!memberfile.is_open())
                 continue;
 
             memberfile.seekg(partner_system_id_offset, std::ios::beg);
             memberfile.read(reinterpret_cast<char*>(mac_temp), ETHER_ADDR_LEN);
+
+            /* During negotiation stage partner info of pdu is empty , skip it */
+            if (memcmp(mac_temp, null_mac, ETHER_ADDR_LEN) == 0)
+		continue;
+
             mac_boot = MacAddress(mac_temp);
             break;
         }
