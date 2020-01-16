@@ -410,7 +410,7 @@ class TestAcl(BaseTestAcl):
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
         # only the default table was left along with DTel tables
-        assert len(keys) == 3
+        assert len(keys) >= 3
 
     def test_V6AclTableCreation(self, dvs, testlog):
 
