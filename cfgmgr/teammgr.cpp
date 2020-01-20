@@ -503,7 +503,7 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
 
             /* During negotiation stage partner info of pdu is empty , skip it */
             if (memcmp(mac_temp, null_mac, ETHER_ADDR_LEN) == 0)
-		continue;
+                continue;
 
             mac_boot = MacAddress(mac_temp);
             break;
