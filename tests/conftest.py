@@ -157,8 +157,10 @@ class DockerVirtualSwitch(object):
         self.syncd = ['syncd']
         self.rtd   = ['fpmsyncd', 'zebra']
         self.teamd = ['teamsyncd', 'teammgrd']
-        self.natd = ['natsyncd', 'natmgrd']
-        self.alld  = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd + self.natd
+        # FIXME: We need to verify that NAT processes are running, once the
+        # appropriate changes are merged into sonic-buildimage
+        # self.natd = ['natsyncd', 'natmgrd']
+        self.alld  = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd # + self.natd
         self.client = docker.from_env()
 
         if subprocess.check_call(["/sbin/modprobe", "team"]) != 0:
