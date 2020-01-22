@@ -1466,7 +1466,7 @@ string PortsOrch::getPriorityGroupWatermarkFlexCounterTableKey(string key)
     return string(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
-bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
+bool PortsOrch::initPort(const string &alias, const set<int> &lane_set, uint32_t speed, int an, string fec_mode)
 {
     SWSS_LOG_ENTER();
 
@@ -1486,6 +1486,12 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
 
             p.m_index = static_cast<int32_t>(m_portList.size()); // TODO: Assume no deletion of physical port
             p.m_port_id = id;
+            if (!fec_mode.empty())
+                if (fec_mode_map.find(fec_mode) != fec_mode_map.end())
+                    p.m_fec_mode = fec_mode_map[fec_mode];
+            p.m_speed = speed;
+            if (an != -1)
+                p.m_autoneg = an;
 
             /* Initialize the port and create corresponding host interface */
             if (initializePort(p))
@@ -1791,7 +1797,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     if (port_created)
                     {
-                        if (!initPort(get<0>(it->second), it->first))
+                        if (!initPort(get<0>(it->second), it->first, get<1>(it->second), get<2>(it->second), get<3>(it->second)))
                         {
                             throw runtime_error("PortsOrch initialization failure.");
                         }
