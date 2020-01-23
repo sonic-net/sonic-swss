@@ -1,365 +1,358 @@
+from swsscommon import swsscommon
+import time
+import re
+import json
+import pytest
+import pdb
+import os
+
 # FIXME: These tests depend on changes in sonic-buildimage, we need to reenable
 # them once those changes are merged.
+@pytest.mark.skip(reason="Depends on changes in sonic-buildimage")
+class TestNatFeature(object):
+    def setup_db(self, dvs):
+        self.appdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        self.asicdb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        self.configdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
 
-# from swsscommon import swsscommon
-# import time
-# import re
-# import json
-# import pytest
-# import pdb
-# import os
+    def set_interfaces(self, dvs):
+        intf_tbl = swsscommon.Table(self.configdb, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+        intf_tbl.set("Ethernet0|67.66.65.1/24", fvs)
+        intf_tbl.set("Ethernet4|18.18.18.1/24", fvs)
+        intf_tbl.set("Ethernet0", fvs)
+        intf_tbl.set("Ethernet4", fvs)
+        dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("ifconfig Ethernet4 up")
 
+        dvs.servers[0].runcmd("ip link set down dev eth0") == 0
+        dvs.servers[0].runcmd("ip link set up dev eth0") == 0
+        dvs.servers[0].runcmd("ifconfig eth0 67.66.65.2/24")
+        dvs.servers[0].runcmd("ip route add default via 67.66.65.1")
 
-# class TestNatFeature(object):
-#     def setup_db(self, dvs):
-#         self.appdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-#         self.asicdb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-#         self.configdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
+        dvs.servers[1].runcmd("ip link set down dev eth0") == 0
+        dvs.servers[1].runcmd("ip link set up dev eth0") == 0
+        dvs.servers[1].runcmd("ifconfig eth0 18.18.18.2/24")
+        dvs.servers[1].runcmd("ip route add default via 18.18.18.1")
 
-#     def set_interfaces(self, dvs):
-#         intf_tbl = swsscommon.Table(self.configdb, "INTERFACE")
-#         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-#         intf_tbl.set("Ethernet0|67.66.65.1/24", fvs)
-#         intf_tbl.set("Ethernet4|18.18.18.1/24", fvs)
-#         intf_tbl.set("Ethernet0", fvs)
-#         intf_tbl.set("Ethernet4", fvs)
-#         dvs.runcmd("ifconfig Ethernet0 up")
-#         dvs.runcmd("ifconfig Ethernet4 up")
+        ps = swsscommon.ProducerStateTable(self.appdb, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("nexthop","18.18.18.2"), \
+                                   ("ifname", "Ethernet0")])
 
-#         dvs.servers[0].runcmd("ip link set down dev eth0") == 0
-#         dvs.servers[0].runcmd("ip link set up dev eth0") == 0
-#         dvs.servers[0].runcmd("ifconfig eth0 67.66.65.2/24")
-#         dvs.servers[0].runcmd("ip route add default via 67.66.65.1")
+        pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_ROUTE_ENTRY")
 
-#         dvs.servers[1].runcmd("ip link set down dev eth0") == 0
-#         dvs.servers[1].runcmd("ip link set up dev eth0") == 0
-#         dvs.servers[1].runcmd("ifconfig eth0 18.18.18.2/24")
-#         dvs.servers[1].runcmd("ip route add default via 18.18.18.1")
+        dvs.runcmd("config nat add interface Ethernet0 -nat_zone 1")
 
-#         ps = swsscommon.ProducerStateTable(self.appdb, "ROUTE_TABLE")
-#         fvs = swsscommon.FieldValuePairs([("nexthop","18.18.18.2"), \
-#                                    ("ifname", "Ethernet0")])
+        time.sleep(1)
 
-#         pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE_ROUTE_ENTRY")
+    def clear_interfaces(self, dvs):
+        dvs.servers[0].runcmd("ifconfig eth0 0.0.0.0")
 
-#         dvs.runcmd("config nat add interface Ethernet0 -nat_zone 1")
+        dvs.servers[1].runcmd("ifconfig eth0 0.0.0.0")
+        # dvs.servers[1].runcmd("ip route del default")
 
-#         time.sleep(1)
+        time.sleep(1)
 
-#     def clear_interfaces(self, dvs):
-#         dvs.servers[0].runcmd("ifconfig eth0 0.0.0.0")
+    def test_NatGlobalTable(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
 
-#         dvs.servers[1].runcmd("ifconfig eth0 0.0.0.0")
-#         # dvs.servers[1].runcmd("ip route del default")
+        # enable NAT feature
+        dvs.runcmd("config nat feature enable")
+        dvs.runcmd("config nat set timeout 450")
+        dvs.runcmd("config nat set udp-timeout 360")
+        dvs.runcmd("config nat set tcp-timeout 900")
 
-#         time.sleep(1)
+        # check NAT global values in appdb
+        tbl = swsscommon.Table(self.appdb, "NAT_GLOBAL_TABLE")
+        values = tbl.getKeys()
 
-#     def test_NatGlobalTable(self, dvs, testlog):
-#         # initialize
-#         self.setup_db(dvs)
+        assert len(values) == 1
 
-#         # enable NAT feature
-#         dvs.runcmd("config nat feature enable")
-#         dvs.runcmd("config nat set timeout 450")
-#         dvs.runcmd("config nat set udp-timeout 360")
-#         dvs.runcmd("config nat set tcp-timeout 900")
+        (status, fvs) = tbl.get("Values")
 
-#         # check NAT global values in appdb
-#         tbl = swsscommon.Table(self.appdb, "NAT_GLOBAL_TABLE")
-#         values = tbl.getKeys()
+        assert fvs==(('admin_mode', 'enabled'), ('nat_timeout', '450'), ('nat_udp_timeout', '360'), ('nat_tcp_timeout', '900'))
 
-#         assert len(values) == 1
+    def test_NatInterfaceZone(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
+        self.set_interfaces(dvs)
 
-#         (status, fvs) = tbl.get("Values")
+        # check NAT zone is set for interface in app db
+        tbl = swsscommon.Table(self.appdb, "INTF_TABLE")
+        keys  = tbl.getKeys()
 
-#         assert fvs==(('admin_mode', 'enabled'), ('nat_timeout', '450'), ('nat_udp_timeout', '360'), ('nat_tcp_timeout', '900'))
+        (status, fvs) = tbl.get("Ethernet0")
 
-#     def test_NatInterfaceZone(self, dvs, testlog):
-#         # initialize
-#         self.setup_db(dvs)
-#         self.set_interfaces(dvs)
+        assert fvs==(('NULL', 'NULL'), ('nat_zone', '1'))
 
-#         # check NAT zone is set for interface in app db
-#         tbl = swsscommon.Table(self.appdb, "INTF_TABLE")
-#         keys  = tbl.getKeys()
 
-#         (status, fvs) = tbl.get("Ethernet0")
+    def test_AddNatStaticEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
 
-#         assert fvs==(('NULL', 'NULL'), ('nat_zone', '1'))
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
 
+        # add a static nat entry
+        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
 
-#     def test_AddNatStaticEntry(self, dvs, testlog):
-#         # initialize
-#         self.setup_db(dvs)
+        # check the entry in the config db
+        tbl = swsscommon.Table(self.configdb, "STATIC_NAT")
+        entry = tbl.getKeys()
+        assert len(entry) == 1
 
-#         # get neighbor and arp entry
-#         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
+        (status, fvs) = tbl.get("67.66.65.1")
 
-#         # add a static nat entry
-#         dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
+        assert fvs==(('local_ip', '18.18.18.2'),)
 
-#         # check the entry in the config db
-#         tbl = swsscommon.Table(self.configdb, "STATIC_NAT")
-#         entry = tbl.getKeys()
-#         assert len(entry) == 1
+        # check the entry in app db
+        tbl = swsscommon.Table(self.appdb, "NAT_TABLE")
+        entry = tbl.getKeys()
+        assert len(entry) == 2
+
+        (status, fvs) = tbl.get("67.66.65.1")
 
-#         (status, fvs) = tbl.get("67.66.65.1")
+        assert fvs== (('translated_ip', '18.18.18.2'), ('nat_type', 'dnat'), ('entry_type', 'static'))
+
+        #check the entry in asic db
+        tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
+        keys = tbl.getKeys()
+        assert len(keys) == 2
 
-#         assert fvs==(('local_ip', '18.18.18.2'),)
+        for key in keys:
+           if (key.find("dst_ip:67.66.65.1")) or (key.find("src_ip:18.18.18.2")):
+               assert True
+           else:
+               assert False
+
+    def test_DelNatStaticEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
+
+        # delete a static nat entry
+        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
 
-#         # check the entry in app db
-#         tbl = swsscommon.Table(self.appdb, "NAT_TABLE")
-#         entry = tbl.getKeys()
-#         assert len(entry) == 2
+        # check the entry is no there in the config db
+        tbl = swsscommon.Table(self.configdb, "STATIC_NAT")
+        entry = tbl.getKeys()
+        assert entry == ()
 
-#         (status, fvs) = tbl.get("67.66.65.1")
+        # check the entry is not there in app db
+        tbl = swsscommon.Table(self.appdb, "NAT_TABLE")
+        entry = tbl.getKeys()
+        assert entry == ()
 
-#         assert fvs== (('translated_ip', '18.18.18.2'), ('nat_type', 'dnat'), ('entry_type', 'static'))
+        #check the entry is not there in asic db
+        tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
+        key = tbl.getKeys()
+        assert key == ()
 
-#         #check the entry in asic db
-#         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
-#         keys = tbl.getKeys()
-#         assert len(keys) == 2
+    def test_AddNaPtStaticEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
 
-#         for key in keys:
-#            if (key.find("dst_ip:67.66.65.1")) or (key.find("src_ip:18.18.18.2")):
-#                assert True
-#            else:
-#                assert False
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
 
-#     def test_DelNatStaticEntry(self, dvs, testlog):
-#         # initialize
-#         self.setup_db(dvs)
+        # add a static nat entry
+        dvs.runcmd("config nat add static udp 67.66.65.1 670 18.18.18.2 180")
 
-#         # delete a static nat entry
-#         dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+        # check the entry in the config db
+        tbl = swsscommon.Table(self.configdb, "STATIC_NAPT")
+        entry = tbl.getKeys()
+        assert len(entry) == 1
 
-#         # check the entry is no there in the config db
-#         tbl = swsscommon.Table(self.configdb, "STATIC_NAT")
-#         entry = tbl.getKeys()
-#         assert entry == ()
+        (status, fvs) = tbl.get("67.66.65.1|UDP|670")
 
-#         # check the entry is not there in app db
-#         tbl = swsscommon.Table(self.appdb, "NAT_TABLE")
-#         entry = tbl.getKeys()
-#         assert entry == ()
+        assert fvs==(('local_ip', '18.18.18.2'),('local_port', '180'))
 
-#         #check the entry is not there in asic db
-#         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
-#         key = tbl.getKeys()
-#         assert key == ()
+        # check the entry in app db
+        tbl = swsscommon.Table(self.appdb, "NAPT_TABLE:UDP")
+        entry = tbl.getKeys()
+        assert len(entry) == 2
 
-#     def test_AddNaPtStaticEntry(self, dvs, testlog):
-#         # initialize
-#         self.setup_db(dvs)
+        (status, fvs) = tbl.get("67.66.65.1:670")
 
-#         # get neighbor and arp entry
-#         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
+        assert fvs== (('translated_ip', '18.18.18.2'), ('translated_l4_port', '180'), ('nat_type', 'dnat'), ('entry_type', 'static')) 
 
-#         # add a static nat entry
-#         dvs.runcmd("config nat add static udp 67.66.65.1 670 18.18.18.2 180")
+        #check the entry in asic db
+        tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
+        keys = tbl.getKeys()
+        assert len(keys) == 2
 
-#         # check the entry in the config db
-#         tbl = swsscommon.Table(self.configdb, "STATIC_NAPT")
-#         entry = tbl.getKeys()
-#         assert len(entry) == 1
+        for key in keys:
+            if (key.find("dst_ip:67.66.65.1")) and (key.find("key.l4_dst_port:670")):
+                 assert True
+            if (key.find("src_ip:18.18.18.2")) or (key.find("key.l4_src_port:180")):
+                 assert True
+            else:
+                 assert False
 
-#         (status, fvs) = tbl.get("67.66.65.1|UDP|670")
+    def test_DelNaPtStaticEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
 
-#         assert fvs==(('local_ip', '18.18.18.2'),('local_port', '180'))
+        # delete a static nat entry
+        dvs.runcmd("config nat remove static udp 67.66.65.1 670 18.18.18.2 180")
 
-#         # check the entry in app db
-#         tbl = swsscommon.Table(self.appdb, "NAPT_TABLE:UDP")
-#         entry = tbl.getKeys()
-#         assert len(entry) == 2
+        # check the entry is no there in the config db
+        tbl = swsscommon.Table(self.configdb, "STATIC_NAPT")
+        entry = tbl.getKeys()
+        assert entry == ()
 
-#         (status, fvs) = tbl.get("67.66.65.1:670")
+        # check the entry is not there in app db
+        tbl = swsscommon.Table(self.appdb, "NAPT_TABLE")
+        entry = tbl.getKeys()
+        assert entry == ()
 
-#         assert fvs== (('translated_ip', '18.18.18.2'), ('translated_l4_port', '180'), ('nat_type', 'dnat'), ('entry_type', 'static')) 
+        #check the entry is not there in asic db
+        tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
+        key = tbl.getKeys()
+        assert key == ()
 
-#         #check the entry in asic db
-#         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
-#         keys = tbl.getKeys()
-#         assert len(keys) == 2
+    def test_AddTwiceNatEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
 
-#         for key in keys:
-#             if (key.find("dst_ip:67.66.65.1")) and (key.find("key.l4_dst_port:670")):
-#                  assert True
-#             if (key.find("src_ip:18.18.18.2")) or (key.find("key.l4_src_port:180")):
-#                  assert True
-#             else:
-#                  assert False
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
+        dvs.servers[1].runcmd("ping -c 1 67.66.65.2")
 
-#     def test_DelNaPtStaticEntry(self, dvs, testlog):
-#         # initialize
-#         self.setup_db(dvs)
+        # add a twice nat entry
+        dvs.runcmd("config nat add static basic 67.66.65.2 18.18.18.1 -nat_type snat -twice_nat_id 9")
+        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2 -nat_type dnat -twice_nat_id 9")
 
-#         # delete a static nat entry
-#         dvs.runcmd("config nat remove static udp 67.66.65.1 670 18.18.18.2 180")
+        # check the entry in the config db
+        tbl = swsscommon.Table(self.configdb, "STATIC_NAT")
+        entry = tbl.getKeys()
+        assert len(entry) == 2
 
-#         # check the entry is no there in the config db
-#         tbl = swsscommon.Table(self.configdb, "STATIC_NAPT")
-#         entry = tbl.getKeys()
-#         assert entry == ()
+        (status, fvs) = tbl.get("67.66.65.1")
 
-#         # check the entry is not there in app db
-#         tbl = swsscommon.Table(self.appdb, "NAPT_TABLE")
-#         entry = tbl.getKeys()
-#         assert entry == ()
+        assert fvs== (('nat_type', 'dnat'), ('twice_nat_id', '9'), ('local_ip', '18.18.18.2'))
 
-#         #check the entry is not there in asic db
-#         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
-#         key = tbl.getKeys()
-#         assert key == ()
+        (status, fvs) = tbl.get("67.66.65.2")
 
+        assert fvs== (('nat_type', 'snat'), ('twice_nat_id', '9'), ('local_ip', '18.18.18.1'))
 
-#     def test_AddTwiceNatEntry(self, dvs, testlog):
-#         # initialize
-#         self.setup_db(dvs)
+        # check the entry in app db
+        tbl = swsscommon.Table(self.appdb, "NAT_TWICE_TABLE")
+        entry = tbl.getKeys()
+        assert len(entry) == 2
 
-#         # get neighbor and arp entry
-#         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
-#         dvs.servers[1].runcmd("ping -c 1 67.66.65.2")
+        (status, fvs) = tbl.get("67.66.65.2:67.66.65.1")
 
-#         # add a twice nat entry
-#         dvs.runcmd("config nat add static basic 67.66.65.2 18.18.18.1 -nat_type snat -twice_nat_id 9")
-#         dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2 -nat_type dnat -twice_nat_id 9")
+        assert fvs== (('translated_src_ip', '18.18.18.1'), ('translated_dst_ip', '18.18.18.2'), ('entry_type', 'static')) 
 
-#         # check the entry in the config db
-#         tbl = swsscommon.Table(self.configdb, "STATIC_NAT")
-#         entry = tbl.getKeys()
-#         assert len(entry) == 2
+        (status, fvs) = tbl.get("18.18.18.2:18.18.18.1")
 
-#         (status, fvs) = tbl.get("67.66.65.1")
+        assert fvs== (('translated_src_ip', '67.66.65.1'), ('translated_dst_ip', '67.66.65.2'), ('entry_type', 'static')) 
 
-#         assert fvs== (('nat_type', 'dnat'), ('twice_nat_id', '9'), ('local_ip', '18.18.18.2'))
+        #check the entry in asic db
+        tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
+        keys = tbl.getKeys()
+        assert len(keys) == 2
+        for key in keys:
+           if (key.find("dst_ip:18.18.18.1")) or (key.find("src_ip:18.18.18.2")):
+               assert True
+           else:
+               assert False
 
-#         (status, fvs) = tbl.get("67.66.65.2")
+    def test_DelTwiceNatStaticEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
 
-#         assert fvs== (('nat_type', 'snat'), ('twice_nat_id', '9'), ('local_ip', '18.18.18.1'))
+        # delete a static nat entry
+        dvs.runcmd("config nat remove static basic 67.66.65.2 18.18.18.1")
+        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
 
-#         # check the entry in app db
-#         tbl = swsscommon.Table(self.appdb, "NAT_TWICE_TABLE")
-#         entry = tbl.getKeys()
-#         assert len(entry) == 2
+        # check the entry is no there in the config db
+        tbl = swsscommon.Table(self.configdb, "STATIC_NAT")
+        entry = tbl.getKeys()
+        assert entry == ()
 
-#         (status, fvs) = tbl.get("67.66.65.2:67.66.65.1")
+        # check the entry is not there in app db
+        tbl = swsscommon.Table(self.appdb, "NAT_TWICE_TABLE")
+        entry = tbl.getKeys()
+        assert entry == ()
 
-#         assert fvs== (('translated_src_ip', '18.18.18.1'), ('translated_dst_ip', '18.18.18.2'), ('entry_type', 'static')) 
+        #check the entry is not there in asic db
+        tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
+        key = tbl.getKeys()
+        assert key == ()
 
-#         (status, fvs) = tbl.get("18.18.18.2:18.18.18.1")
+    def test_AddTwiceNaPtEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
 
-#         assert fvs== (('translated_src_ip', '67.66.65.1'), ('translated_dst_ip', '67.66.65.2'), ('entry_type', 'static')) 
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
+        dvs.servers[1].runcmd("ping -c 1 67.66.65.2")
 
-#         #check the entry in asic db
-#         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
-#         keys = tbl.getKeys()
-#         assert len(keys) == 2
-#         for key in keys:
-#            if (key.find("dst_ip:18.18.18.1")) or (key.find("src_ip:18.18.18.2")):
-#                assert True
-#            else:
-#                assert False
+        # add a twice nat entry
+        dvs.runcmd("config nat add static udp 67.66.65.2 670 18.18.18.1 181 -nat_type snat -twice_nat_id 7")
+        dvs.runcmd("config nat add static udp 67.66.65.1 660 18.18.18.2 182 -nat_type dnat -twice_nat_id 7")
 
-#     def test_DelTwiceNatStaticEntry(self, dvs, testlog):
-#         # initialize
-#         self.setup_db(dvs)
+        # check the entry in the config db
+        tbl = swsscommon.Table(self.configdb, "STATIC_NAPT")
+        entry = tbl.getKeys()
+        assert len(entry) == 2
 
-#         # delete a static nat entry
-#         dvs.runcmd("config nat remove static basic 67.66.65.2 18.18.18.1")
-#         dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+        (status, fvs) = tbl.get("67.66.65.1|UDP|660")
 
-#         # check the entry is no there in the config db
-#         tbl = swsscommon.Table(self.configdb, "STATIC_NAT")
-#         entry = tbl.getKeys()
-#         assert entry == ()
+        assert fvs== (('nat_type', 'dnat'), ('local_ip', '18.18.18.2'), ('twice_nat_id', '7'), ('local_port', '182'))
+        (status, fvs) = tbl.get("67.66.65.2|UDP|670")
 
-#         # check the entry is not there in app db
-#         tbl = swsscommon.Table(self.appdb, "NAT_TWICE_TABLE")
-#         entry = tbl.getKeys()
-#         assert entry == ()
+        assert fvs== (('nat_type', 'snat'), ('local_ip', '18.18.18.1'),('twice_nat_id', '7'), ('local_port', '181'))
 
-#         #check the entry is not there in asic db
-#         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
-#         key = tbl.getKeys()
-#         assert key == ()
+        # check the entry in app db
+        tbl = swsscommon.Table(self.appdb, "NAPT_TWICE_TABLE")
+        entry = tbl.getKeys()
+        assert len(entry) == 2
 
+        (status, fvs) = tbl.get("UDP:67.66.65.2:670:67.66.65.1:660")
 
-#     def test_AddTwiceNaPtEntry(self, dvs, testlog):
-#         # initialize
-#         self.setup_db(dvs)
+        assert fvs== (('translated_src_ip', '18.18.18.1'), ('translated_src_l4_port', '181'), ('translated_dst_ip', '18.18.18.2'), ('translated_dst_l4_port', '182'), ('entry_type', 'static'))
 
-#         # get neighbor and arp entry
-#         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
-#         dvs.servers[1].runcmd("ping -c 1 67.66.65.2")
+        (status, fvs) = tbl.get("UDP:18.18.18.2:182:18.18.18.1:181")
 
-#         # add a twice nat entry
-#         dvs.runcmd("config nat add static udp 67.66.65.2 670 18.18.18.1 181 -nat_type snat -twice_nat_id 7")
-#         dvs.runcmd("config nat add static udp 67.66.65.1 660 18.18.18.2 182 -nat_type dnat -twice_nat_id 7")
+        assert fvs== (('translated_src_ip', '67.66.65.1'), ('translated_src_l4_port', '660'),('translated_dst_ip', '67.66.65.2'),('translated_dst_l4_port', '670'), ('entry_type', 'static'))
 
-#         # check the entry in the config db
-#         tbl = swsscommon.Table(self.configdb, "STATIC_NAPT")
-#         entry = tbl.getKeys()
-#         assert len(entry) == 2
+        #check the entry in asic db
+        tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
+        keys = tbl.getKeys()
+        assert len(keys) == 2
+        for key in keys:
+           if (key.find("src_ip:18.18.18.2")) or (key.find("l4_src_port:182")):
+               assert True
+           if (key.find("dst_ip:18.18.18.1")) or (key.find("l4_dst_port:181")):
+               assert True
+           else:
+               assert False
 
-#         (status, fvs) = tbl.get("67.66.65.1|UDP|660")
+    def test_DelTwiceNaPtStaticEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
 
-#         assert fvs== (('nat_type', 'dnat'), ('local_ip', '18.18.18.2'), ('twice_nat_id', '7'), ('local_port', '182'))
-#         (status, fvs) = tbl.get("67.66.65.2|UDP|670")
+        # delete a static nat entry
+        dvs.runcmd("config nat remove static udp 67.66.65.2 670 18.18.18.1 181")
+        dvs.runcmd("config nat remove static udp 67.66.65.1 660 18.18.18.2 182")
 
-#         assert fvs== (('nat_type', 'snat'), ('local_ip', '18.18.18.1'),('twice_nat_id', '7'), ('local_port', '181'))
+        # check the entry is not there in the config db
+        tbl = swsscommon.Table(self.configdb, "STATIC_NAPT")
+        entry = tbl.getKeys()
+        assert entry == ()
 
+        # check the entry is not there in app db
+        tbl = swsscommon.Table(self.appdb, "NAPT_TWICE_TABLE")
+        entry = tbl.getKeys()
+        assert entry == ()
 
+        #check the entry is not there in asic db
+        tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
+        key = tbl.getKeys()
+        assert key == ()
 
-#         # check the entry in app db
-#         tbl = swsscommon.Table(self.appdb, "NAPT_TWICE_TABLE")
-#         entry = tbl.getKeys()
-#         assert len(entry) == 2
-
-#         (status, fvs) = tbl.get("UDP:67.66.65.2:670:67.66.65.1:660")
-
-#         assert fvs== (('translated_src_ip', '18.18.18.1'), ('translated_src_l4_port', '181'), ('translated_dst_ip', '18.18.18.2'), ('translated_dst_l4_port', '182'), ('entry_type', 'static'))
-
-#         (status, fvs) = tbl.get("UDP:18.18.18.2:182:18.18.18.1:181")
-
-#         assert fvs== (('translated_src_ip', '67.66.65.1'), ('translated_src_l4_port', '660'),('translated_dst_ip', '67.66.65.2'),('translated_dst_l4_port', '670'), ('entry_type', 'static'))
-
-#         #check the entry in asic db
-#         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
-#         keys = tbl.getKeys()
-#         assert len(keys) == 2
-#         for key in keys:
-#            if (key.find("src_ip:18.18.18.2")) or (key.find("l4_src_port:182")):
-#                assert True
-#            if (key.find("dst_ip:18.18.18.1")) or (key.find("l4_dst_port:181")):
-#                assert True
-#            else:
-#                assert False
-
-
-#     def test_DelTwiceNaPtStaticEntry(self, dvs, testlog):
-#         # initialize
-#         self.setup_db(dvs)
-
-#         # delete a static nat entry
-#         dvs.runcmd("config nat remove static udp 67.66.65.2 670 18.18.18.1 181")
-#         dvs.runcmd("config nat remove static udp 67.66.65.1 660 18.18.18.2 182")
-
-#         # check the entry is not there in the config db
-#         tbl = swsscommon.Table(self.configdb, "STATIC_NAPT")
-#         entry = tbl.getKeys()
-#         assert entry == ()
-
-#         # check the entry is not there in app db
-#         tbl = swsscommon.Table(self.appdb, "NAPT_TWICE_TABLE")
-#         entry = tbl.getKeys()
-#         assert entry == ()
-
-#         #check the entry is not there in asic db
-#         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
-#         key = tbl.getKeys()
-#         assert key == ()
-
-#         # clear interfaces
-#         self.clear_interfaces(dvs)
-
+        # clear interfaces
+        self.clear_interfaces(dvs)
