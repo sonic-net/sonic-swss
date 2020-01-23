@@ -36,6 +36,9 @@ private:
 
     MacAddress m_mac;
 
+    unsigned short m_lacp_key = 0;
+    std::map<std::string, unsigned short> m_lagKeys;
+
     void doTask(Consumer &consumer);
     void doLagTask(Consumer &consumer);
     void doLagMemberTask(Consumer &consumer);

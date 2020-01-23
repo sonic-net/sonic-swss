@@ -134,7 +134,7 @@ pid_t TeamMgr::getTeamPid(const string &alias)
     {
         SWSS_LOG_WARN("The LAG PID file: %s is empty", file.c_str());
     }
-    else 
+    else
     {
         /*Store the PID value */
         pid = stoi(line, nullptr, 10);
@@ -541,6 +541,8 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
         return task_need_retry;
     }
 
+    m_lagKeys[alias] = m_lacp_key++;
+
     SWSS_LOG_NOTICE("Start port channel %s with teamd", alias.c_str());
 
     return task_success;
@@ -555,6 +557,8 @@ bool TeamMgr::removeLag(const string &alias)
 
     cmd << TEAMD_CMD << " -k -t " << shellquote(alias);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    m_lagKeys.erase(alias);
 
     SWSS_LOG_NOTICE("Stop port channel %s", alias.c_str());
 
@@ -582,6 +586,8 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
     // ip link set dev <member> down;
     // teamdctl <port_channel_name> port add <member>;
     cmd << IP_CMD << " link set dev " << shellquote(member) << " down; ";
+    cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port config update " << shellquote(member) << " ";
+    cmd << "'{\"prio\": 255, \"link_watch\": { \"name\": \"ethtool\" }, \"lacp_key\": "<< m_lagKeys[lag] <<"}';";
     cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port add " << shellquote(member);
 
     if (exec(cmd.str(), res) != 0)
