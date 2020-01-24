@@ -1504,7 +1504,27 @@ void AclTable::update(SubjectType type, void *cntx)
     }
     else
     {
-        // TODO: deal with port removal scenario
+        if (portSet.find(port.m_alias) != portSet.end())
+        {
+            sai_object_id_t bind_port_id;
+            if (gPortsOrch->getAclBindPortId(port.m_alias, bind_port_id))
+            {
+                unbind(bind_port_id);
+                unlink(bind_port_id);
+
+                portSet.erase(port.m_alias);
+                pendingPortSet.emplace(port.m_alias);
+
+                SWSS_LOG_NOTICE("Unbound port %s from ACL table %s",
+                        port.m_alias.c_str(), id.c_str());
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to get port %s bind port ID",
+                        port.m_alias.c_str());
+                return;
+            }
+        }
     }
 }
 
@@ -1537,6 +1557,7 @@ bool AclTable::unbind(sai_object_id_t portOid)
                 m_oid, member, status);
         return false;
     }
+    ports[portOid] = SAI_NULL_OBJECT_ID;
     return true;
 }
 
@@ -1571,6 +1592,13 @@ void AclTable::link(sai_object_id_t portOid)
     SWSS_LOG_ENTER();
 
     ports.emplace(portOid, SAI_NULL_OBJECT_ID);
+}
+
+void AclTable::unlink(sai_object_id_t portOid)
+{
+    SWSS_LOG_ENTER();
+
+    ports.erase(portOid);
 }
 
 bool AclTable::add(shared_ptr<AclRule> newRule)
