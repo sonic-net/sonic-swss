@@ -7,6 +7,10 @@ import platform
 from distutils.version import StrictVersion
 
 
+# FIXME: This test is extremely unstable and requires several retries
+# for it to pass - we need to stabilize this test before putting it back
+# into the pipeline.
+@pytest.mark.xfail(reason="VLAN test unstable")
 class TestVlan(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)

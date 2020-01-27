@@ -234,6 +234,11 @@ def ping_new_ips(dvs):
             dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
             dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
 
+
+# FIXME: This test is extremely unstable and requires several retries
+# for it to pass - we need to stabilize this test before putting it back
+# into the pipeline.
+@pytest.mark.xfail(reason="warm reboot test unstable")
 class TestWarmReboot(object):
     def test_PortSyncdWarmRestart(self, dvs, testlog):
 
