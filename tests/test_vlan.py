@@ -7,10 +7,6 @@ import platform
 from distutils.version import StrictVersion
 
 
-# FIXME: This test is extremely unstable and requires several retries
-# for it to pass - we need to stabilize this test before putting it back
-# into the pipeline.
-@pytest.mark.xfail(reason="VLAN test unstable")
 class TestVlan(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
@@ -428,6 +424,10 @@ class TestVlan(object):
             #remove vlan
             dvs.remove_vlan(vlan)
 
+    # FIXME: This test is extremely unstable and requires several retries
+    # for it to pass - we need to stabilize this test before putting it back
+    # into the pipeline.
+    @pytest.mark.xfail(reason="test case is unstable")
     def test_AddPortChannelToVlan(self, dvs, testlog):
         self.setup_db(dvs)
         marker = dvs.add_log_marker()
@@ -648,6 +648,10 @@ class TestVlan(object):
         vlan_entries = [k for k in tbl.getKeys() if k != dvs.asicdb.default_vlan_id]
         assert len(vlan_entries) == 0
 
+    # FIXME: This test is extremely unstable and requires several retries
+    # for it to pass - we need to stabilize this test before putting it back
+    # into the pipeline.
+    @pytest.mark.xfail(reason="test case is unstable")
     def test_RemoveVlanWithRouterInterface(self, dvs, testlog):
         dvs.setup_db()
         marker = dvs.add_log_marker()
