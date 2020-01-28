@@ -212,6 +212,8 @@ void TeamSync::removeLag(const string &lagName)
 
 void TeamSync::cleanTeamSync()
 {
+    SWSS_LOG_NOTICE("Cleaning up kernel LAGs ...");
+
     for (const auto& it: m_teamSelectables)
     {
         /* Cleanup LAG */
