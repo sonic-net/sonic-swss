@@ -8,6 +8,7 @@
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
+#include "chassisorch.h"
 
 using namespace std;
 using namespace swss;
@@ -18,6 +19,7 @@ using namespace swss;
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
+extern bool                        gSaiRedisLogRotate;
 
 extern void syncd_apply_view();
 /*
@@ -33,6 +35,9 @@ CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
+NatOrch *gNatOrch;
+
+bool gIsNatSupported = false;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
         m_applDb(applDb),
@@ -45,8 +50,20 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
 OrchDaemon::~OrchDaemon()
 {
     SWSS_LOG_ENTER();
-    for (Orch *o : m_orchList)
-        delete(o);
+
+    /*
+     * Some orchagents call other agents in their destructor.
+     * To avoid accessing deleted agent, do deletion in reverse order.
+     * NOTE: This is stil not a robust solution, as order in this list
+     *       does not strictly match the order of construction of agents.
+     * For a robust solution, first some cleaning/house-keeping in
+     * orchagents management is in order.
+     * For now it fixes, possible crash during process exit.
+     */
+    auto it = m_orchList.rbegin();
+    for(; it != m_orchList.rend(); ++it) {
+        delete(*it);
+    }
 }
 
 bool OrchDaemon::init()
@@ -97,13 +114,27 @@ bool OrchDaemon::init()
     gDirectory.set(cfg_vnet_rt_orch);
     VNetRouteOrch *vnet_rt_orch = new VNetRouteOrch(m_applDb, vnet_tables, vnet_orch);
     gDirectory.set(vnet_rt_orch);
-    VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME);
+    VRFOrch *vrf_orch = new VRFOrch(m_applDb, APP_VRF_TABLE_NAME, m_stateDb, STATE_VRF_OBJECT_TABLE_NAME);
     gDirectory.set(vrf_orch);
+
+    const vector<string> chassis_frontend_tables = {
+        CFG_PASS_THROUGH_ROUTE_TABLE_NAME,
+    };
+    ChassisOrch* chassis_frontend_orch = new ChassisOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
+    gDirectory.set(chassis_frontend_orch);
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch);
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch);
-    gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gNeighOrch);
-    CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
+    gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gNeighOrch, gIntfsOrch, vrf_orch);
+
+    TableConnector confDbSflowTable(m_configDb, CFG_SFLOW_TABLE_NAME);
+    TableConnector appCoppTable(m_applDb, APP_COPP_TABLE_NAME);
+
+    vector<TableConnector> copp_table_connectors = {
+        confDbSflowTable,
+        appCoppTable
+    };
+    CoppOrch  *copp_orch  = new CoppOrch(copp_table_connectors);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
     VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
@@ -117,6 +148,7 @@ bool OrchDaemon::init()
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
         CFG_SCHEDULER_TABLE_NAME,
         CFG_DSCP_TO_TC_MAP_TABLE_NAME,
+        CFG_DOT1P_TO_TC_MAP_TABLE_NAME,
         CFG_QUEUE_TABLE_NAME,
         CFG_PORT_QOS_MAP_TABLE_NAME,
         CFG_WRED_PROFILE_TABLE_NAME,
@@ -142,7 +174,7 @@ bool OrchDaemon::init()
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
     MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
-    TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_NAME);
+    TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
 
     vector<TableConnector> acl_table_connectors = {
@@ -165,16 +197,41 @@ bool OrchDaemon::init()
 
     WatermarkOrch *wm_orch = new WatermarkOrch(m_configDb, wm_tables);
 
+    vector<string> sflow_tables = {
+            APP_SFLOW_TABLE_NAME,
+            APP_SFLOW_SESSION_TABLE_NAME,
+            APP_SFLOW_SAMPLE_RATE_TABLE_NAME
+    };
+    SflowOrch *sflow_orch = new SflowOrch(m_applDb,  sflow_tables);
+
+    vector<string> debug_counter_tables = {
+        CFG_DEBUG_COUNTER_TABLE_NAME,
+        CFG_DEBUG_COUNTER_DROP_REASON_TABLE_NAME
+    };
+
+    DebugCounterOrch *debug_counter_orch = new DebugCounterOrch(m_configDb, debug_counter_tables, 1000);
+
+    const int natorch_base_pri = 50;
+
+    vector<table_name_with_pri_t> nat_tables = {
+        { APP_NAT_TABLE_NAME,        natorch_base_pri + 4 },
+        { APP_NAPT_TABLE_NAME,       natorch_base_pri + 3 },
+        { APP_NAT_TWICE_TABLE_NAME,  natorch_base_pri + 2 },
+        { APP_NAPT_TWICE_TABLE_NAME, natorch_base_pri + 1 },
+        { APP_NAT_GLOBAL_TABLE_NAME, natorch_base_pri     }
+    };
+
+    gNatOrch = new NatOrch(m_applDb, m_stateDb, nat_tables, gRouteOrch, gNeighOrch);
+
     /*
      * The order of the orch list is important for state restore of warm start and
-     * the queued processing in m_toSync map after gPortsOrch->isPortReady() is set.
+     * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
      *
-     * For the multiple consumers in ports_tables, tasks for LAG_TABLE is processed before VLAN_TABLE
-     * when iterating ConsumerMap.
-     * That is ensured implicitly by the order of map key, "LAG_TABLE" is smaller than "VLAN_TABLE" in lexicographic order.
+     * For the multiple consumers in Orchs, tasks in a table which name is smaller in lexicographic order are processed first
+     * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
+     * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gBufferOrch, gPortsOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch };
-
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -212,13 +269,15 @@ bool OrchDaemon::init()
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);
     m_orchList.push_back(gAclOrch);
-    m_orchList.push_back(cfg_vnet_rt_orch);
-    m_orchList.push_back(vnet_orch);
-    m_orchList.push_back(vnet_rt_orch);
+    m_orchList.push_back(chassis_frontend_orch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
     m_orchList.push_back(vxlan_vrf_orch);
+    m_orchList.push_back(cfg_vnet_rt_orch);
+    m_orchList.push_back(vnet_orch);
+    m_orchList.push_back(vnet_rt_orch);
+    m_orchList.push_back(gNatOrch);
 
     m_select = new Select();
 
@@ -233,6 +292,7 @@ bool OrchDaemon::init()
     };
 
     if ((platform == MLNX_PLATFORM_SUBSTRING)
+        || (platform == INVM_PLATFORM_SUBSTRING)
         || (platform == BFN_PLATFORM_SUBSTRING)
         || (platform == NPS_PLATFORM_SUBSTRING))
     {
@@ -266,6 +326,7 @@ bool OrchDaemon::init()
         static const vector<sai_queue_attr_t> queueAttrIds;
 
         if ((platform == MLNX_PLATFORM_SUBSTRING)
+            || (platform == INVM_PLATFORM_SUBSTRING)
             || (platform == NPS_PLATFORM_SUBSTRING))
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
@@ -355,6 +416,19 @@ void OrchDaemon::flush()
     {
         SWSS_LOG_ERROR("Failed to flush redis pipeline %d", status);
         exit(EXIT_FAILURE);
+    }
+
+    // check if logroate is requested
+    if (gSaiRedisLogRotate)
+    {
+        SWSS_LOG_NOTICE("performing log rotate");
+
+        gSaiRedisLogRotate = false;
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_PERFORM_LOG_ROTATE;
+        attr.value.booldata = true;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     }
 }
 
@@ -452,24 +526,29 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     }
 
     /*
-     * Four iterations are needed.
+     * Three iterations are needed.
      *
-     * First iteration: switchorch, Port init/hostif create part of portorch.
+     * First iteration: switchorch, Port init/hostif create part of portorch, buffers configuration
      *
-     * Second iteratoin: gBufferOrch which requires port created,
-     *   then port speed/mtu/fec_mode/pfc_asym/admin_status config.
+     * Second iteratoin: port speed/mtu/fec_mode/pfc_asym/admin_status config,
+     * other orch(s) which wait for port to become ready.
      *
-     * Third iteration: other orch(s) which wait for port init done.
-     *
-     * Fourth iteration: Drain remaining data that are out of order like LAG_MEMBER_TABLE and
-     * VLAN_MEMBER_TABLE since they were checked before LAG_TABLE and VLAN_TABLE within gPortsOrch.
+     * Third iteration: Drain remaining data that are out of order.
      */
-    for (auto it = 0; it < 4; it++)
+
+    for (auto it = 0; it < 3; it++)
     {
+        SWSS_LOG_DEBUG("The current iteration is %d", it);
+
         for (Orch *o : m_orchList)
         {
             o->doTask();
         }
+    }
+
+    for (Orch *o : m_orchList)
+    {
+        o->postBake();
     }
 
     /*

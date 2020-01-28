@@ -20,9 +20,6 @@ extern "C" {
 #include "selectabletimer.h"
 #include "macaddress.h"
 
-using namespace std;
-using namespace swss;
-
 const char delimiter           = ':';
 const char list_item_delimiter = ',';
 const char ref_start           = '[';
@@ -32,6 +29,7 @@ const char range_specifier     = '-';
 const char config_db_key_delimiter = '|';
 const char state_db_key_delimiter  = '|';
 
+#define INVM_PLATFORM_SUBSTRING "innovium"
 #define MLNX_PLATFORM_SUBSTRING "mellanox"
 #define BRCM_PLATFORM_SUBSTRING "broadcom"
 #define BFN_PLATFORM_SUBSTRING  "barefoot"
@@ -40,6 +38,7 @@ const char state_db_key_delimiter  = '|';
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
+#define VLAN_SUB_INTERFACE_SEPARATOR "."
 
 const int default_orch_pri = 0;
 
@@ -52,14 +51,14 @@ typedef enum
     task_ignore
 } task_process_status;
 
-typedef map<string, sai_object_id_t> object_map;
-typedef pair<string, sai_object_id_t> object_map_pair;
+typedef std::map<std::string, sai_object_id_t> object_map;
+typedef std::pair<std::string, sai_object_id_t> object_map_pair;
 
-typedef map<string, object_map*> type_map;
-typedef pair<string, object_map*> type_map_pair;
-typedef map<string, KeyOpFieldsValuesTuple> SyncMap;
+typedef std::map<std::string, object_map*> type_map;
+typedef std::pair<std::string, object_map*> type_map_pair;
+typedef std::map<std::string, swss::KeyOpFieldsValuesTuple> SyncMap;
 
-typedef pair<string, int> table_name_with_pri_t;
+typedef std::pair<std::string, int> table_name_with_pri_t;
 
 class Orch;
 
@@ -67,10 +66,10 @@ class Orch;
 // 1. one Orch can have one or more Executor
 // 2. one Executor must belong to one and only one Orch
 // 3. Executor will hold an pointer to new-ed selectable, and delete it during dtor
-class Executor : public Selectable
+class Executor : public swss::Selectable
 {
 public:
-    Executor(Selectable *selectable, Orch *orch, const string &name)
+    Executor(swss::Selectable *selectable, Orch *orch, const std::string &name)
         : m_selectable(selectable)
         , m_orch(orch)
         , m_name(name)
@@ -81,7 +80,7 @@ public:
 
     // Decorating Selectable
     int getFd() override { return m_selectable->getFd(); }
-    void readData() override { m_selectable->readData(); }
+    uint64_t readData() override { return m_selectable->readData(); }
     bool hasCachedData() override { return m_selectable->hasCachedData(); }
     bool initializedWithData() override { return m_selectable->initializedWithData(); }
     void updateAfterRead() override { m_selectable->updateAfterRead(); }
@@ -94,35 +93,35 @@ public:
     virtual void execute() { }
     virtual void drain() { }
 
-    virtual string getName() const
+    virtual std::string getName() const
     {
         return m_name;
     }
 
 protected:
-    Selectable *m_selectable;
+    swss::Selectable *m_selectable;
     Orch *m_orch;
 
     // Name for Executor
-    string m_name;
+    std::string m_name;
 
     // Get the underlying selectable
-    Selectable *getSelectable() const { return m_selectable; }
+    swss::Selectable *getSelectable() const { return m_selectable; }
 };
 
 class Consumer : public Executor {
 public:
-    Consumer(ConsumerTableBase *select, Orch *orch, const string &name)
+    Consumer(swss::ConsumerTableBase *select, Orch *orch, const std::string &name)
         : Executor(select, orch, name)
     {
     }
 
-    ConsumerTableBase *getConsumerTable() const
+    swss::ConsumerTableBase *getConsumerTable() const
     {
-        return static_cast<ConsumerTableBase *>(getSelectable());
+        return static_cast<swss::ConsumerTableBase *>(getSelectable());
     }
 
-    string getTableName() const
+    std::string getTableName() const
     {
         return getConsumerTable()->getTableName();
     }
@@ -132,11 +131,11 @@ public:
         return getConsumerTable()->getDbId();
     }
 
-    string dumpTuple(KeyOpFieldsValuesTuple &tuple);
-    void dumpPendingTasks(vector<string> &ts);
+    std::string dumpTuple(swss::KeyOpFieldsValuesTuple &tuple);
+    void dumpPendingTasks(std::vector<std::string> &ts);
 
     size_t refillToSync();
-    size_t refillToSync(Table* table);
+    size_t refillToSync(swss::Table* table);
     void execute();
     void drain();
 
@@ -146,10 +145,10 @@ public:
 
 protected:
     // Returns: the number of entries added to m_toSync
-    size_t addToSync(std::deque<KeyOpFieldsValuesTuple> &entries);
+    size_t addToSync(std::deque<swss::KeyOpFieldsValuesTuple> &entries);
 };
 
-typedef map<string, std::shared_ptr<Executor>> ConsumerMap;
+typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;
 
 typedef enum
 {
@@ -161,55 +160,57 @@ typedef enum
     failure
 } ref_resolve_status;
 
-typedef pair<DBConnector *, string> TableConnector;
-typedef pair<DBConnector *, vector<string>> TablesConnector;
+typedef std::pair<swss::DBConnector *, std::string> TableConnector;
+typedef std::pair<swss::DBConnector *, std::vector<std::string>> TablesConnector;
 
 class Orch
 {
 public:
-    Orch(DBConnector *db, const string tableName, int pri = default_orch_pri);
-    Orch(DBConnector *db, const vector<string> &tableNames);
-    Orch(DBConnector *db, const vector<table_name_with_pri_t> &tableNameWithPri);
-    Orch(const vector<TableConnector>& tables);
+    Orch(swss::DBConnector *db, const std::string tableName, int pri = default_orch_pri);
+    Orch(swss::DBConnector *db, const std::vector<std::string> &tableNames);
+    Orch(swss::DBConnector *db, const std::vector<table_name_with_pri_t> &tableNameWithPri);
+    Orch(const std::vector<TableConnector>& tables);
     virtual ~Orch();
 
-    vector<Selectable*> getSelectables();
+    std::vector<swss::Selectable*> getSelectables();
 
     // add the existing table data (left by warm reboot) to the consumer todo task list.
-    size_t addExistingData(Table *table);
-    size_t addExistingData(const string& tableName);
+    size_t addExistingData(swss::Table *table);
+    size_t addExistingData(const std::string& tableName);
 
     // Prepare for warm start if Redis contains valid input data
     // otherwise fallback to cold start
     virtual bool bake();
+    // Clean up the state set in bake()
+    virtual bool postBake();
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     virtual void doTask();
 
     /* Run doTask against a specific executor */
     virtual void doTask(Consumer &consumer) = 0;
-    virtual void doTask(NotificationConsumer &consumer) { }
-    virtual void doTask(SelectableTimer &timer) { }
+    virtual void doTask(swss::NotificationConsumer &consumer) { }
+    virtual void doTask(swss::SelectableTimer &timer) { }
 
     /* TODO: refactor recording */
-    static void recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
+    static void recordTuple(Consumer &consumer, swss::KeyOpFieldsValuesTuple &tuple);
 
-    void dumpPendingTasks(vector<string> &ts);
+    void dumpPendingTasks(std::vector<std::string> &ts);
 protected:
     ConsumerMap m_consumerMap;
 
     static void logfileReopen();
-    string dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple);
-    ref_resolve_status resolveFieldRefValue(type_map&, const string&, KeyOpFieldsValuesTuple&, sai_object_id_t&);
-    bool parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
-    bool parseReference(type_map &type_maps, string &ref, string &table_name, string &object_name);
-    ref_resolve_status resolveFieldRefArray(type_map&, const string&, KeyOpFieldsValuesTuple&, vector<sai_object_id_t>&);
+    std::string dumpTuple(Consumer &consumer, swss::KeyOpFieldsValuesTuple &tuple);
+    ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&);
+    bool parseIndexRange(const std::string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
+    bool parseReference(type_map &type_maps, std::string &ref, std::string &table_name, std::string &object_name);
+    ref_resolve_status resolveFieldRefArray(type_map&, const std::string&, swss::KeyOpFieldsValuesTuple&, std::vector<sai_object_id_t>&);
 
     /* Note: consumer will be owned by this class */
     void addExecutor(Executor* executor);
-    Executor *getExecutor(string executorName);
+    Executor *getExecutor(std::string executorName);
 private:
-    void addConsumer(DBConnector *db, string tableName, int pri = default_orch_pri);
+    void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
 };
 
 #include "request_parser.h"
@@ -217,12 +218,12 @@ private:
 class Orch2 : public Orch
 {
 public:
-    Orch2(DBConnector *db, const std::string& tableName, Request& request, int pri=default_orch_pri)
+    Orch2(swss::DBConnector *db, const std::string& tableName, Request& request, int pri=default_orch_pri)
         : Orch(db, tableName, pri), request_(request)
     {
     }
 
-    Orch2(DBConnector *db, const vector<string> &tableNames, Request& request)
+    Orch2(swss::DBConnector *db, const std::vector<std::string> &tableNames, Request& request)
         : Orch(db, tableNames), request_(request)
     {
     }

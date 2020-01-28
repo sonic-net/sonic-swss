@@ -2,6 +2,7 @@
 #include "policerorch.h"
 
 #include "converter.h"
+#include <inttypes.h>
 
 using namespace std;
 using namespace swss;
@@ -63,7 +64,7 @@ bool PolicerOrch::getPolicerOid(const string &name, sai_object_id_t &oid)
     if (policerExists(name))
     {
         oid = m_syncdPolicers[name];
-        SWSS_LOG_NOTICE("Get policer %s oid:%lx", name.c_str(), oid);
+        SWSS_LOG_NOTICE("Get policer %s oid:%" PRIx64, name.c_str(), oid);
         return true;
     }
 
@@ -114,7 +115,7 @@ void PolicerOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -129,12 +130,8 @@ void PolicerOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            if (m_syncdPolicers.find(key) != m_syncdPolicers.end())
-            {
-                SWSS_LOG_ERROR("Policer %s already exists", key.c_str());
-                it = consumer.m_toSync.erase(it);
-                continue;
-            }
+            // Mark the opeartion as an 'update', if the policer exists.
+            bool update = m_syncdPolicers.find(key) != m_syncdPolicers.end();
 
             vector<sai_attribute_t> attrs;
             bool meter_type = false, mode = false;
@@ -211,26 +208,64 @@ void PolicerOrch::doTask(Consumer &consumer)
                 attrs.push_back(attr);
             }
 
-            if (!meter_type || !mode)
+            // Create a new policer
+            if (!update)
             {
-                SWSS_LOG_ERROR("Failed to create policer %s,\
-                        missing madatory fields", key.c_str());
+                if (!meter_type || !mode)
+                {
+                    SWSS_LOG_ERROR("Failed to create policer %s,\
+                            missing mandatory fields", key.c_str());
+                }
+
+                sai_object_id_t policer_id;
+                sai_status_t status = sai_policer_api->create_policer(
+                    &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
+                            key.c_str(), status);
+                    it++;
+                    continue;
+                }
+
+                SWSS_LOG_NOTICE("Created policer %s", key.c_str());
+                m_syncdPolicers[key] = policer_id;
+                m_policerRefCounts[key] = 0;
+            }
+            // Update an existing policer
+            else
+            {
+                auto policer_id = m_syncdPolicers[key];
+
+                // The update operation has limitations that it could only update
+                // the rate and the size accordingly.
+                // SR_TCM: CIR, CBS, PBS
+                // TR_TCM: CIR, CBS, PIR, PBS
+                // STORM_CONTROL: CIR, CBS
+                for (auto & attr: attrs)
+                {
+                    if (attr.id != SAI_POLICER_ATTR_CBS &&
+                            attr.id != SAI_POLICER_ATTR_CIR &&
+                            attr.id != SAI_POLICER_ATTR_PBS &&
+                            attr.id != SAI_POLICER_ATTR_PIR)
+                    {
+                        continue;
+                    }
+
+                    sai_status_t status = sai_policer_api->set_policer_attribute(
+                            policer_id, &attr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to update policer %s attribute, rv:%d",
+                                key.c_str(), status);
+                        it++;
+                        continue;
+                    }
+                }
+
+                SWSS_LOG_NOTICE("Update policer %s attributes", key.c_str());
             }
 
-            sai_object_id_t policer_id;
-            sai_status_t status = sai_policer_api->create_policer(
-                &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
-                        key.c_str(), status);
-                it++;
-                continue;
-            }
-
-            SWSS_LOG_NOTICE("Created policer %s", key.c_str());
-            m_syncdPolicers[key] = policer_id;
-            m_policerRefCounts[key] = 0;
             it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
@@ -251,7 +286,7 @@ void PolicerOrch::doTask(Consumer &consumer)
 
             sai_status_t status = sai_policer_api->remove_policer(
                     m_syncdPolicers.at(key));
-            if (status == SAI_STATUS_SUCCESS)
+            if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to remove policer %s, rv:%d",
                         key.c_str(), status);

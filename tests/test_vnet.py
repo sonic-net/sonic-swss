@@ -59,12 +59,18 @@ def get_created_entry(db, table, existed_entries):
     return new_entries[0]
 
 
-def get_created_entries(db, table, existed_entries, count):
+def get_all_created_entries(db, table, existed_entries):
     tbl =  swsscommon.Table(db, table)
     entries = set(tbl.getKeys())
     new_entries = list(entries - existed_entries)
-    assert len(new_entries) == count, "Wrong number of created entries."
+    assert len(new_entries) >= 0, "Get all could be no new created entries."
     new_entries.sort()
+    return new_entries
+
+
+def get_created_entries(db, table, existed_entries, count):
+    new_entries = get_all_created_entries(db, table, existed_entries)
+    assert len(new_entries) == count, "Wrong number of created entries."
     return new_entries
 
 
@@ -248,6 +254,10 @@ def delete_vlan_interface(dvs, ifname, ipaddr):
 
     time.sleep(2)
 
+    delete_entry_tbl(conf_db, "VLAN_INTERFACE", ifname)
+
+    time.sleep(2)
+
 
 def create_phy_interface(dvs, ifname, vnet_name, ipaddr):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -290,8 +300,12 @@ def delete_phy_interface(dvs, ifname, ipaddr):
 
     time.sleep(2)
 
+    delete_entry_tbl(conf_db, "INTERFACE", ifname)
 
-def create_vnet_entry(dvs, name, tunnel, vni, peer_list):
+    time.sleep(2)
+
+
+def create_vnet_entry(dvs, name, tunnel, vni, peer_list, scope=""):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -300,6 +314,9 @@ def create_vnet_entry(dvs, name, tunnel, vni, peer_list):
             ("vni", vni),
             ("peer_list", peer_list),
     ]
+
+    if scope:
+        attrs.append(('scope', scope))
 
     # create the VXLAN tunnel Term entry in Config DB
     create_entry_tbl(
@@ -512,13 +529,21 @@ class VnetVxlanVrfTunnel(object):
     def check_vnet_entry(self, dvs, name, peer_list=[]):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         #Check virtual router objects
-        assert how_many_entries_exist(asic_db, self.ASIC_VRF_TABLE) == (len(self.vnet_vr_ids) + 2),\
+        assert how_many_entries_exist(asic_db, self.ASIC_VRF_TABLE) == (len(self.vnet_vr_ids) + 1),\
                                      "The VR objects are not created"
 
-        new_vr_ids  = get_created_entries(asic_db, self.ASIC_VRF_TABLE, self.vnet_vr_ids, 2)
+        new_vr_ids  = get_created_entries(asic_db, self.ASIC_VRF_TABLE, self.vnet_vr_ids, 1)
 
         self.vnet_vr_ids.update(new_vr_ids)
-        self.vr_map[name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[1], 'peer':peer_list }
+        self.vr_map[name] = { 'ing':new_vr_ids[0], 'egr':new_vr_ids[0], 'peer':peer_list }
+
+    def check_default_vnet_entry(self, dvs, name):
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        #Check virtual router objects
+        assert how_many_entries_exist(asic_db, self.ASIC_VRF_TABLE) == (len(self.vnet_vr_ids)),\
+                                     "Some VR objects are created"
+        #Mappers for default VNET is created with default VR objects.
+        self.vr_map[name] = { 'ing':list(self.vnet_vr_ids)[0], 'egr':list(self.vnet_vr_ids)[0], 'peer':[] }
 
     def check_del_vnet_entry(self, dvs, name):
         # TODO: Implement for VRF VNET
@@ -527,10 +552,7 @@ class VnetVxlanVrfTunnel(object):
     def vnet_route_ids(self, dvs, name, local=False):
         vr_set = set()
 
-        if local:
-            vr_set.add(self.vr_map[name].get('egr'))
-        else:
-            vr_set.add(self.vr_map[name].get('ing'))
+        vr_set.add(self.vr_map[name].get('ing'))
 
         try:
             for peer in self.vr_map[name].get('peer'):
@@ -560,15 +582,19 @@ class VnetVxlanVrfTunnel(object):
         new_rif = get_created_entry(asic_db, self.ASIC_RIF_TABLE, self.rifs)
         check_object(asic_db, self.ASIC_RIF_TABLE, new_rif, expected_attr)
 
-        #IP2ME and subnet routes will be created with every router interface
-        new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, 2)
+        #IP2ME route will be created with every router interface
+        new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, 1)
 
         self.rifs.add(new_rif)
         self.routes.update(new_route)
 
     def check_del_router_interface(self, dvs, name):
-        # TODO: Implement for VRF VNET
-        return True
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+
+        old_rif = get_deleted_entries(asic_db, self.ASIC_RIF_TABLE, self.rifs, 1)
+        check_deleted_object(asic_db, self.ASIC_RIF_TABLE, old_rif[0])
+
+        self.rifs.remove(old_rif[0])
 
     def check_vnet_local_routes(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
@@ -578,7 +604,10 @@ class VnetVxlanVrfTunnel(object):
 
         new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, count)
 
-        #Check if the route is duplicated to egress VRF
+        #Routes are not replicated to egress VRF, return if count is 0, else check peering
+        if not count:
+            return
+
         asic_vrs = set()
         for idx in range(count):
             rt_key = json.loads(new_route[idx])
@@ -800,6 +829,9 @@ class VnetBitmapVxlanTunnel(object):
         self.rifs = get_exist_entries(dvs, self.ASIC_RIF_TABLE)
         self.vnet_map.update({name:{}})
 
+    def check_default_vnet_entry(self, dvs, name):
+        return self.check_vnet_entry(dvs, name)
+
     def check_del_vnet_entry(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
@@ -876,12 +908,16 @@ class VnetBitmapVxlanTunnel(object):
         _vni = str(vni) if vni != 0 else self.vnet_map[name]['vni']
 
         if (mac,_vni) not in self.vnet_mac_vni_list:
-            new_fdb = get_created_entry(asic_db, self.ASIC_FDB_ENTRY, self.fdbs)
+            new_fdbs = get_all_created_entries(asic_db, self.ASIC_FDB_ENTRY, self.fdbs)
 
             expected_attrs = {
                 "SAI_FDB_ENTRY_ATTR_TYPE": "SAI_FDB_ENTRY_TYPE_STATIC",
                 "SAI_FDB_ENTRY_ATTR_ENDPOINT_IP": endpoint
             }
+
+            new_fdb = next(iter([fdb for fdb in new_fdbs if (mac if mac != "" else "00:00:00:00:00:00") in fdb]), None)
+            assert new_fdb, "Wrong number of created FDB entries."
+
             check_object(asic_db, self.ASIC_FDB_ENTRY, new_fdb, expected_attrs)
 
             self.fdbs.add(new_fdb)
@@ -922,7 +958,6 @@ class TestVnetOrch(object):
     '''
     Test 1 - Create Vlan Interface, Tunnel and Vnet
     '''
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_vnet_orch_1(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
@@ -944,6 +979,7 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan101", "Ethernet28", "Vnet_2000", "100.100.4.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_2000', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet_2000', '10.10.10.1')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2000', '10.10.10.1', tunnel_name)
 
@@ -963,6 +999,7 @@ class TestVnetOrch(object):
         create_phy_interface(dvs, "Ethernet4", "Vnet_2001", "100.102.1.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_2001')
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.2.1/32", 'Vnet_2001', '10.10.10.2', "00:12:34:56:78:9A")
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2001', '10.10.10.2', tunnel_name, "00:12:34:56:78:9A")
 
@@ -1004,7 +1041,6 @@ class TestVnetOrch(object):
     '''
     Test 2 - Two VNets, One HSMs per VNet
     '''
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_vnet_orch_2(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
@@ -1023,15 +1059,19 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan1001", "Ethernet0", "Vnet_1", "1.1.10.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_1', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.10/32", 'Vnet_1', '100.1.1.10')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '100.1.1.10', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.11/32", 'Vnet_1', '100.1.1.10')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '100.1.1.10', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.12/32", 'Vnet_1', '200.200.1.200')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '200.200.1.200', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.14/32", 'Vnet_1', '200.200.1.201')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_1', '200.200.1.201', tunnel_name)
 
@@ -1046,9 +1086,11 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan1002", "Ethernet4", "Vnet_2", "2.2.10.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_2', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "2.2.2.10/32", 'Vnet_2', '100.1.1.20')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2', '100.1.1.20', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "2.2.2.11/32", 'Vnet_2', '100.1.1.20')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_2', '100.1.1.20', tunnel_name)
 
@@ -1096,7 +1138,6 @@ class TestVnetOrch(object):
     '''
     Test 3 - Two VNets, One HSMs per VNet, Peering
     '''
-    @pytest.mark.skip(reason="Failing. Under investigation")
     def test_vnet_orch_3(self, dvs, testlog):
         vnet_obj = self.get_vnet_obj()
 
@@ -1124,9 +1165,11 @@ class TestVnetOrch(object):
         vid = create_vlan_interface(dvs, "Vlan2002", "Ethernet12", "Vnet_20", "8.8.10.1/24")
         vnet_obj.check_router_interface(dvs, 'Vnet_20', vid)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "5.5.5.10/32", 'Vnet_10', '50.1.1.10')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_10', '50.1.1.10', tunnel_name)
 
+        vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "8.8.8.10/32", 'Vnet_20', '80.1.1.20')
         vnet_obj.check_vnet_routes(dvs, 'Vnet_10', '80.1.1.20', tunnel_name)
 
@@ -1162,3 +1205,134 @@ class TestVnetOrch(object):
         delete_vnet_entry(dvs, 'Vnet_20')
         vnet_obj.check_del_vnet_entry(dvs, 'Vnet_20')
 
+    '''
+    Test 4 - IPv6 Vxlan tunnel test
+    '''
+    @pytest.mark.skip(reason="Failing. Under investigation")
+    def test_vnet_orch_4(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_v6'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, 'fd:2::32')
+        create_vnet_entry(dvs, 'Vnet3001', tunnel_name, '3001', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet3001')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet3001', '3001')
+        vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:2::32')
+
+        vid = create_vlan_interface(dvs, "Vlan300", "Ethernet24", 'Vnet3001', "100.100.3.1/24")
+        vnet_obj.check_router_interface(dvs, 'Vnet3001', vid)
+
+        vid = create_vlan_interface(dvs, "Vlan301", "Ethernet28", 'Vnet3001', "100.100.4.1/24")
+        vnet_obj.check_router_interface(dvs, 'Vnet3001', vid)
+
+        create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000', tunnel_name)
+
+        create_vnet_routes(dvs, "100.100.1.2/32", 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000', tunnel_name)
+
+        create_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet3001', 'Vlan300')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001')
+
+        create_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet3001', 'Vlan301')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3001')
+
+        #Create Physical Interface in another Vnet
+
+        create_vnet_entry(dvs, 'Vnet3002', tunnel_name, '3002', "")
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet3002')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet3002', '3002')
+
+        create_phy_interface(dvs, "Ethernet60", 'Vnet3002', "100.102.1.1/24")
+        vnet_obj.check_router_interface(dvs, 'Vnet3002')
+
+        create_vnet_routes(dvs, "100.100.2.1/32", 'Vnet3002', 'fd:2::34', "00:12:34:56:78:9A")
+        vnet_obj.check_vnet_routes(dvs, 'Vnet3002', 'fd:2::34', tunnel_name, "00:12:34:56:78:9A")
+
+        create_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet3002', 'Ethernet60')
+        vnet_obj.check_vnet_local_routes(dvs, 'Vnet3002')
+
+        # Test peering
+        create_vnet_entry(dvs, 'Vnet3003', tunnel_name, '3003', 'Vnet3004')
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet3003', ['Vnet3004'])
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet3003', '3003')
+
+        create_vnet_entry(dvs, 'Vnet3004', tunnel_name, '3004', 'Vnet3003')
+
+        vnet_obj.check_vnet_entry(dvs, 'Vnet3004', ['Vnet3003'])
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet3004', '3004')
+
+        create_vnet_routes(dvs, "5.5.5.10/32", 'Vnet3003', 'fd:2::35')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet3004', 'fd:2::35', tunnel_name)
+
+        create_vnet_routes(dvs, "8.8.8.10/32", 'Vnet3004', 'fd:2::36')
+        vnet_obj.check_vnet_routes(dvs, 'Vnet3003', 'fd:2::36', tunnel_name)
+
+        # Clean-up and verify remove flows
+
+        delete_vnet_routes(dvs, "5.5.5.10/32", 'Vnet3003')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet3003')
+
+        delete_vnet_routes(dvs, "8.8.8.10/32", 'Vnet3004')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet3004')
+
+        delete_vnet_entry(dvs, 'Vnet3003')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet3003')
+
+        delete_vnet_entry(dvs, 'Vnet3004')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet3004')
+
+        delete_vnet_routes(dvs, "100.100.2.1/24", 'Vnet3002')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet3002')
+
+        delete_vnet_local_routes(dvs, "100.102.1.0/24", 'Vnet3002')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3002')
+
+        delete_phy_interface(dvs, "Ethernet60", "100.102.1.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Ethernet60")
+
+        delete_vnet_entry(dvs, 'Vnet3002')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet3002')
+
+        delete_vnet_local_routes(dvs, "100.100.3.0/24", 'Vnet3001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001')
+
+        delete_vnet_local_routes(dvs, "100.100.4.0/24", 'Vnet3001')
+        vnet_obj.check_del_vnet_local_routes(dvs, 'Vnet3001')
+
+        delete_vnet_routes(dvs, "100.100.1.1/32", 'Vnet3001')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet3001')
+
+        delete_vnet_routes(dvs, "100.100.1.2/32", 'Vnet3001')
+        vnet_obj.check_del_vnet_routes(dvs, 'Vnet3001')
+
+        delete_vlan_interface(dvs, "Vlan300", "100.100.3.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Vlan300")
+
+        delete_vlan_interface(dvs, "Vlan301", "100.100.4.1/24")
+        vnet_obj.check_del_router_interface(dvs, "Vlan301")
+
+        delete_vnet_entry(dvs, 'Vnet3001')
+        vnet_obj.check_del_vnet_entry(dvs, 'Vnet3001')
+
+    '''
+    Test 5 - Default VNet test
+    '''
+    def test_vnet_orch_5(self, dvs, testlog):
+        vnet_obj = self.get_vnet_obj()
+
+        tunnel_name = 'tunnel_5'
+
+        vnet_obj.fetch_exist_entries(dvs)
+
+        create_vxlan_tunnel(dvs, tunnel_name, '8.8.8.8')
+        create_vnet_entry(dvs, 'Vnet_5', tunnel_name, '4789', "", 'default')
+
+        vnet_obj.check_default_vnet_entry(dvs, 'Vnet_5')
+        vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_5', '4789')

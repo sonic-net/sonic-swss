@@ -5,6 +5,7 @@
 #include "netlink.h"
 #include "select.h"
 #include "warm_restart.h"
+#include <signal.h>
 
 using namespace std;
 using namespace swss;
@@ -17,6 +18,14 @@ bool gLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
 
+bool received_sigterm = false;
+
+void sig_handler(int signo)
+{
+    received_sigterm = true;
+    return;
+}
+
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("teammgrd");
@@ -24,11 +33,14 @@ int main(int argc, char **argv)
 
     SWSS_LOG_NOTICE("--- Starting teammrgd ---");
 
+    /* Register the signal handler for SIGTERM */
+    signal(SIGTERM, sig_handler);
+
     try
     {
-        DBConnector conf_db(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-        DBConnector app_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-        DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+        DBConnector conf_db("CONFIG_DB", 0);
+        DBConnector app_db("APPL_DB", 0);
+        DBConnector state_db("STATE_DB", 0);
 
         WarmStart::initialize("teammgrd", "teamd");
         WarmStart::checkWarmStart("teammgrd", "teamd");
@@ -55,6 +67,12 @@ int main(int argc, char **argv)
 
         while (true)
         {
+            if(received_sigterm)
+            {
+                teammgr.cleanTeamProcesses(SIGTERM);
+                received_sigterm = false;
+            }
+            
             Selectable *sel;
             int ret;
 

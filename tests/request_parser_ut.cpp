@@ -8,6 +8,8 @@
 #include "orch.h"
 #include "request_parser.h"
 
+using namespace swss;
+
 const request_description_t request_description1 = {
     { REQ_T_STRING },
     {

@@ -13,9 +13,6 @@
 
 using namespace swss;
 
-#define VLAN_PREFIX "Vlan"
-#define LAG_PREFIX  "PortChannel"
-
 static bool send_message(struct nl_sock *sk, struct nl_msg *msg)
 {
     bool rc = false;
@@ -47,7 +44,8 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
-        m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME)
+        m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
+        m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME)
 {
     int err = 0;
 
@@ -66,28 +64,25 @@ bool NbrMgr::isIntfStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
 
-    if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+    if (m_stateIntfTable.get(alias, temp))
     {
-        if (m_stateVlanTable.get(alias, temp))
-        {
-            SWSS_LOG_DEBUG("Vlan %s is ready", alias.c_str());
-            return true;
-        }
-    }
-    else if (!alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
-    {
-        if (m_stateLagTable.get(alias, temp))
-        {
-            SWSS_LOG_DEBUG("Lag %s is ready", alias.c_str());
-            return true;
-        }
-    }
-    else if (m_statePortTable.get(alias, temp))
-    {
-        SWSS_LOG_DEBUG("Port %s is ready", alias.c_str());
+        SWSS_LOG_DEBUG("Intf %s is ready", alias.c_str());
         return true;
     }
 
+    return false;
+}
+
+bool NbrMgr::isNeighRestoreDone()
+{
+    string value;
+
+    m_stateNeighRestoreTable.hget("Flags", "restored", value);
+    if (value == "true")
+    {
+        SWSS_LOG_INFO("Kernel neighbor table restore is done");
+        return true;
+    }
     return false;
 }
 

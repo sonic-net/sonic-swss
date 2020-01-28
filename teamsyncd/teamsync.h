@@ -25,6 +25,7 @@ public:
     TeamSync(DBConnector *db, DBConnector *stateDb, Select *select);
 
     void periodic();
+    void cleanTeamSync();
 
     /* Listen to RTM_NEWLINK, RTM_DELLINK to track team devices */
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
@@ -38,7 +39,7 @@ public:
         ~TeamPortSync();
 
         int getFd() override;
-        void readData() override;
+        uint64_t readData() override;
 
         /* member_name -> enabled|disabled */
         std::map<std::string, bool> m_lagMembers;

@@ -1,10 +1,13 @@
 #include "tokenize.h"
-
 #include "bufferorch.h"
 #include "logger.h"
+#include "sai_serialize.h"
 
+#include <inttypes.h>
 #include <sstream>
 #include <iostream>
+
+using namespace std;
 
 extern sai_port_api_t *sai_port_api;
 extern sai_queue_api_t *sai_queue_api;
@@ -14,7 +17,13 @@ extern sai_buffer_api_t *sai_buffer_api;
 extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 
-using namespace std;
+#define BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS  "10000"
+
+
+static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
+{
+    SAI_BUFFER_POOL_STAT_WATERMARK_BYTES,
+};
 
 type_map BufferOrch::m_buffer_type_maps = {
     {CFG_BUFFER_POOL_TABLE_NAME, new object_map()},
@@ -25,11 +34,18 @@ type_map BufferOrch::m_buffer_type_maps = {
     {CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME, new object_map()}
 };
 
-BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNames)
+BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) :
+    Orch(db, tableNames),
+    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
+    m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
+    m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
+    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
+    m_countersDbRedisClient(m_countersDb.get())
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
     initBufferReadyLists(db);
+    initFlexCounterGroupTable();
 };
 
 void BufferOrch::initTableHandlers()
@@ -82,6 +98,27 @@ void BufferOrch::initBufferReadyList(Table& table)
     }
 }
 
+void BufferOrch::initFlexCounterGroupTable(void)
+{
+    string bufferPoolWmPluginName = "watermark_bufferpool.lua";
+
+    try
+    {
+        string bufferPoolLuaScript = swss::loadLuaScript(bufferPoolWmPluginName);
+        string bufferPoolWmSha = swss::loadRedisScript(m_countersDb.get(), bufferPoolLuaScript);
+
+        vector<FieldValueTuple> fvTuples;
+        fvTuples.emplace_back(BUFFER_POOL_PLUGIN_FIELD, bufferPoolWmSha);
+        fvTuples.emplace_back(POLL_INTERVAL_FIELD, BUFFER_POOL_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
+
+        m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvTuples);
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_ERROR("Buffer pool watermark lua script and/or flex counter group not set successfully. Runtime error: %s", e.what());
+    }
+}
+
 bool BufferOrch::isPortReady(const std::string& port_name) const
 {
     SWSS_LOG_ENTER();
@@ -103,6 +140,97 @@ bool BufferOrch::isPortReady(const std::string& port_name) const
     }
 
     return result;
+}
+
+void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
+{
+    // This function will be called in FlexCounterOrch when field:value tuple "FLEX_COUNTER_STATUS":"enable"
+    // is received on buffer pool watermark key under table "FLEX_COUNTER_GROUP_TABLE"
+    // Because the SubscriberStateTable listens to the entire keyspace of "BUFFER_POOL_WATERMARK", any update
+    // to field value tuples under key "BUFFER_POOL_WATERMARK" will cause this tuple to be heard again
+    // To avoid resync the coutner ID list a second time, we introduce a data member variable to mark whether
+    // this operation has already been done or not yet
+    if (m_isBufferPoolWatermarkCounterIdListGenerated)
+    {
+        return;
+    }
+
+    // Detokenize the SAI watermark stats to a string, separated by comma
+    string statList;
+    for (const auto &it : bufferPoolWatermarkStatIds)
+    {
+        statList += (sai_serialize_buffer_pool_stat(it) + list_item_delimiter);
+    }
+    if (!statList.empty())
+    {
+        statList.pop_back();
+    }
+
+    // Some platforms do not support buffer pool watermark clear operation on a particular pool
+    // Invoke the SAI clear_stats API per pool to query the capability from the API call return status
+    // We use bit mask to mark the clear watermark capability of each buffer pool. We use an unsigned int to place hold
+    // these bits. This assumes the total number of buffer pools to be no greater than 32, which should satisfy all use cases.
+    unsigned int noWmClrCapability = 0;
+    unsigned int bitMask = 1;
+    for (const auto &it : *(m_buffer_type_maps[CFG_BUFFER_POOL_TABLE_NAME]))
+    {
+        sai_status_t status = sai_buffer_api->clear_buffer_pool_stats(
+                it.second,
+                static_cast<uint32_t>(bufferPoolWatermarkStatIds.size()),
+                reinterpret_cast<const sai_stat_id_t *>(bufferPoolWatermarkStatIds.data()));
+        if (status ==  SAI_STATUS_NOT_SUPPORTED || status == SAI_STATUS_NOT_IMPLEMENTED)
+        {
+            SWSS_LOG_NOTICE("Clear watermark failed on %s, rv: %s", it.first.c_str(), sai_serialize_status(status).c_str());
+            noWmClrCapability |= bitMask;
+        }
+
+        bitMask <<= 1;
+    }
+
+    if (!noWmClrCapability)
+    {
+        vector<FieldValueTuple> fvs;
+
+        fvs.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
+        m_flexCounterGroupTable->set(BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fvs);
+    }
+
+    // Push buffer pool watermark COUNTER_ID_LIST to FLEX_COUNTER_TABLE on a per buffer pool basis
+    vector<FieldValueTuple> fvTuples;
+    fvTuples.emplace_back(BUFFER_POOL_COUNTER_ID_LIST, statList);
+    bitMask = 1;
+    for (const auto &it : *(m_buffer_type_maps[CFG_BUFFER_POOL_TABLE_NAME]))
+    {
+        string key = BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP ":" + sai_serialize_object_id(it.second);
+
+        if (noWmClrCapability)
+        {
+            string stats_mode = STATS_MODE_READ_AND_CLEAR;
+            if (noWmClrCapability & bitMask)
+            {
+                stats_mode = STATS_MODE_READ;
+            }
+            fvTuples.emplace_back(STATS_MODE_FIELD, stats_mode);
+
+            m_flexCounterTable->set(key, fvTuples);
+            fvTuples.pop_back();
+            bitMask <<= 1;
+        }
+        else
+        {
+            m_flexCounterTable->set(key, fvTuples);
+        }
+    }
+
+    m_isBufferPoolWatermarkCounterIdListGenerated = true;
+}
+
+const object_map &BufferOrch::getBufferPoolNameOidMap(void)
+{
+    // In the case different Orches are running in
+    // different threads, caller may need to grab a read lock
+    // before calling this function
+    return *m_buffer_type_maps[CFG_BUFFER_POOL_TABLE_NAME];
 }
 
 task_process_status BufferOrch::processBufferPool(Consumer &consumer)
@@ -136,7 +264,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             if (field == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
             else if (field == buffer_pool_type_field_name)
@@ -179,7 +307,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             }
             else if (field == buffer_pool_xoff_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_POOL_ATTR_XOFF_SIZE;
                 attribs.push_back(attr);
             }
@@ -194,10 +322,10 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             sai_status = sai_buffer_api->set_buffer_pool_attribute(sai_object, &attribs[0]);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
+                SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
                 return task_process_status::task_failed;
             }
-            SWSS_LOG_DEBUG("Modified existing pool:%lx, type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
+            SWSS_LOG_DEBUG("Modified existing pool:%" PRIx64 ", type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
         }
         else
         {
@@ -209,6 +337,12 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             }
             (*(m_buffer_type_maps[map_type_name]))[object_name] = sai_object;
             SWSS_LOG_NOTICE("Created buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
+            // Here we take the PFC watchdog approach to update the COUNTERS_DB metadata (e.g., PFC_WD_DETECTION_TIME per queue)
+            // at initialization (creation and registration phase)
+            // Specifically, we push the buffer pool name to oid mapping upon the creation of the oid
+            // In pg and queue case, this mapping installment is deferred to FlexCounterOrch at a reception of field
+            // "FLEX_COUNTER_STATUS"
+            m_countersDbRedisClient.hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
         }
     }
     else if (op == DEL_COMMAND)
@@ -222,6 +356,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
+        m_countersDbRedisClient.hdel(COUNTERS_BUFFER_POOL_NAME_MAP, object_name);
     }
     else
     {
@@ -279,19 +414,19 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             }
             else if (field == buffer_xon_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xon_offset_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_OFFSET_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xoff_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XOFF_TH;
                 attribs.push_back(attr);
             }
@@ -318,7 +453,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
                 attribs.push_back(attr);
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
             else
@@ -329,11 +464,11 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
-            SWSS_LOG_DEBUG("Modifying existing sai object:%lx ", sai_object);
+            SWSS_LOG_DEBUG("Modifying existing sai object:%" PRIx64, sai_object);
             sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribs[0]);
             if (SAI_STATUS_SUCCESS != sai_status)
             {
-                SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%lx, status:%d", object_name.c_str(), sai_object, sai_status);
+                SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
                 return task_process_status::task_failed;
             }
         }
@@ -370,7 +505,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
 }
 
 /*
-Input sample "BUFFER_QUEUE_TABLE:Ethernet4,Ethernet45:10-15"
+Input sample "BUFFER_QUEUE|Ethernet4,Ethernet45|10-15"
 */
 task_process_status BufferOrch::processQueue(Consumer &consumer)
 {
@@ -427,8 +562,13 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
                 SWSS_LOG_ERROR("Invalid queue index specified:%zd", ind);
                 return task_process_status::task_invalid_entry;
             }
+            if (port.m_queue_lock[ind])
+            {
+                SWSS_LOG_WARN("Queue %zd on port %s is locked, will retry", ind, port_name.c_str());
+                return task_process_status::task_need_retry;
+            }
             queue_id = port.m_queue_ids[ind];
-            SWSS_LOG_DEBUG("Applying buffer profile:0x%lx to queue index:%zd, queue sai_id:0x%lx", sai_buffer_profile, ind, queue_id);
+            SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
             sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
             if (sai_status != SAI_STATUS_SUCCESS)
             {
@@ -444,14 +584,26 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
     }
     else
     {
-        SWSS_LOG_ERROR("Queue profile '%s' was inserted after BufferOrch init", key.c_str());
+        // If a buffer queue profile is not in the initial CONFIG_DB BUFFER_QUEUE table
+        // at BufferOrch object instantiation, it is considered being applied
+        // at run time, and, in this case, is not tracked in the m_ready_list. It is up to
+        // the application to guarantee the set order that the buffer queue profile
+        // should be applied to a physical port before the physical port is brought up to
+        // carry traffic. Here, we alert to application through syslog when such a wrong
+        // set order is detected.
+        for (const auto &port_name : port_names)
+        {
+            if (gPortsOrch->isPortAdminUp(port_name)) {
+                SWSS_LOG_ERROR("Queue profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+            }
+        }
     }
 
     return task_process_status::task_success;
 }
 
 /*
-Input sample "BUFFER_PG_TABLE|Ethernet4,Ethernet45|10-15"
+Input sample "BUFFER_PG|Ethernet4,Ethernet45|10-15"
 */
 task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
 {
@@ -514,8 +666,13 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
                 SWSS_LOG_ERROR("Invalid pg index specified:%zd", ind);
                 return task_process_status::task_invalid_entry;
             }
+            if (port.m_priority_group_lock[ind])
+            {
+                SWSS_LOG_WARN("Priority group %zd on port %s is locked, will retry", ind, port_name.c_str());
+                return task_process_status::task_need_retry;
+            }
             pg_id = port.m_priority_group_ids[ind];
-            SWSS_LOG_DEBUG("Applying buffer profile:0x%lx to port:%s pg index:%zd, pg sai_id:0x%lx", sai_buffer_profile, port_name.c_str(), ind, pg_id);
+            SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to port:%s pg index:%zd, pg sai_id:0x%" PRIx64, sai_buffer_profile, port_name.c_str(), ind, pg_id);
             sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attribute(pg_id, &attr);
             if (sai_status != SAI_STATUS_SUCCESS)
             {
@@ -531,7 +688,19 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     }
     else
     {
-        SWSS_LOG_ERROR("PG profile '%s' was inserted after BufferOrch init", key.c_str());
+        // If a buffer pg profile is not in the initial CONFIG_DB BUFFER_PG table
+        // at BufferOrch object instantiation, it is considered being applied
+        // at run time, and, in this case, is not tracked in the m_ready_list. It is up to
+        // the application to guarantee the set order that the buffer pg profile
+        // should be applied to a physical port before the physical port is brought up to
+        // carry traffic. Here, we alert to application through syslog when such a wrong
+        // set order is detected.
+        for (const auto &port_name : port_names)
+        {
+            if (gPortsOrch->isPortAdminUp(port_name)) {
+                SWSS_LOG_ERROR("PG profile '%s' applied after port %s is up", key.c_str(), port_name.c_str());
+            }
+        }
     }
 
     return task_process_status::task_success;
@@ -671,7 +840,7 @@ void BufferOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isConfigDone())
     {
         return;
     }

@@ -3,6 +3,8 @@
 #include "portsorch.h"
 #include "notifier.h"
 #include "converter.h"
+#include "bufferorch.h"
+#include <inttypes.h>
 
 #define DEFAULT_TELEMETRY_INTERVAL 120
 
@@ -10,8 +12,10 @@
 #define CLEAR_PG_SHARED_REQUEST "PG_SHARED"
 #define CLEAR_QUEUE_SHARED_UNI_REQUEST "Q_SHARED_UNI"
 #define CLEAR_QUEUE_SHARED_MULTI_REQUEST "Q_SHARED_MULTI"
+#define CLEAR_BUFFER_POOL_REQUEST "BUFFER_POOL"
 
 extern PortsOrch *gPortsOrch;
+extern BufferOrch *gBufferOrch;
 
 
 WatermarkOrch::WatermarkOrch(DBConnector *db, const vector<string> &tables):
@@ -19,8 +23,8 @@ WatermarkOrch::WatermarkOrch(DBConnector *db, const vector<string> &tables):
 {
     SWSS_LOG_ENTER();
 
-    m_countersDb = make_shared<DBConnector>(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    m_appDb = make_shared<DBConnector>(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    m_countersDb = make_shared<DBConnector>("COUNTERS_DB", 0);
+    m_appDb = make_shared<DBConnector>("APPL_DB", 0);
     m_countersTable = make_shared<Table>(m_countersDb.get(), COUNTERS_TABLE);
     m_periodicWatermarkTable = make_shared<Table>(m_countersDb.get(), PERIODIC_WATERMARKS_TABLE);
     m_persistentWatermarkTable = make_shared<Table>(m_countersDb.get(), PERSISTENT_WATERMARKS_TABLE);
@@ -47,7 +51,7 @@ void WatermarkOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -94,7 +98,7 @@ void WatermarkOrch::handleWmConfigUpdate(const std::string &key, const std::vect
         {
             if (i.first == "interval")
             {
-                auto intervT = timespec { .tv_sec = to_uint<uint32_t>(i.second.c_str()) , .tv_nsec = 0 };
+                auto intervT = timespec { .tv_sec = static_cast<time_t>(to_uint<uint32_t>(i.second.c_str())), .tv_nsec = 0 };
                 m_telemetryTimer->setInterval(intervT);
                 // reset the timer interval when current timer expires
                 m_timerChanged = true;
@@ -138,7 +142,7 @@ void WatermarkOrch::handleFcConfigUpdate(const std::string &key, const std::vect
 void WatermarkOrch::doTask(NotificationConsumer &consumer)
 {
     SWSS_LOG_ENTER();
-    if (!gPortsOrch->isPortReady())
+    if (!gPortsOrch->allPortsReady())
     {
         return;
     }
@@ -175,29 +179,35 @@ void WatermarkOrch::doTask(NotificationConsumer &consumer)
         return;
     }
 
-    if(data == CLEAR_PG_HEADROOM_REQUEST)
+    if (data == CLEAR_PG_HEADROOM_REQUEST)
     {
         clearSingleWm(table,
         "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES",
         m_pg_ids);
     }
-    else if(data == CLEAR_PG_SHARED_REQUEST)
+    else if (data == CLEAR_PG_SHARED_REQUEST)
     {
         clearSingleWm(table,
         "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES",
         m_pg_ids);
     }
-    else if(data == CLEAR_QUEUE_SHARED_UNI_REQUEST)
+    else if (data == CLEAR_QUEUE_SHARED_UNI_REQUEST)
     {
         clearSingleWm(table,
         "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
         m_unicast_queue_ids);
     }
-    else if(data == CLEAR_QUEUE_SHARED_MULTI_REQUEST)
+    else if (data == CLEAR_QUEUE_SHARED_MULTI_REQUEST)
     {
         clearSingleWm(table,
         "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
         m_multicast_queue_ids);
+    }
+    else if (data == CLEAR_BUFFER_POOL_REQUEST)
+    {
+        clearSingleWm(table,
+        "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES",
+        gBufferOrch->getBufferPoolNameOidMap());
     }
     else
     {
@@ -232,10 +242,16 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
             m_telemetryTimer->stop();
         }
 
-        clearSingleWm(m_periodicWatermarkTable.get(), "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES", m_pg_ids);
-        clearSingleWm(m_periodicWatermarkTable.get(), "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES", m_pg_ids);
-        clearSingleWm(m_periodicWatermarkTable.get(), "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_unicast_queue_ids);
-        clearSingleWm(m_periodicWatermarkTable.get(), "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_multicast_queue_ids);
+        clearSingleWm(m_periodicWatermarkTable.get(),
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES", m_pg_ids);
+        clearSingleWm(m_periodicWatermarkTable.get(),
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES", m_pg_ids);
+        clearSingleWm(m_periodicWatermarkTable.get(),
+            "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_unicast_queue_ids);
+        clearSingleWm(m_periodicWatermarkTable.get(),
+            "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_multicast_queue_ids);
+        clearSingleWm(m_periodicWatermarkTable.get(),
+            "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES", gBufferOrch->getBufferPoolNameOidMap());
         SWSS_LOG_DEBUG("Periodic watermark cleared by timer!");
     }
 }
@@ -279,12 +295,25 @@ void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_objec
 {
     /* Zero-out some WM in some table for some vector of object ids*/
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("clear WM %s, for %ld obj ids", wm_name.c_str(), obj_ids.size());
+    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids", wm_name.c_str(), obj_ids.size());
 
     vector<FieldValueTuple> vfvt = {{wm_name, "0"}};
 
     for (sai_object_id_t id: obj_ids)
     {
         table->set(sai_serialize_object_id(id), vfvt);
+    }
+}
+
+void WatermarkOrch::clearSingleWm(Table *table, string wm_name, const object_map &nameOidMap)
+{
+    SWSS_LOG_ENTER();
+    SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids", wm_name.c_str(), nameOidMap.size());
+
+    vector<FieldValueTuple> fvTuples = {{wm_name, "0"}};
+
+    for (const auto &it : nameOidMap)
+    {
+        table->set(sai_serialize_object_id(it.second), fvTuples);
     }
 }

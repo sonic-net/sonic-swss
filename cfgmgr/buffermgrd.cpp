@@ -78,8 +78,8 @@ int main(int argc, char **argv)
             CFG_PORT_CABLE_LEN_TABLE_NAME,
         };
 
-        DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-        DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+        DBConnector cfgDb("CONFIG_DB", 0);
+        DBConnector stateDb("STATE_DB", 0);
 
         BufferMgr buffmgr(&cfgDb, &stateDb, pg_lookup_file, cfg_buffer_tables);
 

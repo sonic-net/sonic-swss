@@ -16,6 +16,8 @@ debian/libswsscommon.postrm.debhelper
 debian/libswsscommon.substvars
 debian/swss.debhelper.log
 debian/swss.substvars
+debian/swss-dbg.debhelper.log
+debian/swss-dbg.substvars
 
 debian/libswsscommon-dev/
 debian/libswsscommon/
@@ -52,8 +54,10 @@ cfgmgr/vlanmgrd
 cfgmgr/vrfmgrd
 cfgmgr/nbrmgrd
 cfgmgr/vxlanmgrd
+cfgmgr/natmgrd
 neighsyncd/neighsyncd
 portsyncd/portsyncd
+natsyncd/natsyncd
 orchagent/orchagent
 orchagent/routeresync
 orchagent/orchagent_restart_check
