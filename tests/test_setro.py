@@ -1,9 +1,13 @@
-from swsscommon import swsscommon
 import time
 import json
 import redis
 from pprint import pprint
 
+from swsscommon import swsscommon
+from flaky import flaky
+
+
+@pytest.mark.flaky
 class TestSetRo(object):
     def test_SetReadOnlyAttribute(self, dvs, testlog):
 

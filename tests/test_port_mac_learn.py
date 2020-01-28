@@ -1,8 +1,11 @@
-from swsscommon import swsscommon
-
 import time
 import os
 
+from swsscommon import swsscommon
+from flaky import flaky
+
+
+@pytest.mark.flaky
 class TestPortMacLearn(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)

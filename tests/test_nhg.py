@@ -1,9 +1,13 @@
-from swsscommon import swsscommon
 import os
 import re
 import time
 import json
 
+from swsscommon import swsscommon
+from flaky import flaky
+
+
+@pytest.mark.flaky
 class TestNextHopGroup(object):
     def test_route_nhg(self, dvs, testlog):
         config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)

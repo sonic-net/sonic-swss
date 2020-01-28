@@ -1,10 +1,11 @@
-from swsscommon import swsscommon
 import os
 import re
 import time
 import json
 import redis
 
+from swsscommon import swsscommon
+from flaky import flaky
 
 def getCrmCounterValue(dvs, key, counter):
 
@@ -62,6 +63,8 @@ def check_syslog(dvs, marker, err_log, expected_cnt):
     (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
     assert num.strip() >= str(expected_cnt)
 
+
+@pytest.mark.flaky
 class TestCrm(object):
     def test_CrmFdbEntry(self, dvs, testlog):
 

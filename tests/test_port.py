@@ -1,8 +1,11 @@
-from swsscommon import swsscommon
-
 import time
 import os
 
+from swsscommon import swsscommon
+from flaky import flaky
+
+
+@pytest.mark.flaky
 class TestPort(object):
     def test_PortMtu(self, dvs, testlog):
         pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)

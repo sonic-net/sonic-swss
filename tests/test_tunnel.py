@@ -1,9 +1,14 @@
-from swsscommon import swsscommon
 import time
+
+from swsscommon import swsscommon
+from flaky import flaky
+
 
 def create_fvs(**kwargs):
     return swsscommon.FieldValuePairs(kwargs.items())
 
+
+@pytest.mark.flaky
 class TestTunnelBase(object):
     APP_TUNNEL_DECAP_TABLE_NAME = "TUNNEL_DECAP_TABLE"
     ASIC_TUNNEL_TABLE           = "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL"

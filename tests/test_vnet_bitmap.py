@@ -1,6 +1,9 @@
-from swsscommon import swsscommon
 import time
+
 import test_vnet as vnet
+
+from swsscommon import swsscommon
+from flaky import flaky
 
 
 # Define fake platform for "DVS" fixture, so it will set "platform" environment variable for "orchagent".
@@ -14,6 +17,7 @@ Test cases are inherited from "test_vnet.py::TestVnetOrch" since they are the sa
 Difference between these two implementations is in set SAI attributes, so different values should be checked in ASIC_DB.
 This class should override "get_vnet_obj()" method in order to return object with appropriate implementation of "check" APIs.
 '''
+@pytest.mark.flaky
 class TestVnetBitmapOrch(vnet.TestVnetOrch):
 
     '''

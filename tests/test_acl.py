@@ -1,7 +1,10 @@
-from swsscommon import swsscommon
 import time
 import re
 import json
+import pytest
+
+from swsscommon import swsscommon
+from flaky import flaky
 
 
 class BaseTestAcl(object):
@@ -185,6 +188,7 @@ class BaseTestAcl(object):
                 assert False
 
 
+@pytest.mark.flaky
 class TestAcl(BaseTestAcl):
     def test_AclTableCreation(self, dvs, testlog):
         self.setup_db(dvs)
@@ -1370,6 +1374,8 @@ class TestAcl(BaseTestAcl):
         # bring down interface
         dvs.set_interface_status("Ethernet4", "down")
 
+
+@pytest.mark.flaky
 class TestAclRuleValidation(BaseTestAcl):
     """ Test class for cases that check if orchagent corectly validates
     ACL rules input

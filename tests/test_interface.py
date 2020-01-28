@@ -1,8 +1,11 @@
-from swsscommon import swsscommon
-
 import time
 import json
 
+from swsscommon import swsscommon
+from flaky import flaky
+
+
+@pytest.mark.flaky
 class TestRouterInterface(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)

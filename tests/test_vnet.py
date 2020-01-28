@@ -1,9 +1,11 @@
-from swsscommon import swsscommon
 import time
 import json
 import random
 import time
 import pytest
+
+from swsscommon import swsscommon
+from flaky import flaky
 from pprint import pprint
 
 
@@ -950,6 +952,7 @@ class VnetBitmapVxlanTunnel(object):
         self.vnet_bitmap_route_ids.remove(old_bitmap_route[0])
 
 
+@pytest.mark.flaky
 class TestVnetOrch(object):
 
     def get_vnet_obj(self):

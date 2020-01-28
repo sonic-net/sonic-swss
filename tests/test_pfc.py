@@ -1,6 +1,7 @@
 import time
-from swsscommon import swsscommon
 
+from swsscommon import swsscommon
+from flaky import flaky
 
 def getBitMaskStr(bits):
 
@@ -57,6 +58,8 @@ def getPortAttr(dvs, port_oid, port_attr):
 
     return ''
 
+
+@pytest.mark.flaky
 class TestPfc(object):
     def test_PfcAsymmetric(self, dvs, testlog):
 

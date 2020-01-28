@@ -1,5 +1,7 @@
-from swsscommon import swsscommon
 import time
+
+from swsscommon import swsscommon
+from flaky import flaky
 
 
 def create_entry(tbl, key, pairs):
@@ -59,15 +61,14 @@ def vxlan_switch_test(dvs, oid, port, mac):
     )
 
 
+@pytest.mark.flaky
 class TestSwitch(object):
-    
     '''
     Test- Check switch attributes
     '''
     def test_switch_attribute(self, dvs, testlog):
         switch_oid = get_exist_entry(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
-        
-        vxlan_switch_test(dvs, switch_oid, "12345", "00:01:02:03:04:05")
-        
-        vxlan_switch_test(dvs, switch_oid, "56789", "00:0A:0B:0C:0D:0E")
 
+        vxlan_switch_test(dvs, switch_oid, "12345", "00:01:02:03:04:05")
+
+        vxlan_switch_test(dvs, switch_oid, "56789", "00:0A:0B:0C:0D:0E")
