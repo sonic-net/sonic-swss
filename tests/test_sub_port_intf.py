@@ -1,7 +1,9 @@
 import pytest
 import time
 import json
+
 from swsscommon import swsscommon
+from flaky import flaky
 
 CFG_VLAN_SUB_INTF_TABLE_NAME = "VLAN_SUB_INTERFACE"
 CFG_PORT_TABLE_NAME = "PORT"
@@ -17,6 +19,7 @@ ASIC_ROUTE_ENTRY_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
 ADMIN_STATUS = "admin_status"
 
 
+@pytest.mark.flaky
 class TestSubPortIntf(object):
     PHYSICAL_PORT_UNDER_TEST = "Ethernet64"
     SUB_PORT_INTERFACE_UNDER_TEST = "Ethernet64.10"

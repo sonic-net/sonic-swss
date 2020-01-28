@@ -1,7 +1,12 @@
-from swsscommon import swsscommon
 import time
 import os
+import pytest
 
+from swsscommon import swsscommon
+from flaky import flaky
+
+
+@pytest.mark.flaky
 class TestPortAutoNeg(object):
     def test_PortAutoNegCold(self, dvs, testlog):
 

@@ -1,16 +1,19 @@
-from swsscommon import swsscommon
-
-
 import time
 import re
 import json
+import pytest
 
+from swsscommon import swsscommon
+from flaky import flaky
+
+
+@pytest.mark.flaky
 class TestDtel(object):
     def test_DtelGlobalAttribs(self, dvs, testlog):
-    
+
         db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
         adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-    
+
         # create DTel global attributes in config db
         tbl = swsscommon.Table(db, "DTEL")
 

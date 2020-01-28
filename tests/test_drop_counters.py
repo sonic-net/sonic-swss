@@ -1,6 +1,8 @@
-from swsscommon import swsscommon
-
 import time
+import pytest
+
+from swsscommon import swsscommon
+from flaky import flaky
 
 # Supported drop counters
 PORT_INGRESS_DROPS = 'PORT_INGRESS_DROPS'
@@ -53,9 +55,11 @@ ASIC_COUNTER_SWITCH_OUT_TYPE = 'SAI_DEBUG_COUNTER_TYPE_SWITCH_OUT_DROP_REASONS'
 EXPECTED_ASIC_FIELDS = [ASIC_COUNTER_TYPE_FIELD, ASIC_COUNTER_INGRESS_REASON_LIST_FIELD, ASIC_COUNTER_EGRESS_REASON_LIST_FIELD]
 EXPECTED_NUM_ASIC_FIELDS = 2
 
+
 # FIXME: It is really annoying to have to re-run tests due to inconsistent timing, should
 # implement some sort of polling interface for checking ASIC/flex counter tables after
 # applying changes to config DB
+@pytest.mark.flaky
 class TestDropCounters(object):
     def setup_db(self, dvs):
         self.asic_db = swsscommon.DBConnector(1, dvs.redis_sock, 0)

@@ -1,6 +1,11 @@
-from swsscommon import swsscommon
 import time
+import pytest
 
+from swsscommon import swsscommon
+from flaky import flaky
+
+
+@pytest.mark.flaky
 class TestAdminStatus(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)

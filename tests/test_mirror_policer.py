@@ -1,13 +1,14 @@
 # This test suite covers the functionality of mirror feature in SwSS
-
 import platform
 import pytest
 import time
-from distutils.version import StrictVersion
 
 from swsscommon import swsscommon
+from flaky import flaky
+from distutils.version import StrictVersion
 
 
+@pytest.mark.flaky
 class TestMirror(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)

@@ -1,18 +1,18 @@
 """
     test_speed.py implements list of tests to check speed set on
     interfaces and correct buffer manager behavior on speed change
-
-    These tests need to be run in prepared environment and with the
-    SONiC version compiled for PLATFORM=vs
-
-    See README.md for details
 """
-from swsscommon import swsscommon
 import time
 import re
 import json
 import os
+import pytest
 
+from swsscommon import swsscommon
+from flaky import flaky
+
+
+@pytest.mark.flaky
 class TestSpeedSet(object):
     num_ports = 32
     def test_SpeedAndBufferSet(self, dvs, testlog):

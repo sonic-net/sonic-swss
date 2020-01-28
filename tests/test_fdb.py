@@ -1,8 +1,11 @@
-from swsscommon import swsscommon
 import os
 import sys
 import time
 import json
+import pytest
+
+from swsscommon import swsscommon
+from flaky import flaky
 from distutils.version import StrictVersion
 
 def create_entry(tbl, key, pairs):
@@ -24,6 +27,8 @@ def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
 
+
+@pytest.mark.flaky
 class TestFdb(object):
     def test_FdbWarmRestartNotifications(self, dvs, testlog):
         dvs.setup_db()
