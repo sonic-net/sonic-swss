@@ -3,6 +3,7 @@ import re
 import time
 import json
 import redis
+import pytest
 
 from swsscommon import swsscommon
 from flaky import flaky

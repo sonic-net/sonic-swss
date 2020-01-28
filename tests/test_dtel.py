@@ -1,6 +1,7 @@
 import time
 import re
 import json
+import pytest
 
 from swsscommon import swsscommon
 from flaky import flaky

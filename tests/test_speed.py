@@ -6,6 +6,7 @@ import time
 import re
 import json
 import os
+import pytest
 
 from swsscommon import swsscommon
 from flaky import flaky

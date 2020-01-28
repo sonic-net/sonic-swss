@@ -1,4 +1,5 @@
 import time
+import pytest
 
 import test_vnet as vnet
 

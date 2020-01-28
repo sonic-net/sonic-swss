@@ -1,8 +1,9 @@
 import time
 import json
 import redis
-from pprint import pprint
+import pytest
 
+from pprint import pprint
 from swsscommon import swsscommon
 from flaky import flaky
 
