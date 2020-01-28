@@ -66,13 +66,13 @@ class AsicDbValidator(object):
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
 
-        assert len(keys) >= 1
+        assert len(keys) >= 0
         self.default_acl_tables = keys
 
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
         keys = atbl.getKeys()
 
-        assert len(keys) == 2
+        assert len(keys) == 0
         self.default_acl_entries = keys
 
 class ApplDbValidator(object):
