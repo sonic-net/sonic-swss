@@ -35,6 +35,7 @@ extern bool gIsNatSupported;
 const int intfsorch_pri = 35;
 
 #define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
+#define RIF_RATE_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 #define UPDATE_MAPS_SEC 1
 
 #define LOOPBACK_PREFIX     "Loopback"
@@ -77,6 +78,24 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
     fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
     fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
     m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+
+    string rifRatePluginName = "interface_rates.lua";
+
+    try
+    {
+        string rifRateLuaScript = swss::loadLuaScript(rifRatePluginName);
+        string rifRateSha = swss::loadRedisScript(m_counter_db.get(), rifRateLuaScript);
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(RIF_PLUGIN_FIELD, rifRateSha);
+        fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_RATE_FLEX_STAT_COUNTER_POLL_MSECS);
+        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
+        m_flexCounterGroupTable->set(RIF_RATE_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+    }
+    catch (...)
+    {
+        SWSS_LOG_WARN("RIF rate flex counter group plugins was not set successfully");
+    }
 }
 
 sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
