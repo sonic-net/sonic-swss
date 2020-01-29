@@ -35,6 +35,7 @@ const char state_db_key_delimiter  = '|';
 #define BFN_PLATFORM_SUBSTRING  "barefoot"
 #define VS_PLATFORM_SUBSTRING   "vs"
 #define NPS_PLATFORM_SUBSTRING  "nephos"
+#define MRVL_PLATFORM_SUBSTRING "marvell"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"

@@ -148,8 +148,9 @@ void CoppOrch::initDefaultTrapIds()
     trap_id_attrs.push_back(attr);
 
     /* Mellanox platform doesn't support trap priority setting */
+    /* Marvell platform doesn't support trap priority. */
     char *platform = getenv("platform");
-    if (!platform || !strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PLATFORM_SUBSTRING))))
     {
         attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY;
         attr.value.u32 = 0;
@@ -504,8 +505,9 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             else if (fvField(*i) == copp_trap_priority_field)
             {
                 /* Mellanox platform doesn't support trap priority setting */
+                /* Marvell platform doesn't support trap priority. */
                 char *platform = getenv("platform");
-                if (!platform || !strstr(platform, MLNX_PLATFORM_SUBSTRING))
+                if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PLATFORM_SUBSTRING))))
                 {
                     attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY,
                     attr.value.u32 = (uint32_t)stoul(fvValue(*i));
