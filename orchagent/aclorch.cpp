@@ -2836,6 +2836,13 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         string op = kfvOp(t);
 
         SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s", op.c_str(), table_id.c_str(), rule_id.c_str());
+ 
+        if (table_id.empty())
+        {
+            SWSS_LOG_WARN("ACL rule with RULE_ID: %s is not valid as TABLE_ID is empty", rule_id.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
 
         if (op == SET_COMMAND)
         {
@@ -3015,6 +3022,12 @@ bool AclOrch::processAclTableStage(string stage, acl_stage_type_t &acl_stage)
 sai_object_id_t AclOrch::getTableById(string table_id)
 {
     SWSS_LOG_ENTER();
+
+    if (table_id.empty())
+    {
+        SWSS_LOG_WARN("table_id is empty");
+        return SAI_NULL_OBJECT_ID;
+    }
 
     for (auto it : m_AclTables)
     {
