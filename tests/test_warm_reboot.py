@@ -5,7 +5,6 @@ import json
 import pytest
 
 from swsscommon import swsscommon
-from flaky import flaky
 
 
 # macros for number of interfaces and number of neighbors
@@ -236,7 +235,6 @@ def ping_new_ips(dvs):
             dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
 
 
-@pytest.mark.flaky
 class TestWarmReboot(object):
     def test_PortSyncdWarmRestart(self, dvs, testlog):
 

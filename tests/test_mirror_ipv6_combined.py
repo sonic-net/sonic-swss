@@ -4,13 +4,11 @@ import pytest
 import time
 
 from swsscommon import swsscommon
-from flaky import flaky
 from distutils.version import StrictVersion
 
 DVS_FAKE_PLATFORM = "broadcom"
 
 
-@pytest.mark.flaky
 class TestMirror(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)

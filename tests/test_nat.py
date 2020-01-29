@@ -6,7 +6,6 @@ import pdb
 import os
 
 from swsscommon import swsscommon
-from flaky import flaky
 
 
 # FIXME: These tests depend on changes in sonic-buildimage, we need to reenable

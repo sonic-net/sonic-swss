@@ -5,12 +5,10 @@ import time
 from distutils.version import StrictVersion
 
 from swsscommon import swsscommon
-from flaky import flaky
 
 DVS_FAKE_PLATFORM = "mellanox"
 
 
-@pytest.mark.flaky
 class TestMirror(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)

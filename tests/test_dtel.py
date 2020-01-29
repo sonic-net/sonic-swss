@@ -4,10 +4,8 @@ import json
 import pytest
 
 from swsscommon import swsscommon
-from flaky import flaky
 
 
-@pytest.mark.flaky
 class TestDtel(object):
     def test_DtelGlobalAttribs(self, dvs, testlog):
 

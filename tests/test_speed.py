@@ -9,10 +9,8 @@ import os
 import pytest
 
 from swsscommon import swsscommon
-from flaky import flaky
 
 
-@pytest.mark.flaky
 class TestSpeedSet(object):
     num_ports = 32
     def test_SpeedAndBufferSet(self, dvs, testlog):

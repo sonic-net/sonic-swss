@@ -2,7 +2,6 @@ import time
 import pytest
 
 from swsscommon import swsscommon
-from flaky import flaky
 
 
 def create_entry(tbl, key, pairs):
@@ -62,7 +61,6 @@ def vxlan_switch_test(dvs, oid, port, mac):
     )
 
 
-@pytest.mark.flaky
 class TestSwitch(object):
     '''
     Test- Check switch attributes

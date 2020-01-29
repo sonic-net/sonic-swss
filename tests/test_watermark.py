@@ -6,7 +6,6 @@ import pytest
 import redis
 
 from swsscommon import swsscommon
-from flaky import flaky
 
 class SaiWmStats:
     queue_shared = "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES"
@@ -20,7 +19,6 @@ class WmTables:
     user = "USER_WATERMARKS"
 
 
-@pytest.mark.flaky
 class TestWatermark(object):
 
     DEFAULT_TELEMETRY_INTERVAL = 120

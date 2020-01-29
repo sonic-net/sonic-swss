@@ -5,11 +5,9 @@ import json
 import pytest
 
 from swsscommon import swsscommon
-from flaky import flaky
 from distutils.version import StrictVersion
 
 
-@pytest.mark.flaky
 class TestFdbUpdate(object):
     def create_entry(self, tbl, key, pairs):
         fvs = swsscommon.FieldValuePairs(pairs)

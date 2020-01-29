@@ -6,7 +6,6 @@ import redis
 import pytest
 
 from swsscommon import swsscommon
-from flaky import flaky
 
 def getCrmCounterValue(dvs, key, counter):
 
@@ -65,7 +64,6 @@ def check_syslog(dvs, marker, err_log, expected_cnt):
     assert num.strip() >= str(expected_cnt)
 
 
-@pytest.mark.flaky
 class TestCrm(object):
     def test_CrmFdbEntry(self, dvs, testlog):
 
