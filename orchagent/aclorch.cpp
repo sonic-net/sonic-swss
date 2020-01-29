@@ -107,7 +107,8 @@ static acl_table_type_lookup_t aclTableTypeLookUp =
     { TABLE_TYPE_MIRROR_DSCP,           ACL_TABLE_MIRROR_DSCP },
     { TABLE_TYPE_CTRLPLANE,             ACL_TABLE_CTRLPLANE },
     { TABLE_TYPE_DTEL_FLOW_WATCHLIST,   ACL_TABLE_DTEL_FLOW_WATCHLIST },
-    { TABLE_TYPE_DTEL_DROP_WATCHLIST,   ACL_TABLE_DTEL_DROP_WATCHLIST }
+    { TABLE_TYPE_DTEL_DROP_WATCHLIST,   ACL_TABLE_DTEL_DROP_WATCHLIST },
+    { TABLE_TYPE_MCLAG,                 ACL_TABLE_MCLAG }
 };
 
 static acl_stage_type_lookup_t aclStageLookUp =
@@ -659,7 +660,8 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
         type != ACL_TABLE_MIRRORV6 &&
         type != ACL_TABLE_MIRROR_DSCP &&
         type != ACL_TABLE_DTEL_FLOW_WATCHLIST &&
-        type != ACL_TABLE_DTEL_DROP_WATCHLIST)
+        type != ACL_TABLE_DTEL_DROP_WATCHLIST &&
+        type != ACL_TABLE_MCLAG)
     {
         throw runtime_error("Unknown table type");
     }
@@ -702,6 +704,10 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
         } else {
             throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
         }
+    }
+    else if (type == ACL_TABLE_MCLAG)
+    {
+        return make_shared<AclRuleMclag>(acl, rule, table, type);
     }
 
     throw runtime_error("Wrong combination of table type and action in rule " + rule);
@@ -1230,6 +1236,33 @@ void AclRuleMirror::update(SubjectType type, void *cntx)
     }
 }
 
+AclRuleMclag::AclRuleMclag(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
+        AclRuleL3(aclOrch, rule, table, type, createCounter)
+{
+}
+
+bool AclRuleMclag::validateAddMatch(string attr_name, string attr_value)
+{
+    if (attr_name != MATCH_IP_TYPE && attr_name != MATCH_OUT_PORTS)
+    {
+        return false;
+    }
+
+    return AclRule::validateAddMatch(attr_name, attr_value);
+}
+
+bool AclRuleMclag::validate()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_matches.size() == 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
 bool AclTable::validate()
 {
     if (type == ACL_TABLE_CTRLPLANE)
@@ -1451,6 +1484,13 @@ bool AclTable::create()
     if (type == ACL_TABLE_MIRROR || type == ACL_TABLE_MIRRORV6)
     {
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+    }
+
+    if (type == ACL_TABLE_MCLAG)
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
     }
@@ -2454,12 +2494,12 @@ void AclOrch::doTask(Consumer &consumer)
 
     string table_name = consumer.getTableName();
 
-    if (table_name == CFG_ACL_TABLE_TABLE_NAME)
+    if (table_name == CFG_ACL_TABLE_TABLE_NAME || table_name == APP_ACL_TABLE_TABLE_NAME)
     {
         unique_lock<mutex> lock(m_countersMutex);
         doAclTableTask(consumer);
     }
-    else if (table_name == CFG_ACL_RULE_TABLE_NAME)
+    else if (table_name == CFG_ACL_RULE_TABLE_NAME || table_name == APP_ACL_RULE_TABLE_NAME)
     {
         unique_lock<mutex> lock(m_countersMutex);
         doAclRuleTask(consumer);
