@@ -3,10 +3,8 @@ import os
 import pytest
 
 from swsscommon import swsscommon
-from flaky import flaky
 
 
-@pytest.mark.flaky
 class TestSflow(object):
     speed_rate_table = {
         "400000":"40000",

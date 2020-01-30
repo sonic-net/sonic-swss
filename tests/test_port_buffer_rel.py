@@ -2,11 +2,9 @@ import time
 import pytest
 
 from swsscommon import swsscommon
-from flaky import flaky
 
 
 # The test check that the ports will be up, when the admin state is UP by conf db.
-@pytest.mark.flaky
 class TestPortBuffer(object):
     def test_PortsAreUpAfterBuffers(self, dvs, testlog):
         num_ports = 32

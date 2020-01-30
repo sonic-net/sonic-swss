@@ -2,7 +2,6 @@ import time
 import pytest
 
 from swsscommon import swsscommon
-from flaky import flaky
 
 # Supported drop counters
 PORT_INGRESS_DROPS = 'PORT_INGRESS_DROPS'
@@ -59,7 +58,6 @@ EXPECTED_NUM_ASIC_FIELDS = 2
 # FIXME: It is really annoying to have to re-run tests due to inconsistent timing, should
 # implement some sort of polling interface for checking ASIC/flex counter tables after
 # applying changes to config DB
-@pytest.mark.flaky
 class TestDropCounters(object):
     def setup_db(self, dvs):
         self.asic_db = swsscommon.DBConnector(1, dvs.redis_sock, 0)
