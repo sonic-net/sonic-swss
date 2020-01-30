@@ -214,6 +214,9 @@ private:
 
     bool setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
                                 vector<uint32_t> &serdes_val);
+
+    void updateDbPortFlapCounter(const Port& port, vector<FieldValueTuple>& old_tuples, vector<FieldValueTuple>& new_tuples) const;
+    void updateDbPortLastFlapTime(vector<FieldValueTuple>& new_tuples) const;
+
 };
 #endif /* SWSS_PORTSORCH_H */
-
