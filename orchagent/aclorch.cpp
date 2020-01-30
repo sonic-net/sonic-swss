@@ -2113,6 +2113,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     if (platform == BRCM_PLATFORM_SUBSTRING ||
             platform == MLNX_PLATFORM_SUBSTRING ||
             platform == BFN_PLATFORM_SUBSTRING  ||
+            platform == MRVL_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
@@ -2144,6 +2145,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
 
     // In Mellanox platform, V4 and V6 rules are stored in different tables
     if (platform == MLNX_PLATFORM_SUBSTRING ||
+        platform == MRVL_PLATFORM_SUBSTRING ||
         platform == BFN_PLATFORM_SUBSTRING) {
         m_isCombinedMirrorV6Table = false;
     }
