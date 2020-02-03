@@ -182,6 +182,7 @@ class TestNatFeature(object):
         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
         keys = tbl.getKeys()
         assert len(keys) == 2
+
         for key in keys:
             if (key.find("dst_ip:67.66.65.1")) and (key.find("key.l4_dst_port:670")):
                  assert True

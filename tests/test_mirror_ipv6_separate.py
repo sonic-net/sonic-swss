@@ -177,6 +177,7 @@ class TestMirror(object):
         ]
 
         # Check that all of the V6 table attributes have been populated
+        assert(len(attributes) == (len(expected_sai_attributes) + len(expected_sai_list_attributes) + 1)
         for attribute in attributes:
             key = attribute[0]
             value = attribute[1]
