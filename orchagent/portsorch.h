@@ -9,6 +9,7 @@
 #include "observer.h"
 #include "macaddress.h"
 #include "producertable.h"
+#include "flex_counter_manager.h"
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
@@ -57,6 +58,8 @@ public:
 
     bool allPortsReady();
     bool isInitDone();
+    bool isConfigDone();
+    bool isPortAdminUp(const string &alias);
 
     map<string, Port>& getAllPorts();
     bool bake() override;
@@ -86,6 +89,9 @@ public:
 
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
+
+    bool addSubPort(Port &port, const string &alias, const bool &adminUp = true, const uint32_t &mtu = 0);
+    bool removeSubPort(const string &alias);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
@@ -99,13 +105,14 @@ private:
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
-    std::string getQueueFlexCounterTableKey(std::string s);
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
-    std::string getPortFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
 
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
+
+    FlexCounterManager port_stat_manager;
+    FlexCounterManager queue_stat_manager;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 
@@ -115,17 +122,24 @@ private:
     sai_object_id_t m_default1QBridge;
     sai_object_id_t m_defaultVlan;
 
-    bool m_portConfigDone = false;
+    typedef enum
+    {
+        PORT_CONFIG_MISSING,
+        PORT_CONFIG_RECEIVED,
+        PORT_CONFIG_DONE,
+    } port_config_state_t;
+
+    port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;
     sai_uint32_t m_portCount;
     map<set<int>, sai_object_id_t> m_portListLaneMap;
     map<set<int>, tuple<string, uint32_t, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
     map<string, uint32_t> m_port_ref_count;
-
     unordered_set<string> m_pendingPortSet;
 
     NotificationConsumer* m_portStatusNotificationConsumer;
 
+    void doTask() override;
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
@@ -147,6 +161,7 @@ private:
 
     bool addBridgePort(Port &port);
     bool removeBridgePort(Port &port);
+    bool setBridgePortLearnMode(Port &port, string learn_mode);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
@@ -157,6 +172,8 @@ private:
     bool removeLag(Port lag);
     bool addLagMember(Port &lag, Port &port);
     bool removeLagMember(Port &lag, Port &port);
+    bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
+    bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
     void getLagMember(Port &lag, vector<Port> &portv);
 
     bool addPort(const set<int> &lane_set, uint32_t speed, int an=0, string fec="");

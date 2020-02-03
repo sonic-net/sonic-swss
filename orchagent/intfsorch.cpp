@@ -23,17 +23,21 @@ extern Directory<Orch*> gDirectory;
 extern sai_router_interface_api_t*  sai_router_intfs_api;
 extern sai_route_api_t*             sai_route_api;
 extern sai_neighbor_api_t*          sai_neighbor_api;
+extern sai_switch_api_t*            sai_switch_api;
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
 extern RouteOrch *gRouteOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
+extern bool gIsNatSupported;
 
 const int intfsorch_pri = 35;
 
 #define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 #define UPDATE_MAPS_SEC 1
+
+#define LOOPBACK_PREFIX     "Loopback"
 
 static const vector<sai_router_interface_stat_t> rifStatIds =
 {
@@ -53,9 +57,9 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
     SWSS_LOG_ENTER();
 
     /* Initialize DB connectors */ 
-    m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
-    m_flex_db = shared_ptr<DBConnector>(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
-    m_asic_db = shared_ptr<DBConnector>(new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
+    m_flex_db = shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0));
+    m_asic_db = shared_ptr<DBConnector>(new DBConnector("ASIC_DB", 0));
     /* Initialize COUNTER_DB tables */
     m_rifNameTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_NAME_MAP));
     m_rifTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_RIF_TYPE_MAP));
@@ -80,6 +84,22 @@ sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
     Port port;
     gPortsOrch->getPort(alias, port);
     return port.m_rif_id;
+}
+
+bool IntfsOrch::isPrefixSubnet(const IpPrefix &ip_prefix, const string &alias)
+{
+    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+    {
+        return false;
+    }
+    for (auto &prefixIt: m_syncdIntfses[alias].ip_addresses)
+    {
+        if (prefixIt.getSubnet() == ip_prefix)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 string IntfsOrch::getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name)
@@ -126,7 +146,7 @@ void IntfsOrch::decreaseRouterIntfsRefCount(const string &alias)
                   alias.c_str(), m_syncdIntfses[alias].ref_count);
 }
 
-bool IntfsOrch::setRouterIntfsMtu(Port &port)
+bool IntfsOrch::setRouterIntfsMtu(const Port &port)
 {
     SWSS_LOG_ENTER();
 
@@ -147,6 +167,65 @@ bool IntfsOrch::setRouterIntfsMtu(Port &port)
     return true;
 }
 
+bool IntfsOrch::setRouterIntfsNatZoneId(Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    /* Return true if the router interface is not exists */
+    if (!port.m_rif_id)
+    {
+        SWSS_LOG_WARN("Router interface is not exists on %s",
+                      port.m_alias.c_str());
+        return true;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_NAT_ZONE_ID;
+    attr.value.u32 = port.m_nat_zone_id;
+
+    sai_status_t status = sai_router_intfs_api->
+            set_router_interface_attribute(port.m_rif_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+         SWSS_LOG_ERROR("Failed to set router interface %s NAT Zone Id to %u, rv:%d",
+                port.m_alias.c_str(), port.m_nat_zone_id, status);
+        return false;
+    }
+    SWSS_LOG_NOTICE("Set router interface %s NAT Zone Id to %u",
+            port.m_alias.c_str(), port.m_nat_zone_id);
+    return true;
+}
+
+bool IntfsOrch::setRouterIntfsAdminStatus(const Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.value.booldata = port.m_admin_state_up;
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE;
+    sai_status_t status = sai_router_intfs_api->
+            set_router_interface_attribute(port.m_rif_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set router interface %s V4 admin status to %s, rv:%d",
+                port.m_alias.c_str(), port.m_admin_state_up == true ? "up" : "down", status);
+        return false;
+    }
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE;
+    status = sai_router_intfs_api->
+            set_router_interface_attribute(port.m_rif_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set router interface %s V6 admin status to %s, rv:%d",
+                port.m_alias.c_str(), port.m_admin_state_up == true ? "up" : "down", status);
+        return false;
+    }
+
+    return true;
+}
+
 set<IpPrefix> IntfsOrch:: getSubnetRoutes()
 {
     SWSS_LOG_ENTER();
@@ -164,7 +243,7 @@ set<IpPrefix> IntfsOrch:: getSubnetRoutes()
     return subnet_routes;
 }
 
-bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix)
+bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPrefix *ip_prefix, const bool adminUp, const uint32_t mtu)
 {
     SWSS_LOG_ENTER();
 
@@ -174,17 +253,47 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
     auto it_intfs = m_syncdIntfses.find(alias);
     if (it_intfs == m_syncdIntfses.end())
     {
-        if (addRouterIntfs(vrf_id, port))
+        if (!ip_prefix && addRouterIntfs(vrf_id, port))
         {
             gPortsOrch->increasePortRefCount(alias);
             IntfsEntry intfs_entry;
             intfs_entry.ref_count = 0;
             intfs_entry.vrf_id = vrf_id;
             m_syncdIntfses[alias] = intfs_entry;
+            m_vrfOrch->increaseVrfRefCount(vrf_id);
         }
         else
         {
             return false;
+        }
+    }
+    else
+    {
+        if (!ip_prefix && port.m_type == Port::SUBPORT)
+        {
+            // port represents a sub interface
+            // Change sub interface config at run time
+            bool attrChanged = false;
+            if (mtu && port.m_mtu != mtu)
+            {
+                port.m_mtu = mtu;
+                attrChanged = true;
+
+                setRouterIntfsMtu(port);
+            }
+
+            if (port.m_admin_state_up != adminUp)
+            {
+                port.m_admin_state_up = adminUp;
+                attrChanged = true;
+
+                setRouterIntfsAdminStatus(port);
+            }
+
+            if (attrChanged)
+            {
+                gPortsOrch->setPort(alias, port);
+            }
         }
     }
 
@@ -202,28 +311,36 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
      * delete IP with netmask /8. To handle this we in case of overlap
      * we should wait until entry with /8 netmask will be removed.
      * Time frame between those event is quite small.*/
+    /* NOTE: Overlap checking in this interface is not enough.
+     * So extend to check in all interfaces of this VRF */
     bool overlaps = false;
-    for (const auto &prefixIt: m_syncdIntfses[alias].ip_addresses)
+    for (const auto &intfsIt: m_syncdIntfses)
     {
-        if (prefixIt.isAddressInSubnet(ip_prefix->getIp()) ||
-                ip_prefix->isAddressInSubnet(prefixIt.getIp()))
+        if (port.m_vr_id != intfsIt.second.vrf_id)
         {
-            overlaps = true;
-            SWSS_LOG_NOTICE("Router interface %s IP %s overlaps with %s.", port.m_alias.c_str(),
-                    prefixIt.to_string().c_str(), ip_prefix->to_string().c_str());
-            break;
+            continue;
+        }
+
+        for (const auto &prefixIt: intfsIt.second.ip_addresses)
+        {
+            if (prefixIt.isAddressInSubnet(ip_prefix->getIp()) ||
+                    ip_prefix->isAddressInSubnet(prefixIt.getIp()))
+            {
+                overlaps = true;
+                SWSS_LOG_NOTICE("Router interface %s IP %s overlaps with %s.", port.m_alias.c_str(),
+                        prefixIt.to_string().c_str(), ip_prefix->to_string().c_str());
+                break;
+            }
+        }
+
+        if (overlaps)
+        {
+            /* Overlap of IP address network */
+            return false;
         }
     }
 
-    if (overlaps)
-    {
-        /* Overlap of IP address network */
-        return false;
-    }
-
-    vrf_id = port.m_vr_id;
-    addSubnetRoute(port, *ip_prefix);
-    addIp2MeRoute(vrf_id, *ip_prefix);
+    addIp2MeRoute(port.m_vr_id, *ip_prefix);
 
     if (port.m_type == Port::VLAN)
     {
@@ -246,8 +363,7 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
 
     if (ip_prefix && m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
     {
-        removeSubnetRoute(port, *ip_prefix);
-        removeIp2MeRoute(vrf_id, *ip_prefix);
+        removeIp2MeRoute(port.m_vr_id, *ip_prefix);
 
         if(port.m_type == Port::VLAN)
         {
@@ -257,13 +373,22 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
         m_syncdIntfses[alias].ip_addresses.erase(*ip_prefix);
     }
 
-    /* Remove router interface that no IP addresses are associated with */
-    if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+    if (!ip_prefix)
     {
-        if (removeRouterIntfs(port))
+        if (m_syncdIntfses[alias].ip_addresses.size() == 0 && removeRouterIntfs(port))
         {
             gPortsOrch->decreasePortRefCount(alias);
             m_syncdIntfses.erase(alias);
+            m_vrfOrch->decreaseVrfRefCount(vrf_id);
+
+            if (port.m_type == Port::SUBPORT)
+            {
+                if (!gPortsOrch->removeSubPort(alias))
+                {
+                    return false;
+                }
+            }
+
             return true;
         }
         else
@@ -291,8 +416,17 @@ void IntfsOrch::doTask(Consumer &consumer)
 
         vector<string> keys = tokenize(kfvKey(t), ':');
         string alias(keys[0]);
+
+        bool isSubIntf = false;
+        size_t found = alias.find(VLAN_SUB_INTERFACE_SEPARATOR);
+        if (found != string::npos)
+        {
+            isSubIntf = true;
+        }
+
         IpPrefix ip_prefix;
         bool ip_prefix_in_key = false;
+        bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
 
         if (keys.size() > 1)
         {
@@ -301,7 +435,10 @@ void IntfsOrch::doTask(Consumer &consumer)
         }
 
         const vector<FieldValueTuple>& data = kfvFieldsValues(t);
-        string vrf_name = "", vnet_name = "";
+        string vrf_name = "", vnet_name = "", nat_zone = "";
+        uint32_t mtu;
+        bool adminUp;
+        uint32_t nat_zone_id = 0;
 
         for (auto idx : data)
         {
@@ -314,6 +451,56 @@ void IntfsOrch::doTask(Consumer &consumer)
             else if (field == "vnet_name")
             {
                 vnet_name = value;
+            }
+            else if (field == "nat_zone")
+            {
+                try
+                {
+                    nat_zone_id = (uint32_t)stoul(value);
+                }
+                catch (...)
+                {
+                    SWSS_LOG_ERROR("Invalid argument %s for nat zone", value.c_str());
+                    continue;
+                }
+                nat_zone = value;
+            }
+            else if (field == "mtu")
+            {
+                try
+                {
+                    mtu = static_cast<uint32_t>(stoul(value));
+                }
+                catch (const std::invalid_argument &e)
+                {
+                    SWSS_LOG_ERROR("Invalid argument %s to %s()", value.c_str(), e.what());
+                    continue;
+                }
+                catch (const std::out_of_range &e)
+                {
+                    SWSS_LOG_ERROR("Out of range argument %s to %s()", value.c_str(), e.what());
+                    continue;
+                }
+            }
+            else if (field == "admin_status")
+            {
+                if (value == "up")
+                {
+                    adminUp = true;
+                }
+                else
+                {
+                    adminUp = false;
+
+                    if (value != "down")
+                    {
+                        SWSS_LOG_WARN("Sub interface %s unknown admin status %s", alias.c_str(), value.c_str());
+                    }
+                }
+            }
+            else if (field == "nat_zone")
+            {
+                nat_zone = value;
             }
         }
 
@@ -337,59 +524,54 @@ void IntfsOrch::doTask(Consumer &consumer)
         string op = kfvOp(t);
         if (op == SET_COMMAND)
         {
-            if (alias == "lo")
+            if (is_lo)
             {
                 if (!ip_prefix_in_key)
                 {
-                    it = consumer.m_toSync.erase(it);
-                    continue;
-                }
-
-                bool addIp2Me = false;
-                // set request for lo may come after warm start restore.
-                // It is also to prevent dupicate set requests in normal running case.
-                auto it_intfs = m_syncdIntfses.find(alias);
-                if (it_intfs == m_syncdIntfses.end())
-                {
-                    IntfsEntry intfs_entry;
-
-                    intfs_entry.ref_count = 0;
-                    intfs_entry.vrf_id = vrf_id;
-                    intfs_entry.ip_addresses.insert(ip_prefix);
-                    m_syncdIntfses[alias] = intfs_entry;
-                    addIp2Me = true;
+                    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+                    {
+                        IntfsEntry intfs_entry;
+                        intfs_entry.ref_count = 0;
+                        intfs_entry.vrf_id = vrf_id;
+                        m_syncdIntfses[alias] = intfs_entry;
+                        m_vrfOrch->increaseVrfRefCount(vrf_id);
+                    }
                 }
                 else
                 {
-                     if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix) == 0)
-                     {
+                    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+                    {
+                        it++;
+                        continue;
+                    }
+                    if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix) == 0)
+                    {
                         m_syncdIntfses[alias].ip_addresses.insert(ip_prefix);
-                        addIp2Me = true;
-                     }
-                }
-                if (addIp2Me)
-                {
-                    addIp2MeRoute(vrf_id, ip_prefix);
+                        addIp2MeRoute(m_syncdIntfses[alias].vrf_id, ip_prefix);
+                    }
                 }
 
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
 
-            /* Wait for the Interface entry first */
-            auto it_intfs = m_syncdIntfses.find(alias);
-            if (ip_prefix_in_key && it_intfs == m_syncdIntfses.end())
-            {
-                it++;
-                continue;
-            }
-
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
-                /* TODO: Resolve the dependency relationship and add ref_count to port */
-                it++;
-                continue;
+                if (isSubIntf)
+                {
+                    if (!gPortsOrch->addSubPort(port, alias, adminUp, mtu))
+                    {
+                        it++;
+                        continue;
+                    }
+                }
+                else
+                {
+                    /* TODO: Resolve the dependency relationship and add ref_count to port */
+                    it++;
+                    continue;
+                }
             }
 
             if (m_vnetInfses.find(alias) != m_vnetInfses.end())
@@ -405,7 +587,7 @@ void IntfsOrch::doTask(Consumer &consumer)
                     it++;
                     continue;
                 }
-                if (!vnet_orch->setIntf(alias, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr))
+                if (!vnet_orch->setIntf(alias, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
                 {
                     it++;
                     continue;
@@ -418,10 +600,27 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else
             {
-                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr))
+                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
                 {
                     it++;
                     continue;
+                }
+
+                /* Set nat zone id */
+                if ((!nat_zone.empty()) and (port.m_nat_zone_id != nat_zone_id))
+                {
+                    port.m_nat_zone_id = nat_zone_id;
+
+                    if (gIsNatSupported)
+                    {
+                        setRouterIntfsNatZoneId(port);
+                    }
+                    else
+                    {
+                        SWSS_LOG_NOTICE("Not set router interface %s NAT Zone Id to %u, as NAT is not supported",
+                                        port.m_alias.c_str(), port.m_nat_zone_id);
+                    }
+                    gPortsOrch->setPort(alias, port);
                 }
             }
 
@@ -429,19 +628,33 @@ void IntfsOrch::doTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            if (alias == "lo")
+            if (is_lo)
             {
-                // TODO: handle case for which lo is not in default vrf gVirtualRouterId
-                if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
+                if (!ip_prefix_in_key)
                 {
-                    if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
+                    if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
                     {
-                        m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
-                        removeIp2MeRoute(vrf_id, ip_prefix);
+                        if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+                        {
+                            m_vrfOrch->decreaseVrfRefCount(m_syncdIntfses[alias].vrf_id);
+                            m_syncdIntfses.erase(alias);
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    if (m_syncdIntfses[alias].ip_addresses.size() == 0)
+                }
+                else
+                {
+                    if (m_syncdIntfses.find(alias) != m_syncdIntfses.end())
                     {
-                        m_syncdIntfses.erase(alias);
+                        if (m_syncdIntfses[alias].ip_addresses.count(ip_prefix))
+                        {
+                            m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
+                            removeIp2MeRoute(m_syncdIntfses[alias].vrf_id, ip_prefix);
+                        }
                     }
                 }
 
@@ -535,39 +748,72 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
         case Port::PHY:
         case Port::LAG:
             attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_PORT;
+            attrs.push_back(attr);
             break;
         case Port::VLAN:
             attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_VLAN;
+            attrs.push_back(attr);
+            break;
+        case Port::SUBPORT:
+            attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_SUB_PORT;
+            attrs.push_back(attr);
             break;
         default:
             SWSS_LOG_ERROR("Unsupported port type: %d", port.m_type);
             break;
     }
-    attrs.push_back(attr);
 
     switch(port.m_type)
     {
         case Port::PHY:
             attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
             attr.value.oid = port.m_port_id;
+            attrs.push_back(attr);
             break;
         case Port::LAG:
             attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
             attr.value.oid = port.m_lag_id;
+            attrs.push_back(attr);
             break;
         case Port::VLAN:
             attr.id = SAI_ROUTER_INTERFACE_ATTR_VLAN_ID;
             attr.value.oid = port.m_vlan_info.vlan_oid;
+            attrs.push_back(attr);
+            break;
+        case Port::SUBPORT:
+            attr.id = SAI_ROUTER_INTERFACE_ATTR_PORT_ID;
+            attr.value.oid = port.m_parent_port_id;
+            attrs.push_back(attr);
+
+            attr.id = SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID;
+            attr.value.u16 = port.m_vlan_info.vlan_id;
+            attrs.push_back(attr);
+
+            attr.id = SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE;
+            attr.value.booldata = port.m_admin_state_up;
+            attrs.push_back(attr);
+
+            attr.id = SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE;
+            attr.value.booldata = port.m_admin_state_up;
+            attrs.push_back(attr);
             break;
         default:
             SWSS_LOG_ERROR("Unsupported port type: %d", port.m_type);
             break;
     }
-    attrs.push_back(attr);
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
     attr.value.u32 = port.m_mtu;
     attrs.push_back(attr);
+
+    if (gIsNatSupported)
+    {
+        attr.id = SAI_ROUTER_INTERFACE_ATTR_NAT_ZONE_ID;
+        attr.value.u32 = port.m_nat_zone_id;
+
+        SWSS_LOG_INFO("Assinging NAT zone id %d to interface %s\n", attr.value.u32, port.m_alias.c_str());
+        attrs.push_back(attr);
+    }
 
     sai_status_t status = sai_router_intfs_api->create_router_interface(&port.m_rif_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -609,94 +855,12 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
 
     port.m_rif_id = 0;
     port.m_vr_id = 0;
+    port.m_nat_zone_id = 0;
     gPortsOrch->setPort(port.m_alias, port);
 
     SWSS_LOG_NOTICE("Remove router interface for port %s", port.m_alias.c_str());
 
     return true;
-}
-
-void IntfsOrch::addSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
-{
-    sai_route_entry_t unicast_route_entry;
-    unicast_route_entry.switch_id = gSwitchId;
-    unicast_route_entry.vr_id = port.m_vr_id;
-    copy(unicast_route_entry.destination, ip_prefix);
-    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
-
-    sai_attribute_t attr;
-    vector<sai_attribute_t> attrs;
-
-    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    attr.value.oid = port.m_rif_id;
-    attrs.push_back(attr);
-
-    sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create subnet route to %s from %s, rv:%d",
-                       ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
-        throw runtime_error("Failed to create subnet route.");
-    }
-
-    SWSS_LOG_NOTICE("Create subnet route to %s from %s",
-                    ip_prefix.to_string().c_str(), port.m_alias.c_str());
-    increaseRouterIntfsRefCount(port.m_alias);
-
-    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
-    }
-    else
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
-    }
-
-    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, NextHopGroupKey(), true);
-}
-
-void IntfsOrch::removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix)
-{
-    sai_route_entry_t unicast_route_entry;
-    unicast_route_entry.switch_id = gSwitchId;
-    unicast_route_entry.vr_id = port.m_vr_id;
-    copy(unicast_route_entry.destination, ip_prefix);
-    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
-
-    sai_status_t status = sai_route_api->remove_route_entry(&unicast_route_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        if (status == SAI_STATUS_ITEM_NOT_FOUND)
-        {
-            SWSS_LOG_ERROR("No subnet route found for %s", ip_prefix.to_string().c_str());
-            return;
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to remove subnet route to %s from %s, rv:%d",
-                           ip_prefix.to_string().c_str(), port.m_alias.c_str(), status);
-            throw runtime_error("Failed to remove subnet route.");
-        }
-    }
-
-    SWSS_LOG_NOTICE("Remove subnet route to %s from %s",
-                    ip_prefix.to_string().c_str(), port.m_alias.c_str());
-    decreaseRouterIntfsRefCount(port.m_alias);
-
-    if (unicast_route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-    {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
-    }
-    else
-    {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
-    }
-
-    gRouteOrch->notifyNextHopChangeObservers(ip_prefix, NextHopGroupKey(), false);
 }
 
 void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
@@ -907,6 +1071,9 @@ void IntfsOrch::doTask(SelectableTimer &timer)
                 break;
             case Port::VLAN:
                 type = "SAI_ROUTER_INTERFACE_TYPE_VLAN";
+                break;
+            case Port::SUBPORT:
+                type = "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT";
                 break;
             default:
                 SWSS_LOG_ERROR("Unsupported port type: %d", it->m_type);

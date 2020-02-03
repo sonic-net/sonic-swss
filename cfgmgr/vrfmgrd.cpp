@@ -8,6 +8,7 @@
 #include "vrfmgr.h"
 #include <fstream>
 #include <iostream>
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -45,9 +46,12 @@ int main(int argc, char **argv)
             CFG_VNET_TABLE_NAME,
         };
 
-        DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-        DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-        DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+        DBConnector cfgDb("CONFIG_DB", 0);
+        DBConnector appDb("APPL_DB", 0);
+        DBConnector stateDb("STATE_DB", 0);
+
+        WarmStart::initialize("vrfmgrd", "swss");
+        WarmStart::checkWarmStart("vrfmgrd", "swss");
 
         VrfMgr vrfmgr(&cfgDb, &appDb, &stateDb, cfg_vrf_tables);
 

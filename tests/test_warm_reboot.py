@@ -1,10 +1,10 @@
-
-from swsscommon import swsscommon
 import os
 import re
 import time
 import json
 import pytest
+
+from swsscommon import swsscommon
 
 
 # macros for number of interfaces and number of neighbors
@@ -233,6 +233,7 @@ def ping_new_ips(dvs):
         for j in range(NUM_NEIGH_PER_INTF/2):
             dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
             dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
+
 
 class TestWarmReboot(object):
     def test_PortSyncdWarmRestart(self, dvs, testlog):
@@ -1794,6 +1795,10 @@ class TestWarmReboot(object):
         intf_tbl._del("{}".format(intfs[2]))
         time.sleep(2)
 
+    # FIXME: This test is extremely unstable and requires several retries
+    # for it to pass - we need to stabilize this test before putting it back
+    # into the pipeline.
+    @pytest.mark.xfail(reason="test case is unstable")
     def test_system_warmreboot_neighbor_syncup(self, dvs, testlog):
 
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -2067,3 +2072,126 @@ class TestWarmReboot(object):
             intf_tbl._del("Ethernet{}|{}00::1/64".format(i*4, i*4))
             intf_tbl._del("Ethernet{}".format(i*4, i*4))
             intf_tbl._del("Ethernet{}".format(i*4, i*4))
+
+    def test_VrfMgrdWarmRestart(self, dvs, testlog):
+
+        conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
+
+        dvs.runcmd("config warm_restart enable swss")
+
+        # bring up interface
+        dvs.runcmd("ifconfig Ethernet0  up")
+        dvs.runcmd("ifconfig Ethernet4  up")
+
+        # create vrf
+        create_entry_tbl(conf_db, "VRF", "Vrf_1", [('empty', 'empty')])
+        create_entry_tbl(conf_db, "VRF", "Vrf_2", [('empty', 'empty')])
+
+        intf_tbl = swsscommon.Table(conf_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("vrf_name", "Vrf_1")])
+        intf_tbl.set("Ethernet0", fvs)
+        intf_tbl.set("Ethernet4", fvs)
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        intf_tbl.set("Ethernet0|12.0.0.1/24", fvs)
+        intf_tbl.set("Ethernet4|13.0.0.1/24", fvs)
+
+        time.sleep(1)
+
+        dvs.servers[0].runcmd("ifconfig eth0 12.0.0.2/24")
+        dvs.servers[0].runcmd("ip route add default via 12.0.0.1")
+
+        dvs.servers[1].runcmd("ifconfig eth0 13.0.0.2/24")
+        dvs.servers[1].runcmd("ip route add default via 13.0.0.1")
+
+        time.sleep(1)
+
+        # Ping should work between servers via vs port interfaces
+        ping_stats = dvs.servers[0].runcmd("ping -c 1 13.0.0.2")
+        assert ping_stats == 0
+        time.sleep(1)
+
+        tbl = swsscommon.Table(appl_db, "NEIGH_TABLE")
+        (status, fvs) = tbl.get("Ethernet0:12.0.0.2")
+        assert status == True
+
+        (status, fvs) = tbl.get("Ethernet4:13.0.0.2")
+        assert status == True
+
+        (exitcode, vrf_before) = dvs.runcmd(['sh', '-c', "ip link show | grep Vrf"])
+
+        dvs.runcmd(['sh', '-c', 'pkill -x vrfmgrd'])
+
+        pubsub = dvs.SubscribeAsicDbObject("SAI_OBJECT_TYPE")
+
+        dvs.runcmd(['sh', '-c', 'supervisorctl start vrfmgrd'])
+        time.sleep(2)
+
+        # kernel vrf config should be kept the same
+        (exitcode, vrf_after) = dvs.runcmd(['sh', '-c', "ip link show | grep Vrf"])
+        assert vrf_after == vrf_before
+
+        # VIRTUAL_ROUTER/ROUTE_ENTRY/NEIGH_ENTRY should be kept the same
+        (nadd, ndel) = dvs.CountSubscribedObjects(pubsub, ignore=["SAI_OBJECT_TYPE_FDB_ENTRY"])
+        assert nadd == 0
+        assert ndel == 0
+
+        # new ip on server 1
+        dvs.servers[1].runcmd("ifconfig eth0 13.0.0.3/24")
+        dvs.servers[1].runcmd("ip route add default via 13.0.0.1")
+
+        # Ping should work between servers via vs port interfaces
+        ping_stats = dvs.servers[0].runcmd("ping -c 1 13.0.0.3")
+        assert ping_stats == 0
+
+        # new neighbor learn on vs
+        (status, fvs) = tbl.get("Ethernet4:13.0.0.3")
+        assert status == True
+
+        # flush all neigh entries
+        dvs.runcmd("ip link set group default arp off")
+        dvs.runcmd("ip link set group default arp on")
+
+        # remove interface Ethernet4 from vrf_1, add it to vrf_2
+        intf_tbl._del("Ethernet4|13.0.0.1/24")
+        intf_tbl._del("Ethernet4")
+        time.sleep(1)
+
+        intf_tbl = swsscommon.Table(conf_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("vrf_name", "Vrf_2")])
+        intf_tbl.set("Ethernet4", fvs)
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        intf_tbl.set("Ethernet4|13.0.0.1/24", fvs)
+        time.sleep(1)
+
+        # Ping should not work
+        ping_stats = dvs.servers[0].runcmd("ping -c 1 13.0.0.3")
+        assert ping_stats != 0
+
+        # remove interface Ethernet0 from vrf_1, add it to vrf_2
+        intf_tbl._del("Ethernet0|12.0.0.1/24")
+        intf_tbl._del("Ethernet0")
+        time.sleep(1)
+        fvs = swsscommon.FieldValuePairs([("vrf_name", "Vrf_2")])
+        intf_tbl.set("Ethernet0", fvs)
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        intf_tbl.set("Ethernet0|12.0.0.1/24", fvs)
+        time.sleep(1)
+
+        # Ping should work between servers via vs port interfaces
+        ping_stats = dvs.servers[0].runcmd("ping -c 1 13.0.0.3")
+        assert ping_stats == 0
+
+        (status, fvs) = tbl.get("Ethernet4:13.0.0.3")
+        assert status == True
+
+        intf_tbl._del("Ethernet0|12.0.0.1/24")
+        intf_tbl._del("Ethernet4|13.0.0.1/24")
+        intf_tbl._del("Ethernet0")
+        intf_tbl._del("Ethernet4")
+        del_entry_tbl(conf_db, "VRF", "Vrf_1")
+        del_entry_tbl(conf_db, "VRF", "Vrf_2")
+        dvs.servers[0].runcmd("ifconfig eth0 0")
+        dvs.servers[1].runcmd("ifconfig eth0 0")
+        time.sleep(2)

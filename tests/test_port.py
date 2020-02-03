@@ -1,7 +1,9 @@
-from swsscommon import swsscommon
-
 import time
 import os
+import pytest
+
+from swsscommon import swsscommon
+
 
 class TestPort(object):
     def test_PortMtu(self, dvs, testlog):

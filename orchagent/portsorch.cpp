@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <tuple>
 #include <sstream>
+#include <unordered_set>
 
 #include <netinet/if_ether.h>
 #include "net/if.h"
@@ -40,10 +41,12 @@ extern BufferOrch *gBufferOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
-#define PORT_FLEX_STAT_COUNTER_POLL_MSECS "1000"
-#define QUEUE_FLEX_STAT_COUNTER_POLL_MSECS "10000"
+#define MAX_VALID_VLAN_ID   4094
+
+#define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
+#define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
-#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
+#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "10000"
 
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
@@ -59,7 +62,17 @@ static map<string, sai_port_priority_flow_control_mode_t> pfc_asym_map =
     { "off", SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED }
 };
 
-const vector<sai_port_stat_t> portStatIds =
+static map<string, sai_bridge_port_fdb_learning_mode_t> learn_mode_map =
+{
+    { "drop",  SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DROP },
+    { "disable", SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE },
+    { "hardware", SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW },
+    { "cpu_trap", SAI_BRIDGE_PORT_FDB_LEARNING_MODE_CPU_TRAP},
+    { "cpu_log", SAI_BRIDGE_PORT_FDB_LEARNING_MODE_CPU_LOG},
+    { "notification", SAI_BRIDGE_PORT_FDB_LEARNING_MODE_FDB_NOTIFICATION}
+};
+
+const vector<sai_port_stat_t> port_stat_ids =
 {
     SAI_PORT_STAT_IF_IN_OCTETS,
     SAI_PORT_STAT_IF_IN_UCAST_PKTS,
@@ -102,7 +115,7 @@ const vector<sai_port_stat_t> portStatIds =
     SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS,
 };
 
-static const vector<sai_queue_stat_t> queueStatIds =
+static const vector<sai_queue_stat_t> queue_stat_ids =
 {
     SAI_QUEUE_STAT_PACKETS,
     SAI_QUEUE_STAT_BYTES,
@@ -140,12 +153,14 @@ static char* hostif_vlan_tag[] = {
  *    default VLAN and all ports removed from .1Q bridge.
  */
 PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames) :
-        Orch(db, tableNames)
+        Orch(db, tableNames),
+        port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
 {
     SWSS_LOG_ENTER();
 
     /* Initialize counter table */
-    m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
     m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
 
     /* Initialize port table */
@@ -162,18 +177,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_pgPortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_PORT_MAP));
     m_pgIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_INDEX_MAP));
 
-    m_flex_db = shared_ptr<DBConnector>(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+    m_flex_db = shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0));
     m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
     m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
-
-    vector<FieldValueTuple> fields;
-    fields.emplace_back(POLL_INTERVAL_FIELD, PORT_FLEX_STAT_COUNTER_POLL_MSECS);
-    fields.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-    m_flexCounterGroupTable->set(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fields);
-
-    fields.emplace_back(POLL_INTERVAL_FIELD, QUEUE_FLEX_STAT_COUNTER_POLL_MSECS);
-    fields.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-    m_flexCounterGroupTable->set(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, fields);
 
     string queueWmSha, pgWmSha;
     string queueWmPluginName = "watermark_queue.lua";
@@ -304,7 +310,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     removeDefaultBridgePorts();
 
     /* Add port oper status notification support */
-    DBConnector *notificationsDb = new DBConnector(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector *notificationsDb = new DBConnector("ASIC_DB", 0);
     m_portStatusNotificationConsumer = new swss::NotificationConsumer(notificationsDb, "NOTIFICATIONS");
     auto portStatusNotificatier = new Notifier(m_portStatusNotificationConsumer, this, "PORT_STATUS_NOTIFICATIONS");
     Orch::addExecutor(portStatusNotificatier);
@@ -394,12 +400,34 @@ bool PortsOrch::allPortsReady()
     return m_initDone && m_pendingPortSet.empty();
 }
 
-/* Upon receiving PortInitDone, all the configured ports have been created*/
+/* Upon receiving PortInitDone, all the configured ports have been created in both hardware and kernel*/
 bool PortsOrch::isInitDone()
 {
     return m_initDone;
 }
 
+// Upon m_portConfigState transiting to PORT_CONFIG_DONE state, all physical ports have been "created" in hardware.
+// Because of the asynchronous nature of sairedis calls, "create" in the strict sense means that the SAI create_port()
+// function is called and the create port event has been pushed to the sairedis pipeline. Because sairedis pipeline
+// preserves the order of the events received, any event that depends on the physical port being created first, e.g.,
+// buffer profile apply, will be popped in the FIFO fashion, processed in the right order after the physical port is
+// physically created in the ASIC, and thus can be issued safely when this function call returns true.
+bool PortsOrch::isConfigDone()
+{
+    return m_portConfigState == PORT_CONFIG_DONE;
+}
+
+bool PortsOrch::isPortAdminUp(const string &alias)
+{
+    auto it = m_portList.find(alias);
+    if (it == m_portList.end())
+    {
+        SWSS_LOG_ERROR("Failed to get Port object by port alias: %s", alias.c_str());
+        return false;
+    }
+
+    return it->second.m_admin_state_up;
+}
 
 map<string, Port>& PortsOrch::getAllPorts()
 {
@@ -524,6 +552,101 @@ bool PortsOrch::getAclBindPortId(string alias, sai_object_id_t &port_id)
     {
         return false;
     }
+}
+
+bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp, const uint32_t &mtu)
+{
+    size_t found = alias.find(VLAN_SUB_INTERFACE_SEPARATOR);
+    if (found == string::npos)
+    {
+        SWSS_LOG_ERROR("%s is not a sub interface", alias.c_str());
+        return false;
+    }
+    string parentAlias = alias.substr(0, found);
+    string vlanId = alias.substr(found + 1);
+    sai_vlan_id_t vlan_id;
+    try
+    {
+        vlan_id = static_cast<sai_vlan_id_t>(stoul(vlanId));
+    }
+    catch (const std::invalid_argument &e)
+    {
+        SWSS_LOG_ERROR("Invalid argument %s to %s()", vlanId.c_str(), e.what());
+        return false;
+    }
+    catch (const std::out_of_range &e)
+    {
+        SWSS_LOG_ERROR("Out of range argument %s to %s()", vlanId.c_str(), e.what());
+        return false;
+    }
+    if (vlan_id > MAX_VALID_VLAN_ID)
+    {
+        SWSS_LOG_ERROR("sub interface %s Port object creation: invalid VLAN id %u", alias.c_str(), vlan_id);
+        return false;
+    }
+
+    auto it = m_portList.find(parentAlias);
+    if (it == m_portList.end())
+    {
+        SWSS_LOG_NOTICE("Sub interface %s Port object creation: parent port %s is not ready", alias.c_str(), parentAlias.c_str());
+        return false;
+    }
+    Port &parentPort = it->second;
+
+    Port p(alias, Port::SUBPORT);
+
+    p.m_admin_state_up = adminUp;
+
+    if (mtu)
+    {
+        p.m_mtu = mtu;
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Sub interface %s inherits mtu size %u from parent port %s", alias.c_str(), parentPort.m_mtu, parentAlias.c_str());
+        p.m_mtu = parentPort.m_mtu;
+    }
+
+    p.m_parent_port_id = parentPort.m_port_id;
+    p.m_vlan_info.vlan_id = vlan_id;
+
+    parentPort.m_child_ports.insert(p.m_alias);
+
+    m_portList[alias] = p;
+    port = p;
+    return true;
+}
+
+bool PortsOrch::removeSubPort(const string &alias)
+{
+    auto it = m_portList.find(alias);
+    if (it == m_portList.end())
+    {
+        SWSS_LOG_WARN("Sub interface %s Port object not found", alias.c_str());
+        return false;
+    }
+    Port &port = it->second;
+
+    if (port.m_type != Port::SUBPORT)
+    {
+        SWSS_LOG_ERROR("Sub interface %s not of type sub port", alias.c_str());
+        return false;
+    }
+
+    Port parentPort;
+    if (!getPort(port.m_parent_port_id, parentPort))
+    {
+        SWSS_LOG_WARN("Sub interface %s: parent Port object not found", alias.c_str());
+    }
+
+    if (!parentPort.m_child_ports.erase(alias))
+    {
+        SWSS_LOG_WARN("Sub interface %s not associated to parent port %s", alias.c_str(), parentPort.m_alias.c_str());
+    }
+    m_portList[parentPort.m_alias] = parentPort;
+
+    m_portList.erase(it);
+    return true;
 }
 
 void PortsOrch::setPort(string alias, Port p)
@@ -1333,16 +1456,6 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
     return true;
 }
 
-string PortsOrch::getPortFlexCounterTableKey(string key)
-{
-    return string(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
-}
-
-string PortsOrch::getQueueFlexCounterTableKey(string key)
-{
-    return string(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
-}
-
 string PortsOrch::getQueueWatermarkFlexCounterTableKey(string key)
 {
     return string(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
@@ -1386,22 +1499,15 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 fields.push_back(tuple);
                 m_counterTable->set("", fields);
 
-                /* Add port to flex_counter for updating stat counters  */
-                string key = getPortFlexCounterTableKey(sai_serialize_object_id(p.m_port_id));
-                std::string delimiter = "";
-                std::ostringstream counters_stream;
-                for (const auto &id: portStatIds)
+                // Install a flex counter for this port to track stats
+                std::unordered_set<std::string> counter_stats;
+                for (const auto& it: port_stat_ids)
                 {
-                    counters_stream << delimiter << sai_serialize_port_stat(id);
-                    delimiter = comma;
+                    counter_stats.emplace(sai_serialize_port_stat(it));
                 }
+                port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, counter_stats);
 
-                fields.clear();
-                fields.emplace_back(PORT_COUNTER_ID_LIST, counters_stream.str());
-
-                m_flexCounterTable->set(key, fields);
-
-                PortUpdate update = {p, true };
+                PortUpdate update = { p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
@@ -1460,6 +1566,16 @@ bool PortsOrch::bake()
         return false;
     }
 
+    for (const auto& alias: keys)
+    {
+        if (alias == "PortConfigDone" || alias == "PortInitDone")
+        {
+            continue;
+        }
+
+        m_pendingPortSet.emplace(alias);
+    }
+
     addExistingData(m_portTable.get());
     addExistingData(APP_LAG_TABLE_NAME);
     addExistingData(APP_LAG_MEMBER_TABLE_NAME);
@@ -1492,14 +1608,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
         if (alias == "PortConfigDone")
         {
-            if (m_portConfigDone)
+            if (m_portConfigState != PORT_CONFIG_MISSING)
             {
-                // Already done, ignore this task
+                // Already received, ignore this task
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
 
-            m_portConfigDone = true;
+            m_portConfigState = PORT_CONFIG_RECEIVED;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -1543,6 +1659,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             string pfc_asym;
             uint32_t mtu = 0;
             uint32_t speed = 0;
+            string learn_mode;
             int an = -1;
 
             for (auto i : kfvFieldsValues(t))
@@ -1583,6 +1700,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (fvField(i) == "fec")
                 {
                     fec_mode = fvValue(i);
+                }
+
+                /* Get port fdb learn mode*/
+                if (fvField(i) == "learn_mode")
+                {
+                    learn_mode = fvValue(i);
                 }
 
                 /* Set port asymmetric PFC */
@@ -1631,7 +1754,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
              * 2. Create new ports
              * 3. Initialize all ports
              */
-            if (m_portConfigDone && (m_lanesAliasSpeedMap.size() == m_portCount))
+            if (m_portConfigState == PORT_CONFIG_RECEIVED && (m_lanesAliasSpeedMap.size() == m_portCount))
             {
                 for (auto it = m_portListLaneMap.begin(); it != m_portListLaneMap.end();)
                 {
@@ -1676,9 +1799,11 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
                     it = m_lanesAliasSpeedMap.erase(it);
                 }
+
+                m_portConfigState = PORT_CONFIG_DONE;
             }
 
-            if (!m_portConfigDone)
+            if (m_portConfigState != PORT_CONFIG_DONE)
             {
                 // Not yet receive PortConfigDone. Save it for future retry
                 it++;
@@ -1855,6 +1980,32 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     else
                     {
                         SWSS_LOG_ERROR("Unknown fec mode %s", fec_mode.c_str());
+                    }
+                }
+
+                if (!learn_mode.empty() && (p.m_learn_mode != learn_mode))
+                {
+                    if (p.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+                    {
+                        if(setBridgePortLearnMode(p, learn_mode))
+                        {
+                            p.m_learn_mode = learn_mode;
+                            m_portList[alias] = p;
+                            SWSS_LOG_NOTICE("Set port %s learn mode to %s", alias.c_str(), learn_mode.c_str());
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s learn mode to %s", alias.c_str(), learn_mode.c_str());
+                            it++;
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        p.m_learn_mode = learn_mode;
+                        m_portList[alias] = p;
+
+                        SWSS_LOG_NOTICE("Saved to set port %s learn mode %s", alias.c_str(), learn_mode.c_str());
                     }
                 }
 
@@ -2168,13 +2319,19 @@ void PortsOrch::doLagTask(Consumer &consumer)
         {
             // Retrieve attributes
             uint32_t mtu = 0;
+            string learn_mode;
+
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
                 }
-                if (fvField(i) == "oper_status")
+                else if (fvField(i) == "learn_mode")
+                {
+                    learn_mode = fvValue(i);
+                }
+                else if (fvField(i) == "oper_status")
                 {
                     if (fvValue(i) == "down")
                     {
@@ -2212,6 +2369,32 @@ void PortsOrch::doLagTask(Consumer &consumer)
                     if (l.m_rif_id)
                     {
                         gIntfsOrch->setRouterIntfsMtu(l);
+                    }
+                }
+
+                if (!learn_mode.empty() && (l.m_learn_mode != learn_mode))
+                {
+                    if (l.m_bridge_port_id != SAI_NULL_OBJECT_ID)
+                    {
+                        if(setBridgePortLearnMode(l, learn_mode))
+                        {
+                            l.m_learn_mode = learn_mode;
+                            m_portList[alias] = l;
+                            SWSS_LOG_NOTICE("Set port %s learn mode to %s", alias.c_str(), learn_mode.c_str());
+                        }
+                        else
+                        {
+                            SWSS_LOG_ERROR("Failed to set port %s learn mode to %s", alias.c_str(), learn_mode.c_str());
+                            it++;
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        l.m_learn_mode = learn_mode;
+                        m_portList[alias] = l;
+
+                        SWSS_LOG_NOTICE("Saved to set port %s learn mode %s", alias.c_str(), learn_mode.c_str());
                     }
                 }
             }
@@ -2289,39 +2472,51 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                     status = fvValue(i);
             }
 
+            if (lag.m_members.find(port_alias) == lag.m_members.end())
+            {
+                /* Assert the port doesn't belong to any LAG already */
+                assert(!port.m_lag_id && !port.m_lag_member_id);
+
+                if (!addLagMember(lag, port))
+                {
+                    it++;
+                    continue;
+                }
+            }
+
             /* Sync an enabled member */
             if (status == "enabled")
             {
-                /* Duplicate entry */
-                if (lag.m_members.find(port_alias) != lag.m_members.end())
+                /* enable collection first, distribution-only mode
+                 * is not supported on Mellanox platform
+                 */
+                if (setCollectionOnLagMember(port, true) &&
+                    setDistributionOnLagMember(port, true))
                 {
                     it = consumer.m_toSync.erase(it);
+                }
+                else
+                {
+                    it++;
                     continue;
                 }
-
-                /* Assert the port doesn't belong to any LAG */
-                assert(!port.m_lag_id && !port.m_lag_member_id);
-
-                if (addLagMember(lag, port))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
             }
             /* Sync an disabled member */
             else /* status == "disabled" */
             {
-                /* "status" is "disabled" at start when m_lag_id and
-                 * m_lag_member_id are absent */
-                if (!port.m_lag_id || !port.m_lag_member_id)
+                /* disable distribution first, distribution-only mode
+                 * is not supported on Mellanox platform
+                 */
+                if (setDistributionOnLagMember(port, false) &&
+                    setCollectionOnLagMember(port, false))
                 {
                     it = consumer.m_toSync.erase(it);
+                }
+                else
+                {
+                    it++;
                     continue;
                 }
-
-                if (removeLagMember(lag, port))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
             }
         }
         /* Remove a LAG member */
@@ -2339,14 +2534,46 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             }
 
             if (removeLagMember(lag, port))
+            {
                 it = consumer.m_toSync.erase(it);
+            }
             else
+            {
                 it++;
+            }
         }
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
             it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+void PortsOrch::doTask()
+{
+    constexpr auto tableOrder = {
+        APP_PORT_TABLE_NAME,
+        APP_LAG_TABLE_NAME,
+        APP_LAG_MEMBER_TABLE_NAME,
+        APP_VLAN_TABLE_NAME,
+        APP_VLAN_MEMBER_TABLE_NAME,
+    };
+
+    for (auto tableName: tableOrder)
+    {
+        auto consumer = getExecutor(tableName);
+        consumer->drain();
+    }
+
+    // drain remaining tables
+    for (auto& it: m_consumerMap)
+    {
+        auto tableName = it.first;
+        auto consumer = it.second.get();
+        if (find(tableOrder.begin(), tableOrder.end(), tableName) == tableOrder.end())
+        {
+            consumer->drain();
         }
     }
 }
@@ -2403,6 +2630,7 @@ void PortsOrch::initializeQueues(Port &port)
     SWSS_LOG_INFO("Get %d queues for port %s", attr.value.u32, port.m_alias.c_str());
 
     port.m_queue_ids.resize(attr.value.u32);
+    port.m_queue_lock.resize(attr.value.u32);
 
     if (attr.value.u32 == 0)
     {
@@ -2438,6 +2666,7 @@ void PortsOrch::initializePriorityGroups(Port &port)
     SWSS_LOG_INFO("Get %d priority groups for port %s", attr.value.u32, port.m_alias.c_str());
 
     port.m_priority_group_ids.resize(attr.value.u32);
+    port.m_priority_group_lock.resize(attr.value.u32);
 
     if (attr.value.u32 == 0)
     {
@@ -2628,7 +2857,15 @@ bool PortsOrch::addBridgePort(Port &port)
 
     /* And with hardware FDB learning mode set to HW (explicit default value) */
     attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
-    attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+    auto found = learn_mode_map.find(port.m_learn_mode);
+    if (found == learn_mode_map.end())
+    {
+        attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+    }
+    else
+    {
+        attr.value.s32 = found->second;
+    }
     attrs.push_back(attr);
 
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -2696,6 +2933,40 @@ bool PortsOrch::removeBridgePort(Port &port)
     SWSS_LOG_NOTICE("Remove bridge port %s from default 1Q bridge", port.m_alias.c_str());
 
     m_portList[port.m_alias] = port;
+    return true;
+}
+
+bool PortsOrch::setBridgePortLearnMode(Port &port, string learn_mode)
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_bridge_port_id == SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
+    auto found = learn_mode_map.find(learn_mode);
+    if (found == learn_mode_map.end())
+    {
+        SWSS_LOG_ERROR("Incorrect MAC learn mode: %s", learn_mode.c_str());
+        return false;
+    }
+
+    /* Set bridge port learning mode */
+    sai_attribute_t attr;
+    attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+    attr.value.s32 = found->second;
+
+    sai_status_t status = sai_bridge_api->set_bridge_port_attribute(port.m_bridge_port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set bridge port %s learning mode, rv:%d",
+            port.m_alias.c_str(), status);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Set bridge port %s learning mode %s", port.m_alias.c_str(), learn_mode.c_str());
+
     return true;
 }
 
@@ -3063,6 +3334,52 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     return true;
 }
 
+bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
+{
+    /* Port must be LAG member */
+    assert(port.m_lag_member_id);
+
+    sai_status_t status = SAI_STATUS_FAILURE;
+    sai_attribute_t attr {};
+
+    attr.id = SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE;
+    attr.value.booldata = !enableCollection;
+
+    status = sai_lag_api->set_lag_member_attribute(lagMember.m_lag_member_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to %s collection on LAG member %s",
+            enableCollection ? "enable" : "disable",
+            lagMember.m_alias.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribution)
+{
+    /* Port must be LAG member */
+    assert(port.m_lag_member_id);
+
+    sai_status_t status = SAI_STATUS_FAILURE;
+    sai_attribute_t attr {};
+
+    attr.id = SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE;
+    attr.value.booldata = !enableDistribution;
+
+    status = sai_lag_api->set_lag_member_attribute(lagMember.m_lag_member_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to %s distribution on LAG member %s",
+            enableDistribution ? "enable" : "disable",
+            lagMember.m_alias.c_str());
+        return false;
+    }
+
+    return true;
+}
+
 void PortsOrch::generateQueueMap()
 {
     if (m_isQueueMapGenerated)
@@ -3108,34 +3425,26 @@ void PortsOrch::generateQueueMapPerPort(const Port& port)
             queueIndexVector.emplace_back(id, to_string(queueRealIndex));
         }
 
-        /* add ordinary Queue stat counters */
-        string key = getQueueFlexCounterTableKey(id);
-
-        std::string delimiter = "";
-        std::ostringstream counters_stream;
-        for (const auto& it: queueStatIds)
+        // Install a flex counter for this queue to track stats
+        std::unordered_set<string> counter_stats;
+        for (const auto& it: queue_stat_ids)
         {
-            counters_stream << delimiter << sai_serialize_queue_stat(it);
-            delimiter = comma;
+            counter_stats.emplace(sai_serialize_queue_stat(it));
         }
-
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
-
-        m_flexCounterTable->set(key, fieldValues);
+        queue_stat_manager.setCounterIdList(port.m_queue_ids[queueIndex], CounterType::QUEUE, counter_stats);
 
         /* add watermark queue counters */
-        key = getQueueWatermarkFlexCounterTableKey(id);
+        string key = getQueueWatermarkFlexCounterTableKey(id);
 
-        delimiter = "";
-        counters_stream.str("");
+        string delimiter("");
+        std::ostringstream counters_stream;
         for (const auto& it: queueWatermarkStatIds)
         {
             counters_stream << delimiter << sai_serialize_queue_stat(it);
             delimiter = comma;
         }
 
-        fieldValues.clear();
+        vector<FieldValueTuple> fieldValues;
         fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
 
         m_flexCounterTable->set(key, fieldValues);

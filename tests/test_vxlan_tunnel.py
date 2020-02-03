@@ -1,9 +1,10 @@
-from swsscommon import swsscommon
 import time
 import json
 import random
 import time
 import pytest
+
+from swsscommon import swsscommon
 from pprint import pprint
 
 
@@ -240,6 +241,7 @@ def get_lo(dvs):
             assert False, 'Don\'t found loopback id'
 
     return lo_id
+
 
 class TestVxlan(object):
     def test_vxlan_term_orch(self, dvs, testlog):

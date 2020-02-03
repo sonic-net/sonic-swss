@@ -15,9 +15,9 @@ int main(int argc, char **argv)
 {
     Logger::linkToDbNative("neighsyncd");
 
-    DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector appDb("APPL_DB", 0);
     RedisPipeline pipelineAppDB(&appDb);
-    DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector stateDb("STATE_DB", 0);
 
     NeighSync sync(&pipelineAppDB, &stateDb);
 
@@ -40,7 +40,7 @@ int main(int argc, char **argv)
              */
             if (sync.getRestartAssist()->isWarmStartInProgress())
             {
-                sync.getRestartAssist()->readTableToMap();
+                sync.getRestartAssist()->readTablesToMap();
 
                 steady_clock::time_point starttime = steady_clock::now();
                 while (!sync.isNeighRestoreDone())

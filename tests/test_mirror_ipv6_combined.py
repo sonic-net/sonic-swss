@@ -1,11 +1,10 @@
 # This test suite covers the functionality of mirror feature in SwSS
-
 import platform
 import pytest
 import time
-from distutils.version import StrictVersion
 
 from swsscommon import swsscommon
+from distutils.version import StrictVersion
 
 DVS_FAKE_PLATFORM = "broadcom"
 

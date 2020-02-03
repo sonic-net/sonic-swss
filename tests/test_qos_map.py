@@ -2,6 +2,7 @@ import pytest
 import json
 import sys
 import time
+
 from swsscommon import swsscommon
 
 CFG_DOT1P_TO_TC_MAP_TABLE_NAME =  "DOT1P_TO_TC_MAP"

@@ -7,12 +7,18 @@
 #include "portmgr.h"
 
 #include <algorithm>
+#include <iostream>
+#include <fstream>
 #include <sstream>
+#include <fstream>
 #include <thread>
 
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <signal.h>
+
+#define PID_FILE_PATH "/var/run/teamd/"
 
 using namespace std;
 using namespace swss;
@@ -108,6 +114,79 @@ void TeamMgr::doTask(Consumer &consumer)
     }
 }
 
+
+pid_t TeamMgr::getTeamPid(const string &alias)
+{
+    SWSS_LOG_ENTER();
+    pid_t pid = 0;
+
+    string file = string(PID_FILE_PATH) + alias + string(".pid");
+    ifstream infile(file);
+    if (!infile.is_open())
+    {
+        SWSS_LOG_WARN("The LAG PID file: %s is not readable", file.c_str());
+        return 0;
+    }
+
+    string line;
+    getline(infile, line);
+    if (line.empty())
+    {
+        SWSS_LOG_WARN("The LAG PID file: %s is empty", file.c_str());
+    }
+    else 
+    {
+        /*Store the PID value */
+        pid = stoi(line, nullptr, 10);
+    }
+
+    /* Close the file and return */
+    infile.close();
+
+    return pid;
+}
+
+
+void TeamMgr::addLagPid(const string &alias)
+{
+    SWSS_LOG_ENTER();
+    m_lagPIDList[alias] = getTeamPid(alias);
+}
+
+void TeamMgr::removeLagPid(const string &alias)
+{
+    SWSS_LOG_ENTER();
+    m_lagPIDList.erase(alias);
+}
+
+void TeamMgr::cleanTeamProcesses(int signo)
+{
+    pid_t pid = 0;
+
+    for (const auto& it: m_lagList)
+    {
+        pid = m_lagPIDList[it];
+        if(!pid) {
+            SWSS_LOG_WARN("Invalid PID found for LaG %s ", it.c_str());
+
+            /* Try to get the PID again */
+            pid = getTeamPid(it);
+        }
+
+        if(pid > 0)
+        {
+            SWSS_LOG_INFO("Sending TERM Signal to (PID: %d) for LaG %s ", pid, it.c_str());
+            kill(pid, signo);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Can't send TERM signal to LAG %s. PID wasn't found", it.c_str());
+        }
+    }
+
+    return;
+}
+
 void TeamMgr::doLagTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -126,6 +205,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
             bool fallback = false;
             string admin_status = DEFAULT_ADMIN_STATUS_STR;
             string mtu = DEFAULT_MTU_STR;
+            string learn_mode;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -153,6 +233,12 @@ void TeamMgr::doLagTask(Consumer &consumer)
                     mtu = fvValue(i);
                     SWSS_LOG_INFO("Get MTU %s", mtu.c_str());
                 }
+                else if (fvField(i) == "learn_mode")
+                {
+                    learn_mode = fvValue(i);
+                    SWSS_LOG_INFO("Get learn_mode %s",
+                            learn_mode.c_str());
+                }
             }
 
             if (m_lagList.find(alias) == m_lagList.end())
@@ -164,10 +250,16 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 }
 
                 m_lagList.insert(alias);
+                addLagPid(alias);
             }
 
             setLagAdminStatus(alias, admin_status);
             setLagMtu(alias, mtu);
+            if (!learn_mode.empty())
+            {
+                setLagLearnMode(alias, learn_mode);
+                SWSS_LOG_NOTICE("Configure %s MAC learn mode to %s", alias.c_str(), learn_mode.c_str());
+            }
         }
         else if (op == DEL_COMMAND)
         {
@@ -175,6 +267,7 @@ void TeamMgr::doLagTask(Consumer &consumer)
             {
                 removeLag(alias);
                 m_lagList.erase(alias);
+                removeLagPid(alias);
             }
         }
 
@@ -319,7 +412,7 @@ bool TeamMgr::setLagAdminStatus(const string &alias, const string &admin_status)
     string res;
 
     // ip link set dev <port_channel_name> [up|down]
-    cmd << IP_CMD << " link set dev " << alias << " " << admin_status;
+    cmd << IP_CMD << " link set dev " << shellquote(alias) << " " << shellquote(admin_status);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     SWSS_LOG_NOTICE("Set port channel %s admin status to %s",
@@ -336,7 +429,7 @@ bool TeamMgr::setLagMtu(const string &alias, const string &mtu)
     string res;
 
     // ip link set dev <port_channel_name> mtu <mtu_value>
-    cmd << IP_CMD << " link set dev " << alias << " mtu " << mtu;
+    cmd << IP_CMD << " link set dev " << shellquote(alias) << " mtu " << shellquote(mtu);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     vector<FieldValueTuple> fvs;
@@ -365,6 +458,17 @@ bool TeamMgr::setLagMtu(const string &alias, const string &mtu)
     return true;
 }
 
+bool TeamMgr::setLagLearnMode(const string &alias, const string &learn_mode)
+{
+    // Set the port MAC learn mode in application database
+    vector<FieldValueTuple> fvs;
+    FieldValueTuple fv("learn_mode", learn_mode);
+    fvs.push_back(fv);
+    m_appLagTable.set(alias, fvs);
+
+    return true;
+}
+
 task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fallback)
 {
     SWSS_LOG_ENTER();
@@ -373,8 +477,41 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
     string res;
 
     stringstream conf;
+
+    const string dump_path = "/var/warmboot/teamd/";
+    MacAddress mac_boot = m_mac;
+
+    // set portchannel mac same with mac before warmStart, when warmStart and there
+    // is a file written by teamd.
+    ifstream aliasfile(dump_path + alias);
+    if (WarmStart::isWarmStart() && aliasfile.is_open())
+    {
+        const int partner_system_id_offset = 40;
+        string line;
+
+        while (getline(aliasfile, line))
+        {
+            ifstream memberfile(dump_path + line, ios::binary);
+            uint8_t mac_temp[ETHER_ADDR_LEN] = {0};
+            uint8_t null_mac[ETHER_ADDR_LEN] = {0};
+
+            if (!memberfile.is_open())
+                continue;
+
+            memberfile.seekg(partner_system_id_offset, std::ios::beg);
+            memberfile.read(reinterpret_cast<char*>(mac_temp), ETHER_ADDR_LEN);
+
+            /* During negotiation stage partner info of pdu is empty , skip it */
+            if (memcmp(mac_temp, null_mac, ETHER_ADDR_LEN) == 0)
+                continue;
+
+            mac_boot = MacAddress(mac_temp);
+            break;
+        }
+    }
+
     conf << "'{\"device\":\"" << alias << "\","
-         << "\"hwaddr\":\"" << m_mac.to_string() << "\","
+         << "\"hwaddr\":\"" << mac_boot.to_string() << "\","
          << "\"runner\":{"
          << "\"active\":true,"
          << "\"name\":\"lacp\"";
@@ -395,7 +532,6 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
             alias.c_str(), conf.str().c_str());
 
     string warmstart_flag = WarmStart::isWarmStart() ? " -w -o " : " -r ";
-    const string dump_path = "/var/warmboot/teamd/";
 
     cmd << TEAMD_CMD
         << warmstart_flag
@@ -423,7 +559,7 @@ bool TeamMgr::removeLag(const string &alias)
     stringstream cmd;
     string res;
 
-    cmd << TEAMD_CMD << " -k -t " << alias;
+    cmd << TEAMD_CMD << " -k -t " << shellquote(alias);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     SWSS_LOG_NOTICE("Stop port channel %s", alias.c_str());
@@ -451,8 +587,8 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
     // Set admin down LAG member (required by teamd) and enslave it
     // ip link set dev <member> down;
     // teamdctl <port_channel_name> port add <member>;
-    cmd << IP_CMD << " link set dev " << member << " down; ";
-    cmd << TEAMDCTL_CMD << " " << lag << " port add " << member;
+    cmd << IP_CMD << " link set dev " << shellquote(member) << " down; ";
+    cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port add " << shellquote(member);
 
     if (exec(cmd.str(), res) != 0)
     {
@@ -505,7 +641,7 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
 
     // ip link set dev <member> [up|down]
     cmd.str(string());
-    cmd << IP_CMD << " link set dev " << member << " " << admin_status;
+    cmd << IP_CMD << " link set dev " << shellquote(member) << " " << shellquote(admin_status);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     fvs.clear();
@@ -550,8 +686,8 @@ bool TeamMgr::removeLagMember(const string &lag, const string &member)
 
     // ip link set dev <port_name> [up|down];
     // ip link set dev <port_name> mtu
-    cmd << IP_CMD << " link set dev " << member << " " << admin_status << "; ";
-    cmd << IP_CMD << " link set dev " << member << " mtu " << mtu;
+    cmd << IP_CMD << " link set dev " << shellquote(member) << " " << shellquote(admin_status) << "; ";
+    cmd << IP_CMD << " link set dev " << shellquote(member) << " mtu " << shellquote(mtu);
 
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
     fvs.clear();

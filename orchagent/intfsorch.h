@@ -33,19 +33,23 @@ public:
     IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch);
 
     sai_object_id_t getRouterIntfsId(const string&);
+    bool isPrefixSubnet(const IpPrefix&, const string&);
     string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");
 
     void increaseRouterIntfsRefCount(const string&);
     void decreaseRouterIntfsRefCount(const string&);
 
-    bool setRouterIntfsMtu(Port &port);
+    bool setRouterIntfsMtu(const Port &port);
+    bool setRouterIntfsNatZoneId(Port &port);
+    bool setRouterIntfsAdminStatus(const Port &port);
+
     std::set<IpPrefix> getSubnetRoutes();
 
     void generateInterfaceMap();
     void addRifToFlexCounter(const string&, const string&, const string&);
     void removeRifFromFlexCounter(const string&, const string&);
 
-    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr);
+    bool setIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr, const bool adminUp = true, const uint32_t mtu = 0);
     bool removeIntf(const string& alias, sai_object_id_t vrf_id = gVirtualRouterId, const IpPrefix *ip_prefix = nullptr);
 
     void addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix);
@@ -78,13 +82,8 @@ private:
 
     std::string getRifFlexCounterTableKey(std::string s);
 
-    int getRouterIntfsRefCount(const string&);
-
     bool addRouterIntfs(sai_object_id_t vrf_id, Port &port);
     bool removeRouterIntfs(Port &port);
-
-    void addSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
-    void removeSubnetRoute(const Port &port, const IpPrefix &ip_prefix);
 
     void addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
     void removeDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);

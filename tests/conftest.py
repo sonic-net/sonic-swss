@@ -14,9 +14,9 @@ from datetime import datetime
 from swsscommon import swsscommon
 
 def ensure_system(cmd):
-    rc = os.WEXITSTATUS(os.system(cmd))
+    (rc, output) = commands.getstatusoutput(cmd)
     if rc:
-        raise RuntimeError('Failed to run command: %s' % cmd)
+        raise RuntimeError('Failed to run command: %s. rc=%d. output: %s' % (cmd, rc, output))
 
 def pytest_addoption(parser):
     parser.addoption("--dvsname", action="store", default=None,
@@ -66,13 +66,13 @@ class AsicDbValidator(object):
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
 
-        assert len(keys) >= 1
+        assert len(keys) >= 0
         self.default_acl_tables = keys
 
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
         keys = atbl.getKeys()
 
-        assert len(keys) == 2
+        assert len(keys) == 0
         self.default_acl_entries = keys
 
 class ApplDbValidator(object):
@@ -157,7 +157,10 @@ class DockerVirtualSwitch(object):
         self.syncd = ['syncd']
         self.rtd   = ['fpmsyncd', 'zebra']
         self.teamd = ['teamsyncd', 'teammgrd']
-        self.alld  = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd
+        # FIXME: We need to verify that NAT processes are running, once the
+        # appropriate changes are merged into sonic-buildimage
+        # self.natd = ['natsyncd', 'natmgrd']
+        self.alld  = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd # + self.natd
         self.client = docker.from_env()
 
         if subprocess.check_call(["/sbin/modprobe", "team"]) != 0:
@@ -211,7 +214,7 @@ class DockerVirtualSwitch(object):
 
             # mount redis to base to unique directory
             self.mount = "/var/run/redis-vs/{}".format(self.ctn_sw.name)
-            os.system("mkdir -p {}".format(self.mount))
+            ensure_system("mkdir -p {}".format(self.mount))
 
             self.environment = ["fake_platform={}".format(fakeplatform)] if fakeplatform else []
 
@@ -232,6 +235,7 @@ class DockerVirtualSwitch(object):
             self.init_asicdb_validator()
             self.appldb = ApplDbValidator(self)
         except:
+            self.get_logs()
             self.destroy()
             raise
 
@@ -381,7 +385,7 @@ class DockerVirtualSwitch(object):
         else:
             log_dir = "log/{}".format(modname)
         os.system("rm -rf {}".format(log_dir))
-        os.system("mkdir -p {}".format(log_dir))
+        ensure_system("mkdir -p {}".format(log_dir))
         p = subprocess.Popen(["tar", "--no-same-owner", "-C", "./{}".format(log_dir), "-x"], stdin=subprocess.PIPE)
         for x in stream:
             p.stdin.write(x)
@@ -389,7 +393,7 @@ class DockerVirtualSwitch(object):
         p.wait()
         if p.returncode:
             raise RuntimeError("Failed to unpack the archive.")
-        os.system("chmod a+r -R log")
+        ensure_system("chmod a+r -R log")
 
     def add_log_marker(self, file=None):
         marker = "=== start marker {} ===".format(datetime.now().isoformat())
@@ -548,6 +552,20 @@ class DockerVirtualSwitch(object):
 
         return iface_2_bridge_port_id
 
+    def get_vlan_oid(self, asic_db, vlan_id):
+        tbl = swsscommon.Table(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        keys = tbl.getKeys()
+
+        for key in keys:
+            status, fvs = tbl.get(key)
+            assert status, "Error reading from table %s" % "ASIC_STATE:SAI_OBJECT_TYPE_VLAN"
+
+            for k, v in fvs:
+                if k == "SAI_VLAN_ATTR_VLAN_ID" and v == vlan_id:
+                    return True, key
+
+        return False, "Not found vlan id %s" % vlan_id
+
     def is_table_entry_exists(self, db, table, keyregex, attributes):
         tbl = swsscommon.Table(db, table)
         keys = tbl.getKeys()
@@ -637,11 +655,15 @@ class DockerVirtualSwitch(object):
             except ValueError:
                 d_key = json.loads('{' + key + '}')
 
+            key_found = True
+
             for k, v in key_values:
                 if k not in d_key or v != d_key[k]:
-                    continue
+                    key_found = False
+                    break
 
-            key_found = True
+            if not key_found:
+                continue
 
             status, fvs = tbl.get(key)
             assert status, "Error reading from table %s" % table
@@ -736,6 +758,7 @@ class DockerVirtualSwitch(object):
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         tbl._del(interface + "|" + ip);
+        tbl._del(interface);
         time.sleep(1)
 
     def set_mtu(self, interface, mtu):
@@ -755,6 +778,11 @@ class DockerVirtualSwitch(object):
         fvs = swsscommon.FieldValuePairs([("neigh", mac),
                                           ("family", "IPv4")])
         tbl.set(interface + ":" + ip, fvs)
+        time.sleep(1)
+
+    def remove_neighbor(self, interface, ip):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "NEIGH_TABLE")
+        tbl._del(interface + ":" + ip)
         time.sleep(1)
 
     def setup_db(self):

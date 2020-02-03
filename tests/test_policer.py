@@ -4,6 +4,7 @@ import time
 
 from swsscommon import swsscommon
 
+
 class TestPolicer(object):
     def test_PolicerBasic(self, dvs, testlog):
         dvs.setup_db()

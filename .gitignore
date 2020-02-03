@@ -54,8 +54,10 @@ cfgmgr/vlanmgrd
 cfgmgr/vrfmgrd
 cfgmgr/nbrmgrd
 cfgmgr/vxlanmgrd
+cfgmgr/natmgrd
 neighsyncd/neighsyncd
 portsyncd/portsyncd
+natsyncd/natsyncd
 orchagent/orchagent
 orchagent/routeresync
 orchagent/orchagent_restart_check

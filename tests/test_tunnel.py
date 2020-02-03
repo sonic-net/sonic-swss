@@ -1,8 +1,12 @@
-from swsscommon import swsscommon
 import time
+import pytest
+
+from swsscommon import swsscommon
+
 
 def create_fvs(**kwargs):
     return swsscommon.FieldValuePairs(kwargs.items())
+
 
 class TestTunnelBase(object):
     APP_TUNNEL_DECAP_TABLE_NAME = "TUNNEL_DECAP_TABLE"

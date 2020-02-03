@@ -67,36 +67,66 @@ vector<Selectable *> Orch::getSelectables()
     return selectables;
 }
 
-size_t Consumer::addToSync(std::deque<KeyOpFieldsValuesTuple> &entries)
+void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
 {
     SWSS_LOG_ENTER();
 
-    /* Nothing popped */
-    if (entries.empty())
+
+    string key = kfvKey(entry);
+    string op  = kfvOp(entry);
+
+    /* Record incoming tasks */
+    if (gSwssRecord)
     {
-        return 0;
+        Orch::recordTuple(*this, entry);
     }
 
-    for (auto& entry: entries)
+    /*
+    * m_toSync is a multimap which will allow one key with multiple values,
+    * Also, the order of the key-value pairs whose keys compare equivalent
+    * is the order of insertion and does not change. (since C++11)
+    */
+
+    /* If a new task comes we directly put it into getConsumerTable().m_toSync map */
+    if (m_toSync.find(key) == m_toSync.end())
     {
-        string key = kfvKey(entry);
-        string op  = kfvOp(entry);
+        m_toSync.emplace(key, entry);
+    }
 
-        /* Record incoming tasks */
-        if (gSwssRecord)
+    /* if a DEL task comes, we overwrite the old key */
+    else if (op == DEL_COMMAND)
+    {
+        m_toSync.erase(key);
+        m_toSync.emplace(key, entry);
+    }
+    else
+    {
+        /*
+        * Now we are trying to add the key-value with SET.
+        * We maintain maximun two values per key.
+        * In case there is one key-value, it should be DEL or SET
+        * In case there are two key-value pairs, it should be DEL then SET
+        * The code logic is following:
+        * We iterate the values with the key, we skip the value with DEL and then
+        * check if that was the only one (I,E, the iter pointer now points to end or next key),
+        * in such case, we insert the key-value with SET.
+        * If there was a SET already (I,E, the pointer still points to the same key), we combine the kfv.
+        */
+        auto ret = m_toSync.equal_range(key);
+        auto iter = ret.first;
+        for (; iter != ret.second; ++iter)
         {
-            Orch::recordTuple(*this, entry);
+            auto old_op = kfvOp(iter->second);
+            if (old_op == SET_COMMAND)
+                break;
         }
-
-        /* If a new task comes or if a DEL task comes, we directly put it into getConsumerTable().m_toSync map */
-        if (m_toSync.find(key) == m_toSync.end() || op == DEL_COMMAND)
+        if (iter == ret.second)
         {
-           m_toSync[key] = entry;
+            m_toSync.emplace(key, entry);
         }
-        /* If an old task is still there, we combine the old task with new task */
         else
         {
-            KeyOpFieldsValuesTuple existing_data = m_toSync[key];
+            KeyOpFieldsValuesTuple existing_data = iter->second;
 
             auto new_values = kfvFieldsValues(entry);
             auto existing_values = kfvFieldsValues(existing_data);
@@ -118,9 +148,21 @@ size_t Consumer::addToSync(std::deque<KeyOpFieldsValuesTuple> &entries)
                 }
                 existing_values.push_back(FieldValueTuple(field, value));
             }
-            m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
+            iter->second = KeyOpFieldsValuesTuple(key, op, existing_values);
         }
     }
+
+}
+
+size_t Consumer::addToSync(const std::deque<KeyOpFieldsValuesTuple> &entries)
+{
+    SWSS_LOG_ENTER();
+
+    for (auto& entry: entries)
+    {
+        addToSync(entry);
+    }
+
     return entries.size();
 }
 
@@ -186,7 +228,7 @@ void Consumer::drain()
         m_orch->doTask(*this);
 }
 
-string Consumer::dumpTuple(KeyOpFieldsValuesTuple &tuple)
+string Consumer::dumpTuple(const KeyOpFieldsValuesTuple &tuple)
 {
     string s = getTableName() + getConsumerTable()->getTableNameSeparator() + kfvKey(tuple)
                + "|" + kfvOp(tuple);
@@ -412,7 +454,7 @@ void Orch::logfileReopen()
     }
 }
 
-void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
+void Orch::recordTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
 {
     string s = consumer.dumpTuple(tuple);
 
@@ -426,7 +468,7 @@ void Orch::recordTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
     }
 }
 
-string Orch::dumpTuple(Consumer &consumer, KeyOpFieldsValuesTuple &tuple)
+string Orch::dumpTuple(Consumer &consumer, const KeyOpFieldsValuesTuple &tuple)
 {
     string s = consumer.dumpTuple(tuple);
     return s;

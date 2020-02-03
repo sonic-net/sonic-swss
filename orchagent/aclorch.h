@@ -33,6 +33,7 @@
 #define TABLE_TYPE_CTRLPLANE            "CTRLPLANE"
 #define TABLE_TYPE_DTEL_FLOW_WATCHLIST  "DTEL_FLOW_WATCHLIST"
 #define TABLE_TYPE_DTEL_DROP_WATCHLIST  "DTEL_DROP_WATCHLIST"
+#define TABLE_TYPE_MCLAG                "MCLAG"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
@@ -63,6 +64,7 @@
 
 #define ACTION_PACKET_ACTION                "PACKET_ACTION"
 #define ACTION_REDIRECT_ACTION              "REDIRECT_ACTION"
+#define ACTION_DO_NOT_NAT_ACTION            "DO_NOT_NAT_ACTION"
 #define ACTION_MIRROR_ACTION                "MIRROR_ACTION"
 #define ACTION_MIRROR_INGRESS_ACTION        "MIRROR_INGRESS_ACTION"
 #define ACTION_MIRROR_EGRESS_ACTION         "MIRROR_EGRESS_ACTION"
@@ -73,9 +75,10 @@
 #define ACTION_DTEL_FLOW_SAMPLE_PERCENT     "FLOW_SAMPLE_PERCENT"
 #define ACTION_DTEL_REPORT_ALL_PACKETS      "REPORT_ALL_PACKETS"
 
-#define PACKET_ACTION_FORWARD   "FORWARD"
-#define PACKET_ACTION_DROP      "DROP"
-#define PACKET_ACTION_REDIRECT  "REDIRECT"
+#define PACKET_ACTION_FORWARD     "FORWARD"
+#define PACKET_ACTION_DROP        "DROP"
+#define PACKET_ACTION_REDIRECT    "REDIRECT"
+#define PACKET_ACTION_DO_NOT_NAT  "DO_NOT_NAT"
 
 #define DTEL_FLOW_OP_NOP        "NOP"
 #define DTEL_FLOW_OP_POSTCARD   "POSTCARD"
@@ -109,7 +112,8 @@ typedef enum
     ACL_TABLE_PFCWD,
     ACL_TABLE_CTRLPLANE,
     ACL_TABLE_DTEL_FLOW_WATCHLIST,
-    ACL_TABLE_DTEL_DROP_WATCHLIST
+    ACL_TABLE_DTEL_DROP_WATCHLIST,
+    ACL_TABLE_MCLAG
 } acl_table_type_t;
 
 typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
@@ -315,6 +319,14 @@ protected:
     DTelOrch *m_pDTelOrch;
 };
 
+class AclRuleMclag: public AclRuleL3
+{
+public:
+    AclRuleMclag(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = false);
+    bool validateAddMatch(string attr_name, string attr_value);
+    bool validate();
+};
+
 class AclTable {
     sai_object_id_t m_oid;
     AclOrch *m_pAclOrch;
@@ -419,6 +431,8 @@ private:
 
     void queryMirrorTableCapability();
     void queryAclActionCapability();
+    void initDefaultAclActionCapabilities(acl_stage_type_t);
+    void putAclActionCapabilityInDB(acl_stage_type_t);
 
     template<typename AclActionAttrLookupT>
     void queryAclActionAttrEnumValues(const string& action_name,

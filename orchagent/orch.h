@@ -35,9 +35,11 @@ const char state_db_key_delimiter  = '|';
 #define BFN_PLATFORM_SUBSTRING  "barefoot"
 #define VS_PLATFORM_SUBSTRING   "vs"
 #define NPS_PLATFORM_SUBSTRING  "nephos"
+#define MRVL_PLATFORM_SUBSTRING "marvell"
 
 #define CONFIGDB_KEY_SEPARATOR "|"
 #define DEFAULT_KEY_SEPARATOR  ":"
+#define VLAN_SUB_INTERFACE_SEPARATOR "."
 
 const int default_orch_pri = 0;
 
@@ -55,7 +57,11 @@ typedef std::pair<std::string, sai_object_id_t> object_map_pair;
 
 typedef std::map<std::string, object_map*> type_map;
 typedef std::pair<std::string, object_map*> type_map_pair;
-typedef std::map<std::string, swss::KeyOpFieldsValuesTuple> SyncMap;
+
+// Use multimap to support multiple OpFieldsValues for the same key (e,g, DEL and SET)
+// The order of the key-value pairs whose keys compare equivalent is the order of
+// insertion and does not change. (since C++11)
+typedef std::multimap<std::string, swss::KeyOpFieldsValuesTuple> SyncMap;
 
 typedef std::pair<std::string, int> table_name_with_pri_t;
 
@@ -130,7 +136,7 @@ public:
         return getConsumerTable()->getDbId();
     }
 
-    std::string dumpTuple(swss::KeyOpFieldsValuesTuple &tuple);
+    std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     void dumpPendingTasks(std::vector<std::string> &ts);
 
     size_t refillToSync();
@@ -142,9 +148,10 @@ public:
     // TODO: hide?
     SyncMap m_toSync;
 
-protected:
+    void addToSync(const swss::KeyOpFieldsValuesTuple &entry);
+
     // Returns: the number of entries added to m_toSync
-    size_t addToSync(std::deque<swss::KeyOpFieldsValuesTuple> &entries);
+    size_t addToSync(const std::deque<swss::KeyOpFieldsValuesTuple> &entries);
 };
 
 typedef std::map<std::string, std::shared_ptr<Executor>> ConsumerMap;
@@ -192,14 +199,14 @@ public:
     virtual void doTask(swss::SelectableTimer &timer) { }
 
     /* TODO: refactor recording */
-    static void recordTuple(Consumer &consumer, swss::KeyOpFieldsValuesTuple &tuple);
+    static void recordTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
 
     void dumpPendingTasks(std::vector<std::string> &ts);
 protected:
     ConsumerMap m_consumerMap;
 
     static void logfileReopen();
-    std::string dumpTuple(Consumer &consumer, swss::KeyOpFieldsValuesTuple &tuple);
+    std::string dumpTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
     ref_resolve_status resolveFieldRefValue(type_map&, const std::string&, swss::KeyOpFieldsValuesTuple&, sai_object_id_t&);
     bool parseIndexRange(const std::string &input, sai_uint32_t &range_low, sai_uint32_t &range_high);
     bool parseReference(type_map &type_maps, std::string &ref, std::string &table_name, std::string &object_name);

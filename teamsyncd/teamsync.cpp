@@ -12,6 +12,8 @@
 #include "warm_restart.h"
 #include "teamsync.h"
 
+#include <unistd.h>
+
 using namespace std;
 using namespace std::chrono;
 using namespace swss;
@@ -107,6 +109,22 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (!type || (strcmp(type, TEAM_DRV_NAME) != 0))
         return;
 
+    unsigned int flags = rtnl_link_get_flags(link);
+    bool admin = flags & IFF_UP;
+    bool oper = flags & IFF_LOWER_UP;
+    unsigned int ifindex = rtnl_link_get_ifindex(link);
+
+    if (type)
+    {
+        SWSS_LOG_INFO(" nlmsg type:%d key:%s admin:%d oper:%d ifindex:%d type:%s",
+                       nlmsg_type, lagName.c_str(), admin, oper, ifindex, type);
+    }
+    else
+    {
+        SWSS_LOG_INFO(" nlmsg type:%d key:%s admin:%d oper:%d ifindex:%d",
+                       nlmsg_type, lagName.c_str(), admin, oper, ifindex);
+    }
+
     if (nlmsg_type == RTM_DELLINK)
     {
         if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
@@ -192,6 +210,16 @@ void TeamSync::removeLag(const string &lagName)
     m_selectablesToRemove.insert(lagName);
 }
 
+void TeamSync::cleanTeamSync()
+{
+    for (const auto& it: m_teamSelectables)
+    {
+        /* Cleanup LAG */
+        removeLag(it.first);
+    }
+    return;
+}
+
 const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {
     .func       = TeamSync::TeamPortSync::teamdHandler,
     .type_mask  = TEAM_PORT_CHANGE | TEAM_OPTION_CHANGE
@@ -203,32 +231,54 @@ TeamSync::TeamPortSync::TeamPortSync(const string &lagName, int ifindex,
     m_lagName(lagName),
     m_ifindex(ifindex)
 {
-    m_team = team_alloc();
-    if (!m_team)
-    {
-        SWSS_LOG_ERROR("Unable to allocated team socket");
-        throw system_error(make_error_code(errc::address_not_available),
-                           "Unable to allocated team socket");
-    }
+    int count = 0;
+    int max_retries = 3;
 
-    int err = team_init(m_team, ifindex);
-    if (err)
+    while (true)
     {
-        team_free(m_team);
-        m_team = NULL;
-        SWSS_LOG_ERROR("Unable to init team socket");
-        throw system_error(make_error_code(errc::address_not_available),
-                           "Unable to init team socket");
-    }
+        try
+        {
+            m_team = team_alloc();
+            if (!m_team)
+            {
+                throw system_error(make_error_code(errc::address_not_available),
+                                   "Unable to allocate team socket");
+            }
 
-    err = team_change_handler_register(m_team, &gPortChangeHandler, this);
-    if (err)
-    {
-        team_free(m_team);
-        m_team = NULL;
-        SWSS_LOG_ERROR("Unable to register port change event");
-        throw system_error(make_error_code(errc::address_not_available),
-                           "Unable to register port change event");
+            int err = team_init(m_team, ifindex);
+            if (err)
+            {
+                team_free(m_team);
+                m_team = NULL;
+                throw system_error(make_error_code(errc::address_not_available),
+                                   "Unable to initialize team socket");
+            }
+
+            err = team_change_handler_register(m_team, &gPortChangeHandler, this);
+            if (err)
+            {
+                team_free(m_team);
+                m_team = NULL;
+                throw system_error(make_error_code(errc::address_not_available),
+                                   "Unable to register port change event");
+            }
+
+            break;
+        }
+        catch (const system_error& e)
+        {
+            if (++count == max_retries)
+            {
+                throw;
+            }
+            else
+            {
+                SWSS_LOG_WARN("Failed to initialize team handler. LAG=%s error=%d:%s, attempt=%d",
+                              lagName.c_str(), e.code().value(), e.what(), count);
+            }
+
+            sleep(1);
+        }
     }
 
     /* Sync LAG at first */

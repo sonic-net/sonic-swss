@@ -1,6 +1,9 @@
-from swsscommon import swsscommon
 import time
+import pytest
+
 import test_vnet as vnet
+
+from swsscommon import swsscommon
 
 
 # Define fake platform for "DVS" fixture, so it will set "platform" environment variable for "orchagent".
