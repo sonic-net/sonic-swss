@@ -1,5 +1,4 @@
 # This test suite covers the functionality of mirror feature in SwSS
-
 import platform
 import pytest
 import time

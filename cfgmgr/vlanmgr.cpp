@@ -447,8 +447,9 @@ void VlanMgr::processUntaggedVlanMembers(string vlan, const string &members)
             vector<FieldValueTuple> fvVector;
             FieldValueTuple t("tagging_mode", "untagged");
             fvVector.push_back(t);
-            consumer.m_toSync[member_key] = make_tuple(member_key, SET_COMMAND, fvVector);
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, consumer.m_toSync[member_key])).c_str());
+            KeyOpFieldsValuesTuple tuple = make_tuple(member_key, SET_COMMAND, fvVector);
+            consumer.addToSync(tuple);
+            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, tuple)).c_str());
         }
         /*
          * There is pending task from consumer pipe, in this case just skip it.

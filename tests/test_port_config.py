@@ -1,8 +1,10 @@
-from swsscommon import swsscommon
 import redis
 import time
 import os
 import pytest
+
+from swsscommon import swsscommon
+
 
 @pytest.yield_fixture
 def port_config(request, dvs):
@@ -10,6 +12,7 @@ def port_config(request, dvs):
     dvs.runcmd("cp %s %s.bak" % (file_name, file_name))
     yield file_name
     dvs.runcmd("mv %s.bak %s" % (file_name, file_name))
+
 
 class TestPortConfig(object):
 

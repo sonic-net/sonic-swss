@@ -1,7 +1,9 @@
-from swsscommon import swsscommon
-
 import time
 import json
+import pytest
+
+from swsscommon import swsscommon
+
 
 class TestRouterInterface(object):
     def setup_db(self, dvs):

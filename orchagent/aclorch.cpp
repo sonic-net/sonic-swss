@@ -107,7 +107,8 @@ static acl_table_type_lookup_t aclTableTypeLookUp =
     { TABLE_TYPE_MIRROR_DSCP,           ACL_TABLE_MIRROR_DSCP },
     { TABLE_TYPE_CTRLPLANE,             ACL_TABLE_CTRLPLANE },
     { TABLE_TYPE_DTEL_FLOW_WATCHLIST,   ACL_TABLE_DTEL_FLOW_WATCHLIST },
-    { TABLE_TYPE_DTEL_DROP_WATCHLIST,   ACL_TABLE_DTEL_DROP_WATCHLIST }
+    { TABLE_TYPE_DTEL_DROP_WATCHLIST,   ACL_TABLE_DTEL_DROP_WATCHLIST },
+    { TABLE_TYPE_MCLAG,                 ACL_TABLE_MCLAG }
 };
 
 static acl_stage_type_lookup_t aclStageLookUp =
@@ -659,7 +660,8 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
         type != ACL_TABLE_MIRRORV6 &&
         type != ACL_TABLE_MIRROR_DSCP &&
         type != ACL_TABLE_DTEL_FLOW_WATCHLIST &&
-        type != ACL_TABLE_DTEL_DROP_WATCHLIST)
+        type != ACL_TABLE_DTEL_DROP_WATCHLIST &&
+        type != ACL_TABLE_MCLAG)
     {
         throw runtime_error("Unknown table type");
     }
@@ -702,6 +704,10 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
         } else {
             throw runtime_error("DTel feature is not enabled. Watchlists cannot be configured");
         }
+    }
+    else if (type == ACL_TABLE_MCLAG)
+    {
+        return make_shared<AclRuleMclag>(acl, rule, table, type);
     }
 
     throw runtime_error("Wrong combination of table type and action in rule " + rule);
@@ -1230,6 +1236,33 @@ void AclRuleMirror::update(SubjectType type, void *cntx)
     }
 }
 
+AclRuleMclag::AclRuleMclag(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
+        AclRuleL3(aclOrch, rule, table, type, createCounter)
+{
+}
+
+bool AclRuleMclag::validateAddMatch(string attr_name, string attr_value)
+{
+    if (attr_name != MATCH_IP_TYPE && attr_name != MATCH_OUT_PORTS)
+    {
+        return false;
+    }
+
+    return AclRule::validateAddMatch(attr_name, attr_value);
+}
+
+bool AclRuleMclag::validate()
+{
+    SWSS_LOG_ENTER();
+
+    if (m_matches.size() == 0)
+    {
+        return false;
+    }
+
+    return true;
+}
+
 bool AclTable::validate()
 {
     if (type == ACL_TABLE_CTRLPLANE)
@@ -1457,6 +1490,13 @@ bool AclTable::create()
     if (type == ACL_TABLE_MIRROR || type == ACL_TABLE_MIRRORV6)
     {
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+    }
+
+    if (type == ACL_TABLE_MCLAG)
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_OUT_PORTS;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
     }
@@ -2078,6 +2118,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     string platform = getenv("platform") ? getenv("platform") : "";
     if (platform == BRCM_PLATFORM_SUBSTRING ||
             platform == MLNX_PLATFORM_SUBSTRING ||
+            platform == BFN_PLATFORM_SUBSTRING  ||
+            platform == MRVL_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
@@ -2108,7 +2150,9 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     }
 
     // In Mellanox platform, V4 and V6 rules are stored in different tables
-    if (platform == MLNX_PLATFORM_SUBSTRING) {
+    if (platform == MLNX_PLATFORM_SUBSTRING ||
+        platform == MRVL_PLATFORM_SUBSTRING ||
+        platform == BFN_PLATFORM_SUBSTRING) {
         m_isCombinedMirrorV6Table = false;
     }
 
@@ -2458,12 +2502,12 @@ void AclOrch::doTask(Consumer &consumer)
 
     string table_name = consumer.getTableName();
 
-    if (table_name == CFG_ACL_TABLE_TABLE_NAME)
+    if (table_name == CFG_ACL_TABLE_TABLE_NAME || table_name == APP_ACL_TABLE_TABLE_NAME)
     {
         unique_lock<mutex> lock(m_countersMutex);
         doAclTableTask(consumer);
     }
-    else if (table_name == CFG_ACL_RULE_TABLE_NAME)
+    else if (table_name == CFG_ACL_RULE_TABLE_NAME || table_name == APP_ACL_RULE_TABLE_NAME)
     {
         unique_lock<mutex> lock(m_countersMutex);
         doAclRuleTask(consumer);
@@ -2800,6 +2844,13 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         string op = kfvOp(t);
 
         SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s", op.c_str(), table_id.c_str(), rule_id.c_str());
+ 
+        if (table_id.empty())
+        {
+            SWSS_LOG_WARN("ACL rule with RULE_ID: %s is not valid as TABLE_ID is empty", rule_id.c_str());
+            it = consumer.m_toSync.erase(it);
+            continue;
+        }
 
         if (op == SET_COMMAND)
         {
@@ -2979,6 +3030,12 @@ bool AclOrch::processAclTableStage(string stage, acl_stage_type_t &acl_stage)
 sai_object_id_t AclOrch::getTableById(string table_id)
 {
     SWSS_LOG_ENTER();
+
+    if (table_id.empty())
+    {
+        SWSS_LOG_WARN("table_id is empty");
+        return SAI_NULL_OBJECT_ID;
+    }
 
     for (auto it : m_AclTables)
     {

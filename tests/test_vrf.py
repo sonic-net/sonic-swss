@@ -1,8 +1,11 @@
-from swsscommon import swsscommon
 import time
 import json
 import random
+import pytest
+
+from swsscommon import swsscommon
 from pprint import pprint
+
 
 class TestVrf(object):
     def setup_db(self, dvs):

@@ -23,54 +23,6 @@ namespace aclorch_test
 {
     using namespace std;
 
-    size_t consumerAddToSync(Consumer *consumer, const deque<KeyOpFieldsValuesTuple> &entries)
-    {
-        /* Nothing popped */
-        if (entries.empty())
-        {
-            return 0;
-        }
-
-        for (auto &entry : entries)
-        {
-            string key = kfvKey(entry);
-            string op = kfvOp(entry);
-
-            /* If a new task comes or if a DEL task comes, we directly put it into getConsumerTable().m_toSync map */
-            if (consumer->m_toSync.find(key) == consumer->m_toSync.end() || op == DEL_COMMAND)
-            {
-                consumer->m_toSync[key] = entry;
-            }
-            /* If an old task is still there, we combine the old task with new task */
-            else
-            {
-                KeyOpFieldsValuesTuple existing_data = consumer->m_toSync[key];
-
-                auto new_values = kfvFieldsValues(entry);
-                auto existing_values = kfvFieldsValues(existing_data);
-
-                for (auto it : new_values)
-                {
-                    string field = fvField(it);
-                    string value = fvValue(it);
-
-                    auto iu = existing_values.begin();
-                    while (iu != existing_values.end())
-                    {
-                        string ofield = fvField(*iu);
-                        if (field == ofield)
-                            iu = existing_values.erase(iu);
-                        else
-                            iu++;
-                    }
-                    existing_values.push_back(FieldValueTuple(field, value));
-                }
-                consumer->m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
-            }
-        }
-        return entries.size();
-    }
-
     struct AclTestBase : public ::testing::Test
     {
         vector<int32_t *> m_s32list_pool;
@@ -199,8 +151,7 @@ namespace aclorch_test
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_TABLE_TABLE_NAME));
 
-            consumerAddToSync(consumer.get(), entries);
-
+            consumer->addToSync(entries);
             static_cast<Orch *>(m_aclOrch)->doTask(*consumer);
         }
 
@@ -209,8 +160,7 @@ namespace aclorch_test
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(config_db, CFG_ACL_RULE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_RULE_TABLE_NAME));
 
-            consumerAddToSync(consumer.get(), entries);
-
+            consumer->addToSync(entries);
             static_cast<Orch *>(m_aclOrch)->doTask(*consumer);
         }
 
@@ -381,8 +331,7 @@ namespace aclorch_test
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));
 
-            consumerAddToSync(consumer.get(), { { "PortInitDone", EMPTY_PREFIX, { { "", "" } } } });
-
+            consumer->addToSync({ { "PortInitDone", EMPTY_PREFIX, { { "", "" } } } });
             static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
         }
 
@@ -628,7 +577,7 @@ namespace aclorch_test
         // consistency validation with CRM
         bool validateResourceCountWithCrm(const AclOrch *aclOrch, CrmOrch *crmOrch)
         {
-             // Verify ACL Tables            
+             // Verify ACL Tables
             auto const &resourceMap = Portal::CrmOrchInternal::getResourceMap(crmOrch);
             uint32_t crm_acl_table_cnt = 0;
             for (auto const &kv : resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap)
@@ -642,7 +591,7 @@ namespace aclorch_test
                                 << ") and AclOrch " << Portal::AclOrchInternal::getAclTables(aclOrch).size();
                 return false;
             }
-            
+
 
             // Verify ACL Rules
             //

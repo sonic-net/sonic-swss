@@ -1,7 +1,9 @@
-from swsscommon import swsscommon
 import time
 import re
 import json
+import pytest
+
+from swsscommon import swsscommon
 
 
 class BaseTestAcl(object):
@@ -1369,6 +1371,7 @@ class TestAcl(BaseTestAcl):
 
         # bring down interface
         dvs.set_interface_status("Ethernet4", "down")
+
 
 class TestAclRuleValidation(BaseTestAcl):
     """ Test class for cases that check if orchagent corectly validates
