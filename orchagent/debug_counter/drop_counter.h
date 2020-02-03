@@ -2,7 +2,6 @@
 #define SWSS_UTIL_DROP_COUNTER_H_
 
 #include <string>
-#include <vector>
 #include <unordered_set>
 #include <unordered_map>
 #include "debug_counter.h"
@@ -33,8 +32,8 @@ class DropCounter : public DebugCounter
         static bool isIngressDropReasonValid(const std::string& drop_reason);
         static bool isEgressDropReasonValid(const std::string& drop_reason);
 
-        static std::vector<std::string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type);
-        static std::string serializeSupportedDropReasons(std::vector<std::string> drop_reasons);
+        static std::unordered_set<std::string> getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type);
+        static std::string serializeSupportedDropReasons(std::unordered_set<std::string> drop_reasons);
         static uint64_t getSupportedDebugCounterAmounts(sai_debug_counter_type_t counter_type);
 
     private:

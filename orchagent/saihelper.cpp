@@ -43,6 +43,7 @@ sai_dtel_api_t*             sai_dtel_api;
 sai_bmtor_api_t*            sai_bmtor_api;
 sai_samplepacket_api_t*     sai_samplepacket_api;
 sai_debug_counter_api_t*    sai_debug_counter_api;
+sai_nat_api_t*              sai_nat_api;
 
 extern sai_object_id_t gSwitchId;
 extern bool gSairedisRecord;
@@ -134,6 +135,7 @@ void initSaiApi()
     sai_api_query((sai_api_t)SAI_API_BMTOR,     (void **)&sai_bmtor_api);
     sai_api_query(SAI_API_SAMPLEPACKET,         (void **)&sai_samplepacket_api);
     sai_api_query(SAI_API_DEBUG_COUNTER,        (void **)&sai_debug_counter_api);
+    sai_api_query(SAI_API_NAT,                  (void **)&sai_nat_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_BRIDGE,                 SAI_LOG_LEVEL_NOTICE);
@@ -162,6 +164,7 @@ void initSaiApi()
     sai_log_set((sai_api_t)SAI_API_BMTOR,       SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SAMPLEPACKET,           SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DEBUG_COUNTER,          SAI_LOG_LEVEL_NOTICE);
+    sai_log_set((sai_api_t)SAI_API_NAT,         SAI_LOG_LEVEL_NOTICE);
 }
 
 void initSaiRedis(const string &record_location)

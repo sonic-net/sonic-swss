@@ -13,8 +13,9 @@ using swss::FieldValueTuple;
 FlexCounterStatManager::FlexCounterStatManager(
         const string& group_name,
         const StatsMode stats_mode,
-        const int polling_interval) :
-    FlexCounterManager(group_name, stats_mode, polling_interval)
+        const int polling_interval,
+        const bool enabled) :
+    FlexCounterManager(group_name, stats_mode, polling_interval, enabled)
 {
     SWSS_LOG_ENTER();
 }

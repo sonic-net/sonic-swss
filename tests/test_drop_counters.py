@@ -1,6 +1,7 @@
-from swsscommon import swsscommon
-
 import time
+import pytest
+
+from swsscommon import swsscommon
 
 # Supported drop counters
 PORT_INGRESS_DROPS = 'PORT_INGRESS_DROPS'
@@ -52,6 +53,7 @@ ASIC_COUNTER_SWITCH_IN_TYPE = 'SAI_DEBUG_COUNTER_TYPE_SWITCH_IN_DROP_REASONS'
 ASIC_COUNTER_SWITCH_OUT_TYPE = 'SAI_DEBUG_COUNTER_TYPE_SWITCH_OUT_DROP_REASONS'
 EXPECTED_ASIC_FIELDS = [ASIC_COUNTER_TYPE_FIELD, ASIC_COUNTER_INGRESS_REASON_LIST_FIELD, ASIC_COUNTER_EGRESS_REASON_LIST_FIELD]
 EXPECTED_NUM_ASIC_FIELDS = 2
+
 
 # FIXME: It is really annoying to have to re-run tests due to inconsistent timing, should
 # implement some sort of polling interface for checking ASIC/flex counter tables after

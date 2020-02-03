@@ -9,6 +9,7 @@
 #include "observer.h"
 #include "macaddress.h"
 #include "producertable.h"
+#include "flex_counter_manager.h"
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
@@ -104,13 +105,14 @@ private:
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
-    std::string getQueueFlexCounterTableKey(std::string s);
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
-    std::string getPortFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
 
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
+
+    FlexCounterManager port_stat_manager;
+    FlexCounterManager queue_stat_manager;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 
@@ -135,9 +137,9 @@ private:
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
 
-	
     NotificationConsumer* m_portStatusNotificationConsumer;
 
+    void doTask() override;
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
@@ -170,6 +172,8 @@ private:
     bool removeLag(Port lag);
     bool addLagMember(Port &lag, Port &port);
     bool removeLagMember(Port &lag, Port &port);
+    bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
+    bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
     void getLagMember(Port &lag, vector<Port> &portv);
 
     bool addPort(const set<int> &lane_set, uint32_t speed, int an=0, string fec="");

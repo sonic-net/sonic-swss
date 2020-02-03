@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <tuple>
 #include <sstream>
+#include <unordered_set>
 
 #include <netinet/if_ether.h>
 #include "net/if.h"
@@ -41,10 +42,11 @@ extern BufferOrch *gBufferOrch;
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
-#define PORT_FLEX_STAT_COUNTER_POLL_MSECS "1000"
-#define QUEUE_FLEX_STAT_COUNTER_POLL_MSECS "10000"
+
+#define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
+#define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
-#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
+#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "10000"
 
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
@@ -70,7 +72,7 @@ static map<string, sai_bridge_port_fdb_learning_mode_t> learn_mode_map =
     { "notification", SAI_BRIDGE_PORT_FDB_LEARNING_MODE_FDB_NOTIFICATION}
 };
 
-const vector<sai_port_stat_t> portStatIds =
+const vector<sai_port_stat_t> port_stat_ids =
 {
     SAI_PORT_STAT_IF_IN_OCTETS,
     SAI_PORT_STAT_IF_IN_UCAST_PKTS,
@@ -113,7 +115,7 @@ const vector<sai_port_stat_t> portStatIds =
     SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS,
 };
 
-static const vector<sai_queue_stat_t> queueStatIds =
+static const vector<sai_queue_stat_t> queue_stat_ids =
 {
     SAI_QUEUE_STAT_PACKETS,
     SAI_QUEUE_STAT_BYTES,
@@ -151,7 +153,9 @@ static char* hostif_vlan_tag[] = {
  *    default VLAN and all ports removed from .1Q bridge.
  */
 PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames) :
-        Orch(db, tableNames)
+        Orch(db, tableNames),
+        port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+        queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
 {
     SWSS_LOG_ENTER();
 
@@ -176,15 +180,6 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_flex_db = shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0));
     m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
     m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
-
-    vector<FieldValueTuple> fields;
-    fields.emplace_back(POLL_INTERVAL_FIELD, PORT_FLEX_STAT_COUNTER_POLL_MSECS);
-    fields.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-    m_flexCounterGroupTable->set(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fields);
-
-    fields.emplace_back(POLL_INTERVAL_FIELD, QUEUE_FLEX_STAT_COUNTER_POLL_MSECS);
-    fields.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-    m_flexCounterGroupTable->set(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, fields);
 
     string queueWmSha, pgWmSha;
     string queueWmPluginName = "watermark_queue.lua";
@@ -1461,16 +1456,6 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
     return true;
 }
 
-string PortsOrch::getPortFlexCounterTableKey(string key)
-{
-    return string(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
-}
-
-string PortsOrch::getQueueFlexCounterTableKey(string key)
-{
-    return string(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
-}
-
 string PortsOrch::getQueueWatermarkFlexCounterTableKey(string key)
 {
     return string(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
@@ -1514,22 +1499,15 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 fields.push_back(tuple);
                 m_counterTable->set("", fields);
 
-                /* Add port to flex_counter for updating stat counters  */
-                string key = getPortFlexCounterTableKey(sai_serialize_object_id(p.m_port_id));
-                std::string delimiter = "";
-                std::ostringstream counters_stream;
-                for (const auto &id: portStatIds)
+                // Install a flex counter for this port to track stats
+                std::unordered_set<std::string> counter_stats;
+                for (const auto& it: port_stat_ids)
                 {
-                    counters_stream << delimiter << sai_serialize_port_stat(id);
-                    delimiter = comma;
+                    counter_stats.emplace(sai_serialize_port_stat(it));
                 }
+                port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, counter_stats);
 
-                fields.clear();
-                fields.emplace_back(PORT_COUNTER_ID_LIST, counters_stream.str());
-
-                m_flexCounterTable->set(key, fields);
-
-                PortUpdate update = {p, true };
+                PortUpdate update = { p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
                 SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
@@ -2494,39 +2472,51 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                     status = fvValue(i);
             }
 
+            if (lag.m_members.find(port_alias) == lag.m_members.end())
+            {
+                /* Assert the port doesn't belong to any LAG already */
+                assert(!port.m_lag_id && !port.m_lag_member_id);
+
+                if (!addLagMember(lag, port))
+                {
+                    it++;
+                    continue;
+                }
+            }
+
             /* Sync an enabled member */
             if (status == "enabled")
             {
-                /* Duplicate entry */
-                if (lag.m_members.find(port_alias) != lag.m_members.end())
+                /* enable collection first, distribution-only mode
+                 * is not supported on Mellanox platform
+                 */
+                if (setCollectionOnLagMember(port, true) &&
+                    setDistributionOnLagMember(port, true))
                 {
                     it = consumer.m_toSync.erase(it);
+                }
+                else
+                {
+                    it++;
                     continue;
                 }
-
-                /* Assert the port doesn't belong to any LAG */
-                assert(!port.m_lag_id && !port.m_lag_member_id);
-
-                if (addLagMember(lag, port))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
             }
             /* Sync an disabled member */
             else /* status == "disabled" */
             {
-                /* "status" is "disabled" at start when m_lag_id and
-                 * m_lag_member_id are absent */
-                if (!port.m_lag_id || !port.m_lag_member_id)
+                /* disable distribution first, distribution-only mode
+                 * is not supported on Mellanox platform
+                 */
+                if (setDistributionOnLagMember(port, false) &&
+                    setCollectionOnLagMember(port, false))
                 {
                     it = consumer.m_toSync.erase(it);
+                }
+                else
+                {
+                    it++;
                     continue;
                 }
-
-                if (removeLagMember(lag, port))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
             }
         }
         /* Remove a LAG member */
@@ -2544,14 +2534,46 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
             }
 
             if (removeLagMember(lag, port))
+            {
                 it = consumer.m_toSync.erase(it);
+            }
             else
+            {
                 it++;
+            }
         }
         else
         {
             SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
             it = consumer.m_toSync.erase(it);
+        }
+    }
+}
+
+void PortsOrch::doTask()
+{
+    constexpr auto tableOrder = {
+        APP_PORT_TABLE_NAME,
+        APP_LAG_TABLE_NAME,
+        APP_LAG_MEMBER_TABLE_NAME,
+        APP_VLAN_TABLE_NAME,
+        APP_VLAN_MEMBER_TABLE_NAME,
+    };
+
+    for (auto tableName: tableOrder)
+    {
+        auto consumer = getExecutor(tableName);
+        consumer->drain();
+    }
+
+    // drain remaining tables
+    for (auto& it: m_consumerMap)
+    {
+        auto tableName = it.first;
+        auto consumer = it.second.get();
+        if (find(tableOrder.begin(), tableOrder.end(), tableName) == tableOrder.end())
+        {
+            consumer->drain();
         }
     }
 }
@@ -2608,6 +2630,7 @@ void PortsOrch::initializeQueues(Port &port)
     SWSS_LOG_INFO("Get %d queues for port %s", attr.value.u32, port.m_alias.c_str());
 
     port.m_queue_ids.resize(attr.value.u32);
+    port.m_queue_lock.resize(attr.value.u32);
 
     if (attr.value.u32 == 0)
     {
@@ -2643,6 +2666,7 @@ void PortsOrch::initializePriorityGroups(Port &port)
     SWSS_LOG_INFO("Get %d priority groups for port %s", attr.value.u32, port.m_alias.c_str());
 
     port.m_priority_group_ids.resize(attr.value.u32);
+    port.m_priority_group_lock.resize(attr.value.u32);
 
     if (attr.value.u32 == 0)
     {
@@ -3310,6 +3334,52 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
     return true;
 }
 
+bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
+{
+    /* Port must be LAG member */
+    assert(port.m_lag_member_id);
+
+    sai_status_t status = SAI_STATUS_FAILURE;
+    sai_attribute_t attr {};
+
+    attr.id = SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE;
+    attr.value.booldata = !enableCollection;
+
+    status = sai_lag_api->set_lag_member_attribute(lagMember.m_lag_member_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to %s collection on LAG member %s",
+            enableCollection ? "enable" : "disable",
+            lagMember.m_alias.c_str());
+        return false;
+    }
+
+    return true;
+}
+
+bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribution)
+{
+    /* Port must be LAG member */
+    assert(port.m_lag_member_id);
+
+    sai_status_t status = SAI_STATUS_FAILURE;
+    sai_attribute_t attr {};
+
+    attr.id = SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE;
+    attr.value.booldata = !enableDistribution;
+
+    status = sai_lag_api->set_lag_member_attribute(lagMember.m_lag_member_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to %s distribution on LAG member %s",
+            enableDistribution ? "enable" : "disable",
+            lagMember.m_alias.c_str());
+        return false;
+    }
+
+    return true;
+}
+
 void PortsOrch::generateQueueMap()
 {
     if (m_isQueueMapGenerated)
@@ -3355,34 +3425,26 @@ void PortsOrch::generateQueueMapPerPort(const Port& port)
             queueIndexVector.emplace_back(id, to_string(queueRealIndex));
         }
 
-        /* add ordinary Queue stat counters */
-        string key = getQueueFlexCounterTableKey(id);
-
-        std::string delimiter = "";
-        std::ostringstream counters_stream;
-        for (const auto& it: queueStatIds)
+        // Install a flex counter for this queue to track stats
+        std::unordered_set<string> counter_stats;
+        for (const auto& it: queue_stat_ids)
         {
-            counters_stream << delimiter << sai_serialize_queue_stat(it);
-            delimiter = comma;
+            counter_stats.emplace(sai_serialize_queue_stat(it));
         }
-
-        vector<FieldValueTuple> fieldValues;
-        fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
-
-        m_flexCounterTable->set(key, fieldValues);
+        queue_stat_manager.setCounterIdList(port.m_queue_ids[queueIndex], CounterType::QUEUE, counter_stats);
 
         /* add watermark queue counters */
-        key = getQueueWatermarkFlexCounterTableKey(id);
+        string key = getQueueWatermarkFlexCounterTableKey(id);
 
-        delimiter = "";
-        counters_stream.str("");
+        string delimiter("");
+        std::ostringstream counters_stream;
         for (const auto& it: queueWatermarkStatIds)
         {
             counters_stream << delimiter << sai_serialize_queue_stat(it);
             delimiter = comma;
         }
 
-        fieldValues.clear();
+        vector<FieldValueTuple> fieldValues;
         fieldValues.emplace_back(QUEUE_COUNTER_ID_LIST, counters_stream.str());
 
         m_flexCounterTable->set(key, fieldValues);

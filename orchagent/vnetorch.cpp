@@ -1102,7 +1102,7 @@ bool VNetBitmapObject::removeTunnelRoute(IpPrefix& ipPrefix)
         throw std::runtime_error("VNET tunnel route removal failed");
     }
 
-    auto endpointInfo = endpointMap_.at(endpoint);
+    auto& endpointInfo = endpointMap_.at(endpoint);
 
     sai_status_t status;
 

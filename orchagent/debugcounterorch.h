@@ -77,6 +77,10 @@ private:
     std::shared_ptr<swss::Table> m_counterNameToPortStatMap = nullptr;
     std::shared_ptr<swss::Table> m_counterNameToSwitchStatMap = nullptr;
 
+    std::unordered_set<std::string> supported_counter_types;
+    std::unordered_set<std::string> supported_ingress_drop_reasons;
+    std::unordered_set<std::string> supported_egress_drop_reasons;
+
     FlexCounterStatManager flex_counter_manager;
 
     std::unordered_map<std::string, std::unique_ptr<DebugCounter>> debug_counters;

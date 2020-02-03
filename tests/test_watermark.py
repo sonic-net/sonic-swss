@@ -1,4 +1,3 @@
-from swsscommon import swsscommon
 import os
 import re
 import time
@@ -6,6 +5,7 @@ import json
 import pytest
 import redis
 
+from swsscommon import swsscommon
 
 class SaiWmStats:
     queue_shared = "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES"

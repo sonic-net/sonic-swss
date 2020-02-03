@@ -38,6 +38,7 @@ private:
     
     void addLoopbackIntf(const std::string &alias);
     void delLoopbackIntf(const std::string &alias);
+    void flushLoopbackIntfs(void);
 
     void addHostSubIntf(const std::string&intf, const std::string &subIntf, const std::string &vlan);
     void setHostSubIntfMtu(const std::string &subIntf, const std::string &mtu);

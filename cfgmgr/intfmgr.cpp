@@ -8,6 +8,7 @@
 #include "exec.h"
 #include "shellcmd.h"
 #include "macaddress.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -30,6 +31,10 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME)
 {
+    if (!WarmStart::isWarmStart())
+    {
+        flushLoopbackIntfs();
+    }
 }
 
 void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
@@ -119,6 +124,28 @@ void IntfMgr::delLoopbackIntf(const string &alias)
     if (ret)
     {
         SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+}
+
+void IntfMgr::flushLoopbackIntfs()
+{
+    stringstream cmd;
+    string res;
+
+    cmd << IP_CMD << " link show type dummy | grep -o '" << LOOPBACK_PREFIX << "[^:]*'";
+
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_DEBUG("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        return;
+    }
+
+    auto aliases = tokenize(res, '\n');
+    for (string &alias : aliases)
+    {
+        SWSS_LOG_NOTICE("Remove loopback device %s", alias.c_str());
+        delLoopbackIntf(alias);
     }
 }
 
@@ -405,6 +432,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string vrf_name = "";
     string mtu = "";
     string adminStatus = "";
+    string nat_zone = "";
     for (auto idx : data)
     {
         const auto &field = fvField(idx);
@@ -421,6 +449,11 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         else if (field == "admin_status")
         {
             adminStatus = value;
+        }
+
+        if (field == "nat_zone")
+        {
+            nat_zone = value;
         }
     }
 
@@ -448,6 +481,15 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         if (is_lo)
         {
             addLoopbackIntf(alias);
+        }
+        else
+        {
+            /* Set nat zone */
+            if (!nat_zone.empty())
+            {
+                FieldValueTuple fvTuple("nat_zone", nat_zone);
+                data.push_back(fvTuple);
+            }
         }
 
         if (!vrf_name.empty())

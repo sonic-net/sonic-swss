@@ -109,6 +109,22 @@ void TeamSync::onMsg(int nlmsg_type, struct nl_object *obj)
     if (!type || (strcmp(type, TEAM_DRV_NAME) != 0))
         return;
 
+    unsigned int flags = rtnl_link_get_flags(link);
+    bool admin = flags & IFF_UP;
+    bool oper = flags & IFF_LOWER_UP;
+    unsigned int ifindex = rtnl_link_get_ifindex(link);
+
+    if (type)
+    {
+        SWSS_LOG_INFO(" nlmsg type:%d key:%s admin:%d oper:%d ifindex:%d type:%s",
+                       nlmsg_type, lagName.c_str(), admin, oper, ifindex, type);
+    }
+    else
+    {
+        SWSS_LOG_INFO(" nlmsg type:%d key:%s admin:%d oper:%d ifindex:%d",
+                       nlmsg_type, lagName.c_str(), admin, oper, ifindex);
+    }
+
     if (nlmsg_type == RTM_DELLINK)
     {
         if (m_teamSelectables.find(lagName) != m_teamSelectables.end())
@@ -192,6 +208,16 @@ void TeamSync::removeLag(const string &lagName)
     }
 
     m_selectablesToRemove.insert(lagName);
+}
+
+void TeamSync::cleanTeamSync()
+{
+    for (const auto& it: m_teamSelectables)
+    {
+        /* Cleanup LAG */
+        removeLag(it.first);
+    }
+    return;
 }
 
 const struct team_change_handler TeamSync::TeamPortSync::gPortChangeHandler = {

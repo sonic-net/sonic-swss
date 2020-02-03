@@ -729,20 +729,6 @@ QosOrch::QosOrch(DBConnector *db, vector<string> &tableNames) : Orch(db, tableNa
 {
     SWSS_LOG_ENTER();
 
-    // we should really introduce capability query in SAI so that we can first
-    // query the capability and then decide what to do instead of hardcoding the
-    // platform-specfic logic like this here, which is ugly and difficult to
-    // understand the underlying rationale.
-
-    // Do not create color ACL on p4 platform as it does not support match dscp and ecn
-    char *platform = getenv("platform");
-    if (!platform ||
-        (platform && strcmp(platform, "x86_64-barefoot_p4-r0") != 0))
-    {
-        // add ACLs to support Sonic WRED profile.
-        initColorAcl(); // FIXME: Should be removed as soon as we have ACL configuration support
-    }
-
     initTableHandlers();
 };
 
@@ -750,123 +736,6 @@ type_map& QosOrch::getTypeMap()
 {
     SWSS_LOG_ENTER();
     return m_qos_maps;
-}
-
-void QosOrch::initColorAcl()
-{
-    SWSS_LOG_ENTER();
-    sai_object_id_t acl_table_id;
-
-    // init ACL system table
-    acl_table_id = initSystemAclTable();
-
-    // Add entry to match packets with dscp=8, ecn=0 and set yellow color to them
-    initAclEntryForEcn(acl_table_id, 1000, 0x00, 0x08, SAI_PACKET_COLOR_YELLOW);
-    // Add entry to match packets with dscp=0, ecn=0 and set yellow color to them
-    initAclEntryForEcn(acl_table_id,  999, 0x00, 0x00, SAI_PACKET_COLOR_YELLOW);
-}
-
-sai_object_id_t QosOrch::initSystemAclTable()
-{
-    SWSS_LOG_ENTER();
-    vector<sai_attribute_t> attrs;
-    sai_attribute_t attr;
-    sai_object_id_t acl_table_id;
-    sai_status_t status;
-
-    /* Create system ACL table */
-    attr.id = SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST;
-    vector<int32_t> bpoint_list;
-    bpoint_list.push_back(SAI_ACL_BIND_POINT_TYPE_PORT);
-    attr.value.s32list.count = 1;
-    attr.value.s32list.list = bpoint_list.data();
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
-    attr.value.s32 = SAI_ACL_STAGE_INGRESS;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_ECN;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
-
-    status = sai_acl_api->create_acl_table(&acl_table_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create a system ACL table for ECN coloring, rv:%d", status);
-        throw runtime_error("Failed to create a system ACL table for ECN coloring");
-    }
-    SWSS_LOG_NOTICE("Create a system ACL table for ECN coloring");
-
-    gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_PORT);
-
-    for (auto& pair: gPortsOrch->getAllPorts())
-    {
-        auto& port = pair.second;
-        if (port.m_type != Port::PHY) continue;
-
-        sai_object_id_t group_member_oid;
-        // Note: group member OID is discarded
-        if (!gPortsOrch->bindAclTable(port.m_port_id, acl_table_id, group_member_oid))
-        {
-            SWSS_LOG_ERROR("Failed to bind the system ACL table globally, rv:%d", status);
-            throw runtime_error("Failed to bind the system ACL table globally");
-        }
-    }
-
-
-    SWSS_LOG_NOTICE("Bind the system ACL table globally");
-
-    return acl_table_id;
-}
-
-void QosOrch::initAclEntryForEcn(sai_object_id_t acl_table_id, sai_uint32_t priority,
-                                 sai_uint8_t ecn_field, sai_uint8_t dscp_field, sai_int32_t color)
-{
-    SWSS_LOG_ENTER();
-    vector<sai_attribute_t> attrs;
-    sai_attribute_t attr;
-    sai_object_id_t acl_entry_id;
-    sai_status_t status;
-
-    attr.id = SAI_ACL_ENTRY_ATTR_TABLE_ID;
-    attr.value.oid = acl_table_id;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_ENTRY_ATTR_PRIORITY;
-    attr.value.u32 = priority;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_ECN;
-    attr.value.aclfield.enable = true;
-    attr.value.aclfield.data.u8 = ecn_field;
-    attr.value.aclfield.mask.u8 = 0x3;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_DSCP;
-    attr.value.aclfield.enable = true;
-    attr.value.aclfield.data.u8 = dscp_field;
-    attr.value.aclfield.mask.u8 = 0x3f;
-    attrs.push_back(attr);
-
-    attr.id = SAI_ACL_ENTRY_ATTR_ACTION_SET_PACKET_COLOR;
-    attr.value.aclaction.enable = true;
-    attr.value.aclaction.parameter.s32 = color;
-    attrs.push_back(attr);
-
-    status = sai_acl_api->create_acl_entry(&acl_entry_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create a system ACL entry for ECN coloring, rv=%d", status);
-        throw runtime_error("Failed to create a system ACL entry for ECN coloring");
-    }
-    SWSS_LOG_INFO("Create a system ACL entry for ECN coloring");
-
-    gCrmOrch->incCrmAclTableUsedCounter(CrmResourceType::CRM_ACL_ENTRY, acl_table_id);
 }
 
 void QosOrch::initTableHandlers()
@@ -947,25 +816,25 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             else if (fvField(*i) == scheduler_min_bandwidth_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_RATE;
-                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_min_bandwidth_burst_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_BURST_RATE;
-                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_max_bandwidth_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE;
-                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_max_bandwidth_burst_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_BURST_RATE;
-                attr.value.u64 = (uint64_t)stoi(fvValue(*i));
+                attr.value.u64 = stoul(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else {

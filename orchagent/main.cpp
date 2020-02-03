@@ -47,7 +47,10 @@ int gBatchSize = DEFAULT_BATCH_SIZE;
 bool gSairedisRecord = true;
 bool gSwssRecord = true;
 bool gLogRotate = false;
+bool gSaiRedisLogRotate = false;
 bool gSyncMode = false;
+
+extern bool gIsNatSupported;
 
 ofstream gRecordOfs;
 string gRecordFile;
@@ -73,15 +76,7 @@ void sighup_handler(int signo)
      * Don't do any logging since they are using mutexes.
      */
     gLogRotate = true;
-
-    sai_attribute_t attr;
-    attr.id = SAI_REDIS_SWITCH_ATTR_PERFORM_LOG_ROTATE;
-    attr.value.booldata = true;
-
-    if (sai_switch_api != NULL)
-    {
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
-    }
+    gSaiRedisLogRotate = true;
 }
 
 void syncd_apply_view()
@@ -268,6 +263,22 @@ int main(int argc, char **argv)
 
     gVirtualRouterId = attr.value.oid;
     SWSS_LOG_NOTICE("Get switch virtual router ID %" PRIx64, gVirtualRouterId);
+
+    /* Get the NAT supported info */
+    attr.id = SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY;
+
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Failed to get the SNAT available entry count, rv:%d", status);
+    }
+    else
+    {
+        if (attr.value.u32 != 0)
+        {
+            gIsNatSupported = true;
+        }
+    }
 
     /* Create a loopback underlay router interface */
     vector<sai_attribute_t> underlay_intf_attrs;

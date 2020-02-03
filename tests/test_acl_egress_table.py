@@ -1,6 +1,8 @@
+import time
+import pytest
+
 from swsscommon import swsscommon
 
-import time
 
 class TestEgressAclTable(object):
     def setup_db(self, dvs):

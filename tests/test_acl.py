@@ -1,7 +1,9 @@
-from swsscommon import swsscommon
 import time
 import re
 import json
+import pytest
+
+from swsscommon import swsscommon
 
 
 class BaseTestAcl(object):
@@ -329,19 +331,85 @@ class TestAcl(BaseTestAcl):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
-    def test_AclTableDeletion(self, dvs, testlog):
-
+    def test_AclRuleInPortsNonExistingInterface(self, dvs, testlog):
         self.setup_db(dvs)
-        db = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
-        # get ACL_TABLE in config db
-        tbl = swsscommon.Table(db, "ACL_TABLE")
+        # Create ACL rule with a completely wrong interface
+        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+        fvs = swsscommon.FieldValuePairs([("priority", "55"),
+                                          ("PACKET_ACTION", "FORWARD"),
+                                          ("IN_PORTS", "FOO_BAR_BAZ")])
+        tbl.set("test|foo_bar_baz", fvs)
+        time.sleep(1)
+
+        # Make sure no rules were created
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+        keys = atbl.getKeys()
+        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+        assert len(acl_entry) == 0
+
+        # Create ACL rule with a correct interface and a completely wrong interface
+        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+        fvs = swsscommon.FieldValuePairs([("priority", "55"),
+                                          ("PACKET_ACTION", "FORWARD"),
+                                          ("IN_PORTS", "Ethernet0,FOO_BAR_BAZ")])
+        tbl.set("test|foo_bar_baz", fvs)
+        time.sleep(1)
+
+        # Make sure no rules were created
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+        keys = atbl.getKeys()
+        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+        assert len(acl_entry) == 0
+
+        # Delete rule
+        tbl._del("test|foo_bar_baz")
+        time.sleep(1)
+
+    def test_AclRuleOutPortsNonExistingInterface(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # Create ACL rule with a completely wrong interface
+        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+        fvs = swsscommon.FieldValuePairs([("priority", "55"),
+                                          ("PACKET_ACTION", "FORWARD"),
+                                          ("OUT_PORTS", "FOO_BAR_BAZ")])
+        tbl.set("test|foo_bar_baz", fvs)
+        time.sleep(1)
+
+        # Make sure no rules were created
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+        keys = atbl.getKeys()
+        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+        assert len(acl_entry) == 0
+
+        # Create ACL rule with a correct interface and a completely wrong interface
+        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+        fvs = swsscommon.FieldValuePairs([("priority", "55"),
+                                          ("PACKET_ACTION", "FORWARD"),
+                                          ("OUT_PORTS", "Ethernet0,FOO_BAR_BAZ")])
+        tbl.set("test|foo_bar_baz", fvs)
+        time.sleep(1)
+
+        # Make sure no rules were created
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+        keys = atbl.getKeys()
+        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+        assert len(acl_entry) == 0
+
+        # Delete rule
+        tbl._del("test|foo_bar_baz")
+        time.sleep(1)
+
+    def test_AclTableDeletion(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
         tbl._del("test")
 
         time.sleep(1)
 
-        atbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         keys = atbl.getKeys()
         # only the default table was left along with DTel tables
         assert len(keys) >= 1
@@ -1303,6 +1371,7 @@ class TestAcl(BaseTestAcl):
 
         # bring down interface
         dvs.set_interface_status("Ethernet4", "down")
+
 
 class TestAclRuleValidation(BaseTestAcl):
     """ Test class for cases that check if orchagent corectly validates

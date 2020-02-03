@@ -79,6 +79,7 @@ AC_CONFIG_FILES([
     orchagent/Makefile
     fpmsyncd/Makefile
     neighsyncd/Makefile
+    natsyncd/Makefile
     portsyncd/Makefile
     teamsyncd/Makefile
     swssconfig/Makefile

@@ -434,6 +434,15 @@ PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
 {
     SWSS_LOG_ENTER();
 
+    Port portInstance;
+    if (!gPortsOrch->getPort(port, portInstance))
+    {
+        SWSS_LOG_ERROR("Cannot get port by ID 0x%" PRIx64, port);
+        return;
+    }
+
+    setPriorityGroupAndQueueLockFlag(portInstance, true);
+
     sai_attribute_t attr;
     attr.id = SAI_QUEUE_ATTR_BUFFER_PROFILE_ID;
 
@@ -462,13 +471,6 @@ PfcWdZeroBufferHandler::PfcWdZeroBufferHandler(sai_object_id_t port,
     m_originalQueueBufferProfile = oldQueueProfileId;
 
     // Get PG
-    Port portInstance;
-    if (!gPortsOrch->getPort(port, portInstance))
-    {
-        SWSS_LOG_ERROR("Cannot get port by ID 0x%" PRIx64, port);
-        return;
-    }
-
     sai_object_id_t pg = portInstance.m_priority_group_ids[static_cast <size_t> (queueId)];
 
     attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
@@ -533,6 +535,22 @@ PfcWdZeroBufferHandler::~PfcWdZeroBufferHandler(void)
         SWSS_LOG_ERROR("Failed to set buffer profile ID on queue 0x%" PRIx64 ": %d", getQueue(), status);
         return;
     }
+
+    setPriorityGroupAndQueueLockFlag(portInstance, false);
+}
+
+void PfcWdZeroBufferHandler::setPriorityGroupAndQueueLockFlag(Port& port, bool isLocked) const
+{
+    // set lock bits on PG and queue
+    port.m_priority_group_lock[static_cast<size_t>(getQueueId())] = isLocked;
+    for (size_t i = 0; i < port.m_queue_ids.size(); ++i)
+    {
+        if (port.m_queue_ids[i] == getQueue())
+        {
+            port.m_queue_lock[i] = isLocked;
+        }
+    }
+    gPortsOrch->setPort(port.m_alias, port);
 }
 
 PfcWdZeroBufferHandler::ZeroBufferProfile::ZeroBufferProfile(void)
