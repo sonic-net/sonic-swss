@@ -195,124 +195,37 @@ bool IntfMgr::isIntfChangeVrf(const string &alias, const string &vrfName)
 
 void IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const string &vlan)
 {
-    // TODO: remove when validation check at mgmt is in place
-    for (const auto &c : intf)
-    {
-        if (!isalnum(c))
-        {
-            SWSS_LOG_ERROR("Invalid parent port name %s for host sub interface %s", intf.c_str(), subIntf.c_str());
-            return;
-        }
-    }
-    for (const auto &c : vlan)
-    {
-        if (!isdigit(c))
-        {
-            SWSS_LOG_ERROR("Invalid vlan id %s for host sub interface %s", vlan.c_str(), subIntf.c_str());
-            return;
-        }
-    }
-
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link add link " << intf << " name " << subIntf << " type vlan id " << vlan;
+    cmd << IP_CMD " link add link " << shellquote(intf) << " name " << shellquote(subIntf) << " type vlan id " << shellquote(vlan);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
 void IntfMgr::setHostSubIntfMtu(const string &subIntf, const string &mtu)
 {
-    // TODO: remove when validation check at mgmt is in place
-    size_t found = subIntf.find(VLAN_SUB_INTERFACE_SEPARATOR);
-    if (found == string::npos)
-    {
-        SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-        return;
-    }
-    size_t i = 0;
-    for (const auto &c : subIntf)
-    {
-        if (i < found && !isalnum(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        else if (i > found && !isdigit(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        i++;
-    }
-
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link set " << subIntf << " mtu " << mtu;
+    cmd << IP_CMD " link set " << shellquote(subIntf) << " mtu " << shellquote(mtu);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
 void IntfMgr::setHostSubIntfAdminStatus(const string &subIntf, const string &adminStatus)
 {
-    // TODO: remove when validation check at mgmt is in place
-    size_t found = subIntf.find(VLAN_SUB_INTERFACE_SEPARATOR);
-    if (found == string::npos)
-    {
-        SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-        return;
-    }
-    size_t i = 0;
-    for (const auto &c : subIntf)
-    {
-        if (i < found && !isalnum(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        else if (i > found && !isdigit(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        i++;
-    }
-
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link set " << subIntf << " " << adminStatus;
+    cmd << IP_CMD " link set " << shellquote(subIntf) << " " << shellquote(adminStatus);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
 void IntfMgr::removeHostSubIntf(const string &subIntf)
 {
-    // TODO: remove when validation check at mgmt is in place
-    size_t found = subIntf.find(VLAN_SUB_INTERFACE_SEPARATOR);
-    if (found == string::npos)
-    {
-        SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-        return;
-    }
-    size_t i = 0;
-    for (const auto &c : subIntf)
-    {
-        if (i < found && !isalnum(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        else if (i > found && !isdigit(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        i++;
-    }
-
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link del " << subIntf;
+    cmd << IP_CMD " link del " << shellquote(subIntf);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
