@@ -163,6 +163,7 @@ void TeamMgr::cleanTeamProcesses(int signo)
 {
     pid_t pid = 0;
 
+    SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("Cleaning up LAGs during shutdown...");
     for (const auto& it: m_lagList)
     {
