@@ -87,7 +87,14 @@ public:
     sai_object_id_t addDecapMapperEntry(sai_object_id_t obj, uint32_t vni);
 
     void insertMapperEntry(sai_object_id_t encap, sai_object_id_t decap, uint32_t vni);
+    void removeMapperEntry(uint32_t vni);
     std::pair<sai_object_id_t, sai_object_id_t> getMapperEntry(uint32_t vni);
+    std::vector<uint32_t> getMapperKeys();
+
+    bool isMapperEmpty() const
+    {
+        return tunnel_map_entries_.empty();
+    }
 
     sai_object_id_t getTunnelId() const
     {
@@ -121,7 +128,7 @@ private:
     string tunnel_name_;
     bool active_ = false;
 
-    tunnel_ids_t ids_ = {0, 0, 0, 0};
+    tunnel_ids_t ids_ = { SAI_NULL_OBJECT_ID, SAI_NULL_OBJECT_ID, SAI_NULL_OBJECT_ID, SAI_NULL_OBJECT_ID };
     std::pair<MAP_T, MAP_T> tunnel_map_ = { MAP_T::MAP_TO_INVALID, MAP_T::MAP_TO_INVALID };
 
     TunnelMapEntries tunnel_map_entries_;
