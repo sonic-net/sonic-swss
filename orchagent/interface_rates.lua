@@ -1,24 +1,22 @@
 -- KEYS - rif IDs
--- ARGV[1] - poll time interval
--- return nothing 
+-- ARGV[1] - counters db index
+-- ARGV[2] - counters table name
+-- ARGV[3] - poll time interval
+-- return nothing
 
 local asic_db = 1 
-local counters_db = 2
+local counters_db = ARGV[1]
 local config_db = 4 
--- local fc_db = 5
-local counters_table_name = "COUNTERS" 
+local counters_table_name = ARGV[2] 
 -- local asic_table_name = "ASIC_STATE:SAI_OBJECT_TYPE_PORT" 
 local rates_table_name = "RATES"
--- local fc_group_table_name = "FLEX_COUNTER_GROUP_TABLE:PORT_STAT_COUNTER"
-
-local rets = {}
 
 -- Get configuration
 redis.call('SELECT', config_db)
 local smooth_interval = redis.call('GET', rates_table_name .. ':' .. 'RIF_SMOOTH_INTERVAL')
 local alpha = redis.call('GET', rates_table_name .. ':' .. 'RIF_ALPHA')
 local one_minus_alpha = 1 - alpha
-local delta = ARGV[1]
+local delta = tonumber(ARGV[3])
 
 -- Get speeds
 local speeds = {}
@@ -26,14 +24,12 @@ redis.call('SELECT', asic_db)
 local n = table.getn(KEYS)
 for i = 1, n do
     speeds[i] = 40000 
-    --redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_PORT_ATTR_SPEED')
 
 redis.call('SELECT', counters_db)
 
 local initialized = redis.call('GET', rates_table_name .. ':' .. 'INIT_DONE')
 
 for i = 1, n do
-
     -- Get new COUNTERS values
     local in_octets = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_OCTETS')
     local in_pkts = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_PACKETS')
@@ -54,7 +50,6 @@ for i = 1, n do
         local tx_pps_new = (out_pkts - out_pkts_last)/delta
         local rx_util_new = rx_bps_new/speeds[i]
         local tx_util_new = tx_bps_new/speeds[i]
-
 
         if initialized == "DONE" then
             -- Get old rates values

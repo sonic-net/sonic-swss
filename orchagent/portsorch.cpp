@@ -1521,12 +1521,13 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 /* Add port to port list */
                 m_portList[alias] = p;
                 m_port_ref_count[alias] = 0;
-                /* Add port name map to counter table */
-                FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
-                vector<FieldValueTuple> fields;
-                fields.push_back(tuple);
-                m_counterTable->set("", fields);
-
+                {
+                    /* Add port name map to counter table */
+                    FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
+                    vector<FieldValueTuple> fields;
+                    fields.push_back(tuple);
+                    m_counterTable->set("", fields);
+                }
                 // Install a flex counter for this port to track stats
                 std::unordered_set<std::string> counter_stats;
                 for (const auto& it: port_stat_ids)
@@ -1534,7 +1535,12 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                     counter_stats.emplace(sai_serialize_port_stat(it));
                 }
                 port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, counter_stats);
-
+                {
+                    /* Add to port rates FC */
+                    string key = getPortRateFlexCounterTableKey(sai_serialize_object_id(p.m_port_id));
+                    vector<FieldValueTuple> fields;
+                    m_flexCounterTable->set(key, fields);
+                }
                 PortUpdate update = { p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
@@ -1569,6 +1575,10 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     /* remove port name map from counter table */
     RedisClient redisClient(m_counter_db.get());
     redisClient.hdel(COUNTERS_PORT_NAME_MAP, alias);
+
+    /* remove port from port rates FC  */
+    string key = getPortRateFlexCounterTableKey(sai_serialize_object_id(port_id));
+    m_flexCounterTable->del(key);
 
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
 }

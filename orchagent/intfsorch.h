@@ -36,7 +36,7 @@ public:
     sai_object_id_t getRouterIntfsId(const string&);
     bool isPrefixSubnet(const IpPrefix&, const string&);
     string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");
-
+    string getRifRateFlexCounterTableKey(string key);
     void increaseRouterIntfsRefCount(const string&);
     void decreaseRouterIntfsRefCount(const string&);
 
