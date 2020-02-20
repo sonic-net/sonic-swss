@@ -157,10 +157,8 @@ class DockerVirtualSwitch(object):
         self.syncd = ['syncd']
         self.rtd   = ['fpmsyncd', 'zebra', 'staticd']
         self.teamd = ['teamsyncd', 'teammgrd']
-        # FIXME: We need to verify that NAT processes are running, once the
-        # appropriate changes are merged into sonic-buildimage
-        # self.natd = ['natsyncd', 'natmgrd']
-        self.alld  = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd # + self.natd
+        self.natd = ['natsyncd', 'natmgrd']
+        self.alld  = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd + self.natd
         self.client = docker.from_env()
         self.appldb = None
 

@@ -8,10 +8,9 @@ import os
 from swsscommon import swsscommon
 
 
-# FIXME: These tests depend on changes in sonic-buildimage, we need to reenable
-# them once those changes are merged.
-@pytest.mark.skip(reason="Depends on changes in sonic-buildimage")
-class TestNatFeature(object):
+# FIXME: https://github.com/Azure/sonic-swss/issues/1199
+@pytest.mark.xfail(reason="DVS crashes during NAT test execution")
+class TestNat(object):
     def setup_db(self, dvs):
         self.appdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         self.asicdb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
