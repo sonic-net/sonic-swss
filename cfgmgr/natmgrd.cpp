@@ -118,9 +118,9 @@ int main(int argc, char **argv)
             CFG_ACL_RULE_TABLE_NAME
         };
 
-        DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-        DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-        DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+        DBConnector cfgDb("CONFIG_DB", 0);
+        DBConnector appDb("APPL_DB", 0);
+        DBConnector stateDb("STATE_DB", 0);
 
         cleanupNotifier = std::make_shared<swss::NotificationProducer>(&appDb, "NAT_DB_CLEANUP_NOTIFICATION");
 

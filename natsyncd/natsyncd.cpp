@@ -15,9 +15,9 @@ int main(int argc, char **argv)
 {
     Logger::linkToDbNative("natsyncd");
 
-    DBConnector     appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector     appDb("APPL_DB", 0);
+    DBConnector     stateDb("STATE_DB", 0);
     RedisPipeline   pipelineAppDB(&appDb);
-    DBConnector     stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     NfNetlink       nfnl;
 
     nfnl.registerRecvCallbacks();
