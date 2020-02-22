@@ -10,8 +10,13 @@ import commands
 import tarfile
 import StringIO
 import subprocess
+
 from datetime import datetime
 from swsscommon import swsscommon
+
+pytest_plugins = [
+    "dvslib.dvs_database"
+]
 
 def ensure_system(cmd):
     (rc, output) = commands.getstatusoutput(cmd)
