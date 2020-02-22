@@ -45,7 +45,7 @@ NatOrch::NatOrch(DBConnector *appDb, DBConnector *stateDb, vector<table_name_wit
          Orch(appDb, tableNames),
          m_neighOrch(neighOrch),
          m_routeOrch(routeOrch),
-         m_countersDb(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0),
+         m_countersDb("COUNTERS_DB", 0),
          m_countersNatTable(&m_countersDb, COUNTERS_NAT_TABLE),
          m_countersNaptTable(&m_countersDb, COUNTERS_NAPT_TABLE),
          m_countersTwiceNatTable(&m_countersDb, COUNTERS_TWICE_NAT_TABLE),
