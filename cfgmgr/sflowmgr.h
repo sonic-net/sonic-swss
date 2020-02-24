@@ -30,7 +30,8 @@ namespace swss {
 
 struct SflowPortInfo
 {
-    bool        local_conf;
+    bool        local_rate_cfg;
+    bool        local_admin_cfg;
     std::string speed;
     std::string rate;
     std::string admin;
@@ -50,7 +51,7 @@ private:
     Table                  m_cfgSflowSessionTable;
     ProducerStateTable     m_appSflowTable;
     ProducerStateTable     m_appSflowSessionTable;
-    SflowPortConfMap  m_sflowPortConfMap;
+    SflowPortConfMap       m_sflowPortConfMap;
     bool                   m_intfAllConf;
     bool                   m_gEnable;
 
