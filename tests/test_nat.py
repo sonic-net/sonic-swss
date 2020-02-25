@@ -81,8 +81,14 @@ class TestNat(object):
         keys  = tbl.getKeys()
 
         (status, fvs) = tbl.get("Ethernet0")
-
-        assert fvs==(('NULL', 'NULL'), ('nat_zone', '1'))
+        assert status == True
+        assert len(fvs) > 0
+        zone = False
+        for fv in fvs:
+            if fv[0] == 'nat_zone' and fv[1] == '1':
+               zone = True
+               break
+        assert zone == True
 
 
     def test_AddNatStaticEntry(self, dvs, testlog):
