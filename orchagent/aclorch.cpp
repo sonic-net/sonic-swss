@@ -2145,14 +2145,14 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
 
     // In Broadcom platform, V4 and V6 rules are stored in the same table
     if (platform == BRCM_PLATFORM_SUBSTRING ||
-            platform == NPS_PLATFORM_SUBSTRING) {
+        platform == NPS_PLATFORM_SUBSTRING  ||
+        platform == BFN_PLATFORM_SUBSTRING) {
         m_isCombinedMirrorV6Table = true;
     }
 
     // In Mellanox platform, V4 and V6 rules are stored in different tables
     if (platform == MLNX_PLATFORM_SUBSTRING ||
-        platform == MRVL_PLATFORM_SUBSTRING ||
-        platform == BFN_PLATFORM_SUBSTRING) {
+        platform == MRVL_PLATFORM_SUBSTRING) {
         m_isCombinedMirrorV6Table = false;
     }
 
@@ -2844,7 +2844,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
         string op = kfvOp(t);
 
         SWSS_LOG_INFO("OP: %s, TABLE_ID: %s, RULE_ID: %s", op.c_str(), table_id.c_str(), rule_id.c_str());
- 
+
         if (table_id.empty())
         {
             SWSS_LOG_WARN("ACL rule with RULE_ID: %s is not valid as TABLE_ID is empty", rule_id.c_str());
