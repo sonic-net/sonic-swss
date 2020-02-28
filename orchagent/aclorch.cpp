@@ -127,7 +127,10 @@ static const acl_capabilities_t defaultAclActionsSupported =
         }
     },
     {
-        ACL_STAGE_EGRESS, {}
+        ACL_STAGE_EGRESS, 
+        {
+            SAI_ACL_ACTION_TYPE_PACKET_ACTION
+        }
     }
 };
 
