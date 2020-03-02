@@ -5,6 +5,11 @@ LIBNL_LIBS = -lnl-genl-3 -lnl-route-3 -lnl-3
 
 bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd
 
+
+if HAVE_L2MCD
+bin_PROGRAMS += l2mcmgrd
+endif
+
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
 else
@@ -50,6 +55,13 @@ vxlanmgrd_SOURCES = vxlanmgrd.cpp vxlanmgr.cpp $(top_srcdir)/orchagent/orch.cpp 
 vxlanmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 vxlanmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 vxlanmgrd_LDADD = -lswsscommon
+
+if HAVE_L2MCD
+l2mcmgrd_SOURCES =l2mcmgrd.cpp l2mcmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp shellcmd.h
+l2mcmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(COV_CFLAGS) $(ASAN_CFLAGS)
+l2mcmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI) $(COV_CFLAGS) $(ASAN_CFLAGS)
+l2mcmgrd_LDADD = -lswsscommon $(COV_LDFLAGS) $(ASAN_LDFLAGS)
+endif 
 
 sflowmgrd_SOURCES = sflowmgrd.cpp sflowmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp shellcmd.h
 sflowmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
