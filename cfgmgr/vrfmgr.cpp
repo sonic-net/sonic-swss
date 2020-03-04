@@ -68,7 +68,8 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                 else
                 {
                     // No deletion of mgmt table from kernel
-                    if (vrfName.compare("mgmt") ==0) {
+                    if (vrfName.compare("mgmt") ==0)
+                    { 
                         SWSS_LOG_NOTICE("Skipping remove vrf device %s", vrfName.c_str());
                         rowType = LINK_ROW;
                         break;
