@@ -23,21 +23,21 @@ class BaseTestAcl(object):
 
     def get_acl_table_id(self):
         num_keys = len(self.asic_db.default_acl_tables) + 1
-        keys = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", num_keys)
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", num_keys)
 
         acl_tables = [k for k in keys if k not in self.asic_db.default_acl_tables]
         return acl_tables[0]
 
     def verify_no_acl_tables(self):
         num_keys = len(self.asic_db.default_acl_tables)
-        keys = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", num_keys)
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", num_keys)
         assert set(keys) == set(self.asic_db.default_acl_tables)
 
     def verify_acl_group_num(self, expt):
-        acl_table_groups = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", expt)
+        acl_table_groups = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", expt)
 
         for group in acl_table_groups:
-            fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", group)
+            fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", group)
             for k, v in fvs.items():
                 if k == "SAI_ACL_TABLE_GROUP_ATTR_ACL_STAGE":
                     assert v == "SAI_ACL_STAGE_INGRESS"
@@ -49,11 +49,11 @@ class BaseTestAcl(object):
                     assert False
 
     def verify_acl_group_member(self, acl_group_ids, acl_table_id):
-        members = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER", len(acl_group_ids))
+        members = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER", len(acl_group_ids))
 
         member_groups = []
         for member in members:
-            fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER", member)
+            fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER", member)
             for k, v in fvs.items():
                 if k == "SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID":
                     assert v in acl_group_ids
@@ -68,11 +68,11 @@ class BaseTestAcl(object):
         assert set(member_groups) == set(acl_group_ids)
 
     def verify_acl_port_binding(self, bind_ports):
-        acl_table_groups = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", len(bind_ports))
+        acl_table_groups = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", len(bind_ports))
 
         port_groups = []
         for port in [self.asic_db.port_name_map[p] for p in bind_ports]:
-            fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port)
+            fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port)
             acl_table_group = fvs.pop("SAI_PORT_ATTR_INGRESS_ACL", None)
             assert acl_table_group in acl_table_groups
             port_groups.append(acl_table_group)
@@ -96,29 +96,29 @@ class BaseTestAcl(object):
 
     def get_acl_rule_id(self):
         num_keys = len(self.asic_db.default_acl_entries) + 1
-        keys = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
 
         acl_entries = [k for k in keys if k not in self.asic_db.default_acl_entries]
         return acl_entries[0]
 
     def verify_no_acl_rules(self):
         num_keys = len(self.asic_db.default_acl_entries)
-        keys = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
         assert set(keys) == set(self.asic_db.default_acl_entries)
 
     def verify_acl_rule(self, qualifiers, action="FORWARD", priority="2020"):
         acl_rule_id = self.get_acl_rule_id()
 
-        fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
+        fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
         self._check_acl_entry(fvs, qualifiers, action, priority)
 
     def verify_acl_rule_set(self, priorities, in_actions, expected):
         num_keys = len(self.asic_db.default_acl_entries) + len(priorities)
-        keys = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
 
         acl_entries = [k for k in keys if k not in self.asic_db.default_acl_entries]
         for entry in acl_entries:
-            rule = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", entry)
+            rule = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", entry)
             priority = rule.get("SAI_ACL_ENTRY_ATTR_PRIORITY", None)
             assert priority in priorities
             self._check_acl_entry(rule, expected[priority],
@@ -172,7 +172,7 @@ class BaseTestAcl(object):
     def get_acl_range_comparator(self, expected_type, expected_ports):
         def _match_acl_range(sai_acl_range):
             range_id = sai_acl_range.split(":", 1)[1]
-            fvs = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_RANGE", range_id)
+            fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_RANGE", range_id)
             for k, v in fvs.items():
                 if k == "SAI_ACL_RANGE_ATTR_TYPE" and v == expected_type:
                     continue
@@ -193,7 +193,7 @@ class TestAcl(BaseTestAcl):
         self.create_acl_table("test", "L3", bind_ports)
 
         self.verify_acl_group_num(len(bind_ports))
-        acl_group_ids = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", len(bind_ports))
+        acl_group_ids = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", len(bind_ports))
         self.verify_acl_group_member(acl_group_ids, self.get_acl_table_id())
         self.verify_acl_port_binding(bind_ports)
 
@@ -265,7 +265,7 @@ class TestAcl(BaseTestAcl):
         self.create_acl_table("test_aclv6", "L3V6", bind_ports)
 
         self.verify_acl_group_num(len(bind_ports))
-        acl_group_ids = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", len(bind_ports))
+        acl_group_ids = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", len(bind_ports))
         self.verify_acl_group_member(acl_group_ids, self.get_acl_table_id())
         self.verify_acl_port_binding(bind_ports)
 
@@ -569,7 +569,7 @@ class TestAcl(BaseTestAcl):
         dvs.add_ip_address("Ethernet4", "10.0.0.1/24")
         dvs.add_neighbor("Ethernet4", "10.0.0.2", "00:01:02:03:04:05")
 
-        next_hop_id = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)[0]
+        next_hop_id = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)[0]
 
         bind_ports = ["Ethernet0"]
         self.create_acl_table("test_redirect", "L3", bind_ports)
@@ -580,7 +580,7 @@ class TestAcl(BaseTestAcl):
         self.create_acl_rule("test_redirect", "redirect_rule", config_qualifiers, action="REDIRECT:10.0.0.2@Ethernet4", priority="20")
 
         acl_rule_id = self.get_acl_rule_id()
-        entry = self.asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
+        entry = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
         self._check_acl_entry(entry, expected_sai_qualifiers, "REDIRECT:10.0.0.2@Ethernet4", "20")
         assert entry.get("SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT", None) == next_hop_id
 
@@ -605,8 +605,8 @@ class TestAclRuleValidation(BaseTestAcl):
     SWITCH_CAPABILITY_TABLE = "SWITCH_CAPABILITY"
 
     def get_acl_actions_supported(self, stage):
-        switch_id = self.state_db.get_keys(self.SWITCH_CAPABILITY_TABLE, 1)[0]
-        switch = self.state_db.get_entry(self.SWITCH_CAPABILITY_TABLE, switch_id)
+        switch_id = self.state_db.wait_for_n_keys(self.SWITCH_CAPABILITY_TABLE, 1)[0]
+        switch = self.state_db.wait_for_entry(self.SWITCH_CAPABILITY_TABLE, switch_id)
 
         field = "ACL_ACTIONS|{}".format(stage.upper())
 
@@ -652,8 +652,6 @@ class TestAclRuleValidation(BaseTestAcl):
             # restart SWSS so orchagent will query updated switch attributes
             dvs.stop_swss()
             dvs.start_swss()
-            # wait for daemons to start
-            time.sleep(2)
             # reinit ASIC DB validator object
             dvs.init_asicdb_validator()
 
@@ -685,4 +683,3 @@ class TestAclRuleValidation(BaseTestAcl):
             dvs.runcmd("supervisorctl restart syncd")
             dvs.stop_swss()
             dvs.start_swss()
-            time.sleep(5)

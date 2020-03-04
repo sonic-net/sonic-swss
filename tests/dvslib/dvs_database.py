@@ -68,10 +68,11 @@ class DVSDatabase(object):
         formatted_entry = swsscommon.FieldValuePairs(entry.items())
         table.set(key, formatted_entry)
 
-    def get_entry(self, table_name, key,
-                  polling_config=DEFAULT_POLLING_CONFIG):
+    def wait_for_entry(self, table_name, key,
+                       polling_config=DEFAULT_POLLING_CONFIG):
         """
-            Gets the entry stored at `key` in the specified table.
+            Gets the entry stored at `key` in the specified table. This method
+            will wait for the entry to exist.
 
             Args:
                 table_name (str): The name of the table where the entry is
@@ -102,13 +103,13 @@ class DVSDatabase(object):
         table = swsscommon.Table(self.db_connection, table_name)
         table._del(key)  # pylint: disable=protected-access
 
-    def is_entry_empty(self,
-                       table_name,
-                       key,
-                       polling_config=DEFAULT_POLLING_CONFIG):
+    def wait_for_empty_entry(self,
+                             table_name,
+                             key,
+                             polling_config=DEFAULT_POLLING_CONFIG):
         """
             Checks if there is any entry stored at `key` in the specified
-            table.
+            table. This method will wait for the entry to be empty.
 
             Args:
                 table_name (str): The name of the table being checked.
@@ -123,25 +124,19 @@ class DVSDatabase(object):
         access_function = self._get_entry_access_function(table_name, key, False)
         return not self._db_poll(polling_config, access_function)
 
-    def get_keys(self,
-                 table_name,
-                 num_keys=None,
-                 polling_config=DEFAULT_POLLING_CONFIG):
+    def wait_for_n_keys(self,
+                        table_name,
+                        num_keys,
+                        polling_config=DEFAULT_POLLING_CONFIG):
         """
-            Gets all of the keys stored in the specified table.
-
-            By default, this method will simply return whatever keys are
-            stored in the table. The user may use `num_keys` to specify an
-            expected number of keys.
+            Gets all of the keys stored in the specified table. This method
+            will wait for the specified number of keys.
 
             Args:
                 table_name (str): The name of the table from which to fetch
                     the keys.
                 num_keys (int): The expected number of keys to retrieve from
-                    the table. If this value is None, then this method will
-                    return whatever keys are currently in the table. Otherwise,
-                    this method will block until the specified number of keys
-                    is found.
+                    the table.
                 polling_config (PollingConfig): The parameters to use to poll
                     the db.
 
@@ -152,23 +147,6 @@ class DVSDatabase(object):
 
         access_function = self._get_keys_access_function(table_name, num_keys)
         return self._db_poll(polling_config, access_function)
-
-    def is_table_empty(self, table_name,
-                       polling_config=DEFAULT_POLLING_CONFIG):
-        """
-            Checks whether the provided table is empty or not.
-
-            Args:
-                table_name (str): The name of the table to check for emptiness.
-                polling_config (PollingConfig): The parameters to use to poll
-                    the db.
-
-            Returns:
-                bool: True if the table is empty, False otherwise.
-        """
-
-        access_function = self._get_keys_access_function(table_name, 0)
-        return not self._db_poll(polling_config, access_function)
 
     def _get_keys_access_function(self, table_name, num_keys):
         """
@@ -269,8 +247,11 @@ class DVSDatabase(object):
                 Any: The output of the access function, if it is succesful,
                 None otherwise.
         """
+        if polling_config.polling_interval == 0:
+            iterations = 1
+        else:
+            iterations = int(polling_config.timeout // polling_config.polling_interval) + 1
 
-        iterations = int(polling_config.timeout // polling_config.polling_interval) + 1
         for _ in range(iterations):
             (status, result) = access_function()
 
