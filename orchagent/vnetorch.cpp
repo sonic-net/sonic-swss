@@ -1074,7 +1074,7 @@ bool VNetBitmapObject::removeTunnelRoute(IpPrefix& ipPrefix)
     if (tunnelRouteMap_.find(ipPrefix) == tunnelRouteMap_.end())
     {
         SWSS_LOG_WARN("VNET tunnel route %s doesn't exist", ipPrefix.to_string().c_str());
-        return false;
+        return true;
     }
 
     auto tunnelRouteInfo = tunnelRouteMap_.at(ipPrefix);
@@ -1273,7 +1273,7 @@ bool VNetBitmapObject::removeRoute(IpPrefix& ipPrefix)
     if (routeMap_.find(ipPrefix) == routeMap_.end())
     {
         SWSS_LOG_WARN("VNET route %s doesn't exist", ipPrefix.to_string().c_str());
-        return false;
+        return true;
     }
 
     sai_status_t status = sai_bmtor_api->remove_table_bitmap_router_entry(routeMap_.at(ipPrefix).routeTableEntryId);
@@ -1838,7 +1838,7 @@ bool VNetRouteOrch::doRouteTask<VNetBitmapObject>(const string& vnet, IpPrefix& 
     if (!vnet_orch_->isVnetExists(vnet))
     {
         SWSS_LOG_WARN("VNET %s doesn't exist", vnet.c_str());
-        return false;
+        return (op == DEL_COMMAND) ? true : false;
     }
 
     auto *vnet_obj = vnet_orch_->getTypePtr<VNetBitmapObject>(vnet);
@@ -1863,7 +1863,7 @@ bool VNetRouteOrch::doRouteTask<VNetBitmapObject>(const string& vnet, IpPrefix& 
     if (!vnet_orch_->isVnetExists(vnet))
     {
         SWSS_LOG_WARN("VNET %s doesn't exist", vnet.c_str());
-        return false;
+        return (op == DEL_COMMAND) ? true : false;
     }
 
     auto *vnet_obj = vnet_orch_->getTypePtr<VNetBitmapObject>(vnet);
