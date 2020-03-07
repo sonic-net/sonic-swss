@@ -33,6 +33,7 @@ extern sai_vlan_api_t *sai_vlan_api;
 extern sai_lag_api_t *sai_lag_api;
 extern sai_hostif_api_t* sai_hostif_api;
 extern sai_acl_api_t* sai_acl_api;
+extern sai_router_interface_api_t *sai_router_intfs_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
 extern IntfsOrch *gIntfsOrch;
@@ -479,7 +480,8 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
             }
             break;
         case Port::VLAN:
-            if (portIter.second.m_vlan_info.vlan_oid == id)
+            if (portIter.second.m_vlan_info.vlan_oid == id ||
+                portIter.second.m_rif_id == id)
             {
                 port = portIter.second;
                 return true;
@@ -546,7 +548,14 @@ bool PortsOrch::getAclBindPortId(string alias, sai_object_id_t &port_id)
             port_id = port.m_lag_id;
             break;
         case Port::VLAN:
-            port_id = port.m_vlan_info.vlan_oid;
+            if (port.m_rif_id)
+            {
+                port_id = port.m_rif_id;
+            }
+            else
+            {
+                port_id = port.m_vlan_info.vlan_oid;
+            }
             break;
         default:
             SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", alias.c_str(), port.m_type);
@@ -910,7 +919,14 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &gro
                 bind_type = SAI_ACL_BIND_POINT_TYPE_LAG;
                 break;
             case Port::VLAN:
-                bind_type = SAI_ACL_BIND_POINT_TYPE_VLAN;
+                if (port.m_rif_id)
+                {
+                    bind_type = SAI_ACL_BIND_POINT_TYPE_ROUTER_INTERFACE;
+                }
+                else
+                {
+                    bind_type = SAI_ACL_BIND_POINT_TYPE_VLAN;
+                }
                 break;
             default:
                 SWSS_LOG_ERROR("Failed to bind ACL table to port %s with unknown type %d",
@@ -992,17 +1008,35 @@ bool PortsOrch::createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &gro
             }
             case Port::VLAN:
             {
-                // Bind this ACL group to VLAN
-                sai_attribute_t vlan_attr;
-                vlan_attr.id = ingress ? SAI_VLAN_ATTR_INGRESS_ACL : SAI_VLAN_ATTR_EGRESS_ACL;
-                vlan_attr.value.oid = group_oid;
-
-                status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &vlan_attr);
-                if (status != SAI_STATUS_SUCCESS)
+                if(port.m_rif_id)
                 {
-                    SWSS_LOG_ERROR("Failed to bind VLAN %s to ACL table group %" PRIx64 ", rv:%d",
-                            port.m_alias.c_str(), group_oid, status);
-                    return false;
+                    // Bind this ACL group to RIF
+                    sai_attribute_t rif_attr;
+                    rif_attr.id = ingress ? SAI_ROUTER_INTERFACE_ATTR_INGRESS_ACL : SAI_ROUTER_INTERFACE_ATTR_EGRESS_ACL;
+                    rif_attr.value.oid = group_oid;
+
+                    status = sai_router_intfs_api->set_router_interface_attribute(port.m_rif_id, &rif_attr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to bind RIF %s to ACL table group %lx, rv:%d",
+                                port.m_alias.c_str(), group_oid, status);
+                        return false;
+                    }
+                }
+                else
+                {
+                    // Bind this ACL group to VLAN
+                    sai_attribute_t vlan_attr;
+                    vlan_attr.id = ingress ? SAI_VLAN_ATTR_INGRESS_ACL : SAI_VLAN_ATTR_EGRESS_ACL;
+                    vlan_attr.value.oid = group_oid;
+
+                    status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &vlan_attr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to bind VLAN %s to ACL table group %lx, rv:%d",
+                                port.m_alias.c_str(), group_oid, status);
+                        return false;
+                    }
                 }
                 break;
             }
@@ -3747,7 +3781,14 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
             bind_type = SAI_ACL_BIND_POINT_TYPE_LAG;
             break;
         case Port::VLAN:
-            bind_type = SAI_ACL_BIND_POINT_TYPE_VLAN;
+            if (p.m_rif_id)
+            {
+                bind_type = SAI_ACL_BIND_POINT_TYPE_ROUTER_INTERFACE;
+            }
+            else
+            {
+                bind_type = SAI_ACL_BIND_POINT_TYPE_VLAN;
+            }
             break;
         default:
             // Dealing with port, lag and vlan for now.
