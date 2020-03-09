@@ -219,7 +219,7 @@ class DVSDatabase(object):
 
             status = expect_entry == status
 
-            if status and expect_entry:
+            if fv_pairs:
                 entry = dict(fv_pairs)
             else:
                 entry = {}
