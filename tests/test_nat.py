@@ -90,7 +90,6 @@ class TestNat(object):
                break
         assert zone == True
 
-
     def test_AddNatStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -152,6 +151,7 @@ class TestNat(object):
         key = tbl.getKeys()
         assert key == ()
 
+    @pytest.mark.xfail(reason="vs image issue: Azure/sonic-sairedis#575")
     def test_AddNaPtStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -193,6 +193,7 @@ class TestNat(object):
             else:
                  assert False
 
+    @pytest.mark.xfail(reason="vs image issue: Azure/sonic-sairedis#575")
     def test_DelNaPtStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -215,6 +216,7 @@ class TestNat(object):
         key = tbl.getKeys()
         assert key == ()
 
+    @pytest.mark.xfail(reason="vs image issue: Azure/sonic-sairedis#575")
     def test_AddTwiceNatEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -263,6 +265,7 @@ class TestNat(object):
            else:
                assert False
 
+    @pytest.mark.xfail(reason="vs image issue: Azure/sonic-sairedis#575")
     def test_DelTwiceNatStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -286,6 +289,7 @@ class TestNat(object):
         key = tbl.getKeys()
         assert key == ()
 
+    @pytest.mark.xfail(reason="vs image issue: Azure/sonic-sairedis#575")
     def test_AddTwiceNaPtEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
@@ -335,6 +339,7 @@ class TestNat(object):
            else:
                assert False
 
+    @pytest.mark.xfail(reason="vs image issue: Azure/sonic-sairedis#575")
     def test_DelTwiceNaPtStaticEntry(self, dvs, testlog):
         # initialize
         self.setup_db(dvs)
