@@ -821,7 +821,10 @@ bool VNetBitmapObject::removeIntf(const string& alias, const IpPrefix *prefix)
             SWSS_LOG_ERROR("Failed to remove VNET table entry, SAI rc: %d", status);
             throw std::runtime_error("VNET interface removal failed");
         }
+    }
 
+    if (!prefix)
+    {
         intfMap_.erase(alias);
 
         if (!gIntfsOrch->removeIntf(alias, gVirtualRouterId, nullptr))
