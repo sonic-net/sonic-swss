@@ -4,6 +4,7 @@
 #include "logger.h"
 #include "swssnet.h"
 #include "crmorch.h"
+#include "bulker.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
@@ -20,6 +21,8 @@ extern CrmOrch *gCrmOrch;
 #define DEFAULT_MAX_ECMP_GROUP_SIZE     32
 
 const int routeorch_pri = 5;
+
+RouteBulker<sai_route_entry_t> t(sai_route_api);
 
 RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
         Orch(db, tableName, routeorch_pri),
