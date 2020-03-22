@@ -245,9 +245,9 @@ public:
                 auto& entry = i;
                 rs.push_back(entry);
             }
-            uint32_t count = (uint32_t)removing_entries.size();
+            size_t count = removing_entries.size();
             vector<sai_status_t> statuses(count);
-            (*remove_entries)(count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
+            (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
             
             SWSS_LOG_NOTICE("bulk.flush removing_entries %zu\n", removing_entries.size());
             
@@ -270,9 +270,9 @@ public:
                 tss.push_back(attrs.data());
                 cs.push_back((uint32_t)attrs.size());
             }
-            uint32_t count = (uint32_t)creating_entries.size();
+            size_t count = creating_entries.size();
             vector<sai_status_t> statuses(count);
-            (*create_entries)(count, rs.data(), cs.data(), tss.data()
+            (*create_entries)((uint32_t)count, rs.data(), cs.data(), tss.data()
                 , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
 
             SWSS_LOG_NOTICE("bulk.flush creating_entries %zu\n", creating_entries.size());
@@ -296,9 +296,9 @@ public:
                     ts.push_back(attr);
                 }
             }
-            uint32_t count = (uint32_t)setting_entries.size();
+            size_t count = setting_entries.size();
             vector<sai_status_t> statuses(count);
-            (*set_entries_attribute)(count, rs.data(), ts.data()
+            (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
                 , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
 
             SWSS_LOG_NOTICE("bulk.flush setting_entries %zu\n", setting_entries.size());
@@ -361,10 +361,8 @@ public:
         _In_ uint32_t attr_count,
         _In_ const sai_attribute_t *attr_list)
     {
-        creating_entries.emplace_back(std::piecewise_construct,
-                std::forward_as_tuple(object_id),
-                std::forward_as_tuple(attr_list, attr_list + attr_count));
-        SWSS_LOG_DEBUG("bulk.create_entry %zu, %zu, %d, %d\n", creating_entries.size(), creating_entries.back().size(), (int)creating_entries.back()[0].id);
+        creating_entries.emplace_back(object_id, attr_list, attr_list + attr_count);
+        SWSS_LOG_DEBUG("bulk.create_entry %zu, %zu, %d\n", creating_entries.size(), creating_entries.back().attrs.size(), (int)creating_entries.back().attrs[0].id);
         
         *object_id = SAI_NULL_OBJECT_ID; // not created immediately, postponed until flush
         return SAI_STATUS_SUCCESS;
@@ -415,9 +413,9 @@ public:
         // Removing
         if (!removing_entries.empty())
         {
-            uint32_t count = (uint32_t)removing_entries.size();
+            size_t count = removing_entries.size();
             vector<sai_status_t> statuses(count);
-            (*remove_entries)(removing_entries.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
+            (*remove_entries)((uint32_t)count, removing_entries.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
             
             SWSS_LOG_NOTICE("bulk.flush removing_entries %zu\n", removing_entries.size());
             
@@ -440,9 +438,9 @@ public:
                 tss.push_back(attrs.data());
                 cs.push_back((uint32_t)attrs.size());
             }
-            uint32_t count = (uint32_t)creating_entries.size();
+            size_t count = creating_entries.size();
             vector<sai_status_t> statuses(count);
-            (*create_entries)(switch_id, count, rs.data(), cs.data(), tss.data()
+            (*create_entries)(switch_id, (uint32_t)count, rs.data(), cs.data(), tss.data()
                 , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
 
             SWSS_LOG_NOTICE("bulk.flush creating_entries %zu\n", creating_entries.size());
@@ -468,9 +466,9 @@ public:
                     ts.push_back(attr);
                 }
             }
-            uint32_t count = (uint32_t)setting_entries.size();
+            size_t count = setting_entries.size();
             vector<sai_status_t> statuses(count);
-            (*set_entries_attribute)(count, rs.data(), ts.data()
+            (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
                 , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
 
             SWSS_LOG_NOTICE("bulk.flush setting_entries %zu\n", setting_entries.size());
@@ -492,6 +490,12 @@ private:
     {
         sai_object_id_t *object_id;
         vector<sai_attribute_t> attrs;
+        template <class InputIterator>
+        object_entry(sai_object_id_t *object_id, InputIterator first, InputIterator last)
+            : object_id(object_id)
+            , attrs(first, last)
+        {
+        }
     };
     
     sai_object_id_t                                         switch_id;
