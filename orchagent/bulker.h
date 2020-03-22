@@ -123,8 +123,9 @@ template<typename T>
 struct saitraits { };
 
 template<>
-struct saitraits<sai_route_entry_t>
+struct saitraits<sai_route_api_t>
 {
+    using entry_t = sai_route_entry_t;
     using api_t = sai_route_api_t;
     using create_entry_fn = sai_create_route_entry_fn;
     using remove_entry_fn = sai_remove_route_entry_fn;
@@ -135,8 +136,9 @@ struct saitraits<sai_route_entry_t>
 };
 
 template<>
-struct saitraits<sai_fdb_entry_t>
+struct saitraits<sai_fdb_api_t>
 {
+    using entry_t = sai_fdb_entry_t;
     using api_t = sai_fdb_api_t;
     using create_entry_fn = sai_create_fdb_entry_fn;
     using remove_entry_fn = sai_remove_fdb_entry_fn;
@@ -149,6 +151,7 @@ struct saitraits<sai_fdb_entry_t>
 template<>
 struct saitraits<sai_next_hop_group_api_t>
 {
+    using entry_t = sai_object_id_t;
     using api_t = sai_next_hop_group_api_t;
     using create_entry_fn = sai_create_next_hop_group_member_fn;
     using remove_entry_fn = sai_remove_next_hop_group_member_fn;
@@ -159,17 +162,20 @@ struct saitraits<sai_next_hop_group_api_t>
     //using bulk_set_entry_attribute_fn = sai_bulk_object_set_attribute_fn;
 };
 
-template <typename T, typename Ts = saitraits<T>>
-class RouteBulker
+template <typename T>
+class EntityBulker
 {
 public:
-    RouteBulker(typename Ts::api_t *api)
+    using Ts = saitraits<T>;
+    using Te = typename Ts::entry_t;
+
+    EntityBulker(typename Ts::api_t *api)
     {
         throw std::logic_error("Not implemented");
     }
 
     sai_status_t create_entry(
-        _In_ const T *entry,
+        _In_ const Te *entry,
         _In_ uint32_t attr_count,
         _In_ const sai_attribute_t *attr_list)
     {
@@ -182,7 +188,7 @@ public:
     }
 
     sai_status_t remove_entry(
-        _In_ const T *entry)
+        _In_ const Te *entry)
     {
         assert(entry);
         if (!entry) throw std::invalid_argument("entry is null");
@@ -207,7 +213,7 @@ public:
     }
 
     sai_status_t set_entry_attribute(
-        _In_ const T *entry,
+        _In_ const Te *entry,
         _In_ const sai_attribute_t *attr)
     {
         auto found_setting = setting_entries.find(*entry);
@@ -232,16 +238,16 @@ public:
         // Removing
         if (!removing_entries.empty())
         {
-            vector<T> rs;
+            vector<Te> rs;
             
             for (auto i: removing_entries)
             {
                 auto& entry = i;
                 rs.push_back(entry);
             }
-            uint32_t route_count = (uint32_t)removing_entries.size();
-            vector<sai_status_t> statuses(route_count);
-            (*remove_entries)(route_count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
+            uint32_t count = (uint32_t)removing_entries.size();
+            vector<sai_status_t> statuses(count);
+            (*remove_entries)(count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
             
             SWSS_LOG_NOTICE("bulk.flush removing_entries %zu\n", removing_entries.size());
             
@@ -251,7 +257,7 @@ public:
         // Creating
         if (!creating_entries.empty())
         {
-            vector<T> rs;
+            vector<Te> rs;
             vector<sai_attribute_t const*> tss;
             vector<uint32_t> cs;
 
@@ -264,9 +270,9 @@ public:
                 tss.push_back(attrs.data());
                 cs.push_back((uint32_t)attrs.size());
             }
-            uint32_t route_count = (uint32_t)creating_entries.size();
-            vector<sai_status_t> statuses(route_count);
-            (*create_entries)(route_count, rs.data(), cs.data(), tss.data()
+            uint32_t count = (uint32_t)creating_entries.size();
+            vector<sai_status_t> statuses(count);
+            (*create_entries)(count, rs.data(), cs.data(), tss.data()
                 , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
 
             SWSS_LOG_NOTICE("bulk.flush creating_entries %zu\n", creating_entries.size());
@@ -277,7 +283,7 @@ public:
         // Setting
         if (!setting_entries.empty())
         {
-            vector<T> rs;
+            vector<Te> rs;
             vector<sai_attribute_t> ts;
 
             for (auto const& i: setting_entries)
@@ -290,9 +296,9 @@ public:
                     ts.push_back(attr);
                 }
             }
-            uint32_t route_count = (uint32_t)setting_entries.size();
-            vector<sai_status_t> statuses(route_count);
-            (*set_entries_attribute)(route_count, rs.data(), ts.data()
+            uint32_t count = (uint32_t)setting_entries.size();
+            vector<sai_status_t> statuses(count);
+            (*set_entries_attribute)(count, rs.data(), ts.data()
                 , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
 
             SWSS_LOG_NOTICE("bulk.flush setting_entries %zu\n", setting_entries.size());
@@ -309,9 +315,9 @@ public:
     }
 
 private:
-    std::unordered_map<T, std::vector<sai_attribute_t>>     creating_entries;
-    std::unordered_map<T, std::vector<sai_attribute_t>>     setting_entries;
-    std::unordered_set<T>                                   removing_entries;
+    std::unordered_map<Te, std::vector<sai_attribute_t>>     creating_entries;
+    std::unordered_map<Te, std::vector<sai_attribute_t>>     setting_entries;
+    std::unordered_set<Te>                                   removing_entries;
     
     typename Ts::bulk_create_entry_fn                       create_entries;
     typename Ts::bulk_remove_entry_fn                       remove_entries;
@@ -319,7 +325,7 @@ private:
 };
 
 template <>
-RouteBulker<sai_route_entry_t>::RouteBulker(saitraits<sai_route_entry_t>::api_t *api)
+EntityBulker<sai_route_api_t>::EntityBulker(sai_route_api_t *api)
 {
     create_entries = api->create_route_entries;
     remove_entries = api->remove_route_entries;
@@ -328,7 +334,7 @@ RouteBulker<sai_route_entry_t>::RouteBulker(saitraits<sai_route_entry_t>::api_t 
 
 
 template <>
-RouteBulker<sai_fdb_entry_t>::RouteBulker(saitraits<sai_fdb_entry_t>::api_t *api)
+EntityBulker<sai_fdb_api_t>::EntityBulker(sai_fdb_api_t *api)
 {
     // TODO: implement after create_fdb_entries() is available in SAI
     throw std::logic_error("Not implemented");
@@ -339,17 +345,13 @@ RouteBulker<sai_fdb_entry_t>::RouteBulker(saitraits<sai_fdb_entry_t>::api_t *api
     */
 }
 
-template <typename T, typename Ts = saitraits<T>>
-class NextHopGroupBulker
+template <typename T>
+class ObjectBulker
 {
 public:
-    struct object_entry
-    {
-        sai_object_id_t *object_id;
-        vector<sai_attribute_t> attrs;
-    };
-    
-    NextHopGroupBulker(typename Ts::api_t* next_hop_group_api, sai_object_id_t switch_id)
+    using Ts = saitraits<T>;
+
+    ObjectBulker(typename Ts::api_t* next_hop_group_api, sai_object_id_t switch_id)
     {
         throw std::logic_error("Not implemented");
     }
@@ -425,16 +427,16 @@ public:
         // Creating
         if (!creating_entries.empty())
         {
-            vector<T> rs;
+            vector<sai_object_id_t*> rs;
             vector<sai_attribute_t const*> tss;
             vector<uint32_t> cs;
 
             for (auto const& i: creating_entries)
             {
-                auto const& route_entry = i.first;
+                auto const& entry = i.first;
                 auto const& attrs = i.second;
 
-                rs.push_back(route_entry);
+                rs.push_back(entry);
                 tss.push_back(attrs.data());
                 cs.push_back((uint32_t)attrs.size());
             }
@@ -458,11 +460,11 @@ public:
 
             for (auto const& i: setting_entries)
             {
-                auto const& route_entry = i.first;
+                auto const& entry = i.first;
                 auto const& attrs = i.second;
                 for (auto const& attr: attrs)
                 {
-                    rs.push_back(route_entry);
+                    rs.push_back(entry);
                     ts.push_back(attr);
                 }
             }
@@ -486,9 +488,15 @@ public:
     }
 
 private:
+    struct object_entry
+    {
+        sai_object_id_t *object_id;
+        vector<sai_attribute_t> attrs;
+    };
+    
     sai_object_id_t                                         switch_id;
 
-    std::vector<object_entry>                           creating_entries;
+    std::vector<object_entry>                               creating_entries;
     std::unordered_map<sai_object_id_t, std::vector<sai_attribute_t>>
                                                             setting_entries;
     std::vector<sai_object_id_t>                            removing_entries;
@@ -500,7 +508,7 @@ private:
 };
 
 template <>
-NextHopGroupBulker<sai_next_hop_group_api_t>::NextHopGroupBulker(saitraits<sai_next_hop_group_api_t>::api_t *api, sai_object_id_t switch_id)
+ObjectBulker<sai_next_hop_group_api_t>::ObjectBulker(saitraits<sai_next_hop_group_api_t>::api_t *api, sai_object_id_t switch_id)
     : switch_id(switch_id)
 {
     create_entries = api->create_next_hop_group_members;

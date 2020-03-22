@@ -22,7 +22,9 @@ extern CrmOrch *gCrmOrch;
 
 const int routeorch_pri = 5;
 
-RouteBulker<sai_route_entry_t> t(sai_route_api);
+EntityBulker<sai_route_api_t> gRouteBulker(sai_route_api);
+extern sai_fdb_api_t*            sai_fdb_api; EntityBulker<sai_fdb_api_t> gFdbBulker(sai_fdb_api);
+ObjectBulker<sai_next_hop_group_api_t> gNextHopGroupMemberBulkder(sai_next_hop_group_api, gSwitchId);
 
 RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
         Orch(db, tableName, routeorch_pri),
