@@ -73,6 +73,7 @@ class TestPortDPB(object):
     '''
     @pytest.mark.skip()
     '''
+    @pytest.mark.xfail(reason="test stability issue: Azure/sonic-swss#1222")
     def test_port_breakout_multiple(self, dvs):
         dpb = DPB()
         port_names = ["Ethernet0", "Ethernet12", "Ethernet64", "Ethernet112"]

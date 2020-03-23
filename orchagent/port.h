@@ -49,14 +49,6 @@ public:
         UNKNOWN
     } ;
 
-    enum Dependency {
-            ACL_DEP,
-            FDB_DEP,
-            INTF_DEP,
-            LAG_DEP,
-            VLAN_DEP
-    };
-
     Port() {};
     Port(std::string alias, Type type) :
             m_alias(alias), m_type(type) {};
@@ -84,6 +76,7 @@ public:
     std::string         m_learn_mode = "hardware";
     bool                m_autoneg = false;
     bool                m_admin_state_up = false;
+    bool                m_init = false;
     sai_object_id_t     m_port_id = 0;
     sai_port_fec_mode_t m_fec_mode = SAI_PORT_FEC_MODE_NONE;
     VlanInfo            m_vlan_info;
@@ -120,19 +113,6 @@ public:
 
     std::unordered_set<sai_object_id_t> m_ingress_acl_tables_uset;
     std::unordered_set<sai_object_id_t> m_egress_acl_tables_uset;
-
-    inline void set_dependency(Dependency dep)
-    {
-        m_dependency_bitmap |= (1 << dep);
-    }
-    inline void clear_dependency(Dependency dep)
-    {
-        m_dependency_bitmap &= ~(1 << dep);
-    }
-    inline bool has_dependency()
-    {
-        return (m_dependency_bitmap != 0);
-    }
 };
 
 }

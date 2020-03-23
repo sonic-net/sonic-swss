@@ -82,6 +82,7 @@ AC_CONFIG_FILES([
     natsyncd/Makefile
     portsyncd/Makefile
     teamsyncd/Makefile
+    mclagsyncd/Makefile
     swssconfig/Makefile
     cfgmgr/Makefile
     tests/Makefile
