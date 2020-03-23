@@ -184,7 +184,7 @@ public:
                 std::forward_as_tuple(attr_list, attr_list + attr_count));
         bool inserted = rc.second;
         SWSS_LOG_DEBUG("bulk.create_entry %zu, %zu, %d, %d\n", creating_entries.size(), creating_entries[*entry].size(), (int)creating_entries[*entry][0].id, inserted);
-        return inserted ? SAI_STATUS_SUCCESS : SAI_STATUS_ITEM_ALREADY_EXISTS;
+        return inserted ? SAI_STATUS_NOT_EXECUTED : SAI_STATUS_ITEM_ALREADY_EXISTS;
     }
 
     sai_status_t remove_entry(
@@ -203,13 +203,14 @@ public:
         if (found_creating != creating_entries.end())
         {
             creating_entries.erase(found_creating);
+            return SAI_STATUS_SUCCESS;
         }
         else
         {
             removing_entries.emplace(*entry);
+            return SAI_STATUS_NOT_EXECUTED;
         }
 
-        return SAI_STATUS_SUCCESS;
     }
 
     sai_status_t set_entry_attribute(
@@ -230,7 +231,7 @@ public:
                 std::forward_as_tuple(1, *attr));
         }
 
-        return SAI_STATUS_SUCCESS;
+        return SAI_STATUS_NOT_EXECUTED;
     }
 
     void flush()
@@ -361,14 +362,17 @@ public:
         _In_ uint32_t attr_count,
         _In_ const sai_attribute_t *attr_list)
     {
-        creating_entries.emplace_back(object_id, attr_list, attr_list + attr_count);
-        SWSS_LOG_DEBUG("bulk.create_entry %zu, %zu, %d\n", creating_entries.size(), creating_entries.back().attrs.size(), (int)creating_entries.back().attrs[0].id);
+        creating_entries.emplace_back(std::piecewise_construct,  std::forward_as_tuple(object_id), std::forward_as_tuple(attr_list, attr_list + attr_count));
+        
+        auto last_attrs = std::get<1>(creating_entries.back());
+        SWSS_LOG_DEBUG("bulk.create_entry %zu, %zu, %u\n", creating_entries.size(), last_attrs.size(), last_attrs[0].id);
         
         *object_id = SAI_NULL_OBJECT_ID; // not created immediately, postponed until flush
-        return SAI_STATUS_SUCCESS;
+        return SAI_STATUS_NOT_EXECUTED;
     }
 
     sai_status_t remove_entry(
+        _Out_ sai_status_t *object_status,
         _In_ sai_object_id_t object_id)
     {
         assert(object_id != SAI_NULL_OBJECT_ID);
@@ -379,9 +383,11 @@ public:
         {
             setting_entries.erase(found_setting);
         }
-
-        removing_entries.push_back(object_id);
-        return SAI_STATUS_SUCCESS;
+        
+        removing_entries.emplace_back(object_id);
+        removing_statuses.emplace_back(object_status);
+        *object_status = SAI_STATUS_NOT_EXECUTED;
+        return *object_status;
     }
 
     // TODO: wait until available in SAI
@@ -425,25 +431,27 @@ public:
         // Creating
         if (!creating_entries.empty())
         {
-            vector<sai_object_id_t*> rs;
             vector<sai_attribute_t const*> tss;
             vector<uint32_t> cs;
 
             for (auto const& i: creating_entries)
             {
-                auto const& entry = i.first;
-                auto const& attrs = i.second;
-
-                rs.push_back(entry);
+                auto const& attrs = std::get<1>(i);
                 tss.push_back(attrs.data());
                 cs.push_back((uint32_t)attrs.size());
             }
             size_t count = creating_entries.size();
+            vector<sai_object_id_t> object_ids(count);
             vector<sai_status_t> statuses(count);
-            (*create_entries)(switch_id, (uint32_t)count, rs.data(), cs.data(), tss.data()
-                , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
-
+            (*create_entries)(switch_id, (uint32_t)count, cs.data(), tss.data()
+                , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, object_ids.data(), statuses.data());
             SWSS_LOG_NOTICE("bulk.flush creating_entries %zu\n", creating_entries.size());
+
+            for (size_t i = 0; i < count; i++)
+            {
+                auto pid = std::get<0>(creating_entries[i]);
+                *pid = (statuses[i] == SAI_STATUS_SUCCESS) ? object_ids[i] : SAI_NULL_OBJECT_ID;
+            }
 
             creating_entries.clear();
         }
@@ -500,10 +508,21 @@ private:
     
     sai_object_id_t                                         switch_id;
 
-    std::vector<object_entry>                               creating_entries;
-    std::unordered_map<sai_object_id_t, std::vector<sai_attribute_t>>
-                                                            setting_entries;
+    std::vector<std::pair<                                  // An vector of
+            sai_object_id_t *,                              // - object_id
+            vector<sai_attribute_t>                         // - attrs
+    >>                                                      creating_entries;
+    
+    std::unordered_map<                                     // An map of
+            sai_object_id_t,                                // object_id -> (object_status, attributes)
+            std::pair<
+                    sai_status_t,
+                    std::vector<sai_attribute_t>
+            >
+    >                                                       setting_entries;
+    
     std::vector<sai_object_id_t>                            removing_entries;
+    std::vector<sai_status_t *>                             removing_statuses;
     
     typename Ts::bulk_create_entry_fn                       create_entries;
     typename Ts::bulk_remove_entry_fn                       remove_entries;
