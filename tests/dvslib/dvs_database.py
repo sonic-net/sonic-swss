@@ -35,7 +35,7 @@ class DVSDatabase(object):
         `DEFAULT_POLLING_CONFIG`. Users can specify their own PollingConfig,
         but this shouldn't typically be necessary.
     """
-    DEFAULT_POLLING_CONFIG = PollingConfig(polling_interval=0.01, timeout=10, strict=True)
+    DEFAULT_POLLING_CONFIG = PollingConfig(polling_interval=0.01, timeout=5, strict=True)
 
     def __init__(self, db_id, connector):
         """
