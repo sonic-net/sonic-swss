@@ -14,7 +14,7 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
     ```
     sudo modprobe team
     sudo apt install net-tools ethtool
-    sudo pip install docker zipp==2.2.1 pytest==4.6.9 pytest flaky redis
+    sudo pip install docker zipp==2.2.1 pytest==4.6.9 flaky redis
     ```
 3. Install `python-swsscommon_1.0.0_amd64.deb`. You will need to install all the dependencies as well in the following order:
 
