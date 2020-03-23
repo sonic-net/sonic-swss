@@ -13,10 +13,7 @@ import subprocess
 
 from datetime import datetime
 from swsscommon import swsscommon
-
-pytest_plugins = [
-    "dvslib.dvs_database"
-]
+from dvslib import dvs_database as dvs_db
 
 def ensure_system(cmd):
     (rc, output) = commands.getstatusoutput(cmd)
@@ -149,6 +146,13 @@ class VirtualServer(object):
         return subprocess.check_output("ip netns exec %s %s" % (self.nsname, cmd), shell=True)
 
 class DockerVirtualSwitch(object):
+    APP_DB_ID = 0
+    ASIC_DB_ID = 1
+    COUNTERS_DB_ID = 2
+    CONFIG_DB_ID = 4
+    FLEX_COUNTER_DB_ID = 5
+    STATE_DB_ID = 6
+
     def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None):
         self.basicd = ['redis-server',
                        'rsyslogd']
@@ -230,6 +234,21 @@ class DockerVirtualSwitch(object):
 
         self.redis_sock = self.mount + '/' + "redis.sock"
         self.check_ctn_status_and_db_connect()
+
+        # Initialize DB Wrappers
+        self.app_db = dvs_db.DVSDatabase(self.APP_DB_ID, self.redis_sock)
+        self.asic_db = dvs_db.DVSDatabase(self.ASIC_DB_ID, self.redis_sock)
+        self.counters_db = dvs_db.DVSDatabase(self.COUNTERS_DB_ID, self.redis_sock)
+        self.config_db = dvs_db.DVSDatabase(self.CONFIG_DB_ID, self.redis_sock)
+        self.flex_db = dvs_db.DVSDatabase(self.FLEX_COUNTER_DB_ID, self.redis_sock)
+        self.state_db = dvs_db.DVSDatabase(self.STATE_DB_ID, self.redis_sock)
+
+        # NOTE: In order to limit the scope of this PR only the newly ported
+        # tests are using these variables. I will be refactoring the tests to
+        # all use these variables in a follow-up PR.
+        self.default_acl_tables = self.asicdb.default_acl_tables
+        self.default_acl_entries = self.asicdb.default_acl_entries
+        self.port_name_map = self.asicdb.portnamemap
 
     def destroy(self):
         if self.appldb:

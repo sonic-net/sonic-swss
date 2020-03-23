@@ -1,10 +1,19 @@
 import time
 
 class BaseTestAcl(object):
-    def setup_db(self, asic_db, config_db, state_db):
-        self.asic_db = asic_db
-        self.config_db = config_db
-        self.state_db = state_db
+    # NOTE: We should do away with this method like we did for the NAT
+    # tests, but doing so causes a lot of cascading changes. In order
+    # to limit the scope of this PR we'll do that in a follow-up PR.
+    def setup_db(self, dvs):
+        self.asic_db = dvs.asic_db
+        self.config_db = dvs.config_db
+        self.state_db = dvs.state_db
+
+        # NOTE: This also causes a lot of cascading changes - save it for
+        # a later PR.
+        self.default_acl_tables = dvs.default_acl_tables
+        self.default_acl_entries = dvs.default_acl_entries
+        self.port_name_map = dvs.port_name_map
 
     def create_acl_table(self, table_name, table_type, ports, stage=None):
         table_attrs = {
@@ -22,16 +31,16 @@ class BaseTestAcl(object):
         self.config_db.delete_entry("ACL_TABLE", table_name)
 
     def get_acl_table_id(self):
-        num_keys = len(self.asic_db.default_acl_tables) + 1
+        num_keys = len(self.default_acl_tables) + 1
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", num_keys)
 
-        acl_tables = [k for k in keys if k not in self.asic_db.default_acl_tables]
+        acl_tables = [k for k in keys if k not in self.default_acl_tables]
         return acl_tables[0]
 
     def verify_no_acl_tables(self):
-        num_keys = len(self.asic_db.default_acl_tables)
+        num_keys = len(self.default_acl_tables)
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", num_keys)
-        assert set(keys) == set(self.asic_db.default_acl_tables)
+        assert set(keys) == set(self.default_acl_tables)
 
     def verify_acl_group_num(self, expt):
         acl_table_groups = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", expt)
@@ -71,7 +80,7 @@ class BaseTestAcl(object):
         acl_table_groups = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", len(bind_ports))
 
         port_groups = []
-        for port in [self.asic_db.port_name_map[p] for p in bind_ports]:
+        for port in [self.port_name_map[p] for p in bind_ports]:
             fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port)
             acl_table_group = fvs.pop("SAI_PORT_ATTR_INGRESS_ACL", None)
             assert acl_table_group in acl_table_groups
@@ -95,16 +104,16 @@ class BaseTestAcl(object):
         self.config_db.delete_entry("ACL_RULE", "{}|{}".format(table_name, rule_name))
 
     def get_acl_rule_id(self):
-        num_keys = len(self.asic_db.default_acl_entries) + 1
+        num_keys = len(self.default_acl_entries) + 1
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
 
-        acl_entries = [k for k in keys if k not in self.asic_db.default_acl_entries]
+        acl_entries = [k for k in keys if k not in self.default_acl_entries]
         return acl_entries[0]
 
     def verify_no_acl_rules(self):
-        num_keys = len(self.asic_db.default_acl_entries)
+        num_keys = len(self.default_acl_entries)
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
-        assert set(keys) == set(self.asic_db.default_acl_entries)
+        assert set(keys) == set(self.default_acl_entries)
 
     def verify_acl_rule(self, qualifiers, action="FORWARD", priority="2020"):
         acl_rule_id = self.get_acl_rule_id()
@@ -113,10 +122,10 @@ class BaseTestAcl(object):
         self._check_acl_entry(fvs, qualifiers, action, priority)
 
     def verify_acl_rule_set(self, priorities, in_actions, expected):
-        num_keys = len(self.asic_db.default_acl_entries) + len(priorities)
+        num_keys = len(self.default_acl_entries) + len(priorities)
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
 
-        acl_entries = [k for k in keys if k not in self.asic_db.default_acl_entries]
+        acl_entries = [k for k in keys if k not in self.default_acl_entries]
         for entry in acl_entries:
             rule = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", entry)
             priority = rule.get("SAI_ACL_ENTRY_ATTR_PRIORITY", None)
@@ -162,7 +171,7 @@ class BaseTestAcl(object):
             if not sai_port_list.startswith("{}:".format(len(expected_ports))):
                 return False
             for port in expected_ports:
-                if self.asic_db.port_name_map[port] not in sai_port_list:
+                if self.port_name_map[port] not in sai_port_list:
                     return False
 
             return True
@@ -186,8 +195,8 @@ class BaseTestAcl(object):
         return _match_acl_range
 
 class TestAcl(BaseTestAcl):
-    def test_AclTableCreation(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_AclTableCreation(self, dvs):
+        self.setup_db(dvs)
 
         bind_ports = ["Ethernet0", "Ethernet4"]
         self.create_acl_table("test", "L3", bind_ports)
@@ -197,8 +206,8 @@ class TestAcl(BaseTestAcl):
         self.verify_acl_group_member(acl_group_ids, self.get_acl_table_id())
         self.verify_acl_port_binding(bind_ports)
 
-    def test_AclRuleL4SrcPort(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_AclRuleL4SrcPort(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {"L4_SRC_PORT": "65000"}
         expected_sai_qualifiers = {"SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT": self.get_simple_qualifier_comparator("65000&mask:0xffff")}
@@ -209,8 +218,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_AclRuleInOutPorts(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_AclRuleInOutPorts(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {
             "IN_PORTS": "Ethernet0,Ethernet4",
@@ -228,8 +237,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_AclRuleInPortsNonExistingInterface(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_AclRuleInPortsNonExistingInterface(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {
             "IN_PORTS": "FOO_BAR_BAZ"
@@ -240,8 +249,8 @@ class TestAcl(BaseTestAcl):
         self.verify_no_acl_rules()
         self.remove_acl_rule("test", "acl_test_rule")
 
-    def test_AclRuleOutPortsNonExistingInterface(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_AclRuleOutPortsNonExistingInterface(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {
             "OUT_PORTS": "FOO_BAR_BAZ"
@@ -252,14 +261,14 @@ class TestAcl(BaseTestAcl):
         self.verify_no_acl_rules()
         self.remove_acl_rule("test", "acl_test_rule")
 
-    def test_AclTableDeletion(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_AclTableDeletion(self, dvs):
+        self.setup_db(dvs)
 
         self.remove_acl_table("test")
         self.verify_no_acl_tables()
 
-    def test_V6AclTableCreation(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclTableCreation(self, dvs):
+        self.setup_db(dvs)
 
         bind_ports = ["Ethernet0", "Ethernet4", "Ethernet8"]
         self.create_acl_table("test_aclv6", "L3V6", bind_ports)
@@ -269,8 +278,8 @@ class TestAcl(BaseTestAcl):
         self.verify_acl_group_member(acl_group_ids, self.get_acl_table_id())
         self.verify_acl_port_binding(bind_ports)
 
-    def test_V6AclRuleIPv6Any(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclRuleIPv6Any(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {"IP_TYPE": "IPv6ANY"}
         expected_sai_qualifiers = {
@@ -283,8 +292,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test_aclv6", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_V6AclRuleIPv6AnyDrop(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclRuleIPv6AnyDrop(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {"IP_TYPE": "IPv6ANY"}
         expected_sai_qualifiers = {
@@ -297,8 +306,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test_aclv6", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_V6AclRuleIpProtocol(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclRuleIpProtocol(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {"IP_PROTOCOL": "6"}
         expected_sai_qualifiers = {"SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL": self.get_simple_qualifier_comparator("6&mask:0xff")}
@@ -309,8 +318,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test_aclv6", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_V6AclRuleSrcIPv6(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclRuleSrcIPv6(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {"SRC_IPV6": "2777::0/64"}
         expected_sai_qualifiers = {
@@ -323,8 +332,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test_aclv6", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_V6AclRuleDstIPv6(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclRuleDstIPv6(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {"DST_IPV6": "2002::2/128"}
         expected_sai_qualifiers = {
@@ -337,8 +346,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test_aclv6", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_V6AclRuleL4SrcPort(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclRuleL4SrcPort(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {"L4_SRC_PORT": "65000"}
         expected_sai_qualifiers = {"SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT": self.get_simple_qualifier_comparator("65000&mask:0xffff")}
@@ -349,8 +358,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test_aclv6", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_V6AclRuleL4DstPort(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclRuleL4DstPort(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {"L4_DST_PORT": "65001"}
         expected_sai_qualifiers = {"SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT": self.get_simple_qualifier_comparator("65001&mask:0xffff")}
@@ -361,8 +370,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test_aclv6", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_V6AclRuleTCPFlags(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclRuleTCPFlags(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {"TCP_FLAGS": "0x07/0x3f"}
         expected_sai_qualifiers = {"SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS": self.get_simple_qualifier_comparator("7&mask:0x3f")}
@@ -373,8 +382,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test_aclv6", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_V6AclRuleL4SrcPortRange(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclRuleL4SrcPortRange(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {"L4_SRC_PORT_RANGE": "1-100"}
         expected_sai_qualifiers = {
@@ -387,8 +396,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test_aclv6", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_V6AclRuleL4DstPortRange(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclRuleL4DstPortRange(self, dvs):
+        self.setup_db(dvs)
 
         config_qualifiers = {"L4_DST_PORT_RANGE": "101-200"}
         expected_sai_qualifiers = {
@@ -401,14 +410,14 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_rule("test_aclv6", "acl_test_rule")
         self.verify_no_acl_rules()
 
-    def test_V6AclTableDeletion(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_V6AclTableDeletion(self, dvs):
+        self.setup_db(dvs)
 
         self.remove_acl_table("test_aclv6")
         self.verify_no_acl_tables()
 
-    def test_InsertAclRuleBetweenPriorities(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_InsertAclRuleBetweenPriorities(self, dvs):
+        self.setup_db(dvs)
 
         bind_ports = ["Ethernet0", "Ethernet4"]
         self.create_acl_table("test_priorities", "L3", bind_ports)
@@ -462,8 +471,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_table("test_priorities")
         self.verify_no_acl_tables()
 
-    def test_RulesWithDiffMaskLengths(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_RulesWithDiffMaskLengths(self, dvs):
+        self.setup_db(dvs)
 
         bind_ports = ["Ethernet0", "Ethernet4"]
         self.create_acl_table("test_masks", "L3", bind_ports)
@@ -510,8 +519,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_table("test_masks")
         self.verify_no_acl_tables()
 
-    def test_AclRuleIcmp(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_AclRuleIcmp(self, dvs):
+        self.setup_db(dvs)
 
         bind_ports = ["Ethernet0", "Ethernet4"]
         self.create_acl_table("test_icmp", "L3", bind_ports)
@@ -535,8 +544,8 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_table("test_icmp")
         self.verify_no_acl_tables()
 
-    def test_AclRuleIcmpV6(self, asic_db, config_db, state_db):
-        self.setup_db(asic_db, config_db, state_db)
+    def test_AclRuleIcmpV6(self, dvs):
+        self.setup_db(dvs)
 
         bind_ports = ["Ethernet0", "Ethernet4"]
         self.create_acl_table("test_icmpv6", "L3V6", bind_ports)
@@ -560,9 +569,9 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_table("test_icmpv6")
         self.verify_no_acl_tables()
 
-    def test_AclRuleRedirectToNextHop(self, dvs, asic_db, config_db, state_db):
+    def test_AclRuleRedirectToNextHop(self, dvs):
         dvs.setup_db()
-        self.setup_db(asic_db, config_db, state_db)
+        self.setup_db(dvs)
 
         # Bring up an IP interface with a neighbor
         dvs.set_interface_status("Ethernet4", "up")
@@ -619,14 +628,13 @@ class TestAclRuleValidation(BaseTestAcl):
 
         return supported_actions
 
-    def test_AclActionValidation(self, dvs, asic_db, config_db, state_db):
+    def test_AclActionValidation(self, dvs):
         """
             The test overrides R/O SAI_SWITCH_ATTR_ACL_STAGE_INGRESS/EGRESS switch attributes
             to check the case when orchagent refuses to process rules with action that is not
             supported by the ASIC.
         """
-
-        self.setup_db(asic_db, config_db, state_db)
+        self.setup_db(dvs)
 
         stage_name_map = {
             "ingress": "SAI_SWITCH_ATTR_ACL_STAGE_INGRESS",
