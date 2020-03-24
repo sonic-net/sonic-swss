@@ -1,19 +1,10 @@
 import time
 
 class BaseTestAcl(object):
-    # NOTE: We should do away with this method like we did for the NAT
-    # tests, but doing so causes a lot of cascading changes. In order
-    # to limit the scope of this PR we'll do that in a follow-up PR.
     def setup_db(self, dvs):
-        self.asic_db = dvs.asic_db
-        self.config_db = dvs.config_db
-        self.state_db = dvs.state_db
-
-        # NOTE: This also causes a lot of cascading changes - save it for
-        # a later PR.
-        self.default_acl_tables = dvs.default_acl_tables
-        self.default_acl_entries = dvs.default_acl_entries
-        self.port_name_map = dvs.port_name_map
+        self.asic_db = dvs.get_asic_db()
+        self.config_db = dvs.get_config_db()
+        self.state_db = dvs.get_state_db()
 
     def create_acl_table(self, table_name, table_type, ports, stage=None):
         table_attrs = {
@@ -31,16 +22,16 @@ class BaseTestAcl(object):
         self.config_db.delete_entry("ACL_TABLE", table_name)
 
     def get_acl_table_id(self):
-        num_keys = len(self.default_acl_tables) + 1
+        num_keys = len(self.asic_db.default_acl_tables) + 1
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", num_keys)
 
-        acl_tables = [k for k in keys if k not in self.default_acl_tables]
+        acl_tables = [k for k in keys if k not in self.asic_db.default_acl_tables]
         return acl_tables[0]
 
     def verify_no_acl_tables(self):
-        num_keys = len(self.default_acl_tables)
+        num_keys = len(self.asic_db.default_acl_tables)
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", num_keys)
-        assert set(keys) == set(self.default_acl_tables)
+        assert set(keys) == set(self.asic_db.default_acl_tables)
 
     def verify_acl_group_num(self, expt):
         acl_table_groups = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", expt)
@@ -80,7 +71,7 @@ class BaseTestAcl(object):
         acl_table_groups = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", len(bind_ports))
 
         port_groups = []
-        for port in [self.port_name_map[p] for p in bind_ports]:
+        for port in [self.asic_db.port_name_map[p] for p in bind_ports]:
             fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port)
             acl_table_group = fvs.pop("SAI_PORT_ATTR_INGRESS_ACL", None)
             assert acl_table_group in acl_table_groups
@@ -104,16 +95,16 @@ class BaseTestAcl(object):
         self.config_db.delete_entry("ACL_RULE", "{}|{}".format(table_name, rule_name))
 
     def get_acl_rule_id(self):
-        num_keys = len(self.default_acl_entries) + 1
+        num_keys = len(self.asic_db.default_acl_entries) + 1
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
 
-        acl_entries = [k for k in keys if k not in self.default_acl_entries]
+        acl_entries = [k for k in keys if k not in self.asic_db.default_acl_entries]
         return acl_entries[0]
 
     def verify_no_acl_rules(self):
-        num_keys = len(self.default_acl_entries)
+        num_keys = len(self.asic_db.default_acl_entries)
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
-        assert set(keys) == set(self.default_acl_entries)
+        assert set(keys) == set(self.asic_db.default_acl_entries)
 
     def verify_acl_rule(self, qualifiers, action="FORWARD", priority="2020"):
         acl_rule_id = self.get_acl_rule_id()
@@ -122,10 +113,10 @@ class BaseTestAcl(object):
         self._check_acl_entry(fvs, qualifiers, action, priority)
 
     def verify_acl_rule_set(self, priorities, in_actions, expected):
-        num_keys = len(self.default_acl_entries) + len(priorities)
+        num_keys = len(self.asic_db.default_acl_entries) + len(priorities)
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys)
 
-        acl_entries = [k for k in keys if k not in self.default_acl_entries]
+        acl_entries = [k for k in keys if k not in self.asic_db.default_acl_entries]
         for entry in acl_entries:
             rule = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", entry)
             priority = rule.get("SAI_ACL_ENTRY_ATTR_PRIORITY", None)
@@ -171,7 +162,7 @@ class BaseTestAcl(object):
             if not sai_port_list.startswith("{}:".format(len(expected_ports))):
                 return False
             for port in expected_ports:
-                if self.port_name_map[port] not in sai_port_list:
+                if self.asic_db.port_name_map[port] not in sai_port_list:
                     return False
 
             return True
@@ -570,6 +561,8 @@ class TestAcl(BaseTestAcl):
         self.verify_no_acl_tables()
 
     def test_AclRuleRedirectToNextHop(self, dvs):
+        # NOTE: set_interface_status has a dependency on cdb within dvs,
+        # so we still need to setup the db. This should be refactored.
         dvs.setup_db()
         self.setup_db(dvs)
 
