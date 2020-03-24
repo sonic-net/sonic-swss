@@ -165,7 +165,6 @@ class TestVlan(object):
         dvs.remove_vlan("2")
 
     def test_MultipleVlan(self, dvs, testlog):
-        return
         dvs.setup_db()
 
         # create vlan and vlan members
