@@ -423,9 +423,12 @@ public:
             size_t count = removing_entries.size();
             vector<sai_status_t> statuses(count);
             (*remove_entries)((uint32_t)count, removing_entries.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
-            
             SWSS_LOG_NOTICE("bulk.flush removing_entries %zu\n", removing_entries.size());
-            
+
+            for (size_t i = 0; i < count; i++)
+            {
+                *removing_statuses[i] = statuses[i];
+            }
             removing_entries.clear();
         }
 
