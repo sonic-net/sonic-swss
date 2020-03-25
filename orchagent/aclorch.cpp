@@ -812,7 +812,7 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
             // check that we have a colon after redirect rule
             size_t colon_pos = string(PACKET_ACTION_REDIRECT).length();
 
-            if (attr_value[colon_pos] != ':')
+            if (attr_value.c_str()[colon_pos] != ':')
             {
                 SWSS_LOG_ERROR("Redirect action rule must have ':' after REDIRECT");
                 return false;
