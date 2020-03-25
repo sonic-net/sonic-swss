@@ -18,6 +18,7 @@ extern sai_port_api_t *sai_port_api;
 extern sai_vlan_api_t *sai_vlan_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_route_api_t *sai_route_api;
+extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 
 namespace aclorch_test
 {
@@ -258,6 +259,7 @@ namespace aclorch_test
             sai_api_query(SAI_API_VLAN, (void **)&sai_vlan_api);
             sai_api_query(SAI_API_ROUTE, (void **)&sai_route_api);
             sai_api_query(SAI_API_ACL, (void **)&sai_acl_api);
+            sai_api_query(SAI_API_NEXT_HOP_GROUP, (void **)&sai_next_hop_group_api);
 
             sai_attribute_t attr;
 

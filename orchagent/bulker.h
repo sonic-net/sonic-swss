@@ -1,3 +1,5 @@
+#pragma once
+
 #include <assert.h>
 #include <deque>
 #include <vector>
@@ -326,16 +328,15 @@ private:
 };
 
 template <>
-EntityBulker<sai_route_api_t>::EntityBulker(sai_route_api_t *api)
+inline EntityBulker<sai_route_api_t>::EntityBulker(sai_route_api_t *api)
 {
     create_entries = api->create_route_entries;
     remove_entries = api->remove_route_entries;
     set_entries_attribute = api->set_route_entries_attribute;
 }
 
-
 template <>
-EntityBulker<sai_fdb_api_t>::EntityBulker(sai_fdb_api_t *api)
+inline EntityBulker<sai_fdb_api_t>::EntityBulker(sai_fdb_api_t *api)
 {
     // TODO: implement after create_fdb_entries() is available in SAI
     throw std::logic_error("Not implemented");
@@ -531,7 +532,7 @@ private:
 };
 
 template <>
-ObjectBulker<sai_next_hop_group_api_t>::ObjectBulker(saitraits<sai_next_hop_group_api_t>::api_t *api, sai_object_id_t switch_id)
+inline ObjectBulker<sai_next_hop_group_api_t>::ObjectBulker(saitraits<sai_next_hop_group_api_t>::api_t *api, sai_object_id_t switch_id)
     : switch_id(switch_id)
 {
     create_entries = api->create_next_hop_group_members;

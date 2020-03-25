@@ -10,6 +10,7 @@
 #include "ipaddresses.h"
 #include "ipprefix.h"
 #include "nexthopgroupkey.h"
+#include "bulker.h"
 
 #include <map>
 
@@ -98,6 +99,9 @@ private:
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
 
     void doTask(Consumer& consumer);
+    EntityBulker<sai_route_api_t> gRouteBulker;
+    //EntityBulker<sai_fdb_api_t> gFdbBulker;
+    ObjectBulker<sai_next_hop_group_api_t> gNextHopGroupMemberBulkder;
 };
 
 #endif /* SWSS_ROUTEORCH_H */

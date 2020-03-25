@@ -4,7 +4,6 @@
 #include "logger.h"
 #include "swssnet.h"
 #include "crmorch.h"
-#include "bulker.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
@@ -12,6 +11,7 @@ extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t*    sai_next_hop_group_api;
 extern sai_route_api_t*             sai_route_api;
 extern sai_switch_api_t*            sai_switch_api;
+extern sai_fdb_api_t*               sai_fdb_api;
 
 extern PortsOrch *gPortsOrch;
 extern CrmOrch *gCrmOrch;
@@ -22,11 +22,10 @@ extern CrmOrch *gCrmOrch;
 
 const int routeorch_pri = 5;
 
-EntityBulker<sai_route_api_t> gRouteBulker(sai_route_api);
-extern sai_fdb_api_t*            sai_fdb_api; EntityBulker<sai_fdb_api_t> gFdbBulker(sai_fdb_api);
-ObjectBulker<sai_next_hop_group_api_t> gNextHopGroupMemberBulkder(sai_next_hop_group_api, gSwitchId);
-
 RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
+        gRouteBulker(sai_route_api),
+        //gFdbBulker(sai_fdb_api),
+        gNextHopGroupMemberBulkder(sai_next_hop_group_api, gSwitchId),
         Orch(db, tableName, routeorch_pri),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
