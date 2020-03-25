@@ -865,6 +865,7 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
         //status = sai_next_hop_group_api->remove_next_hop_group_member(nhop->second);
         gNextHopGroupMemberBulkder.remove_entry(&statuses[i], next_hop_ids[i]);
     }
+    gNextHopGroupMemberBulkder.flush();
     for (size_t i = 0; i < nhid_count; i++)
     {
         if (statuses[i] != SAI_STATUS_SUCCESS)
