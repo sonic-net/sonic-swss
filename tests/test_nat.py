@@ -1,10 +1,10 @@
 import time
 
 class TestNat(object):
-    def setup_db(self, app_db, asic_db, config_db):
-        self.app_db = app_db
-        self.asic_db = asic_db
-        self.config_db = config_db
+    def setup_db(self, dvs):
+        self.app_db = dvs.get_app_db()
+        self.asic_db = dvs.get_asic_db()
+        self.config_db = dvs.get_config_db()
 
     def set_interfaces(self, dvs):
         fvs = {"NULL": "NULL"}
@@ -35,9 +35,9 @@ class TestNat(object):
 
         time.sleep(1)
 
-    def test_NatGlobalTable(self, app_db, asic_db, config_db, dvs, testlog):
+    def test_NatGlobalTable(self, dvs, testlog):
         # initialize
-        self.setup_db(app_db, asic_db, config_db)
+        self.setup_db(dvs)
 
         # enable NAT feature
         dvs.runcmd("config nat feature enable")
@@ -52,9 +52,9 @@ class TestNat(object):
 
         assert fvs == {"admin_mode": "enabled", "nat_timeout": "450", "nat_udp_timeout": "360", "nat_tcp_timeout": "900"}
 
-    def test_NatInterfaceZone(self, app_db, asic_db, config_db, dvs, testlog):
+    def test_NatInterfaceZone(self, dvs, testlog):
         # initialize
-        self.setup_db(app_db, asic_db, config_db)
+        self.setup_db(dvs)
         self.set_interfaces(dvs)
 
         # check NAT zone is set for interface in app db
@@ -66,9 +66,9 @@ class TestNat(object):
                 break
         assert zone
 
-    def test_AddNatStaticEntry(self, app_db, asic_db, config_db, dvs, testlog):
+    def test_AddNatStaticEntry(self, dvs, testlog):
         # initialize
-        self.setup_db(app_db, asic_db, config_db)
+        self.setup_db(dvs)
 
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
@@ -100,9 +100,9 @@ class TestNat(object):
         for key in keys:
             assert "\"dst_ip\":\"67.66.65.1\"" in key or "\"src_ip\":\"18.18.18.2\"" in key
 
-    def test_DelNatStaticEntry(self, app_db, asic_db, config_db, dvs, testlog):
+    def test_DelNatStaticEntry(self, dvs, testlog):
         # initialize
-        self.setup_db(app_db, asic_db, config_db)
+        self.setup_db(dvs)
 
         # delete a static nat entry
         dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
@@ -116,9 +116,9 @@ class TestNat(object):
         #check the entry is not there in asic db
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
-    def test_AddNaPtStaticEntry(self, app_db, asic_db, config_db, dvs, testlog):
+    def test_AddNaPtStaticEntry(self, dvs, testlog):
         # initialize
-        self.setup_db(app_db, asic_db, config_db)
+        self.setup_db(dvs)
 
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
@@ -150,9 +150,9 @@ class TestNat(object):
             else:
                 assert False
 
-    def test_DelNaPtStaticEntry(self, app_db, asic_db, config_db, dvs, testlog):
+    def test_DelNaPtStaticEntry(self, dvs, testlog):
         # initialize
-        self.setup_db(app_db, asic_db, config_db)
+        self.setup_db(dvs)
 
         # delete a static nat entry
         dvs.runcmd("config nat remove static udp 67.66.65.1 670 18.18.18.2 180")
@@ -166,9 +166,9 @@ class TestNat(object):
         #check the entry is not there in asic db
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
-    def test_AddTwiceNatEntry(self, app_db, asic_db, config_db, dvs, testlog):
+    def test_AddTwiceNatEntry(self, dvs, testlog):
         # initialize
-        self.setup_db(app_db, asic_db, config_db)
+        self.setup_db(dvs)
 
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
@@ -201,9 +201,9 @@ class TestNat(object):
         for key in keys:
             assert "\"dst_ip\":\"67.66.65.1\"" in key or "\"src_ip\":\"18.18.18.2\"" in key
 
-    def test_DelTwiceNatStaticEntry(self, app_db, asic_db, config_db, dvs, testlog):
+    def test_DelTwiceNatStaticEntry(self, dvs, testlog):
         # initialize
-        self.setup_db(app_db, asic_db, config_db)
+        self.setup_db(dvs)
 
         # delete a static nat entry
         dvs.runcmd("config nat remove static basic 67.66.65.2 18.18.18.1")
@@ -218,9 +218,9 @@ class TestNat(object):
         #check the entry is not there in asic db
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
-    def test_AddTwiceNaPtEntry(self, app_db, asic_db, config_db, dvs, testlog):
+    def test_AddTwiceNaPtEntry(self, dvs, testlog):
         # initialize
-        self.setup_db(app_db, asic_db, config_db)
+        self.setup_db(dvs)
 
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
@@ -258,9 +258,9 @@ class TestNat(object):
             else:
                 assert False
 
-    def test_DelTwiceNaPtStaticEntry(self, app_db, asic_db, config_db, dvs, testlog):
+    def test_DelTwiceNaPtStaticEntry(self, dvs, testlog):
         # initialize
-        self.setup_db(app_db, asic_db, config_db)
+        self.setup_db(dvs)
 
         # delete a static nat entry
         dvs.runcmd("config nat remove static udp 67.66.65.2 670 18.18.18.1 181")

@@ -2,17 +2,8 @@
     dvs_database contains utilities for interacting with redis when writing
     tests for the virtual switch.
 """
-import pytest
-
 from swsscommon import swsscommon
 from dvslib.dvs_common import wait_for_result, PollingConfig
-
-APP_DB_ID = 0
-ASIC_DB_ID = 1
-COUNTERS_DB_ID = 2
-CONFIG_DB_ID = 4
-FLEX_COUNTER_DB_ID = 5
-STATE_DB_ID = 6
 
 
 class DVSDatabase(object):
@@ -34,10 +25,6 @@ class DVSDatabase(object):
                     instance in redis.
                 connector (str): The I/O connection used to communicate with
                     redis (e.g. unix socket, tcp socket, etc.).
-
-            NOTE: Currently it's most convenient to let the user specify the
-            connector since it's set up in the dvs fixture. We may abstract
-            this further in the future as we refactor dvs.
         """
 
         self.db_connection = swsscommon.DBConnector(db_id, connector, 0)
@@ -184,115 +171,3 @@ class DVSDatabase(object):
             return (len(keys) == num_keys, keys)
 
         return wait_for_result(_access_function, polling_config)
-
-
-@pytest.fixture
-def app_db(dvs):
-    """
-        Provides access to the SONiC APP DB.
-
-        Args:
-            dvs (DockerVirtualSwitch): The dvs fixture, automatically injected
-            by pytest.
-
-        Returns:
-            DVSDatabase: An instance of APP DB
-    """
-
-    return DVSDatabase(APP_DB_ID, dvs.redis_sock)
-
-
-@pytest.fixture
-def asic_db(dvs):
-    """
-        Provides access to the SONiC ASIC DB.
-
-        Args:
-            dvs (DockerVirtualSwitch): The dvs fixture, automatically injected
-            by pytest.
-
-        Attributes:
-            default_acl_tables (List[str]): IDs for the ACL tables that are
-                configured in SONiC by default
-            default_acl_entries (List[str]): IDs for the ACL rules that are
-                configured in SONiC by default
-            port_name_map (Dict[str, str]): A mapping from interface names
-                (e.g. Ethernet0) to port IDs
-
-        Returns:
-            DVSDatabase: An instance of ASIC DB
-    """
-
-    db = DVSDatabase(ASIC_DB_ID, dvs.redis_sock) # pylint: disable=invalid-name
-
-    # NOTE: This is an ugly hack to emulate the current asic db behavior,
-    # this will be refactored along with the dvs fixture.
-    db.default_acl_tables = dvs.asicdb.default_acl_tables # pylint: disable=attribute-defined-outside-init
-    db.default_acl_entries = dvs.asicdb.default_acl_entries # pylint: disable=attribute-defined-outside-init
-    db.port_name_map = dvs.asicdb.portnamemap # pylint: disable=attribute-defined-outside-init
-
-    return db
-
-
-@pytest.fixture
-def counters_db(dvs):
-    """
-        Provides access to the SONiC Counters DB.
-
-        Args:
-            dvs (DockerVirtualSwitch): The dvs fixture, automatically injected
-            by pytest.
-
-        Returns:
-            DVSDatabase: An instance of Counters DB
-    """
-
-    return DVSDatabase(COUNTERS_DB_ID, dvs.redis_sock)
-
-
-@pytest.fixture
-def config_db(dvs):
-    """
-        Provides access to the SONiC Config DB.
-
-        Args:
-            dvs (DockerVirtualSwitch): The dvs fixture, automatically injected
-            by pytest.
-
-        Returns:
-            DVSDatabase: An instance of Config DB
-    """
-
-    return DVSDatabase(CONFIG_DB_ID, dvs.redis_sock)
-
-
-@pytest.fixture
-def flex_counter_db(dvs):
-    """
-        Provides access to the SONiC Flex Counter DB.
-
-        Args:
-            dvs (DockerVirtualSwitch): The dvs fixture, automatically injected
-            by pytest.
-
-        Returns:
-            DVSDatabase: An instance of Flex Counter DB
-    """
-
-    return DVSDatabase(FLEX_COUNTER_DB_ID, dvs.redis_sock)
-
-
-@pytest.fixture
-def state_db(dvs):
-    """
-        Provides access to the SONiC State DB.
-
-        Args:
-            dvs (DockerVirtualSwitch): The dvs fixture, automatically injected
-            by pytest.
-
-        Returns:
-            DVSDatabase: An instance of State DB
-    """
-
-    return DVSDatabase(STATE_DB_ID, dvs.redis_sock)
