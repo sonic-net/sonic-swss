@@ -870,8 +870,8 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     {
         if (statuses[i] != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to remove next hop group member %" PRIx64 ", rv:%d",
-                           next_hop_ids[i], statuses[i]);
+            SWSS_LOG_ERROR("Failed to remove next hop group member[%zu] %" PRIx64 ", rv:%d",
+                           i, next_hop_ids[i], statuses[i]);
             return false;
         }
 
