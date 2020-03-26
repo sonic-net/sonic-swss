@@ -121,6 +121,43 @@ class DVSDatabase(object):
 
         return wait_for_result(_access_function, polling_config)
 
+    def wait_for_field_match(self,
+                             table_name,
+                             key,
+                             expected_fields,
+                             polling_config=DEFAULT_POLLING_CONFIG):
+        """
+            Checks if the provided fields are contained in the entry stored
+            at `key` in the specified table. This method will wait for the
+            fields to exist.
+
+            NOTE: We suggest you only use this function if:
+                1) the entry already exists, and
+                2) you expect certain fields to change
+
+            Otherwise, it is more efficient to use `wait_for_entry` and check
+            for the expected fields after the entry has been retrieved.
+
+            Args:
+                table_name (str): The name of the table where the entry is
+                    stored.
+                key (str): The key that maps to the entry being checked.
+                expected_fields (dict): The fields and their values we expect
+                    to see in the entry.
+                polling_config (PollingConfig): The parameters to use to poll
+                    the db.
+
+            Returns:
+                Dict[str, str]: The entry stored at `key`. If no entry is found,
+                then an empty Dict will be returned.
+        """
+
+        def _access_function():
+            fv_pairs = self.get_entry(table_name, key)
+            return (expected_fields.items() <= fv_pairs.items(), fv_pairs)
+
+        return wait_for_result(_access_function, polling_config)
+
     def wait_for_empty_entry(self,
                              table_name,
                              key,
@@ -141,7 +178,7 @@ class DVSDatabase(object):
 
         def _access_function():
             fv_pairs = self.get_entry(table_name, key)
-            return (not fv_pairs, fv_pairs)
+            return (not bool(fv_pairs), fv_pairs)
 
         return wait_for_result(_access_function, polling_config)
 
