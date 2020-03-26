@@ -65,9 +65,9 @@ int main(int argc, char **argv)
         }
     }
 
-    DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector state_db(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector cfgDb("CONFIG_DB", 0);
+    DBConnector appl_db("APPL_DB", 0);
+    DBConnector state_db("STATE_DB", 0);
     ProducerStateTable p(&appl_db, APP_PORT_TABLE_NAME);
     SubscriberStateTable portCfg(&cfgDb, CFG_PORT_TABLE_NAME);
 

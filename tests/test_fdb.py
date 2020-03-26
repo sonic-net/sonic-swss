@@ -1,8 +1,10 @@
-from swsscommon import swsscommon
 import os
 import sys
 import time
 import json
+import pytest
+
+from swsscommon import swsscommon
 from distutils.version import StrictVersion
 
 def create_entry(tbl, key, pairs):
@@ -23,6 +25,7 @@ def create_entry_pst(db, table, key, pairs):
 def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
+
 
 class TestFdb(object):
     def test_FdbWarmRestartNotifications(self, dvs, testlog):
@@ -334,16 +337,26 @@ class TestFdb(object):
             ]
         )
 
-        # check that the FDB entry wasn't inserted into ASIC DB
-        assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 0, "The fdb entry leaked to ASIC"
-
         vlan_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
         bp_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT")
         vm_before = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN_MEMBER")
 
         # create vlan
         dvs.create_vlan("2")
+        time.sleep(1)
+
+        # Get bvid from vlanid
+        ok, bvid = dvs.get_vlan_oid(dvs.adb, "2")
+        assert ok, bvid
+
+        # check that the FDB entry wasn't inserted into ASIC DB
+        ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
+                        [("mac", "52:54:00:25:06:E9"), ("bvid", bvid)], [])
+        assert ok == False, "The fdb entry leaked to ASIC"
+
+        # create vlan member
         dvs.create_vlan_member("2", "Ethernet0")
+        time.sleep(1)
 
         # check that the vlan information was propagated
         vlan_after = how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
@@ -358,10 +371,8 @@ class TestFdb(object):
         iface_2_bridge_port_id = dvs.get_map_iface_bridge_port_id(dvs.adb)
 
         # check that the FDB entry was inserted into ASIC DB
-        assert how_many_entries_exist(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY") == 1, "The fdb entry wasn't inserted to ASIC"
-
         ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
-                        [("mac", "52-54-00-25-06-E9"), ("vlan", "2")],
+                        [("mac", "52:54:00:25:06:E9"), ("bvid", bvid)],
                         [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_DYNAMIC"),
                          ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet0"]),
                          ('SAI_FDB_ENTRY_ATTR_PACKET_ACTION', 'SAI_PACKET_ACTION_FORWARD')]

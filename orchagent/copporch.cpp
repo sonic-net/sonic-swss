@@ -18,6 +18,7 @@ extern sai_switch_api_t*    sai_switch_api;
 
 extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
+extern bool                 gIsNatSupported;
 
 static map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
@@ -72,7 +73,9 @@ static map<string, sai_hostif_trap_type_t> trap_id_map = {
     {"ttl_error", SAI_HOSTIF_TRAP_TYPE_TTL_ERROR},
     {"udld", SAI_HOSTIF_TRAP_TYPE_UDLD},
     {"bfd", SAI_HOSTIF_TRAP_TYPE_BFD},
-    {"bfdv6", SAI_HOSTIF_TRAP_TYPE_BFDV6}
+    {"bfdv6", SAI_HOSTIF_TRAP_TYPE_BFDV6},
+    {"src_nat_miss", SAI_HOSTIF_TRAP_TYPE_SNAT_MISS},
+    {"dest_nat_miss", SAI_HOSTIF_TRAP_TYPE_DNAT_MISS}
 };
 
 static map<string, sai_packet_action_t> packet_action_map = {
@@ -145,8 +148,9 @@ void CoppOrch::initDefaultTrapIds()
     trap_id_attrs.push_back(attr);
 
     /* Mellanox platform doesn't support trap priority setting */
+    /* Marvell platform doesn't support trap priority. */
     char *platform = getenv("platform");
-    if (!platform || !strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PLATFORM_SUBSTRING))))
     {
         attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY;
         attr.value.u32 = 0;
@@ -189,6 +193,12 @@ void CoppOrch::getTrapIdList(vector<string> &trap_id_name_list, vector<sai_hosti
         SWSS_LOG_DEBUG("processing trap_id:%s", trap_id_str.c_str());
         trap_id = trap_id_map.at(trap_id_str);
         SWSS_LOG_DEBUG("Pushing trap_id:%d", trap_id);
+        if (((trap_id == SAI_HOSTIF_TRAP_TYPE_SNAT_MISS) or (trap_id == SAI_HOSTIF_TRAP_TYPE_DNAT_MISS)) and
+            (gIsNatSupported == false))
+        {
+            SWSS_LOG_NOTICE("Ignoring the trap_id: %s, as NAT is not supported", trap_id_str.c_str());
+            continue;
+        }
         trap_id_list.push_back(trap_id);
     }
 }
@@ -415,7 +425,7 @@ bool CoppOrch::removeGenetlinkHostIf(string trap_group_name)
                 sai_status = sai_hostif_api->remove_hostif_table_entry(hostTableEntry->second);
                 if(sai_status != SAI_STATUS_SUCCESS)
                 {
-                    SWSS_LOG_ERROR("Failed to delete hostif table entry %ld \
+                    SWSS_LOG_ERROR("Failed to delete hostif table entry %" PRId64 " \
                                    on trap group %s. rc=%d", hostTableEntry->second,
                                    trap_group_name.c_str(), sai_status);
                     return false;
@@ -431,7 +441,7 @@ bool CoppOrch::removeGenetlinkHostIf(string trap_group_name)
         sai_status = sai_hostif_api->remove_hostif(hostInfo->second);
         if(sai_status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to delete host info %ld on trap group %s. rc=%d",
+            SWSS_LOG_ERROR("Failed to delete host info %" PRId64 " on trap group %s. rc=%d",
                            hostInfo->second, trap_group_name.c_str(), sai_status);
             return false;
         }
@@ -495,8 +505,9 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             else if (fvField(*i) == copp_trap_priority_field)
             {
                 /* Mellanox platform doesn't support trap priority setting */
+                /* Marvell platform doesn't support trap priority. */
                 char *platform = getenv("platform");
-                if (!platform || !strstr(platform, MLNX_PLATFORM_SUBSTRING))
+                if (!platform || (!strstr(platform, MLNX_PLATFORM_SUBSTRING) && (!strstr(platform, MRVL_PLATFORM_SUBSTRING))))
                 {
                     attr.id = SAI_HOSTIF_TRAP_ATTR_TRAP_PRIORITY,
                     attr.value.u32 = (uint32_t)stoul(fvValue(*i));
@@ -724,7 +735,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             sai_status = sai_hostif_api->remove_hostif_trap(it.second.trap_obj);
             if (sai_status != SAI_STATUS_SUCCESS)
             {
-                SWSS_LOG_ERROR("Failed to remove trap object %ld", it.second.trap_obj);
+                SWSS_LOG_ERROR("Failed to remove trap object %" PRId64 "", it.second.trap_obj);
                 return task_process_status::task_failed;
             }
         }

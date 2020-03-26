@@ -12,6 +12,8 @@
 #define GREP_CMD             "/bin/grep"
 #define TEAMD_CMD            "/usr/bin/teamd"
 #define TEAMDCTL_CMD         "/usr/bin/teamdctl"
+#define IPTABLES_CMD         "/sbin/iptables"
+#define CONNTRACK_CMD        "/usr/sbin/conntrack"
 
 #define EXEC_WITH_ERROR_THROW(cmd, res)   ({    \
     int ret = swss::exec(cmd, res);             \

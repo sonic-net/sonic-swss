@@ -36,10 +36,6 @@ AM_CONDITIONAL(DEBUG, test x$debug = xtrue)
 
 CFLAGS_COMMON="-std=c++14 -Wall -fPIC -Wno-write-strings -I/usr/include/libnl3 -I/usr/include/swss"
 
-AM_CONDITIONAL(sonic_asic_platform_barefoot,   test x$CONFIGURED_PLATFORM = xbarefoot)
-AM_COND_IF([sonic_asic_platform_barefoot],
-           [CFLAGS_COMMON+=" -I/opt/bfn/install/include/switchsai"])
-
 CFLAGS_COMMON+=" -Werror"
 CFLAGS_COMMON+=" -Wno-reorder"
 CFLAGS_COMMON+=" -Wcast-align"
@@ -83,8 +79,10 @@ AC_CONFIG_FILES([
     orchagent/Makefile
     fpmsyncd/Makefile
     neighsyncd/Makefile
+    natsyncd/Makefile
     portsyncd/Makefile
     teamsyncd/Makefile
+    mclagsyncd/Makefile
     swssconfig/Makefile
     cfgmgr/Makefile
     tests/Makefile

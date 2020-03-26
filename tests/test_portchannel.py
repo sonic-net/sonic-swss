@@ -1,7 +1,10 @@
-from swsscommon import swsscommon
 import time
 import re
 import json
+import pytest
+
+from swsscommon import swsscommon
+
 
 class TestPortchannel(object):
     def test_Portchannel(self, dvs, testlog):
@@ -33,13 +36,41 @@ class TestPortchannel(object):
         assert len(lagms) == 1
 
         (status, fvs) = lagmtbl.get(lagms[0])
-        for fv in fvs:
-            if fv[0] == "SAI_LAG_MEMBER_ATTR_LAG_ID":
-                assert fv[1] == lags[0]
-            elif fv[0] == "SAI_LAG_MEMBER_ATTR_PORT_ID":
-                assert dvs.asicdb.portoidmap[fv[1]] == "Ethernet0"
-            else:
-                assert False
+        fvs = dict(fvs)
+        assert status
+        assert "SAI_LAG_MEMBER_ATTR_LAG_ID" in fvs
+        assert fvs.pop("SAI_LAG_MEMBER_ATTR_LAG_ID") == lags[0]
+        assert "SAI_LAG_MEMBER_ATTR_PORT_ID" in fvs
+        assert dvs.asicdb.portoidmap[fvs.pop("SAI_LAG_MEMBER_ATTR_PORT_ID")] == "Ethernet0"
+        assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
+        assert fvs.pop("SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE") == "false"
+        assert "SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE" in fvs
+        assert fvs.pop("SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE") == "false"
+        assert not fvs
+
+        ps = swsscommon.ProducerStateTable(db, "LAG_MEMBER_TABLE")
+        fvs = swsscommon.FieldValuePairs([("status", "disabled")])
+
+        ps.set("PortChannel0001:Ethernet0", fvs)
+
+        time.sleep(1)
+
+        lagmtbl = swsscommon.Table(asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER")
+        lagms = lagmtbl.getKeys()
+        assert len(lagms) == 1
+
+        (status, fvs) = lagmtbl.get(lagms[0])
+        fvs = dict(fvs)
+        assert status
+        assert "SAI_LAG_MEMBER_ATTR_LAG_ID" in fvs
+        assert fvs.pop("SAI_LAG_MEMBER_ATTR_LAG_ID") == lags[0]
+        assert "SAI_LAG_MEMBER_ATTR_PORT_ID" in fvs
+        assert dvs.asicdb.portoidmap[fvs.pop("SAI_LAG_MEMBER_ATTR_PORT_ID")] == "Ethernet0"
+        assert "SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE" in fvs
+        assert fvs.pop("SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE") == "true"
+        assert "SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE" in fvs
+        assert fvs.pop("SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE") == "true"
+        assert not fvs
 
         # remove port channel member
         ps = swsscommon.ProducerStateTable(db, "LAG_MEMBER_TABLE")

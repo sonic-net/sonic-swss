@@ -86,6 +86,18 @@ public:
         return true;
     }
 
+    bool hasIntfNextHop() const
+    {
+        for (const auto &nh : m_nexthops)
+        {
+            if (nh.isIntfNextHop())
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void remove(const std::string &ip, const std::string &alias)
     {
         NextHopKey nh(ip, alias);

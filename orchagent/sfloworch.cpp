@@ -45,7 +45,7 @@ bool SflowOrch::sflowDestroySession(SflowSession &session)
     sai_rc = sai_samplepacket_api->remove_samplepacket(session.m_sample_id);
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to destroy sample packet session with id %lx",
+        SWSS_LOG_ERROR("Failed to destroy sample packet session with id %" PRIx64 "",
                        session.m_sample_id);
         return false;
     }
@@ -88,7 +88,7 @@ bool SflowOrch::sflowUpdateRate(sai_object_id_t port_id, uint32_t rate)
     {
         if (!sflowDestroySession(m_sflowRateSampleMap[old_rate]))
         {
-            SWSS_LOG_ERROR("Failed to clean old session %lx with rate %d",
+            SWSS_LOG_ERROR("Failed to clean old session %" PRIx64 " with rate %d",
                            m_sflowRateSampleMap[old_rate].m_sample_id, old_rate);
         }
         else
@@ -110,7 +110,7 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id)
 
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set session %lx on port %lx", sample_id, port_id);
+        SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64 , sample_id, port_id);
         return false;
     }
     return true;
@@ -127,7 +127,7 @@ bool SflowOrch::sflowDelPort(sai_object_id_t port_id)
 
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to delete session on port %lx", port_id);
+        SWSS_LOG_ERROR("Failed to delete session on port %" PRIx64  , port_id);
         return false;
     }
     return true;

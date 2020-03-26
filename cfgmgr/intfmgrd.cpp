@@ -8,6 +8,7 @@
 #include "intfmgr.h"
 #include <fstream>
 #include <iostream>
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -45,11 +46,15 @@ int main(int argc, char **argv)
             CFG_LAG_INTF_TABLE_NAME,
             CFG_VLAN_INTF_TABLE_NAME,
             CFG_LOOPBACK_INTERFACE_TABLE_NAME,
+            CFG_VLAN_SUB_INTF_TABLE_NAME,
         };
 
-        DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-        DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-        DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+        DBConnector cfgDb("CONFIG_DB", 0);
+        DBConnector appDb("APPL_DB", 0);
+        DBConnector stateDb("STATE_DB", 0);
+
+        WarmStart::initialize("intfmgrd", "swss");
+        WarmStart::checkWarmStart("intfmgrd", "swss");
 
         IntfMgr intfmgr(&cfgDb, &appDb, &stateDb, cfg_intf_tables);
 

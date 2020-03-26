@@ -1,11 +1,10 @@
 # This test suite covers the functionality of mirror feature in SwSS
-
 import platform
 import pytest
 import time
-from distutils.version import StrictVersion
 
 from swsscommon import swsscommon
+from distutils.version import StrictVersion
 
 DVS_FAKE_PLATFORM = "broadcom"
 
@@ -141,6 +140,79 @@ class TestMirror(object):
         tbl = swsscommon.Table(self.cdb, "ACL_RULE")
         tbl._del(table + "|" + rule)
         time.sleep(1)
+
+    def test_CombinedMirrorTableCreation(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        acl_table = "MIRROR_TABLE"
+        ports = ["Ethernet0", "Ethernet4"]
+
+        # Create the table
+        self.create_acl_table(acl_table, ports, "MIRROR")
+
+        # Check that the table has been created
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
+        table_entries = [k for k in tbl.getKeys() if k not in dvs.asicdb.default_acl_tables]
+        assert len(table_entries) == 1
+
+        # Get the data from the table
+        table_id = table_entries[0]
+        status, attributes = tbl.get(table_id)
+        assert status
+
+        # TODO: Refactor mirror table tests so that these attributes can be shared between tests for v4, v6, and
+        # dscp mirror tables.
+        expected_sai_attributes = [
+            "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE",
+            "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL",
+            "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP",
+            "SAI_ACL_TABLE_ATTR_FIELD_DST_IP",
+            "SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE",
+            "SAI_ACL_TABLE_ATTR_FIELD_ICMP_CODE",
+            "SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT",
+            "SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT",
+            "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS",
+            "SAI_ACL_TABLE_ATTR_FIELD_DSCP",
+            "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE",
+            "SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS",
+            "SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6",
+            "SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6",
+            "SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE",
+            "SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_CODE",
+        ]
+
+        expected_sai_list_attributes = [
+            "SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE",
+            "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST"
+        ]
+
+        # Check that all of the V6 table attributes have been populated
+        assert(len(attributes) == (len(expected_sai_attributes) + len(expected_sai_list_attributes) + 1))
+        for attribute in attributes:
+            key = attribute[0]
+            value = attribute[1]
+
+            if key in expected_sai_attributes:
+                assert value == "true"
+            elif key in expected_sai_list_attributes:
+                count = int(value[0:1])
+                list_attrs = value[2:].split(',')
+                if key == "SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE":
+                    assert set(list_attrs) == set(["SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE", "SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE"])
+                elif key == "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST":
+                    assert set(list_attrs) == set(["SAI_ACL_BIND_POINT_TYPE_PORT", "SAI_ACL_BIND_POINT_TYPE_LAG"])
+                else:
+                    print("Encountered unexpected range attribute on mirror table: {}".format(key))
+                    assert False
+            elif key == "SAI_ACL_TABLE_ATTR_ACL_STAGE":
+                assert value == "SAI_ACL_STAGE_INGRESS"
+            else:
+                print("Encountered unexpected attribute on mirror table: {}".format(key))
+                assert False
+
+        # Delete the table
+        self.remove_acl_table(acl_table)
+
 
     # Test case - create a MIRROR table and a MIRRORV6 table in combined mode
     # 0. predefine the VS capability: combined

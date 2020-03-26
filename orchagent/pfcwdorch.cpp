@@ -36,7 +36,7 @@ extern PortsOrch *gPortsOrch;
 template <typename DropHandler, typename ForwardHandler>
 PfcWdOrch<DropHandler, ForwardHandler>::PfcWdOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames),
-    m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersTable(new Table(m_countersDb.get(), COUNTERS_TABLE))
 {
     SWSS_LOG_ENTER();
@@ -560,11 +560,8 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
                 sai_serialize_object_id(queueId));
     }
 
-    // Create egress ACL table group for each port of pfcwd's interest
-    sai_object_id_t groupId;
-    gPortsOrch->createBindAclTableGroup(port.m_port_id, groupId, ACL_STAGE_INGRESS);
-    gPortsOrch->createBindAclTableGroup(port.m_port_id, groupId, ACL_STAGE_EGRESS);
-
+    // We do NOT need to create ACL table group here. It will be
+    // done when ACL tables are bound to ports
     return true;
 }
 
@@ -652,14 +649,14 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
         const vector<sai_queue_attr_t> &queueAttrIds,
         int pollInterval):
     PfcWdOrch<DropHandler, ForwardHandler>(db, tableNames),
-    m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
     c_portStatIds(portStatIds),
     c_queueStatIds(queueStatIds),
     c_queueAttrIds(queueAttrIds),
     m_pollInterval(pollInterval),
-    m_applDb(make_shared<DBConnector>(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_applDb(make_shared<DBConnector>("APPL_DB", 0)),
     m_applTable(make_shared<Table>(m_applDb.get(), APP_PFC_WD_TABLE_NAME "_INSTORM")),
     m_applDbRedisClient(m_applDb.get())
 {
@@ -758,6 +755,11 @@ template <typename DropHandler, typename ForwardHandler>
 void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
 {
     PfcWdOrch<DropHandler, ForwardHandler>::doTask(consumer);
+
+    if (!gPortsOrch->allPortsReady())
+    {
+        return;
+    }
 
     if ((consumer.getDbId() == APPL_DB) && (consumer.getTableName() == APP_PFC_WD_TABLE_NAME))
     {

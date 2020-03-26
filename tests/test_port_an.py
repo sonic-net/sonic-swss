@@ -1,6 +1,9 @@
-from swsscommon import swsscommon
 import time
 import os
+import pytest
+
+from swsscommon import swsscommon
+
 
 class TestPortAutoNeg(object):
     def test_PortAutoNegCold(self, dvs, testlog):

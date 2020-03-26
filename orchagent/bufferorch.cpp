@@ -36,10 +36,10 @@ type_map BufferOrch::m_buffer_type_maps = {
 
 BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) :
     Orch(db, tableNames),
-    m_flexCounterDb(new DBConnector(FLEX_COUNTER_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
-    m_countersDb(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0)),
+    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
     m_countersDbRedisClient(m_countersDb.get())
 {
     SWSS_LOG_ENTER();
@@ -264,7 +264,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             if (field == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_POOL_ATTR_SIZE;
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
             else if (field == buffer_pool_type_field_name)
@@ -307,7 +307,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             }
             else if (field == buffer_pool_xoff_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_POOL_ATTR_XOFF_SIZE;
                 attribs.push_back(attr);
             }
@@ -414,19 +414,19 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             }
             else if (field == buffer_xon_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xon_offset_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XON_OFFSET_TH;
                 attribs.push_back(attr);
             }
             else if (field == buffer_xoff_field_name)
             {
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attr.id = SAI_BUFFER_PROFILE_ATTR_XOFF_TH;
                 attribs.push_back(attr);
             }
@@ -453,7 +453,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
                 attribs.push_back(attr);
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
             else
@@ -562,6 +562,11 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
                 SWSS_LOG_ERROR("Invalid queue index specified:%zd", ind);
                 return task_process_status::task_invalid_entry;
             }
+            if (port.m_queue_lock[ind])
+            {
+                SWSS_LOG_WARN("Queue %zd on port %s is locked, will retry", ind, port_name.c_str());
+                return task_process_status::task_need_retry;
+            }
             queue_id = port.m_queue_ids[ind];
             SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
             sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
@@ -598,7 +603,7 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
 }
 
 /*
-Input sample "BUFFER_PG_TABLE|Ethernet4,Ethernet45|10-15"
+Input sample "BUFFER_PG|Ethernet4,Ethernet45|10-15"
 */
 task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
 {
@@ -660,6 +665,11 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
             {
                 SWSS_LOG_ERROR("Invalid pg index specified:%zd", ind);
                 return task_process_status::task_invalid_entry;
+            }
+            if (port.m_priority_group_lock[ind])
+            {
+                SWSS_LOG_WARN("Priority group %zd on port %s is locked, will retry", ind, port_name.c_str());
+                return task_process_status::task_need_retry;
             }
             pg_id = port.m_priority_group_ids[ind];
             SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to port:%s pg index:%zd, pg sai_id:0x%" PRIx64, sai_buffer_profile, port_name.c_str(), ind, pg_id);
@@ -830,7 +840,7 @@ void BufferOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->isInitDone())
+    if (!gPortsOrch->isConfigDone())
     {
         return;
     }

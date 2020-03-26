@@ -19,9 +19,21 @@ using namespace swss;
 
 NeighSync::NeighSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb) :
     m_neighTable(pipelineAppDB, APP_NEIGH_TABLE_NAME),
-    m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME),
-    m_AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", &m_neighTable, DEFAULT_NEIGHSYNC_WARMSTART_TIMER)
+    m_stateNeighRestoreTable(stateDb, STATE_NEIGH_RESTORE_TABLE_NAME)
 {
+    m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "neighsyncd", "swss", DEFAULT_NEIGHSYNC_WARMSTART_TIMER);
+    if (m_AppRestartAssist)
+    {
+        m_AppRestartAssist->registerAppTable(APP_NEIGH_TABLE_NAME, &m_neighTable);
+    }
+}
+
+NeighSync::~NeighSync()
+{
+    if (m_AppRestartAssist)
+    {
+        delete m_AppRestartAssist;
+    }
 }
 
 // Check if neighbor table is restored in kernel
@@ -70,6 +82,11 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     key+= ipStr;
 
     int state = rtnl_neigh_get_state(neigh);
+    if (state == NUD_NOARP)
+    {
+        return;
+    }
+
     bool delete_key = false;
     if ((nlmsg_type == RTM_DELNEIGH) || (state == NUD_INCOMPLETE) ||
         (state == NUD_FAILED))
@@ -93,9 +110,9 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     fvVector.push_back(f);
 
     // If warmstart is in progress, we take all netlink changes into the cache map
-    if (m_AppRestartAssist.isWarmStartInProgress())
+    if (m_AppRestartAssist->isWarmStartInProgress())
     {
-        m_AppRestartAssist.insertToMap(key, fvVector, delete_key);
+        m_AppRestartAssist->insertToMap(APP_NEIGH_TABLE_NAME, key, fvVector, delete_key);
     }
     else
     {

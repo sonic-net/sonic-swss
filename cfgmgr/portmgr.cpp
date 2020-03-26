@@ -55,6 +55,17 @@ bool PortMgr::setPortAdminStatus(const string &alias, const bool up)
     return true;
 }
 
+bool PortMgr::setPortLearnMode(const string &alias, const string &learn_mode)
+{
+    // Set the port MAC learn mode in application database
+    vector<FieldValueTuple> fvs;
+    FieldValueTuple fv("learn_mode", learn_mode);
+    fvs.push_back(fv);
+    m_appPortTable.set(alias, fvs);
+
+    return true;
+}
+
 bool PortMgr::isPortStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
@@ -91,7 +102,7 @@ void PortMgr::doTask(Consumer &consumer)
                 continue;
             }
 
-            string admin_status, mtu;
+            string admin_status, mtu, learn_mode;
 
             bool configured = (m_portList.find(alias) != m_portList.end());
 
@@ -116,6 +127,10 @@ void PortMgr::doTask(Consumer &consumer)
                 {
                     admin_status = fvValue(i);
                 }
+                else if (fvField(i) == "learn_mode")
+                {
+                    learn_mode = fvValue(i);
+                }
             }
 
             if (!mtu.empty())
@@ -129,6 +144,17 @@ void PortMgr::doTask(Consumer &consumer)
                 setPortAdminStatus(alias, admin_status == "up");
                 SWSS_LOG_NOTICE("Configure %s admin status to %s", alias.c_str(), admin_status.c_str());
             }
+
+            if (!learn_mode.empty())
+            {
+                setPortLearnMode(alias, learn_mode);
+                SWSS_LOG_NOTICE("Configure %s MAC learn mode to %s", alias.c_str(), learn_mode.c_str());
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Delete Port: %s", alias.c_str());
+            m_appPortTable.del(alias);
         }
 
         it = consumer.m_toSync.erase(it);

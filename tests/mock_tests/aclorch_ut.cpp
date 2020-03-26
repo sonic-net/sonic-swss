@@ -23,54 +23,6 @@ namespace aclorch_test
 {
     using namespace std;
 
-    size_t consumerAddToSync(Consumer *consumer, const deque<KeyOpFieldsValuesTuple> &entries)
-    {
-        /* Nothing popped */
-        if (entries.empty())
-        {
-            return 0;
-        }
-
-        for (auto &entry : entries)
-        {
-            string key = kfvKey(entry);
-            string op = kfvOp(entry);
-
-            /* If a new task comes or if a DEL task comes, we directly put it into getConsumerTable().m_toSync map */
-            if (consumer->m_toSync.find(key) == consumer->m_toSync.end() || op == DEL_COMMAND)
-            {
-                consumer->m_toSync[key] = entry;
-            }
-            /* If an old task is still there, we combine the old task with new task */
-            else
-            {
-                KeyOpFieldsValuesTuple existing_data = consumer->m_toSync[key];
-
-                auto new_values = kfvFieldsValues(entry);
-                auto existing_values = kfvFieldsValues(existing_data);
-
-                for (auto it : new_values)
-                {
-                    string field = fvField(it);
-                    string value = fvValue(it);
-
-                    auto iu = existing_values.begin();
-                    while (iu != existing_values.end())
-                    {
-                        string ofield = fvField(*iu);
-                        if (field == ofield)
-                            iu = existing_values.erase(iu);
-                        else
-                            iu++;
-                    }
-                    existing_values.push_back(FieldValueTuple(field, value));
-                }
-                consumer->m_toSync[key] = KeyOpFieldsValuesTuple(key, op, existing_values);
-            }
-        }
-        return entries.size();
-    }
-
     struct AclTestBase : public ::testing::Test
     {
         vector<int32_t *> m_s32list_pool;
@@ -98,7 +50,7 @@ namespace aclorch_test
 
         AclTest()
         {
-            m_config_db = make_shared<swss::DBConnector>(CONFIG_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
+            m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
         }
 
         void SetUp() override
@@ -199,8 +151,7 @@ namespace aclorch_test
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(config_db, CFG_ACL_TABLE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_TABLE_TABLE_NAME));
 
-            consumerAddToSync(consumer.get(), entries);
-
+            consumer->addToSync(entries);
             static_cast<Orch *>(m_aclOrch)->doTask(*consumer);
         }
 
@@ -209,8 +160,7 @@ namespace aclorch_test
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(config_db, CFG_ACL_RULE_TABLE_NAME, 1, 1), m_aclOrch, CFG_ACL_RULE_TABLE_NAME));
 
-            consumerAddToSync(consumer.get(), entries);
-
+            consumer->addToSync(entries);
             static_cast<Orch *>(m_aclOrch)->doTask(*consumer);
         }
 
@@ -235,9 +185,9 @@ namespace aclorch_test
         AclOrchTest()
         {
             // FIXME: move out from constructor
-            m_app_db = make_shared<swss::DBConnector>(APPL_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
-            m_config_db = make_shared<swss::DBConnector>(CONFIG_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
-            m_state_db = make_shared<swss::DBConnector>(STATE_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0);
+            m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
+            m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
+            m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
         }
 
         static map<string, string> gProfileMap;
@@ -352,7 +302,7 @@ namespace aclorch_test
             gCrmOrch = new CrmOrch(m_config_db.get(), CFG_CRM_TABLE_NAME);
 
             ASSERT_EQ(gVrfOrch, nullptr);
-            gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME);
+            gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
 
             ASSERT_EQ(gIntfsOrch, nullptr);
             gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch);
@@ -361,7 +311,7 @@ namespace aclorch_test
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch);
 
             ASSERT_EQ(gRouteOrch, nullptr);
-            gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gNeighOrch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gNeighOrch, gIntfsOrch, gVrfOrch);
 
             TableConnector applDbFdb(m_app_db.get(), APP_FDB_TABLE_NAME);
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
@@ -381,8 +331,7 @@ namespace aclorch_test
             auto consumer = unique_ptr<Consumer>(new Consumer(
                 new swss::ConsumerStateTable(m_app_db.get(), APP_PORT_TABLE_NAME, 1, 1), gPortsOrch, APP_PORT_TABLE_NAME));
 
-            consumerAddToSync(consumer.get(), { { "PortInitDone", EMPTY_PREFIX, { { "", "" } } } });
-
+            consumer->addToSync({ { "PortInitDone", EMPTY_PREFIX, { { "", "" } } } });
             static_cast<Orch *>(gPortsOrch)->doTask(*consumer.get());
         }
 
@@ -628,31 +577,86 @@ namespace aclorch_test
         // consistency validation with CRM
         bool validateResourceCountWithCrm(const AclOrch *aclOrch, CrmOrch *crmOrch)
         {
-            auto resourceMap = Portal::CrmOrchInternal::getResourceMap(crmOrch);
-            auto ifpPortKey = Portal::CrmOrchInternal::getCrmAclKey(crmOrch, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_PORT);
-            auto efpPortKey = Portal::CrmOrchInternal::getCrmAclKey(crmOrch, SAI_ACL_STAGE_EGRESS, SAI_ACL_BIND_POINT_TYPE_PORT);
+             // Verify ACL Tables
+            auto const &resourceMap = Portal::CrmOrchInternal::getResourceMap(crmOrch);
+            uint32_t crm_acl_table_cnt = 0;
+            for (auto const &kv : resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap)
+            {
+                crm_acl_table_cnt += kv.second.usedCounter;
+            }
 
-            auto ifpPortAclTableCount = resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap[ifpPortKey].usedCounter;
-            auto efpPortAclTableCount = resourceMap.at(CrmResourceType::CRM_ACL_TABLE).countersMap[efpPortKey].usedCounter;
+            if (crm_acl_table_cnt != Portal::AclOrchInternal::getAclTables(aclOrch).size())
+            {
+                ADD_FAILURE() << "ACL table size is not consistent between CrmOrch (" << crm_acl_table_cnt
+                                << ") and AclOrch " << Portal::AclOrchInternal::getAclTables(aclOrch).size();
+                return false;
+            }
 
-            return ifpPortAclTableCount + efpPortAclTableCount == Portal::AclOrchInternal::getAclTables(aclOrch).size();
 
-            // TODO: add rule check
+            // Verify ACL Rules
+            //
+            // for each CRM_ACL_ENTRY and CRM_ACL_COUNTER's entry => the ACL TABLE should exist
+            //
+            for (auto acl_entry_or_counter : { CrmResourceType::CRM_ACL_ENTRY, CrmResourceType::CRM_ACL_COUNTER })
+            {
+                auto const &resourceMap = Portal::CrmOrchInternal::getResourceMap(crmOrch);
+                for (auto const &kv : resourceMap.at(acl_entry_or_counter).countersMap)
+                {
+                    auto acl_oid = kv.second.id;
+
+                    const auto &aclTables = Portal::AclOrchInternal::getAclTables(aclOrch);
+                    if (aclTables.find(acl_oid) == aclTables.end())
+                    {
+                        ADD_FAILURE() << "Can't find ACL '" << sai_serialize_object_id(acl_oid) << "' in AclOrch";
+                        return false;
+                    }
+
+                    if (kv.second.usedCounter != aclTables.at(acl_oid).rules.size())
+                    {
+                        ADD_FAILURE() << "CRM usedCounter (" << kv.second.usedCounter
+                                      << ") is not equal rule in ACL (" << aclTables.at(acl_oid).rules.size() << ")";
+                        return false;
+                    }
+                }
+            }
+
+            //
+            // for each ACL TABLE with rule count larger than one => it shoule exist a corresponding entry in CRM_ACL_ENTRY and CRM_ACL_COUNTER
+            //
+            for (const auto &kv : Portal::AclOrchInternal::getAclTables(aclOrch))
+            {
+                if (0 < kv.second.rules.size())
+                {
+                    auto key = Portal::CrmOrchInternal::getCrmAclTableKey(crmOrch, kv.first);
+                    for (auto acl_entry_or_counter : { CrmResourceType::CRM_ACL_ENTRY, CrmResourceType::CRM_ACL_COUNTER })
+                    {
+                        const auto &cntMap = Portal::CrmOrchInternal::getResourceMap(crmOrch).at(acl_entry_or_counter).countersMap;
+                        if (cntMap.find(key) == cntMap.end())
+                        {
+                            ADD_FAILURE() << "Can't find ACL (" << sai_serialize_object_id(kv.first)
+                                          << ") in " << (acl_entry_or_counter == CrmResourceType::CRM_ACL_ENTRY ? "CrmResourceType::CRM_ACL_ENTRY" : "CrmResourceType::CRM_ACL_COUNTER");
+                            return false;
+                        }
+                    }
+                }
+            }
+
+            return true;
         }
 
         // leakage check
         bool validateResourceCountWithLowerLayerDb(const AclOrch *aclOrch)
         {
-            // TODO: Using the need to include "sai_vs_state.h". That will need the include path from `configure`
-            //       Do this later ...
+        // TODO: Using the need to include "sai_vs_state.h". That will need the include path from `configure`
+        //       Do this later ...
 #if WITH_SAI == LIBVS
-            // {
-            //     auto& aclTableHash = g_switch_state_map.at(gSwitchId)->objectHash.at(SAI_OBJECT_TYPE_ACL_TABLE);
-            //
-            //     return aclTableHash.size() == Portal::AclOrchInternal::getAclTables(aclOrch).size();
-            // }
-            //
-            // TODO: add rule check
+        // {
+        //     auto& aclTableHash = g_switch_state_map.at(gSwitchId)->objectHash.at(SAI_OBJECT_TYPE_ACL_TABLE);
+        //
+        //     return aclTableHash.size() == Portal::AclOrchInternal::getAclTables(aclOrch).size();
+        // }
+        //
+        // TODO: add rule check
 #endif
 
             return true;
