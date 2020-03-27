@@ -7,6 +7,7 @@
 #include "vrfmgr.h"
 #include "exec.h"
 #include "shellcmd.h"
+#include "warm_restart.h"
 
 #define VRF_TABLE_START 1001
 #define VRF_TABLE_END 2000
@@ -58,9 +59,32 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
                 rowType = DETAILS_ROW;
                 break;
             case DETAILS_ROW:
-                table = static_cast<uint32_t>(stoul(items[6]));
-                m_vrfTableMap[vrfName] = table;
-                m_freeTables.erase(table);
+                if (WarmStart::isWarmStart())
+                {
+                    table = static_cast<uint32_t>(stoul(items[6]));
+                    m_vrfTableMap[vrfName] = table;
+                    m_freeTables.erase(table);
+                }
+                else
+                {
+                    // No deletion of mgmt table from kernel
+                    if (vrfName.compare("mgmt") == 0)
+                    { 
+                        SWSS_LOG_NOTICE("Skipping remove vrf device %s", vrfName.c_str());
+                        rowType = LINK_ROW;
+                        break;
+                    }
+
+                    SWSS_LOG_NOTICE("Remove vrf device %s", vrfName.c_str());
+                    cmd.str("");
+                    cmd.clear();
+                    cmd << IP_CMD << " link del " << vrfName;
+                    int ret = swss::exec(cmd.str(), res);
+                    if (ret)
+                    {
+                        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+                    }
+                }
                 rowType = LINK_ROW;
                 break;
         }

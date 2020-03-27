@@ -2,6 +2,7 @@
 #include <netinet/in.h>
 #include <net/if.h>
 #include <unistd.h>
+#include <netlink/cache.h>
 
 #include "logger.h"
 #include "tokenize.h"

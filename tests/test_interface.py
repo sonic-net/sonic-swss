@@ -1,8 +1,10 @@
-from swsscommon import swsscommon
-
 import time
 import json
+import pytest
 
+from swsscommon import swsscommon
+
+@pytest.mark.xfail(reason="vs image issue: Azure/sonic-sairedis#574")
 class TestRouterInterface(object):
     def setup_db(self, dvs):
         self.pdb = swsscommon.DBConnector(0, dvs.redis_sock, 0)
@@ -488,7 +490,6 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::1/128":
                 assert False
 
-
     def test_PortInterfaceAddRemoveIpv4AddressWithVrf(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -937,7 +938,6 @@ class TestRouterInterface(object):
         # remove port channel
         self.remove_port_channel("PortChannel001")
 
-
     def test_LagInterfaceSetMtu(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -1113,7 +1113,6 @@ class TestRouterInterface(object):
 
         # remove port channel
         self.remove_port_channel("PortChannel001")
-
 
     def test_LagInterfaceAddRemoveIpv4AddressWithVrf(self, dvs, testlog):
         self.setup_db(dvs)

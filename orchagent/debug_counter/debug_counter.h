@@ -4,6 +4,8 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <inttypes.h>
+
 
 extern "C" {
 #include "sai.h"

@@ -1,9 +1,10 @@
-from swsscommon import swsscommon
 import time
 import json
 import random
 import time
 import pytest
+
+from swsscommon import swsscommon
 from pprint import pprint
 
 

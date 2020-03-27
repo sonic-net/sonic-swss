@@ -7,6 +7,8 @@
 #include "intfmgr.h"
 #include "exec.h"
 #include "shellcmd.h"
+#include "macaddress.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -29,6 +31,10 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         m_stateIntfTable(stateDb, STATE_INTERFACE_TABLE_NAME),
         m_appIntfTableProducer(appDb, APP_INTF_TABLE_NAME)
 {
+    if (!WarmStart::isWarmStart())
+    {
+        flushLoopbackIntfs();
+    }
 }
 
 void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
@@ -52,6 +58,20 @@ void IntfMgr::setIntfIp(const string &alias, const string &opCmd,
         (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " broadcast " << shellquote(broadcastIpStr) << " dev " << shellquote(alias)) :
         (cmd << IP_CMD << " -6 address " << shellquote(opCmd) << " " << shellquote(ipPrefixStr) << " dev " << shellquote(alias));
     }
+
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+}
+
+void IntfMgr::setIntfMac(const string &alias, const string &mac_str)
+{
+    stringstream cmd;
+    string res;
+
+    cmd << IP_CMD << " link set " << alias << " address " << mac_str;
 
     int ret = swss::exec(cmd.str(), res);
     if (ret)
@@ -104,6 +124,28 @@ void IntfMgr::delLoopbackIntf(const string &alias)
     if (ret)
     {
         SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+    }
+}
+
+void IntfMgr::flushLoopbackIntfs()
+{
+    stringstream cmd;
+    string res;
+
+    cmd << IP_CMD << " link show type dummy | grep -o '" << LOOPBACK_PREFIX << "[^:]*'";
+
+    int ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_DEBUG("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+        return;
+    }
+
+    auto aliases = tokenize(res, '\n');
+    for (string &alias : aliases)
+    {
+        SWSS_LOG_NOTICE("Remove loopback device %s", alias.c_str());
+        delLoopbackIntf(alias);
     }
 }
 
@@ -168,124 +210,37 @@ bool IntfMgr::isIntfChangeVrf(const string &alias, const string &vrfName)
 
 void IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const string &vlan)
 {
-    // TODO: remove when validation check at mgmt is in place
-    for (const auto &c : intf)
-    {
-        if (!isalnum(c))
-        {
-            SWSS_LOG_ERROR("Invalid parent port name %s for host sub interface %s", intf.c_str(), subIntf.c_str());
-            return;
-        }
-    }
-    for (const auto &c : vlan)
-    {
-        if (!isdigit(c))
-        {
-            SWSS_LOG_ERROR("Invalid vlan id %s for host sub interface %s", vlan.c_str(), subIntf.c_str());
-            return;
-        }
-    }
-
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link add link " << intf << " name " << subIntf << " type vlan id " << vlan;
+    cmd << IP_CMD " link add link " << shellquote(intf) << " name " << shellquote(subIntf) << " type vlan id " << shellquote(vlan);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
 void IntfMgr::setHostSubIntfMtu(const string &subIntf, const string &mtu)
 {
-    // TODO: remove when validation check at mgmt is in place
-    size_t found = subIntf.find(VLAN_SUB_INTERFACE_SEPARATOR);
-    if (found == string::npos)
-    {
-        SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-        return;
-    }
-    size_t i = 0;
-    for (const auto &c : subIntf)
-    {
-        if (i < found && !isalnum(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        else if (i > found && !isdigit(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        i++;
-    }
-
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link set " << subIntf << " mtu " << mtu;
+    cmd << IP_CMD " link set " << shellquote(subIntf) << " mtu " << shellquote(mtu);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
 void IntfMgr::setHostSubIntfAdminStatus(const string &subIntf, const string &adminStatus)
 {
-    // TODO: remove when validation check at mgmt is in place
-    size_t found = subIntf.find(VLAN_SUB_INTERFACE_SEPARATOR);
-    if (found == string::npos)
-    {
-        SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-        return;
-    }
-    size_t i = 0;
-    for (const auto &c : subIntf)
-    {
-        if (i < found && !isalnum(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        else if (i > found && !isdigit(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        i++;
-    }
-
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link set " << subIntf << " " << adminStatus;
+    cmd << IP_CMD " link set " << shellquote(subIntf) << " " << shellquote(adminStatus);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
 void IntfMgr::removeHostSubIntf(const string &subIntf)
 {
-    // TODO: remove when validation check at mgmt is in place
-    size_t found = subIntf.find(VLAN_SUB_INTERFACE_SEPARATOR);
-    if (found == string::npos)
-    {
-        SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-        return;
-    }
-    size_t i = 0;
-    for (const auto &c : subIntf)
-    {
-        if (i < found && !isalnum(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        else if (i > found && !isdigit(c))
-        {
-            SWSS_LOG_ERROR("Invalid host sub interface name: %s", subIntf.c_str());
-            return;
-        }
-        i++;
-    }
-
     stringstream cmd;
     string res;
 
-    cmd << IP_CMD << " link del " << subIntf;
+    cmd << IP_CMD " link del " << shellquote(subIntf);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 }
 
@@ -386,10 +341,11 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         alias = alias.substr(0, found);
     }
     bool is_lo = !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX);
-
+    string mac = "";
     string vrf_name = "";
     string mtu = "";
     string adminStatus = "";
+    string nat_zone = "";
     for (auto idx : data)
     {
         const auto &field = fvField(idx);
@@ -399,10 +355,18 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             vrf_name = value;
         }
-
-        if (field == "admin_status")
+        else if (field == "mac_addr")
+        {
+            mac = value;
+        }
+        else if (field == "admin_status")
         {
             adminStatus = value;
+        }
+
+        if (field == "nat_zone")
+        {
+            nat_zone = value;
         }
     }
 
@@ -431,12 +395,32 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             addLoopbackIntf(alias);
         }
+        else
+        {
+            /* Set nat zone */
+            if (!nat_zone.empty())
+            {
+                FieldValueTuple fvTuple("nat_zone", nat_zone);
+                data.push_back(fvTuple);
+            }
+        }
 
         if (!vrf_name.empty())
         {
             setIntfVrf(alias, vrf_name);
         }
 
+        /*Set the mac of interface*/
+        if (!mac.empty())
+        {
+            setIntfMac(alias, mac);
+        }
+        else
+        {
+            FieldValueTuple fvTuple("mac_addr", MacAddress().to_string());
+            data.push_back(fvTuple);
+        }
+        
         if (!subIntfAlias.empty())
         {
             if (m_subIntfList.find(subIntfAlias) == m_subIntfList.end())

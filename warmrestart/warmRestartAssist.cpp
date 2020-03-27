@@ -17,19 +17,15 @@ const AppRestartAssist::cache_state_map AppRestartAssist::cacheStateMap =
     {DELETE,    "DELETE"}
 };
 
-AppRestartAssist::AppRestartAssist(RedisPipeline *pipeline,
-    const std::string &appName, const std::string &dockerName,
-    ProducerStateTable *psTable, const uint32_t defaultWarmStartTimerValue):
-    m_appTable(pipeline, APP_NEIGH_TABLE_NAME, false),
+AppRestartAssist::AppRestartAssist(RedisPipeline *pipelineAppDB, const std::string &appName,
+                                   const std::string &dockerName, const uint32_t defaultWarmStartTimerValue):
+    m_pipeLine(pipelineAppDB),
     m_appName(appName),
     m_dockerName(dockerName),
-    m_psTable(psTable),
     m_warmStartTimer(timespec{0, 0})
 {
     WarmStart::initialize(m_appName, m_dockerName);
     WarmStart::checkWarmStart(m_appName, m_dockerName);
-
-    m_appTableName = m_appTable.getTableName();
 
     /*
      * set the default timer value.
@@ -66,15 +62,25 @@ AppRestartAssist::AppRestartAssist(RedisPipeline *pipeline,
 
         m_warmStartTimer.setInterval(timespec{m_reconcileTimer, 0});
 
-        // Clear the producerstate table to make sure no pending data for the AppTable
-        m_psTable->clear();
-
         WarmStart::setWarmStartState(m_appName, WarmStart::INITIALIZED);
     }
 }
 
 AppRestartAssist::~AppRestartAssist()
 {
+    for (auto it = m_appTables.begin(); it != m_appTables.end(); it++)
+    {
+        delete (it->second);
+    }
+}
+
+void AppRestartAssist::registerAppTable(const std::string &tableName, ProducerStateTable *psTable)
+{
+    m_psTables[tableName]  = psTable;
+
+    // Clear the producerstate table to make sure no pending data for the AppTable
+    psTable->clear();
+    m_appTables[tableName] = new Table(m_pipeLine, tableName, false);
 }
 
 // join the field-value strings for straight printing.
@@ -108,40 +114,43 @@ AppRestartAssist::cache_state_t AppRestartAssist::getCacheEntryState(const std::
     throw std::logic_error("cache entry state is invalid");
 }
 
-// Read table from APPDB and append stale flag then insert to cachemap
-void AppRestartAssist::readTableToMap()
+// Read table(s) from APPDB and append stale flag then insert to cachemap
+void AppRestartAssist::readTablesToMap()
 {
     vector<string> keys;
 
-    m_appTable.getKeys(keys);
-    FieldValueTuple state(CACHE_STATE_FIELD, "");
-
-    for (const auto &key: keys)
+    for (auto it = m_appTables.begin(); it != m_appTables.end(); it++)
     {
-        vector<FieldValueTuple> fv;
+        (it->second)->getKeys(keys);
+        FieldValueTuple state(CACHE_STATE_FIELD, "");
 
-	    // if the fieldvalue is empty, skip
-        if (!m_appTable.get(key, fv))
+        for (const auto &key: keys)
         {
-            continue;
+            vector<FieldValueTuple> fv;
+
+                // if the fieldvalue is empty, skip
+            if (!(it->second)->get(key, fv))
+            {
+                continue;
+            }
+
+            fv.push_back(state);
+            setCacheEntryState(fv, STALE);
+
+            string s = joinVectorString(fv);
+
+            SWSS_LOG_INFO("write to cachemap: %s, key: %s, "
+                   "%s", (it->first).c_str(), key.c_str(), s.c_str());
+
+            // insert to the cache map
+            appTableCacheMap[it->first][key] = fv;
         }
-
-        fv.push_back(state);
-        setCacheEntryState(fv, STALE);
-
-        string s = joinVectorString(fv);
-
-        SWSS_LOG_INFO("write to cachemap: %s, key: %s, "
-               "%s", m_appTableName.c_str(), key.c_str(), s.c_str());
-
-        // insert to the cache map
-        appTableCacheMap[key] = fv;
+        WarmStart::setWarmStartState(m_appName, WarmStart::RESTORED);
+        SWSS_LOG_NOTICE("Restored appDB table to %s internal cache map", (it->first).c_str());
     }
-    WarmStart::setWarmStartState(m_appName, WarmStart::RESTORED);
-    SWSS_LOG_NOTICE("Restored appDB table to internal cache map");
     return;
 }
-
+ 
 /*
  * Check and insert to CacheMap Logic:
  * if delete_key:
@@ -154,40 +163,39 @@ void AppRestartAssist::readTableToMap()
  *    insert with "NEW" flag.
  *   }
  */
-void AppRestartAssist::insertToMap(string key, vector<FieldValueTuple> fvVector, bool delete_key)
+void AppRestartAssist::insertToMap(string tableName, string key, vector<FieldValueTuple> fvVector, bool delete_key)
 {
     SWSS_LOG_INFO("Received message %s, key: %s, "
-            "%s, delete = %d", m_appTableName.c_str(), key.c_str(), joinVectorString(fvVector).c_str(), delete_key);
+            "%s, delete = %d", tableName.c_str(), key.c_str(), joinVectorString(fvVector).c_str(), delete_key);
 
-
-    auto found = appTableCacheMap.find(key);
+    auto found = appTableCacheMap[tableName].find(key);
 
     if (delete_key)
     {
-        SWSS_LOG_NOTICE("%s, delete key: %s, ", m_appTableName.c_str(), key.c_str());
+        SWSS_LOG_NOTICE("%s, delete key: %s, ", tableName.c_str(), key.c_str());
         /* mark it as DELETE if exist, otherwise, no-op */
-        if (found != appTableCacheMap.end())
+        if (found != appTableCacheMap[tableName].end())
         {
             setCacheEntryState(found->second, DELETE);
         }
     }
-    else if (found != appTableCacheMap.end())
+    else if (found != appTableCacheMap[tableName].end())
     {
         // check only the original vector range (exclude cache-state field/value)
         if(! contains(found->second, fvVector))
         {
-            SWSS_LOG_NOTICE("%s, found key: %s, new value ", m_appTableName.c_str(), key.c_str());
+            SWSS_LOG_NOTICE("%s, found key: %s, new value ", tableName.c_str(), key.c_str());
 
             FieldValueTuple state(CACHE_STATE_FIELD, "");
             fvVector.push_back(state);
 
             // mark as NEW flag
             setCacheEntryState(fvVector, NEW);
-            appTableCacheMap[key] = fvVector;
+            appTableCacheMap[tableName][key] = fvVector;
         }
         else
         {
-            SWSS_LOG_INFO("%s, found key: %s, same value", m_appTableName.c_str(), key.c_str());
+            SWSS_LOG_INFO("%s, found key: %s, same value", tableName.c_str(), key.c_str());
 
             // mark as SAME flag
             setCacheEntryState(found->second, SAME);
@@ -196,13 +204,12 @@ void AppRestartAssist::insertToMap(string key, vector<FieldValueTuple> fvVector,
     else
     {
         // not found, mark the entry as NEW and insert to map
-        SWSS_LOG_NOTICE("%s, not found key: %s, new", m_appTableName.c_str(), key.c_str());
+        SWSS_LOG_NOTICE("%s, not found key: %s, new", tableName.c_str(), key.c_str());
         FieldValueTuple state(CACHE_STATE_FIELD, "");
         fvVector.push_back(state);
         setCacheEntryState(fvVector, NEW);
-        appTableCacheMap[key] = fvVector;
+        appTableCacheMap[tableName][key] = fvVector;
     }
-
     return;
 }
 
@@ -216,42 +223,48 @@ void AppRestartAssist::insertToMap(string key, vector<FieldValueTuple> fvVector,
  */
 void AppRestartAssist::reconcile()
 {
+    std::string tableName;
 
     SWSS_LOG_ENTER();
-    for (auto iter = appTableCacheMap.begin(); iter != appTableCacheMap.end(); ++iter )
+    for (auto tableIter = appTableCacheMap.begin(); tableIter != appTableCacheMap.end(); ++tableIter)
     {
-        string s = joinVectorString(iter->second);
-        auto state = getCacheEntryState(iter->second);
+        tableName = tableIter->first;
+        for (auto it = (tableIter->second).begin(); it != (tableIter->second).end(); ++it)
+        {
+            string s = joinVectorString(it->second);
+            auto state = getCacheEntryState(it->second);
 
-        if (state == SAME)
-        {
-            SWSS_LOG_INFO("%s SAME, key: %s, %s",
-                    m_appTableName.c_str(), iter->first.c_str(), s.c_str());
-            continue;
-        }
-        else if (state == STALE || state == DELETE)
-        {
-            SWSS_LOG_NOTICE("%s STALE/DELETE, key: %s, %s",
-                    m_appTableName.c_str(), iter->first.c_str(), s.c_str());
+            if (state == SAME)
+            {
+                SWSS_LOG_INFO("%s SAME, key: %s, %s",
+                        tableName.c_str(), it->first.c_str(), s.c_str());
+                continue;
+            }
+            else if (state == STALE || state == DELETE)
+            {
+                SWSS_LOG_NOTICE("%s STALE/DELETE, key: %s, %s",
+                        tableName.c_str(), it->first.c_str(), s.c_str());
 
-            //delete from appDB
-            m_psTable->del(iter->first);
-        }
-        else if (state == NEW)
-        {
-            SWSS_LOG_NOTICE("%s NEW, key: %s, %s",
-                    m_appTableName.c_str(), iter->first.c_str(), s.c_str());
+                //delete from appDB
+                m_psTables[tableName]->del(it->first);
+            }
+            else if (state == NEW)
+            {
+                SWSS_LOG_NOTICE("%s NEW, key: %s, %s",
+                        tableName.c_str(), it->first.c_str(), s.c_str());
 
-            //add to appDB, exclude the state
-            iter->second.pop_back();
-            m_psTable->set(iter->first, iter->second);
+                //add to appDB, exclude the state
+                it->second.pop_back();
+                m_psTables[tableName]->set(it->first, it->second);
+            }
+            else
+            {
+                throw std::logic_error("cache entry state is invalid");
+            }
         }
-        else
-        {
-            throw std::logic_error("cache entry state is invalid");
-        }
+        // reconcile finished, clear the map, mark the warmstart state
+        appTableCacheMap[tableName].clear();
     }
-    // reconcile finished, clear the map, mark the warmstart state
     appTableCacheMap.clear();
     WarmStart::setWarmStartState(m_appName, WarmStart::RECONCILED);
     m_warmStartInProgress = false;

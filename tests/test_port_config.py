@@ -1,8 +1,10 @@
-from swsscommon import swsscommon
 import redis
 import time
 import os
 import pytest
+
+from swsscommon import swsscommon
+
 
 @pytest.yield_fixture
 def port_config(request, dvs):
@@ -10,6 +12,7 @@ def port_config(request, dvs):
     dvs.runcmd("cp %s %s.bak" % (file_name, file_name))
     yield file_name
     dvs.runcmd("mv %s.bak %s" % (file_name, file_name))
+
 
 class TestPortConfig(object):
 
@@ -33,25 +36,25 @@ class TestPortConfig(object):
         asic_r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB)
         return asic_r.hget("RIDTOVID", port_rid);
 
-
     def test_port_hw_lane(self, dvs):
 
         app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        port_tbl = swsscommon.Table(app_db, "PORT_TABLE")
+        app_db_ptbl = swsscommon.Table(app_db, "PORT_TABLE")
+        asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        asic_db_lanes_tbl = swsscommon.Table(asic_db, "LANES")
 
-        asic_r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB)
-        num_lanes = asic_r.hlen("LANES")
-        for i in range(1, num_lanes+1):
-            port_rid = asic_r.hget("LANES", i)
+        lanes = asic_db_lanes_tbl.get('')[1]
+        num_lanes = len(lanes)
+        for lane in lanes:
+            lane_num = lane[0];
+            port_rid = lane[1];
             port_vid = self.getVIDfromRID(dvs, port_rid)
             port_name = self.getPortName(dvs, port_vid)
-
-            (status, fvs) = port_tbl.get(port_name)
+            (status, fvs) = app_db_ptbl.get(port_name)
             assert status == True
             for fv in fvs:
                 if fv[0] == "lanes":
-                    assert str(i) in list(fv[1].split(","))
-
+                    assert str(lane_num) in list(fv[1].split(","))
 
     def test_port_breakout(self, dvs, port_config):
 

@@ -3,6 +3,8 @@
 #include "logger.h"
 #include "sai_serialize.h"
 
+#include <vector>
+
 using std::runtime_error;
 using std::string;
 using std::unordered_map;
@@ -11,6 +13,9 @@ using std::vector;
 
 extern sai_object_id_t gSwitchId;
 extern sai_debug_counter_api_t *sai_debug_counter_api;
+
+#define INGRESS_DROP_REASON_PREFIX_LENGTH 19 // "SAI_IN_DROP_REASON_"
+#define EGRESS_DROP_REASON_PREFIX_LENGTH  20 // "SAI_OUT_DROP_REASON_"
 
 const unordered_map<string, sai_in_drop_reason_t> DropCounter::ingress_drop_reason_lookup =
 {
@@ -290,7 +295,7 @@ void DropCounter::updateDropReasonsInSAI()
 //
 // If the device does not support querying drop reasons, this method will
 // return an empty list.
-vector<string> DropCounter::getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type)
+unordered_set<string> DropCounter::getSupportedDropReasons(sai_debug_counter_attr_t drop_reason_type)
 {
     sai_s32_list_t drop_reason_list;
     int32_t        supported_reasons[maxDropReasons];
@@ -306,20 +311,22 @@ vector<string> DropCounter::getSupportedDropReasons(sai_debug_counter_attr_t dro
         return {};
     }
 
-    vector<string> supported_drop_reasons;
+    unordered_set<string> supported_drop_reasons;
     for (uint32_t i = 0; i < drop_reason_list.count; i++)
     {
         string drop_reason;
         if (drop_reason_type == SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST)
         {
             drop_reason = sai_serialize_ingress_drop_reason(static_cast<sai_in_drop_reason_t>(drop_reason_list.list[i]));
+            drop_reason = drop_reason.substr(INGRESS_DROP_REASON_PREFIX_LENGTH);
         }
         else
         {
             drop_reason = sai_serialize_egress_drop_reason(static_cast<sai_out_drop_reason_t>(drop_reason_list.list[i]));
+            drop_reason = drop_reason.substr(EGRESS_DROP_REASON_PREFIX_LENGTH);
         }
 
-        supported_drop_reasons.push_back(drop_reason);
+        supported_drop_reasons.emplace(drop_reason);
     }
 
     return supported_drop_reasons;
@@ -330,7 +337,7 @@ vector<string> DropCounter::getSupportedDropReasons(sai_debug_counter_attr_t dro
 //
 // e.g. { "SMAC_EQUALS_DMAC", "INGRESS_VLAN_FILTER" } -> "["SMAC_EQUALS_DMAC","INGRESS_VLAN_FILTER"]"
 // e.g. { } -> "[]"
-string DropCounter::serializeSupportedDropReasons(vector<string> drop_reasons)
+string DropCounter::serializeSupportedDropReasons(unordered_set<string> drop_reasons)
 {
     if (drop_reasons.size() == 0)
     {
@@ -338,7 +345,7 @@ string DropCounter::serializeSupportedDropReasons(vector<string> drop_reasons)
     }
 
     string supported_drop_reasons;
-    for (auto const &drop_reason : drop_reasons)
+    for (auto const& drop_reason : drop_reasons)
     {
         supported_drop_reasons += ',';
         supported_drop_reasons += drop_reason;

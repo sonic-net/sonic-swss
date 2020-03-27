@@ -1,6 +1,7 @@
 import pytest
 import time
 import json
+
 from swsscommon import swsscommon
 
 CFG_VLAN_SUB_INTF_TABLE_NAME = "VLAN_SUB_INTERFACE"

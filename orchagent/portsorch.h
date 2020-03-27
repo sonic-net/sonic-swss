@@ -9,6 +9,7 @@
 #include "observer.h"
 #include "macaddress.h"
 #include "producertable.h"
+#include "flex_counter_manager.h"
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
@@ -19,7 +20,6 @@
 
 
 typedef std::vector<sai_uint32_t> PortSupportedSpeeds;
-
 
 static const map<sai_port_oper_status_t, string> oper_status_strings =
 {
@@ -77,9 +77,24 @@ public:
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
-    bool createBindAclTableGroup(sai_object_id_t id, sai_object_id_t &group_oid, acl_stage_type_t acl_stage = ACL_STAGE_EGRESS);
-    bool bindAclTable(sai_object_id_t id, sai_object_id_t table_oid, sai_object_id_t &group_member_oid, acl_stage_type_t acl_stage = ACL_STAGE_INGRESS);
-
+    bool createBindAclTableGroup(sai_object_id_t  port_oid,
+                   sai_object_id_t  acl_table_oid,
+                   sai_object_id_t  &group_oid,
+                   acl_stage_type_t acl_stage = ACL_STAGE_EGRESS);
+    bool unbindRemoveAclTableGroup(sai_object_id_t  port_oid,
+                                   sai_object_id_t  acl_table_oid,
+                                   acl_stage_type_t acl_stage);
+    bool bindAclTable(sai_object_id_t  id,
+                      sai_object_id_t  table_oid,
+                      sai_object_id_t  &group_member_oid,
+                      acl_stage_type_t acl_stage = ACL_STAGE_INGRESS);
+    bool unbindAclTable(sai_object_id_t  port_oid,
+                        sai_object_id_t  acl_table_oid,
+                        sai_object_id_t  acl_group_member_oid,
+                        acl_stage_type_t acl_stage);
+    bool bindUnbindAclTableGroup(Port &port,
+                                 bool ingress,
+     bool bind);
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
     bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
 
@@ -93,6 +108,7 @@ public:
     bool removeSubPort(const string &alias);
 private:
     unique_ptr<Table> m_counterTable;
+    unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
@@ -104,13 +120,14 @@ private:
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
-    std::string getQueueFlexCounterTableKey(std::string s);
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
-    std::string getPortFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
 
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
+
+    FlexCounterManager port_stat_manager;
+    FlexCounterManager queue_stat_manager;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;
 
@@ -135,9 +152,9 @@ private:
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
 
-	
     NotificationConsumer* m_portStatusNotificationConsumer;
 
+    void doTask() override;
     void doTask(Consumer &consumer);
     void doPortTask(Consumer &consumer);
     void doVlanTask(Consumer &consumer);
@@ -147,6 +164,8 @@ private:
 
     void doTask(NotificationConsumer &consumer);
 
+    void removePortFromLanesMap(string alias);
+    void removePortFromPortListMap(sai_object_id_t port_id);
     void removeDefaultVlanMembers();
     void removeDefaultBridgePorts();
 
@@ -170,11 +189,14 @@ private:
     bool removeLag(Port lag);
     bool addLagMember(Port &lag, Port &port);
     bool removeLagMember(Port &lag, Port &port);
+    bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
+    bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
     void getLagMember(Port &lag, vector<Port> &portv);
 
     bool addPort(const set<int> &lane_set, uint32_t speed, int an=0, string fec="");
-    bool removePort(sai_object_id_t port_id);
+    sai_status_t removePort(sai_object_id_t port_id);
     bool initPort(const string &alias, const set<int> &lane_set);
+    void deInitPort(string alias, sai_object_id_t port_id);
 
     bool setPortAdminStatus(sai_object_id_t id, bool up);
     bool getPortAdminStatus(sai_object_id_t id, bool& up);
@@ -210,6 +232,8 @@ private:
 
     bool setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
                                 vector<uint32_t> &serdes_val);
+    bool getSaiAclBindPointType(Port::Type                type,
+                                sai_acl_bind_point_type_t &sai_acl_bind_type);
 };
 #endif /* SWSS_PORTSORCH_H */
 

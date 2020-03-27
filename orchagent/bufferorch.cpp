@@ -562,6 +562,11 @@ task_process_status BufferOrch::processQueue(Consumer &consumer)
                 SWSS_LOG_ERROR("Invalid queue index specified:%zd", ind);
                 return task_process_status::task_invalid_entry;
             }
+            if (port.m_queue_lock[ind])
+            {
+                SWSS_LOG_WARN("Queue %zd on port %s is locked, will retry", ind, port_name.c_str());
+                return task_process_status::task_need_retry;
+            }
             queue_id = port.m_queue_ids[ind];
             SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to queue index:%zd, queue sai_id:0x%" PRIx64, sai_buffer_profile, ind, queue_id);
             sai_status_t sai_status = sai_queue_api->set_queue_attribute(queue_id, &attr);
@@ -660,6 +665,11 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
             {
                 SWSS_LOG_ERROR("Invalid pg index specified:%zd", ind);
                 return task_process_status::task_invalid_entry;
+            }
+            if (port.m_priority_group_lock[ind])
+            {
+                SWSS_LOG_WARN("Priority group %zd on port %s is locked, will retry", ind, port_name.c_str());
+                return task_process_status::task_need_retry;
             }
             pg_id = port.m_priority_group_ids[ind];
             SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to port:%s pg index:%zd, pg sai_id:0x%" PRIx64, sai_buffer_profile, port_name.c_str(), ind, pg_id);

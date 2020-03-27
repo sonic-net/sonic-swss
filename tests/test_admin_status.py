@@ -1,5 +1,8 @@
-from swsscommon import swsscommon
 import time
+import pytest
+
+from swsscommon import swsscommon
+
 
 class TestAdminStatus(object):
     def setup_db(self, dvs):

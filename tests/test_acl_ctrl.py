@@ -1,6 +1,8 @@
+import time
+import pytest
+
 from swsscommon import swsscommon
 
-import time
 
 class TestPortChannelAcl(object):
     def setup_db(self, dvs):
