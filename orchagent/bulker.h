@@ -10,7 +10,6 @@
 #include <sairedis.h>
 #include "sai.h"
 
-/*
 static inline bool operator==(const sai_ip_prefix_t& a, const sai_ip_prefix_t& b)
 {
     if (a.addr_family != b.addr_family) return false;
@@ -40,7 +39,6 @@ static inline bool operator==(const sai_route_entry_t& a, const sai_route_entry_
         && a.destination == b.destination
         ;
 }
-*/
 
 static inline std::size_t hash_value(const sai_ip_prefix_t& a)
 {
@@ -177,19 +175,33 @@ public:
     }
 
     sai_status_t create_entry(
+        _Out_ sai_status_t *object_status,
         _In_ const Te *entry,
         _In_ uint32_t attr_count,
         _In_ const sai_attribute_t *attr_list)
     {
         auto rc = creating_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
-                std::forward_as_tuple(attr_list, attr_list + attr_count));
+                std::forward_as_tuple());
+        auto it = rc.first;
         bool inserted = rc.second;
-        SWSS_LOG_DEBUG("bulk.create_entry %zu, %zu, %d, %d\n", creating_entries.size(), creating_entries[*entry].size(), (int)creating_entries[*entry][0].id, inserted);
-        return inserted ? SAI_STATUS_NOT_EXECUTED : SAI_STATUS_ITEM_ALREADY_EXISTS;
+        if (!inserted)
+        {
+            SWSS_LOG_DEBUG("bulk.create_entry not inserted %zu\n", creating_entries.size());
+            *object_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
+            return *object_status;
+        }
+        
+        auto& attrs = it->second.first;
+        attrs.insert(attrs.end(), attr_list, attr_list + attr_count);
+        it->second.second = object_status;
+        SWSS_LOG_DEBUG("bulk.create_entry %zu, %zu, %d, %d\n", creating_entries.size(), it->second.first.size(), (int)it->second.first[0].id, inserted);
+        *object_status = SAI_STATUS_NOT_EXECUTED;
+        return *object_status;
     }
 
     sai_status_t remove_entry(
+        _Out_ sai_status_t *object_status,
         _In_ const Te *entry)
     {
         assert(entry);
@@ -205,14 +217,14 @@ public:
         if (found_creating != creating_entries.end())
         {
             creating_entries.erase(found_creating);
-            return SAI_STATUS_SUCCESS;
+            *object_status = SAI_STATUS_SUCCESS;
+            return *object_status;
         }
-        else
-        {
-            removing_entries.emplace(*entry);
-            return SAI_STATUS_NOT_EXECUTED;
-        }
-
+        removing_entries.emplace(std::piecewise_construct,
+                std::forward_as_tuple(*entry),
+                std::forward_as_tuple(object_status));
+        *object_status = SAI_STATUS_NOT_EXECUTED;
+        return *object_status;
     }
 
     sai_status_t set_entry_attribute(
@@ -318,9 +330,18 @@ public:
     }
 
 private:
-    std::unordered_map<Te, std::vector<sai_attribute_t>>     creating_entries;
-    std::unordered_map<Te, std::vector<sai_attribute_t>>     setting_entries;
-    std::unordered_set<Te>                                   removing_entries;
+    std::unordered_map<
+            Te,
+            std::pair<
+                    std::vector<sai_attribute_t>,
+                    sai_status_t *
+            >
+    >                                                       creating_entries;
+    std::unordered_map<Te, std::vector<sai_attribute_t>>    setting_entries;
+    std::unordered_map<
+            Te,
+            sai_status_t *
+    >                                                       removing_entries;
     
     typename Ts::bulk_create_entry_fn                       create_entries;
     typename Ts::bulk_remove_entry_fn                       remove_entries;
@@ -494,6 +515,7 @@ public:
     void clear()
     {
         removing_entries.clear();
+        removing_statuses.clear();
         creating_entries.clear();
         setting_entries.clear();
     }
@@ -521,7 +543,7 @@ private:
     std::unordered_map<                                     // An map of
             sai_object_id_t,                                // object_id -> (object_status, attributes)
             std::pair<
-                    sai_status_t,
+                    sai_status_t *,
                     std::vector<sai_attribute_t>
             >
     >                                                       setting_entries;
