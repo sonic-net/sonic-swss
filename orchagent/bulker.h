@@ -234,11 +234,13 @@ public:
         _In_ const Te *entry,
         _In_ const sai_attribute_t *attr)
     {
+        // Insert or find the key (entry)
         auto attrmap = setting_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
                 std::forward_as_tuple()
         ).first->second;
         
+        // Insert or find the key (attr)
         auto rc = attrmap.emplace(std::piecewise_construct,
                 std::forward_as_tuple(attr->id),
                 std::forward_as_tuple());
@@ -279,7 +281,10 @@ public:
             {
                 auto& entry = rs[ir];
                 sai_status_t *object_status = removing_entries[entry];
-                *object_status = statuses[ir];
+                if (object_status)
+                {
+                    *object_status = statuses[ir];
+                }
             }
             removing_entries.clear();
         }
@@ -310,7 +315,10 @@ public:
             {
                 auto& entry = rs[ir];
                 sai_status_t *object_status = creating_entries[entry].second;
-                *object_status = statuses[ir];
+                if (object_status)
+                {
+                    *object_status = statuses[ir];
+                }
             }
             creating_entries.clear();
         }
@@ -342,7 +350,10 @@ public:
                 auto& entry = rs[ir];
                 auto& attr_id = ts[ir].id;
                 sai_status_t *object_status = setting_entries[entry][attr_id].second;
-                *object_status = statuses[ir];
+                if (object_status)
+                {
+                    *object_status = statuses[ir];
+                }
             }
             setting_entries.clear();
         }
@@ -483,7 +494,11 @@ public:
 
             for (size_t i = 0; i < count; i++)
             {
-                *removing_statuses[i] = statuses[i];
+                sai_status_t *object_status = removing_statuses[i];
+                if (object_status)
+                {
+                    *object_status = statuses[i];
+                }
             }
             removing_entries.clear();
             removing_statuses.clear();
