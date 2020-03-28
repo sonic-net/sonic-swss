@@ -1028,7 +1028,12 @@ bool RouteOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
         route_attr.value.oid = next_hop_id;
 
         /* Default SAI_ROUTE_ATTR_PACKET_ACTION is SAI_PACKET_ACTION_FORWARD */
-        sai_status_t status = sai_route_api->create_route_entry(&route_entry, 1, &route_attr);
+        //sai_status_t status = sai_route_api->create_route_entry(&route_entry, 1, &route_attr);
+        sai_status_t object_status;
+        sai_status_t status = gRouteBulker.create_entry(&object_status, &route_entry, 1, &route_attr);
+        gRouteBulker.flush();
+        status = object_status;
+        
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s",
@@ -1065,7 +1070,12 @@ bool RouteOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
             route_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
             route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
-            status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+            //status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+            sai_status_t object_status;
+            status = gRouteBulker.set_entry_attribute(&object_status, &route_entry, &route_attr);
+            gRouteBulker.flush();
+            status = object_status;
+            
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to set route %s with packet action forward, %d",
@@ -1078,7 +1088,11 @@ bool RouteOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
         route_attr.value.oid = next_hop_id;
 
         /* Set the next hop ID to a new value */
-        status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+        sai_status_t object_status;
+        status = gRouteBulker.set_entry_attribute(&object_status, &route_entry, &route_attr);
+        gRouteBulker.flush();
+        status = object_status;
+        
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to set route %s with next hop(s) %s",
@@ -1161,7 +1175,12 @@ bool RouteOrch::removeRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
     }
     else
     {
-        sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
+        //sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
+        sai_status_t object_status;
+        sai_status_t status = gRouteBulker.remove_entry(&object_status, &route_entry);
+        gRouteBulker.flush();
+        status = object_status;
+        
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to remove route prefix:%s\n", ipPrefix.to_string().c_str());
