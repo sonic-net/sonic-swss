@@ -229,7 +229,7 @@ public:
         return *object_status;
     }
 
-    sai_status_t set_entry_attribute(
+    void set_entry_attribute(
         _Out_ sai_status_t *object_status,
         _In_ const Te *entry,
         _In_ const sai_attribute_t *attr)
@@ -252,12 +252,11 @@ public:
         it->second.first = *attr;
         if (!inserted)
         {
-            // If found existing key, mark old status as done
+            // If found existing key, mark old status as success
             *it->second.second = SAI_STATUS_SUCCESS;
         }
         it->second.second = object_status;
         *object_status = SAI_STATUS_NOT_EXECUTED;
-        return *object_status;
     }
 
     void flush()
@@ -430,7 +429,7 @@ public:
         _In_ uint32_t attr_count,
         _In_ const sai_attribute_t *attr_list)
     {
-        creating_entries.emplace_back(std::piecewise_construct,  std::forward_as_tuple(object_id), std::forward_as_tuple(attr_list, attr_list + attr_count));
+        creating_entries.emplace_back(std::piecewise_construct, std::forward_as_tuple(object_id), std::forward_as_tuple(attr_list, attr_list + attr_count));
         
         auto last_attrs = std::get<1>(creating_entries.back());
         SWSS_LOG_DEBUG("bulk.create_entry %zu, %zu, %u\n", creating_entries.size(), last_attrs.size(), last_attrs[0].id);
