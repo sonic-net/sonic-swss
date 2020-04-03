@@ -220,11 +220,15 @@ public:
             // TODO: mark old ones as done
             creating_entries.erase(found_creating);
             *object_status = SAI_STATUS_SUCCESS;
+            SWSS_LOG_INFO("EntityBulker.remove_entry quickly removed %zu, creating_entries.size=%zu\n", removing_entries.size(), creating_entries.size());
             return *object_status;
         }
-        removing_entries.emplace(std::piecewise_construct,
+        auto rc = removing_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
                 std::forward_as_tuple(object_status));
+        bool inserted = rc.second;
+        SWSS_LOG_INFO("EntityBulker.remove_entry %zu, %d\n", removing_entries.size(), inserted);
+                
         *object_status = SAI_STATUS_NOT_EXECUTED;
         return *object_status;
     }
@@ -235,7 +239,7 @@ public:
         _In_ const sai_attribute_t *attr)
     {
         // Insert or find the key (entry)
-        auto attrmap = setting_entries.emplace(std::piecewise_construct,
+        auto& attrmap = setting_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
                 std::forward_as_tuple()
         ).first->second;
@@ -266,7 +270,7 @@ public:
         {
             vector<Te> rs;
             
-            for (auto i: removing_entries)
+            for (auto& i: removing_entries)
             {
                 auto& entry = i.first;
                 rs.push_back(entry);
@@ -342,7 +346,7 @@ public:
             vector<sai_status_t> statuses(count);
             (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
                 , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
-            SWSS_LOG_NOTICE("EntityBulker.flush setting_entries %zu\n", setting_entries.size());
+            SWSS_LOG_NOTICE("EntityBulker.flush setting_entries %zu, count %zu\n", setting_entries.size(), count);
 
             for (size_t ir = 0; ir < count; ir++)
             {
@@ -431,8 +435,8 @@ public:
     {
         creating_entries.emplace_back(std::piecewise_construct, std::forward_as_tuple(object_id), std::forward_as_tuple(attr_list, attr_list + attr_count));
         
-        auto last_attrs = std::get<1>(creating_entries.back());
-        SWSS_LOG_DEBUG("bulk.create_entry %zu, %zu, %u\n", creating_entries.size(), last_attrs.size(), last_attrs[0].id);
+        auto& last_attrs = std::get<1>(creating_entries.back());
+        SWSS_LOG_INFO("ObjectBulker.create_entry %zu, %zu, %u\n", creating_entries.size(), last_attrs.size(), last_attrs[0].id);
         
         *object_id = SAI_NULL_OBJECT_ID; // not created immediately, postponed until flush
         return SAI_STATUS_NOT_EXECUTED;
@@ -524,7 +528,7 @@ public:
 
             for (size_t i = 0; i < count; i++)
             {
-                auto pid = std::get<0>(creating_entries[i]);
+                sai_object_id_t *pid = std::get<0>(creating_entries[i]);
                 *pid = (statuses[i] == SAI_STATUS_SUCCESS) ? object_ids[i] : SAI_NULL_OBJECT_ID;
             }
 

@@ -91,17 +91,29 @@ private:
 
     NextHopObserverTable m_nextHopObservers;
 
-    void addTempRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool removeRoute(sai_object_id_t, const IpPrefix&);
+    using StatusInserter = std::deque<sai_status_t>&;
+    std::map<
+            std::pair<
+                    std::string,            // Key
+                    std::string             // Op
+            >,
+            std::deque<sai_status_t>        // Bulk statuses
+    >                                       m_toBulk;
+    
+    EntityBulker<sai_route_api_t>           gRouteBulker;
+    //EntityBulker<sai_fdb_api_t> gFdbBulker;
+    ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulkder;
+    
+    bool addTempRoute(StatusInserter object_statuses, sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
+    bool addRoute(StatusInserter object_statuses, sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
+    bool addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
+    bool removeRoute(StatusInserter object_statuses, sai_object_id_t, const IpPrefix&);
+    bool removeRoutePost(StatusInserter object_statuses, sai_object_id_t, const IpPrefix&);
 
     std::string getLinkLocalEui64Addr(void);
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
 
     void doTask(Consumer& consumer);
-    EntityBulker<sai_route_api_t> gRouteBulker;
-    //EntityBulker<sai_fdb_api_t> gFdbBulker;
-    ObjectBulker<sai_next_hop_group_api_t> gNextHopGroupMemberBulkder;
 };
 
 #endif /* SWSS_ROUTEORCH_H */
