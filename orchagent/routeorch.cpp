@@ -492,10 +492,8 @@ void RouteOrch::doTask(Consumer& consumer)
             {
                 /* If any existing routes are updated to point to the
                  * above interfaces, remove them from the ASIC. */
-                if (removeRoute(object_statuses, vrf_id, ip_prefix))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
+                removeRoute(object_statuses, vrf_id, ip_prefix);
+                it++;
                 continue;
             }
 
@@ -533,20 +531,16 @@ void RouteOrch::doTask(Consumer& consumer)
                 /* subnet route, vrf leaked route, etc */
                 else
                 {
-                    if (addRoute(object_statuses, vrf_id, ip_prefix, nhg))
-                        it = consumer.m_toSync.erase(it);
-                    else
-                        it++;
+                    addRoute(object_statuses, vrf_id, ip_prefix, nhg);
+                    it++;
                 }
             }
             else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
                 m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                 m_syncdRoutes.at(vrf_id).at(ip_prefix) != nhg)
             {
-                if (addRoute(object_statuses, vrf_id, ip_prefix, nhg))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
+                addRoute(object_statuses, vrf_id, ip_prefix, nhg);
+                it++;
             }
             else
                 /* Duplicate entry */
@@ -554,11 +548,8 @@ void RouteOrch::doTask(Consumer& consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            /* Cannot locate the route or remove succeed */
-            if (removeRoute(object_statuses, vrf_id, ip_prefix))
-                it = consumer.m_toSync.erase(it);
-            else
-                it++;
+            removeRoute(object_statuses, vrf_id, ip_prefix);
+            it++;
         }
         else
         {
