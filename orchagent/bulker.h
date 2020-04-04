@@ -198,15 +198,24 @@ public:
         auto found_setting = setting_entries.find(*entry);
         if (found_setting != setting_entries.end())
         {
-            // TODO: mark old ones as done
+            // Mark old one as done
+            auto& attrmap = found_setting->second;
+            for (auto& attr: attrmap)
+            {
+                *attr.second.second = SAI_STATUS_SUCCESS;
+            }
+            // Erase old one
             setting_entries.erase(found_setting);
         }
 
         auto found_creating = creating_entries.find(*entry);
         if (found_creating != creating_entries.end())
         {
-            // TODO: mark old ones as done
+            // Mark old ones as done
+            *found_creating->second.second = SAI_STATUS_SUCCESS;
+            // Erase old one
             creating_entries.erase(found_creating);
+            // No need to keep in bulker, claim success immediately
             *object_status = SAI_STATUS_SUCCESS;
             SWSS_LOG_INFO("EntityBulker.remove_entry quickly removed %zu, creating_entries.size=%zu\n", removing_entries.size(), creating_entries.size());
             return *object_status;
