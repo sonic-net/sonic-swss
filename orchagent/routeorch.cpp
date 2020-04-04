@@ -1266,7 +1266,7 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
 
         /* Increase the ref_count for the next hop (group) entry */
         increaseNextHopRefCount(nextHops);
-        SWSS_LOG_NOTICE("Create route %s with next hop(s) %s",
+        SWSS_LOG_NOTICE("Post create route %s with next hop(s) %s",
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
     else
@@ -1296,7 +1296,7 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
         {
             removeNextHopGroup(it_route->second);
         }
-        SWSS_LOG_INFO("Set route %s with next hop(s) %s",
+        SWSS_LOG_NOTICE("Post set route %s with next hop(s) %s",
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
 
