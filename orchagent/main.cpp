@@ -233,7 +233,7 @@ int main(int argc, char **argv)
         SWSS_LOG_ERROR("Failed to create a switch, rv:%d", status);
         exit(EXIT_FAILURE);
     }
-    SWSS_LOG_NOTICE("Create a switch");
+    SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
     /* Get switch source MAC address if not provided */
     if (!gMacAddress)

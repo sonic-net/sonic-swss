@@ -118,6 +118,7 @@ class TestRoute(object):
 
         # check ASIC route database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        route_found = False
         for key in tbl.getKeys():
             route = json.loads(key)
             if route["dest"] == "2.2.2.0/24":
@@ -195,6 +196,7 @@ class TestRoute(object):
 
         # check ASIC route database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        route_found = False
         for key in tbl.getKeys():
             route = json.loads(key)
             if route["dest"] == "3000::/64":
