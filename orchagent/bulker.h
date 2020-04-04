@@ -369,6 +369,21 @@ public:
         setting_entries.clear();
     }
 
+    size_t creating_entries_count()
+    {
+        return creating_entries.size();
+    }
+    
+    size_t setting_entries_count()
+    {
+        return setting_entries.size();
+    }
+    
+    size_t removing_entries_count()
+    {
+        return removing_entries.size();
+    }
+
 private:
     std::unordered_map<
             Te,
@@ -571,6 +586,21 @@ public:
         removing_statuses.clear();
         creating_entries.clear();
         setting_entries.clear();
+    }
+
+    size_t creating_entries_count()
+    {
+        return creating_entries.size();
+    }
+    
+    size_t setting_entries_count()
+    {
+        return setting_entries.size();
+    }
+    
+    size_t removing_entries_count()
+    {
+        return removing_entries.size();
     }
 
 private:

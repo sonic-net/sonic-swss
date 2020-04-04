@@ -505,6 +505,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
             NextHopGroupKey nhg(nhg_str);
 
+            bool addedRoute = false;
             if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
             {
                 /* blackhole to be done */
@@ -531,7 +532,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 /* subnet route, vrf leaked route, etc */
                 else
                 {
-                    addRoute(object_statuses, vrf_id, ip_prefix, nhg);
+                    addedRoute = addRoute(object_statuses, vrf_id, ip_prefix, nhg);
                     it++;
                 }
             }
@@ -539,12 +540,22 @@ void RouteOrch::doTask(Consumer& consumer)
                 m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                 m_syncdRoutes.at(vrf_id).at(ip_prefix) != nhg)
             {
-                addRoute(object_statuses, vrf_id, ip_prefix, nhg);
+                addedRoute = addRoute(object_statuses, vrf_id, ip_prefix, nhg);
                 it++;
             }
             else
                 /* Duplicate entry */
                 it = consumer.m_toSync.erase(it);
+                
+            // If just added a route, and already exhaust the nexthop groups, and there are pending removing routes in bulker,
+            // flush the bulker and possibly collect some released nexthop groups
+            if (addedRoute
+                && m_nextHopGroupCount >= m_maxNextHopGroupCount
+                && gRouteBulker.removing_entries_count() > 0
+                )
+            {
+                break;
+            }
         }
         else if (op == DEL_COMMAND)
         {
