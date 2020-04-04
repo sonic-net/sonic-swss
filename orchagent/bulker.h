@@ -175,7 +175,7 @@ public:
         bool inserted = rc.second;
         if (!inserted)
         {
-            SWSS_LOG_DEBUG("bulk.create_entry not inserted %zu\n", creating_entries.size());
+            SWSS_LOG_INFO("EntityBulker.create_entry not inserted %zu\n", creating_entries.size());
             *object_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
             return *object_status;
         }
@@ -183,7 +183,7 @@ public:
         auto& attrs = it->second.first;
         attrs.insert(attrs.end(), attr_list, attr_list + attr_count);
         it->second.second = object_status;
-        SWSS_LOG_DEBUG("bulk.create_entry %zu, %zu, %d, %d\n", creating_entries.size(), it->second.first.size(), (int)it->second.first[0].id, inserted);
+        SWSS_LOG_INFO("EntityBulker.create_entry %zu, %zu, %d, %d\n", creating_entries.size(), it->second.first.size(), (int)it->second.first[0].id, inserted);
         *object_status = SAI_STATUS_NOT_EXECUTED;
         return *object_status;
     }
@@ -266,7 +266,7 @@ public:
             size_t count = rs.size();
             vector<sai_status_t> statuses(count);
             (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
-            SWSS_LOG_NOTICE("EntityBulker.flush removing_entries %zu\n", removing_entries.size());
+            SWSS_LOG_INFO("EntityBulker.flush removing_entries %zu\n", removing_entries.size());
 
             for (size_t ir = 0; ir < count; ir++)
             {
@@ -300,7 +300,7 @@ public:
             vector<sai_status_t> statuses(count);
             (*create_entries)((uint32_t)count, rs.data(), cs.data(), tss.data()
                 , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
-            SWSS_LOG_NOTICE("EntityBulker.flush creating_entries %zu\n", creating_entries.size());
+            SWSS_LOG_INFO("EntityBulker.flush creating_entries %zu\n", creating_entries.size());
 
             for (size_t ir = 0; ir < count; ir++)
             {
@@ -334,7 +334,7 @@ public:
             vector<sai_status_t> statuses(count);
             (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
                 , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
-            SWSS_LOG_NOTICE("EntityBulker.flush setting_entries %zu, count %zu\n", setting_entries.size(), count);
+            SWSS_LOG_INFO("EntityBulker.flush setting_entries %zu, count %zu\n", setting_entries.size(), count);
 
             for (size_t ir = 0; ir < count; ir++)
             {
@@ -343,6 +343,7 @@ public:
                 sai_status_t *object_status = setting_entries[entry][attr_id].second;
                 if (object_status)
                 {
+                    SWSS_LOG_INFO("EntityBulker.flush setting_entries status[%zu]=%d(0x%8p)\n", ir, statuses[ir], object_status);
                     *object_status = statuses[ir];
                 }
             }
@@ -498,7 +499,7 @@ public:
             size_t count = removing_entries.size();
             vector<sai_status_t> statuses(count);
             sai_status_t status = (*remove_entries)((uint32_t)count, removing_entries.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
-            SWSS_LOG_NOTICE("ObjectBulker.flush removing_entries %zu rc=%d statuses[0]=%d\n", removing_entries.size(), status, statuses[0]);
+            SWSS_LOG_INFO("ObjectBulker.flush removing_entries %zu rc=%d statuses[0]=%d\n", removing_entries.size(), status, statuses[0]);
 
             for (size_t i = 0; i < count; i++)
             {
@@ -529,7 +530,7 @@ public:
             vector<sai_status_t> statuses(count);
             (*create_entries)(switch_id, (uint32_t)count, cs.data(), tss.data()
                 , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, object_ids.data(), statuses.data());
-            SWSS_LOG_NOTICE("ObjectBulker.flush creating_entries %zu\n", creating_entries.size());
+            SWSS_LOG_INFO("ObjectBulker.flush creating_entries %zu\n", creating_entries.size());
 
             for (size_t i = 0; i < count; i++)
             {
@@ -563,7 +564,7 @@ public:
             (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
                 , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
 
-            SWSS_LOG_NOTICE("ObjectBulker.flush setting_entries %zu\n", setting_entries.size());
+            SWSS_LOG_INFO("ObjectBulker.flush setting_entries %zu\n", setting_entries.size());
 
             setting_entries.clear();
         }
