@@ -101,7 +101,6 @@ private:
     >                                       m_toBulk;
 
     EntityBulker<sai_route_api_t>           gRouteBulker;
-    //EntityBulker<sai_fdb_api_t> gFdbBulker;
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulkder;
 
     bool addTempRoute(StatusInserter object_statuses, sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);

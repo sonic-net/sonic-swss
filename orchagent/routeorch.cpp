@@ -25,7 +25,6 @@ const int routeorch_pri = 5;
 
 RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
         gRouteBulker(sai_route_api),
-        //gFdbBulker(sai_fdb_api),
         gNextHopGroupMemberBulkder(sai_next_hop_group_api, gSwitchId),
         Orch(db, tableName, routeorch_pri),
         m_neighOrch(neighOrch),
@@ -897,7 +896,6 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
     size_t npid_count = next_hop_ids.size();
     vector<sai_object_id_t> nhgm_ids(npid_count);
     for (size_t i = 0; i < npid_count; i++)
-    //for (auto nhid: next_hop_ids)
     {
         auto nhid = next_hop_ids[i];
 
@@ -913,14 +911,9 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         nhgm_attr.value.oid = nhid;
         nhgm_attrs.push_back(nhgm_attr);
 
-        //sai_object_id_t next_hop_group_member_id;
         gNextHopGroupMemberBulkder.create_entry(&nhgm_ids[i],
                                                  (uint32_t)nhgm_attrs.size(),
                                                  nhgm_attrs.data());
-        // status = sai_next_hop_group_api->create_next_hop_group_member(&next_hop_group_member_id,
-                                                                      // gSwitchId,
-                                                                      // (uint32_t)nhgm_attrs.size(),
-                                                                      // nhgm_attrs.data());
     }
 
     gNextHopGroupMemberBulkder.flush();
@@ -996,7 +989,6 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     vector<sai_status_t> statuses(nhid_count);
     for (size_t i = 0; i < nhid_count; i++)
     {
-        //status = sai_next_hop_group_api->remove_next_hop_group_member(nhop->second);
         gNextHopGroupMemberBulkder.remove_entry(&statuses[i], next_hop_ids[i]);
     }
     gNextHopGroupMemberBulkder.flush();
@@ -1181,7 +1173,6 @@ bool RouteOrch::addRoute(StatusInserter object_statuses, sai_object_id_t vrf_id,
         route_attr.value.oid = next_hop_id;
 
         /* Default SAI_ROUTE_ATTR_PACKET_ACTION is SAI_PACKET_ACTION_FORWARD */
-        //sai_status_t status = sai_route_api->create_route_entry(&route_entry, 1, &route_attr);
         object_statuses.emplace_back();
         sai_status_t status = gRouteBulker.create_entry(&object_statuses.back(), &route_entry, 1, &route_attr);
         if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
@@ -1199,7 +1190,6 @@ bool RouteOrch::addRoute(StatusInserter object_statuses, sai_object_id_t vrf_id,
             route_attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
             route_attr.value.s32 = SAI_PACKET_ACTION_FORWARD;
 
-            //status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
             object_statuses.emplace_back();
             gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
         }
@@ -1337,20 +1327,17 @@ bool RouteOrch::removeRoute(StatusInserter object_statuses, sai_object_id_t vrf_
         attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
         attr.value.s32 = SAI_PACKET_ACTION_DROP;
 
-        //sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &attr);
         object_statuses.emplace_back();
         gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &attr);
 
         attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
         attr.value.oid = SAI_NULL_OBJECT_ID;
 
-        //status = sai_route_api->set_route_entry_attribute(&route_entry, &attr);
         object_statuses.emplace_back();
         gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &attr);
     }
     else
     {
-        //sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
         object_statuses.emplace_back();
         gRouteBulker.remove_entry(&object_statuses.back(), &route_entry);
     }

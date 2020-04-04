@@ -86,18 +86,6 @@ namespace std
     };
 }
 
-/*
-struct NextHopGroupEntry
-{
-    sai_object_id_t             next_hop_group_id;      // next hop group id
-    std::set<sai_object_id_t>   next_hop_group_members; // next hop group member ids
-    int                         ref_count;              // reference count
-};
-*/
-
-/* NextHopGroupTable: next hop group IP addersses, NextHopGroupEntry */
-//typedef std::map<IpAddresses, NextHopGroupEntry> NextHopGroupTable;
-
 // SAI typedef which is not available in SAI 1.5
 // TODO: remove after available
 typedef sai_status_t (*sai_bulk_create_fdb_entry_fn)(
@@ -385,26 +373,28 @@ public:
     }
 
 private:
-    std::unordered_map<
-            Te,
+    std::unordered_map<                                     // A map of
+            Te,                                             // entry ->
             std::pair<
-                    std::vector<sai_attribute_t>,
+                    std::vector<sai_attribute_t>,           // (attributes, OUT object_status)
                     sai_status_t *
             >
     >                                                       creating_entries;
-    std::unordered_map<
-            Te,
-            std::unordered_map<
-                    sai_attr_id_t,
+
+    std::unordered_map<                                     // A map of
+            Te,                                             // entry ->
+            std::unordered_map<                             //     another map of
+                    sai_attr_id_t,                          //     attr_id ->
                     std::pair<
-                            sai_attribute_t,
+                            sai_attribute_t,                //     (attr_value, OUT object_status)
                             sai_status_t *
                     >
             >
     >                                                       setting_entries;
-    std::unordered_map<
-            Te,
-            sai_status_t *
+
+    std::unordered_map<                                     // A map of
+            Te,                                             // entry ->
+            sai_status_t *                                  // OUT object_status
     >                                                       removing_entries;
 
     typename Ts::bulk_create_entry_fn                       create_entries;
@@ -618,13 +608,13 @@ private:
 
     sai_object_id_t                                         switch_id;
 
-    std::vector<std::pair<                                  // An vector of
+    std::vector<std::pair<                                  // A vector of pair of
             sai_object_id_t *,                              // - object_id
             vector<sai_attribute_t>                         // - attrs
     >>                                                      creating_entries;
 
-    std::unordered_map<                                     // An map of
-            sai_object_id_t,                                // object_id -> (object_status, attributes)
+    std::unordered_map<                                     // A map of
+            sai_object_id_t,                                // object_id -> (OUT object_status, attributes)
             std::pair<
                     sai_status_t *,
                     std::vector<sai_attribute_t>
