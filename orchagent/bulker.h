@@ -71,7 +71,7 @@ namespace std
             return seed;
         }
     };
-    
+
     template <>
     struct hash<sai_fdb_entry_t>
     {
@@ -118,7 +118,7 @@ typedef sai_status_t (*sai_bulk_set_fdb_entry_attribute_fn)(
         _In_ const sai_attribute_t *attr_list,
         _In_ sai_bulk_op_error_mode_t mode,
         _Out_ sai_status_t *object_statuses);
-        
+
 template<typename T>
 struct saitraits { };
 
@@ -191,7 +191,7 @@ public:
             *object_status = SAI_STATUS_ITEM_ALREADY_EXISTS;
             return *object_status;
         }
-        
+
         auto& attrs = it->second.first;
         attrs.insert(attrs.end(), attr_list, attr_list + attr_count);
         it->second.second = object_status;
@@ -228,7 +228,7 @@ public:
                 std::forward_as_tuple(object_status));
         bool inserted = rc.second;
         SWSS_LOG_INFO("EntityBulker.remove_entry %zu, %d\n", removing_entries.size(), inserted);
-                
+
         *object_status = SAI_STATUS_NOT_EXECUTED;
         return *object_status;
     }
@@ -243,14 +243,14 @@ public:
                 std::forward_as_tuple(*entry),
                 std::forward_as_tuple()
         ).first->second;
-        
+
         // Insert or find the key (attr)
         auto rc = attrmap.emplace(std::piecewise_construct,
                 std::forward_as_tuple(attr->id),
                 std::forward_as_tuple());
         bool inserted = rc.second;
         auto it = rc.first;
-                
+
         // If inserted new key, assign the attr
         // If found existing key, overwrite the old attr
         it->second.first = *attr;
@@ -269,7 +269,7 @@ public:
         if (!removing_entries.empty())
         {
             vector<Te> rs;
-            
+
             for (auto& i: removing_entries)
             {
                 auto& entry = i.first;
@@ -279,7 +279,7 @@ public:
             vector<sai_status_t> statuses(count);
             (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
             SWSS_LOG_NOTICE("EntityBulker.flush removing_entries %zu\n", removing_entries.size());
-            
+
             for (size_t ir = 0; ir < count; ir++)
             {
                 auto& entry = rs[ir];
@@ -373,12 +373,12 @@ public:
     {
         return creating_entries.size();
     }
-    
+
     size_t setting_entries_count()
     {
         return setting_entries.size();
     }
-    
+
     size_t removing_entries_count()
     {
         return removing_entries.size();
@@ -406,7 +406,7 @@ private:
             Te,
             sai_status_t *
     >                                                       removing_entries;
-    
+
     typename Ts::bulk_create_entry_fn                       create_entries;
     typename Ts::bulk_remove_entry_fn                       remove_entries;
     typename Ts::bulk_set_entry_attribute_fn                set_entries_attribute;
@@ -442,17 +442,17 @@ public:
     {
         throw std::logic_error("Not implemented");
     }
-    
+
     sai_status_t create_entry(
         _Out_ sai_object_id_t *object_id,
         _In_ uint32_t attr_count,
         _In_ const sai_attribute_t *attr_list)
     {
         creating_entries.emplace_back(std::piecewise_construct, std::forward_as_tuple(object_id), std::forward_as_tuple(attr_list, attr_list + attr_count));
-        
+
         auto& last_attrs = std::get<1>(creating_entries.back());
         SWSS_LOG_INFO("ObjectBulker.create_entry %zu, %zu, %u\n", creating_entries.size(), last_attrs.size(), last_attrs[0].id);
-        
+
         *object_id = SAI_NULL_OBJECT_ID; // not created immediately, postponed until flush
         return SAI_STATUS_NOT_EXECUTED;
     }
@@ -469,7 +469,7 @@ public:
         {
             setting_entries.erase(found_setting);
         }
-        
+
         removing_entries.emplace_back(object_id);
         removing_statuses.emplace_back(object_status);
         *object_status = SAI_STATUS_NOT_EXECUTED;
@@ -592,12 +592,12 @@ public:
     {
         return creating_entries.size();
     }
-    
+
     size_t setting_entries_count()
     {
         return setting_entries.size();
     }
-    
+
     size_t removing_entries_count()
     {
         return removing_entries.size();
@@ -615,14 +615,14 @@ private:
         {
         }
     };
-    
+
     sai_object_id_t                                         switch_id;
 
     std::vector<std::pair<                                  // An vector of
             sai_object_id_t *,                              // - object_id
             vector<sai_attribute_t>                         // - attrs
     >>                                                      creating_entries;
-    
+
     std::unordered_map<                                     // An map of
             sai_object_id_t,                                // object_id -> (object_status, attributes)
             std::pair<
@@ -630,10 +630,10 @@ private:
                     std::vector<sai_attribute_t>
             >
     >                                                       setting_entries;
-    
+
     std::vector<sai_object_id_t>                            removing_entries;
     std::vector<sai_status_t *>                             removing_statuses;
-    
+
     typename Ts::bulk_create_entry_fn                       create_entries;
     typename Ts::bulk_remove_entry_fn                       remove_entries;
     // TODO: wait until available in SAI

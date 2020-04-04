@@ -384,7 +384,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
         string key = kfvKey(t);
         string op = kfvOp(t);
-        
+
         auto inserted = m_toBulk.emplace(std::piecewise_construct,
                 std::forward_as_tuple(key, op),
                 std::forward_as_tuple());
@@ -546,7 +546,7 @@ void RouteOrch::doTask(Consumer& consumer)
             else
                 /* Duplicate entry */
                 it = consumer.m_toSync.erase(it);
-                
+
             // If just added a route, and already exhaust the nexthop groups, and there are pending removing routes in bulker,
             // flush the bulker and possibly collect some released nexthop groups
             if (addedRoute
@@ -568,9 +568,9 @@ void RouteOrch::doTask(Consumer& consumer)
             it = consumer.m_toSync.erase(it);
         }
     }
-    
+
     gRouteBulker.flush();
-    
+
     it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
@@ -579,26 +579,26 @@ void RouteOrch::doTask(Consumer& consumer)
             it++;
             continue;
         }
-        
+
         KeyOpFieldsValuesTuple t = it->second;
 
         string key = kfvKey(t);
         string op = kfvOp(t);
-        
+
         auto found = m_toBulk.find(make_pair(key, op));
         if (found == m_toBulk.end())
         {
             it++;
             continue;
         }
-        
+
         auto& object_statuses = found->second;
         if (object_statuses.empty())
         {
             it++;
             continue;
         }
-        
+
         sai_object_id_t vrf_id;
         IpPrefix ip_prefix;
 
@@ -855,7 +855,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
                     it.to_string().c_str(), nexthops.to_string().c_str());
             return false;
         }
-        
+
         // skip next hop group member create for neighbor from down port
         if (m_neighOrch->isNextHopFlagSet(it, NHFLAGS_IFDOWN)) {
             continue;
@@ -922,7 +922,7 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
                                                                       // (uint32_t)nhgm_attrs.size(),
                                                                       // nhgm_attrs.data());
     }
-    
+
     gNextHopGroupMemberBulkder.flush();
     for (size_t i = 0; i < npid_count; i++)
     {
@@ -987,11 +987,11 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
             nhop = nhgm.erase(nhop);
             continue;
         }
-        
+
         next_hop_ids.push_back(nhop->second);
         nhop = nhgm.erase(nhop);
     }
-    
+
     size_t nhid_count = next_hop_ids.size();
     vector<sai_status_t> statuses(nhid_count);
     for (size_t i = 0; i < nhid_count; i++)
@@ -1223,7 +1223,7 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
         // Something went wrong before router bulker, will retry
         return false;
     }
-    
+
     if (nextHops.getSize() > 1)
     {
         if (!hasNextHopGroup(nextHops))
@@ -1238,7 +1238,7 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
             return false;
         }
     }
-    
+
     auto it_status = object_statuses.begin();
     auto it_route = m_syncdRoutes.at(vrf_id).find(ipPrefix);
     if (it_route == m_syncdRoutes.at(vrf_id).end())
@@ -1254,7 +1254,7 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
             }
             return false;
         }
-        
+
         if (ipPrefix.isV4())
         {
             gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
@@ -1278,7 +1278,7 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
                            ipPrefix.to_string().c_str(), status);
             return false;
         }
-        
+
         status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
         {
@@ -1286,7 +1286,7 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
                     ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
             return false;
         }
-        
+
         /* Increase the ref_count for the next hop (group) entry */
         increaseNextHopRefCount(nextHops);
 
@@ -1340,7 +1340,7 @@ bool RouteOrch::removeRoute(StatusInserter object_statuses, sai_object_id_t vrf_
         //sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &attr);
         object_statuses.emplace_back();
         gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &attr);
-        
+
         attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
         attr.value.oid = SAI_NULL_OBJECT_ID;
 
@@ -1354,7 +1354,7 @@ bool RouteOrch::removeRoute(StatusInserter object_statuses, sai_object_id_t vrf_
         object_statuses.emplace_back();
         gRouteBulker.remove_entry(&object_statuses.back(), &route_entry);
     }
-    
+
     return true;
 }
 
@@ -1450,6 +1450,6 @@ bool RouteOrch::removeRoutePost(StatusInserter object_statuses, sai_object_id_t 
             m_vrfOrch->decreaseVrfRefCount(vrf_id);
         }
     }
-    
+
     return true;
 }
