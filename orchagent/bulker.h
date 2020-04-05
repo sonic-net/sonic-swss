@@ -367,19 +367,24 @@ public:
         setting_entries.clear();
     }
 
-    size_t creating_entries_count()
+    size_t creating_entries_count() const
     {
         return creating_entries.size();
     }
 
-    size_t setting_entries_count()
+    size_t setting_entries_count() const
     {
         return setting_entries.size();
     }
 
-    size_t removing_entries_count()
+    size_t removing_entries_count() const
     {
         return removing_entries.size();
+    }
+
+    size_t creating_entries_count(const Te& entry) const
+    {
+        return creating_entries.count(entry);
     }
 
 private:
@@ -588,17 +593,17 @@ public:
         setting_entries.clear();
     }
 
-    size_t creating_entries_count()
+    size_t creating_entries_count() const
     {
         return creating_entries.size();
     }
 
-    size_t setting_entries_count()
+    size_t setting_entries_count() const
     {
         return setting_entries.size();
     }
 
-    size_t removing_entries_count()
+    size_t removing_entries_count() const
     {
         return removing_entries.size();
     }
