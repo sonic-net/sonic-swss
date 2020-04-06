@@ -1,0 +1,7 @@
+path_classifiers:
+  test:
+    exclude: tests
+extraction:
+  python:
+    python_setup:
+      version: "2"
