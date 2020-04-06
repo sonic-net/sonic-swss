@@ -379,324 +379,327 @@ void RouteOrch::doTask(Consumer& consumer)
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
-        KeyOpFieldsValuesTuple t = it->second;
-
-        string key = kfvKey(t);
-        string op = kfvOp(t);
-
-        auto inserted = m_toBulk.emplace(std::piecewise_construct,
-                std::forward_as_tuple(key, op),
-                std::forward_as_tuple());
-        auto& object_statuses = inserted.first->second;
-
-        /* Get notification from application */
-        /* resync application:
-         * When routeorch receives 'resync' message, it marks all current
-         * routes as dirty and waits for 'resync complete' message. For all
-         * newly received routes, if they match current dirty routes, it unmarks
-         * them dirty. After receiving 'resync complete' message, it creates all
-         * newly added routes and removes all dirty routes.
-         */
-        if (key == "resync")
+        while (it != consumer.m_toSync.end())
         {
-            if (op == "SET")
+            KeyOpFieldsValuesTuple t = it->second;
+
+            string key = kfvKey(t);
+            string op = kfvOp(t);
+
+            auto inserted = m_toBulk.emplace(std::piecewise_construct,
+                    std::forward_as_tuple(key, op),
+                    std::forward_as_tuple());
+            auto& object_statuses = inserted.first->second;
+
+            /* Get notification from application */
+            /* resync application:
+             * When routeorch receives 'resync' message, it marks all current
+             * routes as dirty and waits for 'resync complete' message. For all
+             * newly received routes, if they match current dirty routes, it unmarks
+             * them dirty. After receiving 'resync complete' message, it creates all
+             * newly added routes and removes all dirty routes.
+             */
+            if (key == "resync")
             {
-                /* Mark all current routes as dirty (DEL) in consumer.m_toSync map */
-                SWSS_LOG_NOTICE("Start resync routes\n");
-                for (auto j : m_syncdRoutes)
+                if (op == "SET")
                 {
-                    string vrf;
-
-                    if (j.first != gVirtualRouterId)
+                    /* Mark all current routes as dirty (DEL) in consumer.m_toSync map */
+                    SWSS_LOG_NOTICE("Start resync routes\n");
+                    for (auto j : m_syncdRoutes)
                     {
-                        vrf = m_vrfOrch->getVRFname(j.first) + ":";
-                    }
+                        string vrf;
 
-                    for (auto i : j.second)
-                    {
-                        vector<FieldValueTuple> v;
-                        key = vrf + i.first.to_string();
-                        auto x = KeyOpFieldsValuesTuple(key, DEL_COMMAND, v);
-                        consumer.addToSync(x);
+                        if (j.first != gVirtualRouterId)
+                        {
+                            vrf = m_vrfOrch->getVRFname(j.first) + ":";
+                        }
+
+                        for (auto i : j.second)
+                        {
+                            vector<FieldValueTuple> v;
+                            key = vrf + i.first.to_string();
+                            auto x = KeyOpFieldsValuesTuple(key, DEL_COMMAND, v);
+                            consumer.addToSync(x);
+                        }
                     }
+                    m_resync = true;
                 }
-                m_resync = true;
+                else
+                {
+                    SWSS_LOG_NOTICE("Complete resync routes\n");
+                    m_resync = false;
+                }
+
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
-            else
-            {
-                SWSS_LOG_NOTICE("Complete resync routes\n");
-                m_resync = false;
-            }
 
-            it = consumer.m_toSync.erase(it);
-            continue;
-        }
-
-        if (m_resync)
-        {
-            it++;
-            continue;
-        }
-
-        sai_object_id_t vrf_id;
-        IpPrefix ip_prefix;
-
-        if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
-        {
-            size_t found = key.find(':');
-            string vrf_name = key.substr(0, found);
-
-            if (!m_vrfOrch->isVRFexists(vrf_name))
+            if (m_resync)
             {
                 it++;
                 continue;
             }
-            vrf_id = m_vrfOrch->getVRFid(vrf_name);
-            ip_prefix = IpPrefix(key.substr(found+1));
-        }
-        else
-        {
-            vrf_id = gVirtualRouterId;
-            ip_prefix = IpPrefix(key);
-        }
 
-        if (op == SET_COMMAND)
-        {
-            string ips;
-            string aliases;
-            bool excp_intfs_flag = false;
+            sai_object_id_t vrf_id;
+            IpPrefix ip_prefix;
 
-            for (auto i : kfvFieldsValues(t))
+            if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
             {
-                if (fvField(i) == "nexthop")
-                    ips = fvValue(i);
+                size_t found = key.find(':');
+                string vrf_name = key.substr(0, found);
 
-                if (fvField(i) == "ifname")
-                    aliases = fvValue(i);
-            }
-            vector<string> ipv = tokenize(ips, ',');
-            vector<string> alsv = tokenize(aliases, ',');
-
-            for (auto alias : alsv)
-            {
-                if (alias == "eth0" || alias == "lo" || alias == "docker0")
+                if (!m_vrfOrch->isVRFexists(vrf_name))
                 {
-                    excp_intfs_flag = true;
+                    it++;
+                    continue;
+                }
+                vrf_id = m_vrfOrch->getVRFid(vrf_name);
+                ip_prefix = IpPrefix(key.substr(found+1));
+            }
+            else
+            {
+                vrf_id = gVirtualRouterId;
+                ip_prefix = IpPrefix(key);
+            }
+
+            if (op == SET_COMMAND)
+            {
+                string ips;
+                string aliases;
+                bool excp_intfs_flag = false;
+
+                for (auto i : kfvFieldsValues(t))
+                {
+                    if (fvField(i) == "nexthop")
+                        ips = fvValue(i);
+
+                    if (fvField(i) == "ifname")
+                        aliases = fvValue(i);
+                }
+                vector<string> ipv = tokenize(ips, ',');
+                vector<string> alsv = tokenize(aliases, ',');
+
+                for (auto alias : alsv)
+                {
+                    if (alias == "eth0" || alias == "lo" || alias == "docker0")
+                    {
+                        excp_intfs_flag = true;
+                        break;
+                    }
+                }
+
+                // TODO: cannot trust m_portsOrch->getPortIdByAlias because sometimes alias is empty
+                if (excp_intfs_flag)
+                {
+                    /* If any existing routes are updated to point to the
+                     * above interfaces, remove them from the ASIC. */
+                    if (removeRoute(object_statuses, vrf_id, ip_prefix))
+                        it = consumer.m_toSync.erase(it);
+                    else
+                        it++;
+                    continue;
+                }
+
+                string nhg_str = ipv[0] + NH_DELIMITER + alsv[0];
+                for (uint32_t i = 1; i < ipv.size(); i++)
+                {
+                    nhg_str += NHG_DELIMITER + ipv[i] + NH_DELIMITER + alsv[i];
+                }
+
+                NextHopGroupKey nhg(nhg_str);
+
+                if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
+                {
+                    /* blackhole to be done */
+                    if (alsv[0] == "unknown")
+                    {
+                        /* add addBlackholeRoute or addRoute support empty nhg */
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    /* directly connected route to VRF interface which come from kernel */
+                    else if (!alsv[0].compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+                    {
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    /* skip prefix which is linklocal or multicast */
+                    else if (ip_prefix.getIp().getAddrScope() != IpAddress::GLOBAL_SCOPE)
+                    {
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    /* fullmask subnet route is same as ip2me route */
+                    else if (ip_prefix.isFullMask() && m_intfsOrch->isPrefixSubnet(ip_prefix, alsv[0]))
+                    {
+                        it = consumer.m_toSync.erase(it);
+                    }
+                    /* subnet route, vrf leaked route, etc */
+                    else
+                    {
+                        if (addRoute(object_statuses, vrf_id, ip_prefix, nhg))
+                             it = consumer.m_toSync.erase(it);
+                        else
+                            it++;
+                    }
+                }
+                else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
+                    m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
+                    m_syncdRoutes.at(vrf_id).at(ip_prefix) != nhg)
+                {
+                    if (addRoute(object_statuses, vrf_id, ip_prefix, nhg))
+                        it = consumer.m_toSync.erase(it);
+                    else
+                        it++;
+                }
+                else
+                    /* Duplicate entry */
+                    it = consumer.m_toSync.erase(it);
+
+                // If already exhaust the nexthop groups, and there are pending removing routes in bulker,
+                // flush the bulker and possibly collect some released nexthop groups
+                if (m_nextHopGroupCount >= m_maxNextHopGroupCount && gRouteBulker.removing_entries_count() > 0)
+                {
                     break;
                 }
             }
-
-            // TODO: cannot trust m_portsOrch->getPortIdByAlias because sometimes alias is empty
-            if (excp_intfs_flag)
+            else if (op == DEL_COMMAND)
             {
-                /* If any existing routes are updated to point to the
-                 * above interfaces, remove them from the ASIC. */
                 if (removeRoute(object_statuses, vrf_id, ip_prefix))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
+                it = consumer.m_toSync.erase(it);
+            }
+        }
+
+        gRouteBulker.flush();
+
+        auto it_prev = consumer.m_toSync.begin();
+        while (it_prev != it)
+        {
+            if (m_resync)
+            {
+                it_prev++;
                 continue;
             }
 
-            string nhg_str = ipv[0] + NH_DELIMITER + alsv[0];
-            for (uint32_t i = 1; i < ipv.size(); i++)
+            KeyOpFieldsValuesTuple t = it_prev->second;
+
+            string key = kfvKey(t);
+            string op = kfvOp(t);
+
+            auto found = m_toBulk.find(make_pair(key, op));
+            if (found == m_toBulk.end())
             {
-                nhg_str += NHG_DELIMITER + ipv[i] + NH_DELIMITER + alsv[i];
+                it_prev++;
+                continue;
             }
 
-            NextHopGroupKey nhg(nhg_str);
-
-            if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
+            auto& object_statuses = found->second;
+            if (object_statuses.empty())
             {
-                /* blackhole to be done */
-                if (alsv[0] == "unknown")
+                it_prev++;
+                continue;
+            }
+
+            sai_object_id_t vrf_id;
+            IpPrefix ip_prefix;
+
+            if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+            {
+                size_t found = key.find(':');
+                string vrf_name = key.substr(0, found);
+
+                if (!m_vrfOrch->isVRFexists(vrf_name))
                 {
-                    /* add addBlackholeRoute or addRoute support empty nhg */
-                    it = consumer.m_toSync.erase(it);
+                    it_prev++;
+                    continue;
                 }
-                /* directly connected route to VRF interface which come from kernel */
-                else if (!alsv[0].compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
+                vrf_id = m_vrfOrch->getVRFid(vrf_name);
+                ip_prefix = IpPrefix(key.substr(found+1));
+            }
+            else
+            {
+                vrf_id = gVirtualRouterId;
+                ip_prefix = IpPrefix(key);
+            }
+
+            if (op == SET_COMMAND)
+            {
+                string ips;
+                string aliases;
+                bool excp_intfs_flag = false;
+
+                for (auto i : kfvFieldsValues(t))
                 {
-                    it = consumer.m_toSync.erase(it);
+                    if (fvField(i) == "nexthop")
+                        ips = fvValue(i);
+
+                    if (fvField(i) == "ifname")
+                        aliases = fvValue(i);
                 }
-                /* skip prefix which is linklocal or multicast */
-                else if (ip_prefix.getIp().getAddrScope() != IpAddress::GLOBAL_SCOPE)
+                vector<string> ipv = tokenize(ips, ',');
+                vector<string> alsv = tokenize(aliases, ',');
+
+                for (auto alias : alsv)
                 {
-                    it = consumer.m_toSync.erase(it);
+                    if (alias == "eth0" || alias == "lo" || alias == "docker0")
+                    {
+                        excp_intfs_flag = true;
+                        break;
+                    }
                 }
-                /* fullmask subnet route is same as ip2me route */
-                else if (ip_prefix.isFullMask() && m_intfsOrch->isPrefixSubnet(ip_prefix, alsv[0]))
+
+                // TODO: cannot trust m_portsOrch->getPortIdByAlias because sometimes alias is empty
+                if (excp_intfs_flag)
                 {
-                    it = consumer.m_toSync.erase(it);
-                }
-                /* subnet route, vrf leaked route, etc */
-                else
-                {
-                    if (addRoute(object_statuses, vrf_id, ip_prefix, nhg))
-                         it = consumer.m_toSync.erase(it);
+                    /* If any existing routes are updated to point to the
+                     * above interfaces, remove them from the ASIC. */
+                    if (removeRoutePost(object_statuses, vrf_id, ip_prefix))
+                        it_prev = consumer.m_toSync.erase(it_prev);
                     else
-                        it++;
+                        it_prev++;
+                    continue;
                 }
-            }
-            else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
-                m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
-                m_syncdRoutes.at(vrf_id).at(ip_prefix) != nhg)
-            {
-                if (addRoute(object_statuses, vrf_id, ip_prefix, nhg))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
-            }
-            else
-                /* Duplicate entry */
-                it = consumer.m_toSync.erase(it);
 
-            // If already exhaust the nexthop groups, and there are pending removing routes in bulker,
-            // flush the bulker and possibly collect some released nexthop groups
-            if (m_nextHopGroupCount >= m_maxNextHopGroupCount && gRouteBulker.removing_entries_count() > 0)
-            {
-                break;
-            }
-        }
-        else if (op == DEL_COMMAND)
-        {
-            if (removeRoute(object_statuses, vrf_id, ip_prefix))
-                it = consumer.m_toSync.erase(it);
-            else
-                it++;
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Unknown operation type %s\n", op.c_str());
-            it = consumer.m_toSync.erase(it);
-        }
-    }
-
-    gRouteBulker.flush();
-
-    it = consumer.m_toSync.begin();
-    while (it != consumer.m_toSync.end())
-    {
-        if (m_resync)
-        {
-            it++;
-            continue;
-        }
-
-        KeyOpFieldsValuesTuple t = it->second;
-
-        string key = kfvKey(t);
-        string op = kfvOp(t);
-
-        auto found = m_toBulk.find(make_pair(key, op));
-        if (found == m_toBulk.end())
-        {
-            it++;
-            continue;
-        }
-
-        auto& object_statuses = found->second;
-        if (object_statuses.empty())
-        {
-            it++;
-            continue;
-        }
-
-        sai_object_id_t vrf_id;
-        IpPrefix ip_prefix;
-
-        if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
-        {
-            size_t found = key.find(':');
-            string vrf_name = key.substr(0, found);
-
-            if (!m_vrfOrch->isVRFexists(vrf_name))
-            {
-                it++;
-                continue;
-            }
-            vrf_id = m_vrfOrch->getVRFid(vrf_name);
-            ip_prefix = IpPrefix(key.substr(found+1));
-        }
-        else
-        {
-            vrf_id = gVirtualRouterId;
-            ip_prefix = IpPrefix(key);
-        }
-
-        if (op == SET_COMMAND)
-        {
-            string ips;
-            string aliases;
-            bool excp_intfs_flag = false;
-
-            for (auto i : kfvFieldsValues(t))
-            {
-                if (fvField(i) == "nexthop")
-                    ips = fvValue(i);
-
-                if (fvField(i) == "ifname")
-                    aliases = fvValue(i);
-            }
-            vector<string> ipv = tokenize(ips, ',');
-            vector<string> alsv = tokenize(aliases, ',');
-
-            for (auto alias : alsv)
-            {
-                if (alias == "eth0" || alias == "lo" || alias == "docker0")
+                string nhg_str = ipv[0] + NH_DELIMITER + alsv[0];
+                for (uint32_t i = 1; i < ipv.size(); i++)
                 {
-                    excp_intfs_flag = true;
-                    break;
+                    nhg_str += NHG_DELIMITER + ipv[i] + NH_DELIMITER + alsv[i];
+                }
+
+                NextHopGroupKey nhg(nhg_str);
+
+                if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
+                {
+                    if (addRoutePost(object_statuses, vrf_id, ip_prefix, nhg))
+                        it_prev = consumer.m_toSync.erase(it_prev);
+                    else
+                        it_prev++;
+                }
+                else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
+                    m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
+                    m_syncdRoutes.at(vrf_id).at(ip_prefix) != nhg)
+                {
+                    if (addRoutePost(object_statuses, vrf_id, ip_prefix, nhg))
+                        it_prev = consumer.m_toSync.erase(it_prev);
+                    else
+                        it_prev++;
                 }
             }
-
-            // TODO: cannot trust m_portsOrch->getPortIdByAlias because sometimes alias is empty
-            if (excp_intfs_flag)
+            else if (op == DEL_COMMAND)
             {
-                /* If any existing routes are updated to point to the
-                 * above interfaces, remove them from the ASIC. */
+                /* Cannot locate the route or remove succeed */
                 if (removeRoutePost(object_statuses, vrf_id, ip_prefix))
-                    it = consumer.m_toSync.erase(it);
+                    it_prev = consumer.m_toSync.erase(it_prev);
                 else
-                    it++;
-                continue;
-            }
-
-            string nhg_str = ipv[0] + NH_DELIMITER + alsv[0];
-            for (uint32_t i = 1; i < ipv.size(); i++)
-            {
-                nhg_str += NHG_DELIMITER + ipv[i] + NH_DELIMITER + alsv[i];
-            }
-
-            NextHopGroupKey nhg(nhg_str);
-
-            if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
-            {
-                if (addRoutePost(object_statuses, vrf_id, ip_prefix, nhg))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
-            }
-            else if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end() ||
-                m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
-                m_syncdRoutes.at(vrf_id).at(ip_prefix) != nhg)
-            {
-                if (addRoutePost(object_statuses, vrf_id, ip_prefix, nhg))
-                    it = consumer.m_toSync.erase(it);
-                else
-                    it++;
+                    it_prev++;
             }
         }
-        else if (op == DEL_COMMAND)
-        {
-            /* Cannot locate the route or remove succeed */
-            if (removeRoutePost(object_statuses, vrf_id, ip_prefix))
-                it = consumer.m_toSync.erase(it);
-            else
-                it++;
-        }
+        m_toBulk.clear();
     }
-    m_toBulk.clear();
 }
 
 void RouteOrch::notifyNextHopChangeObservers(sai_object_id_t vrf_id, const IpPrefix &prefix, const NextHopGroupKey &nexthops, bool add)
