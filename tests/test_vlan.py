@@ -181,8 +181,8 @@ class TestVlan(object):
 
         # Member ports should have been detached from master bridge port
         for member in vlan2_members:
-            exitcode, _ = dvs.runcmd(['sh', '-c', "ip link show {} | grep -w master".format(member)])
-            assert not exitcode
+            _, output = dvs.runcmd(['sh', '-c', "ip link show {}".format(member)])
+            assert "master" not in output
 
         self.remove_vlan(vlan1)
         self.get_and_verify_vlan_ids(1)
