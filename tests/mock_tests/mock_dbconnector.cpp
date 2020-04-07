@@ -39,6 +39,7 @@ namespace swss
     }
 
     DBConnector::DBConnector(const std::string& dbName, unsigned int timeout, bool isTcpConn)
+        : m_dbName(dbName)
     {
         if (swss::SonicDBConfig::isInit() == false)
             swss::SonicDBConfig::initialize("./database_config.json");
