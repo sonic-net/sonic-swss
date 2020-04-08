@@ -208,3 +208,23 @@ class DVSDatabase(object):
             return (len(keys) == num_keys, keys)
 
         return wait_for_result(_access_function, polling_config)
+
+    def wait_for_matching_keys(self,
+                               table_name,
+                               expected_keys,
+                               polling_config=DEFAULT_POLLING_CONFIG):
+        def _access_function():
+            keys = self.get_keys(table_name)
+            return (all(key in keys for key in expected_keys), keys)
+
+        return wait_for_result(_access_function, polling_config)
+
+    def wait_for_deleted_keys(self,
+                              table_name,
+                              deleted_keys,
+                              polling_config=DEFAULT_POLLING_CONFIG):
+        def _access_function():
+            keys = self.get_keys(table_name)
+            return (all(key not in keys for key in deleted_keys), keys)
+
+        return wait_for_result(_access_function, polling_config)
