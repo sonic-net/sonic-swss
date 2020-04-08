@@ -306,7 +306,6 @@ class TestRouterInterface(object):
             if route["dest"] == "10.0.0.4/32":
                 assert False
 
-    @pytest.mark.skip(reason="vs image issue: Azure/sonic-sairedis#574")
     def test_PortInterfaceSetMtu(self, dvs, testlog):
         self.setup_db(dvs)
 
