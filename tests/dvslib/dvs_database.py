@@ -131,9 +131,6 @@ class DVSDatabase(object):
             at `key` in the specified table. This method will wait for the
             fields to exist.
 
-            Note:
-                This method does not check for an exact match.
-
             Args:
                 table_name (str): The name of the table where the entry is
                     stored.
@@ -154,10 +151,39 @@ class DVSDatabase(object):
 
         return wait_for_result(_access_function, polling_config)
 
-    def wait_for_empty_entry(self,
+    def wait_for_exact_match(self,
                              table_name,
                              key,
+                             expected_entry,
                              polling_config=DEFAULT_POLLING_CONFIG):
+        """
+            Checks if the provided entry matches the entry stored at `key`
+            in the specified table. This method will wait for the exact entry
+            to exist.
+
+            Args:
+                table_name (str): The name of the table where the entry is
+                    stored.
+                key (str): The key that maps to the entry being checked.
+                expected_entry (dict): The entry we expect to see.
+                polling_config (PollingConfig): The parameters to use to poll
+                    the db.
+
+            Returns:
+                Dict[str, str]: The entry stored at `key`. If no entry is found,
+                then an empty Dict will be returned.
+        """
+
+        def _access_function():
+            fv_pairs = self.get_entry(table_name, key)
+            return (fv_pairs == expected_entry, fv_pairs)
+
+        return wait_for_result(_access_function, polling_config)
+
+    def wait_for_deleted_entry(self,
+                               table_name,
+                               key,
+                               polling_config=DEFAULT_POLLING_CONFIG):
         """
             Checks if there is any entry stored at `key` in the specified
             table. This method will wait for the entry to be empty.
@@ -169,7 +195,8 @@ class DVSDatabase(object):
                     the db.
 
             Returns:
-                bool: True if no entry exists at `key`, False otherwise.
+                Dict[str, str]: The entry stored at `key`. If no entry is found,
+                then an empty Dict will be returned.
         """
 
         def _access_function():
