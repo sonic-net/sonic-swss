@@ -2782,7 +2782,7 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
 
 void PortsOrch::doTask()
 {
-    constexpr auto tableOrder = {
+    auto tableOrder = {
         APP_PORT_TABLE_NAME,
         APP_LAG_TABLE_NAME,
         APP_LAG_MEMBER_TABLE_NAME,
