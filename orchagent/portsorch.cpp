@@ -224,9 +224,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
         fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
         m_flexCounterGroupTable->set(PORT_RATE_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
     }
-    catch (...)
+    catch (const runtime_error &e)
     {
-        SWSS_LOG_WARN("Port rate flex counter group plugins was not set successfully");
+        SWSS_LOG_WARN("Port rate flex counter group plugins was not set successfully: %s", e.what());
     }
 
     uint32_t i, j;

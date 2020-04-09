@@ -79,7 +79,7 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
     fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
     m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
 
-    string rifRatePluginName = "interface_rates.lua";
+    string rifRatePluginName = "rif_rates.lua";
 
     try
     {
@@ -92,9 +92,9 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
         fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
         m_flexCounterGroupTable->set(RIF_RATE_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
     }
-    catch (...)
+    catch (const runtime_error &e)
     {
-        SWSS_LOG_WARN("RIF rate flex counter group plugins was not set successfully");
+        SWSS_LOG_WARN("RIF rate flex counter group plugins was not set successfully: %s", e.what());
     }
 }
 

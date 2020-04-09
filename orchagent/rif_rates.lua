@@ -62,19 +62,19 @@ for i = 1, n do
 
             -- Smooth the rates values and store them in DB
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_BPS', alpha*rx_bps_new + one_minus_alpha*rx_bps_old)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_PPS', alpha*rx_bps_new + one_minus_alpha*rx_bps_old)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_BPS', alpha*rx_bps_new + one_minus_alpha*rx_bps_old)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_PPS', alpha*rx_bps_new + one_minus_alpha*rx_bps_old)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_UTIL', alpha*rx_bps_new + one_minus_alpha*rx_bps_old)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_UTIL', alpha*rx_bps_new + one_minus_alpha*rx_bps_old)    
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_PPS', alpha*rx_pps_new + one_minus_alpha*rx_pps_old)
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_BPS', alpha*tx_bps_new + one_minus_alpha*tx_bps_old)
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_PPS', alpha*tx_pps_new + one_minus_alpha*tx_pps_old)
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_UTIL', alpha*rx_util_new + one_minus_alpha*rx_util_old)
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_UTIL', alpha*tx_util_new + one_minus_alpha*tx_util_old)    
         else
             -- Store unsmoothed initial rates values in DB
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_BPS', rx_bps_new)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_PPS', rx_bps_new)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_BPS', rx_bps_new)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_PPS', rx_bps_new)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_UTIL', rx_bps_new)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_UTIL', rx_bps_new) 
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_PPS', rx_pps_new)
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_BPS', tx_bps_new)
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_PPS', tx_pps_new)
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_UTIL', rx_util_new)
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_UTIL', tx_util_new) 
         end        
     
     elseif initialized == "NONE" then
