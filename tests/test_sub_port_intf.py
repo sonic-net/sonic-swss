@@ -125,7 +125,7 @@ class TestSubPortIntf(object):
                          not in removed_route_entries
                          for raw_route_entry in raw_route_entries)
             return (status, None)
-        
+
         wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
 
     def _test_sub_port_intf_creation(self, dvs, sub_port_intf_name):
@@ -179,7 +179,6 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_add_ip_addrs(self, dvs, sub_port_intf_name):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
-        vlan_id = substrs[1]
 
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
 
@@ -220,7 +219,9 @@ class TestSubPortIntf(object):
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
-        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name, [self.IPV4_ADDR_UNDER_TEST, self.IPV6_ADDR_UNDER_TEST])
+        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name,
+                                                  [self.IPV4_ADDR_UNDER_TEST,
+                                                   self.IPV6_ADDR_UNDER_TEST])
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
@@ -235,7 +236,6 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_admin_status_change(self, dvs, sub_port_intf_name):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
-        vlan_id = substrs[1]
 
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
 
@@ -261,7 +261,7 @@ class TestSubPortIntf(object):
         # Change sub port interface admin status to down
         self.set_sub_port_intf_admin_status(sub_port_intf_name, "down")
 
-        # Verify that sub port interface admin status change is synced to APPL_DB INTF_TABLE by Intfmgrd
+        # Verify that sub port interface admin status change is synced to APP_DB by Intfmgrd
         fv_dict = {
             ADMIN_STATUS: "down",
         }
@@ -279,7 +279,7 @@ class TestSubPortIntf(object):
         # Change sub port interface admin status to up
         self.set_sub_port_intf_admin_status(sub_port_intf_name, "up")
 
-        # Verify that sub port interface admin status change is synced to APPL_DB INTF_TABLE by Intfmgrd
+        # Verify that sub port interface admin status change is synced to APP_DB by Intfmgrd
         fv_dict = {
             ADMIN_STATUS: "up",
         }
@@ -297,7 +297,9 @@ class TestSubPortIntf(object):
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
-        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name, [self.IPV4_ADDR_UNDER_TEST, self.IPV6_ADDR_UNDER_TEST])
+        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name,
+                                                  [self.IPV4_ADDR_UNDER_TEST,
+                                                   self.IPV6_ADDR_UNDER_TEST])
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
@@ -312,7 +314,6 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_remove_ip_addrs(self, dvs, sub_port_intf_name):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
-        vlan_id = substrs[1]
 
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
 
@@ -372,7 +373,6 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_removal(self, dvs, sub_port_intf_name):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
-        vlan_id = substrs[1]
         if parent_port.startswith(ETHERNET_PREFIX):
             state_tbl_name = STATE_PORT_TABLE_NAME
         else:
@@ -402,7 +402,9 @@ class TestSubPortIntf(object):
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
-        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name, [self.IPV4_ADDR_UNDER_TEST, self.IPV6_ADDR_UNDER_TEST])
+        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name,
+                                                  [self.IPV4_ADDR_UNDER_TEST,
+                                                   self.IPV6_ADDR_UNDER_TEST])
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
@@ -411,7 +413,7 @@ class TestSubPortIntf(object):
         # Verify that sub port interface state ok is removed from STATE_DB by Intfmgrd
         self.check_sub_port_intf_key_removal(self.state_db, state_tbl_name, sub_port_intf_name)
 
-        # Verify that sub port interface configuration is removed from APPL_DB INTF_TABLE by Intfmgrd
+        # Verify that sub port interface configuration is removed from APP_DB by Intfmgrd
         self.check_sub_port_intf_key_removal(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name)
 
         # Verify that sub port router interface entry is removed from ASIC_DB

@@ -131,12 +131,8 @@ class DVSDatabase(object):
             at `key` in the specified table. This method will wait for the
             fields to exist.
 
-            NOTE: We suggest you only use this function if:
-                1) the entry already exists, and
-                2) you expect certain fields to change
-
-            Otherwise, it is more efficient to use `wait_for_entry` and check
-            for the expected fields after the entry has been retrieved.
+            Note:
+                This method does not check for an exact match.
 
             Args:
                 table_name (str): The name of the table where the entry is
@@ -213,6 +209,23 @@ class DVSDatabase(object):
                                table_name,
                                expected_keys,
                                polling_config=DEFAULT_POLLING_CONFIG):
+        """
+            Checks if the specified keys exist in the table. This method
+            will wait for the keys to exist.
+
+            Args:
+                table_name (str): The name of the table from which to fetch
+                    the keys.
+                expected_keys (List[str]): The keys we expect to see in the
+                    table.
+                polling_config (PollingConfig): The parameters to use to poll
+                    the db.
+
+            Returns:
+                List[str]: The keys stored in the table. If no keys are found,
+                then an empty List will be returned.
+        """
+
         def _access_function():
             keys = self.get_keys(table_name)
             return (all(key in keys for key in expected_keys), keys)
@@ -223,6 +236,23 @@ class DVSDatabase(object):
                               table_name,
                               deleted_keys,
                               polling_config=DEFAULT_POLLING_CONFIG):
+        """
+            Checks if the specified keys no longer exist in the table. This
+            method will wait for the keys to be deleted.
+
+            Args:
+                table_name (str): The name of the table from which to fetch
+                    the keys.
+                deleted_keys (List[str]): The keys we expect to be removed from
+                    the table.
+                polling_config (PollingConfig): The parameters to use to poll
+                    the db.
+
+            Returns:
+                List[str]: The keys stored in the table. If no keys are found,
+                then an empty List will be returned.
+        """
+
         def _access_function():
             keys = self.get_keys(table_name)
             return (all(key not in keys for key in deleted_keys), keys)
