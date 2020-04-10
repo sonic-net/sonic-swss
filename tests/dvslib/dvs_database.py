@@ -154,7 +154,7 @@ class DVSDatabase(object):
 
         def _access_function():
             fv_pairs = self.get_entry(table_name, key)
-            return (expected_fields.items() <= fv_pairs.items(), fv_pairs)
+            return (all(fv_pairs.get(k) == v for k, v in expected_fields.items()), fv_pairs)
 
         return wait_for_result(_access_function, polling_config)
 

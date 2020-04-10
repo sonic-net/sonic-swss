@@ -1,4 +1,3 @@
-import time
 import json
 
 from dvslib.dvs_common import wait_for_result
@@ -74,18 +73,19 @@ class TestSubPortIntf(object):
 
         self.config_db.create_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, sub_port_intf_name, fvs)
 
-        time.sleep(1)
-
     def remove_sub_port_intf_profile(self, sub_port_intf_name):
         self.config_db.delete_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, sub_port_intf_name)
 
-        time.sleep(1)
+    def verify_sub_port_intf_removal(self, rif_oid):
+        self.asic_db.wait_for_deleted_keys(ASIC_RIF_TABLE, [rif_oid])
 
     def remove_sub_port_intf_ip_addr(self, sub_port_intf_name, ip_addr):
         key = "{}|{}".format(sub_port_intf_name, ip_addr)
         self.config_db.delete_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, key)
 
-        time.sleep(1)
+    def verify_sub_port_intf_ip_addr_removal(self, sub_port_intf_name, ip_addrs):
+        interfaces = ["{}:{}".format(sub_port_intf_name, addr) for addr in ip_addrs]
+        self.app_db.wait_for_deleted_keys(APP_INTF_TABLE_NAME, interfaces)
 
     def get_oids(self, table):
         return self.asic_db.get_keys(table)
@@ -99,13 +99,7 @@ class TestSubPortIntf(object):
         db.wait_for_matching_keys(table_name, [key])
 
     def check_sub_port_intf_fvs(self, db, table_name, key, fv_dict):
-        fvs = db.wait_for_entry(table_name, key)
-        assert len(fvs) >= len(fv_dict)
-
-        for field, value in fvs.items():
-            if field in fv_dict:
-                assert fv_dict[field] == value, \
-                    "Wrong value for field %s: %s, expected value: %s" % (field, value, fv_dict[field])
+        db.wait_for_field_match(table_name, key, fv_dict)
 
     def check_sub_port_intf_route_entries(self):
         expected_destinations = [self.IPV4_TOME_UNDER_TEST,
@@ -174,6 +168,7 @@ class TestSubPortIntf(object):
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.verify_sub_port_intf_removal(rif_oid)
 
     def test_sub_port_intf_creation(self, dvs):
         self.connect_dbs(dvs)
@@ -225,8 +220,11 @@ class TestSubPortIntf(object):
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name, [self.IPV4_ADDR_UNDER_TEST, self.IPV6_ADDR_UNDER_TEST])
+
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.verify_sub_port_intf_removal(rif_oid)
 
     def test_sub_port_intf_add_ip_addrs(self, dvs):
         self.connect_dbs(dvs)
@@ -299,8 +297,11 @@ class TestSubPortIntf(object):
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name, [self.IPV4_ADDR_UNDER_TEST, self.IPV6_ADDR_UNDER_TEST])
+
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.verify_sub_port_intf_removal(rif_oid)
 
     def test_sub_port_intf_admin_status_change(self, dvs):
         self.connect_dbs(dvs)
@@ -360,6 +361,7 @@ class TestSubPortIntf(object):
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.verify_sub_port_intf_removal(rif_oid)
 
     def test_sub_port_intf_remove_ip_addrs(self, dvs):
         self.connect_dbs(dvs)
@@ -400,9 +402,11 @@ class TestSubPortIntf(object):
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name, [self.IPV4_ADDR_UNDER_TEST, self.IPV6_ADDR_UNDER_TEST])
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.verify_sub_port_intf_removal(rif_oid)
 
         # Verify that sub port interface state ok is removed from STATE_DB by Intfmgrd
         self.check_sub_port_intf_key_removal(self.state_db, state_tbl_name, sub_port_intf_name)
