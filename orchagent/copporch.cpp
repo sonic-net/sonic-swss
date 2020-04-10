@@ -451,14 +451,13 @@ bool CoppOrch::removeGenetlinkHostIf(string trap_group_name)
     return true;
 }
 
-task_process_status CoppOrch::processCoppRule(Consumer& consumer)
+task_process_status CoppOrch::processCoppRule(Consumer& consumer, SyncMap::iterator it)
 {
     SWSS_LOG_ENTER();
 
     sai_status_t sai_status;
     vector<string> trap_id_list;
     string queue_ind;
-    auto it = consumer.m_toSync.begin();
     KeyOpFieldsValuesTuple tuple = it->second;
     string trap_group_name = kfvKey(tuple);
     string op = kfvOp(tuple);
@@ -832,7 +831,7 @@ void CoppOrch::doTask(Consumer &consumer)
 
         try
         {
-            task_status = processCoppRule(consumer);
+            task_status = processCoppRule(consumer, it);
         }
         catch(const out_of_range& e)
         {
@@ -859,7 +858,6 @@ void CoppOrch::doTask(Consumer &consumer)
                 SWSS_LOG_ERROR("Processing copp task item failed, exiting. ");
                 return;
             case task_process_status::task_need_retry:
-                SWSS_LOG_ERROR("Processing copp task item failed, will retry.");
                 it++;
                 break;
             default:

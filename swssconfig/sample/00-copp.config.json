@@ -55,5 +55,21 @@
             "red_action":"drop"
         },
         "OP": "SET"
-    }
+    },
+    {
+        "COPP_TABLE:trap.group.sflow": {
+            "trap_ids": "sample_packet",
+            "trap_action":"trap",
+            "trap_priority":"1",
+            "queue": "2",
+            "meter_type":"packets",
+            "mode":"sr_tcm",
+            "cir":"5000",
+            "cbs":"5000",
+            "red_action":"drop",
+            "genetlink_name":"psample",
+            "genetlink_mcgrp_name":"packets"
+        },
+        "OP": "SET"
+   }
 ]

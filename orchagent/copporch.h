@@ -61,7 +61,7 @@ protected:
     void initDefaultTrapGroup();
     void initDefaultTrapIds();
 
-    task_process_status processCoppRule(Consumer& consumer);
+    task_process_status processCoppRule(Consumer& consumer, SyncMap::iterator it);
     bool isValidList(std::vector<std::string> &trap_id_list, std::vector<std::string> &all_items) const;
     void getTrapIdList(std::vector<std::string> &trap_id_name_list, std::vector<sai_hostif_trap_type_t> &trap_id_list) const;
     bool applyTrapIds(sai_object_id_t trap_group, std::vector<std::string> &trap_id_name_list, std::vector<sai_attribute_t> &trap_id_attribs);
