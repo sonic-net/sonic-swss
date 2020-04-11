@@ -386,10 +386,16 @@ void RouteOrch::doTask(Consumer& consumer)
             string key = kfvKey(t);
             string op = kfvOp(t);
 
-            auto inserted = m_toBulk.emplace(std::piecewise_construct,
+            auto rc = m_toBulk.emplace(std::piecewise_construct,
                     std::forward_as_tuple(key, op),
                     std::forward_as_tuple());
-            auto& object_statuses = inserted.first->second;
+
+            bool inserted = rc.second;
+            auto& object_statuses = rc.first->second;
+            if (!inserted)
+            {
+                object_statuses.clear();
+            }
 
             /* Get notification from application */
             /* resync application:
