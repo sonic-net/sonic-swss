@@ -1218,17 +1218,47 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
         return false;
     }
 
-    if (nextHops.getSize() > 1)
+    /* next_hop_id indicates the next hop id or next hop group id of this route */
+    sai_object_id_t next_hop_id;
+
+    /* The route is pointing to a next hop */
+    if (nextHops.getSize() == 1)
+    {
+        NextHopKey nexthop(nextHops.to_string());
+        if (nexthop.ip_address.isZero())
+        {
+            next_hop_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
+            /* rif is not created yet */
+            if (next_hop_id == SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                        nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
+                return false;
+            }
+        }
+        else
+        {
+            if (m_neighOrch->hasNextHop(nexthop))
+            {
+                next_hop_id = m_neighOrch->getNextHopId(nexthop);
+            }
+            else
+            {
+                SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                        nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
+                return false;
+            }
+        }
+    }
+    /* The route is pointing to a next hop group */
+    else
     {
         if (!hasNextHopGroup(nextHops))
         {
             // Previous added an temporary route
-            auto& tmp_next_hop = m_syncdRoutes[vrf_id][ipPrefix];
-            bool rc = addRoutePost(object_statuses, vrf_id, ipPrefix, tmp_next_hop);
-            if (!rc)
-            {
-                m_syncdRoutes[vrf_id].erase(ipPrefix);
-            }
+            auto tmp_next_hop = m_syncdRoutes[vrf_id][ipPrefix];
+            m_syncdRoutes[vrf_id].erase(ipPrefix);
+            addRoutePost(object_statuses, vrf_id, ipPrefix, tmp_next_hop);
             return false;
         }
     }
@@ -1265,13 +1295,19 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
     }
     else
     {
-        sai_status_t status = *it_status++;
-        if (status != SAI_STATUS_SUCCESS)
+        sai_status_t status;
+
+        /* Set the packet action to forward when there was no next hop (dropped) */
+        if (it_route->second.getSize() == 0)
         {
-            SWSS_LOG_ERROR("Failed to set route %s with packet action forward, %d",
-                           ipPrefix.to_string().c_str(), status);
-            return false;
-        }
+        	status = *it_status++;
+	        if (status != SAI_STATUS_SUCCESS)
+	        {
+	            SWSS_LOG_ERROR("Failed to set route %s with packet action forward, %d",
+	                           ipPrefix.to_string().c_str(), status);
+	            return false;
+	        }
+		}
 
         status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
