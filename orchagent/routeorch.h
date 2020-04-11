@@ -78,6 +78,8 @@ public:
 
     void notifyNextHopChangeObservers(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&, bool);
 private:
+    using StatusInserter = std::deque<sai_status_t>&;
+
     NeighOrch *m_neighOrch;
     IntfsOrch *m_intfsOrch;
     VRFOrch *m_vrfOrch;
@@ -90,15 +92,6 @@ private:
     NextHopGroupTable m_syncdNextHopGroups;
 
     NextHopObserverTable m_nextHopObservers;
-
-    using StatusInserter = std::deque<sai_status_t>&;
-    std::map<
-            std::pair<
-                    std::string,            // Key
-                    std::string             // Op
-            >,
-            std::deque<sai_status_t>        // Bulk statuses
-    >                                       m_toBulk;
 
     EntityBulker<sai_route_api_t>           gRouteBulker;
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulkder;

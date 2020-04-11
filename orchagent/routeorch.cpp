@@ -12,7 +12,6 @@ extern sai_object_id_t gSwitchId;
 extern sai_next_hop_group_api_t*    sai_next_hop_group_api;
 extern sai_route_api_t*             sai_route_api;
 extern sai_switch_api_t*            sai_switch_api;
-extern sai_fdb_api_t*               sai_fdb_api;
 
 extern PortsOrch *gPortsOrch;
 extern CrmOrch *gCrmOrch;
@@ -374,11 +373,19 @@ void RouteOrch::doTask(Consumer& consumer)
         return;
     }
 
-    m_toBulk.clear();
-
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {
+        // Route bulk results will be stored in a map
+        std::map<
+                std::pair<
+                        std::string,            // Key
+                        std::string             // Op
+                >,
+                std::deque<sai_status_t>        // Bulk statuses
+        >                                       toBulk;
+
+        // Add or remove routes with a route bulker
         while (it != consumer.m_toSync.end())
         {
             KeyOpFieldsValuesTuple t = it->second;
@@ -386,7 +393,7 @@ void RouteOrch::doTask(Consumer& consumer)
             string key = kfvKey(t);
             string op = kfvOp(t);
 
-            auto rc = m_toBulk.emplace(std::piecewise_construct,
+            auto rc = toBulk.emplace(std::piecewise_construct,
                     std::forward_as_tuple(key, op),
                     std::forward_as_tuple());
 
@@ -580,24 +587,19 @@ void RouteOrch::doTask(Consumer& consumer)
             }
         }
 
+        // Flush the route bulker, so routes will be written to syncd and ASIC
         gRouteBulker.flush();
 
+        // Go through the bulker results
         auto it_prev = consumer.m_toSync.begin();
         while (it_prev != it)
         {
-            if (m_resync)
-            {
-                it_prev++;
-                continue;
-            }
-
             KeyOpFieldsValuesTuple t = it_prev->second;
 
             string key = kfvKey(t);
             string op = kfvOp(t);
-
-            auto found = m_toBulk.find(make_pair(key, op));
-            if (found == m_toBulk.end())
+            auto found = toBulk.find(make_pair(key, op));
+            if (found == toBulk.end())
             {
                 it_prev++;
                 continue;
@@ -704,7 +706,6 @@ void RouteOrch::doTask(Consumer& consumer)
                     it_prev++;
             }
         }
-        m_toBulk.clear();
     }
 }
 
