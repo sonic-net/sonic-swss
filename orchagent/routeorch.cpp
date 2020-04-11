@@ -1060,9 +1060,9 @@ bool RouteOrch::addTempRoute(StatusInserter object_statuses, sai_object_id_t vrf
 
     /* Set the route's temporary next hop to be the randomly picked one */
     NextHopGroupKey tmp_next_hop((*it).to_string());
-    size_t sz = gRouteBulker.creating_entries_count();
+    size_t sz = object_statuses.size();
     addRoute(object_statuses, vrf_id, ipPrefix, tmp_next_hop);
-    if (gRouteBulker.creating_entries_count() > sz)
+    if (object_statuses.size() > sz)
     {
         // TRICK! TRICK! TRICK!
         // Even we only successfully invoke bulker, not SAI, we write the temp route
