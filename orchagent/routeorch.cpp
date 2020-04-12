@@ -382,7 +382,7 @@ void RouteOrch::doTask(Consumer& consumer)
                         std::string,            // Key
                         std::string             // Op
                 >,
-                std::deque<sai_status_t>        // Bulk statuses
+                RouteBulkContext
         >                                       toBulk;
 
         // Add or remove routes with a route bulker
@@ -398,10 +398,10 @@ void RouteOrch::doTask(Consumer& consumer)
                     std::forward_as_tuple());
 
             bool inserted = rc.second;
-            auto& object_statuses = rc.first->second;
+            auto& ctx = rc.first->second;
             if (!inserted)
             {
-                object_statuses.clear();
+                ctx.clear();
             }
 
             /* Get notification from application */
@@ -453,8 +453,8 @@ void RouteOrch::doTask(Consumer& consumer)
                 continue;
             }
 
-            sai_object_id_t vrf_id;
-            IpPrefix ip_prefix;
+            sai_object_id_t& vrf_id = ctx.vrf_id;
+            IpPrefix& ip_prefix = ctx.ip_prefix;
 
             if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
             {
@@ -506,7 +506,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 {
                     /* If any existing routes are updated to point to the
                      * above interfaces, remove them from the ASIC. */
-                    if (removeRoute(object_statuses, vrf_id, ip_prefix))
+                    if (removeRoute(ctx, vrf_id, ip_prefix))
                         it = consumer.m_toSync.erase(it);
                     else
                         it++;
@@ -547,7 +547,7 @@ void RouteOrch::doTask(Consumer& consumer)
                     /* subnet route, vrf leaked route, etc */
                     else
                     {
-                        if (addRoute(object_statuses, vrf_id, ip_prefix, nhg))
+                        if (addRoute(ctx, vrf_id, ip_prefix, nhg))
                              it = consumer.m_toSync.erase(it);
                         else
                             it++;
@@ -557,7 +557,7 @@ void RouteOrch::doTask(Consumer& consumer)
                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                     m_syncdRoutes.at(vrf_id).at(ip_prefix) != nhg)
                 {
-                    if (addRoute(object_statuses, vrf_id, ip_prefix, nhg))
+                    if (addRoute(ctx, vrf_id, ip_prefix, nhg))
                         it = consumer.m_toSync.erase(it);
                     else
                         it++;
@@ -575,7 +575,7 @@ void RouteOrch::doTask(Consumer& consumer)
             }
             else if (op == DEL_COMMAND)
             {
-                if (removeRoute(object_statuses, vrf_id, ip_prefix))
+                if (removeRoute(ctx, vrf_id, ip_prefix))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;
@@ -605,34 +605,17 @@ void RouteOrch::doTask(Consumer& consumer)
                 continue;
             }
 
-            auto& object_statuses = found->second;
+            auto& ctx = found->second;
+            auto& object_statuses = ctx.object_statuses;
             if (object_statuses.empty())
             {
                 it_prev++;
                 continue;
             }
 
-            sai_object_id_t vrf_id;
-            IpPrefix ip_prefix;
-
-            if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
-            {
-                size_t found = key.find(':');
-                string vrf_name = key.substr(0, found);
-
-                if (!m_vrfOrch->isVRFexists(vrf_name))
-                {
-                    it_prev++;
-                    continue;
-                }
-                vrf_id = m_vrfOrch->getVRFid(vrf_name);
-                ip_prefix = IpPrefix(key.substr(found+1));
-            }
-            else
-            {
-                vrf_id = gVirtualRouterId;
-                ip_prefix = IpPrefix(key);
-            }
+            sai_object_id_t& vrf_id = ctx.vrf_id;
+            IpPrefix& ip_prefix = ctx.ip_prefix;
+            SWSS_LOG_NOTICE("vrf_id=%lu, ip_prefix=%s", vrf_id, ip_prefix.to_string().c_str());
 
             if (op == SET_COMMAND)
             {
@@ -665,7 +648,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 {
                     /* If any existing routes are updated to point to the
                      * above interfaces, remove them from the ASIC. */
-                    if (removeRoutePost(object_statuses, vrf_id, ip_prefix))
+                    if (removeRoutePost(ctx, vrf_id, ip_prefix))
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -682,7 +665,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
                 {
-                    if (addRoutePost(object_statuses, vrf_id, ip_prefix, nhg))
+                    if (addRoutePost(ctx, vrf_id, ip_prefix, nhg))
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -691,7 +674,7 @@ void RouteOrch::doTask(Consumer& consumer)
                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                     m_syncdRoutes.at(vrf_id).at(ip_prefix) != nhg)
                 {
-                    if (addRoutePost(object_statuses, vrf_id, ip_prefix, nhg))
+                    if (addRoutePost(ctx, vrf_id, ip_prefix, nhg))
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -700,7 +683,7 @@ void RouteOrch::doTask(Consumer& consumer)
             else if (op == DEL_COMMAND)
             {
                 /* Cannot locate the route or remove succeed */
-                if (removeRoutePost(object_statuses, vrf_id, ip_prefix))
+                if (removeRoutePost(ctx, vrf_id, ip_prefix))
                     it_prev = consumer.m_toSync.erase(it_prev);
                 else
                     it_prev++;
@@ -1038,7 +1021,7 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     return true;
 }
 
-bool RouteOrch::addTempRoute(StatusInserter object_statuses, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+void RouteOrch::addTempRoute(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
 
@@ -1059,7 +1042,7 @@ bool RouteOrch::addTempRoute(StatusInserter object_statuses, sai_object_id_t vrf
 
     /* Return if next_hop_set is empty */
     if (next_hop_set.empty())
-        return false;
+        return;
 
     /* Randomly pick an address from the set */
     auto it = next_hop_set.begin();
@@ -1067,20 +1050,12 @@ bool RouteOrch::addTempRoute(StatusInserter object_statuses, sai_object_id_t vrf
 
     /* Set the route's temporary next hop to be the randomly picked one */
     NextHopGroupKey tmp_next_hop((*it).to_string());
-    size_t sz = object_statuses.size();
-    addRoute(object_statuses, vrf_id, ipPrefix, tmp_next_hop);
-    if (object_statuses.size() > sz)
-    {
-        // TRICK! TRICK! TRICK!
-        // Even we only successfully invoke bulker, not SAI, we write the temp route
-        // into m_syncdRoutes so addRoutePost will know what happened
-        m_syncdRoutes[vrf_id][ipPrefix] = tmp_next_hop;
-        return true;
-    }
-    return false;
+    ctx.tmp_next_hop = tmp_next_hop;
+
+    addRoute(ctx, vrf_id, ipPrefix, tmp_next_hop);
 }
 
-bool RouteOrch::addRoute(StatusInserter object_statuses, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoute(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
 
@@ -1149,14 +1124,8 @@ bool RouteOrch::addRoute(StatusInserter object_statuses, sai_object_id_t vrf_id,
                 /* Add a temporary route when a next hop group cannot be added,
                  * and there is no temporary route right now or the current temporary
                  * route is not pointing to a member of the next hop group to sync. */
-                bool rc = addTempRoute(object_statuses, vrf_id, ipPrefix, nextHops);
-                if (rc)
-                {
-                    /* Push failure into object_statuses so addRoutePost will fail
-                     * so the original route is not successfully added, and will retry */
-                    object_statuses.emplace_back(SAI_STATUS_INSUFFICIENT_RESOURCES);
-                }
-                //  Only added to route bulker, not immediately finished
+                addTempRoute(ctx, vrf_id, ipPrefix, nextHops);
+                /* Return false since the original route is not successfully added */
                 return false;
             }
         }
@@ -1171,6 +1140,7 @@ bool RouteOrch::addRoute(StatusInserter object_statuses, sai_object_id_t vrf_id,
     copy(route_entry.destination, ipPrefix);
 
     sai_attribute_t route_attr;
+    auto& object_statuses = ctx.object_statuses;
 
     /* If the prefix is not in m_syncdRoutes, then we need to create the route
      * for this prefix with the new next hop (group) id. If the prefix is already
@@ -1215,9 +1185,11 @@ bool RouteOrch::addRoute(StatusInserter object_statuses, sai_object_id_t vrf_id,
     return false;
 }
 
-bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoutePost(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
+
+    auto& object_statuses = ctx.object_statuses;
 
     if (object_statuses.empty())
     {
@@ -1263,9 +1235,8 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
         if (!hasNextHopGroup(nextHops))
         {
             // Previous added an temporary route
-            auto tmp_next_hop = m_syncdRoutes[vrf_id][ipPrefix];
-            m_syncdRoutes[vrf_id].erase(ipPrefix);
-            addRoutePost(object_statuses, vrf_id, ipPrefix, tmp_next_hop);
+            auto& tmp_next_hop = ctx.tmp_next_hop;
+            addRoutePost(ctx, vrf_id, ipPrefix, tmp_next_hop);
             return false;
         }
     }
@@ -1307,14 +1278,14 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
         /* Set the packet action to forward when there was no next hop (dropped) */
         if (it_route->second.getSize() == 0)
         {
-        	status = *it_status++;
-	        if (status != SAI_STATUS_SUCCESS)
-	        {
-	            SWSS_LOG_ERROR("Failed to set route %s with packet action forward, %d",
-	                           ipPrefix.to_string().c_str(), status);
-	            return false;
-	        }
-		}
+            status = *it_status++;
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to set route %s with packet action forward, %d",
+                               ipPrefix.to_string().c_str(), status);
+                return false;
+            }
+        }
 
         status = *it_status++;
         if (status != SAI_STATUS_SUCCESS)
@@ -1343,7 +1314,7 @@ bool RouteOrch::addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf
     return true;
 }
 
-bool RouteOrch::removeRoute(StatusInserter object_statuses, sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
+bool RouteOrch::removeRoute(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
 {
     SWSS_LOG_ENTER();
 
@@ -1367,6 +1338,8 @@ bool RouteOrch::removeRoute(StatusInserter object_statuses, sai_object_id_t vrf_
                 ipPrefix.to_string().c_str());
         return true;
     }
+
+    auto& object_statuses = ctx.object_statuses;
 
     // set to blackhole for default route
     if (ipPrefix.isDefaultRoute())
@@ -1393,9 +1366,11 @@ bool RouteOrch::removeRoute(StatusInserter object_statuses, sai_object_id_t vrf_
     return false;
 }
 
-bool RouteOrch::removeRoutePost(StatusInserter object_statuses, sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
+bool RouteOrch::removeRoutePost(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
 {
     SWSS_LOG_ENTER();
+
+    auto& object_statuses = ctx.object_statuses;
 
     if (object_statuses.empty())
     {
@@ -1488,4 +1463,3 @@ bool RouteOrch::removeRoutePost(StatusInserter object_statuses, sai_object_id_t 
 
     return true;
 }
-

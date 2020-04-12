@@ -55,6 +55,28 @@ struct NextHopObserverEntry
     list<Observer *> observers;
 };
 
+struct RouteBulkContext
+{
+    std::deque<sai_status_t>            object_statuses;    // Bulk statuses
+    NextHopGroupKey                     tmp_next_hop;       // Temporary next hop
+    sai_object_id_t                     vrf_id;
+    IpPrefix                            ip_prefix;
+
+    RouteBulkContext()
+    {
+    }
+
+    // Disable any copy constructors
+    RouteBulkContext(const RouteBulkContext&) = delete;
+    RouteBulkContext(RouteBulkContext&&) = delete;
+
+    void clear()
+    {
+        object_statuses.clear();
+        tmp_next_hop.clear();
+    }
+};
+
 class RouteOrch : public Orch, public Subject
 {
 public:
@@ -78,8 +100,6 @@ public:
 
     void notifyNextHopChangeObservers(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&, bool);
 private:
-    using StatusInserter = std::deque<sai_status_t>&;
-
     NeighOrch *m_neighOrch;
     IntfsOrch *m_intfsOrch;
     VRFOrch *m_vrfOrch;
@@ -96,11 +116,11 @@ private:
     EntityBulker<sai_route_api_t>           gRouteBulker;
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulkder;
 
-    bool addTempRoute(StatusInserter object_statuses, sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool addRoute(StatusInserter object_statuses, sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool addRoutePost(StatusInserter object_statuses, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
-    bool removeRoute(StatusInserter object_statuses, sai_object_id_t, const IpPrefix&);
-    bool removeRoutePost(StatusInserter object_statuses, sai_object_id_t, const IpPrefix&);
+    void addTempRoute(RouteBulkContext& ctx, sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
+    bool addRoute(RouteBulkContext& ctx, sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
+    bool addRoutePost(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
+    bool removeRoute(RouteBulkContext& ctx, sai_object_id_t, const IpPrefix&);
+    bool removeRoutePost(RouteBulkContext& ctx, sai_object_id_t, const IpPrefix&);
 
     std::string getLinkLocalEui64Addr(void);
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
