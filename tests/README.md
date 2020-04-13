@@ -106,4 +106,5 @@ For those developing new features for SWSS or the DVS framework, you might find 
     You can mitigate this by editing the `DEFAULT_DOCKER_API_VERSION` in `/usr/local/lib/python2.7/dist-packages/docker/constants.py`, or by upgrading to a newer version of Docker CE. See [relevant GitHub discussion](https://github.com/drone/drone/issues/2048).
     
 ## Further Reading
-[Development Guide](./README.DevGuide.md)
+- [How to develop new tests](./README.TestDevGuide.md)
+- [How to contribute to `dvslib`](./README.LibDevGuide.md)
