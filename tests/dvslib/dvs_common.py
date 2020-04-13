@@ -37,8 +37,11 @@ def wait_for_result(polling_function, polling_config):
                 not, as well as some return value.
 
         Returns:
-            Any: The output of the polling function, if it is succesful,
-            None otherwise.
+            (bool, Any): If the polling function succeeds, then this method
+            will return True and the output of the polling function. If it
+            does not succeed within the provided timeout, it will return False
+            and whatever the output of the polling function was on the final
+            attempt.
     """
     if polling_config.polling_interval == 0:
         iterations = 1
@@ -46,14 +49,14 @@ def wait_for_result(polling_function, polling_config):
         iterations = int(polling_config.timeout // polling_config.polling_interval) + 1
 
     for _ in range(iterations):
-        (status, result) = polling_function()
+        status, result = polling_function()
 
         if status:
-            return result
+            return (True, result)
 
         time.sleep(polling_config.polling_interval)
 
     if polling_config.strict:
-        assert False
+        assert False, "Operation timed out after {}s".format(polling_config.timeout)
 
-    return None
+    return (False, result)
