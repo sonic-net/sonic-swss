@@ -24,7 +24,7 @@ const int routeorch_pri = 5;
 
 RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
         gRouteBulker(sai_route_api),
-        gNextHopGroupMemberBulkder(sai_next_hop_group_api, gSwitchId),
+        gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId),
         Orch(db, tableName, routeorch_pri),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
@@ -908,12 +908,12 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         nhgm_attr.value.oid = nhid;
         nhgm_attrs.push_back(nhgm_attr);
 
-        gNextHopGroupMemberBulkder.create_entry(&nhgm_ids[i],
+        gNextHopGroupMemberBulker.create_entry(&nhgm_ids[i],
                                                  (uint32_t)nhgm_attrs.size(),
                                                  nhgm_attrs.data());
     }
 
-    gNextHopGroupMemberBulkder.flush();
+    gNextHopGroupMemberBulker.flush();
     for (size_t i = 0; i < npid_count; i++)
     {
         auto nhid = next_hop_ids[i];
@@ -986,9 +986,9 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     vector<sai_status_t> statuses(nhid_count);
     for (size_t i = 0; i < nhid_count; i++)
     {
-        gNextHopGroupMemberBulkder.remove_entry(&statuses[i], next_hop_ids[i]);
+        gNextHopGroupMemberBulker.remove_entry(&statuses[i], next_hop_ids[i]);
     }
-    gNextHopGroupMemberBulkder.flush();
+    gNextHopGroupMemberBulker.flush();
     for (size_t i = 0; i < nhid_count; i++)
     {
         if (statuses[i] != SAI_STATUS_SUCCESS)

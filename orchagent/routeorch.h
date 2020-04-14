@@ -114,7 +114,7 @@ private:
     NextHopObserverTable m_nextHopObservers;
 
     EntityBulker<sai_route_api_t>           gRouteBulker;
-    ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulkder;
+    ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
 
     void addTempRoute(RouteBulkContext& ctx, sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
     bool addRoute(RouteBulkContext& ctx, sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
