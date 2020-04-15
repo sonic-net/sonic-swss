@@ -1217,11 +1217,7 @@ bool RouteOrch::addRoutePost(RouteBulkContext& ctx, sai_object_id_t vrf_id, cons
         }
         else
         {
-            if (m_neighOrch->hasNextHop(nexthop))
-            {
-                next_hop_id = m_neighOrch->getNextHopId(nexthop);
-            }
-            else
+            if (!m_neighOrch->hasNextHop(nexthop))
             {
                 SWSS_LOG_INFO("Failed to get next hop %s for %s",
                         nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
