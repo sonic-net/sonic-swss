@@ -119,12 +119,94 @@ class DVSDatabase(object):
             fv_pairs = self.get_entry(table_name, key)
             return (bool(fv_pairs), fv_pairs)
 
-        return wait_for_result(_access_function, polling_config)
+        status, result = wait_for_result(_access_function,
+                                         self._disable_strict_polling(polling_config))
 
-    def wait_for_empty_entry(self,
+        if not status:
+            assert not polling_config.strict, \
+                "Entry not found: key=\"{}\", table=\"{}\"".format(key, table_name)
+
+        return result
+
+    def wait_for_field_match(self,
                              table_name,
                              key,
+                             expected_fields,
                              polling_config=DEFAULT_POLLING_CONFIG):
+        """
+            Checks if the provided fields are contained in the entry stored
+            at `key` in the specified table. This method will wait for the
+            fields to exist.
+
+            Args:
+                table_name (str): The name of the table where the entry is
+                    stored.
+                key (str): The key that maps to the entry being checked.
+                expected_fields (dict): The fields and their values we expect
+                    to see in the entry.
+                polling_config (PollingConfig): The parameters to use to poll
+                    the db.
+
+            Returns:
+                Dict[str, str]: The entry stored at `key`. If no entry is found,
+                then an empty Dict will be returned.
+        """
+
+        def _access_function():
+            fv_pairs = self.get_entry(table_name, key)
+            return (all(fv_pairs.get(k) == v for k, v in expected_fields.items()), fv_pairs)
+
+        status, result = wait_for_result(_access_function,
+                                         self._disable_strict_polling(polling_config))
+
+        if not status:
+            assert not polling_config.strict, \
+                "Expected fields not found: expected={}, received={}, \
+                key=\"{}\", table=\"{}\"".format(expected_fields, result, key, table_name)
+
+        return result
+
+    def wait_for_exact_match(self,
+                             table_name,
+                             key,
+                             expected_entry,
+                             polling_config=DEFAULT_POLLING_CONFIG):
+        """
+            Checks if the provided entry matches the entry stored at `key`
+            in the specified table. This method will wait for the exact entry
+            to exist.
+
+            Args:
+                table_name (str): The name of the table where the entry is
+                    stored.
+                key (str): The key that maps to the entry being checked.
+                expected_entry (dict): The entry we expect to see.
+                polling_config (PollingConfig): The parameters to use to poll
+                    the db.
+
+            Returns:
+                Dict[str, str]: The entry stored at `key`. If no entry is found,
+                then an empty Dict will be returned.
+        """
+
+        def _access_function():
+            fv_pairs = self.get_entry(table_name, key)
+            return (fv_pairs == expected_entry, fv_pairs)
+
+        status, result = wait_for_result(_access_function,
+                                         self._disable_strict_polling(polling_config))
+
+        if not status:
+            assert not polling_config.strict, \
+                "Exact match not found: expected={}, received={}, \
+                key=\"{}\", table=\"{}\"".format(expected_entry, result, key, table_name)
+
+        return result
+
+    def wait_for_deleted_entry(self,
+                               table_name,
+                               key,
+                               polling_config=DEFAULT_POLLING_CONFIG):
         """
             Checks if there is any entry stored at `key` in the specified
             table. This method will wait for the entry to be empty.
@@ -136,14 +218,23 @@ class DVSDatabase(object):
                     the db.
 
             Returns:
-                bool: True if no entry exists at `key`, False otherwise.
+                Dict[str, str]: The entry stored at `key`. If no entry is found,
+                then an empty Dict will be returned.
         """
 
         def _access_function():
             fv_pairs = self.get_entry(table_name, key)
-            return (not fv_pairs, fv_pairs)
+            return (not bool(fv_pairs), fv_pairs)
 
-        return wait_for_result(_access_function, polling_config)
+        status, result = wait_for_result(_access_function,
+                                         self._disable_strict_polling(polling_config))
+
+        if not status:
+            assert not polling_config.strict, \
+                "Entry still exists: entry={}, key=\"{}\", table=\"{}\""\
+                .format(result, key, table_name)
+
+        return result
 
     def wait_for_n_keys(self,
                         table_name,
@@ -170,4 +261,89 @@ class DVSDatabase(object):
             keys = self.get_keys(table_name)
             return (len(keys) == num_keys, keys)
 
-        return wait_for_result(_access_function, polling_config)
+        status, result = wait_for_result(_access_function,
+                                         self._disable_strict_polling(polling_config))
+
+        if not status:
+            assert not polling_config.strict, \
+                "Unexpected number of keys: expected={}, received={} ({}), table=\"{}\""\
+                .format(num_keys, len(result), result, table_name)
+
+        return result
+
+    def wait_for_matching_keys(self,
+                               table_name,
+                               expected_keys,
+                               polling_config=DEFAULT_POLLING_CONFIG):
+        """
+            Checks if the specified keys exist in the table. This method
+            will wait for the keys to exist.
+
+            Args:
+                table_name (str): The name of the table from which to fetch
+                    the keys.
+                expected_keys (List[str]): The keys we expect to see in the
+                    table.
+                polling_config (PollingConfig): The parameters to use to poll
+                    the db.
+
+            Returns:
+                List[str]: The keys stored in the table. If no keys are found,
+                then an empty List will be returned.
+        """
+
+        def _access_function():
+            keys = self.get_keys(table_name)
+            return (all(key in keys for key in expected_keys), keys)
+
+        status, result = wait_for_result(_access_function,
+                                         self._disable_strict_polling(polling_config))
+
+        if not status:
+            assert not polling_config.strict, \
+                "Expected keys not found: expected={}, received={}, table=\"{}\""\
+                .format(expected_keys, result, table_name)
+
+        return result
+
+    def wait_for_deleted_keys(self,
+                              table_name,
+                              deleted_keys,
+                              polling_config=DEFAULT_POLLING_CONFIG):
+        """
+            Checks if the specified keys no longer exist in the table. This
+            method will wait for the keys to be deleted.
+
+            Args:
+                table_name (str): The name of the table from which to fetch
+                    the keys.
+                deleted_keys (List[str]): The keys we expect to be removed from
+                    the table.
+                polling_config (PollingConfig): The parameters to use to poll
+                    the db.
+
+            Returns:
+                List[str]: The keys stored in the table. If no keys are found,
+                then an empty List will be returned.
+        """
+
+        def _access_function():
+            keys = self.get_keys(table_name)
+            return (all(key not in keys for key in deleted_keys), keys)
+
+        status, result = wait_for_result(_access_function,
+                                         self._disable_strict_polling(polling_config))
+
+        if not status:
+            assert not polling_config.strict, \
+                "Unexpected keys found: expected={}, received={}, table=\"{}\""\
+                .format(deleted_keys, result, table_name)
+
+        return result
+
+    @staticmethod
+    def _disable_strict_polling(polling_config):
+        disabled_config = PollingConfig(polling_interval=polling_config.polling_interval,
+                                        timeout=polling_config.timeout,
+                                        strict=False)
+        return disabled_config

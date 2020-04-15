@@ -947,6 +947,9 @@ class DockerVirtualSwitch(object):
             db.default_acl_tables = self.asicdb.default_acl_tables
             db.default_acl_entries = self.asicdb.default_acl_entries
             db.port_name_map = self.asicdb.portnamemap
+            db.default_vlan_id = self.asicdb.default_vlan_id
+            db.port_to_id_map = self.asicdb.portoidmap
+            db.hostif_name_map = self.asicdb.hostifnamemap
             self.asic_db = db
 
         return self.asic_db

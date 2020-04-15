@@ -433,7 +433,7 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             else if (field == buffer_size_field_name)
             {
                 attr.id = SAI_BUFFER_PROFILE_ATTR_BUFFER_SIZE;
-                attr.value.u32 = (uint32_t)stoul(value);
+                attr.value.u64 = (uint64_t)stoul(value);
                 attribs.push_back(attr);
             }
             else if (field == buffer_dynamic_th_field_name)

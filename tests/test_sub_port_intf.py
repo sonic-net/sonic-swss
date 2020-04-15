@@ -1,8 +1,7 @@
-import pytest
-import time
 import json
 
-from swsscommon import swsscommon
+from dvslib.dvs_common import wait_for_result
+from dvslib.dvs_database import DVSDatabase
 
 CFG_VLAN_SUB_INTF_TABLE_NAME = "VLAN_SUB_INTERFACE"
 CFG_PORT_TABLE_NAME = "PORT"
@@ -38,130 +37,96 @@ class TestSubPortIntf(object):
     IPV6_SUBNET_UNDER_TEST = "fc00::40/126"
 
     def connect_dbs(self, dvs):
-        self.config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-        self.state_db = swsscommon.DBConnector(swsscommon.STATE_DB, dvs.redis_sock, 0)
-        self.appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        self.asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        self.app_db = dvs.get_app_db()
+        self.asic_db = dvs.get_asic_db()
+        self.config_db = dvs.get_config_db()
+        self.state_db = dvs.get_state_db()
 
     def set_parent_port_admin_status(self, dvs, port_name, status):
-        fvs = swsscommon.FieldValuePairs([(ADMIN_STATUS, status)])
+        fvs = {ADMIN_STATUS: status}
 
         if port_name.startswith(ETHERNET_PREFIX):
             tbl_name = CFG_PORT_TABLE_NAME
         else:
             assert port_name.startswith(LAG_PREFIX)
             tbl_name = CFG_LAG_TABLE_NAME
-        tbl = swsscommon.Table(self.config_db, tbl_name)
-        tbl.set(port_name, fvs)
-        time.sleep(1)
+        self.config_db.create_entry(tbl_name, port_name, fvs)
 
         # follow the treatment in TestSubPortIntf::set_admin_status
         if tbl_name == CFG_LAG_TABLE_NAME:
             dvs.runcmd("bash -c 'echo " + ("1" if status == "up" else "0") + \
                     " > /sys/class/net/" + port_name + "/carrier'")
-        time.sleep(1)
 
     def create_sub_port_intf_profile(self, sub_port_intf_name):
-        fvs = swsscommon.FieldValuePairs([(ADMIN_STATUS, "up")])
+        fvs = {ADMIN_STATUS: "up"}
 
-        tbl = swsscommon.Table(self.config_db, CFG_VLAN_SUB_INTF_TABLE_NAME)
-        tbl.set(sub_port_intf_name, fvs)
-
-        time.sleep(1)
+        self.config_db.create_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, sub_port_intf_name, fvs)
 
     def add_sub_port_intf_ip_addr(self, sub_port_intf_name, ip_addr):
-        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        fvs = {"NULL": "NULL"}
 
-        tbl = swsscommon.Table(self.config_db, CFG_VLAN_SUB_INTF_TABLE_NAME)
-        tbl.set(sub_port_intf_name + "|" + ip_addr, fvs)
-
-        time.sleep(2)
+        key = "{}|{}".format(sub_port_intf_name, ip_addr)
+        self.config_db.create_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, key, fvs)
 
     def set_sub_port_intf_admin_status(self, sub_port_intf_name, status):
-        fvs = swsscommon.FieldValuePairs([(ADMIN_STATUS, status)])
+        fvs = {ADMIN_STATUS: status}
 
-        tbl = swsscommon.Table(self.config_db, CFG_VLAN_SUB_INTF_TABLE_NAME)
-        tbl.set(sub_port_intf_name, fvs)
-
-        time.sleep(1)
+        self.config_db.create_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, sub_port_intf_name, fvs)
 
     def remove_sub_port_intf_profile(self, sub_port_intf_name):
-        tbl = swsscommon.Table(self.config_db, CFG_VLAN_SUB_INTF_TABLE_NAME)
-        tbl._del(sub_port_intf_name)
+        self.config_db.delete_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, sub_port_intf_name)
 
-        time.sleep(2)
+    def verify_sub_port_intf_removal(self, rif_oid):
+        self.asic_db.wait_for_deleted_keys(ASIC_RIF_TABLE, [rif_oid])
 
     def remove_sub_port_intf_ip_addr(self, sub_port_intf_name, ip_addr):
-        tbl = swsscommon.Table(self.config_db, CFG_VLAN_SUB_INTF_TABLE_NAME)
-        tbl._del(sub_port_intf_name + "|" + ip_addr)
+        key = "{}|{}".format(sub_port_intf_name, ip_addr)
+        self.config_db.delete_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, key)
 
-        time.sleep(1)
+    def verify_sub_port_intf_ip_addr_removal(self, sub_port_intf_name, ip_addrs):
+        interfaces = ["{}:{}".format(sub_port_intf_name, addr) for addr in ip_addrs]
+        self.app_db.wait_for_deleted_keys(APP_INTF_TABLE_NAME, interfaces)
 
     def get_oids(self, table):
-        tbl = swsscommon.Table(self.asic_db, table)
-        return set(tbl.getKeys())
+        return self.asic_db.get_keys(table)
 
     def get_newly_created_oid(self, table, old_oids):
-        new_oids = self.get_oids(table)
-        oid = list(new_oids - old_oids)
-        assert len(oid) == 1, "Wrong # of newly created oids: %d, expected #: 1." % (len(oid))
+        new_oids = self.asic_db.wait_for_n_keys(table, len(old_oids) + 1)
+        oid = [ids for ids in new_oids if ids not in old_oids]
         return oid[0]
 
     def check_sub_port_intf_key_existence(self, db, table_name, key):
-        tbl = swsscommon.Table(db, table_name)
-
-        keys = tbl.getKeys()
-        assert key in keys, "Key %s not exist" % (key)
+        db.wait_for_matching_keys(table_name, [key])
 
     def check_sub_port_intf_fvs(self, db, table_name, key, fv_dict):
-        tbl = swsscommon.Table(db, table_name)
-
-        keys = tbl.getKeys()
-        assert key in keys
-
-        (status, fvs) = tbl.get(key)
-        assert status == True
-        assert len(fvs) >= len(fv_dict)
-
-        for field, value in fvs:
-            if field in fv_dict:
-                assert fv_dict[field] == value, \
-                    "Wrong value for field %s: %s, expected value: %s" % (field, value, fv_dict[field])
+        db.wait_for_field_match(table_name, key, fv_dict)
 
     def check_sub_port_intf_route_entries(self):
-        ipv4_ip2me_found = False
-        ipv4_subnet_found = False
-        ipv6_ip2me_found = False
-        ipv6_subnet_found = False
+        expected_destinations = [self.IPV4_TOME_UNDER_TEST,
+                                 self.IPV4_SUBNET_UNDER_TEST,
+                                 self.IPV6_TOME_UNDER_TEST,
+                                 self.IPV6_SUBNET_UNDER_TEST]
 
-        tbl = swsscommon.Table(self.asic_db, ASIC_ROUTE_ENTRY_TABLE)
-        raw_route_entries = tbl.getKeys()
+        def _access_function():
+            raw_route_entries = self.asic_db.get_keys(ASIC_ROUTE_ENTRY_TABLE)
+            route_destinations = [str(json.loads(raw_route_entry)["dest"])
+                                  for raw_route_entry in raw_route_entries]
+            return (all(dest in route_destinations for dest in expected_destinations), None)
 
-        for raw_route_entry in raw_route_entries:
-            route_entry = json.loads(raw_route_entry)
-            if route_entry["dest"] == self.IPV4_TOME_UNDER_TEST:
-                ipv4_ip2me_found = True
-            elif route_entry["dest"] == self.IPV4_SUBNET_UNDER_TEST:
-                ipv4_subnet_found = True
-            elif route_entry["dest"] == self.IPV6_TOME_UNDER_TEST:
-                ipv6_ip2me_found = True
-            elif route_entry["dest"] == self.IPV6_SUBNET_UNDER_TEST:
-                ipv6_subnet_found = True
-
-        assert ipv4_ip2me_found and ipv4_subnet_found and ipv6_ip2me_found and ipv6_subnet_found
+        wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
 
     def check_sub_port_intf_key_removal(self, db, table_name, key):
-        tbl = swsscommon.Table(db, table_name)
-
-        keys = tbl.getKeys()
-        assert key not in keys, "Key %s not removed" % (key)
+        db.wait_for_deleted_keys(table_name, [key])
 
     def check_sub_port_intf_route_entries_removal(self, removed_route_entries):
-        tbl = swsscommon.Table(self.asic_db, ASIC_ROUTE_ENTRY_TABLE)
-        raw_route_entries = tbl.getKeys()
-        for raw_route_entry in raw_route_entries:
-            route_entry = json.loads(raw_route_entry)
-            assert route_entry["dest"] not in removed_route_entries
+        def _access_function():
+            raw_route_entries = self.asic_db.get_keys(ASIC_ROUTE_ENTRY_TABLE)
+            status = all(str(json.loads(raw_route_entry)["dest"])
+                         not in removed_route_entries
+                         for raw_route_entry in raw_route_entries)
+            return (status, None)
+
+        wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
 
     def _test_sub_port_intf_creation(self, dvs, sub_port_intf_name):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
@@ -188,7 +153,7 @@ class TestSubPortIntf(object):
         fv_dict = {
             ADMIN_STATUS: "up",
         }
-        self.check_sub_port_intf_fvs(self.appl_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
 
         # Verify that a sub port router interface entry is created in ASIC_DB
         fv_dict = {
@@ -203,6 +168,7 @@ class TestSubPortIntf(object):
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.verify_sub_port_intf_removal(rif_oid)
 
     def test_sub_port_intf_creation(self, dvs):
         self.connect_dbs(dvs)
@@ -213,7 +179,6 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_add_ip_addrs(self, dvs, sub_port_intf_name):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
-        vlan_id = substrs[1]
 
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
 
@@ -239,10 +204,10 @@ class TestSubPortIntf(object):
             "scope": "global",
             "family": "IPv4",
         }
-        self.check_sub_port_intf_fvs(self.appl_db, APP_INTF_TABLE_NAME, \
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, \
                 sub_port_intf_name + ":" + self.IPV4_ADDR_UNDER_TEST, fv_dict)
         fv_dict["family"] = "IPv6"
-        self.check_sub_port_intf_fvs(self.appl_db, APP_INTF_TABLE_NAME, \
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, \
                 sub_port_intf_name + ":" + self.IPV6_ADDR_UNDER_TEST, fv_dict)
 
         # Verify that an IPv4 ip2me route entry is created in ASIC_DB
@@ -254,8 +219,13 @@ class TestSubPortIntf(object):
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name,
+                                                  [self.IPV4_ADDR_UNDER_TEST,
+                                                   self.IPV6_ADDR_UNDER_TEST])
+
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.verify_sub_port_intf_removal(rif_oid)
 
     def test_sub_port_intf_add_ip_addrs(self, dvs):
         self.connect_dbs(dvs)
@@ -266,7 +236,6 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_admin_status_change(self, dvs, sub_port_intf_name):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
-        vlan_id = substrs[1]
 
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
 
@@ -279,7 +248,7 @@ class TestSubPortIntf(object):
         fv_dict = {
             ADMIN_STATUS: "up",
         }
-        self.check_sub_port_intf_fvs(self.appl_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
 
         fv_dict = {
             "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "true",
@@ -292,11 +261,11 @@ class TestSubPortIntf(object):
         # Change sub port interface admin status to down
         self.set_sub_port_intf_admin_status(sub_port_intf_name, "down")
 
-        # Verify that sub port interface admin status change is synced to APPL_DB INTF_TABLE by Intfmgrd
+        # Verify that sub port interface admin status change is synced to APP_DB by Intfmgrd
         fv_dict = {
             ADMIN_STATUS: "down",
         }
-        self.check_sub_port_intf_fvs(self.appl_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
 
         # Verify that sub port router interface entry in ASIC_DB has the updated admin status
         fv_dict = {
@@ -310,11 +279,11 @@ class TestSubPortIntf(object):
         # Change sub port interface admin status to up
         self.set_sub_port_intf_admin_status(sub_port_intf_name, "up")
 
-        # Verify that sub port interface admin status change is synced to APPL_DB INTF_TABLE by Intfmgrd
+        # Verify that sub port interface admin status change is synced to APP_DB by Intfmgrd
         fv_dict = {
             ADMIN_STATUS: "up",
         }
-        self.check_sub_port_intf_fvs(self.appl_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
 
         # Verify that sub port router interface entry in ASIC_DB has the updated admin status
         fv_dict = {
@@ -328,8 +297,13 @@ class TestSubPortIntf(object):
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name,
+                                                  [self.IPV4_ADDR_UNDER_TEST,
+                                                   self.IPV6_ADDR_UNDER_TEST])
+
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.verify_sub_port_intf_removal(rif_oid)
 
     def test_sub_port_intf_admin_status_change(self, dvs):
         self.connect_dbs(dvs)
@@ -340,7 +314,6 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_remove_ip_addrs(self, dvs, sub_port_intf_name):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
-        vlan_id = substrs[1]
 
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
 
@@ -360,7 +333,7 @@ class TestSubPortIntf(object):
                 sub_port_intf_name + "|" + self.IPV4_ADDR_UNDER_TEST)
 
         # Verify that IPv4 address configuration is removed from APPL_DB INTF_TABLE by Intfmgrd
-        self.check_sub_port_intf_key_removal(self.appl_db, APP_INTF_TABLE_NAME, \
+        self.check_sub_port_intf_key_removal(self.app_db, APP_INTF_TABLE_NAME, \
                 sub_port_intf_name + ":" + self.IPV4_ADDR_UNDER_TEST)
 
         # Verify that IPv4 subnet route entry is removed from ASIC_DB
@@ -376,7 +349,7 @@ class TestSubPortIntf(object):
                 sub_port_intf_name + "|" + self.IPV6_ADDR_UNDER_TEST)
 
         # Verify that IPv6 address configuration is removed from APPL_DB INTF_TABLE by Intfmgrd
-        self.check_sub_port_intf_key_removal(self.appl_db, APP_INTF_TABLE_NAME, \
+        self.check_sub_port_intf_key_removal(self.app_db, APP_INTF_TABLE_NAME, \
                 sub_port_intf_name + ":" + self.IPV6_ADDR_UNDER_TEST)
 
         # Verify that IPv6 subnet route entry is removed from ASIC_DB
@@ -389,6 +362,7 @@ class TestSubPortIntf(object):
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.verify_sub_port_intf_removal(rif_oid)
 
     def test_sub_port_intf_remove_ip_addrs(self, dvs):
         self.connect_dbs(dvs)
@@ -399,7 +373,6 @@ class TestSubPortIntf(object):
     def _test_sub_port_intf_removal(self, dvs, sub_port_intf_name):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
-        vlan_id = substrs[1]
         if parent_port.startswith(ETHERNET_PREFIX):
             state_tbl_name = STATE_PORT_TABLE_NAME
         else:
@@ -424,20 +397,24 @@ class TestSubPortIntf(object):
         fv_dict = {
             ADMIN_STATUS: "up",
         }
-        self.check_sub_port_intf_fvs(self.appl_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
 
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name,
+                                                  [self.IPV4_ADDR_UNDER_TEST,
+                                                   self.IPV6_ADDR_UNDER_TEST])
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.verify_sub_port_intf_removal(rif_oid)
 
         # Verify that sub port interface state ok is removed from STATE_DB by Intfmgrd
         self.check_sub_port_intf_key_removal(self.state_db, state_tbl_name, sub_port_intf_name)
 
-        # Verify that sub port interface configuration is removed from APPL_DB INTF_TABLE by Intfmgrd
-        self.check_sub_port_intf_key_removal(self.appl_db, APP_INTF_TABLE_NAME, sub_port_intf_name)
+        # Verify that sub port interface configuration is removed from APP_DB by Intfmgrd
+        self.check_sub_port_intf_key_removal(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name)
 
         # Verify that sub port router interface entry is removed from ASIC_DB
         self.check_sub_port_intf_key_removal(self.asic_db, ASIC_RIF_TABLE, rif_oid)
