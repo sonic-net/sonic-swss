@@ -1,7 +1,6 @@
 #pragma once
 
 #include <assert.h>
-#include <deque>
 #include <vector>
 #include <unordered_map>
 #include <unordered_set>
@@ -9,6 +8,7 @@
 #include <boost/functional/hash.hpp>
 #include <sairedis.h>
 #include "sai.h"
+#include "logger.h"
 
 static inline bool operator==(const sai_ip_prefix_t& a, const sai_ip_prefix_t& b)
 {
@@ -265,7 +265,7 @@ public:
         // Removing
         if (!removing_entries.empty())
         {
-            vector<Te> rs;
+            std::vector<Te> rs;
 
             for (auto& i: removing_entries)
             {
@@ -273,7 +273,7 @@ public:
                 rs.push_back(entry);
             }
             size_t count = rs.size();
-            vector<sai_status_t> statuses(count);
+            std::vector<sai_status_t> statuses(count);
             (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
             SWSS_LOG_INFO("EntityBulker.flush removing_entries %zu\n", removing_entries.size());
 
@@ -292,9 +292,9 @@ public:
         // Creating
         if (!creating_entries.empty())
         {
-            vector<Te> rs;
-            vector<sai_attribute_t const*> tss;
-            vector<uint32_t> cs;
+            std::vector<Te> rs;
+            std::vector<sai_attribute_t const*> tss;
+            std::vector<uint32_t> cs;
 
             for (auto const& i: creating_entries)
             {
@@ -306,7 +306,7 @@ public:
                 cs.push_back((uint32_t)attrs.size());
             }
             size_t count = rs.size();
-            vector<sai_status_t> statuses(count);
+            std::vector<sai_status_t> statuses(count);
             (*create_entries)((uint32_t)count, rs.data(), cs.data(), tss.data()
                 , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
             SWSS_LOG_INFO("EntityBulker.flush creating_entries %zu\n", creating_entries.size());
@@ -326,8 +326,8 @@ public:
         // Setting
         if (!setting_entries.empty())
         {
-            vector<Te> rs;
-            vector<sai_attribute_t> ts;
+            std::vector<Te> rs;
+            std::vector<sai_attribute_t> ts;
 
             for (auto const& i: setting_entries)
             {
@@ -340,7 +340,7 @@ public:
                 }
             }
             size_t count = rs.size();
-            vector<sai_status_t> statuses(count);
+            std::vector<sai_status_t> statuses(count);
             (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
                 , SAI_BULK_OP_ERROR_MODE_IGNORE_ERROR, statuses.data());
             SWSS_LOG_INFO("EntityBulker.flush setting_entries %zu, count %zu\n", setting_entries.size(), count);
@@ -511,7 +511,7 @@ public:
         if (!removing_entries.empty())
         {
             size_t count = removing_entries.size();
-            vector<sai_status_t> statuses(count);
+            std::vector<sai_status_t> statuses(count);
             sai_status_t status = (*remove_entries)((uint32_t)count, removing_entries.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
             SWSS_LOG_INFO("ObjectBulker.flush removing_entries %zu rc=%d statuses[0]=%d\n", removing_entries.size(), status, statuses[0]);
 
@@ -530,8 +530,8 @@ public:
         // Creating
         if (!creating_entries.empty())
         {
-            vector<sai_attribute_t const*> tss;
-            vector<uint32_t> cs;
+            std::vector<sai_attribute_t const*> tss;
+            std::vector<uint32_t> cs;
 
             for (auto const& i: creating_entries)
             {
@@ -540,8 +540,8 @@ public:
                 cs.push_back((uint32_t)attrs.size());
             }
             size_t count = creating_entries.size();
-            vector<sai_object_id_t> object_ids(count);
-            vector<sai_status_t> statuses(count);
+            std::vector<sai_object_id_t> object_ids(count);
+            std::vector<sai_status_t> statuses(count);
             (*create_entries)(switch_id, (uint32_t)count, cs.data(), tss.data()
                 , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, object_ids.data(), statuses.data());
             SWSS_LOG_INFO("ObjectBulker.flush creating_entries %zu\n", creating_entries.size());
@@ -560,8 +560,8 @@ public:
         /*
         if (!setting_entries.empty())
         {
-            vector<sai_object_id_t> rs;
-            vector<sai_attribute_t> ts;
+            std::vector<sai_object_id_t> rs;
+            std::vector<sai_attribute_t> ts;
 
             for (auto const& i: setting_entries)
             {
@@ -574,7 +574,7 @@ public:
                 }
             }
             size_t count = setting_entries.size();
-            vector<sai_status_t> statuses(count);
+            std::vector<sai_status_t> statuses(count);
             (*set_entries_attribute)((uint32_t)count, rs.data(), ts.data()
                 , SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
 
@@ -612,7 +612,7 @@ private:
     struct object_entry
     {
         sai_object_id_t *object_id;
-        vector<sai_attribute_t> attrs;
+        std::vector<sai_attribute_t> attrs;
         template <class InputIterator>
         object_entry(sai_object_id_t *object_id, InputIterator first, InputIterator last)
             : object_id(object_id)
@@ -625,7 +625,7 @@ private:
 
     std::vector<std::pair<                                  // A vector of pair of
             sai_object_id_t *,                              // - object_id
-            vector<sai_attribute_t>                         // - attrs
+            std::vector<sai_attribute_t>                    // - attrs
     >>                                                      creating_entries;
 
     std::unordered_map<                                     // A map of
