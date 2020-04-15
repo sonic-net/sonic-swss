@@ -34,23 +34,22 @@
 #include <map>
 #include <set>
 
+#include "select.h"
+#include "orch.h"
+#include "dbconnector.h"
 #include "producerstatetable.h"
-#include "selectable.h"
 #include "redisclient.h"
 #include "mclagsyncd/mclag.h"
 
 namespace swss {
 
-#define ETHER_ADDR_STR_LEN 18
-#define MAX_L_PORT_NAME 20
-
 struct mclag_fdb_info
 {
-    char mac[ETHER_ADDR_STR_LEN];
+    char mac[MCLAG_ETHER_ADDR_STR_LEN];
     unsigned int vid;
-    char port_name[MAX_L_PORT_NAME];
-    short type;     /*dynamic or static*/
-    short op_type;  /*add or del*/
+    char port_name[MCLAG_MAX_L_PORT_NAME];
+    short type;             /* dynamic or static */
+    short op_type;          /* add or del */
 };
 
 struct mclag_fdb
@@ -58,15 +57,12 @@ struct mclag_fdb
     std::string mac;
     unsigned int vid;
     std::string port_name;
-    std::string type;/*dynamic or static*/
+    std::string type;       /* dynamic or static */
+    short op_type;          /* add or del */
 
     mclag_fdb(std::string val_mac, unsigned int val_vid, std::string val_pname,
-              std::string val_type) : mac(val_mac), vid(val_vid), port_name(val_pname), type(val_type)
-    {
-    }
-    mclag_fdb()
-    {
-    }
+              std::string val_type, short val_op_type):mac(val_mac),vid(val_vid),port_name(val_pname),type(val_type),op_type(val_op_type) {}
+    mclag_fdb() {}
 
     bool operator <(const mclag_fdb &fdb) const
     {
@@ -76,77 +72,89 @@ struct mclag_fdb
             return vid < fdb.vid;
         else
             return port_name < fdb.port_name;
-        //else if (port_name != fdb.port_name) return port_name < fdb.port_name;
-        //else return type <fdb.type;
     }
 
     bool operator ==(const mclag_fdb &fdb) const
     {
-        if (mac != fdb.mac)
+        if (mac != fdb.mac || vid != fdb.vid)
             return 0;
-        if (vid != fdb.vid)
-            return 0;
+
         return 1;
     }
-
 };
 
-class MclagLink : public Selectable {
+class MclagFdbGather:public Orch
+{
 public:
-    const int MSG_BATCH_SIZE;
-    ProducerStateTable * p_port_tbl;
-    ProducerStateTable * p_lag_tbl;
-    ProducerStateTable * p_tnl_tbl;
-    ProducerStateTable * p_intf_tbl;
-    ProducerStateTable *p_fdb_tbl;
-    ProducerStateTable *p_acl_table_tbl;
-    ProducerStateTable *p_acl_rule_tbl;
-    DBConnector *p_appl_db;
-    RedisClient *p_redisClient_to_asic;/*redis client access to ASIC_DB*/
-    RedisClient *p_redisClient_to_counters;/*redis client access to COUNTERS_DB*/
-    std::set <mclag_fdb> *p_old_fdb;
-
-    MclagLink(int port = MCLAG_DEFAULT_PORT);
-    virtual ~MclagLink();
-
-    /* Wait for connection (blocking) */
-    void accept();
-
-    int getFd() override;
-    uint64_t readData() override;
-
-    /* readMe throws MclagConnectionClosedException when connection is lost */
-    class MclagConnectionClosedException : public std::exception
-    {
-    };
+    MclagFdbGather(DBConnector *staDb, const std::vector<TableConnector> &tables);
+    using Orch::doTask;
+    std::vector<struct mclag_fdb> m_fdbEvent;
+    std::set<mclag_fdb> m_fdbSet;
+    void getFdbFromStatedb();
 
 private:
-    unsigned int m_bufSize;
-    char *m_messageBuffer;
-    char *m_messageBuffer_send;
+    RedisClient m_redisClient;
+    void doTask(Consumer &consumer);
+    void doFdbUpdateTask(Consumer &consumer);
+    void storeFdbChange(Consumer &consumer);
+};
+
+class MclagLink:public Selectable
+{
+public:
+    bool m_connectionState;
+    MclagLink(int fd);
+    virtual ~MclagLink();
+
+    int getFd() override;
+    void readData() override;
+    void notifyFdbChange();
+    std::vector<Selectable *> getFdbGatherSelectables();
+
+private:
     unsigned int m_pos;
+    unsigned int m_bufSize;
+    char m_msgBuf[MCLAG_MAX_MSG_LEN * MSG_BATCH_SIZE];
+    char m_msgSndBuf[MCLAG_MAX_SEND_MSG_LEN];
+    int m_connectionSocket;
+    std::vector<struct mclag_fdb> *m_pFdbEvent;
+    std::set<mclag_fdb> *m_pFdbSet;
+    DBConnector m_applDb;
+    DBConnector m_stateDb;
+    ProducerStateTable m_portTable;
+    ProducerStateTable m_lagTable;
+    ProducerStateTable m_tnlTable;
+    ProducerStateTable m_intfTable;
+    ProducerStateTable m_fdbTable;
+    ProducerStateTable m_aclTable;
+    ProducerStateTable m_aclRuleTable;
+    TableConnector m_stateFdbTable;
+    std::vector<TableConnector> m_fdbGatherTables;
+    MclagFdbGather m_fdbGather;
 
-    bool m_connected;
-    bool m_server_up;
-    int m_server_socket;
-    int m_connection_socket;
-
-    void getOidToPortNameMap(std::unordered_map<std::string, std:: string> & port_map);
-    void getBridgePortIdToAttrPortIdMap(std::map<std::string, std:: string> *oid_map);
-    void getVidByBvid(std::string &bvid, std::string &vlanid);
-    void getFdbSet(std::set<mclag_fdb> *fdb_set);
     void setPortIsolate(char *msg);
-    void setPortMacLearnMode(char *msg);
-    void setFdbFlush();
-    void setFdbFlushByPort(char *msg);
+    void setPortLearnMode(char *msg);
+    void flushFdb();
+    void flushFdbByPort(char *msg);
     void setIntfMac(char *msg);
     void setFdbEntry(char *msg, int msg_len);
-    ssize_t  getFdbChange(char *msg_buf);
-    void connectionLostHandlePortIsolate();
-    void connectionLostHandlePortLearnMode();
-    void connectionLost();
+};
+
+class MclagServerLink:public Selectable
+{
+public:
+    Select *m_pSelect;
+    std::vector<MclagLink *> m_linkList;
+    MclagServerLink(int port = MCLAG_DEFAULT_PORT);
+    virtual ~MclagServerLink();
+    void accept();
+    int getFd() override;
+    void readData() override;
+
+private:
+    bool m_serverUp;
+    int m_serverSocket;
 };
 
 }
 #endif
-

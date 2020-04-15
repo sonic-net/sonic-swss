@@ -18,73 +18,94 @@
  *  Maintainer: Jim Jiang from nephos
  */
 #include <iostream>
-#include "logger.h"
+#include <fstream>
 #include <map>
-#include "select.h"
+#include "logger.h"
 #include "netdispatcher.h"
-#include "mclagsyncd/mclaglink.h"
-#include <set>
+#include "select.h"
+#include "mclaglink.h"
 
 using namespace std;
 using namespace swss;
 
+#define RAPID_TIMEOUT 50
+#define SLOW_TIMEOUT 2147483647
+
+int gBatchSize = 0;
+bool gSwssRecord = false;
+bool gLogRotate = false;
+ofstream gRecordOfs;
+string gRecordFile;
+
 int main(int argc, char **argv)
 {
-    swss::Logger::linkToDbNative("mclagsyncd");
-    DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector asic_db(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector counters_db(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    ProducerStateTable port_tbl(&appl_db, APP_PORT_TABLE_NAME);
-    ProducerStateTable lag_tbl(&appl_db, APP_LAG_TABLE_NAME);
-    ProducerStateTable tnl_tbl(&appl_db, APP_VXLAN_TUNNEL_TABLE_NAME);
-    ProducerStateTable intf_tbl(&appl_db, APP_INTF_TABLE_NAME);
-    ProducerStateTable fdb_tbl(&appl_db, APP_FDB_TABLE_NAME);
-    ProducerStateTable acl_table_tbl(&appl_db, APP_ACL_TABLE_TABLE_NAME);
-    ProducerStateTable acl_rule_tbl(&appl_db, APP_ACL_RULE_TABLE_NAME);
-    RedisClient redisClient_to_asicDb(&asic_db);
-    RedisClient redisClient_to_countersDb(&counters_db);
-    map <string, string> isolate;
-    RedisPipeline pipeline(&appl_db);
-    set <mclag_fdb> old_fdb;
+    Logger::linkToDbNative("mclagsyncd");
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_NOTICE("--- Starting mclagsyncd ---");
 
     while (1)
     {
         try
         {
-            MclagLink mclag;
             Select s;
+            int timeout = RAPID_TIMEOUT;
 
-            mclag.p_port_tbl = &port_tbl;
-            mclag.p_lag_tbl = &lag_tbl;
-            mclag.p_tnl_tbl = &tnl_tbl;
-            mclag.p_intf_tbl = &intf_tbl;
-            mclag.p_fdb_tbl = &fdb_tbl;
-            mclag.p_acl_table_tbl = &acl_table_tbl;
-            mclag.p_acl_rule_tbl = &acl_rule_tbl;
-            mclag.p_appl_db = &appl_db;
-            mclag.p_redisClient_to_asic = &redisClient_to_asicDb;
-            mclag.p_redisClient_to_counters = &redisClient_to_countersDb;
-            mclag.p_old_fdb = &old_fdb;
+            MclagServerLink serverlink;
+            serverlink.m_pSelect = &s;
 
-            cout << "Waiting for connection..." << endl;
-            mclag.accept();
-            cout << "Connected!" << endl;
-
-            s.addSelectable(&mclag);
+            s.addSelectable(&serverlink);
 
             while (true)
             {
                 Selectable *temps;
 
-                /* Reading MCLAG messages forever (and calling "readData" to read them) */
-                s.select(&temps);
-                pipeline.flush();
-                SWSS_LOG_DEBUG("Pipeline flushed");
+                int ret;
+                ret = s.select(&temps, timeout);
+
+                if (ret == Select::ERROR)
+                {
+                    SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
+                    continue;
+                }
+
+                if (ret == Select::TIMEOUT)
+                {
+                    vector<MclagLink *>::iterator link_it;
+                    for (link_it = serverlink.m_linkList.begin(); link_it != serverlink.m_linkList.end();)
+                    {
+                        MclagLink *link = (*link_it);
+                        link->notifyFdbChange();
+
+                        if (link->m_connectionState == false)
+                        {
+                            vector<Selectable *> selectables;
+                            link_it = serverlink.m_linkList.erase(link_it);
+                            s.removeSelectable(link);
+                            selectables = link->getFdbGatherSelectables();
+                            for(auto it : selectables)
+                            {
+                                s.removeSelectable(it);
+                            }
+
+                            delete link;
+                        }
+                        else
+                            link_it++;
+                    }
+
+                    timeout = SLOW_TIMEOUT;
+
+                    continue;
+                }
+
+                if (typeid(*temps) == typeid(MclagServerLink) || typeid(*temps) == typeid(MclagLink))
+                    continue;
+
+                auto *c = (Executor *)temps;
+                c->execute();
+                timeout = RAPID_TIMEOUT;
             }
-        }
-        catch (MclagLink::MclagConnectionClosedException &e)
-        {
-            cout << "Connection lost, reconnecting..." << endl;
         }
         catch (const exception& e)
         {
