@@ -97,22 +97,22 @@ class TestFdb(object):
         dvs.set_interface_status("Ethernet68", "up")
         dvs.set_interface_status("Ethernet72", "up")
         dvs.set_interface_status("Ethernet76", "up")
-        dvs.servers[16].runcmd("config interface startup eth0 6.6.6.6/24")
+        dvs.servers[16].runcmd("ifconfig eth0 6.6.6.6/24 up")
         dvs.servers[16].runcmd("ip route add default via 6.6.6.1")
-        dvs.servers[17].runcmd("config interface startup eth0 6.6.6.7/24")
+        dvs.servers[17].runcmd("ifconfig eth0 6.6.6.7/24 up")
         dvs.servers[17].runcmd("ip route add default via 6.6.6.1")
 
         dvs.servers[18].runcmd("vconfig add eth0 8")
-        dvs.servers[18].runcmd("config interface startup eth0.8 8.8.8.6/24")
+        dvs.servers[18].runcmd("ifconfig eth0.8 8.8.8.6/24 up")
         dvs.servers[18].runcmd("ip route add default via 8.8.8.1")
 
         dvs.servers[19].runcmd("vconfig add eth0 8")
-        dvs.servers[19].runcmd("config interface startup eth0.8 8.8.8.7/24")
+        dvs.servers[19].runcmd("ifconfig eth0.8 8.8.8.7/24 up")
         dvs.servers[19].runcmd("ip route add default via 8.8.8.1")
 
-        dvs.servers[18].runcmd("config interface startup eth0 7.7.7.6/24")
+        dvs.servers[18].runcmd("ifconfig eth0 7.7.7.6/24 up")
         dvs.servers[18].runcmd("ip route add default via 7.7.7.1")
-        dvs.servers[19].runcmd("config interface startup eth0 7.7.7.7/24")
+        dvs.servers[19].runcmd("ifconfig eth0 7.7.7.7/24 up")
         dvs.servers[19].runcmd("ip route add default via 7.7.7.1")
 
         # get neighbor and arp entry
@@ -382,4 +382,3 @@ class TestFdb(object):
         dvs.runcmd("sonic-clear fdb all")
         dvs.remove_vlan_member("2", "Ethernet0")
         dvs.remove_vlan("2")
-
