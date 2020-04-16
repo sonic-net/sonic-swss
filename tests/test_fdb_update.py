@@ -198,9 +198,9 @@ class TestFdbUpdate(object):
         dvs.set_interface_status("Ethernet72", "up")
 
         dvs.servers[16].runcmd("ifconfig eth0 hw ether 00:00:00:00:00:11")
-        dvs.servers[16].runcmd("ifconfig eth0 6.6.6.6/24 up")
+        dvs.servers[16].runcmd("config interface startup eth0 6.6.6.6/24")
         dvs.servers[16].runcmd("ip route add default via 6.6.6.1")
-        dvs.servers[17].runcmd("ifconfig eth0 6.6.6.7/24 up")
+        dvs.servers[17].runcmd("config interface startup eth0 6.6.6.7/24")
         dvs.servers[17].runcmd("ip route add default via 6.6.6.1")
         time.sleep(2)
 

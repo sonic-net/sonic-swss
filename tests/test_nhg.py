@@ -18,9 +18,9 @@ class TestNextHopGroup(object):
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
         intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
         intf_tbl.set("Ethernet8|10.0.0.4/31", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
-        dvs.runcmd("ifconfig Ethernet4 up")
-        dvs.runcmd("ifconfig Ethernet8 up")
+        dvs.runcmd("config interface startup Ethernet0")
+        dvs.runcmd("config interface startup Ethernet4")
+        dvs.runcmd("config interface startup Ethernet8")
 
         dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
         dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")

@@ -27,8 +27,8 @@ class TestPort(object):
 
     def test_PortNotification(self, dvs, testlog):
 
-        dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up") == 0
-        dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up") == 0
+        dvs.runcmd("config interface startup Ethernet0 10.0.0.0/31") == 0
+        dvs.runcmd("config interface startup Ethernet4 10.0.0.2/31") == 0
 
         dvs.servers[0].runcmd("ip link set down dev eth0") == 0
 
@@ -70,8 +70,8 @@ class TestPort(object):
 
     def test_PortFec(self, dvs, testlog):
 
-        dvs.runcmd("ifconfig Ethernet0 10.0.0.0/31 up") == 0
-        dvs.runcmd("ifconfig Ethernet4 10.0.0.2/31 up") == 0
+        dvs.runcmd("config interface startup Ethernet0 10.0.0.0/31") == 0
+        dvs.runcmd("config interface startup Ethernet4 10.0.0.2/31") == 0
 
         dvs.servers[0].runcmd("ip link set down dev eth0") == 0
 
