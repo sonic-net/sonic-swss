@@ -55,7 +55,7 @@ Similarly, `wait_for_deleted_keys` can help you check that specific keys *don't*
 ```
 
 #### Verify *any* output
-Sometimes we don't care what the specific output is - we just want to check if *something* exists. This is typically done to check if we've finished cleaning up the database or not.
+Sometimes we don't care what the specific output is - we just want to check if *something* exists. One example of this is to check if we've finished cleaning up the database or not.
 
 For entries, we can use `wait_for_entry` to check if something exists at a specific key, and `wait_for_deleted_entry` to check that nothing exists at the specified key.
 
@@ -97,7 +97,6 @@ self.remove_port_channel(lag_id)
 
 **Example 2:**
 ```
-# Remove IP addresses
 self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
 self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
 
@@ -117,9 +116,9 @@ For such cases it makes sense for the user to use the `wait_for_result` API from
 ```
 def check_sub_port_intf_route_entries(self):
     expected_destinations = [self.IPV4_TOME_UNDER_TEST,
-                                self.IPV4_SUBNET_UNDER_TEST,
-                                self.IPV6_TOME_UNDER_TEST,
-                                self.IPV6_SUBNET_UNDER_TEST]
+                             self.IPV4_SUBNET_UNDER_TEST,
+                             self.IPV6_TOME_UNDER_TEST,
+                             self.IPV6_SUBNET_UNDER_TEST]
 
     def _access_function():
         raw_route_entries = self.asic_db.get_keys(ASIC_ROUTE_ENTRY_TABLE)
