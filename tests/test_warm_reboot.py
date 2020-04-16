@@ -1075,9 +1075,9 @@ class TestWarmReboot(object):
         intf_tbl.set("{}".format(intfs[1]), fvs)
         intf_tbl.set("{}".format(intfs[2]), fvs)
         intf_tbl.set("{}".format(intfs[2]), fvs)
-        dvs.runcmd("ip link set {} up".format(intfs[0]))
-        dvs.runcmd("ip link set {} up".format(intfs[1]))
-        dvs.runcmd("ip link set {} up".format(intfs[2]))
+        dvs.runcmd("config interface startup {}".format(intfs[0]))
+        dvs.runcmd("config interface startup {}".format(intfs[1]))
+        dvs.runcmd("config interface startup {}".format(intfs[2]))
 
         time.sleep(1)
 
@@ -1835,7 +1835,7 @@ class TestWarmReboot(object):
             intf_tbl.set("Ethernet{}|{}00::1/64".format(i*4, i*4), fvs)
             intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
             intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
-            dvs.runcmd("ip link set Ethernet{} up".format(i*4, i*4))
+            dvs.runcmd("config interface startup Ethernet{}".format(i*4, i*4))
             dvs.servers[i].runcmd("ip link set up dev eth0")
             dvs.servers[i].runcmd("ip addr flush dev eth0")
             #result = dvs.servers[i].runcmd_output("ifconfig eth0 | grep HWaddr | awk '{print $NF}'")

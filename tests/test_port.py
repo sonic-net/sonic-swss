@@ -26,9 +26,11 @@ class TestPort(object):
                 assert fv[1] == "9100"
 
     def test_PortNotification(self, dvs, testlog):
+        dvs.runcmd("config interface startup Ethernet0")
+        dvs.runcmd("config interface ip add Ethernet0 10.0.0.0/31")
 
-        dvs.runcmd("config interface startup Ethernet0 10.0.0.0/31") == 0
-        dvs.runcmd("config interface startup Ethernet4 10.0.0.2/31") == 0
+        dvs.runcmd("config interface startup Ethernet4")
+        dvs.runcmd("config interface ip add Ethernet4 10.0.0.2/31")
 
         dvs.servers[0].runcmd("ip link set down dev eth0") == 0
 
@@ -69,9 +71,11 @@ class TestPort(object):
         assert oper_status == "up"
 
     def test_PortFec(self, dvs, testlog):
+        dvs.runcmd("config interface startup Ethernet0")
+        dvs.runcmd("config interface ip add Ethernet0 10.0.0.0/31")
 
-        dvs.runcmd("config interface startup Ethernet0 10.0.0.0/31") == 0
-        dvs.runcmd("config interface startup Ethernet4 10.0.0.2/31") == 0
+        dvs.runcmd("config interface startup Ethernet4")
+        dvs.runcmd("config interface ip add Ethernet4 10.0.0.2/31")
 
         dvs.servers[0].runcmd("ip link set down dev eth0") == 0
 
