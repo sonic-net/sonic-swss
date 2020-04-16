@@ -244,8 +244,8 @@ class TestWarmReboot(object):
 
         dvs.runcmd("config warm_restart enable swss")
 
-        dvs.runcmd("config interface startup Ethernet16 ")
-        dvs.runcmd("config interface startup Ethernet20 ")
+        dvs.runcmd("config interface startup Ethernet16")
+        dvs.runcmd("config interface startup Ethernet20")
 
         time.sleep(1)
 
@@ -315,7 +315,7 @@ class TestWarmReboot(object):
 
         check_port_oper_status(appl_db, "Ethernet16", "up")
         check_port_oper_status(appl_db, "Ethernet20", "up")
-        check_port_oper_status(appl_db, "Ethernet24", "up")
+        check_port_oper_status(appl_db, "Ethernet24", "down")
 
 
         swss_app_check_RestoreCount_single(state_db, restore_count, "portsyncd")
