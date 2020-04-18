@@ -571,7 +571,7 @@ uint64_t MclagServerLink::readData()
 {
     accept();
 
-	return 0;
+    return 0;
 }
 
 MclagFdbGather::MclagFdbGather(DBConnector *statDb, const vector<TableConnector> &tables) :

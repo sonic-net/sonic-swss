@@ -107,7 +107,7 @@ public:
     virtual ~MclagLink();
 
     int getFd() override;
-    void readData() override;
+    uint64_t readData() override;
     void notifyFdbChange();
     std::vector<Selectable *> getFdbGatherSelectables();
 
@@ -149,7 +149,7 @@ public:
     virtual ~MclagServerLink();
     void accept();
     int getFd() override;
-    void readData() override;
+    uint64_t readData() override;
 
 private:
     bool m_serverUp;
