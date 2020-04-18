@@ -506,7 +506,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 {
                     /* If any existing routes are updated to point to the
                      * above interfaces, remove them from the ASIC. */
-                    if (removeRoute(ctx, vrf_id, ip_prefix))
+                    if (removeRoute(ctx))
                         it = consumer.m_toSync.erase(it);
                     else
                         it++;
@@ -547,7 +547,7 @@ void RouteOrch::doTask(Consumer& consumer)
                     /* subnet route, vrf leaked route, etc */
                     else
                     {
-                        if (addRoute(ctx, vrf_id, ip_prefix, nhg))
+                        if (addRoute(ctx, nhg))
                              it = consumer.m_toSync.erase(it);
                         else
                             it++;
@@ -557,7 +557,7 @@ void RouteOrch::doTask(Consumer& consumer)
                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                     m_syncdRoutes.at(vrf_id).at(ip_prefix) != nhg)
                 {
-                    if (addRoute(ctx, vrf_id, ip_prefix, nhg))
+                    if (addRoute(ctx, nhg))
                         it = consumer.m_toSync.erase(it);
                     else
                         it++;
@@ -575,7 +575,7 @@ void RouteOrch::doTask(Consumer& consumer)
             }
             else if (op == DEL_COMMAND)
             {
-                if (removeRoute(ctx, vrf_id, ip_prefix))
+                if (removeRoute(ctx))
                     it = consumer.m_toSync.erase(it);
                 else
                     it++;
@@ -648,7 +648,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 {
                     /* If any existing routes are updated to point to the
                      * above interfaces, remove them from the ASIC. */
-                    if (removeRoutePost(ctx, vrf_id, ip_prefix))
+                    if (removeRoutePost(ctx))
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -665,7 +665,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
                 {
-                    if (addRoutePost(ctx, vrf_id, ip_prefix, nhg))
+                    if (addRoutePost(ctx, nhg))
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -674,7 +674,7 @@ void RouteOrch::doTask(Consumer& consumer)
                     m_syncdRoutes.at(vrf_id).find(ip_prefix) == m_syncdRoutes.at(vrf_id).end() ||
                     m_syncdRoutes.at(vrf_id).at(ip_prefix) != nhg)
                 {
-                    if (addRoutePost(ctx, vrf_id, ip_prefix, nhg))
+                    if (addRoutePost(ctx, nhg))
                         it_prev = consumer.m_toSync.erase(it_prev);
                     else
                         it_prev++;
@@ -683,7 +683,7 @@ void RouteOrch::doTask(Consumer& consumer)
             else if (op == DEL_COMMAND)
             {
                 /* Cannot locate the route or remove succeed */
-                if (removeRoutePost(ctx, vrf_id, ip_prefix))
+                if (removeRoutePost(ctx))
                     it_prev = consumer.m_toSync.erase(it_prev);
                 else
                     it_prev++;
@@ -1021,9 +1021,11 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
     return true;
 }
 
-void RouteOrch::addTempRoute(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+void RouteOrch::addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
+
+    IpPrefix& ipPrefix = ctx.ip_prefix;
 
     auto next_hop_set = nextHops.getNextHops();
 
@@ -1052,12 +1054,15 @@ void RouteOrch::addTempRoute(RouteBulkContext& ctx, sai_object_id_t vrf_id, cons
     NextHopGroupKey tmp_next_hop((*it).to_string());
     ctx.tmp_next_hop = tmp_next_hop;
 
-    addRoute(ctx, vrf_id, ipPrefix, tmp_next_hop);
+    addRoute(ctx, tmp_next_hop);
 }
 
-bool RouteOrch::addRoute(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
+
+    sai_object_id_t& vrf_id = ctx.vrf_id;
+    IpPrefix& ipPrefix = ctx.ip_prefix;
 
     /* next_hop_id indicates the next hop id or next hop group id of this route */
     sai_object_id_t next_hop_id;
@@ -1124,7 +1129,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, sai_object_id_t vrf_id, const Ip
                 /* Add a temporary route when a next hop group cannot be added,
                  * and there is no temporary route right now or the current temporary
                  * route is not pointing to a member of the next hop group to sync. */
-                addTempRoute(ctx, vrf_id, ipPrefix, nextHops);
+                addTempRoute(ctx, nextHops);
                 /* Return false since the original route is not successfully added */
                 return false;
             }
@@ -1185,9 +1190,12 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, sai_object_id_t vrf_id, const Ip
     return false;
 }
 
-bool RouteOrch::addRoutePost(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoutePost(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
+
+    sai_object_id_t& vrf_id = ctx.vrf_id;
+    IpPrefix& ipPrefix = ctx.ip_prefix;
 
     auto& object_statuses = ctx.object_statuses;
 
@@ -1232,7 +1240,7 @@ bool RouteOrch::addRoutePost(RouteBulkContext& ctx, sai_object_id_t vrf_id, cons
         {
             // Previous added an temporary route
             auto& tmp_next_hop = ctx.tmp_next_hop;
-            addRoutePost(ctx, vrf_id, ipPrefix, tmp_next_hop);
+            addRoutePost(ctx, tmp_next_hop);
             return false;
         }
     }
@@ -1310,9 +1318,12 @@ bool RouteOrch::addRoutePost(RouteBulkContext& ctx, sai_object_id_t vrf_id, cons
     return true;
 }
 
-bool RouteOrch::removeRoute(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
+bool RouteOrch::removeRoute(RouteBulkContext& ctx)
 {
     SWSS_LOG_ENTER();
+
+    sai_object_id_t& vrf_id = ctx.vrf_id;
+    IpPrefix& ipPrefix = ctx.ip_prefix;
 
     auto it_route_table = m_syncdRoutes.find(vrf_id);
     if (it_route_table == m_syncdRoutes.end())
@@ -1362,9 +1373,12 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx, sai_object_id_t vrf_id, const
     return false;
 }
 
-bool RouteOrch::removeRoutePost(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
+bool RouteOrch::removeRoutePost(RouteBulkContext& ctx)
 {
     SWSS_LOG_ENTER();
+
+    sai_object_id_t& vrf_id = ctx.vrf_id;
+    IpPrefix& ipPrefix = ctx.ip_prefix;
 
     auto& object_statuses = ctx.object_statuses;
 

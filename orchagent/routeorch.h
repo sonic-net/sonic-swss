@@ -116,11 +116,11 @@ private:
     EntityBulker<sai_route_api_t>           gRouteBulker;
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
 
-    void addTempRoute(RouteBulkContext& ctx, sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool addRoute(RouteBulkContext& ctx, sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool addRoutePost(RouteBulkContext& ctx, sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
-    bool removeRoute(RouteBulkContext& ctx, sai_object_id_t, const IpPrefix&);
-    bool removeRoutePost(RouteBulkContext& ctx, sai_object_id_t, const IpPrefix&);
+    void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
+    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
+    bool addRoutePost(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    bool removeRoute(RouteBulkContext& ctx);
+    bool removeRoutePost(RouteBulkContext& ctx);
 
     std::string getLinkLocalEui64Addr(void);
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
