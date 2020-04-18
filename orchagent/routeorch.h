@@ -61,8 +61,10 @@ struct RouteBulkContext
     NextHopGroupKey                     tmp_next_hop;       // Temporary next hop
     sai_object_id_t                     vrf_id;
     IpPrefix                            ip_prefix;
+    bool                                excp_intfs_flag;
 
     RouteBulkContext()
+        : excp_intfs_flag(false)
     {
     }
 
@@ -74,6 +76,7 @@ struct RouteBulkContext
     {
         object_statuses.clear();
         tmp_next_hop.clear();
+        excp_intfs_flag = false;
     }
 };
 
@@ -118,9 +121,9 @@ private:
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
     bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
-    bool addRoutePost(RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeRoute(RouteBulkContext& ctx);
-    bool removeRoutePost(RouteBulkContext& ctx);
+    bool removeRoutePost(const RouteBulkContext& ctx);
 
     std::string getLinkLocalEui64Addr(void);
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);

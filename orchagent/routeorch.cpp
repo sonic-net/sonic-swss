@@ -479,7 +479,7 @@ void RouteOrch::doTask(Consumer& consumer)
             {
                 string ips;
                 string aliases;
-                bool excp_intfs_flag = false;
+                bool& excp_intfs_flag = ctx.excp_intfs_flag;
 
                 for (auto i : kfvFieldsValues(t))
                 {
@@ -605,23 +605,22 @@ void RouteOrch::doTask(Consumer& consumer)
                 continue;
             }
 
-            auto& ctx = found->second;
-            auto& object_statuses = ctx.object_statuses;
+            const auto& ctx = found->second;
+            const auto& object_statuses = ctx.object_statuses;
             if (object_statuses.empty())
             {
                 it_prev++;
                 continue;
             }
 
-            sai_object_id_t& vrf_id = ctx.vrf_id;
-            IpPrefix& ip_prefix = ctx.ip_prefix;
-            SWSS_LOG_NOTICE("vrf_id=%lu, ip_prefix=%s", vrf_id, ip_prefix.to_string().c_str());
+            const sai_object_id_t& vrf_id = ctx.vrf_id;
+            const IpPrefix& ip_prefix = ctx.ip_prefix;
 
             if (op == SET_COMMAND)
             {
                 string ips;
                 string aliases;
-                bool excp_intfs_flag = false;
+                const bool& excp_intfs_flag = ctx.excp_intfs_flag;
 
                 for (auto i : kfvFieldsValues(t))
                 {
@@ -634,16 +633,6 @@ void RouteOrch::doTask(Consumer& consumer)
                 vector<string> ipv = tokenize(ips, ',');
                 vector<string> alsv = tokenize(aliases, ',');
 
-                for (auto alias : alsv)
-                {
-                    if (alias == "eth0" || alias == "lo" || alias == "docker0")
-                    {
-                        excp_intfs_flag = true;
-                        break;
-                    }
-                }
-
-                // TODO: cannot trust m_portsOrch->getPortIdByAlias because sometimes alias is empty
                 if (excp_intfs_flag)
                 {
                     /* If any existing routes are updated to point to the
@@ -853,7 +842,8 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         }
 
         // skip next hop group member create for neighbor from down port
-        if (m_neighOrch->isNextHopFlagSet(it, NHFLAGS_IFDOWN)) {
+        if (m_neighOrch->isNextHopFlagSet(it, NHFLAGS_IFDOWN))
+        {
             continue;
         }
 
@@ -1190,14 +1180,14 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     return false;
 }
 
-bool RouteOrch::addRoutePost(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
+bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t& vrf_id = ctx.vrf_id;
-    IpPrefix& ipPrefix = ctx.ip_prefix;
+    const sai_object_id_t& vrf_id = ctx.vrf_id;
+    const IpPrefix& ipPrefix = ctx.ip_prefix;
 
-    auto& object_statuses = ctx.object_statuses;
+    const auto& object_statuses = ctx.object_statuses;
 
     if (object_statuses.empty())
     {
@@ -1373,12 +1363,12 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     return false;
 }
 
-bool RouteOrch::removeRoutePost(RouteBulkContext& ctx)
+bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t& vrf_id = ctx.vrf_id;
-    IpPrefix& ipPrefix = ctx.ip_prefix;
+    const sai_object_id_t& vrf_id = ctx.vrf_id;
+    const IpPrefix& ipPrefix = ctx.ip_prefix;
 
     auto& object_statuses = ctx.object_statuses;
 
