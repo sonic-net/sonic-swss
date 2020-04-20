@@ -35,13 +35,14 @@
 #include <set>
 
 #include "select.h"
-#include "orch.h"
+//#include "../orchagent/orch.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "orch.h"
 #include "redisclient.h"
 #include "mclagsyncd/mclag.h"
 
-//namespace swss {
+namespace swss {
 
 struct mclag_fdb_info
 {
@@ -156,5 +157,5 @@ private:
     int m_serverSocket;
 };
 
-//}
+}
 #endif
