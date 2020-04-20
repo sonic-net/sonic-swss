@@ -41,7 +41,7 @@
 #include "redisclient.h"
 #include "mclagsyncd/mclag.h"
 
-namespace swss {
+//namespace swss {
 
 struct mclag_fdb_info
 {
@@ -99,7 +99,7 @@ private:
     void storeFdbChange(Consumer &consumer);
 };
 
-class MclagLink:public Selectable
+class MclagLink:public swss::Selectable
 {
 public:
     bool m_connectionState;
@@ -109,7 +109,7 @@ public:
     int getFd() override;
     uint64_t readData() override;
     void notifyFdbChange();
-    std::vector<Selectable *> getFdbGatherSelectables();
+    std::vector<swss::Selectable *> getFdbGatherSelectables();
 
 private:
     unsigned int m_pos;
@@ -140,7 +140,7 @@ private:
     void setFdbEntry(char *msg, int msg_len);
 };
 
-class MclagServerLink:public Selectable
+class MclagServerLink:public swss::Selectable
 {
 public:
     Select *m_pSelect;
@@ -156,5 +156,5 @@ private:
     int m_serverSocket;
 };
 
-}
+//}
 #endif
