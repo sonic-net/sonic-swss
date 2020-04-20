@@ -35,7 +35,7 @@
 #include <set>
 
 #include "select.h"
-#include "../orchagent/orch.h"
+#include "orch.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "redisclient.h"
