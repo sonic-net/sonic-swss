@@ -2,32 +2,48 @@
 -- ARGV[1] - counters db index
 -- ARGV[2] - counters table name
 -- ARGV[3] - poll time interval
--- return nothing
+-- ARGV[4] - asic db index
+-- ARGV[5] - config db index
+-- return log
 
-local asic_db = 1 
+local logtable = {}
+
+local function logit(msg)
+  logtable[#logtable+1] = tostring(msg)
+end
+
+local asic_db = ARGV[4]
 local counters_db = ARGV[1]
-local config_db = 4 
+local config_db = ARGV[5]
 local counters_table_name = ARGV[2] 
 local asic_table_name = "ASIC_STATE:SAI_OBJECT_TYPE_PORT" 
 local rates_table_name = "RATES"
 
 -- Get configuration
 redis.call('SELECT', config_db)
-local smooth_interval = redis.call('GET', rates_table_name .. ':' .. 'PORT_SMOOTH_INTERVAL')
-local alpha = redis.call('GET', rates_table_name .. ':' .. 'PORT_ALPHA')
-local one_minus_alpha = 1 - alpha
+local smooth_interval = redis.call('HGET', rates_table_name .. '|' .. 'PORT', 'PORT_SMOOTH_INTERVAL')
+local alpha = redis.call('HGET', rates_table_name .. '|' .. 'PORT', 'PORT_ALPHA')
+local one_minus_alpha = 1.0 - alpha
 local delta = tonumber(ARGV[3])
+
+logit(alpha)
+logit(one_minus_alpha)
+logit(delta)
 
 -- Get speeds
 local speeds = {}
 redis.call('SELECT', asic_db)
 local n = table.getn(KEYS)
 for i = 1, n do
-    speeds[i] = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_PORT_ATTR_SPEED')
+   speeds[i] = redis.call('HGET', asic_table_name .. ':' .. KEYS[i], 'SAI_PORT_ATTR_SPEED')
+   logit(speeds[i])
+end
 
 redis.call('SELECT', counters_db)
 
-local initialized = redis.call('GET', rates_table_name .. ':' .. 'INIT_DONE')
+local initialized = redis.call('HGET', rates_table_name, 'INIT_DONE')
+
+logit(initialized)
 
 for i = 1, n do
     -- Get new COUNTERS values
@@ -38,7 +54,7 @@ for i = 1, n do
     local in_octets = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_OCTETS')
     local out_octets = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_OUT_OCTETS')
 
-    if initialized == "DONE" or initialized == "COUNTERS_LAST" then
+    if initialized == 'DONE' or initialized == 'COUNTERS_LAST' then
         -- Get old COUNTERS values
         local in_ucast_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_UCAST_PKTS_last')
         local in_non_ucast_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS_last')
@@ -50,8 +66,8 @@ for i = 1, n do
         -- Calculate new rates values
         local rx_bps_new = (in_octets - in_octets_last)/delta
         local tx_bps_new = (out_octets - out_octets_last)/delta
-        local rx_pps_new = ((in_ucast_pkts_last + in_non_ucast_pkts) - (in_ucast_pkts_last_last + in_non_ucast_pkts_last))/delta
-        local tx_pps_new = ((out_ucast_pkts_last + out_non_ucast_pkts) - (out_ucast_pkts_last_last + out_non_ucast_pkts_last))/delta
+        local rx_pps_new = ((in_ucast_pkts + in_non_ucast_pkts) - (in_ucast_pkts_last + in_non_ucast_pkts_last))/delta
+        local tx_pps_new = ((out_ucast_pkts + out_non_ucast_pkts) - (out_ucast_pkts_last + out_non_ucast_pkts_last))/delta
         local rx_util_new = rx_bps_new/speeds[i]
         local tx_util_new = tx_bps_new/speeds[i]
 
@@ -78,10 +94,11 @@ for i = 1, n do
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_BPS', tx_bps_new)
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_PPS', tx_pps_new)
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_UTIL', rx_util_new)
-            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_UTIL', tx_util_new) 
+            redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_UTIL', tx_util_new)
+            redis.call('HSET', rates_table_name, 'INIT_DONE', 'DONE')
         end        
     
-    elseif initialized == "NONE" then
+    else
 
         -- Set old COUNTERS values
         redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_UCAST_PKTS_last', in_ucast_pkts)
@@ -91,6 +108,9 @@ for i = 1, n do
         redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_OCTETS_last', in_octets)
         redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_OUT_OCTETS_last', out_octets)        
 
-        redis.call('SET', rates_table_name .. ':' .. 'INIT_DONE', "COUNTERS_LAST")
+        redis.call('HSET', rates_table_name, 'INIT_DONE', 'COUNTERS_LAST')
 
     end
+end
+
+return logtable

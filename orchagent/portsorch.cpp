@@ -48,7 +48,7 @@ extern BufferOrch *gBufferOrch;
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
 #define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
-#define PORT_RATE_FLEX_STAT_COUNTER_POLL_MSECS "1000"
+#define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS "1000"
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
 {
@@ -220,9 +220,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
 
         vector<FieldValueTuple> fieldValues;
         fieldValues.emplace_back(PORT_PLUGIN_FIELD, portRateSha);
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, PORT_RATE_FLEX_STAT_COUNTER_POLL_MSECS);
+        fieldValues.emplace_back(POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS);
         fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flexCounterGroupTable->set(PORT_RATE_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+        m_flexCounterGroupTable->set(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
     }
     catch (const runtime_error &e)
     {
@@ -1479,11 +1479,6 @@ bool PortsOrch::removePort(sai_object_id_t port_id)
     return true;
 }
 
-string PortsOrch::getPortRateFlexCounterTableKey(string key)
-{
-    return string(PORT_RATE_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
-}
-
 string PortsOrch::getQueueWatermarkFlexCounterTableKey(string key)
 {
     return string(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
@@ -1521,13 +1516,11 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 /* Add port to port list */
                 m_portList[alias] = p;
                 m_port_ref_count[alias] = 0;
-                {
-                    /* Add port name map to counter table */
-                    FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
-                    vector<FieldValueTuple> fields;
-                    fields.push_back(tuple);
-                    m_counterTable->set("", fields);
-                }
+                /* Add port name map to counter table */
+                FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));
+                vector<FieldValueTuple> fields;
+                fields.push_back(tuple);
+                m_counterTable->set("", fields);
                 // Install a flex counter for this port to track stats
                 std::unordered_set<std::string> counter_stats;
                 for (const auto& it: port_stat_ids)
@@ -1535,12 +1528,6 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                     counter_stats.emplace(sai_serialize_port_stat(it));
                 }
                 port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, counter_stats);
-                {
-                    /* Add to port rates FC */
-                    string key = getPortRateFlexCounterTableKey(sai_serialize_object_id(p.m_port_id));
-                    vector<FieldValueTuple> fields;
-                    m_flexCounterTable->set(key, fields);
-                }
                 PortUpdate update = { p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
@@ -1575,10 +1562,6 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     /* remove port name map from counter table */
     RedisClient redisClient(m_counter_db.get());
     redisClient.hdel(COUNTERS_PORT_NAME_MAP, alias);
-
-    /* remove port from port rates FC  */
-    string key = getPortRateFlexCounterTableKey(sai_serialize_object_id(port_id));
-    m_flexCounterTable->del(key);
 
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
 }

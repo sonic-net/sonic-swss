@@ -35,7 +35,6 @@ extern bool gIsNatSupported;
 const int intfsorch_pri = 35;
 
 #define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
-#define RIF_RATE_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 #define UPDATE_MAPS_SEC 1
 
 #define LOOPBACK_PREFIX     "Loopback"
@@ -88,13 +87,13 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
 
         vector<FieldValueTuple> fieldValues;
         fieldValues.emplace_back(RIF_PLUGIN_FIELD, rifRateSha);
-        fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_RATE_FLEX_STAT_COUNTER_POLL_MSECS);
+        fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
         fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
-        m_flexCounterGroupTable->set(RIF_RATE_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+        m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
     }
     catch (const runtime_error &e)
     {
-        SWSS_LOG_WARN("RIF rate flex counter group plugins was not set successfully: %s", e.what());
+        SWSS_LOG_WARN("RIF flex counter group plugins was not set successfully: %s", e.what());
     }
 }
 
@@ -1031,8 +1030,6 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
 
     /* update RIF in FLEX_COUNTER_DB */
     string key = getRifFlexCounterTableKey(id);
-    string rate_key = getRifRateFlexCounterTableKey(id);
-
 
     std::ostringstream counters_stream;
     for (const auto& it: rifStatIds)
@@ -1042,7 +1039,6 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
 
     /* check the state of intf, if registering the intf to FC will result in runtime error */
     vector<FieldValueTuple> fieldValues;
-    m_flexCounterTable->set(rate_key, fieldValues);
     fieldValues.emplace_back(RIF_COUNTER_ID_LIST, counters_stream.str());
     m_flexCounterTable->set(key, fieldValues);
     SWSS_LOG_DEBUG("Registered interface %s to Flex counter", name.c_str());
@@ -1057,21 +1053,14 @@ void IntfsOrch::removeRifFromFlexCounter(const string &id, const string &name)
 
     /* remove it from FLEX_COUNTER_DB */
     string key = getRifFlexCounterTableKey(id);
-    string rate_key = getRifRateFlexCounterTableKey(id);
 
     m_flexCounterTable->del(key);
-    m_flexCounterTable->del(rate_key);
     SWSS_LOG_DEBUG("Unregistered interface %s from Flex counter", name.c_str());
 }
 
 string IntfsOrch::getRifFlexCounterTableKey(string key)
 {
     return string(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
-}
-
-string IntfsOrch::getRifRateFlexCounterTableKey(string key)
-{
-    return string(RIF_RATE_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
 void IntfsOrch::generateInterfaceMap()
