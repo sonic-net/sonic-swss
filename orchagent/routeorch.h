@@ -5,6 +5,8 @@
 #include "observer.h"
 #include "intfsorch.h"
 #include "neighorch.h"
+#include "vnetorch.h"
+#include "vxlanorch.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -74,6 +76,9 @@ public:
 
     bool validnexthopinNextHopGroup(const NextHopKey&);
     bool invalidnexthopinNextHopGroup(const NextHopKey&);
+
+    bool createRemoteVtep(sai_object_id_t, const NextHopKey&);
+    bool deleteRemoteVtep(sai_object_id_t, const NextHopKey&);
 
     void notifyNextHopChangeObservers(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&, bool);
 private:

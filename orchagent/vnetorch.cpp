@@ -1653,6 +1653,11 @@ bool VNetRouteOrch::doRouteTask<VNetVrfObject>(const string& vnet, IpPrefix& ipP
 
     bool is_subnet = (!nh.ips.getSize() || nh.ips.contains("0.0.0.0")) ? true : false;
 
+    /*With VRF changes nexthop IP is 0.0.0.0*/
+    if ((nh.ips.getSize() == 1) && (IpAddress(nh.ips.to_string()).isZero())) {
+        is_subnet = true;
+    }
+
     Port port;
     if (is_subnet && (!gPortsOrch->getPort(nh.ifname, port) || (port.m_rif_id == SAI_NULL_OBJECT_ID)))
     {

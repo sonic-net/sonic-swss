@@ -3983,3 +3983,44 @@ void PortsOrch::getPortSerdesVal(const std::string& val_str,
         lane_values.push_back(lane_val);
     }
 }
+
+bool PortsOrch::updateL3VniStatus(uint16_t vlan_id, bool isUp)
+{
+    Port vlan;
+    string vlan_alias;
+
+    vlan_alias = VLAN_PREFIX + to_string(vlan_id);
+    SWSS_LOG_NOTICE("update L3Vni Status for Vlan %d with isUp %d vlan %s",
+            vlan_id, isUp, vlan_alias.c_str());
+
+    if (!getPort(vlan_alias, vlan))
+    {
+        SWSS_LOG_NOTICE("Failed to locate VLAN %d", vlan_id);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("member count %d, l3vni %d", vlan.m_up_member_count, vlan.m_l3_vni);
+    if (isUp) {
+        auto old_count = vlan.m_up_member_count;
+        vlan.m_up_member_count++;
+        if (old_count == 0)
+        {
+            updateVlanOperStatus(vlan, true);
+        }
+        vlan.m_l3_vni = true;
+    } else {
+        vlan.m_up_member_count--;
+        if (vlan.m_up_member_count == 0)
+        {
+            updateVlanOperStatus(vlan, false);
+        }
+        vlan.m_l3_vni = false;
+    }
+
+    m_portList[vlan_alias] = vlan;
+
+    SWSS_LOG_NOTICE("Updated L3Vni status of VLAN %d member count %d", vlan_id, vlan.m_up_member_count);
+
+    return true;
+}
+

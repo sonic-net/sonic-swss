@@ -106,6 +106,7 @@ public:
 
     bool addSubPort(Port &port, const string &alias, const bool &adminUp = true, const uint32_t &mtu = 0);
     bool removeSubPort(const string &alias);
+    bool updateL3VniStatus(uint16_t vlan_id, bool status);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;

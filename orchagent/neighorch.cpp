@@ -4,6 +4,7 @@
 #include "swssnet.h"
 #include "crmorch.h"
 #include "routeorch.h"
+#include "directory.h"
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
@@ -12,6 +13,7 @@ extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 extern RouteOrch *gRouteOrch;
+extern Directory<Orch*> gDirectory;
 
 const int neighorch_pri = 30;
 
@@ -228,6 +230,23 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
     return true;
 }
 
+bool NeighOrch::removeOverlayNextHop(const NextHopKey &nexthop)
+{
+    SWSS_LOG_ENTER();
+
+    assert(hasNextHop(nexthop));
+
+    if (m_syncdNextHops[nexthop].ref_count > 0)
+    {
+        SWSS_LOG_ERROR("Failed to remove still referenced next hop %s on %s",
+                   nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+        return false;
+    }
+
+    m_syncdNextHops.erase(nexthop);
+    return true;
+}
+
 sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
 {
     assert(hasNextHop(nexthop));
@@ -425,8 +444,8 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
                 return false;
             }
         }
-
-        SWSS_LOG_NOTICE("Created neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
+        SWSS_LOG_NOTICE("Created neighbor ip %s, %s on %s", ip_address.to_string().c_str(),
+                macAddress.to_string().c_str(), alias.c_str());
         m_intfsOrch->increaseRouterIntfsRefCount(alias);
 
         if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
@@ -581,3 +600,73 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry)
 
     return true;
 }
+
+sai_object_id_t NeighOrch::addTunnelNextHop(const NextHopKey& nh)
+{
+    SWSS_LOG_ENTER();
+    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
+
+    EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
+    auto vtep_ptr = evpn_orch->getEVPNVtep();
+
+    if(!vtep_ptr)
+    {
+        SWSS_LOG_ERROR("Add Tunnel next hop unable to find EVPN VTEP");
+        return nh_id;
+    }
+
+    auto tun_name = vtep_ptr->getTunnelName();
+
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+    IpAddress tnl_dip = nh.ip_address;
+    nh_id = vxlan_orch->createNextHopTunnel(tun_name, tnl_dip, nh.mac_address, nh.vni);
+
+    if (nh_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Failed to create Tunnel next hop %s, %s|%d|%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+            nh.vni, nh.mac_address.to_string().c_str());
+        throw std::runtime_error("NH Tunnel create failed for " + tun_name + " ip " + nh.ip_address.to_string());
+    }
+
+    SWSS_LOG_NOTICE("Created Tunnel next hop %s, %s|%d|%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+            nh.vni, nh.mac_address.to_string().c_str());
+
+    NextHopEntry next_hop_entry;
+    next_hop_entry.next_hop_id = nh_id;
+    next_hop_entry.ref_count = 0;
+    next_hop_entry.nh_flags = 0;
+    m_syncdNextHops[nh] = next_hop_entry;
+
+    return nh_id;
+}
+
+bool NeighOrch::removeTunnelNextHop(const NextHopKey& nh)
+{
+    SWSS_LOG_ENTER();
+
+    EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
+    auto vtep_ptr = evpn_orch->getEVPNVtep();
+
+    if(!vtep_ptr)
+    {
+        SWSS_LOG_ERROR("Remove Tunnel next hop unable to find EVPN VTEP");
+        return false;
+    }
+
+    auto tun_name = vtep_ptr->getTunnelName();
+
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+    IpAddress tnl_dip = nh.ip_address;
+    if (!vxlan_orch->removeNextHopTunnel(tun_name, tnl_dip, nh.mac_address, nh.vni))
+    {
+        SWSS_LOG_ERROR("Failed to remove Tunnel next hop %s, %s|%d|%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+            nh.vni, nh.mac_address.to_string().c_str());
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Removed Tunnel next hop %s, %s|%d|%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+            nh.vni, nh.mac_address.to_string().c_str());
+    return true;
+}
+

@@ -11,9 +11,22 @@ public:
     /* ip_string@if_alias separated by ',' */
     NextHopGroupKey(const std::string &nexthops)
     {
+        m_overlay_nexthops = false;
         auto nhv = tokenize(nexthops, NHG_DELIMITER);
         for (const auto &nh : nhv)
         {
+            m_nexthops.insert(nh);
+        }
+    }
+
+    /* ip_string|if_alias|vni|router_mac separated by ',' */
+    NextHopGroupKey(const std::string &nexthops, bool overlay_nh)
+    {
+        m_overlay_nexthops = true;
+        auto nhv = tokenize(nexthops, NHG_DELIMITER);
+        for (const auto &nh_str : nhv)
+        {
+            auto nh = NextHopKey(nh_str, overlay_nh);
             m_nexthops.insert(nh);
         }
     }
@@ -124,15 +137,24 @@ public:
             {
                 nhs_str += NHG_DELIMITER;
             }
-
-            nhs_str += it->to_string();
+            if (m_overlay_nexthops) {
+                nhs_str += it->to_string(m_overlay_nexthops);
+            } else {
+                nhs_str += it->to_string();
+            }
         }
 
         return nhs_str;
     }
 
+    inline bool is_overlay_nexthop() const
+    {
+        return m_overlay_nexthops;
+    }
+
 private:
     std::set<NextHopKey> m_nexthops;
+    bool m_overlay_nexthops;
 };
 
 #endif /* SWSS_NEXTHOPGROUPKEY_H */
