@@ -51,6 +51,7 @@ bool gSwssRecord = true;
 bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
 bool gSyncMode = false;
+char *gAsicInstance = NULL;
 
 extern bool gIsNatSupported;
 
@@ -117,7 +118,6 @@ int main(int argc, char **argv)
     int opt;
     sai_status_t status;
 
-    char *asic_inst_info = NULL;
     string record_location = ".";
 
     while ((opt = getopt(argc, argv, "b:m:r:d:i:hs")) != -1)
@@ -128,8 +128,8 @@ int main(int argc, char **argv)
             gBatchSize = atoi(optarg);
             break;
         case 'i':
-            asic_inst_info = (char *)calloc(strlen(optarg)+1, sizeof(char));
-            memcpy(asic_inst_info, optarg, strlen(optarg));
+            gAsicInstance = (char *)calloc(strlen(optarg)+1, sizeof(char));
+            memcpy(gAsicInstance, optarg, strlen(optarg));
             break;
         case 'm':
             gMacAddress = MacAddress(optarg);
@@ -233,10 +233,13 @@ int main(int argc, char **argv)
         sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     }
 
-    attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
-    attr.value.s8list.count = (uint32_t)(strlen(asic_inst_info)+1);
-    attr.value.s8list.list = (int8_t*)asic_inst_info;
-    attrs.push_back(attr);
+    if(gAsicInstance)
+    {
+        attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
+        attr.value.s8list.count = (uint32_t)(strlen(gAsicInstance)+1);
+        attr.value.s8list.list = (int8_t*)gAsicInstance;
+        attrs.push_back(attr);
+    }
 
     status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -244,7 +247,7 @@ int main(int argc, char **argv)
         SWSS_LOG_ERROR("Failed to create a switch, rv:%d", status);
         exit(EXIT_FAILURE);
     }
-    SWSS_LOG_NOTICE("Create a switch ( SAI asic instance : %s ), id:%" PRIu64, asic_inst_info, gSwitchId);
+    SWSS_LOG_NOTICE("Create a switch, id:%" PRIu64, gSwitchId);
 
     /* Get switch source MAC address if not provided */
     if (!gMacAddress)
