@@ -47,8 +47,9 @@ extern BufferOrch *gBufferOrch;
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
-#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
-#define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS "1000"
+#define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "10000"
+#define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS   "1000"
+
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
 {
@@ -185,6 +186,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     string queueWmSha, pgWmSha;
     string queueWmPluginName = "watermark_queue.lua";
     string pgWmPluginName = "watermark_pg.lua";
+    string portRatePluginName = "port_rates.lua";
 
     try
     {
@@ -193,6 +195,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
 
         string pgLuaScript = swss::loadLuaScript(pgWmPluginName);
         pgWmSha = swss::loadRedisScript(m_counter_db.get(), pgLuaScript);
+
+        string portRateLuaScript = swss::loadLuaScript(portRatePluginName);
+        string portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
 
         vector<FieldValueTuple> fieldValues;
         fieldValues.emplace_back(QUEUE_PLUGIN_FIELD, queueWmSha);
@@ -205,20 +210,8 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS);
         fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ_AND_CLEAR);
         m_flexCounterGroupTable->set(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
-    }
-    catch (const runtime_error &e)
-    {
-        SWSS_LOG_ERROR("Watermark flex counter groups were not set successfully: %s", e.what());
-    }
 
-    string portRatePluginName = "port_rates.lua";
-
-    try
-    {
-        string portRateLuaScript = swss::loadLuaScript(portRatePluginName);
-        string portRateSha = swss::loadRedisScript(m_counter_db.get(), portRateLuaScript);
-
-        vector<FieldValueTuple> fieldValues;
+        fieldValues.clear();
         fieldValues.emplace_back(PORT_PLUGIN_FIELD, portRateSha);
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS);
         fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
@@ -226,7 +219,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     }
     catch (const runtime_error &e)
     {
-        SWSS_LOG_WARN("Port rate flex counter group plugins was not set successfully: %s", e.what());
+        SWSS_LOG_ERROR("Port flex counter groups were not set successfully: %s", e.what());
     }
 
     uint32_t i, j;
