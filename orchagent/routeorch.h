@@ -59,9 +59,11 @@ struct RouteBulkContext
 {
     std::deque<sai_status_t>            object_statuses;    // Bulk statuses
     NextHopGroupKey                     tmp_next_hop;       // Temporary next hop
+    NextHopGroupKey                     nhg;
     sai_object_id_t                     vrf_id;
     IpPrefix                            ip_prefix;
     bool                                excp_intfs_flag;
+    std::vector<string>                 ipv;
 
     RouteBulkContext()
         : excp_intfs_flag(false)
@@ -76,7 +78,10 @@ struct RouteBulkContext
     {
         object_statuses.clear();
         tmp_next_hop.clear();
+        nhg.clear();
+        ipv.clear();
         excp_intfs_flag = false;
+        vrf_id = SAI_NULL_OBJECT_ID;
     }
 };
 

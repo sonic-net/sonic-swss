@@ -489,7 +489,8 @@ void RouteOrch::doTask(Consumer& consumer)
                     if (fvField(i) == "ifname")
                         aliases = fvValue(i);
                 }
-                vector<string> ipv = tokenize(ips, ',');
+                vector<string>& ipv = ctx.ipv;
+                ipv = tokenize(ips, ',');
                 vector<string> alsv = tokenize(aliases, ',');
 
                 /*
@@ -549,7 +550,8 @@ void RouteOrch::doTask(Consumer& consumer)
                     nhg_str += NHG_DELIMITER + ipv[i] + NH_DELIMITER + alsv[i];
                 }
 
-                NextHopGroupKey nhg(nhg_str);
+                NextHopGroupKey& nhg = ctx.nhg;
+                nhg = NextHopGroupKey(nhg_str);
 
                 if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
                 {
@@ -648,20 +650,8 @@ void RouteOrch::doTask(Consumer& consumer)
 
             if (op == SET_COMMAND)
             {
-                string ips;
-                string aliases;
                 const bool& excp_intfs_flag = ctx.excp_intfs_flag;
-
-                for (auto i : kfvFieldsValues(t))
-                {
-                    if (fvField(i) == "nexthop")
-                        ips = fvValue(i);
-
-                    if (fvField(i) == "ifname")
-                        aliases = fvValue(i);
-                }
-                vector<string> ipv = tokenize(ips, ',');
-                vector<string> alsv = tokenize(aliases, ',');
+                const vector<string>& ipv = ctx.ipv;
 
                 if (excp_intfs_flag)
                 {
@@ -674,13 +664,7 @@ void RouteOrch::doTask(Consumer& consumer)
                     continue;
                 }
 
-                string nhg_str = ipv[0] + NH_DELIMITER + alsv[0];
-                for (uint32_t i = 1; i < ipv.size(); i++)
-                {
-                    nhg_str += NHG_DELIMITER + ipv[i] + NH_DELIMITER + alsv[i];
-                }
-
-                NextHopGroupKey nhg(nhg_str);
+                const NextHopGroupKey& nhg = ctx.nhg;
 
                 if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
                 {
