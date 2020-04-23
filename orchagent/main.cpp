@@ -70,7 +70,7 @@ void usage()
     cout << "    -d record_location: set record logs folder location (default .)" << endl;
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
-    cout << "    -i INST_ID: set the ASIC instance ID in multi-asic platform" << endl;
+    cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
     cout << "    -s: enable synchronous mode" << endl;
 }
 
@@ -233,7 +233,7 @@ int main(int argc, char **argv)
         sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     }
 
-    if(gAsicInstance)
+    if (gAsicInstance)
     {
         attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
         attr.value.s8list.count = (uint32_t)(strlen(gAsicInstance)+1);
