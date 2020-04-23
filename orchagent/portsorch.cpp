@@ -3572,7 +3572,7 @@ bool PortsOrch::removeLagMember(Port &lag, Port &port)
 bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
 {
     /* Port must be LAG member */
-    assert(port.m_lag_member_id);
+    assert(lagMember.m_lag_member_id);
 
     sai_status_t status = SAI_STATUS_FAILURE;
     sai_attribute_t attr {};
@@ -3595,7 +3595,7 @@ bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
 bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribution)
 {
     /* Port must be LAG member */
-    assert(port.m_lag_member_id);
+    assert(lagMember.m_lag_member_id);
 
     sai_status_t status = SAI_STATUS_FAILURE;
     sai_attribute_t attr {};

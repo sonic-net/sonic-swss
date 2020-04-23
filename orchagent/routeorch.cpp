@@ -492,6 +492,36 @@ void RouteOrch::doTask(Consumer& consumer)
                 vector<string> ipv = tokenize(ips, ',');
                 vector<string> alsv = tokenize(aliases, ',');
 
+                /*
+                 * For backward compatibility, adjust ip string from old format to
+                 * new format. Meanwhile it can deal with some abnormal cases.
+                 */
+
+                /* Resize the ip vector to match ifname vector
+                 * as tokenize(",", ',') will miss the last empty segment. */
+                if (alsv.size() == 0)
+                {
+                    SWSS_LOG_WARN("Skip the route %s, for it has an empty ifname field.", key.c_str());
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+                else if (alsv.size() != ipv.size())
+                {
+                    SWSS_LOG_NOTICE("Route %s: resize ipv to match alsv, %zd -> %zd.", key.c_str(), ipv.size(), alsv.size());
+                    ipv.resize(alsv.size());
+                }
+
+                /* Set the empty ip(s) to zero
+                 * as IpAddress("") will construst a incorrect ip. */
+                for (auto &ip : ipv)
+                {
+                    if (ip.empty())
+                    {
+                        SWSS_LOG_NOTICE("Route %s: set the empty nexthop ip to zero.", key.c_str());
+                        ip = ip_prefix.isV4() ? "0.0.0.0" : "::";
+                    }
+                }
+
                 for (auto alias : alsv)
                 {
                     if (alias == "eth0" || alias == "lo" || alias == "docker0")

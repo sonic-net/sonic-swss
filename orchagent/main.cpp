@@ -13,6 +13,8 @@ extern "C" {
 #include <getopt.h>
 #include <unistd.h>
 #include <inttypes.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <sys/time.h>
 #include "timestamp.h"
@@ -49,6 +51,7 @@ bool gSwssRecord = true;
 bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
 bool gSyncMode = false;
+char *gAsicInstance = NULL;
 
 extern bool gIsNatSupported;
 
@@ -57,7 +60,7 @@ string gRecordFile;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-s]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-i INST_ID] [-s]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -67,6 +70,7 @@ void usage()
     cout << "    -d record_location: set record logs folder location (default .)" << endl;
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
+    cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
     cout << "    -s: enable synchronous mode" << endl;
 }
 
@@ -116,12 +120,16 @@ int main(int argc, char **argv)
 
     string record_location = ".";
 
-    while ((opt = getopt(argc, argv, "b:m:r:d:hs")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:d:i:hs")) != -1)
     {
         switch (opt)
         {
         case 'b':
             gBatchSize = atoi(optarg);
+            break;
+        case 'i':
+            gAsicInstance = (char *)calloc(strlen(optarg)+1, sizeof(char));
+            memcpy(gAsicInstance, optarg, strlen(optarg));
             break;
         case 'm':
             gMacAddress = MacAddress(optarg);
@@ -182,7 +190,6 @@ int main(int argc, char **argv)
     attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
     attr.value.booldata = true;
     attrs.push_back(attr);
-
     attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
     attr.value.ptr = (void *)on_fdb_event;
     attrs.push_back(attr);
@@ -226,6 +233,13 @@ int main(int argc, char **argv)
         sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     }
 
+    if (gAsicInstance)
+    {
+        attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
+        attr.value.s8list.count = (uint32_t)(strlen(gAsicInstance)+1);
+        attr.value.s8list.list = (int8_t*)gAsicInstance;
+        attrs.push_back(attr);
+    }
 
     status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
