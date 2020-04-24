@@ -108,10 +108,10 @@ typedef sai_status_t (*sai_bulk_set_fdb_entry_attribute_fn)(
         _Out_ sai_status_t *object_statuses);
 
 template<typename T>
-struct saitraits { };
+struct SaiBulkerTraits { };
 
 template<>
-struct saitraits<sai_route_api_t>
+struct SaiBulkerTraits<sai_route_api_t>
 {
     using entry_t = sai_route_entry_t;
     using api_t = sai_route_api_t;
@@ -124,7 +124,7 @@ struct saitraits<sai_route_api_t>
 };
 
 template<>
-struct saitraits<sai_fdb_api_t>
+struct SaiBulkerTraits<sai_fdb_api_t>
 {
     using entry_t = sai_fdb_entry_t;
     using api_t = sai_fdb_api_t;
@@ -137,7 +137,7 @@ struct saitraits<sai_fdb_api_t>
 };
 
 template<>
-struct saitraits<sai_next_hop_group_api_t>
+struct SaiBulkerTraits<sai_next_hop_group_api_t>
 {
     using entry_t = sai_object_id_t;
     using api_t = sai_next_hop_group_api_t;
@@ -154,7 +154,7 @@ template <typename T>
 class EntityBulker
 {
 public:
-    using Ts = saitraits<T>;
+    using Ts = SaiBulkerTraits<T>;
     using Te = typename Ts::entry_t;
 
     EntityBulker(typename Ts::api_t *api)
@@ -441,7 +441,7 @@ template <typename T>
 class ObjectBulker
 {
 public:
-    using Ts = saitraits<T>;
+    using Ts = SaiBulkerTraits<T>;
 
     ObjectBulker(typename Ts::api_t* next_hop_group_api, sai_object_id_t switch_id)
     {
@@ -646,7 +646,7 @@ private:
 };
 
 template <>
-inline ObjectBulker<sai_next_hop_group_api_t>::ObjectBulker(saitraits<sai_next_hop_group_api_t>::api_t *api, sai_object_id_t switch_id)
+inline ObjectBulker<sai_next_hop_group_api_t>::ObjectBulker(SaiBulkerTraits<sai_next_hop_group_api_t>::api_t *api, sai_object_id_t switch_id)
     : switch_id(switch_id)
 {
     create_entries = api->create_next_hop_group_members;
