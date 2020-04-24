@@ -3538,11 +3538,6 @@ bool PortsOrch::addLag(string lag_alias)
     PortUpdate update = { lag, true };
     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
-    FieldValueTuple tuple(lag_alias, sai_serialize_object_id(lag_id));
-    vector<FieldValueTuple> fields;
-    fields.push_back(tuple);
-    m_counterLagTable->set("", fields);
-
     return true;
 }
 
