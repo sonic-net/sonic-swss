@@ -1,10 +1,10 @@
-
-from swsscommon import swsscommon
 import os
 import re
 import time
 import json
 import pytest
+
+from swsscommon import swsscommon
 
 
 # macros for number of interfaces and number of neighbors
@@ -234,6 +234,7 @@ def ping_new_ips(dvs):
             dvs.runcmd(['sh', '-c', "ping -c 1 -W 0 -q {}.0.0.{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
             dvs.runcmd(['sh', '-c', "ping6 -c 1 -W 0 -q {}00::{} > /dev/null 2>&1".format(i*4,j+NUM_NEIGH_PER_INTF+2)])
 
+
 class TestWarmReboot(object):
     def test_PortSyncdWarmRestart(self, dvs, testlog):
 
@@ -243,8 +244,8 @@ class TestWarmReboot(object):
 
         dvs.runcmd("config warm_restart enable swss")
 
-        dvs.runcmd("ifconfig Ethernet16  up")
-        dvs.runcmd("ifconfig Ethernet20  up")
+        dvs.runcmd("config interface startup Ethernet16")
+        dvs.runcmd("config interface startup Ethernet20")
 
         time.sleep(1)
 
@@ -255,8 +256,8 @@ class TestWarmReboot(object):
         intf_tbl.set("Ethernet20|11.0.0.9/29", fvs)
         intf_tbl.set("Ethernet16", fvs)
         intf_tbl.set("Ethernet20", fvs)
-        dvs.runcmd("ifconfig Ethernet16 up")
-        dvs.runcmd("ifconfig Ethernet20 up")
+        dvs.runcmd("config interface startup Ethernet16")
+        dvs.runcmd("config interface startup Ethernet20")
 
         dvs.servers[4].runcmd("ip link set down dev eth0") == 0
         dvs.servers[4].runcmd("ip link set up dev eth0") == 0
@@ -314,7 +315,7 @@ class TestWarmReboot(object):
 
         check_port_oper_status(appl_db, "Ethernet16", "up")
         check_port_oper_status(appl_db, "Ethernet20", "up")
-        check_port_oper_status(appl_db, "Ethernet24", "up")
+        check_port_oper_status(appl_db, "Ethernet24", "down")
 
 
         swss_app_check_RestoreCount_single(state_db, restore_count, "portsyncd")
@@ -335,8 +336,8 @@ class TestWarmReboot(object):
         dvs.runcmd("ifconfig Ethernet16  0")
         dvs.runcmd("ifconfig Ethernet20  0")
 
-        dvs.runcmd("ifconfig Ethernet16  up")
-        dvs.runcmd("ifconfig Ethernet20  up")
+        dvs.runcmd("config interface startup Ethernet16 ")
+        dvs.runcmd("config interface startup Ethernet20 ")
 
         time.sleep(1)
 
@@ -383,8 +384,8 @@ class TestWarmReboot(object):
         intf_tbl.set("Vlan20|11.0.0.9/29", fvs)
         intf_tbl.set("Vlan16", fvs)
         intf_tbl.set("Vlan20", fvs)
-        dvs.runcmd("ifconfig Vlan16 up")
-        dvs.runcmd("ifconfig Vlan20 up")
+        dvs.runcmd("config interface startup Vlan16")
+        dvs.runcmd("config interface startup Vlan20")
 
         dvs.servers[4].runcmd("ifconfig eth0 11.0.0.2/29")
         dvs.servers[4].runcmd("ip route add default via 11.0.0.1")
@@ -477,8 +478,8 @@ class TestWarmReboot(object):
         intf_tbl.set("{}".format(intfs[1]), fvs)
         intf_tbl.set("{}".format(intfs[0]), fvs)
         intf_tbl.set("{}".format(intfs[1]), fvs)
-        dvs.runcmd("ifconfig {} up".format(intfs[0]))
-        dvs.runcmd("ifconfig {} up".format(intfs[1]))
+        dvs.runcmd("config interface startup {}".format(intfs[0]))
+        dvs.runcmd("config interface startup {}".format(intfs[1]))
 
         ips = ["24.0.0.2", "24.0.0.3", "28.0.0.2", "28.0.0.3"]
         v6ips = ["2400::2", "2400::3", "2800::2", "2800::3"]
@@ -830,8 +831,8 @@ class TestWarmReboot(object):
         intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet4", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
-        dvs.runcmd("ifconfig Ethernet4 up")
+        dvs.runcmd("config interface startup Ethernet0")
+        dvs.runcmd("config interface startup Ethernet4")
 
         dvs.servers[0].runcmd("ifconfig eth0 10.0.0.1/31")
         dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
@@ -903,9 +904,9 @@ class TestWarmReboot(object):
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet4", fvs)
         intf_tbl.set("Ethernet8", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
-        dvs.runcmd("ifconfig Ethernet4 up")
-        dvs.runcmd("ifconfig Ethernet8 up")
+        dvs.runcmd("config interface startup Ethernet0")
+        dvs.runcmd("config interface startup Ethernet4")
+        dvs.runcmd("config interface startup Ethernet8")
 
         dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
         dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
@@ -1074,9 +1075,9 @@ class TestWarmReboot(object):
         intf_tbl.set("{}".format(intfs[1]), fvs)
         intf_tbl.set("{}".format(intfs[2]), fvs)
         intf_tbl.set("{}".format(intfs[2]), fvs)
-        dvs.runcmd("ip link set {} up".format(intfs[0]))
-        dvs.runcmd("ip link set {} up".format(intfs[1]))
-        dvs.runcmd("ip link set {} up".format(intfs[2]))
+        dvs.runcmd("config interface startup {}".format(intfs[0]))
+        dvs.runcmd("config interface startup {}".format(intfs[1]))
+        dvs.runcmd("config interface startup {}".format(intfs[2]))
 
         time.sleep(1)
 
@@ -1794,6 +1795,10 @@ class TestWarmReboot(object):
         intf_tbl._del("{}".format(intfs[2]))
         time.sleep(2)
 
+    # FIXME: This test is extremely unstable and requires several retries
+    # for it to pass - we need to stabilize this test before putting it back
+    # into the pipeline.
+    @pytest.mark.xfail(reason="test case is unstable")
     def test_system_warmreboot_neighbor_syncup(self, dvs, testlog):
 
         appl_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
@@ -1830,7 +1835,7 @@ class TestWarmReboot(object):
             intf_tbl.set("Ethernet{}|{}00::1/64".format(i*4, i*4), fvs)
             intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
             intf_tbl.set("Ethernet{}".format(i*4, i*4), fvs)
-            dvs.runcmd("ip link set Ethernet{} up".format(i*4, i*4))
+            dvs.runcmd("config interface startup Ethernet{}".format(i*4, i*4))
             dvs.servers[i].runcmd("ip link set up dev eth0")
             dvs.servers[i].runcmd("ip addr flush dev eth0")
             #result = dvs.servers[i].runcmd_output("ifconfig eth0 | grep HWaddr | awk '{print $NF}'")
@@ -2077,8 +2082,8 @@ class TestWarmReboot(object):
         dvs.runcmd("config warm_restart enable swss")
 
         # bring up interface
-        dvs.runcmd("ifconfig Ethernet0  up")
-        dvs.runcmd("ifconfig Ethernet4  up")
+        dvs.runcmd("config interface startup Ethernet0 ")
+        dvs.runcmd("config interface startup Ethernet4 ")
 
         # create vrf
         create_entry_tbl(conf_db, "VRF", "Vrf_1", [('empty', 'empty')])

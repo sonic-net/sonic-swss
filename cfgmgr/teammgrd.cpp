@@ -5,6 +5,7 @@
 #include "netlink.h"
 #include "select.h"
 #include "warm_restart.h"
+#include <signal.h>
 
 using namespace std;
 using namespace swss;
@@ -17,12 +18,23 @@ bool gLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
 
+bool received_sigterm = false;
+
+void sig_handler(int signo)
+{
+    received_sigterm = true;
+    return;
+}
+
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("teammgrd");
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting teammrgd ---");
+
+    /* Register the signal handler for SIGTERM */
+    signal(SIGTERM, sig_handler);
 
     try
     {
@@ -55,6 +67,12 @@ int main(int argc, char **argv)
 
         while (true)
         {
+            if(received_sigterm)
+            {
+                teammgr.cleanTeamProcesses(SIGTERM);
+                received_sigterm = false;
+            }
+            
             Selectable *sel;
             int ret;
 

@@ -11,7 +11,8 @@ class FlexCounterStatManager : public FlexCounterManager
         FlexCounterStatManager(
                 const std::string& group_name,
                 const StatsMode stats_mode,
-                const int polling_interval);
+                const int polling_interval,
+                const bool enabled);
 
         FlexCounterStatManager(const FlexCounterStatManager&) = delete;
         FlexCounterStatManager& operator=(const FlexCounterStatManager&) = delete;

@@ -1,6 +1,8 @@
+import time
+import pytest
+
 from swsscommon import swsscommon
 
-import time
 
 class TestPortChannelAcl(object):
     def setup_db(self, dvs):
@@ -131,6 +133,8 @@ class TestPortChannelAcl(object):
         time.sleep(2)
 
         used_counter = dvs.getCrmCounterValue('ACL_STATS:INGRESS:LAG', 'crm_stats_acl_group_used')
+        if used_counter is None:
+            used_counter = 0
         # create port channel
         self.create_port_channel(dvs, "PortChannel01")
 
@@ -140,8 +144,8 @@ class TestPortChannelAcl(object):
         time.sleep(2)
 
         new_used_counter = dvs.getCrmCounterValue('ACL_STATS:INGRESS:LAG', 'crm_stats_acl_group_used')
-        if used_counter is None:
-            used_counter = 0
+        if new_used_counter is None:
+            new_used_counter = 0
         assert new_used_counter - used_counter == 1
         # check ASIC table
         self.check_asic_table_existed(dvs)

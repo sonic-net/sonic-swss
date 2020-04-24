@@ -1,5 +1,6 @@
 #include <iostream>
 #include <team.h>
+#include <signal.h>
 #include "logger.h"
 #include "select.h"
 #include "netdispatcher.h"
@@ -8,6 +9,14 @@
 
 using namespace std;
 using namespace swss;
+
+bool received_sigterm = false;
+
+void sig_handler(int signo)
+{
+    received_sigterm = true;
+    return;
+}
 
 int main(int argc, char **argv)
 {
@@ -19,6 +28,9 @@ int main(int argc, char **argv)
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWLINK, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELLINK, &sync);
+
+    /* Register the signal handler for SIGTERM */
+    signal(SIGTERM, sig_handler);
 
     while (1)
     {
@@ -33,6 +45,12 @@ int main(int argc, char **argv)
             s.addSelectable(&netlink);
             while (true)
             {
+                if(received_sigterm)
+                {
+                  sync.cleanTeamSync();
+                  received_sigterm = false;
+                }
+
                 Selectable *temps;
                 s.select(&temps, 1000); // block for a second
                 sync.periodic();

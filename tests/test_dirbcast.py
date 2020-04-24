@@ -1,7 +1,10 @@
-from swsscommon import swsscommon
 import time
 import re
 import json
+import pytest
+
+from swsscommon import swsscommon
+
 
 class TestDirectedBroadcast(object):
     def test_DirectedBroadcast(self, dvs, testlog):

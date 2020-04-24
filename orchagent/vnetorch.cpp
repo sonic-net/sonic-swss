@@ -429,6 +429,10 @@ VnetBridgeInfo VNetBitmapObject::getBridgeInfoByVni(uint32_t vni, string tunnelN
     attr.value.oid = info.bridge_id;
     rif_attrs.push_back(attr);
 
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+    attr.value.u32 = VNET_BITMAP_RIF_MTU;
+    rif_attrs.push_back(attr);
+
     status = sai_router_intfs_api->create_router_interface(
             &info.rif_id,
             gSwitchId,
@@ -715,60 +719,7 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
 
     if (prefix)
     {
-        auto& intf = intfMap_.at(alias);
-
-        if (intf.pfxMap.find(*prefix) != intf.pfxMap.end())
-        {
-            SWSS_LOG_WARN("VNET '%s' interface '%s' prefix '%s' already exists",
-                    getVnetName().c_str(), alias.c_str(), prefix->getIp().to_string().c_str());
-            return true;
-        }
-
-        RouteInfo intfPfxInfo;
-
-        sai_ip_prefix_t saiPrefix;
-        copy(saiPrefix, *prefix);
-
         gIntfsOrch->addIp2MeRoute(gVirtualRouterId, *prefix);
-
-        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_ACTION;
-        attr.value.s32 = SAI_TABLE_BITMAP_ROUTER_ENTRY_ACTION_TO_LOCAL;
-        route_attrs.push_back(attr);
-
-        intfPfxInfo.offset = getFreeTunnelRouteTableOffset();
-        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_PRIORITY;
-        attr.value.u32 = intfPfxInfo.offset;
-        route_attrs.push_back(attr);
-
-        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_IN_RIF_METADATA_KEY;
-        attr.value.u64 = 0;
-        route_attrs.push_back(attr);
-
-        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_IN_RIF_METADATA_MASK;
-        attr.value.u64 = ~peerBitmap;
-        route_attrs.push_back(attr);
-
-        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_DST_IP_KEY;
-        attr.value.ipprefix = saiPrefix;
-        route_attrs.push_back(attr);
-
-        attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_ROUTER_INTERFACE;
-        attr.value.oid = gIntfsOrch->getRouterIntfsId(alias);
-        route_attrs.push_back(attr);
-
-        status = sai_bmtor_api->create_table_bitmap_router_entry(
-                &intfPfxInfo.routeTableEntryId,
-                gSwitchId,
-                (uint32_t)route_attrs.size(),
-                route_attrs.data());
-
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to create local VNET route entry, SAI rc: %d", status);
-            throw std::runtime_error("VNet interface creation failed");
-        }
-
-        intf.pfxMap.emplace(*prefix, intfPfxInfo);
     }
 
     return true;
@@ -790,38 +741,18 @@ bool VNetBitmapObject::removeIntf(const string& alias, const IpPrefix *prefix)
 
     if (prefix)
     {
-        if (intf.pfxMap.find(*prefix) == intf.pfxMap.end())
-        {
-            SWSS_LOG_ERROR("VNET '%s' interface '%s' prefix '%s' doesn't exist",
-                    getVnetName().c_str(), alias.c_str(), prefix->getIp().to_string().c_str());
-            return true;
-        }
-
-        auto& pfx = intf.pfxMap.at(*prefix);
-
-        status = sai_bmtor_api->remove_table_bitmap_router_entry(pfx.routeTableEntryId);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to remove VNET local route entry, SAI rc: %d", status);
-            throw std::runtime_error("VNET interface removal failed");
-        }
-
         gIntfsOrch->removeIp2MeRoute(gVirtualRouterId, *prefix);
-
-        recycleTunnelRouteTableOffset(pfx.offset);
-
-        intf.pfxMap.erase(*prefix);
     }
 
-    if (intf.pfxMap.size() == 0)
+    status = sai_bmtor_api->remove_table_bitmap_classification_entry(intf.vnetTableEntryId);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        status = sai_bmtor_api->remove_table_bitmap_classification_entry(intf.vnetTableEntryId);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to remove VNET table entry, SAI rc: %d", status);
-            throw std::runtime_error("VNET interface removal failed");
-        }
+        SWSS_LOG_ERROR("Failed to remove VNET table entry, SAI rc: %d", status);
+        throw std::runtime_error("VNET interface removal failed");
+    }
 
+    if (!prefix)
+    {
         intfMap_.erase(alias);
 
         if (!gIntfsOrch->removeIntf(alias, gVirtualRouterId, nullptr))
@@ -863,6 +794,12 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
     TunnelRouteInfo tunnelRouteInfo;
     sai_ip_address_t underlayAddr;
     copy(underlayAddr, endp.ip);
+
+    if (tunnelRouteMap_.find(ipPrefix) != tunnelRouteMap_.end())
+    {
+        SWSS_LOG_WARN("VNET tunnel route %s exists", ipPrefix.to_string().c_str());
+        return true;
+    }
 
     VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
     for (auto peer : peer_list)
@@ -1074,7 +1011,7 @@ bool VNetBitmapObject::removeTunnelRoute(IpPrefix& ipPrefix)
     if (tunnelRouteMap_.find(ipPrefix) == tunnelRouteMap_.end())
     {
         SWSS_LOG_WARN("VNET tunnel route %s doesn't exist", ipPrefix.to_string().c_str());
-        return false;
+        return true;
     }
 
     auto tunnelRouteInfo = tunnelRouteMap_.at(ipPrefix);
@@ -1165,6 +1102,12 @@ bool VNetBitmapObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
     uint32_t peerBitmap = vnet_id_;
     Port port;
     RouteInfo routeInfo;
+
+    if (routeMap_.find(ipPrefix) != routeMap_.end())
+    {
+        SWSS_LOG_WARN("VNET route %s exists", ipPrefix.to_string().c_str());
+        return true;
+    }
 
     bool is_subnet = (!nh.ips.getSize() || nh.ips.contains("0.0.0.0")) ? true : false;
 
@@ -1273,7 +1216,7 @@ bool VNetBitmapObject::removeRoute(IpPrefix& ipPrefix)
     if (routeMap_.find(ipPrefix) == routeMap_.end())
     {
         SWSS_LOG_WARN("VNET route %s doesn't exist", ipPrefix.to_string().c_str());
-        return false;
+        return true;
     }
 
     sai_status_t status = sai_bmtor_api->remove_table_bitmap_router_entry(routeMap_.at(ipPrefix).routeTableEntryId);
@@ -1838,7 +1781,7 @@ bool VNetRouteOrch::doRouteTask<VNetBitmapObject>(const string& vnet, IpPrefix& 
     if (!vnet_orch_->isVnetExists(vnet))
     {
         SWSS_LOG_WARN("VNET %s doesn't exist", vnet.c_str());
-        return false;
+        return (op == DEL_COMMAND) ? true : false;
     }
 
     auto *vnet_obj = vnet_orch_->getTypePtr<VNetBitmapObject>(vnet);
@@ -1863,7 +1806,7 @@ bool VNetRouteOrch::doRouteTask<VNetBitmapObject>(const string& vnet, IpPrefix& 
     if (!vnet_orch_->isVnetExists(vnet))
     {
         SWSS_LOG_WARN("VNET %s doesn't exist", vnet.c_str());
-        return false;
+        return (op == DEL_COMMAND) ? true : false;
     }
 
     auto *vnet_obj = vnet_orch_->getTypePtr<VNetBitmapObject>(vnet);

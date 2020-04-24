@@ -194,7 +194,7 @@ def set_neigh_in_kernel(ipclass, family, intf_idx, dst_ip, dmac):
 def build_arp_ns_pkt(family, smac, src_ip, dst_ip):
     if family == 'IPv4':
         eth = Ether(src=smac, dst='ff:ff:ff:ff:ff:ff')
-        pkt = eth/ARP(op='who-has', pdst=dst_ip)
+        pkt = eth/ARP(op='who-has', pdst=dst_ip, psrc=src_ip, hwsrc=smac)
     elif family == 'IPv6':
         nsma = in6_getnsma(inet_pton(AF_INET6, dst_ip))
         mcast_dst_ip = inet_ntop(AF_INET6, nsma)

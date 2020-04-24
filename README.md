@@ -1,6 +1,8 @@
-Broadcom[![Broadcom](https://sonic-jenkins.westus2.cloudapp.azure.com/job/broadcom/job/sonic-swss-build/badge/icon)](https://sonic-jenkins.westus2.cloudapp.azure.com/job/broadcom/job/sonic-swss-build/)
-Mellanox[![Mellanox](https://sonic-jenkins.westus2.cloudapp.azure.com/job/mellanox/job/sonic-swss-build/badge/icon)](https://sonic-jenkins.westus2.cloudapp.azure.com/job/mellanox/job/sonic-swss-build/)
-VS[![VS](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/sonic-swss-build/badge/icon)](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/sonic-swss-build/)
+[![Total alerts](https://img.shields.io/lgtm/alerts/g/Azure/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/Azure/sonic-swss/alerts/)
+[![Language grade: Python](https://img.shields.io/lgtm/grade/python/g/Azure/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/Azure/sonic-swss/context:python)
+[![Language grade: C/C++](https://img.shields.io/lgtm/grade/cpp/g/Azure/sonic-swss.svg?logo=lgtm&logoWidth=18)](https://lgtm.com/projects/g/Azure/sonic-swss/context:cpp)
+
+[![VS](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/sonic-swss-build/badge/icon?subject=VS%20build)](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/sonic-swss-build/)
 
 # SONiC - SWitch State Service - SWSS
 

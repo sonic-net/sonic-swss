@@ -33,6 +33,7 @@
 #define TABLE_TYPE_CTRLPLANE            "CTRLPLANE"
 #define TABLE_TYPE_DTEL_FLOW_WATCHLIST  "DTEL_FLOW_WATCHLIST"
 #define TABLE_TYPE_DTEL_DROP_WATCHLIST  "DTEL_DROP_WATCHLIST"
+#define TABLE_TYPE_MCLAG                "MCLAG"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
@@ -63,6 +64,7 @@
 
 #define ACTION_PACKET_ACTION                "PACKET_ACTION"
 #define ACTION_REDIRECT_ACTION              "REDIRECT_ACTION"
+#define ACTION_DO_NOT_NAT_ACTION            "DO_NOT_NAT_ACTION"
 #define ACTION_MIRROR_ACTION                "MIRROR_ACTION"
 #define ACTION_MIRROR_INGRESS_ACTION        "MIRROR_INGRESS_ACTION"
 #define ACTION_MIRROR_EGRESS_ACTION         "MIRROR_EGRESS_ACTION"
@@ -73,9 +75,10 @@
 #define ACTION_DTEL_FLOW_SAMPLE_PERCENT     "FLOW_SAMPLE_PERCENT"
 #define ACTION_DTEL_REPORT_ALL_PACKETS      "REPORT_ALL_PACKETS"
 
-#define PACKET_ACTION_FORWARD   "FORWARD"
-#define PACKET_ACTION_DROP      "DROP"
-#define PACKET_ACTION_REDIRECT  "REDIRECT"
+#define PACKET_ACTION_FORWARD     "FORWARD"
+#define PACKET_ACTION_DROP        "DROP"
+#define PACKET_ACTION_REDIRECT    "REDIRECT"
+#define PACKET_ACTION_DO_NOT_NAT  "DO_NOT_NAT"
 
 #define DTEL_FLOW_OP_NOP        "NOP"
 #define DTEL_FLOW_OP_POSTCARD   "POSTCARD"
@@ -109,7 +112,8 @@ typedef enum
     ACL_TABLE_PFCWD,
     ACL_TABLE_CTRLPLANE,
     ACL_TABLE_DTEL_FLOW_WATCHLIST,
-    ACL_TABLE_DTEL_DROP_WATCHLIST
+    ACL_TABLE_DTEL_DROP_WATCHLIST,
+    ACL_TABLE_MCLAG
 } acl_table_type_t;
 
 typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
@@ -315,6 +319,14 @@ protected:
     DTelOrch *m_pDTelOrch;
 };
 
+class AclRuleMclag: public AclRuleL3
+{
+public:
+    AclRuleMclag(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = false);
+    bool validateAddMatch(string attr_name, string attr_value);
+    bool validate();
+};
+
 class AclTable {
     sai_object_id_t m_oid;
     AclOrch *m_pAclOrch;
@@ -362,6 +374,8 @@ public:
     bool unbind();
     // Link the ACL table with a port, for future bind or unbind
     void link(sai_object_id_t portOid);
+    // Unlink the ACL table from a port after unbind
+    void unlink(sai_object_id_t portOid);
     // Add or overwrite a rule into the ACL table
     bool add(shared_ptr<AclRule> newRule);
     // Remove a rule from the ACL table
@@ -375,8 +389,13 @@ public:
 class AclOrch : public Orch, public Observer
 {
 public:
-    AclOrch(vector<TableConnector>& connectors, TableConnector switchTable,
-            PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *m_dTelOrch = NULL);
+    AclOrch(vector<TableConnector>& connectors,
+            TableConnector          switchTable,
+            PortsOrch               *portOrch,
+            MirrorOrch              *mirrorOrch,
+            NeighOrch               *neighOrch,
+            RouteOrch               *routeOrch,
+            DTelOrch                *m_dTelOrch = NULL);
     ~AclOrch();
     void update(SubjectType, void *);
 
@@ -396,8 +415,9 @@ public:
     RouteOrch *m_routeOrch;
     DTelOrch *m_dTelOrch;
 
-    bool addAclTable(AclTable &aclTable, string table_id);
+    bool addAclTable(AclTable &aclTable);
     bool removeAclTable(string table_id);
+    bool updateAclTable(AclTable &currentTable, AclTable &newTable);
     bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
 
@@ -430,13 +450,20 @@ private:
     static void collectCountersThread(AclOrch *pAclOrch);
 
     bool createBindAclTable(AclTable &aclTable, sai_object_id_t &table_oid);
-    sai_status_t bindAclTable(sai_object_id_t table_oid, AclTable &aclTable, bool bind = true);
+    sai_status_t bindAclTable(AclTable &aclTable, bool bind = true);
     sai_status_t deleteUnbindAclTable(sai_object_id_t table_oid);
 
+    bool isAclTableTypeUpdated(acl_table_type_t table_type, AclTable &aclTable);
     bool processAclTableType(string type, acl_table_type_t &table_type);
+    bool isAclTableStageUpdated(acl_stage_type_t acl_stage, AclTable &aclTable);
     bool processAclTableStage(string stage, acl_stage_type_t &acl_stage);
     bool processAclTablePorts(string portList, AclTable &aclTable);
     bool validateAclTable(AclTable &aclTable);
+    bool updateAclTablePorts(AclTable &newTable, AclTable &curTable);
+    void getAddDeletePorts(AclTable    &newT,
+                           AclTable    &curT,
+                           set<string> &addSet,
+                           set<string> &delSet);
     sai_status_t createDTelWatchListTables();
     sai_status_t deleteDTelWatchListTables();
 

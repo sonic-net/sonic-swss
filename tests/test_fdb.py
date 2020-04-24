@@ -1,8 +1,10 @@
-from swsscommon import swsscommon
 import os
 import sys
 import time
 import json
+import pytest
+
+from swsscommon import swsscommon
 from distutils.version import StrictVersion
 
 def create_entry(tbl, key, pairs):
@@ -23,6 +25,7 @@ def create_entry_pst(db, table, key, pairs):
 def how_many_entries_exist(db, table):
     tbl =  swsscommon.Table(db, table)
     return len(tbl.getKeys())
+
 
 class TestFdb(object):
     def test_FdbWarmRestartNotifications(self, dvs, testlog):
@@ -379,4 +382,3 @@ class TestFdb(object):
         dvs.runcmd("sonic-clear fdb all")
         dvs.remove_vlan_member("2", "Ethernet0")
         dvs.remove_vlan("2")
-

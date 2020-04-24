@@ -1,9 +1,10 @@
-from swsscommon import swsscommon
 import time
 import json
 import random
 import time
 import pytest
+
+from swsscommon import swsscommon
 from pprint import pprint
 
 
@@ -858,12 +859,9 @@ class VnetBitmapVxlanTunnel(object):
         new_rif = get_created_entry(asic_db, self.ASIC_RIF_TABLE, self.rifs)
         check_object(asic_db, self.ASIC_RIF_TABLE, new_rif, expected_attrs)
 
-        new_bitmap_route = get_created_entries(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, self.vnet_bitmap_route_ids, 1)
-
         new_bitmap_class_id  = get_created_entries(asic_db, self.ASIC_BITMAP_CLASS_ENTRY, self.vnet_bitmap_class_ids, 1)
 
         self.rifs.add(new_rif)
-        self.vnet_bitmap_route_ids.update(new_bitmap_route)
         self.vnet_bitmap_class_ids.update(new_bitmap_class_id)
 
     def check_del_router_interface(self, dvs, name):
@@ -875,12 +873,8 @@ class VnetBitmapVxlanTunnel(object):
         old_bitmap_class_id  = get_deleted_entries(asic_db, self.ASIC_BITMAP_CLASS_ENTRY, self.vnet_bitmap_class_ids, 1)
         check_deleted_object(asic_db, self.ASIC_BITMAP_CLASS_ENTRY, old_bitmap_class_id[0])
 
-        old_bitmap_route_id  = get_deleted_entries(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, self.vnet_bitmap_route_ids, 1)
-        check_deleted_object(asic_db, self.ASIC_BITMAP_ROUTER_ENTRY, old_bitmap_route_id[0])
-
         self.rifs.remove(old_rif[0])
         self.vnet_bitmap_class_ids.remove(old_bitmap_class_id[0])
-        self.vnet_bitmap_route_ids.remove(old_bitmap_route_id[0])
 
     def check_vnet_local_routes(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)

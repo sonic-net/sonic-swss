@@ -34,17 +34,19 @@ const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lo
 {
     { CounterType::PORT_DEBUG,   PORT_DEBUG_COUNTER_ID_LIST },
     { CounterType::SWITCH_DEBUG, SWITCH_DEBUG_COUNTER_ID_LIST },
+    { CounterType::PORT,         PORT_COUNTER_ID_LIST },
+    { CounterType::QUEUE,        QUEUE_COUNTER_ID_LIST }
 };
 
-// This constructor will create a group that is disabled by default.
 FlexCounterManager::FlexCounterManager(
         const string& group_name,
         const StatsMode stats_mode,
-        const uint polling_interval) :
+        const uint polling_interval,
+        const bool enabled) :
     group_name(group_name),
     stats_mode(stats_mode),
     polling_interval(polling_interval),
-    enabled(false),
+    enabled(enabled),
     flex_counter_db(new DBConnector("FLEX_COUNTER_DB", 0)),
     flex_counter_group_table(new ProducerTable(flex_counter_db.get(), FLEX_COUNTER_GROUP_TABLE)),
     flex_counter_table(new ProducerTable(flex_counter_db.get(), FLEX_COUNTER_TABLE))
@@ -72,6 +74,8 @@ FlexCounterManager::~FlexCounterManager()
 
 void FlexCounterManager::applyGroupConfiguration()
 {
+    SWSS_LOG_ENTER();
+
     vector<FieldValueTuple> field_values =
     {
         FieldValueTuple(STATS_MODE_FIELD, stats_mode_lookup.at(stats_mode)),
@@ -165,7 +169,7 @@ void FlexCounterManager::setCounterIdList(
     flex_counter_table->set(getFlexCounterTableKey(group_name, object_id), field_values);
     installed_counters.insert(object_id);
 
-    SWSS_LOG_DEBUG("Updated flex counter id list for object '%lu' in group '%s'.",
+    SWSS_LOG_DEBUG("Updated flex counter id list for object '%" PRIu64 "' in group '%s'.",
             object_id,
             group_name.c_str());
 }
@@ -179,7 +183,7 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
     auto counter_it = installed_counters.find(object_id);
     if (counter_it == installed_counters.end())
     {
-        SWSS_LOG_WARN("No counters found on object '%lu' in group '%s'.",
+        SWSS_LOG_WARN("No counters found on object '%" PRIu64 "' in group '%s'.",
                 object_id,
                 group_name.c_str());
         return;
@@ -188,7 +192,7 @@ void FlexCounterManager::clearCounterIdList(const sai_object_id_t object_id)
     flex_counter_table->del(getFlexCounterTableKey(group_name, object_id));
     installed_counters.erase(counter_it);
 
-    SWSS_LOG_DEBUG("Cleared flex counter id list for object '%lu' in group '%s'.",
+    SWSS_LOG_DEBUG("Cleared flex counter id list for object '%" PRIu64 "' in group '%s'.",
             object_id,
             group_name.c_str());
 }

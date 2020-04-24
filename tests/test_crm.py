@@ -1,10 +1,11 @@
-from swsscommon import swsscommon
 import os
 import re
 import time
 import json
 import redis
+import pytest
 
+from swsscommon import swsscommon
 
 def getCrmCounterValue(dvs, key, counter):
 
@@ -61,6 +62,7 @@ def setReadOnlyAttr(dvs, obj, attr, val):
 def check_syslog(dvs, marker, err_log, expected_cnt):
     (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, err_log)])
     assert num.strip() >= str(expected_cnt)
+
 
 class TestCrm(object):
     def test_CrmFdbEntry(self, dvs, testlog):
@@ -136,7 +138,7 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("config interface startup Ethernet0")
 
         dvs.runcmd("crm config polling interval 1")
 
@@ -203,7 +205,7 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet0|fc00::1/126", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("config interface startup Ethernet0")
 
         dvs.servers[0].runcmd("ifconfig eth0 inet6 add fc00::2/126")
         dvs.servers[0].runcmd("ip -6 route add default via fc00::1")
@@ -269,7 +271,7 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
         intf_tbl.set("Ethernet0", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("config interface startup Ethernet0")
 
         dvs.runcmd("crm config polling interval 1")
 
@@ -328,7 +330,7 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet0|fc00::1/126", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("config interface startup Ethernet0")
 
         dvs.runcmd("crm config polling interval 1")
 
@@ -383,7 +385,7 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("config interface startup Ethernet0")
 
         dvs.runcmd("crm config polling interval 1")
 
@@ -442,7 +444,7 @@ class TestCrm(object):
         fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
         intf_tbl.set("Ethernet0", fvs)
         intf_tbl.set("Ethernet0|fc00::1/126", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
+        dvs.runcmd("config interface startup Ethernet0")
 
         dvs.runcmd("crm config polling interval 1")
 
@@ -499,8 +501,8 @@ class TestCrm(object):
         intf_tbl.set("Ethernet4", fvs)
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
         intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
-        dvs.runcmd("ifconfig Ethernet4 up")
+        dvs.runcmd("config interface startup Ethernet0")
+        dvs.runcmd("config interface startup Ethernet4")
 
         dvs.runcmd("crm config polling interval 1")
 
@@ -574,8 +576,8 @@ class TestCrm(object):
         intf_tbl.set("Ethernet4", fvs)
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
         intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
-        dvs.runcmd("ifconfig Ethernet4 up")
+        dvs.runcmd("config interface startup Ethernet0")
+        dvs.runcmd("config interface startup Ethernet4")
 
         dvs.runcmd("crm config polling interval 1")
 

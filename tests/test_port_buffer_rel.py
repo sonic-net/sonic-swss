@@ -1,5 +1,8 @@
-from swsscommon import swsscommon
 import time
+import pytest
+
+from swsscommon import swsscommon
+
 
 # The test check that the ports will be up, when the admin state is UP by conf db.
 class TestPortBuffer(object):

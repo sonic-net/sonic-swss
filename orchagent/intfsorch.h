@@ -40,7 +40,9 @@ public:
     void decreaseRouterIntfsRefCount(const string&);
 
     bool setRouterIntfsMtu(const Port &port);
+    bool setRouterIntfsNatZoneId(Port &port);
     bool setRouterIntfsAdminStatus(const Port &port);
+
     std::set<IpPrefix> getSubnetRoutes();
 
     void generateInterfaceMap();

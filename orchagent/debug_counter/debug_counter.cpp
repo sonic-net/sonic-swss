@@ -96,7 +96,7 @@ void DebugCounter::addDebugCounterToSAI(const int num_attributes, const sai_attr
         throw std::runtime_error("Failed to create debug counter");
     }
 
-    SWSS_LOG_DEBUG("Created debug counter '%s' with OID=%lu", name.c_str(), debug_counter_id);
+    SWSS_LOG_DEBUG("Created debug counter '%s' with OID=%" PRIu64 "" , name.c_str(), debug_counter_id);
     counter_id = debug_counter_id;
 }
 

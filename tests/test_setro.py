@@ -1,8 +1,11 @@
-from swsscommon import swsscommon
 import time
 import json
 import redis
+import pytest
+
 from pprint import pprint
+from swsscommon import swsscommon
+
 
 class TestSetRo(object):
     def test_SetReadOnlyAttribute(self, dvs, testlog):

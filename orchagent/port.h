@@ -9,6 +9,8 @@ extern "C" {
 #include <string>
 #include <vector>
 #include <map>
+#include <bitset>
+#include <unordered_set>
 
 #define DEFAULT_PORT_VLAN_ID    1
 /*
@@ -76,6 +78,7 @@ public:
     std::string         m_learn_mode = "hardware";
     bool                m_autoneg = false;
     bool                m_admin_state_up = false;
+    bool                m_init = false;
     sai_object_id_t     m_port_id = 0;
     sai_port_fec_mode_t m_fec_mode = SAI_PORT_FEC_MODE_NONE;
     VlanInfo            m_vlan_info;
@@ -91,6 +94,7 @@ public:
     sai_object_id_t     m_egress_acl_table_group_id = 0;
     vlan_members_t      m_vlan_members;
     sai_object_id_t     m_parent_port_id = 0;
+    uint32_t            m_dependency_bitmap = 0;
     sai_port_oper_status_t m_oper_status = SAI_PORT_OPER_STATUS_UNKNOWN;
     std::set<std::string> m_members;
     std::set<std::string> m_child_ports;
@@ -100,6 +104,20 @@ public:
     uint8_t m_pfc_bitmask = 0;
     uint32_t            m_fdb_count = 0;
     uint32_t            m_up_member_count = 0;
+    uint32_t m_nat_zone_id = 0;
+
+    /*
+     * Following two bit vectors are used to lock
+     * the PG/queue from being changed in BufferOrch.
+     * The use case scenario is when PfcWdZeroBufferHandler
+     * sets zero buffer profile it should protect PG/queue
+     * from being overwritten in BufferOrch.
+     */
+    std::vector<bool> m_queue_lock;
+    std::vector<bool> m_priority_group_lock;
+
+    std::unordered_set<sai_object_id_t> m_ingress_acl_tables_uset;
+    std::unordered_set<sai_object_id_t> m_egress_acl_tables_uset;
 };
 
 }

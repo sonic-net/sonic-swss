@@ -151,6 +151,11 @@ void PortMgr::doTask(Consumer &consumer)
                 SWSS_LOG_NOTICE("Configure %s MAC learn mode to %s", alias.c_str(), learn_mode.c_str());
             }
         }
+        else if (op == DEL_COMMAND)
+        {
+            SWSS_LOG_NOTICE("Delete Port: %s", alias.c_str());
+            m_appPortTable.del(alias);
+        }
 
         it = consumer.m_toSync.erase(it);
     }

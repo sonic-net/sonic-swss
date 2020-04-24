@@ -232,7 +232,7 @@ bool VlanMgr::removeHostVlanMember(int vlan_id, const string &port_alias)
       IP_CMD " link set " << shellquote(port_alias) << " nomaster; "
       "elif [ $ret -eq 1 ]; then exit 0; "
       "else exit $ret; fi )";
-    cmds << BASH_CMD " -c " << shellquote(cmds.str());
+    cmds << BASH_CMD " -c " << shellquote(inner.str());
 
     std::string res;
     EXEC_WITH_ERROR_THROW(cmds.str(), res);
@@ -601,8 +601,9 @@ void VlanMgr::processUntaggedVlanMembers(string vlan, const string &members)
             vector<FieldValueTuple> fvVector;
             FieldValueTuple t("tagging_mode", "untagged");
             fvVector.push_back(t);
-            consumer.m_toSync[member_key] = make_tuple(member_key, SET_COMMAND, fvVector);
-            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, consumer.m_toSync[member_key])).c_str());
+            KeyOpFieldsValuesTuple tuple = make_tuple(member_key, SET_COMMAND, fvVector);
+            consumer.addToSync(tuple);
+            SWSS_LOG_DEBUG("%s", (dumpTuple(consumer, tuple)).c_str());
         }
         /*
          * There is pending task from consumer pipe, in this case just skip it.

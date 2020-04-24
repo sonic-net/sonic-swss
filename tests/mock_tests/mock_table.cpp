@@ -23,7 +23,7 @@ namespace swss
 
     bool Table::get(const std::string &key, std::vector<FieldValueTuple> &ovalues)
     {
-        auto table = gDB[getDbId()][getTableName()];
+        auto table = gDB[m_pipe->getDbId()][getTableName()];
         if (table.find(key) == table.end())
         {
             return false;
@@ -35,7 +35,7 @@ namespace swss
 
     bool Table::hget(const std::string &key, const std::string &field, std::string &value)
     {
-        auto table = gDB[getDbId()][getTableName()];
+        auto table = gDB[m_pipe->getDbId()][getTableName()];
         if (table.find(key) == table.end())
         {
             return false;
@@ -58,14 +58,14 @@ namespace swss
                     const std::string &op,
                     const std::string &prefix)
     {
-        auto &table = gDB[getDbId()][getTableName()];
+        auto &table = gDB[m_pipe->getDbId()][getTableName()];
         table[key] = values;
     }
 
     void Table::getKeys(std::vector<std::string> &keys)
     {
         keys.clear();
-        auto table = gDB[getDbId()][getTableName()];
+        auto table = gDB[m_pipe->getDbId()][getTableName()];
         for (const auto &it : table)
         {
             keys.push_back(it.first);

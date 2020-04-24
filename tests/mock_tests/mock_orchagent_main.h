@@ -19,6 +19,7 @@ extern int gBatchSize;
 extern bool gSwssRecord;
 extern bool gSairedisRecord;
 extern bool gLogRotate;
+extern bool gSaiRedisLogRotate;
 extern ofstream gRecordOfs;
 extern string gRecordFile;
 
@@ -54,3 +55,4 @@ extern sai_tunnel_api_t *sai_tunnel_api;
 extern sai_next_hop_api_t *sai_next_hop_api;
 extern sai_hostif_api_t *sai_hostif_api;
 extern sai_buffer_api_t *sai_buffer_api;
+extern sai_queue_api_t *sai_queue_api;

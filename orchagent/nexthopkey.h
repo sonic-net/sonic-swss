@@ -64,6 +64,11 @@ struct NextHopKey
     {
         return !(*this == o);
     }
+
+    bool isIntfNextHop() const
+    {
+        return (ip_address.getV4Addr() == 0);
+    }
 };
 
 #endif /* SWSS_NEXTHOPKEY_H */

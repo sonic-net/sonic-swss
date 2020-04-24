@@ -34,6 +34,16 @@ AC_ARG_ENABLE(debug,
 esac],[debug=false])
 AM_CONDITIONAL(DEBUG, test x$debug = xtrue)
 
+AC_ARG_WITH(extra-inc,
+[  --with-extra-inc=DIR
+                          prefix where extra includes are installed],
+[AC_SUBST(CPPFLAGS, "$CPPFLAGS -I${withval} -I${withval}/swss -I${withval}/sai")])
+
+AC_ARG_WITH(extra-lib,
+[  --with-extra-lib=DIR
+                          prefix where extra libraries are installed],
+[AC_SUBST(LDFLAGS, "$LDFLAGS -L${withval}")])
+
 CFLAGS_COMMON="-std=c++14 -Wall -fPIC -Wno-write-strings -I/usr/include/libnl3 -I/usr/include/swss"
 
 CFLAGS_COMMON+=" -Werror"
@@ -79,8 +89,10 @@ AC_CONFIG_FILES([
     orchagent/Makefile
     fpmsyncd/Makefile
     neighsyncd/Makefile
+    natsyncd/Makefile
     portsyncd/Makefile
     teamsyncd/Makefile
+    mclagsyncd/Makefile
     swssconfig/Makefile
     cfgmgr/Makefile
     tests/Makefile

@@ -1,66 +1,109 @@
-SWSS Integration Tests
+# Docker Virtual Switch (DVS) Tests
 
-# Introduction
+## Introduction
+The Docker Virtual Switch tests allow developers to validate the control plane behavior of new SWSS features without needing an actual network device or switching ASIC.
 
-SWSS Integration tests runs on docker-sonic-vs which runs on top of SAI virtual switch. The tests can be run on any Linux machine without real switch ASIC. It is used to test SwSS (Switch State Service) by setting AppDB or ConfigDB and checking corresponding AsicDB entries.
+The DVS tests work by publishing configuration updates to redis (typically Config DB or App DB) and checking that the state of the system is correctly updated by SWSS (typically by checking ASIC DB).
 
-# How to run the tests
+SWSS, Redis, and all the other required components run inside a virtual switch Docker container, meaning that these test cases can be run on any Linux machine - no special hardware required!
 
-- Install docker and pytest on your dev machine
-    ```
-    sudo pip install --system docker==3.5.0
-    sudo pip install --system pytest==3.3.0 docker redis
-    ```
-- Compile and install swss common library. Follow instructions [here](https://github.com/Azure/sonic-swss-common/blob/master/README.md) to first install prerequisites to build swss common library. 
-    ```
-    cd sonic-swss-common
-    ./autogen.sh
-    dpkg-buildpackage -us -uc -b
-    dpkg -i ../libswsscommon_1.0.0_amd64.deb
-    dpkg -i ../python-swsscommon_1.0.0_amd64.deb
-    ```
-- Build and load docker-sonic-vs
+## Setting up your test environment
+1. [Install Docker CE](https://docs.docker.com/install/linux/docker-ce/ubuntu/). Be sure to follow the [post-install instructions](https://docs.docker.com/install/linux/linux-postinstall/) so that you don't need sudo privileges to run docker commands.
+2. Install the external dependencies needed to run the tests:
 
     ```
-    cd sonic-buildimage
-    make configure PLATFORM=vs
-    make all
-    docker load < target/docker-sonic-vs.gz
+    sudo modprobe team
+    sudo apt install net-tools ethtool vlan
+    sudo pip install docker zipp==2.2.1 pytest==4.6.9 flaky redis
+    ```
+3. Install `python-swsscommon_1.0.0_amd64.deb`. You will need to install all the dependencies as well in the following order:
+
+    ```
+    sudo dpkg -i libnl-3-200_3.5.0-1_amd64.deb
+    sudo dpkg -i libnl-genl-3-200_3.5.0-1_amd64.deb
+    sudo dpkg -i libnl-route-3-200_3.5.0-1_amd64.deb
+    sudo dpkg -i libnl-nf-3-200_3.5.0-1_amd64.deb
+    sudo dpkg -i libhiredis0.14_0.14.0-3~bpo9+1_amd64.deb
+    sudo dpkg -i libswsscommon_1.0.0_amd64.deb
+    sudo dpkg -i python-swsscommon_1.0.0_amd64.deb
     ```
 
-- Run tests
+    You can find the dependencies [here](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/buildimage-vs-all/lastSuccessfulBuild/artifact/target/debs/stretch/), and get this package by:
+    - [Building it from scratch](https://github.com/Azure/sonic-swss-common)
+    - [Downloading the latest build from Jenkins](https://sonic-jenkins.westus2.cloudapp.azure.com/job/common/job/sonic-swss-common-build/lastSuccessfulBuild/artifact/target/)
+4. Load the `docker-sonic-vs.gz` file into docker. You can get the image by:
+    - [Building it from scratch](https://github.com/Azure/sonic-buildimage)
+    - [Downloading the latest build from Jenkins](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/buildimage-vs-all/lastSuccessfulBuild/artifact/target/)
     
-    ```
-    cd sonic-swss/tests
-    sudo pytest -v
-    ```
+    Once you have the file, you can load it into docker by running `docker load < docker-sonic-vs.gz`.
 
-\* If you meet the error: client is newer than server, please edit the file `/usr/local/lib/python2.7/dist-packages/docker/constants.py` to update the `DEFAULT_DOCKER_API_VERSION` to mitigate this issue.
+## Running the tests
+```
+cd sonic-swss/tests
+sudo pytest
+```
 
-# How to setup test development env
+## Setting up a persistent test environment
+For those developing new features for SWSS or the DVS framework, you might find it helpful to setup a persistent DVS container that you can inspect and make modifications to (e.g. using `dpkg -i` to install a new version of SWSS to test a new feature).
 
-To develop new swss features or swss integration tests, you need to setup a virtual switch docker container which 
-persists.
-
-- Create virtual switch container (name:vs). ```create_vnet.sh``` can be found at [here](https://github.com/Azure/sonic-buildimage/blob/master/platform/vs/create_vnet.sh).
+1. [Download `create_vnet.sh`](https://github.com/Azure/sonic-buildimage/blob/master/platform/vs/create_vnet.sh).
+2. Setup a virtual server and network:
 
     ```
     docker run --privileged -id --name sw debian bash
     sudo ./create_vnet.sh sw
+    ```
+3. Start the DVS container:
+
+    ```
     docker run --privileged -v /var/run/redis-vs/sw:/var/run/redis --network container:sw -d --name vs docker-sonic-vs
     ```
+
+4. You can specify your persistent DVS container when running the tests as follows:
     
-- If you need to simulate other platforms, e.g. Broadcom or Mellanox, you will need to add the environment variable while starting the docker.
+    ```
+    sudo pytest --dvsname=vs
+    ```
+
+5. Additionally, if you need to simulate a specific hardware platform (e.g. Broadcom or Mellanox), you can add this environment variable when starting the DVS container:
+
     ```
     -e "fake_platform=mellanox"
     ```
-    
-- Run full test using the existing vs container
+
+## Other useful test parameters
+- You can see the output of all test cases that have been run by adding the verbose flag:
+
     ```
-    sudo pytest -s -v --dvsname=vs
+    sudo pytest -v
     ```
 
-- Run specific test using the existing vs container
+    This works for persistent DVS containers as well.
+
+- You can specify a specific test file, class, or even individual test case when you run the tests:
+
     ```
-    sudo pytest -s -v --dvsname=vs <test_file_name>::<test_class_name>::<test_name>
+    sudo pytest <test_file_name>::<test_class_name>::<test_name>
     ```
+
+    This works for persistent DVS containers as well.
+
+- You can specify a specific image:tag to use when running the tests *without a persistent DVS container*:
+
+    ```
+    sudo pytest --imgname=docker-sonic-vs:my-changes.333
+    ```
+
+- You can automatically retry failed test cases **once**:
+
+    ```
+    sudo pytest --force-flaky
+    ```
+
+## Known Issues
+-   ```
+    ERROR: Error response from daemon: client is newer than server (client API version: x.xx, server API version: x.xx)
+    ```
+
+    You can mitigate this by editing the `DEFAULT_DOCKER_API_VERSION` in `/usr/local/lib/python2.7/dist-packages/docker/constants.py`, or by upgrading to a newer version of Docker CE. See [relevant GitHub discussion](https://github.com/drone/drone/issues/2048).
+    
