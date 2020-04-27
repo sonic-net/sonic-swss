@@ -19,6 +19,7 @@
 
 #include "dbconnector.h"
 #include "producerstatetable.h"
+#include "notificationproducer.h"
 #include "netmsg.h"
 #include "warmRestartAssist.h"
 #include "ipaddress.h"
@@ -63,6 +64,8 @@ private:
     bool        matchingSnaptEntryExists(const naptEntry &entry);
     bool        matchingDnaptEntryExists(const naptEntry &entry);
     int         addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFlag);
+
+    std::shared_ptr<swss::NotificationProducer> setTimeoutNotifier;
 
     ProducerStateTable m_natTable;
     ProducerStateTable m_naptTable;

@@ -26,6 +26,7 @@
 #include "warm_restart.h"
 #include "ipaddress.h"
 #include "ipprefix.h"
+#include "notifier.h"
 
 using namespace std;
 using namespace swss;
@@ -37,6 +38,8 @@ NatMgr::NatMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
         m_stateInterfaceTable(stateDb, STATE_INTERFACE_TABLE_NAME),
+        m_stateWarmRestartEnableTable(stateDb, STATE_WARM_RESTART_ENABLE_TABLE_NAME),
+        m_stateWarmRestartTable(stateDb, STATE_WARM_RESTART_TABLE_NAME),
         m_appNatTableProducer(appDb, APP_NAT_TABLE_NAME),
         m_appNaptTableProducer(appDb, APP_NAPT_TABLE_NAME),
         m_appTwiceNatTableProducer(appDb, APP_NAT_TWICE_TABLE_NAME),
@@ -68,7 +71,12 @@ NatMgr::NatMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
         SWSS_LOG_ERROR("Command '%s' failed", cmds.c_str());
     }
 
-    flushNotifier = std::make_shared<swss::NotificationProducer>(appDb, "FLUSHNATREQUEST");
+    /* Start the timer to refresh static conntrack entries for every 1 day (86400) */
+    SWSS_LOG_INFO("Start the NAT Refresh Timer ");
+    auto refresh_interval      = timespec { .tv_sec = NAT_ENTRY_REFRESH_PERIOD, .tv_nsec = 0 };
+    m_natRefreshTimer = new SelectableTimer(refresh_interval);
+    auto refresh_executor   = new ExecutableTimer(m_natRefreshTimer, this, "NAT_ENTRY_REFRESH_TIMER");
+    Orch::addExecutor(refresh_executor);
 }
 
 /* To check the port init id done or not */
@@ -327,26 +335,152 @@ void NatMgr::setNaptPoolIpTable(const string &opCmd, const string &ip_range, con
     }
 }
 
+/* To check warmboot in progress */
+bool NatMgr::warmBootingInProgress(void)
+{
+    std::string value;
+
+    m_stateWarmRestartEnableTable.hget("system", "enable", value);
+    if (value == "true")
+    {
+        SWSS_LOG_INFO("Warm reboot enabled");
+        m_stateWarmRestartTable.hget("natsyncd", "state", value);
+        if (value != "reconciled")
+        {
+            SWSS_LOG_NOTICE("Nat conntrack state reconciliation not completed yet");
+            return true;
+        }
+        return false;
+    }
+    else
+    {
+        SWSS_LOG_INFO("Warm reboot not enabled");
+    }
+    return false;
+}
+
+/* To flush all NAT entries */
+void NatMgr::flushAllNatEntries(void)
+{
+    std::string res;
+    const std::string cmds = std::string("") + CONNTRACK_CMD + FLUSH;
+    int ret = swss::exec(cmds, res);
+
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
+    }
+    else
+    {
+        SWSS_LOG_INFO("Cleared the All NAT Entries");
+    }
+}
+
+/* To Update a conntrack entry for the Dynamic Single NAT entry in the kernel */
+void NatMgr::updateDynamicSingleNatConnTrackTimeout(string key, int timeout)
+{
+    std::string res;
+    std::string cmds = std::string("") + CONNTRACK_CMD;
+    IpAddress   ip_address = IpAddress(key);
+
+    cmds += (" -U -s " + ip_address.to_string() + " -t " + to_string(timeout) + REDIRECT_TO_DEV_NULL);
+    int ret = swss::exec(cmds, res);
+
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
+    }
+    else
+    {
+        SWSS_LOG_INFO("Updated the active NAT conntrack entry with src-ip %s, timeout %u",
+                      ip_address.to_string().c_str(), timeout);
+    }
+}
+
+/* To Update a conntrack entry for the Dynamic Single NAPT entry in the kernel */
+void NatMgr::updateDynamicSingleNaptConnTrackTimeout(string key, int timeout)
+{
+    std::string     res;
+    vector<string>  keys = tokenize(key, ':');
+    IpAddress       ip_address = IpAddress(keys[1]);
+    int             l4_port = stoi(keys[2]);
+    string          prototype = ((keys[0] == string("TCP")) ? "tcp" : "udp");
+    std::string     cmds = std::string("") + CONNTRACK_CMD;
+    
+    cmds += (" -U -s " + ip_address.to_string() + " -p " + prototype + " --orig-port-src " + to_string(l4_port) + " -t " + to_string(timeout) + REDIRECT_TO_DEV_NULL);
+    int ret = swss::exec(cmds, res);
+
+    if (ret)
+    {
+        SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmds.c_str(), ret);
+    }
+    else
+    {
+        SWSS_LOG_INFO("Updated active NAPT conntrack entry with protocol %s, src-ip %s, src-port %d, timeout %u",
+                      prototype.c_str(), ip_address.to_string().c_str(), l4_port, timeout);
+    }
+}
+
+/* To Update a conntrack entry for the Dynamic Twice NAT entry in the kernel */
+void NatMgr::updateDynamicTwiceNatConnTrackTimeout(string key, int timeout)
+{
+    std::string     res;
+    std::string     cmd = std::string("") + CONNTRACK_CMD;
+    vector<string>  keys = tokenize(key, ':');
+    IpAddress       src_ip = IpAddress(keys[1]);
+    IpAddress       dst_ip = IpAddress(keys[1]);
+
+    cmd += (" -U -s " + src_ip.to_string() + " -d " + dst_ip.to_string() + " -t " + std::to_string(timeout) + REDIRECT_TO_DEV_NULL);
+
+    swss::exec(cmd, res);
+
+    SWSS_LOG_INFO("Updated active Twice NAT conntrack entry with src-ip %s, dst-ip %s, timeout %u",
+                  src_ip.to_string().c_str(), dst_ip.to_string().c_str(), timeout);
+}
+
+/* To Update a conntrack entry for the Dynamic Twice NAPT entry in the kernel */
+void NatMgr::updateDynamicTwiceNaptConnTrackTimeout(string key, int timeout)
+{
+    std::string     res;
+    std::string     cmd = std::string("") + CONNTRACK_CMD;
+    vector<string>  keys = tokenize(key, ':');
+    IpAddress       src_ip      = IpAddress(keys[1]);
+    int             src_l4_port = stoi(keys[2]);
+    IpAddress       dst_ip      = IpAddress(keys[3]);
+    int             dst_l4_port = stoi(keys[4]);
+    string          prototype = ((keys[0] == string("TCP")) ? "tcp" : "udp");
+
+    cmd += (" -U -s " + src_ip.to_string() + " -p " + prototype + " --orig-port-src " + to_string(src_l4_port) +
+            " -d " + dst_ip.to_string() + " --orig-port-dst " + std::to_string(dst_l4_port) +
+            " -t " + std::to_string(timeout) + REDIRECT_TO_DEV_NULL);
+
+    swss::exec(cmd, res);
+
+    SWSS_LOG_INFO("Updated active Twice NAPT conntrack entry with protocol %s, src-ip %s, src-port %d, dst-ip %s, dst-port %d, timeout %u",
+                  prototype.c_str(), src_ip.to_string().c_str(), src_l4_port, dst_ip.to_string().c_str(), dst_l4_port, timeout);
+}
+
 /* To Add a dummy conntrack entry for the Static Single NAT entry in the kernel */
-void NatMgr::addConntrackSingleNatEntry(const string &key)
+void NatMgr::addConntrackStaticSingleNatEntry(const string &key)
 {
     std::string res, cmds = std::string("") + CONNTRACK_CMD; 
+    int timeout = NAT_TIMEOUT_MAX;
 
     if (m_staticNatEntry[key].nat_type == DNAT_NAT_TYPE)
     {
         SWSS_LOG_INFO("Add static NAT conntrack entry with src-ip %s, timeout %d",
-                      m_staticNatEntry[key].local_ip.c_str(), m_natTimeout);
+                      m_staticNatEntry[key].local_ip.c_str(), timeout);
 
-        cmds += (" -I -n " + key + ":1 -g 127.0.0.1:127" + " -p udp -t " + to_string(m_natTimeout) +
-                 " --src " + m_staticNatEntry[key].local_ip + " --sport 1 --dst 127.0.0.1 --dport 127 -u ASSURED ");
+        cmds += (" -I -n " + key + ":1 -g 127.0.0.1:127" + " -p udp -t " + to_string(timeout) +
+                 " --src " + m_staticNatEntry[key].local_ip + " --sport 1 --dst 127.0.0.1 --dport 127 -u ASSURED " + REDIRECT_TO_DEV_NULL);
     }
     else if (m_staticNatEntry[key].nat_type == SNAT_NAT_TYPE)
     {
         SWSS_LOG_INFO("Add static NAT conntrack entry with src-ip %s, timeout %d",
-                      key.c_str(), m_natTimeout);
+                      key.c_str(), timeout);
 
-        cmds += (" -I -n " + m_staticNatEntry[key].local_ip + ":1 -g 127.0.0.1:127" + " -p udp -t " + to_string(m_natTimeout) +
-                 " --src " + key + " --sport 1 --dst 127.0.0.1 --dport 127 -u ASSURED ");
+        cmds += (" -I -n " + m_staticNatEntry[key].local_ip + ":1 -g 127.0.0.1:127" + " -p udp -t " + to_string(timeout) +
+                 " --src " + key + " --sport 1 --dst 127.0.0.1 --dport 127 -u ASSURED " + REDIRECT_TO_DEV_NULL);
     }
 
     int ret = swss::exec(cmds, res);
@@ -362,16 +496,17 @@ void NatMgr::addConntrackSingleNatEntry(const string &key)
 }
 
 /* To Add a dummy conntrack entry for the Static Twice NAT entry in the kernel */
-void NatMgr::addConntrackTwiceNatEntry(const string &snatKey, const string &dnatKey)
+void NatMgr::addConntrackStaticTwiceNatEntry(const string &snatKey, const string &dnatKey)
 {
     std::string res, cmds = std::string("") + CONNTRACK_CMD;
+    int timeout = NAT_TIMEOUT_MAX;
 
     SWSS_LOG_INFO("Add static Twice NAT conntrack entry with src-ip %s, dst-ip %s, timeout %u",
-                  snatKey.c_str(), dnatKey.c_str(), m_natTimeout);
+                  snatKey.c_str(), dnatKey.c_str(), timeout);
 
     cmds += (" -I -n " + m_staticNatEntry[snatKey].local_ip + ":1" + " -g " + m_staticNatEntry[dnatKey].local_ip + ":1"
-             +  " -p udp" + " -t " + to_string(m_natTimeout) + " --src " + snatKey + " --sport 1" + " --dst " + dnatKey
-             +  " --dport 1" + " -u ASSURED ");
+             +  " -p udp" + " -t " + to_string(timeout) + " --src " + snatKey + " --sport 1" + " --dst " + dnatKey
+             +  " --dport 1" + " -u ASSURED " + REDIRECT_TO_DEV_NULL);
 
     int ret = swss::exec(cmds, res);
 
@@ -387,22 +522,20 @@ void NatMgr::addConntrackTwiceNatEntry(const string &snatKey, const string &dnat
 
 /* To Add a dummy conntrack entry for the Static NAPT entry in the kernel,
  * so that the port number is reserved and the same port is not allocated by the stack for any other dynamic entry */
-void NatMgr::addConntrackSingleNaptEntry(const string &key)
+void NatMgr::addConntrackStaticSingleNaptEntry(const string &key)
 {
-    int timeout = 0;
+    int timeout = NAT_TIMEOUT_MAX;
     std::string res, prototype, state, cmds = std::string("") + CONNTRACK_CMD;
     vector<string> keys = tokenize(key, config_db_key_delimiter);
 
     if (keys[1] == to_upper(IP_PROTOCOL_UDP))
     {
         prototype = IP_PROTOCOL_UDP;
-        timeout = m_natUdpTimeout;
         state = "";
     }
     else if (keys[1] == to_upper(IP_PROTOCOL_TCP))
     {
         prototype = IP_PROTOCOL_TCP;
-        timeout = m_natTcpTimeout;
         state = " --state ESTABLISHED ";
     }
 
@@ -413,7 +546,8 @@ void NatMgr::addConntrackSingleNaptEntry(const string &key)
                       prototype.c_str(), m_staticNaptEntry[key].local_ip.c_str(), m_staticNaptEntry[key].local_port.c_str(), timeout);
 
         cmds += (" -I -n " + keys[0] + ":" + keys[2] + " -g 127.0.0.1:127" + " -p " + prototype + " -t " + to_string(timeout) +
-                 " --src " + m_staticNaptEntry[key].local_ip + " --sport " + m_staticNaptEntry[key].local_port + " --dst 127.0.0.1 --dport 127 -u ASSURED " + state);
+                 " --src " + m_staticNaptEntry[key].local_ip + " --sport " + m_staticNaptEntry[key].local_port + " --dst 127.0.0.1 --dport 127 -u ASSURED " 
+                 + state + REDIRECT_TO_DEV_NULL);
     }
     else if (m_staticNaptEntry[key].nat_type == SNAT_NAT_TYPE)
     {
@@ -421,7 +555,7 @@ void NatMgr::addConntrackSingleNaptEntry(const string &key)
                       prototype.c_str(), keys[0].c_str(), keys[2].c_str(), timeout);
 
         cmds += (" -I -n " + m_staticNaptEntry[key].local_ip + ":" + m_staticNaptEntry[key].local_port + " -g 127.0.0.1:127" + " -p " + prototype + " -t " + to_string(timeout) +
-                 " --src " + keys[0] + " --sport " + keys[2] + " --dst 127.0.0.1 --dport 127 -u ASSURED " +  state);
+                 " --src " + keys[0] + " --sport " + keys[2] + " --dst 127.0.0.1 --dport 127 -u ASSURED " +  state + REDIRECT_TO_DEV_NULL);
     }
 
     int ret = swss::exec(cmds, res);
@@ -437,9 +571,9 @@ void NatMgr::addConntrackSingleNaptEntry(const string &key)
 }
 
 /* To Add a dummy conntrack entry for the Static Twice NAPT entry in the kernel */
-void NatMgr::addConntrackTwiceNaptEntry(const string &snatKey, const string &dnatKey)
+void NatMgr::addConntrackStaticTwiceNaptEntry(const string &snatKey, const string &dnatKey)
 {
-    int timeout = 0;
+    int timeout = NAT_TIMEOUT_MAX;
     std::string res, prototype, state, cmds = std::string("") + CONNTRACK_CMD;
     vector<string> snatKeys = tokenize(snatKey, config_db_key_delimiter);
     vector<string> dnatKeys = tokenize(dnatKey, config_db_key_delimiter);
@@ -447,13 +581,11 @@ void NatMgr::addConntrackTwiceNaptEntry(const string &snatKey, const string &dna
     if (snatKeys[1] == to_upper(IP_PROTOCOL_UDP))
     {
         prototype = IP_PROTOCOL_UDP;
-        timeout = m_natUdpTimeout;
         state = "";
     }
     else if (snatKeys[1] == to_upper(IP_PROTOCOL_TCP))
     {
         prototype = IP_PROTOCOL_TCP;
-        timeout = m_natTcpTimeout;
         state = " --state ESTABLISHED ";
     }
 
@@ -462,7 +594,8 @@ void NatMgr::addConntrackTwiceNaptEntry(const string &snatKey, const string &dna
 
     cmds += (" -I -n " + m_staticNaptEntry[snatKey].local_ip + ":" + m_staticNaptEntry[snatKey].local_port + " -g " + m_staticNaptEntry[dnatKey].local_ip + ":"
              + m_staticNaptEntry[dnatKey].local_port +  " -p " + prototype + " -t " + to_string(timeout)
-             + " --src " + snatKeys[0] + " --sport " + snatKeys[2] + " --dst " + dnatKeys[0] + " --dport " + dnatKeys[2] + " -u ASSURED " +  state);
+             + " --src " + snatKeys[0] + " --sport " + snatKeys[2] + " --dst " + dnatKeys[0] + " --dport " + dnatKeys[2] + " -u ASSURED " 
+             +  state + REDIRECT_TO_DEV_NULL);
 
     int ret = swss::exec(cmds, res);
 
@@ -476,8 +609,108 @@ void NatMgr::addConntrackTwiceNaptEntry(const string &snatKey, const string &dna
     }
 }
 
+/* To Update a dummy conntrack entry for the Static Single NAT entry in the kernel */
+void NatMgr::updateConntrackStaticSingleNatEntry(const string &key)
+{
+    std::string res, cmds = std::string("") + CONNTRACK_CMD;
+    int timeout = NAT_TIMEOUT_MAX;
+
+    if (m_staticNatEntry[key].nat_type == DNAT_NAT_TYPE)
+    {
+        SWSS_LOG_INFO("Update static NAT conntrack entry with src-ip %s, timeout %d",
+                      m_staticNatEntry[key].local_ip.c_str(), timeout);
+
+        cmds += (" -U --src " + m_staticNatEntry[key].local_ip + " -p udp -t " + to_string(timeout) + REDIRECT_TO_DEV_NULL);
+    }
+    else if (m_staticNatEntry[key].nat_type == SNAT_NAT_TYPE)
+    {
+        SWSS_LOG_INFO("Update static NAT conntrack entry with src-ip %s, timeout %d",
+                      key.c_str(), timeout);
+
+        cmds += (" -U --src " + key + " -p udp -t " + to_string(timeout) + REDIRECT_TO_DEV_NULL);
+    }
+
+    swss::exec(cmds, res);
+}
+
+/* To Update a dummy conntrack entry for the Static Twice NAT entry in the kernel */
+void NatMgr::updateConntrackStaticTwiceNatEntry(const string &snatKey, const string &dnatKey)
+{
+    std::string res, cmds = std::string("") + CONNTRACK_CMD;
+    int timeout = NAT_TIMEOUT_MAX;
+
+    SWSS_LOG_INFO("Update static Twice NAT conntrack entry with src-ip %s, dst-ip %s, timeout %u",
+                  snatKey.c_str(), dnatKey.c_str(), timeout);
+   
+    cmds += (" -U --src " + snatKey + " -p udp -t " + to_string(timeout) + " --dst " + dnatKey + REDIRECT_TO_DEV_NULL);
+
+    swss::exec(cmds, res);
+}
+
+/* To update a dummy conntrack entry for the Static NAPT entry in the kernel */
+void NatMgr::updateConntrackStaticSingleNaptEntry(const string &key)
+{
+    int timeout = NAT_TIMEOUT_MAX;
+    std::string res, prototype, cmds = std::string("") + CONNTRACK_CMD;
+    vector<string> keys = tokenize(key, config_db_key_delimiter);
+
+    if (keys[1] == to_upper(IP_PROTOCOL_UDP))
+    {
+        prototype = IP_PROTOCOL_UDP;
+    }
+    else if (keys[1] == to_upper(IP_PROTOCOL_TCP))
+    {
+        prototype = IP_PROTOCOL_TCP;
+    }
+
+    if (m_staticNaptEntry[key].nat_type == DNAT_NAT_TYPE)
+    {
+
+        SWSS_LOG_INFO("Update static NAPT conntrack entry with protocol %s, src-ip %s, src-port %s, timeout %d",
+                      prototype.c_str(), m_staticNaptEntry[key].local_ip.c_str(), m_staticNaptEntry[key].local_port.c_str(), timeout);
+ 
+        cmds += (" -U --src " + m_staticNaptEntry[key].local_ip + " -p " + prototype + " --sport " + m_staticNaptEntry[key].local_port + " -t " 
+                 + to_string(timeout) + REDIRECT_TO_DEV_NULL);
+    }
+    else if (m_staticNaptEntry[key].nat_type == SNAT_NAT_TYPE)
+    {
+        SWSS_LOG_INFO("Update static NAPT conntrack entry with protocol %s, src-ip %s, src-port %s, timeout %d",
+                      prototype.c_str(), keys[0].c_str(), keys[2].c_str(), timeout);
+
+        cmds += (" -U --src " + keys[0] + " -p " + prototype + " --sport " + keys[2] + " -t " + to_string(timeout) + REDIRECT_TO_DEV_NULL);
+    }
+
+    swss::exec(cmds, res);
+}
+
+/* To Update a dummy conntrack entry for the Static Twice NAPT entry in the kernel */
+void NatMgr::updateConntrackStaticTwiceNaptEntry(const string &snatKey, const string &dnatKey)
+{
+    int timeout = NAT_TIMEOUT_MAX;
+    std::string res, prototype, cmds = std::string("") + CONNTRACK_CMD;
+    vector<string> snatKeys = tokenize(snatKey, config_db_key_delimiter);
+    vector<string> dnatKeys = tokenize(dnatKey, config_db_key_delimiter);
+
+    if (snatKeys[1] == to_upper(IP_PROTOCOL_UDP))
+    {
+        prototype = IP_PROTOCOL_UDP;
+    }
+    else if (snatKeys[1] == to_upper(IP_PROTOCOL_TCP))
+    {
+        prototype = IP_PROTOCOL_TCP;
+    }
+
+    SWSS_LOG_DEBUG("Update static Twice NAPT conntrack entry with protocol %s, src-ip %s, src-port %s, dst-ip %s, dst-port %s, timeout %u",
+                   prototype.c_str(), snatKeys[0].c_str(), snatKeys[2].c_str(), dnatKeys[0].c_str(), dnatKeys[2].c_str(), timeout);
+
+    cmds += (" -U --src " + snatKeys[0] + " --dst " + dnatKeys[0] + " -p udp " + " --sport " + snatKeys[2] + " --dport " + dnatKeys[2]
+             + " -p udp -t " + to_string(timeout) + REDIRECT_TO_DEV_NULL);
+
+    swss::exec(cmds, res);
+}
+
 /* To Delete conntrack entry for Static Single NAT entry */
-void NatMgr::deleteConntrackSingleNatEntry(const string &key)
+void NatMgr::deleteConntrackStaticSingleNatEntry(const string &key)
 {
     std::string res, cmds = std::string("") + CONNTRACK_CMD;
 
@@ -485,13 +718,13 @@ void NatMgr::deleteConntrackSingleNatEntry(const string &key)
     {
         SWSS_LOG_INFO("Delete static NAT conntrack entry with src-ip %s", m_staticNatEntry[key].local_ip.c_str());
 
-        cmds += (" -D -s " + m_staticNatEntry[key].local_ip + " -p udp" + " &> /dev/null");
+        cmds += (" -D -s " + m_staticNatEntry[key].local_ip + " -p udp" + REDIRECT_TO_DEV_NULL);
     }
     else if (m_staticNatEntry[key].nat_type == SNAT_NAT_TYPE)
     {
         SWSS_LOG_INFO("Delete static NAT conntrack entry with src-ip %s", key.c_str());
 
-        cmds += (" -D -s " + key + " -p udp" + " &> /dev/null");
+        cmds += (" -D -s " + key + " -p udp" + REDIRECT_TO_DEV_NULL);
     }
 
     int ret = swss::exec(cmds, res);
@@ -507,13 +740,13 @@ void NatMgr::deleteConntrackSingleNatEntry(const string &key)
 }
 
 /* To Delete conntrack entry for Static Twice NAT entry */
-void NatMgr::deleteConntrackTwiceNatEntry(const string &snatKey, const string &dnatKey)
+void NatMgr::deleteConntrackStaticTwiceNatEntry(const string &snatKey, const string &dnatKey)
 {
     std::string res, cmds = std::string("") + CONNTRACK_CMD;
 
     SWSS_LOG_INFO("Delete static Twice NAT conntrack entry with src-ip %s and dst-ip %s", snatKey.c_str(), dnatKey.c_str());
 
-    cmds += (" -D -s " + snatKey + " -d " + dnatKey + " &> /dev/null");
+    cmds += (" -D -s " + snatKey + " -d " + dnatKey + REDIRECT_TO_DEV_NULL);
 
     int ret = swss::exec(cmds, res);
 
@@ -528,7 +761,7 @@ void NatMgr::deleteConntrackTwiceNatEntry(const string &snatKey, const string &d
 }
 
 /* To Delete conntrack entry for Static Single NAPT entry */
-void NatMgr::deleteConntrackSingleNaptEntry(const string &key)
+void NatMgr::deleteConntrackStaticSingleNaptEntry(const string &key)
 {
     std::string res, prototype, cmds = std::string("") + CONNTRACK_CMD;
     vector<string> keys = tokenize(key, config_db_key_delimiter);
@@ -547,14 +780,14 @@ void NatMgr::deleteConntrackSingleNaptEntry(const string &key)
         SWSS_LOG_INFO("Delete static NAPT conntrack entry with protocol %s, src-ip %s, src-port %s",
                       prototype.c_str(), m_staticNaptEntry[key].local_ip.c_str(), m_staticNaptEntry[key].local_port.c_str());
 
-        cmds += (" -D -s " + m_staticNaptEntry[key].local_ip + " -p " + prototype + " --sport " + m_staticNaptEntry[key].local_port + " &> /dev/null");
+        cmds += (" -D -s " + m_staticNaptEntry[key].local_ip + " -p " + prototype + " --sport " + m_staticNaptEntry[key].local_port + REDIRECT_TO_DEV_NULL);
     }
     else if (m_staticNaptEntry[key].nat_type == SNAT_NAT_TYPE)
     {
         SWSS_LOG_INFO("Delete static NAPT conntrack entry with protocol %s, src-ip %s, src-port %s",
                       prototype.c_str(), keys[0].c_str(), keys[2].c_str());
 
-        cmds += (" -D -s " + keys[0] + " -p " + prototype + " --sport " + keys[2] + " &> /dev/null");
+        cmds += (" -D -s " + keys[0] + " -p " + prototype + " --sport " + keys[2] + REDIRECT_TO_DEV_NULL);
     }
 
     int ret = swss::exec(cmds, res);
@@ -570,7 +803,7 @@ void NatMgr::deleteConntrackSingleNaptEntry(const string &key)
 }
 
 /* To Delete conntrack entry for Static Twice NAPT entry */
-void NatMgr::deleteConntrackTwiceNaptEntry(const string &snatKey, const string &dnatKey)
+void NatMgr::deleteConntrackStaticTwiceNaptEntry(const string &snatKey, const string &dnatKey)
 {
     std::string res, prototype, cmds = std::string("") + CONNTRACK_CMD;
     vector<string> snatKeys = tokenize(snatKey, config_db_key_delimiter);
@@ -588,7 +821,7 @@ void NatMgr::deleteConntrackTwiceNaptEntry(const string &snatKey, const string &
     SWSS_LOG_INFO("Delete static Twice NAPT conntrack entry with protocol %s, src-ip %s, src-port %s, dst-ip %s, dst-port %s",
                   prototype.c_str(), snatKeys[0].c_str(), snatKeys[2].c_str(), dnatKeys[0].c_str(), dnatKeys[2].c_str());
 
-    cmds += (" -D -s " + snatKeys[0] + " -p " + prototype + " --orig-port-src " + snatKeys[2] + " -d " + dnatKeys[0] + " --orig-port-dst " + dnatKeys[2] + " &> /dev/null");
+    cmds += (" -D -s " + snatKeys[0] + " -p " + prototype + " --orig-port-src " + snatKeys[2] + " -d " + dnatKeys[0] + " --orig-port-dst " + dnatKeys[2] + REDIRECT_TO_DEV_NULL);
 
     int ret = swss::exec(cmds, res);
 
@@ -640,7 +873,7 @@ void NatMgr::deleteConntrackDynamicEntries(const string &ip_range)
 
         SWSS_LOG_INFO("Delete dynamic conntrack entry with translated-src-ip %s", ipAddr);
 
-        cmds = (std::string("") + CONNTRACK_CMD + " -D -q " + ipAddrString + " &> /dev/null");
+        cmds = (std::string("") + CONNTRACK_CMD + " -D -q " + ipAddrString + REDIRECT_TO_DEV_NULL);
 
         int ret = swss::exec(cmds, res);
 
@@ -1733,7 +1966,7 @@ void NatMgr::addStaticSingleNatEntry(const string &key)
     SWSS_LOG_INFO("Added Static NAT %s to APPL_DB", key.c_str());
 
     /* Add a dummy conntrack entry for Static NAT entry */
-    addConntrackSingleNatEntry(key);
+    addConntrackStaticSingleNatEntry(key);
 
     /* Add Static NAT iptables rule */
     if (!setStaticNatIptablesRules(INSERT, interface, key, m_staticNatEntry[key].local_ip, m_staticNatEntry[key].nat_type))
@@ -1847,12 +2080,12 @@ void NatMgr::addStaticTwiceNatEntry(const string &key)
         if (((*it).second.nat_type == DNAT_NAT_TYPE) and
             (m_staticNatEntry[key].nat_type == SNAT_NAT_TYPE))
         {
-            addConntrackTwiceNatEntry(key, (*it).first);
+            addConntrackStaticTwiceNatEntry(key, (*it).first);
         }
         else if (((*it).second.nat_type == SNAT_NAT_TYPE) and
                  (m_staticNatEntry[key].nat_type == DNAT_NAT_TYPE))
         {
-            addConntrackTwiceNatEntry((*it).first, key);
+            addConntrackStaticTwiceNatEntry((*it).first, key);
         }
 
         /* Add Static NAT iptables rule */
@@ -2023,10 +2256,10 @@ void NatMgr::addStaticSingleNaptEntry(const string &key)
     SWSS_LOG_INFO("Added Static NAPT %s to APPL_DB", key.c_str());
 
     /* Delete any conntrack entry if exists */
-    deleteConntrackSingleNaptEntry(key);
+    deleteConntrackStaticSingleNaptEntry(key);
 
     /* Add a dummy conntrack entry for Static NAPT entry */
-    addConntrackSingleNaptEntry(key);
+    addConntrackStaticSingleNaptEntry(key);
 
     /* Add Static NAPT iptables rule */
     if (!setStaticNaptIptablesRules(INSERT, interface, prototype, keys[0], keys[2],
@@ -2177,19 +2410,19 @@ void NatMgr::addStaticTwiceNaptEntry(const string &key)
             (m_staticNaptEntry[key].nat_type == SNAT_NAT_TYPE))
         {
             /* Delete any conntrack entry if exists */
-            deleteConntrackTwiceNaptEntry(key, (*it).first);
+            deleteConntrackStaticTwiceNaptEntry(key, (*it).first);
 
             /* Add a dummy conntrack entry for Static Twice NAPT entry */
-            addConntrackTwiceNaptEntry(key, (*it).first);
+            addConntrackStaticTwiceNaptEntry(key, (*it).first);
         }
         else if (((*it).second.nat_type == SNAT_NAT_TYPE) and
                  (m_staticNaptEntry[key].nat_type == DNAT_NAT_TYPE))
         {
             /* Delete any conntrack entry if exists */
-            deleteConntrackTwiceNaptEntry((*it).first, key);
+            deleteConntrackStaticTwiceNaptEntry((*it).first, key);
 
             /* Add a dummy conntrack entry for Static Twice NAPT entry */
-            addConntrackTwiceNaptEntry((*it).first, key);
+            addConntrackStaticTwiceNaptEntry((*it).first, key);
         }
 
         /* Add Static NAPT iptables rule */
@@ -2333,7 +2566,7 @@ void NatMgr::removeStaticSingleNatEntry(const string &key)
     }
 
     /* Delete conntrack entry */
-    deleteConntrackSingleNatEntry(key);
+    deleteConntrackStaticSingleNatEntry(key);
 
     /* Delete it from APPL_DB */
     m_appNatTableProducer.del(appKeyDnat);
@@ -2445,13 +2678,13 @@ void NatMgr::removeStaticTwiceNatEntry(const string &key)
             (m_staticNatEntry[key].nat_type == SNAT_NAT_TYPE))
         {
             /* Delete any conntrack entry */
-            deleteConntrackTwiceNatEntry(key, (*it).first);
+            deleteConntrackStaticTwiceNatEntry(key, (*it).first);
         }
         else if (((*it).second.nat_type == SNAT_NAT_TYPE) and
                  (m_staticNatEntry[key].nat_type == DNAT_NAT_TYPE))
         {
             /* Delete any conntrack entry */
-            deleteConntrackTwiceNatEntry((*it).first, key);
+            deleteConntrackStaticTwiceNatEntry((*it).first, key);
         }
 
         /* Delete it from APPL_DB */
@@ -2620,7 +2853,7 @@ void NatMgr::removeStaticSingleNaptEntry(const string &key)
     }
 
     /* Delete conntrack entry */
-    deleteConntrackSingleNaptEntry(key);
+    deleteConntrackStaticSingleNaptEntry(key);
 
     /* Delete it from APPL_DB */
     m_appNaptTableProducer.del(appKeyDnat);
@@ -2760,13 +2993,13 @@ void NatMgr::removeStaticTwiceNaptEntry(const string &key)
             (m_staticNaptEntry[key].nat_type == SNAT_NAT_TYPE))
         {
             /* Delete any conntrack entry */
-            deleteConntrackTwiceNaptEntry(key, (*it).first);
+            deleteConntrackStaticTwiceNaptEntry(key, (*it).first);
         }
         else if (((*it).second.nat_type == SNAT_NAT_TYPE) and
                  (m_staticNaptEntry[key].nat_type == DNAT_NAT_TYPE))
         {
             /* Delete any conntrack entry */
-            deleteConntrackTwiceNaptEntry((*it).first, key);
+            deleteConntrackStaticTwiceNaptEntry((*it).first, key);
         }
  
         /* Delete it from APPL_DB */
@@ -3852,6 +4085,255 @@ void NatMgr::removeStaticTwiceNaptIptables(const string &key)
     }
 }
 
+/* To set conntrack for the Static NAT entries */
+void NatMgr::setStaticNatConntrackEntries(string mode)
+{
+    bool isEntryModified = false;
+
+    /* Check the NAT is enabled, otherwise return */
+    if (!isNatEnabled())
+    {
+        SWSS_LOG_INFO("NAT is not yet enabled, skipping modfiying NAT conntrack entries");
+        return;
+    }
+
+    /* Get all the Static NAT entries */
+    for (auto it = m_staticNatEntry.begin(); it != m_staticNatEntry.end(); it++)
+    {
+        /* Check interface is not None, otherwise continue */
+        if ((*it).second.interface == NONE_STRING)
+        {
+            continue;
+        }
+
+        isEntryModified = true;
+
+        if ((*it).second.twice_nat_id.empty())
+        {
+            /* Set the conntrack for Static Single NAT Entry */
+            setStaticSingleNatConntrackEntry((*it).first, mode);
+        }
+        else if (((*it).second.twice_nat_added == true))
+        {
+            /* Set the conntrack for Static Twice NAT entry */
+            setStaticTwiceNatConntrackEntry((*it).first, mode);
+        }
+    }
+
+    if (!isEntryModified)
+    {
+        SWSS_LOG_INFO("No Static NAT entries to modify");
+    }
+}
+
+/* To set conntrack for the Static Single NAT entry based on Key */
+void NatMgr::setStaticSingleNatConntrackEntry(const string &key, string &mode)
+{
+    if (mode == "UPDATE")
+    {
+        updateConntrackStaticSingleNatEntry(key);
+    }
+    else if (mode == "ADD")
+    {
+        addConntrackStaticSingleNatEntry(key);
+    }
+}
+
+/* To set conntrack for the Static Twice NAT entry based on Key */
+void NatMgr::setStaticTwiceNatConntrackEntry(const string &key, string &mode)
+{
+    /* Get all the Static NAT entries */
+    for (auto it = m_staticNatEntry.begin(); it != m_staticNatEntry.end(); it++)
+    {
+        vector<FieldValueTuple> fvVector, reversefvVector;
+
+        /* Check for other entries, otherwise continue */
+        if ((*it).first == key)
+        {
+            continue;
+        }
+
+        /* Check the twice_nat_id is matched, otherwise continue */
+        if ((*it).second.twice_nat_id != m_staticNatEntry[key].twice_nat_id)
+        {
+            continue;
+        }
+
+        /* Check the twice NAT is added, otherwise continue */
+        if ((!(*it).second.twice_nat_added) or (!m_staticNatEntry[key].twice_nat_added))
+        {
+            continue;
+        }
+
+        /* Check interface is assigned, means Entry is added, otherwise continue */
+        if (((*it).second.interface == NONE_STRING) or (m_staticNatEntry[key].interface == NONE_STRING))
+        {
+            continue;
+        }
+
+        /* Check the nat type is different, otherwise continue */
+        if ((*it).second.nat_type == m_staticNatEntry[key].nat_type)
+        {
+            continue;
+        }
+
+        /* Update a dummy conntrack entry for Static Twice NAT entry */
+        if (((*it).second.nat_type == DNAT_NAT_TYPE) and
+            (m_staticNatEntry[key].nat_type == SNAT_NAT_TYPE))
+        {
+            if (mode == "UPDATE")
+            {
+                updateConntrackStaticTwiceNatEntry(key, (*it).first);
+            }
+            else if (mode == "ADD")
+            {
+                addConntrackStaticTwiceNatEntry(key, (*it).first);
+            }
+        }
+        else if (((*it).second.nat_type == SNAT_NAT_TYPE) and
+                 (m_staticNatEntry[key].nat_type == DNAT_NAT_TYPE))
+        {
+            if (mode == "UPDATE")
+            {
+                updateConntrackStaticTwiceNatEntry((*it).first, key);
+            }
+            else if (mode == "ADD")
+            {
+                addConntrackStaticTwiceNatEntry((*it).first, key);
+            }
+       }
+        break;
+    }
+}
+
+/* To set the conntrack for Static NAPT entries */
+void NatMgr::setStaticNaptConntrackEntries(string mode)
+{
+    bool isEntryModified = false;
+
+    /* Check the NAT is enabled, otherwise return */
+    if (!isNatEnabled())
+    {
+        SWSS_LOG_INFO("NAT is not yet enabled, skipping modifying NAPT conntrack entries");
+        return;
+    }
+
+    /* Get all the Static NAPT entries */
+    for (auto it = m_staticNaptEntry.begin(); it != m_staticNaptEntry.end(); it++)
+    {
+        /* Check interface is not None, otherwise continue */
+        if ((*it).second.interface == NONE_STRING)
+        {
+            continue;
+        }
+
+        isEntryModified = true;
+
+        if ((*it).second.twice_nat_id.empty())
+        {
+            /* Set the conntrack for Static Single NAPT Entry */
+            setStaticSingleNaptConntrackEntry((*it).first, mode);
+        }
+        else if (((*it).second.twice_nat_added == true))
+        {
+            /* Set the conntrack for Static Twice NAPT entry */
+            setStaticTwiceNaptConntrackEntry((*it).first, mode);
+        }
+    }
+
+    if (!isEntryModified)
+    {
+        SWSS_LOG_INFO("No Static NAPT entries to modify");
+    }
+}
+
+/* To set the conntrack for Static Single NAPT entry based on Key*/
+void NatMgr::setStaticSingleNaptConntrackEntry(const string &key, string &mode)
+{
+    if (mode == "UPDATE")
+    {
+        updateConntrackStaticSingleNaptEntry(key);
+    }
+    else if (mode == "ADD")
+    {
+        addConntrackStaticSingleNaptEntry(key);
+    }
+}
+
+/* To set the conntrack for Static Twice NAPT entry based on Key */
+void NatMgr::setStaticTwiceNaptConntrackEntry(const string &key, string &mode)
+{
+    vector<string> keys = tokenize(key, config_db_key_delimiter);
+
+    /* Get all the Static NAPT entries */
+    for (auto it = m_staticNaptEntry.begin(); it != m_staticNaptEntry.end(); it++)
+    {
+        vector<string> entry_keys = tokenize((*it).first, config_db_key_delimiter);
+
+        /* Check for other entries, otherwise continue */
+        if ((*it).first == key)
+        {
+            continue;
+        }
+
+        /* Check for both protocols are same, otherwise continue */
+        if (entry_keys[1] != keys[1])
+        {
+            continue;
+        }
+
+        /* Check the twice_nat_id is matched, otherwise continue */
+        if ((*it).second.twice_nat_id != m_staticNaptEntry[key].twice_nat_id)
+        {
+            continue;
+        }
+
+        /* Check the twice NAT is added, otherwise continue */
+        if ((!(*it).second.twice_nat_added) or (!m_staticNaptEntry[key].twice_nat_added))
+        {
+            continue;
+        }
+
+        /* Check interface is assigned, means Entry is added, otherwise continue */
+        if (((*it).second.interface == NONE_STRING) or (m_staticNaptEntry[key].interface == NONE_STRING))
+        {
+            continue;
+        }
+
+        /* Check the nat type is different, otherwise continue */
+        if ((*it).second.nat_type == m_staticNaptEntry[key].nat_type)
+        {
+            continue;
+        }
+
+        if (((*it).second.nat_type == DNAT_NAT_TYPE) and
+            (m_staticNaptEntry[key].nat_type == SNAT_NAT_TYPE))
+        {
+            if (mode == "UPDATE")
+            {
+                updateConntrackStaticTwiceNaptEntry(key, (*it).first);
+            }
+            else if (mode == "ADD")
+            {
+                addConntrackStaticTwiceNaptEntry(key, (*it).first);
+            }
+        }
+        else if (((*it).second.nat_type == SNAT_NAT_TYPE) and
+                 (m_staticNaptEntry[key].nat_type == DNAT_NAT_TYPE))
+        {
+            if (mode == "UPDATE")
+            {
+                updateConntrackStaticTwiceNaptEntry((*it).first, key);
+            }
+            else if (mode == "ADD")
+            {
+                addConntrackStaticTwiceNaptEntry((*it).first, key);
+            }
+        }
+        break;
+    }
+}
+
 /* To Add or Delete Dynamic NAT/NAPT iptables rules if all valid conditions are met */
 void NatMgr::setDynamicAllForwardOrAclbasedRules(const string &opCmd, const string &pool_interface, const string &ip_range,
                                                  const string &port_range, const string &aclsName, 
@@ -4565,9 +5047,7 @@ void NatMgr::addDynamicNatRules(const string port, const string ipPrefix)
 
         if ((port != NONE_STRING) and (ipPrefix != NONE_STRING))
         {
-            /* Send notification to Orchagent to flush the conntrack entries */
-            std::vector<swss::FieldValueTuple> entry;
-            flushNotifier->send("ENTRIES", "ALL", entry);
+            flushAllNatEntries();
             SWSS_LOG_WARN("Added interface is part of Binded NAT Pool range, so it is clearing all the nat translations");
         }
 
@@ -4983,6 +5463,16 @@ void NatMgr::enableNatFeature(void)
 
     /* Add full-cone PRE-ROUTING DNAT rule in the kernel */
     setFullConeDnatIptablesRule(ADD);
+
+    SWSS_LOG_INFO("NAT Refresh timer start ");
+    m_natRefreshTimer->start();
+
+    if (! warmBootingInProgress())
+    {
+        SWSS_LOG_NOTICE("Not warm rebooting, so clearing all conntrack Entries on nat feature enable");
+        flushAllNatEntries();
+        addAllStaticConntrackEntries();
+    }
 }
 
 /* To disable the NAT Feature */
@@ -5011,6 +5501,55 @@ void NatMgr::disableNatFeature(void)
 
     /* Delete full-cone PRE-ROUTING DNAT rule in the kernel */
     setFullConeDnatIptablesRule(DELETE);
+
+    SWSS_LOG_INFO("NAT Refresh timer stop ");
+    m_natRefreshTimer->stop();
+
+    SWSS_LOG_INFO("Clear all dynamic NAT Entries ");
+    flushAllNatEntries();
+}
+
+/* To set the timout of conntrack entries */
+void NatMgr::doNatRefreshTimerTask()
+{
+    SWSS_LOG_ENTER();
+
+    /* Update conntrack static NAT entries */
+    SWSS_LOG_INFO("Updating conntrack for Static NAT entries");
+    setStaticNatConntrackEntries("UPDATE");
+
+    /* Update conntrack static NAPT entries */
+    SWSS_LOG_INFO("Updating conntrack for Static NAPT entries");
+    setStaticNaptConntrackEntries("UPDATE");
+}
+
+/* To add all conntrack entries */
+void NatMgr::addAllStaticConntrackEntries()
+{
+    SWSS_LOG_ENTER();
+
+    /* Add conntrack static NAT entries */
+    SWSS_LOG_INFO("Adding conntrack for Static NAT entries");
+    setStaticNatConntrackEntries("ADD");
+
+    /* Add conntrack static NAPT entries */
+    SWSS_LOG_INFO("Adding conntrack for Static NAPT entries");
+    setStaticNaptConntrackEntries("ADD");
+}
+
+void NatMgr::doTask(SelectableTimer &timer)
+{
+    SWSS_LOG_ENTER();
+
+    if (timer.getFd() == m_natRefreshTimer->getFd())
+    {
+        SWSS_LOG_INFO("Calling doNatRefreshTimerTask");
+        doNatRefreshTimerTask();
+    }
+    else
+    {
+        SWSS_LOG_INFO("Received unknown selectable timer");
+    }
 }
 
 /* To parse the received Static NAT Table and save it to cache */
@@ -7399,6 +7938,74 @@ void NatMgr::doTask(Consumer &consumer)
     {
         SWSS_LOG_ERROR("Unknown config table %s ", table_name.c_str());
         throw runtime_error("NatMgr doTask failure.");
+    }
+}
+
+/* To parse the timeout notifications */
+void NatMgr::timeoutNotifications(string op, string data)
+{
+    SWSS_LOG_ENTER();
+
+    if (op == "SET-SINGLE-NAT")
+    {
+        SWSS_LOG_INFO("Received set single nat timeout notification");
+        updateDynamicSingleNatConnTrackTimeout(data, NAT_TIMEOUT_MAX);
+    }
+    else if (op == "AGEOUT-SINGLE-NAT")
+    {
+        SWSS_LOG_INFO("Received reset single nat timeout notification");
+        updateDynamicSingleNatConnTrackTimeout(data, NAT_TIMEOUT_LOW);
+    }
+    else if (op == "SET-SINGLE-NAPT")
+    {
+        SWSS_LOG_INFO("Received set single napt timeout notification");
+        updateDynamicSingleNaptConnTrackTimeout(data, NAT_TIMEOUT_MAX);
+    }
+    else if (op == "AGEOUT-SINGLE-NAPT")
+    {
+        SWSS_LOG_INFO("Received reset single napt timeout notification");
+        updateDynamicSingleNaptConnTrackTimeout(data, NAT_TIMEOUT_LOW);
+    }
+    else if (op == "SET-TWICE-NAT")
+    {
+        SWSS_LOG_INFO("Received set twice nat timeout notification");
+        updateDynamicTwiceNatConnTrackTimeout(data, NAT_TIMEOUT_MAX);
+    }
+    else if (op == "AGEOUT-TWICE-NAT")
+    {
+        SWSS_LOG_INFO("Received reset twice nat timeout notification");
+        updateDynamicTwiceNatConnTrackTimeout(data, NAT_TIMEOUT_LOW);
+    }
+    else if (op == "SET-TWICE-NAPT")
+    {
+        SWSS_LOG_INFO("Received set twice napt timeout notification");
+        updateDynamicTwiceNaptConnTrackTimeout(data, NAT_TIMEOUT_MAX);
+    }
+    else if (op == "AGEOUT-TWICE-NAPT")
+    {
+        SWSS_LOG_INFO("Received reset twice napt timeout notification");
+        updateDynamicTwiceNaptConnTrackTimeout(data, NAT_TIMEOUT_LOW);
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Received unknown timeout nat request");
+    }
+}
+
+/* To parse the flush notifications */
+void NatMgr::flushNotifications(string op, string data)
+{
+    SWSS_LOG_ENTER();
+
+    if ((op == "ENTRIES") and (data == "ALL"))
+    {
+        SWSS_LOG_INFO("Received flush entries notification");
+        flushAllNatEntries();
+        addAllStaticConntrackEntries();
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Received unknown flush nat request");
     }
 }
 

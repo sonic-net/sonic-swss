@@ -55,6 +55,9 @@ string    gRecordFile;
 mutex     gDbMutex;
 NatMgr    *natmgr = NULL;
 
+NotificationConsumer   *timeoutNotificationsConsumer = NULL;
+NotificationConsumer   *flushNotificationsConsumer = NULL;
+
 std::shared_ptr<swss::NotificationProducer> cleanupNotifier;
 
 void sigterm_handler(int signo)
@@ -142,6 +145,12 @@ int main(int argc, char **argv)
             s.addSelectables(o->getSelectables());
         }
 
+        timeoutNotificationsConsumer = new NotificationConsumer(&appDb, "SETTIMEOUTNAT");
+        s.addSelectable(timeoutNotificationsConsumer);
+
+        flushNotificationsConsumer = new NotificationConsumer(&appDb, "FLUSHNATENTRIES");
+        s.addSelectable(flushNotificationsConsumer);
+
         SWSS_LOG_NOTICE("starting main loop");
         while (true)
         {
@@ -154,6 +163,29 @@ int main(int argc, char **argv)
                 SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
                 continue;
             }
+
+            if (sel == timeoutNotificationsConsumer)
+            {
+               std::string op;
+               std::string data;
+               std::vector<swss::FieldValueTuple> values;
+
+               timeoutNotificationsConsumer->pop(op, data, values);
+               natmgr->timeoutNotifications(op, data);
+               continue;
+            }
+
+            if (sel == flushNotificationsConsumer)
+            {
+               std::string op;
+               std::string data;
+               std::vector<swss::FieldValueTuple> values;
+
+               flushNotificationsConsumer->pop(op, data, values);
+               natmgr->flushNotifications(op, data);
+               continue;
+            }
+
             if (ret == Select::TIMEOUT)
             {
                 natmgr->doTask();
