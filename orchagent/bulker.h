@@ -269,8 +269,12 @@ public:
 
             for (auto& i: removing_entries)
             {
-                auto& entry = i.first;
-                rs.push_back(entry);
+                auto const& entry = i.first;
+                sai_status_t *object_status = i.second;
+                if (*object_status == SAI_STATUS_NOT_EXECUTED)
+                {
+                    rs.push_back(entry);
+                }
             }
             size_t count = rs.size();
             std::vector<sai_status_t> statuses(count);
@@ -300,10 +304,13 @@ public:
             {
                 auto const& entry = i.first;
                 auto const& attrs = i.second.first;
-
-                rs.push_back(entry);
-                tss.push_back(attrs.data());
-                cs.push_back((uint32_t)attrs.size());
+                sai_status_t *object_status = i.second.second;
+                if (*object_status == SAI_STATUS_NOT_EXECUTED)
+                {
+                    rs.push_back(entry);
+                    tss.push_back(attrs.data());
+                    cs.push_back((uint32_t)attrs.size());
+                }
             }
             size_t count = rs.size();
             std::vector<sai_status_t> statuses(count);
@@ -335,8 +342,13 @@ public:
                 auto const& attrmap = i.second;
                 for (auto const& ia: attrmap)
                 {
-                    rs.push_back(entry);
-                    ts.push_back(ia.second.first);
+                    auto const& attr = ia.second.first;
+                    sai_status_t *object_status = ia.second.second;
+                    if (*object_status == SAI_STATUS_NOT_EXECUTED)
+                    {
+                        rs.push_back(entry);
+                        ts.push_back(attr);
+                    }
                 }
             }
             size_t count = rs.size();
@@ -475,8 +487,7 @@ public:
             setting_entries.erase(found_setting);
         }
 
-        removing_entries.emplace_back(object_id);
-        removing_statuses.emplace_back(object_status);
+        removing_entries.emplace(object_id, object_status);
         *object_status = SAI_STATUS_NOT_EXECUTED;
         return *object_status;
     }
@@ -510,21 +521,28 @@ public:
         // Removing
         if (!removing_entries.empty())
         {
-            size_t count = removing_entries.size();
+            std::vector<sai_object_id_t> rs;
+            for (auto const& i: removing_entries)
+            {
+                auto const& entry = i.first;
+                sai_status_t *object_status = i.second;
+                if (*object_status == SAI_STATUS_NOT_EXECUTED)
+                {
+                    rs.push_back(entry);
+                }
+            }
+            size_t count = rs.size();
             std::vector<sai_status_t> statuses(count);
-            sai_status_t status = (*remove_entries)((uint32_t)count, removing_entries.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
+            sai_status_t status = (*remove_entries)((uint32_t)count, rs.data(), SAI_BULK_OP_ERROR_MODE_STOP_ON_ERROR, statuses.data());
             SWSS_LOG_INFO("ObjectBulker.flush removing_entries %zu rc=%d statuses[0]=%d\n", removing_entries.size(), status, statuses[0]);
 
             for (size_t i = 0; i < count; i++)
             {
-                sai_status_t *object_status = removing_statuses[i];
-                if (object_status)
-                {
-                    *object_status = statuses[i];
-                }
+                auto const& entry = rs[i];
+                sai_status_t object_status = statuses[i];
+                *removing_entries[entry] = object_status;
             }
             removing_entries.clear();
-            removing_statuses.clear();
         }
 
         // Creating
@@ -535,9 +553,13 @@ public:
 
             for (auto const& i: creating_entries)
             {
+                sai_object_id_t *pid = std::get<0>(i);
                 auto const& attrs = std::get<1>(i);
-                tss.push_back(attrs.data());
-                cs.push_back((uint32_t)attrs.size());
+                if (*pid == SAI_NULL_OBJECT_ID)
+                {
+                    tss.push_back(attrs.data());
+                    cs.push_back((uint32_t)attrs.size());
+                }
             }
             size_t count = creating_entries.size();
             std::vector<sai_object_id_t> object_ids(count);
@@ -588,7 +610,6 @@ public:
     void clear()
     {
         removing_entries.clear();
-        removing_statuses.clear();
         creating_entries.clear();
         setting_entries.clear();
     }
@@ -636,8 +657,9 @@ private:
             >
     >                                                       setting_entries;
 
-    std::vector<sai_object_id_t>                            removing_entries;
-    std::vector<sai_status_t *>                             removing_statuses;
+                                                            // A map of
+                                                            // object_id -> object_status
+    std::unordered_map<sai_object_id_t, sai_status_t *>     removing_entries;
 
     typename Ts::bulk_create_entry_fn                       create_entries;
     typename Ts::bulk_remove_entry_fn                       remove_entries;
