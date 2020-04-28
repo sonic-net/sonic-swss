@@ -85,11 +85,15 @@ bool OrchDaemon::init()
         { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri     }
     };
 
+    vector<table_name_with_pri_t> app_fdb_tables = {
+        { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
+        { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+    };
+
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
     gPortsOrch = new PortsOrch(m_applDb, ports_tables);
-    TableConnector applDbFdb(m_applDb, APP_FDB_TABLE_NAME);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
-    gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
+    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, gPortsOrch);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
