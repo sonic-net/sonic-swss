@@ -168,6 +168,13 @@ public:
         _In_ uint32_t attr_count,
         _In_ const sai_attribute_t *attr_list)
     {
+        assert(object_status);
+        if (!object_status) throw std::invalid_argument("object_status is null");
+        assert(entry);
+        if (!entry) throw std::invalid_argument("entry is null");
+        assert(attr_list);
+        if (!attr_list) throw std::invalid_argument("attr_list is null");
+
         auto rc = creating_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
                 std::forward_as_tuple());
@@ -192,6 +199,8 @@ public:
         _Out_ sai_status_t *object_status,
         _In_ const Te *entry)
     {
+        assert(object_status);
+        if (!object_status) throw std::invalid_argument("object_status is null");
         assert(entry);
         if (!entry) throw std::invalid_argument("entry is null");
 
@@ -235,6 +244,13 @@ public:
         _In_ const Te *entry,
         _In_ const sai_attribute_t *attr)
     {
+        assert(object_status);
+        if (!object_status) throw std::invalid_argument("object_status is null");
+        assert(entry);
+        if (!entry) throw std::invalid_argument("entry is null");
+        assert(attr);
+        if (!attr) throw std::invalid_argument("attr is null");
+
         // Insert or find the key (entry)
         auto& attrmap = setting_entries.emplace(std::piecewise_construct,
                 std::forward_as_tuple(*entry),
@@ -465,6 +481,11 @@ public:
         _In_ uint32_t attr_count,
         _In_ const sai_attribute_t *attr_list)
     {
+        assert(object_id);
+        if (!object_id) throw std::invalid_argument("object_id is null");
+        assert(attr_list);
+        if (!attr_list) throw std::invalid_argument("attr_list is null");
+
         creating_entries.emplace_back(std::piecewise_construct, std::forward_as_tuple(object_id), std::forward_as_tuple(attr_list, attr_list + attr_count));
 
         auto& last_attrs = std::get<1>(creating_entries.back());
@@ -478,6 +499,8 @@ public:
         _Out_ sai_status_t *object_status,
         _In_ sai_object_id_t object_id)
     {
+        assert(object_status);
+        if (!object_status) throw std::invalid_argument("object_status is null");
         assert(object_id != SAI_NULL_OBJECT_ID);
         if (object_id == SAI_NULL_OBJECT_ID) throw std::invalid_argument("object_id is null");
 
