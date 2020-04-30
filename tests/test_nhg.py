@@ -3,6 +3,7 @@ import re
 import time
 import json
 import pytest
+import ipaddress
 
 from swsscommon import swsscommon
 
@@ -26,13 +27,13 @@ class TestNextHopGroup(object):
         dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
         dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03")
 
-        dvs.servers[0].runcmd("ip link set down dev eth0") == 0
-        dvs.servers[1].runcmd("ip link set down dev eth0") == 0
-        dvs.servers[2].runcmd("ip link set down dev eth0") == 0
+        assert dvs.servers[0].runcmd("ip link set down dev eth0") == 0
+        assert dvs.servers[1].runcmd("ip link set down dev eth0") == 0
+        assert dvs.servers[2].runcmd("ip link set down dev eth0") == 0
 
-        dvs.servers[0].runcmd("ip link set up dev eth0") == 0
-        dvs.servers[1].runcmd("ip link set up dev eth0") == 0
-        dvs.servers[2].runcmd("ip link set up dev eth0") == 0
+        assert dvs.servers[0].runcmd("ip link set up dev eth0") == 0
+        assert dvs.servers[1].runcmd("ip link set up dev eth0") == 0
+        assert dvs.servers[2].runcmd("ip link set up dev eth0") == 0
 
         db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
         ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
@@ -138,3 +139,194 @@ class TestNextHopGroup(object):
                 for v in fvs:
                     if v[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID":
                         assert v[1] == nhgid
+
+    def test_route_nhg_exhaust(self, dvs, testlog):
+        """
+        Test the situation of exhausting ECMP group, assume SAI_SWITCH_ATTR_NUMBER_OF_ECMP_GROUPS is 512
+
+        In order to achieve that, we will config
+            1. 9 ports
+            2. 512 routes with different nexthop group
+
+        See Also
+        --------
+        SwitchStateBase::set_number_of_ecmp_groups()
+        https://github.com/Azure/sonic-sairedis/blob/master/vslib/src/SwitchStateBase.cpp
+
+        """
+
+        # TODO: check ECMP 512
+
+        def port_name(i):
+            return "Ethernet" + str(i * 4)
+
+        def port_ip(i):
+            return "10.0.0." + str(i * 2)
+
+        def peer_ip(i):
+            return "10.0.0." + str(i * 2 + 1)
+
+        def port_ipprefix(i):
+            return port_ip(i) + "/31"
+
+        def port_mac(i):
+            return "00:00:00:00:00:0" + str(i)
+
+        def gen_ipprefix(r):
+            """ Construct route like 2.X.X.0/24 """
+            ip = ipaddress.IPv4Address(IP_INTEGER_BASE + r * 256)
+            ip = str(ip)
+            ipprefix = ip + "/24"
+            return ipprefix
+
+        def gen_nhg_fvs(binary):
+            nexthop = []
+            ifname = []
+            for i in range(MAX_PORT_COUNT):
+                if binary[i] == '1':
+                    nexthop.append(peer_ip(i))
+                    ifname.append(port_name(i))
+
+            nexthop = ','.join(nexthop)
+            ifname = ','.join(ifname)
+            fvs = swsscommon.FieldValuePairs([("nexthop", nexthop), ("ifname", ifname)])
+            return fvs
+
+        def asic_route_exists(ipprefix):
+            keys = rtbl.getKeys()
+            for k in keys:
+                rt_key = json.loads(k)
+
+                if rt_key['dest'] == ipprefix:
+                    return k
+            else:
+                return None
+
+        def asic_route_nhg_fvs(k):
+            (status, fvs) = rtbl.get(k)
+            if not status:
+                return None
+
+            nhgid = None
+            for v in fvs:
+                if v[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
+                    nhgid = v[1]
+                    break
+            else:
+                return None
+
+            (status, fvs) = nhgtbl.get(nhgid)
+            if not status:
+                return None
+            return fvs
+
+        MAX_ECMP_COUNT = 512
+        MAX_PORT_COUNT = 10
+        IP_INTEGER_BASE = int(ipaddress.IPv4Address(unicode("2.2.2.0")))
+
+        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
+        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+
+        for i in range(MAX_PORT_COUNT):
+            intf_tbl.set(port_name(i), fvs)
+            intf_tbl.set("{}|{}".format(port_name(i), port_ipprefix(i)), fvs)
+            dvs.runcmd("config interface startup " + port_name(i))
+            dvs.runcmd("arp -s {} {}".format(peer_ip(i), port_mac(i)))
+            assert dvs.servers[i].runcmd("ip link set down dev eth0") == 0
+            assert dvs.servers[i].runcmd("ip link set up dev eth0") == 0
+
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
+
+        # Add first batch of routes with unique nexthop groups in AppDB
+        route_count = 0
+        r = 0
+        while route_count < MAX_ECMP_COUNT:
+            r += 1
+            fmt = '{{0:0{}b}}'.format(MAX_PORT_COUNT)
+            binary = fmt.format(r)
+            # We need at least 2 ports for a nexthop group
+            if binary.count('1') <= 1:
+                continue
+            fvs = gen_nhg_fvs(binary)
+            route_ipprefix = gen_ipprefix(route_count)
+            ps.set(route_ipprefix, fvs)
+            route_count += 1
+
+        time.sleep(1)
+
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+        rtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        nhgtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
+
+        # check ASIC DB on the count of nexthop groups used
+        nhg_count = len(nhgtbl.getKeys())
+        assert nhg_count == MAX_ECMP_COUNT
+
+        # Add second batch of routes with unique nexthop groups in AppDB
+        # Add more routes with new nexthop group in AppDBdd
+        route_ipprefix = gen_ipprefix(route_count)
+        base_ipprefix = route_ipprefix
+        base = route_count
+        route_count = 0
+        while route_count < 10:
+            r += 1
+            fmt = '{{0:0{}b}}'.format(MAX_PORT_COUNT)
+            binary = fmt.format(r)
+            # We need at least 2 ports for a nexthop group
+            if binary.count('1') <= 1:
+                continue
+            fvs = gen_nhg_fvs(binary)
+            route_ipprefix = gen_ipprefix(base + route_count)
+            ps.set(route_ipprefix, fvs)
+            route_count += 1
+        last_ipprefix = route_ipprefix
+
+        time.sleep(1)
+
+        # Check ASIC DB on the count of nexthop groups used, and it should not increase
+        nhg_count = len(nhgtbl.getKeys())
+        assert nhg_count == MAX_ECMP_COUNT
+
+        # Check the route points to next hop group
+        k = asic_route_exists("2.2.2.0/24")
+        assert k is not None
+        fvs = asic_route_nhg_fvs(k)
+        assert fvs is not None
+
+        # Check the second batch does not point to next hop group
+        k = asic_route_exists(base_ipprefix)
+        assert k is not None
+        fvs = asic_route_nhg_fvs(k)
+        assert fvs is None
+
+        # Remove part of first batch of routes with unique nexthop groups in AppDB
+        route_count = 0
+        r = 0
+        while route_count < MAX_ECMP_COUNT:
+            r += 1
+            fmt = '{{0:0{}b}}'.format(MAX_PORT_COUNT)
+            binary = fmt.format(r)
+            # We need at least 2 ports for a nexthop group
+            if binary.count('1') <= 1:
+                continue
+            route_ipprefix = gen_ipprefix(route_count)
+            ps._del(route_ipprefix)
+            route_count += 1
+
+        time.sleep(1)
+
+        # Check the second batch points to next hop group
+        k = asic_route_exists(base_ipprefix)
+        assert k is not None
+        fvs = asic_route_nhg_fvs(k)
+        assert fvs is not None
+        k = asic_route_exists(last_ipprefix)
+        assert k is not None
+        fvs = asic_route_nhg_fvs(k)
+        assert fvs is not None
+
+        # Check ASIC DB on the count of nexthop groups used, and it should not increase or decrease
+        nhg_count = len(nhgtbl.getKeys())
+        assert nhg_count == 10
