@@ -1773,7 +1773,7 @@ void PortsOrch::removePortFromPortListMap(sai_object_id_t port_id)
     {
         if (it->second == port_id)
         {
-            SWSS_LOG_NOTICE("Removing port-id %lx from port list map", port_id);
+            SWSS_LOG_NOTICE("Removing port-id %" PRIx64 " from port list map", port_id);
             it = m_portListLaneMap.erase(it);
             break;
         }
@@ -2276,7 +2276,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 // port is part of at-least one VLAN. 
                 // Ideally this should be tracked by SAI redis. 
                 // Until then, let this snippet be here.
-                SWSS_LOG_WARN("Cannot remove port as bridge port OID is present %lx", bridge_port_oid);
+                SWSS_LOG_WARN("Cannot remove port as bridge port OID is present %" PRIx64 , bridge_port_oid);
                 it++;
                 continue;
             } 
@@ -2284,7 +2284,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             if (m_portList[alias].m_init)
             {
                 deInitPort(alias, port_id);
-                SWSS_LOG_NOTICE("Removing hostif %lx for Port %s", hif_id, alias.c_str());
+                SWSS_LOG_NOTICE("Removing hostif %" PRIx64 " for Port %s", hif_id, alias.c_str());
                 sai_status_t status = sai_hostif_api->remove_hostif(hif_id);
                 if (status != SAI_STATUS_SUCCESS)
                 {
