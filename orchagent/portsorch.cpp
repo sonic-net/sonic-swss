@@ -1638,7 +1638,7 @@ void PortsOrch::removePortFromPortListMap(sai_object_id_t port_id)
     {
         if (it->second == port_id)
         {
-            SWSS_LOG_NOTICE("Removing port-id %lx from port list map", port_id);
+            SWSS_LOG_NOTICE("Removing port-id %" PRIx64 " from port list map", port_id);
             it = m_portListLaneMap.erase(it);
             break;
         }
@@ -2146,7 +2146,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
             deInitPort(alias, port_id);
 
-            SWSS_LOG_NOTICE("Removing hostif %lx for Port %s", hif_id, alias.c_str());
+            SWSS_LOG_NOTICE("Removing hostif %" PRIx64 " for Port %s", hif_id, alias.c_str());
             sai_status_t status = sai_hostif_api->remove_hostif(hif_id);
             if (status != SAI_STATUS_SUCCESS)
             {

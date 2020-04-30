@@ -3312,7 +3312,7 @@ bool NatOrch::getNatCounters(const NatEntry::iterator &iter)
     {
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get Counters for SNAT entry [src-ip %s], bytes = %lu, pkts = %lu", ipAddr.to_string().c_str(),
+            SWSS_LOG_ERROR("Failed to get Counters for SNAT entry [src-ip %s], bytes = %" PRIu64 ", pkts = %" PRIu64 "", ipAddr.to_string().c_str(),
                            nat_entry_attr[0].value.u64, nat_entry_attr[1].value.u64);
         }
         else
@@ -3325,7 +3325,7 @@ bool NatOrch::getNatCounters(const NatEntry::iterator &iter)
     {
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get Counters for DNAT entry [dst-ip %s], bytes = %lu, pkts = %lu", ipAddr.to_string().c_str(),
+            SWSS_LOG_ERROR("Failed to get Counters for DNAT entry [dst-ip %s], bytes = %" PRIu64 ", pkts = %" PRIu64 "", ipAddr.to_string().c_str(),
                            nat_entry_attr[0].value.u64, nat_entry_attr[1].value.u64);
         }
         else
@@ -3376,7 +3376,7 @@ bool NatOrch::getTwiceNatCounters(const TwiceNatEntry::iterator &iter)
     status = sai_nat_api->get_nat_entry_attribute(&dbl_nat_entry, attr_count, nat_entry_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get Counters for Twice NAT entry [src-ip %s, dst-ip %s], bytes = %lu, pkts = %lu",
+        SWSS_LOG_ERROR("Failed to get Counters for Twice NAT entry [src-ip %s, dst-ip %s], bytes = %" PRIu64 ", pkts = %" PRIu64 "",
                         key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str(),
                         nat_entry_attr[0].value.u64, nat_entry_attr[1].value.u64);
     }
@@ -3521,7 +3521,7 @@ bool NatOrch::getNaptCounters(const NaptEntry::iterator &iter)
     { 
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get Counters for SNAPT entry for [proto %s, src-ip %s, src-port %d], bytes = %lu, pkts = %lu",
+            SWSS_LOG_ERROR("Failed to get Counters for SNAPT entry for [proto %s, src-ip %s, src-port %d], bytes = %" PRIu64 ", pkts = %" PRIu64 "",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port,
                            nat_entry_attr[0].value.u64, nat_entry_attr[1].value.u64);
         }
@@ -3535,7 +3535,7 @@ bool NatOrch::getNaptCounters(const NaptEntry::iterator &iter)
     {
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get Counters for DNAPT entry for [proto %s, dst-ip %s, dst-port %d], bytes = %lu, pkts = %lu",
+            SWSS_LOG_ERROR("Failed to get Counters for DNAPT entry for [proto %s, dst-ip %s, dst-port %d], bytes = %" PRIu64 ", pkts = %" PRIu64 "",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port,
                            nat_entry_attr[0].value.u64, nat_entry_attr[1].value.u64);
         }
@@ -4732,7 +4732,7 @@ void NatOrch::debugdumpALL()
         SWSS_DEBUG_PRINT(m_dbgCompName, "%8d.  IP: %s", count, ipAddr.to_string().c_str());
         SWSS_DEBUG_PRINT(m_dbgCompName, "             Translated IP: %s, NAT Type: %s, Entry Type: %s",
                          value.translated_ip.to_string().c_str(), value.nat_type.c_str(), value.entry_type.c_str());
-        SWSS_DEBUG_PRINT(m_dbgCompName, "             Age-out time: %ld secs, Added-to-Hw: %s",
+        SWSS_DEBUG_PRINT(m_dbgCompName, "             Age-out time: %" PRId64 " secs, Added-to-Hw: %s",
                          (value.ageOutTime - time_now.tv_sec), ((value.addedToHw) ? "Yes" : "No"));
         natIter++;
     }
@@ -4751,7 +4751,7 @@ void NatOrch::debugdumpALL()
         SWSS_DEBUG_PRINT(m_dbgCompName, "             Translated IP: %s, L4 Port: %d, NAT Type: %s, Entry Type: %s",
                          naptValue.translated_ip.to_string().c_str(), naptValue.translated_l4_port,
                          naptValue.nat_type.c_str(), naptValue.entry_type.c_str());
-        SWSS_DEBUG_PRINT(m_dbgCompName, "             Age-out time: %ld secs, Added-to-Hw: %s",
+        SWSS_DEBUG_PRINT(m_dbgCompName, "             Age-out time: %" PRId64 " secs, Added-to-Hw: %s",
                          (naptValue.ageOutTime - time_now.tv_sec), ((naptValue.addedToHw) ? "Yes" : "No"));
         naptIter++;
     }
@@ -4771,7 +4771,7 @@ void NatOrch::debugdumpALL()
         SWSS_DEBUG_PRINT(m_dbgCompName, "             Translated Src IP: %s, Dst IP: %s, Entry Type: %s",
                          twiceNatValue.translated_src_ip.to_string().c_str(), twiceNatValue.translated_dst_ip.to_string().c_str(),
                          twiceNatValue.entry_type.c_str());
-        SWSS_DEBUG_PRINT(m_dbgCompName, "             Age-out time: %ld secs, Added-to-Hw: %s",
+        SWSS_DEBUG_PRINT(m_dbgCompName, "             Age-out time: %" PRId64 " secs, Added-to-Hw: %s",
                          (twiceNatValue.ageOutTime - time_now.tv_sec), ((twiceNatValue.addedToHw) ? "Yes" : "No"));
         twiceNatIter++;
     }
@@ -4793,7 +4793,7 @@ void NatOrch::debugdumpALL()
                          twiceNaptValue.translated_src_ip.to_string().c_str(), twiceNaptValue.translated_src_l4_port,
                          twiceNaptValue.translated_dst_ip.to_string().c_str(), twiceNaptValue.translated_dst_l4_port,
                          twiceNaptValue.entry_type.c_str());
-        SWSS_DEBUG_PRINT(m_dbgCompName, "             Age-out time: %ld secs, Added-to-Hw: %s",
+        SWSS_DEBUG_PRINT(m_dbgCompName, "             Age-out time: %" PRId64 " secs, Added-to-Hw: %s",
                          (twiceNaptValue.ageOutTime - time_now.tv_sec), ((twiceNaptValue.addedToHw) ? "Yes" : "No"));
         twiceNaptIter++;
     }
