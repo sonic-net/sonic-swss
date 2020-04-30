@@ -272,6 +272,34 @@ void IntfMgr::removeSubIntfState(const string &alias)
     }
 }
 
+bool IntfMgr::setIntfProxyArp(const string &alias, const string &vrf_name, const string &proxy_arp)
+{
+    stringstream cmd;
+    string res;
+    string proxy_arp_pvlan;
+
+    if (proxy_arp == "enabled" || !vrf_name.compare(0, strlen(VNET_PREFIX), VNET_PREFIX))
+    {
+        proxy_arp_pvlan = "1";
+    }
+    else if (proxy_arp == "disabled" && vrf_name.compare(0, strlen(VNET_PREFIX), VNET_PREFIX))
+    {
+        proxy_arp_pvlan = "0";
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Proxy ARP state is invalid: \"%s\"", proxy_arp.c_str());
+        return false;
+    }
+
+    cmd << ECHO_CMD << " " << proxy_arp_pvlan << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp_pvlan";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    SWSS_LOG_INFO("Proxy ARP set to \"%s\" on interface \"%s\"", proxy_arp.c_str(), alias.c_str());
+
+    return true;
+}
+
 bool IntfMgr::isIntfStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
@@ -346,6 +374,8 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string mtu = "";
     string adminStatus = "";
     string nat_zone = "";
+    string proxy_arp = "";
+
     for (auto idx : data)
     {
         const auto &field = fvField(idx);
@@ -362,6 +392,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         else if (field == "admin_status")
         {
             adminStatus = value;
+        }
+        else if (field == "proxy_arp")
+        {
+            proxy_arp = value;
         }
 
         if (field == "nat_zone")
@@ -420,7 +454,22 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             FieldValueTuple fvTuple("mac_addr", MacAddress().to_string());
             data.push_back(fvTuple);
         }
-        
+
+        if (!proxy_arp.empty())
+        {
+            if (!setIntfProxyArp(alias, vrf_name, proxy_arp))
+            {
+                SWSS_LOG_ERROR("Failed to set proxy ARP to \"%s\" state for the \"%s\" interface", proxy_arp.c_str(), alias.c_str());
+                return false;
+            }
+
+            if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+            {
+                FieldValueTuple fvTuple("proxy_arp", proxy_arp);
+                data.push_back(fvTuple);
+            }
+        }
+
         if (!subIntfAlias.empty())
         {
             if (m_subIntfList.find(subIntfAlias) == m_subIntfList.end())

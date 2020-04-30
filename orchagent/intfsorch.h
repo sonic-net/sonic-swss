@@ -23,6 +23,7 @@ struct IntfsEntry
     std::set<IpPrefix>  ip_addresses;
     int                 ref_count;
     sai_object_id_t     vrf_id;
+    bool                proxy_arp;
 };
 
 typedef map<string, IntfsEntry> IntfsTable;
@@ -87,6 +88,9 @@ private:
 
     void addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
     void removeDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
+
+    bool setIntfVlanFloodType(const Port &port);
+    bool setIntfProxyArp(const string &alias, const string &proxy_arp);
 };
 
 #endif /* SWSS_INTFSORCH_H */

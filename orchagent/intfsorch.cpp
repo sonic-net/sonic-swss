@@ -24,6 +24,7 @@ extern sai_router_interface_api_t*  sai_router_intfs_api;
 extern sai_route_api_t*             sai_route_api;
 extern sai_neighbor_api_t*          sai_neighbor_api;
 extern sai_switch_api_t*            sai_switch_api;
+extern sai_vlan_api_t*              sai_vlan_api;
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
@@ -222,6 +223,81 @@ bool IntfsOrch::setRouterIntfsAdminStatus(const Port &port)
                 port.m_alias.c_str(), port.m_admin_state_up == true ? "up" : "down", status);
         return false;
     }
+
+    return true;
+}
+
+bool IntfsOrch::setIntfVlanFloodType(const Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::VLAN)
+    {
+        SWSS_LOG_ERROR("VLAN flood type cannot be set for non VLAN interface \"%s\"", port.m_alias.c_str());
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE;
+    attr.value.s32 = port.m_vlan_info.vlan_flood_type;
+
+    sai_status_t status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set flood type for VLAN %u, rv:%d", port.m_vlan_info.vlan_id, status);
+        return false;
+    }
+
+    return true;
+}
+
+bool IntfsOrch::setIntfProxyArp(const string &alias, const string &proxy_arp)
+{
+    SWSS_LOG_ENTER();
+
+    if (proxy_arp != "enabled" || proxy_arp != "disabled")
+    {
+        SWSS_LOG_ERROR("Proxy ARP state is invalid: \"%s\"", proxy_arp.c_str());
+        return false;
+    }
+
+    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+    {
+        SWSS_LOG_ERROR("Interface \"%s\" doesn't exist", alias.c_str());
+        return false;
+    }
+
+    if (m_syncdIntfses[alias].proxy_arp == (proxy_arp == "enabled" ? true : false))
+    {
+        SWSS_LOG_INFO("Proxy ARP is already set to \"%s\" on interface \"%s\"", proxy_arp.c_str(), alias.c_str());
+        return true;
+    }
+
+    Port port;
+    if (!gPortsOrch->getPort(alias, port))
+    {
+        SWSS_LOG_ERROR("Failed to get port info for the interface \"%s\"", alias.c_str());
+        return false;
+    }
+
+    if (port.m_type == Port::VLAN)
+    {
+        if (proxy_arp == "enabled")
+        {
+            port.m_vlan_info.vlan_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_NONE;
+        }
+        else
+        {
+            port.m_vlan_info.vlan_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+        }
+    
+        if (!setIntfVlanFloodType(port))
+        {
+            return false;
+        }
+    }
+
+    m_syncdIntfses[alias].proxy_arp = proxy_arp == "enabled" ? true : false;
 
     return true;
 }
@@ -440,6 +516,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         uint32_t mtu;
         bool adminUp;
         uint32_t nat_zone_id = 0;
+        string proxy_arp = "";
 
         for (auto idx : data)
         {
@@ -514,6 +591,10 @@ void IntfsOrch::doTask(Consumer &consumer)
             else if (field == "nat_zone")
             {
                 nat_zone = value;
+            }
+            else if (field == "proxy_arp")
+            {
+                proxy_arp = value;
             }
         }
 
@@ -666,6 +747,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                 }
             }
 
+            if (!proxy_arp.empty())
+            {
+                setIntfProxyArp(alias, proxy_arp);
+            }
+
             it = consumer.m_toSync.erase(it);
         }
         else if (op == DEL_COMMAND)
@@ -722,6 +808,11 @@ void IntfsOrch::doTask(Consumer &consumer)
             if (m_vnetInfses.find(alias) != m_vnetInfses.end())
             {
                 vnet_name = m_vnetInfses.at(alias);
+            }
+
+            if (m_syncdIntfses[alias].proxy_arp)
+            {
+                setIntfProxyArp(alias, "disabled");
             }
 
             if (!vnet_name.empty())
