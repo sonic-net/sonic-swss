@@ -477,8 +477,8 @@ private:
     static DBConnector m_db;
     static Table m_countersTable;
 
-    string m_mirrorTableId;
-    string m_mirrorV6TableId;
+    map<acl_stage_type_t, string> m_mirrorTableId;
+    map<acl_stage_type_t, string> m_mirrorV6TableId;
 
     acl_capabilities_t m_aclCapabilities;
     acl_action_enum_values_capabilities_t m_aclEnumActionCapabilities;
