@@ -5049,7 +5049,7 @@ void NatMgr::doStaticNatTask(Consumer &consumer)
         /* Ensure the key size is 1 otherwise ignore */
         if (keys.size() != STATIC_NAT_KEY_SIZE)
         {
-            SWSS_LOG_ERROR("Invalid key size %u, skipping %s", keys.size(), key.c_str());
+            SWSS_LOG_ERROR("Invalid key size %" PRIu32 ", skipping %s", keys.size(), key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -5366,7 +5366,7 @@ void NatMgr::doStaticNaptTask(Consumer &consumer)
         /* Ensure the key size is 3 otherwise ignore */
         if (keys.size() != STATIC_NAPT_KEY_SIZE)
         {   
-            SWSS_LOG_ERROR("Invalid key size %u, skipping %s", keys.size(), key.c_str());
+            SWSS_LOG_ERROR("Invalid key size %" PRIu32 ", skipping %s", keys.size(), key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -5707,7 +5707,7 @@ void NatMgr::doNatPoolTask(Consumer &consumer)
         /* Ensure the key size is 1 otherwise ignore */
         if (keys.size() != POOL_TABLE_KEY_SIZE)
         {
-            SWSS_LOG_ERROR("Invalid key size %u, skipping %s", keys.size(), key.c_str());
+            SWSS_LOG_ERROR("Invalid key size %" PRIu32 ", skipping %s", keys.size(), key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -5766,7 +5766,7 @@ void NatMgr::doNatPoolTask(Consumer &consumer)
             /* Ensure the Pool name length is not more than 32 otherwise ignore */
             if (key.length() > 32)
             {
-                SWSS_LOG_ERROR("Invalid pool name length - %u, skipping %s", key.length(), key.c_str());
+                SWSS_LOG_ERROR("Invalid pool name length - %" PRIu32 ", skipping %s", key.length(), key.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -5791,7 +5791,7 @@ void NatMgr::doNatPoolTask(Consumer &consumer)
             /* Ensure the ip range size is not more than 2, otherwise ignore */
             if (nat_ip_range.size() > 2)
             {
-                SWSS_LOG_ERROR("Invalid nat ip range size %u, skipping %s", nat_ip_range.size(), key.c_str());
+                SWSS_LOG_ERROR("Invalid nat ip range size %" PRIu32 ", skipping %s", nat_ip_range.size(), key.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -5876,7 +5876,7 @@ void NatMgr::doNatPoolTask(Consumer &consumer)
                 /* Ensure the port range size is not more than 2, otherwise ignore */
                 if (nat_port_range.size() > 2)
                 {
-                    SWSS_LOG_ERROR("Invalid nat port range size %u, skipping %s", nat_port_range.size(), key.c_str());
+                    SWSS_LOG_ERROR("Invalid nat port range size %" PRIu32 ", skipping %s", nat_port_range.size(), key.c_str());
                     it = consumer.m_toSync.erase(it);
                     continue;
                 }
@@ -6094,7 +6094,7 @@ void NatMgr::doNatBindingTask(Consumer &consumer)
         /* Ensure the key size is 1 otherwise ignore */
         if (keys.size() != BINDING_TABLE_KEY_SIZE)
         {
-            SWSS_LOG_ERROR("Invalid key size %u, skipping %s", keys.size(), key.c_str());
+            SWSS_LOG_ERROR("Invalid key size %" PRIu32 ", skipping %s", keys.size(), key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -6102,7 +6102,7 @@ void NatMgr::doNatBindingTask(Consumer &consumer)
         /* Ensure the Binding name length is not more than 32 otherwise ignore */
         if (key.length() > 32)
         {
-            SWSS_LOG_ERROR("Invalid binding name length - %u, skipping %s", key.length(), key.c_str());
+            SWSS_LOG_ERROR("Invalid binding name length - %" PRIu32 ", skipping %s", key.length(), key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -6226,7 +6226,7 @@ void NatMgr::doNatBindingTask(Consumer &consumer)
             /* Ensure the Pool name length is not more than 32 otherwise ignore */
             if (nat_pool.length() > 32)
             {
-                SWSS_LOG_ERROR("Invalid pool name length - %u, skipping %s", nat_pool.length(), key.c_str());
+                SWSS_LOG_ERROR("Invalid pool name length - %" PRIu32 ", skipping %s", nat_pool.length(), key.c_str());
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -6604,13 +6604,13 @@ void NatMgr::doNatIpInterfaceTask(Consumer &consumer)
         /* Ensure the key size is 2 or 1, otherwise ignore */
         if ((keys.size() != L3_INTERFACE_KEY_SIZE) and (keys.size() != L3_INTERFACE_ZONE_SIZE))
         {
-            SWSS_LOG_INFO("Invalid key size %u, skipping %s", keys.size(), key.c_str());
+            SWSS_LOG_INFO("Invalid key size %" PRIu32 ", skipping %s", keys.size(), key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
         else
         {
-            SWSS_LOG_INFO("Key size %u for %s", keys.size(), key.c_str());
+            SWSS_LOG_INFO("Key size %" PRIu32 " for %s", keys.size(), key.c_str());
         }
 
         /* Ensure the key starts with "Vlan" or "Ethernet" or "PortChannel" or "Loopback", otherwise ignore */
@@ -6849,7 +6849,7 @@ void NatMgr::doNatIpInterfaceTask(Consumer &consumer)
             }
             else
             {
-                SWSS_LOG_INFO("Invalid key size %u, skipping %s", keys.size(), key.c_str());
+                SWSS_LOG_INFO("Invalid key size %" PRIu32 ", skipping %s", keys.size(), key.c_str());
             }
             it = consumer.m_toSync.erase(it);
         }
@@ -6935,7 +6935,7 @@ void NatMgr::doNatIpInterfaceTask(Consumer &consumer)
             }
             else
             {
-                SWSS_LOG_INFO("Invalid key size %u, skipping %s", keys.size(), key.c_str());
+                SWSS_LOG_INFO("Invalid key size %" PRIu32 ", skipping %s", keys.size(), key.c_str());
             }
             it = consumer.m_toSync.erase(it);
         }
@@ -6971,7 +6971,7 @@ void NatMgr::doNatAclTableTask(Consumer &consumer)
         /* Ensure the key size is 1 otherwise ignore */
         if (keys.size() != ACL_TABLE_KEY_SIZE)
         {
-            SWSS_LOG_INFO("Invalid key size %u, skipping %s", keys.size(), key.c_str());
+            SWSS_LOG_INFO("Invalid key size %" PRIu32 ", skipping %s", keys.size(), key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -7112,7 +7112,7 @@ void NatMgr::doNatAclRuleTask(Consumer &consumer)
         /* Ensure the key size is 2 otherwise ignore */
         if (keys.size() != ACL_RULE_TABLE_KEY_SIZE)
         {
-            SWSS_LOG_INFO("Invalid key size %u, skipping %s", keys.size(), key.c_str());
+            SWSS_LOG_INFO("Invalid key size %" PRIu32 ", skipping %s", keys.size(), key.c_str());
             it = consumer.m_toSync.erase(it);
             continue;
         }
@@ -7239,7 +7239,7 @@ void NatMgr::doNatAclRuleTask(Consumer &consumer)
                     /* Ensure the port range size is valid, otherwise ignore */
                     if (port_range.size() != L4_PORT_RANGE_SIZE)
                     {
-                        SWSS_LOG_INFO("Invalid port range size %u for Matching Port Range Field, skipping %s", port_range.size(), key.c_str());
+                        SWSS_LOG_INFO("Invalid port range size %" PRIu32 " for Matching Port Range Field, skipping %s", port_range.size(), key.c_str());
                         isNatAclRuleNotValid = true;
                         break;
                     }
