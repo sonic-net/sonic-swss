@@ -2792,20 +2792,22 @@ bool AclOrch::removeAclTable(string table_id)
         // Clear mirror table information
         // If the v4 and v6 ACL mirror tables are combined together,
         // remove both of them.
-        if (table_id == m_mirrorTableId[stage])
+        auto mirror_id = m_mirrorTableId.find(stage);
+        auto mirror_v6_id = m_mirrorV6TableId.find(stage);
+        if (mirror_id != m_mirrorTableId.end() && mirror_id->second == table_id)
         {
-            m_mirrorTableId.erase(stage);
+            m_mirrorTableId.erase(mirror_id);
             if (m_isCombinedMirrorV6Table)
             {
-                m_mirrorV6TableId.erase(stage);
+                m_mirrorV6TableId.erase(mirror_v6_id);
             }
         }
-        else if (table_id == m_mirrorV6TableId[stage])
+        else if (mirror_v6_id != m_mirrorV6TableId.end() && mirror_v6_id->second == table_id)
         {
-            m_mirrorV6TableId.erase(stage);
+            m_mirrorV6TableId.erase(mirror_v6_id);
             if (m_isCombinedMirrorV6Table)
             {
-                m_mirrorTableId.erase(stage);
+                m_mirrorTableId.erase(mirror_id);
             }
         }
 
