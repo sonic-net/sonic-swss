@@ -2713,23 +2713,24 @@ bool AclOrch::addAclTable(AclTable &newTable)
     // Check if a separate mirror table is needed or not based on the platform
     if (newTable.type == ACL_TABLE_MIRROR || newTable.type == ACL_TABLE_MIRRORV6)
     {
-
+        auto mirror_id = m_mirrorTableId.find(table_stage);
+        auto mirror_v6_id = m_mirrorV6TableId.find(table_stage);
         if (m_isCombinedMirrorV6Table &&
-                (m_mirrorTableId.find(table_stage) != m_mirrorTableId.end() ||
-                 m_mirrorV6TableId.find(table_stage) != m_mirrorV6TableId.end())) {
+                (mirror_id != m_mirrorTableId.end() ||
+                 mirror_v6_id != m_mirrorV6TableId.end())) {
 
             string orig_table_name;
 
             // If v4 table is created, mark v6 table is created
-            if (m_mirrorTableId.find(table_stage) != m_mirrorTableId.end())
+            if (mirror_id != m_mirrorTableId.end())
             {
-                orig_table_name = m_mirrorTableId[table_stage];
+                orig_table_name = mirror_id->second;
                 m_mirrorV6TableId.emplace(table_stage, newTable.id);
             }
             // If v6 table is created, mark v4 table is created
             else
             {
-                orig_table_name = m_mirrorV6TableId[table_stage];
+                orig_table_name = mirror_v6_id->second;
                 m_mirrorTableId.emplace(table_stage, newTable.id);
             }
 
@@ -3056,7 +3057,9 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             auto stage = m_AclTables[table_oid].stage;
             if (type == ACL_TABLE_MIRROR || type == ACL_TABLE_MIRRORV6)
             {
-                type = table_id == m_mirrorTableId[stage] ? ACL_TABLE_MIRROR : ACL_TABLE_MIRRORV6;
+                auto mirror_id = m_mirrorTableId.find(stage);
+                bool isMirror = mirror_id != m_mirrorTableId.end() && table_id == mirror_id->second;
+                type = isMirror ? ACL_TABLE_MIRROR : ACL_TABLE_MIRRORV6;
             }
 
 
