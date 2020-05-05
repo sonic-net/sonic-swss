@@ -2717,22 +2717,21 @@ bool AclOrch::addAclTable(AclTable &newTable)
     // Check if a separate mirror table is needed or not based on the platform
     if (newTable.type == ACL_TABLE_MIRROR || newTable.type == ACL_TABLE_MIRRORV6)
     {
-        auto mirror_id = m_mirrorTableId.find(table_stage);
-        auto mirror_v6_id = m_mirrorV6TableId.find(table_stage);
         if (m_isCombinedMirrorV6Table &&
-            (!m_mirrorTableId[table_stage].empty() || !m_mirrorV6TableId[table_stage].empty())) {
+                (!m_mirrorTableId[table_stage].empty() ||
+                !m_mirrorV6TableId[table_stage].empty())) {
             string orig_table_name;
 
             // If v4 table is created, mark v6 table is created
             if (!m_mirrorTableId[table_stage].empty())
             {
-                orig_table_name = mirror_id->second;
+                orig_table_name = m_mirrorTableId[table_stage];
                 m_mirrorV6TableId[table_stage] = newTable.id;
             }
             // If v6 table is created, mark v4 table is created
             else
             {
-                orig_table_name = mirror_v6_id->second;
+                orig_table_name = m_mirrorV6TableId[table_stage];
                 m_mirrorTableId[table_stage] = newTable.id;
             }
 
