@@ -202,21 +202,16 @@ class TestNextHopGroup(object):
                 return None
 
         def asic_route_nhg_fvs(k):
-            (status, fvs) = rtbl.get(k)
-            if not status:
+            fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", k)
+            if not fvs:
                 return None
 
-            nhgid = None
-            for v in fvs:
-                if v[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
-                    nhgid = v[1]
-                    break
-            else:
+            print fvs
+            nhgid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+            if nhgid is None:
                 return None
 
-            (status, fvs) = nhgtbl.get(nhgid)
-            if not status:
-                return None
+            fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhgid)
             return fvs
 
         MAX_ECMP_COUNT = 512
@@ -224,12 +219,11 @@ class TestNextHopGroup(object):
         IP_INTEGER_BASE = int(ipaddress.IPv4Address(unicode("2.2.2.0")))
 
         config_db = dvs.get_config_db()
-        intf_tbl = swsscommon.Table(config_db.db_connection, "INTERFACE")
-        fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
+        fvs = {"NULL": "NULL"}
 
         for i in range(MAX_PORT_COUNT):
-            intf_tbl.set(port_name(i), fvs)
-            intf_tbl.set("{}|{}".format(port_name(i), port_ipprefix(i)), fvs)
+            config_db.create_entry("INTERFACE", port_name(i), fvs)
+            config_db.create_entry("INTERFACE", "{}|{}".format(port_name(i), port_ipprefix(i)), fvs)
             dvs.runcmd("config interface startup " + port_name(i))
             dvs.runcmd("arp -s {} {}".format(peer_ip(i), port_mac(i)))
             assert dvs.servers[i].runcmd("ip link set down dev eth0") == 0
@@ -254,12 +248,10 @@ class TestNextHopGroup(object):
             route_count += 1
 
         asic_db = dvs.get_asic_db()
-        rtbl = swsscommon.Table(asic_db.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
-        nhgtbl = swsscommon.Table(asic_db.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
 
         # Wait and check ASIC DB the count of nexthop groups used
         asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", MAX_ECMP_COUNT)
-        asic_routes_count = len(rtbl.getKeys())
+        asic_routes_count = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"))
 
         # Add second batch of routes with unique nexthop groups in AppDB
         # Add more routes with new nexthop group in AppDBdd
@@ -295,7 +287,7 @@ class TestNextHopGroup(object):
         k = asic_route_exists(keys, base_ipprefix)
         assert k is not None
         fvs = asic_route_nhg_fvs(k)
-        assert fvs is None
+        assert not(fvs)
 
         # Remove first batch of routes with unique nexthop groups in AppDB
         route_count = 0
@@ -314,7 +306,7 @@ class TestNextHopGroup(object):
         # Wait and check the second batch points to next hop group
         # Check ASIC DB on the count of nexthop groups used, and it should not increase or decrease
         asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", 10)
-        keys = rtbl.getKeys()
+        keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
         k = asic_route_exists(keys, base_ipprefix)
         assert k is not None
         fvs = asic_route_nhg_fvs(k)
