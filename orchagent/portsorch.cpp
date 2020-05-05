@@ -3391,8 +3391,15 @@ bool PortsOrch::addLag(string lag_alias)
     SWSS_LOG_ENTER();
 
     sai_object_id_t lag_id;
-    sai_status_t status = sai_lag_api->create_lag(&lag_id, gSwitchId, 0, NULL);
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+    sai_status_t status;
 
+    attr.id = SAI_LAG_ATTR_NAME;
+    strncpy((char *)&attr.value.chardata, lag_alias.c_str(), sizeof(attr.value.chardata));
+    attrs.push_back(attr);
+
+    status = sai_lag_api->create_lag(&lag_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create LAG %s lid:%" PRIx64, lag_alias.c_str(), lag_id);
