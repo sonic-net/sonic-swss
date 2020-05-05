@@ -2213,6 +2213,12 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
 
     queryAclActionCapability();
 
+    for (auto stage: {ACL_STAGE_INGRESS, ACL_STAGE_EGRESS})
+    {
+        m_mirrorTableId[stage] = "";
+        m_mirrorV6TableId[stage] = "";
+    }
+
     // Attach observers
     m_mirrorOrch->attach(this);
     gPortsOrch->attach(this);
@@ -2686,14 +2692,12 @@ bool AclOrch::addAclTable(AclTable &newTable)
         if (table_type == ACL_TABLE_MIRROR || table_type == ACL_TABLE_MIRRORV6)
         {
             string mirror_type;
-            if (table_type == ACL_TABLE_MIRROR &&
-                m_mirrorTableId.find(table_stage) != m_mirrorTableId.end())
+            if (table_type == ACL_TABLE_MIRROR && !m_mirrorTableId[table_stage].empty())
             {
                 mirror_type = TABLE_TYPE_MIRROR;
             }
 
-            if (table_type == ACL_TABLE_MIRRORV6 &&
-                m_mirrorV6TableId.find(table_stage) != m_mirrorV6TableId.end())
+            if (table_type == ACL_TABLE_MIRRORV6 && !m_mirrorV6TableId[table_stage].empty())
             {
                 mirror_type = TABLE_TYPE_MIRRORV6;
             }
@@ -2716,22 +2720,20 @@ bool AclOrch::addAclTable(AclTable &newTable)
         auto mirror_id = m_mirrorTableId.find(table_stage);
         auto mirror_v6_id = m_mirrorV6TableId.find(table_stage);
         if (m_isCombinedMirrorV6Table &&
-                (mirror_id != m_mirrorTableId.end() ||
-                 mirror_v6_id != m_mirrorV6TableId.end())) {
-
+            (!m_mirrorTableId[table_stage].empty() || !m_mirrorV6TableId[table_stage].empty())) {
             string orig_table_name;
 
             // If v4 table is created, mark v6 table is created
-            if (mirror_id != m_mirrorTableId.end())
+            if (!m_mirrorTableId[table_stage].empty())
             {
                 orig_table_name = mirror_id->second;
-                m_mirrorV6TableId.emplace(table_stage, newTable.id);
+                m_mirrorV6TableId[table_stage] = newTable.id;
             }
             // If v6 table is created, mark v4 table is created
             else
             {
                 orig_table_name = mirror_v6_id->second;
-                m_mirrorTableId.emplace(table_stage, newTable.id);
+                m_mirrorTableId[table_stage] = newTable.id;
             }
 
             SWSS_LOG_NOTICE("Created ACL table %s as a sibling of %s",
@@ -2750,11 +2752,11 @@ bool AclOrch::addAclTable(AclTable &newTable)
         // Mark the existence of the mirror table
         if (newTable.type == ACL_TABLE_MIRROR)
         {
-            m_mirrorTableId.emplace(table_stage, table_id);
+            m_mirrorTableId[table_stage] = table_id;
         }
         else if (newTable.type == ACL_TABLE_MIRRORV6)
         {
-            m_mirrorV6TableId.emplace(table_stage, table_id);
+            m_mirrorV6TableId[table_stage] = table_id;
         }
 
         return true;
@@ -2793,22 +2795,20 @@ bool AclOrch::removeAclTable(string table_id)
         // Clear mirror table information
         // If the v4 and v6 ACL mirror tables are combined together,
         // remove both of them.
-        auto mirror_id = m_mirrorTableId.find(stage);
-        auto mirror_v6_id = m_mirrorV6TableId.find(stage);
-        if (mirror_id != m_mirrorTableId.end() && mirror_id->second == table_id)
+        if (m_mirrorTableId[stage] == table_id)
         {
-            m_mirrorTableId.erase(mirror_id);
+            m_mirrorTableId[stage].clear();
             if (m_isCombinedMirrorV6Table)
             {
-                m_mirrorV6TableId.erase(mirror_v6_id);
+                m_mirrorV6TableId[stage].clear();
             }
         }
-        else if (mirror_v6_id != m_mirrorV6TableId.end() && mirror_v6_id->second == table_id)
+        else if (m_mirrorV6TableId[stage] == table_id)
         {
-            m_mirrorV6TableId.erase(mirror_v6_id);
+            m_mirrorV6TableId[stage].clear();
             if (m_isCombinedMirrorV6Table)
             {
-                m_mirrorTableId.erase(mirror_id);
+                m_mirrorTableId[stage].clear();
             }
         }
 
@@ -3057,9 +3057,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             auto stage = m_AclTables[table_oid].stage;
             if (type == ACL_TABLE_MIRROR || type == ACL_TABLE_MIRRORV6)
             {
-                auto mirror_id = m_mirrorTableId.find(stage);
-                bool isMirror = mirror_id != m_mirrorTableId.end() && table_id == mirror_id->second;
-                type = isMirror ? ACL_TABLE_MIRROR : ACL_TABLE_MIRRORV6;
+                type = table_id == m_mirrorTableId[stage] ? ACL_TABLE_MIRROR : ACL_TABLE_MIRRORV6;
             }
 
 
@@ -3227,20 +3225,17 @@ sai_object_id_t AclOrch::getTableById(string table_id)
     }
 
     // Check if the table is a mirror table and a sibling mirror table is created
-    if (m_isCombinedMirrorV6Table) {
-        for (auto stage: {ACL_STAGE_INGRESS, ACL_STAGE_EGRESS}) {
-            auto mirrorTableId = m_mirrorTableId.find(stage);
-            auto mirrorV6TableId = m_mirrorV6TableId.find(stage);
-
+    for (auto stage: {ACL_STAGE_INGRESS, ACL_STAGE_EGRESS}) {
+        if (m_isCombinedMirrorV6Table &&
+                (table_id == m_mirrorTableId[stage] || table_id == m_mirrorV6TableId[stage]))
+        {
             // If the table is v4, the corresponding v6 table is already created
-            if (mirrorTableId != m_mirrorTableId.end() &&
-                table_id == m_mirrorTableId[stage])
+            if (table_id == m_mirrorTableId[stage])
             {
                 return getTableById(m_mirrorV6TableId[stage]);
             }
             // If the table is v6, the corresponding v4 table is already created
-            else if (mirrorV6TableId != m_mirrorV6TableId.end() &&
-                table_id == m_mirrorV6TableId[stage])
+            else
             {
                 return getTableById(m_mirrorTableId[stage]);
             }
