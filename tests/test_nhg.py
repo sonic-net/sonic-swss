@@ -192,8 +192,7 @@ class TestNextHopGroup(object):
             fvs = swsscommon.FieldValuePairs([("nexthop", nexthop), ("ifname", ifname)])
             return fvs
 
-        def asic_route_exists(ipprefix):
-            keys = rtbl.getKeys()
+        def asic_route_exists(keys, ipprefix):
             for k in keys:
                 rt_key = json.loads(k)
 
@@ -224,8 +223,8 @@ class TestNextHopGroup(object):
         MAX_PORT_COUNT = 10
         IP_INTEGER_BASE = int(ipaddress.IPv4Address(unicode("2.2.2.0")))
 
-        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
+        config_db = dvs.get_config_db()
+        intf_tbl = swsscommon.Table(config_db.db_connection, "INTERFACE")
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
 
         for i in range(MAX_PORT_COUNT):
@@ -236,8 +235,8 @@ class TestNextHopGroup(object):
             assert dvs.servers[i].runcmd("ip link set down dev eth0") == 0
             assert dvs.servers[i].runcmd("ip link set up dev eth0") == 0
 
-        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
+        app_db = dvs.get_app_db()
+        ps = swsscommon.ProducerStateTable(app_db.db_connection, "ROUTE_TABLE")
 
         # Add first batch of routes with unique nexthop groups in AppDB
         route_count = 0
@@ -254,15 +253,13 @@ class TestNextHopGroup(object):
             ps.set(route_ipprefix, fvs)
             route_count += 1
 
-        time.sleep(1)
+        asic_db = dvs.get_asic_db()
+        rtbl = swsscommon.Table(asic_db.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        nhgtbl = swsscommon.Table(asic_db.db_connection, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
 
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-        rtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
-        nhgtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
-
-        # check ASIC DB on the count of nexthop groups used
-        nhg_count = len(nhgtbl.getKeys())
-        assert nhg_count == MAX_ECMP_COUNT
+        # Wait and check ASIC DB the count of nexthop groups used
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", MAX_ECMP_COUNT)
+        asic_routes_count = len(rtbl.getKeys())
 
         # Add second batch of routes with unique nexthop groups in AppDB
         # Add more routes with new nexthop group in AppDBdd
@@ -283,25 +280,24 @@ class TestNextHopGroup(object):
             route_count += 1
         last_ipprefix = route_ipprefix
 
-        time.sleep(1)
-
-        # Check ASIC DB on the count of nexthop groups used, and it should not increase
-        nhg_count = len(nhgtbl.getKeys())
-        assert nhg_count == MAX_ECMP_COUNT
+        # Wait until we get expected routes and check ASIC DB on the count of nexthop groups used, and it should not increase
+        keys = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", asic_routes_count + 10)
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", MAX_ECMP_COUNT)
 
         # Check the route points to next hop group
-        k = asic_route_exists("2.2.2.0/24")
+        # Note: no need to wait here
+        k = asic_route_exists(keys, "2.2.2.0/24")
         assert k is not None
         fvs = asic_route_nhg_fvs(k)
         assert fvs is not None
 
         # Check the second batch does not point to next hop group
-        k = asic_route_exists(base_ipprefix)
+        k = asic_route_exists(keys, base_ipprefix)
         assert k is not None
         fvs = asic_route_nhg_fvs(k)
         assert fvs is None
 
-        # Remove part of first batch of routes with unique nexthop groups in AppDB
+        # Remove first batch of routes with unique nexthop groups in AppDB
         route_count = 0
         r = 0
         while route_count < MAX_ECMP_COUNT:
@@ -315,18 +311,15 @@ class TestNextHopGroup(object):
             ps._del(route_ipprefix)
             route_count += 1
 
-        time.sleep(1)
-
-        # Check the second batch points to next hop group
-        k = asic_route_exists(base_ipprefix)
-        assert k is not None
-        fvs = asic_route_nhg_fvs(k)
-        assert fvs is not None
-        k = asic_route_exists(last_ipprefix)
-        assert k is not None
-        fvs = asic_route_nhg_fvs(k)
-        assert fvs is not None
-
+        # Wait and check the second batch points to next hop group
         # Check ASIC DB on the count of nexthop groups used, and it should not increase or decrease
-        nhg_count = len(nhgtbl.getKeys())
-        assert nhg_count == 10
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", 10)
+        keys = rtbl.getKeys()
+        k = asic_route_exists(keys, base_ipprefix)
+        assert k is not None
+        fvs = asic_route_nhg_fvs(k)
+        assert fvs is not None
+        k = asic_route_exists(keys, last_ipprefix)
+        assert k is not None
+        fvs = asic_route_nhg_fvs(k)
+        assert fvs is not None
