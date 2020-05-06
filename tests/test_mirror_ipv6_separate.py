@@ -320,8 +320,7 @@ class TestMirror(object):
         self.remove_acl_table(duplicate_ingress_table)
         self.remove_acl_table(duplicate_egress_table)
 
-        table_ids = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 
-                                            len(asic_db.default_acl_tables))
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", len(asic_db.default_acl_tables))
 
     # Test case - create a MIRROR table and a MIRRORV6 table in separated mode
     # 0. predefine the VS platform: mellanox platform
