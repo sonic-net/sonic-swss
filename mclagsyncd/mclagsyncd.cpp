@@ -31,9 +31,9 @@ using namespace swss;
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("mclagsyncd");
-    DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector asic_db(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector counters_db(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector appl_db("APPL_DB", 0);
+    DBConnector asic_db("ASIC_DB", 0);
+    DBConnector counters_db("COUNTERS_DB", 0);
     ProducerStateTable port_tbl(&appl_db, APP_PORT_TABLE_NAME);
     ProducerStateTable lag_tbl(&appl_db, APP_LAG_TABLE_NAME);
     ProducerStateTable tnl_tbl(&appl_db, APP_VXLAN_TUNNEL_TABLE_NAME);
