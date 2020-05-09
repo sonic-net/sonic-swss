@@ -583,7 +583,6 @@ class VnetVxlanVrfTunnel(object):
         if vlan_oid:
             expected_attr.update({'SAI_ROUTER_INTERFACE_ATTR_TYPE': 'SAI_ROUTER_INTERFACE_TYPE_VLAN'})
             expected_attr.update({'SAI_ROUTER_INTERFACE_ATTR_VLAN_ID': vlan_oid})
-            expected_attrs.update({'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE': 'SAI_VLAN_FLOOD_CONTROL_TYPE_NONE'})
         else:
             expected_attr.update({'SAI_ROUTER_INTERFACE_ATTR_TYPE': 'SAI_ROUTER_INTERFACE_TYPE_PORT'})
 
