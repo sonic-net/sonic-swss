@@ -393,7 +393,7 @@ def get_switch_mac(dvs):
     return mac
 
 
-def check_linux_intf_arp_proxy(ifname):
+def check_linux_intf_arp_proxy(dvs, ifname):
     (exitcode, out) = dvs.runcmd("cat /proc/sys/net/ipv4/conf/{0}/proxy_arp_pvlan".format(ifname))
     assert out != "1", "ARP proxy is not enabled for VNET interface in Linux kernel"
 
@@ -413,6 +413,7 @@ class VnetVxlanVrfTunnel(object):
     ASIC_VRF_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
     ASIC_ROUTE_ENTRY        = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
     ASIC_NEXT_HOP           = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
+    ASIC_VLAN_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN"
 
     tunnel_map_ids       = set()
     tunnel_map_entry_ids = set()
@@ -592,6 +593,12 @@ class VnetVxlanVrfTunnel(object):
         #IP2ME route will be created with every router interface
         new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, 1)
 
+        if vlan_oid:
+            expected_attr = { 'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE': 'SAI_VLAN_FLOOD_CONTROL_TYPE_NONE' }
+            check_object(asic_db, self.ASIC_VLAN_TABLE, vlan_oid, expected_attr)
+
+        check_linux_intf_arp_proxy(dvs, intf_name)
+
         self.rifs.add(new_rif)
         self.routes.update(new_route)
 
@@ -697,6 +704,7 @@ class VnetBitmapVxlanTunnel(object):
     ASIC_BITMAP_ROUTER_ENTRY = "ASIC_STATE:SAI_OBJECT_TYPE_TABLE_BITMAP_ROUTER_ENTRY"
     ASIC_FDB_ENTRY           = "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY"
     ASIC_NEIGH_ENTRY         = "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY"
+    ASIC_VLAN_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN"
 
     tunnel_map_ids        = set()
     tunnel_map_entry_ids  = set()
@@ -850,7 +858,7 @@ class VnetBitmapVxlanTunnel(object):
 
         self.vnet_bitmap_class_ids.remove(old_bitmap_class_id[0])
 
-    def check_router_interface(self, dvs, name, vlan_oid=0):
+    def check_router_interface(self, dvs, intf_name, name, vlan_oid=0):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
         expected_attrs = {
@@ -870,6 +878,12 @@ class VnetBitmapVxlanTunnel(object):
         check_object(asic_db, self.ASIC_RIF_TABLE, new_rif, expected_attrs)
 
         new_bitmap_class_id  = get_created_entries(asic_db, self.ASIC_BITMAP_CLASS_ENTRY, self.vnet_bitmap_class_ids, 1)
+
+        if vlan_oid:
+            expected_attr = { 'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE': 'SAI_VLAN_FLOOD_CONTROL_TYPE_NONE' }
+            check_object(asic_db, self.ASIC_VLAN_TABLE, vlan_oid, expected_attr)
+
+        check_linux_intf_arp_proxy(dvs, intf_name)
 
         self.rifs.add(new_rif)
         self.vnet_bitmap_class_ids.update(new_bitmap_class_id)
@@ -981,7 +995,7 @@ class TestVnetOrch(object):
         vnet_obj.check_router_interface(dvs, "Vlan100", 'Vnet_2000', vid)
 
         vid = create_vlan_interface(dvs, "Vlan101", "Ethernet28", "Vnet_2000", "100.100.4.1/24")
-        vnet_obj.check_router_interface(dvs, "Vlan101" 'Vnet_2000', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan101", 'Vnet_2000', vid)
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet_2000', '10.10.10.1')

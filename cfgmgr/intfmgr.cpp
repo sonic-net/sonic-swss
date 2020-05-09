@@ -455,7 +455,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             data.push_back(fvTuple);
         }
 
-        if (!proxy_arp.empty())
+        if (!proxy_arp.empty() || !vrf_name.compare(0, strlen(VNET_PREFIX), VNET_PREFIX))
         {
             if (!setIntfProxyArp(alias, vrf_name, proxy_arp))
             {

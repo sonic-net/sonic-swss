@@ -290,14 +290,14 @@ bool IntfsOrch::setIntfProxyArp(const string &alias, const string &proxy_arp)
         {
             port.m_vlan_info.vlan_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
         }
-    
+
         if (!setIntfVlanFloodType(port))
         {
             return false;
         }
     }
 
-    m_syncdIntfses[alias].proxy_arp = proxy_arp == "enabled" ? true : false;
+    m_syncdIntfses[alias].proxy_arp = (proxy_arp == "enabled") ? true : false;
 
     return true;
 }
