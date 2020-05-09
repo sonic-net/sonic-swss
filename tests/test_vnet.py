@@ -601,9 +601,6 @@ class VnetVxlanVrfTunnel(object):
         self.rifs.add(new_rif)
         self.routes.update(new_route)
 
-        check_linux_intf_arp_proxy(intf_name)
-        
-
     def check_del_router_interface(self, dvs, name):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
