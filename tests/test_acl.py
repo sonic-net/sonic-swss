@@ -595,51 +595,6 @@ class TestAcl(BaseTestAcl):
         self.remove_acl_table("test_acl_table")
         self.verify_no_acl_tables()
 
-    def test_AclpriorityRule(self, dvs):        
-        self.setup_db(dvs)
-
-        bind_ports = ["Ethernet0", "Ethernet8"]
-        self.create_acl_table("test_acl_table", "L3", bind_ports)
-
-        config_qualifiers1 = {"L4_SRC_PORT": "65000"}
-        config_qualifiers2 = {"L4_SRC_PORT": "30000"}
-        expected_sai_qualifiers1 = {"SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT": self.get_simple_qualifier_comparator("65000&mask:0xffff")}
-        expected_sai_qualifiers2 = {"SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT": self.get_simple_qualifier_comparator("30000&mask:0xffff")}
-        action = "FORWARD"
-        
-        # Configuring ACL rule with string "priority" in lower case
-        fvs1 = {
-            "priority": "20",
-            "PACKET_ACTION": action
-        }
-
-        for k, v in config_qualifiers1.items():
-            fvs1[k] = v
-
-        self.config_db.create_entry("ACL_RULE", "test_acl_table|acl_test_rule1", fvs1)
-
-        self.verify_acl_rule(expected_sai_qualifiers1, action, "20")
-
-        self.remove_acl_rule("test_acl_table", "acl_test_rule1")
-        # Configuring ACL rule with string "priority" in upper case
-        fvs2 = {
-            "PRIORITY": "30",
-            "PACKET_ACTION": action
-        }
-
-        for k, v in config_qualifiers2.items():
-            fvs2[k] = v
-
-        self.config_db.create_entry("ACL_RULE", "test_acl_table|acl_test_rule2", fvs2)
-
-        self.verify_acl_rule(expected_sai_qualifiers2, action, "30")
-
-        self.remove_acl_rule("test_acl_table", "acl_test_rule2")
-        self.verify_no_acl_rules()
-
-        self.remove_acl_table("test_acl_table")
-        self.verify_no_acl_tables()
-
     def test_AclRuleRedirectToNextHop(self, dvs, asic_db, config_db, state_db):
         # NOTE: set_interface_status has a dependency on cdb within dvs,
         # so we still need to setup the db. This should be refactored.
