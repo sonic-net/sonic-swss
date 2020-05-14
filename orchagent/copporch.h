@@ -49,7 +49,6 @@ public:
     CoppOrch(std::vector<TableConnector> &tableConnectors);
 protected:
     object_map m_trap_group_map;
-    bool       enable_sflow_trap;
 
     TrapGroupPolicerTable m_trap_group_policer_map;
     TrapIdTrapObjectsTable m_syncdTrapIds;

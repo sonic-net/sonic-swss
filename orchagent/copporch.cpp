@@ -102,7 +102,6 @@ CoppOrch::CoppOrch(vector<TableConnector> &tableConnectors) :
     initDefaultHostIntfTable();
     initDefaultTrapGroup();
     initDefaultTrapIds();
-    enable_sflow_trap = false;
 };
 
 void CoppOrch::initDefaultHostIntfTable()
@@ -477,14 +476,6 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             if (fvField(*i) == copp_trap_id_list)
             {
                 trap_id_list = tokenize(fvValue(*i), list_item_delimiter);
-                auto it = std::find(trap_id_list.begin(), trap_id_list.end(), "sample_packet");
-                if (it != trap_id_list.end())
-                {
-                    if (!enable_sflow_trap)
-                    {
-                        return task_process_status::task_need_retry;
-                    }
-                }
             }
             else if (fvField(*i) == copp_queue_field)
             {
@@ -775,49 +766,9 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
     return task_process_status::task_success;
 }
 
-/* Program Sflow trap once we get sflow enable command */
-void CoppOrch::coppProcessSflow(Consumer &consumer)
-{
-    auto it = consumer.m_toSync.begin();
-
-    while (it != consumer.m_toSync.end())
-    {
-        auto tuple = it->second;
-        string op = kfvOp(tuple);
-
-        /*
-         * Need to handled just 'config sflow enable' command to install the sflow trap group
-         * for the first time to ensure support of genetlink attributes. Rest of the fields or
-         * disable value or DEL command are not required to be handled
-         *
-         */
-        if (op == SET_COMMAND)
-        {
-            for (auto i : kfvFieldsValues(tuple))
-            {
-                if (fvField(i) == "admin_state")
-                {
-                    if (fvValue(i) == "up")
-                    {
-                        enable_sflow_trap = true;
-                    }
-                }
-            }
-        }
-        it = consumer.m_toSync.erase(it);
-    }
-}
-
 void CoppOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-    string table_name = consumer.getTableName();
-
-    if (table_name == CFG_SFLOW_TABLE_NAME)
-    {
-        coppProcessSflow(consumer);
-        return;
-    }
 
     if (!gPortsOrch->allPortsReady())
     {
