@@ -15,7 +15,6 @@
 #include "shellcmd.h"
 #include "fdbsync.h"
 #include "warm_restart.h"
-#include "nlapi.h"
 #include "errno.h"
 
 using namespace std;
