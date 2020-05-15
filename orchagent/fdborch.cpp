@@ -186,17 +186,95 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         }
         else if (bridge_port_id && entry->bv_id == SAI_NULL_OBJECT_ID)
         {
-            /*this is a placeholder for flush port fdb case, not supported yet.*/
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush port fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
+            if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
+            {
+                SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64, bridge_port_id);
+                return;
+            }
+
+            update.entry.port_name = update.port.m_alias;
+
+            /* Remove all FDB entries of specified port by going through m_entries */
+            for (auto itr = m_entries.begin(); itr != m_entries.end();)
+            {
+                if (itr->port_name == update.port.m_alias)
+                {
+                    update.entry.mac = itr->mac;
+                    update.entry.bv_id = itr->bv_id;
+                    update.add = false;
+                    itr++;
+
+                    storeFdbEntryState(update);
+
+                    SWSS_LOG_DEBUG("FdbOrch notification: mac %s , bv_id 0x%" PRIx64 " on port ID 0x%" PRIx64 " was removed", update.entry.mac.to_string().c_str(), update.entry.bv_id, bridge_port_id);
+
+                    for (auto observer: m_observers)
+                    {
+                        observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+                    }
+                    continue;
+                }
+                itr++;
+            }
         }
         else if (bridge_port_id == SAI_NULL_OBJECT_ID && entry->bv_id != SAI_NULL_OBJECT_ID)
         {
-            /*this is a placeholder for flush vlan fdb case, not supported yet.*/
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush vlan fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
+            /* Remove all FDB entries of specified vlan by going through m_entries */
+            for (auto itr = m_entries.begin(); itr != m_entries.end();)
+            {
+                if (itr->bv_id == entry->bv_id)
+                {
+                    update.entry.mac = itr->mac;
+                    update.entry.bv_id = itr->bv_id;
+                    update.add = false;
+                    itr++;
+
+                    storeFdbEntryState(update);
+
+                    SWSS_LOG_DEBUG("FdbOrch notification: mac %s , bv_id 0x%" PRIx64 " was removed", update.entry.mac.to_string().c_str(), update.entry.bv_id);
+
+                    for (auto observer: m_observers)
+                    {
+                        observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+                    }
+                    continue;
+                }
+                itr++;
+            }
         }
         else
         {
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
+            if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
+            {
+                SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64, bridge_port_id);
+                return;
+            }
+
+            update.entry.port_name = update.port.m_alias;
+
+            /* Remove all FDB entries of specified port and vlan by going through m_entries */
+            for (auto itr = m_entries.begin(); itr != m_entries.end();)
+            {
+                if ((itr->port_name == update.port.m_alias)
+                    && (itr->bv_id == entry->bv_id))
+                {
+                    update.entry.mac = itr->mac;
+                    update.entry.bv_id = itr->bv_id;
+                    update.add = false;
+                    itr++;
+
+                    storeFdbEntryState(update);
+
+                    SWSS_LOG_DEBUG("FdbOrch notification: mac %s , bv_id 0x%" PRIx64 " on port ID 0x%" PRIx64 " was removed", update.entry.mac.to_string().c_str(), update.entry.bv_id, bridge_port_id);
+
+                    for (auto observer: m_observers)
+                    {
+                        observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
+                    }
+                    continue;
+                }
+                itr++;
+            }
         }
         break;
     }
@@ -259,6 +337,40 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
     return true;
 }
 
+bool FdbOrch::ifChangeInformFdb(Port &port, bool if_up)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+
+    if (if_up)
+    {
+        SWSS_LOG_DEBUG("Port %s is goning up, and no need updating FDB for this port.", port.m_alias.c_str());
+        return true;
+    }
+
+    attr.id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
+    attr.value.s32 = SAI_FDB_ENTRY_TYPE_DYNAMIC;
+    attrs.push_back(attr);
+
+    attr.id = SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID;
+    attr.value.oid = port.m_bridge_port_id;
+    attrs.push_back(attr);
+
+    sai_status_t status = sai_fdb_api->flush_fdb_entries(gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to flush dynamic FDB on %s, rv:%d",
+                       port.m_alias.c_str(), status);
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Success to flush dynamic FDB on %s", port.m_alias.c_str());
+
+    return true;
+}
+
 void FdbOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
@@ -309,6 +421,8 @@ void FdbOrch::doTask(Consumer& consumer)
 
             /* FDB type is either dynamic or static */
             assert(type == "dynamic" || type == "static");
+
+            entry.port_name = port;
 
             if (addFdbEntry(entry, port, type))
                 it = consumer.m_toSync.erase(it);
@@ -429,7 +543,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     auto fdb_list = std::move(saved_fdb_entries[port_name]);
     if(!fdb_list.empty())
     {
-        for (const auto& fdb: fdb_list)
+        for (auto& fdb: fdb_list)
         {
             // try to insert an FDB entry. If the FDB entry is not ready to be inserted yet,
             // it would be added back to the saved_fdb_entries structure by addFDBEntry()
@@ -438,7 +552,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     }
 }
 
-bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const string& type)
+bool FdbOrch::addFdbEntry(FdbEntry& entry, const string& port_name, const string& type)
 {
     SWSS_LOG_ENTER();
 
@@ -465,6 +579,12 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
         saved_fdb_entries[port_name].push_back({entry, type});
 
         return true;
+    }
+
+    /* Update entry's port name if needed */
+    if (entry.port_name.empty())
+    {
+        entry.port_name = port_name;
     }
 
     sai_attribute_t attr;

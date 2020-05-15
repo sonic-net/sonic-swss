@@ -9,6 +9,7 @@ struct FdbEntry
 {
     MacAddress mac;
     sai_object_id_t bv_id;
+    std::string port_name;
 
     bool operator<(const FdbEntry& other) const
     {
@@ -46,6 +47,7 @@ public:
     void update(sai_fdb_event_t, const sai_fdb_entry_t *, sai_object_id_t);
     void update(SubjectType type, void *cntx);
     bool getPort(const MacAddress&, uint16_t, Port&);
+    bool ifChangeInformFdb(Port&, bool);
 
 private:
     PortsOrch *m_portsOrch;
@@ -60,7 +62,7 @@ private:
     void doTask(NotificationConsumer& consumer);
 
     void updateVlanMember(const VlanMemberUpdate&);
-    bool addFdbEntry(const FdbEntry&, const string&, const string&);
+    bool addFdbEntry(FdbEntry&, const string&, const string&);
     bool removeFdbEntry(const FdbEntry&);
 
     bool storeFdbEntryState(const FdbUpdate& update);

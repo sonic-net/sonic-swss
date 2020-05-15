@@ -2,6 +2,7 @@
 #include "intfsorch.h"
 #include "bufferorch.h"
 #include "neighorch.h"
+#include "fdborch.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -39,6 +40,7 @@ extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
+extern FdbOrch *gFdbOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -3829,6 +3831,11 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     if (!gNeighOrch->ifChangeInformNextHop(port.m_alias, isUp))
     {
         SWSS_LOG_WARN("Inform nexthop operation failed for interface %s", port.m_alias.c_str());
+    }
+
+    if (!gFdbOrch->ifChangeInformFdb(port, isUp))
+    {
+        SWSS_LOG_WARN("Inform fdb operation failed for interface %s", port.m_alias.c_str());
     }
 }
 
