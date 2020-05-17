@@ -256,23 +256,48 @@ and reflects the LAG ports into the redis under: `LAG_TABLE:<team0>:port`
 ### SCHEDULER_TABLE
     ; Scheduler table
     ; SAI mapping - saicheduler.h
-    key      = "SCHEDULER_TABLE":name
-    ; field     value
-    type     = "DWRR"/"WRR"/"PRIORITY"
-    weight   = 1*DIGIT
-    priority = 1*DIGIT
+    key        = "SCHEDULER_TABLE":name
+    ; field      value
+    type       = "DWRR"/"WRR"/"STRICT"
+    weight     = 2*DIGIT
+    priority   = 1*DIGIT
+    meter_type = "packets"/"bytes"
+    cir        = 1*11 DIGIT  ; guaranteed rate in pps or bytes/sec
+    cbs        = 1*11 DIGIT  ; guaranteed burst size in packets or bytes
+    pir        = 1*11 DIGIT  ; max rate in pps or bytes/sec
+    pbs        = 1*11 DIGIT  ; max burst size in packets or bytes
 
     Example:
     127.0.0.1:6379> hgetall SCHEDULER_TABLE:BEST_EFFORT
-    1) "type"
-    2) "PRIORITY"
-    3) "priority"
-    4) "7"
+     1) "type"
+     2) "PRIORITY"
+     3) "priority"
+     4) "7"
+     5) "meter_type"
+     6) "bytes"
+     7) "cir"
+     8) "1000000000"
+     9) "cbs"
+    10) "8192"
+    11) "pir"
+    12) "1250000000"
+    13) "pbs"
+    14) "8192"
     127.0.0.1:6379> hgetall SCHEDULER_TABLE:SCAVENGER
-    1) "type"
-    2) "DWRR"
-    3) "weight"
-    4) "35"
+     1) "type"
+     2) "DWRR"
+     3) "weight"
+     4) "35"
+     5) "meter_type"
+     6) "bytes"
+     7) "cir"
+     8) "1000000000"
+     9) "cbs"
+    10) "8192"
+    11) "pir"
+    12) "1250000000"
+    13) "pbs"
+    14) "8192"
 
 ---------------------------------------------
 ### WRED\_PROFILE\_TABLE
