@@ -14,6 +14,7 @@ import subprocess
 from datetime import datetime
 from swsscommon import swsscommon
 from dvslib import dvs_database as dvs_db
+from dvslib import dvs_acl
 
 def ensure_system(cmd):
     (rc, output) = commands.getstatusoutput(cmd)
@@ -242,6 +243,8 @@ class DockerVirtualSwitch(object):
         self.config_db = None
         self.flex_db = None
         self.state_db = None
+
+        self.dvs_acl = None
 
     def destroy(self):
         if self.appldb:
@@ -953,30 +956,38 @@ class DockerVirtualSwitch(object):
             self.asic_db = db
 
         return self.asic_db
-    
+
     def get_counters_db(self):
         if not self.counters_db:
             self.counters_db = dvs_db.DVSDatabase(self.COUNTERS_DB_ID, self.redis_sock)
 
         return self.counters_db
-    
+
     def get_config_db(self):
         if not self.config_db:
             self.config_db = dvs_db.DVSDatabase(self.CONFIG_DB_ID, self.redis_sock)
 
         return self.config_db
-    
+
     def get_flex_db(self):
         if not self.flex_db:
             self.flex_db = dvs_db.DVSDatabase(self.FLEX_COUNTER_DB_ID, self.redis_sock)
 
         return self.flex_db
-    
+
     def get_state_db(self):
         if not self.state_db:
             self.state_db = dvs_db.DVSDatabase(self.STATE_DB_ID, self.redis_sock)
 
         return self.state_db
+
+    def get_dvs_acl(self):
+        if not self.dvs_acl:
+            self.dvs_acl = dvs_acl.DVSAcl(self.get_asic_db(),
+                                          self.get_config_db(),
+                                          self.get_state_db(),
+                                          self.get_counters_db())
+        return self.dvs_acl
 
 @pytest.yield_fixture(scope="module")
 def dvs(request):
@@ -997,6 +1008,13 @@ def testlog(request, dvs):
     dvs.runcmd("logger === start test %s ===" % request.node.name)
     yield testlog
     dvs.runcmd("logger === finish test %s ===" % request.node.name)
+
+@pytest.yield_fixture(scope="class")
+def dvs_acl_manager(request, dvs):
+    request.cls.dvs_acl = dvs_acl.DVSAcl(dvs.get_asic_db(),
+                                         dvs.get_config_db(),
+                                         dvs.get_state_db(),
+                                         dvs.get_counters_db())
 
 ##################### DPB fixtures ###########################################
 @pytest.yield_fixture(scope="module")

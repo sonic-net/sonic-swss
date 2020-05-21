@@ -10,6 +10,7 @@ extern "C" {
 #include <vector>
 #include <map>
 #include <bitset>
+#include <unordered_set>
 
 #define DEFAULT_PORT_VLAN_ID    1
 /*

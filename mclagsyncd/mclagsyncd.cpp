@@ -39,6 +39,7 @@ string gRecordFile;
 
 int main(int argc, char **argv)
 {
+
     Logger::linkToDbNative("mclagsyncd");
     SWSS_LOG_ENTER();
 

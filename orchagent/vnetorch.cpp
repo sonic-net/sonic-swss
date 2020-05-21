@@ -429,6 +429,10 @@ VnetBridgeInfo VNetBitmapObject::getBridgeInfoByVni(uint32_t vni, string tunnelN
     attr.value.oid = info.bridge_id;
     rif_attrs.push_back(attr);
 
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+    attr.value.u32 = VNET_BITMAP_RIF_MTU;
+    rif_attrs.push_back(attr);
+
     status = sai_router_intfs_api->create_router_interface(
             &info.rif_id,
             gSwitchId,
@@ -713,7 +717,7 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
         intfMap_.emplace(alias, intfInfo);
     }
 
-    if (prefix)
+    if (prefix && gIntfsOrch->updateSyncdIntfPfx(alias, *prefix))
     {
         gIntfsOrch->addIp2MeRoute(gVirtualRouterId, *prefix);
     }
@@ -735,7 +739,7 @@ bool VNetBitmapObject::removeIntf(const string& alias, const IpPrefix *prefix)
 
     auto& intf = intfMap_.at(alias);
 
-    if (prefix)
+    if (prefix && gIntfsOrch->updateSyncdIntfPfx(alias, *prefix, false))
     {
         gIntfsOrch->removeIp2MeRoute(gVirtualRouterId, *prefix);
     }
@@ -790,6 +794,12 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
     TunnelRouteInfo tunnelRouteInfo;
     sai_ip_address_t underlayAddr;
     copy(underlayAddr, endp.ip);
+
+    if (tunnelRouteMap_.find(ipPrefix) != tunnelRouteMap_.end())
+    {
+        SWSS_LOG_WARN("VNET tunnel route %s exists", ipPrefix.to_string().c_str());
+        return true;
+    }
 
     VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
     for (auto peer : peer_list)
@@ -1092,6 +1102,12 @@ bool VNetBitmapObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
     uint32_t peerBitmap = vnet_id_;
     Port port;
     RouteInfo routeInfo;
+
+    if (routeMap_.find(ipPrefix) != routeMap_.end())
+    {
+        SWSS_LOG_WARN("VNET route %s exists", ipPrefix.to_string().c_str());
+        return true;
+    }
 
     bool is_subnet = (!nh.ips.getSize() || nh.ips.contains("0.0.0.0")) ? true : false;
 

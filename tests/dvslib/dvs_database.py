@@ -43,6 +43,20 @@ class DVSDatabase(object):
         formatted_entry = swsscommon.FieldValuePairs(entry.items())
         table.set(key, formatted_entry)
 
+    def update_entry(self, table_name, key, entry):
+        """
+            Updates entries of an existing key in the specified table.
+
+            Args:
+                table_name (str): The name of the table.
+                key (str): The key that needs to be updated.
+                entry (Dict[str, str]): A set of key-value pairs to be updated.
+        """
+
+        table = swsscommon.Table(self.db_connection, table_name)
+        formatted_entry = swsscommon.FieldValuePairs(entry.items())
+        table.set(key, formatted_entry)
+
     def get_entry(self, table_name, key):
         """
             Gets the entry stored at `key` in the specified table.

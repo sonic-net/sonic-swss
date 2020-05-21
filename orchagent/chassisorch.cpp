@@ -51,7 +51,6 @@ void ChassisOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    const std::string & tableName = consumer.getTableName();
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
     {

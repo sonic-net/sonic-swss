@@ -382,4 +382,3 @@ class TestFdb(object):
         dvs.runcmd("sonic-clear fdb all")
         dvs.remove_vlan_member("2", "Ethernet0")
         dvs.remove_vlan("2")
-

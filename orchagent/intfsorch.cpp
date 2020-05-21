@@ -1094,6 +1094,23 @@ void IntfsOrch::generateInterfaceMap()
     m_updateMapsTimer->start();
 }
 
+bool IntfsOrch::updateSyncdIntfPfx(const string &alias, const IpPrefix &ip_prefix, bool add)
+{
+    if (add && m_syncdIntfses[alias].ip_addresses.count(ip_prefix) == 0)
+    {
+        m_syncdIntfses[alias].ip_addresses.insert(ip_prefix);
+        return true;
+    }
+
+    if (!add && m_syncdIntfses[alias].ip_addresses.count(ip_prefix) > 0)
+    {
+        m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
+        return true;
+    }
+
+    return false;
+}
+
 void IntfsOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();

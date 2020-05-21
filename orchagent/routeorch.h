@@ -10,6 +10,7 @@
 #include "ipaddresses.h"
 #include "ipprefix.h"
 #include "nexthopgroupkey.h"
+#include "bulker.h"
 
 #include <map>
 
@@ -54,6 +55,36 @@ struct NextHopObserverEntry
     list<Observer *> observers;
 };
 
+struct RouteBulkContext
+{
+    std::deque<sai_status_t>            object_statuses;    // Bulk statuses
+    NextHopGroupKey                     tmp_next_hop;       // Temporary next hop
+    NextHopGroupKey                     nhg;
+    sai_object_id_t                     vrf_id;
+    IpPrefix                            ip_prefix;
+    bool                                excp_intfs_flag;
+    std::vector<string>                 ipv;
+
+    RouteBulkContext()
+        : excp_intfs_flag(false)
+    {
+    }
+
+    // Disable any copy constructors
+    RouteBulkContext(const RouteBulkContext&) = delete;
+    RouteBulkContext(RouteBulkContext&&) = delete;
+
+    void clear()
+    {
+        object_statuses.clear();
+        tmp_next_hop.clear();
+        nhg.clear();
+        ipv.clear();
+        excp_intfs_flag = false;
+        vrf_id = SAI_NULL_OBJECT_ID;
+    }
+};
+
 class RouteOrch : public Orch, public Subject
 {
 public:
@@ -90,9 +121,14 @@ private:
 
     NextHopObserverTable m_nextHopObservers;
 
-    void addTempRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool removeRoute(sai_object_id_t, const IpPrefix&);
+    EntityBulker<sai_route_api_t>           gRouteBulker;
+    ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
+
+    void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
+    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
+    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    bool removeRoute(RouteBulkContext& ctx);
+    bool removeRoutePost(const RouteBulkContext& ctx);
 
     std::string getLinkLocalEui64Addr(void);
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);

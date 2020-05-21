@@ -12,8 +12,8 @@ class TestNat(object):
         self.config_db.create_entry("INTERFACE", "Ethernet4|18.18.18.1/24", fvs)
         self.config_db.create_entry("INTERFACE", "Ethernet0", fvs)
         self.config_db.create_entry("INTERFACE", "Ethernet4", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
-        dvs.runcmd("ifconfig Ethernet4 up")
+        dvs.runcmd("config interface startup Ethernet0")
+        dvs.runcmd("config interface startup Ethernet4")
 
         dvs.servers[0].runcmd("ip link set down dev eth0")
         dvs.servers[0].runcmd("ip link set up dev eth0")
