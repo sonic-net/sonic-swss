@@ -160,6 +160,9 @@ typedef std::set<NaptEntryKey> DnaptCache;
 typedef std::set<TwiceNatEntryKey> TwiceNatCache;
 typedef std::set<TwiceNaptEntryKey> TwiceNaptCache;
 
+// Cache of DNAT Pool destIp 
+typedef std::set<IpAddress> DnatPoolEntry;
+
 struct DnatEntries
 {
     IpAddress        dnatIp;       /* NAT entry cache */
@@ -217,6 +220,8 @@ private:
     mutex                   m_natMutex;
     string                  m_dbgCompName;
     IpAddress               nullIpv4Addr;
+    DnatPoolEntry           m_dnatPoolEntries;
+
 
     /* DNAT/DNAPT entry is cached, to delete and re-add it whenever the direct NextHop (connected neighbor)
      * or indirect NextHop (via route) to reach the DNAT IP is changed. */
@@ -247,6 +252,7 @@ private:
     void doTwiceNatTableTask(Consumer& consumer);
     void doTwiceNaptTableTask(Consumer& consumer);
     void doNatGlobalTableTask(Consumer& consumer);
+    void doDnatPoolTableTask(Consumer& consumer);
 
     bool addNatEntry(const IpAddress &ip_address, const NatEntryValue &entry);
     bool removeNatEntry(const IpAddress &ip_address);
@@ -308,6 +314,7 @@ private:
     void disableNatFeature(void);
     void addAllNatEntries(void);
     void flushAllNatEntries(void);
+    void addAllDnatPoolEntries(void);
     void clearAllDnatEntries(void);
     void cleanupAppDbEntries(void);
     void clearCounters(void);

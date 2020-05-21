@@ -222,6 +222,12 @@ typedef std::map<std::string, natAclRule_t> natAclRule_map_t;
  */
 typedef std::map<std::string, std::string> natZoneInterface_map_t;
 
+/* To store NAT Dnat Pool information,
+ * Key is "Dst-Ip" (Eg. 65.55.45.1)
+ * Value is "ref_count" (Eg. 1)
+ */
+typedef std::map<std::string, int> natDnatPool_map_t;
+
 /* Define NatMgr Class inherited from Orch Class */
 class NatMgr : public Orch
 {
@@ -238,7 +244,7 @@ public:
 private:
     /* Declare APPL_DB, CFG_DB and STATE_DB tables */
     ProducerStateTable m_appNatTableProducer, m_appNaptTableProducer, m_appNatGlobalTableProducer;
-    ProducerStateTable m_appTwiceNatTableProducer, m_appTwiceNaptTableProducer;
+    ProducerStateTable m_appTwiceNatTableProducer, m_appTwiceNaptTableProducer, m_appNatDnatPoolProducer;
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateInterfaceTable, m_appNaptPoolIpTable;
     std::shared_ptr<swss::NotificationProducer> flushNotifier;
 
@@ -256,6 +262,7 @@ private:
     natZoneInterface_map_t   m_natZoneInterfaceInfo;
     natAclTable_map_t        m_natAclTableInfo;
     natAclRule_map_t         m_natAclRuleInfo;
+    natDnatPool_map_t        m_natDnatPoolInfo; 
 
     /* Declare doTask related fucntions */
     void doTask(Consumer &consumer);
@@ -318,6 +325,9 @@ private:
     void deleteDynamicTwiceNatRule(const std::string &key);
     void setDynamicAllForwardOrAclbasedRules(const std::string &opCmd, const std::string &pool_interface, const std::string &ip_range,
                                              const std::string &port_range, const std::string &acls_name, const std::string &dynamicKey);
+    void setDnatPoolfromNatPool(const std::string &opCmd, const std::string &ip_range);
+    void addDnatPoolEntry(std::string destIp);
+    void removeDnatPoolEntry(std::string destIp);
 
     bool isNatEnabled(void);
     bool isPortStateOk(const std::string &alias);

@@ -214,11 +214,12 @@ bool OrchDaemon::init()
     const int natorch_base_pri = 50;
 
     vector<table_name_with_pri_t> nat_tables = {
-        { APP_NAT_TABLE_NAME,        natorch_base_pri + 4 },
-        { APP_NAPT_TABLE_NAME,       natorch_base_pri + 3 },
-        { APP_NAT_TWICE_TABLE_NAME,  natorch_base_pri + 2 },
-        { APP_NAPT_TWICE_TABLE_NAME, natorch_base_pri + 1 },
-        { APP_NAT_GLOBAL_TABLE_NAME, natorch_base_pri     }
+        { APP_NAT_DNAT_POOL_TABLE_NAME,  natorch_base_pri + 5 },
+        { APP_NAT_TABLE_NAME,            natorch_base_pri + 4 },
+        { APP_NAPT_TABLE_NAME,           natorch_base_pri + 3 },
+        { APP_NAT_TWICE_TABLE_NAME,      natorch_base_pri + 2 },
+        { APP_NAPT_TWICE_TABLE_NAME,     natorch_base_pri + 1 },
+        { APP_NAT_GLOBAL_TABLE_NAME,     natorch_base_pri     }
     };
 
     gNatOrch = new NatOrch(m_applDb, m_stateDb, nat_tables, gRouteOrch, gNeighOrch);
