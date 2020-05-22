@@ -32,9 +32,9 @@ typedef std::map<sai_vlan_id_t, VlanMemberEntry> vlan_members_t;
 
 struct VlanInfo
 {
-    sai_object_id_t vlan_oid = 0;
-    sai_vlan_id_t vlan_id = 0;
-    sai_vlan_flood_control_type_t vlan_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+    sai_object_id_t     vlan_oid = 0;
+    sai_vlan_id_t       vlan_id = 0;
+
 };
 
 class Port
