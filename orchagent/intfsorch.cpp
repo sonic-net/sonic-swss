@@ -227,7 +227,7 @@ bool IntfsOrch::setRouterIntfsAdminStatus(const Port &port)
     return true;
 }
 
-bool IntfsOrch::setIntfVlanFloodType(const Port &port)
+bool IntfsOrch::setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_type_t vlan_flood_type)
 {
     SWSS_LOG_ENTER();
 
@@ -239,7 +239,7 @@ bool IntfsOrch::setIntfVlanFloodType(const Port &port)
 
     sai_attribute_t attr;
     attr.id = SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE;
-    attr.value.s32 = port.m_vlan_info.vlan_flood_type;
+    attr.value.s32 = vlan_flood_type;
 
     sai_status_t status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &attr);
     if (status != SAI_STATUS_SUCCESS)
@@ -254,12 +254,6 @@ bool IntfsOrch::setIntfVlanFloodType(const Port &port)
 bool IntfsOrch::setIntfProxyArp(const string &alias, const string &proxy_arp)
 {
     SWSS_LOG_ENTER();
-
-    if (proxy_arp != "enabled" || proxy_arp != "disabled")
-    {
-        SWSS_LOG_ERROR("Proxy ARP state is invalid: \"%s\"", proxy_arp.c_str());
-        return false;
-    }
 
     if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
     {
@@ -282,23 +276,23 @@ bool IntfsOrch::setIntfProxyArp(const string &alias, const string &proxy_arp)
 
     if (port.m_type == Port::VLAN)
     {
+        sai_vlan_flood_control_type_t vlan_flood_type;
         if (proxy_arp == "enabled")
         {
-            port.m_vlan_info.vlan_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_NONE;
+            vlan_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_NONE;
         }
         else
         {
-            port.m_vlan_info.vlan_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+            vlan_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
         }
 
-        if (!setIntfVlanFloodType(port))
+        if (!setIntfVlanFloodType(port, vlan_flood_type))
         {
             return false;
         }
     }
 
     m_syncdIntfses[alias].proxy_arp = (proxy_arp == "enabled") ? true : false;
-
     return true;
 }
 

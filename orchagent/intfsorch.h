@@ -89,7 +89,7 @@ private:
     void addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
     void removeDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
 
-    bool setIntfVlanFloodType(const Port &port);
+    bool setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_type_t vlan_flood_type);
     bool setIntfProxyArp(const string &alias, const string &proxy_arp);
 };
 

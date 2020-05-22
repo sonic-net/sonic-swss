@@ -278,11 +278,11 @@ bool IntfMgr::setIntfProxyArp(const string &alias, const string &vrf_name, const
     string res;
     string proxy_arp_pvlan;
 
-    if (proxy_arp == "enabled" || !vrf_name.compare(0, strlen(VNET_PREFIX), VNET_PREFIX))
+    if (proxy_arp == "enabled")
     {
         proxy_arp_pvlan = "1";
     }
-    else if (proxy_arp == "disabled" && vrf_name.compare(0, strlen(VNET_PREFIX), VNET_PREFIX))
+    else if (proxy_arp == "disabled")
     {
         proxy_arp_pvlan = "0";
     }
@@ -296,7 +296,6 @@ bool IntfMgr::setIntfProxyArp(const string &alias, const string &vrf_name, const
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
     SWSS_LOG_INFO("Proxy ARP set to \"%s\" on interface \"%s\"", proxy_arp.c_str(), alias.c_str());
-
     return true;
 }
 
@@ -455,7 +454,8 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             data.push_back(fvTuple);
         }
 
-        if (!proxy_arp.empty() || !vrf_name.compare(0, strlen(VNET_PREFIX), VNET_PREFIX))
+
+        if (!proxy_arp.empty())
         {
             if (!setIntfProxyArp(alias, vrf_name, proxy_arp))
             {

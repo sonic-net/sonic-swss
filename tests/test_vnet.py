@@ -221,6 +221,7 @@ def create_vlan_interface(dvs, vlan_name, ifname, vnet_name, ipaddr):
         "VLAN_INTERFACE", '|', vlan_name,
         [
           ("vnet_name", vnet_name),
+          ("proxy_arp", "enabled"),
         ],
     )
 
@@ -231,6 +232,7 @@ def create_vlan_interface(dvs, vlan_name, ifname, vnet_name, ipaddr):
         "INTF_TABLE", ':', vlan_name,
         [
             ("vnet_name", vnet_name),
+            ("proxy_arp", "enabled"),
         ],
     )
     time.sleep(2)
