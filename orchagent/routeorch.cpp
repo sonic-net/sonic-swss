@@ -22,7 +22,7 @@ extern CrmOrch *gCrmOrch;
 
 const int routeorch_pri = 5;
 
-RouteOrch::RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
+RouteOrch::RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch) :
         gRouteBulker(sai_route_api),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId),
         Orch(db, tableName, routeorch_pri),
@@ -30,6 +30,8 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, 
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
         m_vrfOrch(vrfOrch),
+        m_fgNhgOrch(fgNhgOrch),
+	m_fgNhgOrch(fgNhgOrch),
         m_nextHopGroupCount(0),
         m_resync(false)
 {
@@ -1073,6 +1075,12 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
 
+    if(m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()){
+        SWSS_LOG_INFO("Reroute %s:%s to fgNhgOrch", ipPrefix.to_string().c_str(), 
+                nextHops.to_string().c_str());
+        return m_fgNhgOrch->addRoute(vrf_id, ipPrefix, nextHops);
+    }
+
     /* next_hop_id indicates the next hop id or next hop group id of this route */
     sai_object_id_t next_hop_id;
 
@@ -1333,6 +1341,11 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
 
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
+
+    if(m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()){
+        SWSS_LOG_INFO("Reroute %s to fgNhgOrch", ipPrefix.to_string().c_str());
+        return m_fgNhgOrch->removeRoute(vrf_id, ipPrefix);
+    }
 
     auto it_route_table = m_syncdRoutes.find(vrf_id);
     if (it_route_table == m_syncdRoutes.end())

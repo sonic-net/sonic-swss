@@ -1,0 +1,117 @@
+#ifndef SWSS_FGNHGORCH_H
+#define SWSS_FGNHGORCH_H
+
+#include "orch.h"
+#include "observer.h"
+#include "intfsorch.h"
+#include "neighorch.h"
+
+#include "ipaddress.h"
+#include "ipaddresses.h"
+#include "ipprefix.h"
+#include "nexthopgroupkey.h"
+
+#include <map>
+
+/* Maximum next hop group number */
+#define NHGRP_MAX_SIZE 128
+/* Length of the Interface Id value in EUI64 format */
+#define EUI64_INTF_ID_LEN 8
+
+/* Use default to start with, TODO: make this dynamic */
+#define DEFAULT_NHGRP_SIZE 128
+
+typedef uint32_t Bank;
+typedef std::set<NextHopKey> ActiveNextHops; /* TODO: replace ActiveNextHops with FGNextHopGroupMap */
+typedef std::vector<sai_object_id_t> FGNextHopGroupMembers;
+typedef std::vector<uint32_t> HashBuckets;
+typedef std::map<NextHopKey, HashBuckets> FGNextHopGroupMap;
+typedef std::vector<FGNextHopGroupMap> BankFGNextHopGroupMap;
+typedef std::map<Bank,Bank> InactiveBankMapsToBank;
+
+struct FGNextHopGroupEntry
+{
+    sai_object_id_t         next_hop_group_id;      // next hop group id
+    int                     ref_count;              // reference count
+    FGNextHopGroupMembers   nhopgroup_members;      // ids of members indexed by <ip_address, if_alias>
+    ActiveNextHops          active_nexthops;
+    BankFGNextHopGroupMap   syncd_fgnhg_map;
+    NextHopGroupKey         nhg_key;
+    InactiveBankMapsToBank  inactive_to_active_map;
+};
+
+/*TODO: can we make an optimization here when we get multiple routes pointing to a fgnhg */
+typedef std::map<IpPrefix, FGNextHopGroupEntry> FGRouteTable;
+/* RouteTables: vrf_id, RouteTable */
+typedef std::map<sai_object_id_t, FGRouteTable> FGRouteTables;
+
+typedef std::string FgNhg;
+
+typedef std::map<IpAddress, Bank> NextHops;
+typedef struct
+{
+    uint32_t start_index;
+    uint32_t end_index;
+} bank_index_range;
+
+typedef struct FgNhgEntry
+{
+    string fgNhg_name;
+    uint32_t configured_bucket_size;
+    uint32_t real_bucket_size;
+    NextHops nextHops;
+    std::vector<IpPrefix> prefixes;
+    std::vector<bank_index_range> hash_bucket_indices;
+} FgNhgEntry;
+
+typedef std::map<IpPrefix, FgNhgEntry*> FgNhgPrefixes; 
+
+typedef std::map<FgNhg, FgNhgEntry> FgNhgs;
+
+typedef struct
+{
+    std::vector<NextHopKey> nhs_to_del;
+    std::vector<NextHopKey> nhs_to_add;
+    std::vector<NextHopKey> active_nhs;
+} Bank_Member_Changes;
+
+class FgNhgOrch : public Orch, public Subject
+{
+public:
+    FgNhgPrefixes fgNhgPrefixes;
+    FgNhgOrch(DBConnector *db, vector<string> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch);
+
+    bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
+    bool removeRoute(sai_object_id_t, const IpPrefix&);
+    bool validnexthopinNextHopGroup(const NextHopKey&);
+    bool invalidnexthopinNextHopGroup(const NextHopKey&);
+
+private:
+    NeighOrch *m_neighOrch;
+    IntfsOrch *m_intfsOrch;
+    VRFOrch *m_vrfOrch;
+    FgNhgs m_FgNhgs;
+    FGRouteTables m_syncdFGRouteTables;
+
+    bool set_new_nhg_members(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+                    std::vector<Bank_Member_Changes> &bank_member_changes, 
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+    bool compute_and_set_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry,
+                    FgNhgEntry *fgNhgEntry, std::vector<Bank_Member_Changes> &bank_member_changes,
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+    bool set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+                    uint32_t bank, uint32_t syncd_bank, std::vector<Bank_Member_Changes> bank_member_changes,
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+    bool set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+                    uint32_t bank,std::vector<Bank_Member_Changes> &bank_member_changes,
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+    void check_and_skip_down_nhs(FgNhgEntry *fgNhgEntry, std::vector<Bank_Member_Changes> &bank_member_changes,
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+
+    bool doTaskFgNhg(const KeyOpFieldsValuesTuple&);
+    bool doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple&);
+    bool doTaskFgNhg_member(const KeyOpFieldsValuesTuple&);
+    void doTask(Consumer& consumer);
+};
+
+#endif /* SWSS_ROUTEORCH_H */

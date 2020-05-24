@@ -8,6 +8,7 @@ extern PortsOrch *gPortsOrch;
 extern RouteOrch *gRouteOrch;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
+extern FgNhgOrch *gFgNhgOrch;
 
 extern FdbOrch *gFdbOrch;
 extern MirrorOrch *gMirrorOrch;
@@ -315,6 +316,14 @@ namespace aclorch_test
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch);
 
+            ASSERT_EQ(gFgNhgOrch, nullptr);
+            vector<string> fgnhg_tables = {
+                CFG_FG_NHG,
+                CFG_FG_NHG_PREFIX,
+                CFG_FG_NHG_MEMBER
+            };
+            gFgNhgOrch = new FgNhgOrch(m_config_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
+
             ASSERT_EQ(gRouteOrch, nullptr);
             gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch);
 
@@ -362,6 +371,8 @@ namespace aclorch_test
             gCrmOrch = nullptr;
             delete gPortsOrch;
             gPortsOrch = nullptr;
+            delete gFgNhgOrch;
+            gFgNhgOrch = nullptr; 
 
             auto status = sai_switch_api->remove_switch(gSwitchId);
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);

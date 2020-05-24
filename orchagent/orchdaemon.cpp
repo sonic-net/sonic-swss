@@ -30,6 +30,7 @@ FdbOrch *gFdbOrch;
 IntfsOrch *gIntfsOrch;
 NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
+FgNhgOrch *gFgNhgOrch;
 AclOrch *gAclOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
@@ -126,7 +127,16 @@ bool OrchDaemon::init()
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch);
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch);
-    gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch);
+
+    /* TODO: add table priorities to fgnhg_tables: table_name_with_pri_t after checking what is the implication of it */
+    vector<string> fgnhg_tables = {
+        CFG_FG_NHG,
+        CFG_FG_NHG_PREFIX,
+        CFG_FG_NHG_MEMBER
+    };
+
+    gFgNhgOrch = new FgNhgOrch(m_configDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
+    gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
 
     TableConnector confDbSflowTable(m_configDb, CFG_SFLOW_TABLE_NAME);
     TableConnector appCoppTable(m_applDb, APP_COPP_TABLE_NAME);
