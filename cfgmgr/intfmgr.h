@@ -47,7 +47,7 @@ private:
     void setSubIntfStateOk(const std::string &alias);
     void removeSubIntfState(const std::string &alias);
 
-    bool setIntfProxyArp(const std::string &alias, const std::string &vrf_name, const std::string &proxy_arp);
+    bool setIntfProxyArp(const std::string &alias, const std::string &proxy_arp);
 };
 
 }

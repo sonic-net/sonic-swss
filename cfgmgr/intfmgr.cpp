@@ -272,7 +272,7 @@ void IntfMgr::removeSubIntfState(const string &alias)
     }
 }
 
-bool IntfMgr::setIntfProxyArp(const string &alias, const string &vrf_name, const string &proxy_arp)
+bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
 {
     stringstream cmd;
     string res;
@@ -454,10 +454,9 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             data.push_back(fvTuple);
         }
 
-
         if (!proxy_arp.empty())
         {
-            if (!setIntfProxyArp(alias, vrf_name, proxy_arp))
+            if (!setIntfProxyArp(alias, proxy_arp))
             {
                 SWSS_LOG_ERROR("Failed to set proxy ARP to \"%s\" state for the \"%s\" interface", proxy_arp.c_str(), alias.c_str());
                 return false;
