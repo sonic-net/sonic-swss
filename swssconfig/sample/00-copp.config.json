@@ -43,8 +43,8 @@
         "OP": "SET"
     },
     {
-        "COPP_TABLE:trap.group.ip2me": {
-            "trap_ids": "ip2me",
+        "COPP_TABLE:trap.group.nat.ip2me": {
+            "trap_ids": "ip2me,src_nat_miss,dest_nat_miss",
             "trap_action":"trap",
             "trap_priority":"1",
             "queue": "1",
@@ -52,20 +52,6 @@
             "mode":"sr_tcm",
             "cir":"6000",
             "cbs":"6000",
-            "red_action":"drop"
-        },
-        "OP": "SET"
-    },
-    {
-        "COPP_TABLE:trap.group.nat": {
-            "trap_ids": "src_nat_miss,dest_nat_miss",
-            "trap_action":"trap",
-            "trap_priority":"1",
-            "queue": "1",
-            "meter_type":"packets",
-            "mode":"sr_tcm",
-            "cir":"600",
-            "cbs":"600",
             "red_action":"drop"
         },
         "OP": "SET"
