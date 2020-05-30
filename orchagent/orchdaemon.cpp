@@ -136,6 +136,7 @@ bool OrchDaemon::init()
     };
 
     gFgNhgOrch = new FgNhgOrch(m_configDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
+    gDirectory.set(gFgNhgOrch);
     gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
 
     TableConnector confDbSflowTable(m_configDb, CFG_SFLOW_TABLE_NAME);
@@ -292,6 +293,7 @@ bool OrchDaemon::init()
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(gNatOrch);
+    m_orchList.push_back(gFgNhgOrch);
 
     m_select = new Select();
 

@@ -75,7 +75,7 @@ typedef struct
     std::vector<NextHopKey> active_nhs;
 } Bank_Member_Changes;
 
-class FgNhgOrch : public Orch, public Subject
+class FgNhgOrch : public Orch
 {
 public:
     FgNhgPrefixes fgNhgPrefixes;

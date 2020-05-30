@@ -26,6 +26,7 @@ FgNhgOrch::FgNhgOrch(DBConnector *db, vector<string> &tableNames, NeighOrch *nei
 {
     /* TODO: make Orch call with table priorities: table_name_with_pri_t after checking what is the implication of it */
      SWSS_LOG_ENTER();
+
 }
 
 void calculate_bank_hash_bucket_start_indices(FgNhgEntry *fgNhgEntry)
@@ -525,8 +526,8 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
     {
         /* New route + nhg addition */
         FGNextHopGroupEntry syncd_fg_route_entry;
-        /* TODO: query real_bucket_size from SAI */
-        fgNhgEntry->real_bucket_size = fgNhgEntry->configured_bucket_size;
+        string platform = getenv("platform") ? getenv("platform") : "";
+
         sai_attribute_t nhg_attr;
         vector<sai_attribute_t> nhg_attrs;
 
@@ -535,7 +536,7 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
         nhg_attrs.push_back(nhg_attr);
 
         nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_CONFIGURED_SIZE;
-        nhg_attr.value.s32 = fgNhgEntry->real_bucket_size;
+        nhg_attr.value.s32 = fgNhgEntry->configured_bucket_size;
         nhg_attrs.push_back(nhg_attr);
 
         sai_object_id_t next_hop_group_id;
@@ -543,8 +544,6 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
                                                                         gSwitchId,
                                                                         (uint32_t)nhg_attrs.size(),
                                                                         nhg_attrs.data());
-        calculate_bank_hash_bucket_start_indices(fgNhgEntry);
-
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
@@ -552,7 +551,28 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
             return false;
         }
 
-        SWSS_LOG_NOTICE("fgnhgorch created next hop group %s", nextHops.to_string().c_str());
+        if(platform == VS_PLATFORM_SUBSTRING)
+        {
+           /* TODO: need implementation for SAI_NEXT_HOP_GROUP_ATTR_REAL_SIZE */ 
+            fgNhgEntry->real_bucket_size = fgNhgEntry->configured_bucket_size;
+        }
+        else
+        {
+            nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_REAL_SIZE;
+            nhg_attr.value.u32 = 0;
+            status = sai_next_hop_group_api->get_next_hop_group_attribute(next_hop_group_id, 1, &nhg_attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to query next hop group %s SAI_NEXT_HOP_GROUP_ATTR_REAL_SIZE, rv:%d",
+                           nextHops.to_string().c_str(), status);
+                return false;
+            }
+            fgNhgEntry->real_bucket_size = nhg_attr.value.u32;
+        }
+
+        calculate_bank_hash_bucket_start_indices(fgNhgEntry);
+
+        SWSS_LOG_NOTICE("fgnhgorch created next hop group %s of size %d", nextHops.to_string().c_str(), fgNhgEntry->real_bucket_size);
 
         syncd_fg_route_entry.next_hop_group_id = next_hop_group_id;
 
