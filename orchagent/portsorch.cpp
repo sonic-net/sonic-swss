@@ -114,8 +114,6 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_ETHER_STATS_TX_NO_ERRORS,
     SAI_PORT_STAT_IP_IN_UCAST_PKTS,
     SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS,
-    SAI_PORT_STAT_IN_DROPPED_PKTS,
-    SAI_PORT_STAT_OUT_DROPPED_PKTS,
 };
 
 static const vector<sai_queue_stat_t> queue_stat_ids =
