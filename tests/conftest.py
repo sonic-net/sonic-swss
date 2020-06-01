@@ -1017,7 +1017,6 @@ def dvs_acl_manager(request, dvs):
                                          dvs.get_counters_db())
 
 ##################### DPB fixtures ###########################################
-@pytest.yield_fixture(scope="module")
 def create_dpb_config_file(dvs):
     cmd = "sonic-cfggen -j /etc/sonic/init_cfg.json -j /tmp/ports.json --print-data > /tmp/dpb_config_db.json"
     dvs.runcmd(['sh', '-c', cmd])
@@ -1026,7 +1025,6 @@ def create_dpb_config_file(dvs):
     cmd = "cp /tmp/dpb_config_db.json /etc/sonic/config_db.json"
     dvs.runcmd(cmd)
 
-@pytest.yield_fixture(scope="module")
 def remove_dpb_config_file(dvs):
     cmd = "mv /etc/sonic/config_db.json.bak /etc/sonic/config_db.json"
     dvs.runcmd(cmd)
