@@ -18,11 +18,15 @@ debian/swss.debhelper.log
 debian/swss.substvars
 debian/swss-dbg.debhelper.log
 debian/swss-dbg.substvars
-
 debian/libswsscommon-dev/
 debian/libswsscommon/
 debian/swss/
 debian/tmp/
+debian/.debhelper/
+debian/autoreconf.after
+debian/autoreconf.before
+debian/debhelper-build-stamp
+debian/swss-dbg/
 
 aclocal.m4
 config.h
@@ -37,6 +41,7 @@ stamp-h1
 **/.deps/
 **/.libs/
 **/Makefile
+autom4te.cache
 
 # Dependency Folder #
 #####################
@@ -55,16 +60,25 @@ cfgmgr/vrfmgrd
 cfgmgr/nbrmgrd
 cfgmgr/vxlanmgrd
 cfgmgr/natmgrd
+cfgmgr/sflowmgrd
 neighsyncd/neighsyncd
 portsyncd/portsyncd
 natsyncd/natsyncd
+mclagsyncd/mclagsyncd
 orchagent/orchagent
 orchagent/routeresync
 orchagent/orchagent_restart_check
 swssconfig/swssconfig
 swssconfig/swssplayer
+tlm_teamd/tlm_teamd
 tests/tests
 
 # Test Files #
 ##############
 tests/log
+tests/mock_tests/test-suite.log
+tests/mock_tests/tests.log
+tests/mock_tests/tests.trs
+tests/test-suite.log
+tests/tests.log
+tests/tests.trs
