@@ -7,7 +7,7 @@ class TestSpeedSet:
     NUM_PORTS = 32
 
     def test_SpeedAndBufferSet(self, dvs, testlog):
-        configured_speed_list = ["40000"]
+        configured_speed_list = []
         speed_list = ["10000", "25000", "40000", "50000", "100000"]
 
         # buffers_config.j2 is used for the test and defines 3 static profiles and 1 dynamic profile:
@@ -19,6 +19,20 @@ class TestSpeedSet:
 
         cdb = dvs.get_config_db()
         adb = dvs.get_asic_db()
+
+        # Get speed from the first port we hit in ASIC DB port walk, and
+        # assume that its the initial configured speed for all ports, and
+        # dynamic buffer profile has already been created for it.
+        asic_port_records = adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        for k in asic_port_records:
+            fvs = adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", k)
+            for fv in fvs:
+                if fv[0] == "SAI_PORT_ATTR_SPEED":
+                    configured_speed_list.append(fv[1])
+                    break
+
+            if len(configured_speed_list):
+                break;
 
         # Check if the buffer profiles make it to Config DB
         cdb.wait_for_n_keys("BUFFER_PROFILE", num_buffer_profiles)
