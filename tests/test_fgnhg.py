@@ -51,8 +51,6 @@ def verify_programmed_nh_membs(db,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size
         assert idx == 1
 
 
-
-
 class TestFineGrainedNextHopGroup(object):
     def test_route_fgnhg(self, dvs, testlog):
         config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -64,24 +62,20 @@ class TestFineGrainedNextHopGroup(object):
         intf_tbl.set("Ethernet12", fvs)
         intf_tbl.set("Ethernet16", fvs)
         intf_tbl.set("Ethernet20", fvs)
-        intf_tbl.set("Ethernet24", fvs)
-        intf_tbl.set("Ethernet28", fvs)
+
         intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
         intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
         intf_tbl.set("Ethernet8|10.0.0.4/31", fvs)
         intf_tbl.set("Ethernet12|10.0.0.6/31", fvs)
         intf_tbl.set("Ethernet16|10.0.0.8/31", fvs)
         intf_tbl.set("Ethernet20|10.0.0.10/31", fvs)
-        intf_tbl.set("Ethernet24|10.0.0.12/31", fvs)
-        intf_tbl.set("Ethernet28|10.0.0.14/31", fvs)
-        dvs.runcmd("ifconfig Ethernet0 up")
-        dvs.runcmd("ifconfig Ethernet4 up")
-        dvs.runcmd("ifconfig Ethernet8 up")
-        dvs.runcmd("ifconfig Ethernet12 up")
-        dvs.runcmd("ifconfig Ethernet16 up")
-        dvs.runcmd("ifconfig Ethernet20 up")
-        dvs.runcmd("ifconfig Ethernet24 up")
-        dvs.runcmd("ifconfig Ethernet28 up")
+
+        dvs.runcmd("config interface startup Ethernet0")
+        dvs.runcmd("config interface startup Ethernet4")
+        dvs.runcmd("config interface startup Ethernet8")
+        dvs.runcmd("config interface startup Ethernet12")
+        dvs.runcmd("config interface startup Ethernet16")
+        dvs.runcmd("config interface startup Ethernet20")
 
         dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
         dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
@@ -89,18 +83,22 @@ class TestFineGrainedNextHopGroup(object):
         dvs.runcmd("arp -s 10.0.0.7 00:00:00:00:00:04")
         dvs.runcmd("arp -s 10.0.0.9 00:00:00:00:00:05")
         dvs.runcmd("arp -s 10.0.0.11 00:00:00:00:00:06")
-        dvs.runcmd("arp -s 10.0.0.13 00:00:00:00:00:07")
-        dvs.runcmd("arp -s 10.0.0.15 00:00:00:00:00:08")
-        dvs.runcmd("arp -s 10.0.0.17 00:00:00:00:00:09")
 
         dvs.servers[0].runcmd("ip link set down dev eth0") == 0
         dvs.servers[1].runcmd("ip link set down dev eth0") == 0
         dvs.servers[2].runcmd("ip link set down dev eth0") == 0
+        dvs.servers[3].runcmd("ip link set down dev eth0") == 0
+        dvs.servers[4].runcmd("ip link set down dev eth0") == 0
+        dvs.servers[5].runcmd("ip link set down dev eth0") == 0
 
         dvs.servers[0].runcmd("ip link set up dev eth0") == 0
         dvs.servers[1].runcmd("ip link set up dev eth0") == 0
         dvs.servers[2].runcmd("ip link set up dev eth0") == 0
-
+        dvs.servers[3].runcmd("ip link set up dev eth0") == 0
+        dvs.servers[4].runcmd("ip link set up dev eth0") == 0
+        dvs.servers[5].runcmd("ip link set up dev eth0") == 0
+        
+        # TODO: add tests for link down scenarios
 
         fg_nhg_name = "fgnhg_v4"
         fg_nhg_prefix = "2.2.2.0/24"

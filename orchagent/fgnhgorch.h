@@ -105,8 +105,6 @@ private:
     bool set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     uint32_t bank,std::vector<Bank_Member_Changes> &bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
-    void check_and_skip_down_nhs(FgNhgEntry *fgNhgEntry, std::vector<Bank_Member_Changes> &bank_member_changes,
-                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
 
     bool doTaskFgNhg(const KeyOpFieldsValuesTuple&);
     bool doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple&);
