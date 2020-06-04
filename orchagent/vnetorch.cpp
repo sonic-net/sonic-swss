@@ -482,36 +482,7 @@ VnetBridgeInfo VNetBitmapObject::getBridgeInfoByVni(uint32_t vni, string tunnelN
         tunnel->createTunnel(MAP_T::BRIDGE_TO_VNI, MAP_T::VNI_TO_BRIDGE, VXLAN_ENCAP_TTL);
     }
 
-    attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
-    attr.value.s32 = SAI_BRIDGE_PORT_TYPE_TUNNEL;
-    bpt_attrs.push_back(attr);
-
-    attr.id = SAI_BRIDGE_PORT_ATTR_BRIDGE_ID;
-    attr.value.oid = info.bridge_id;
-    bpt_attrs.push_back(attr);
-
-    attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
-    attr.value.booldata = true;
-    bpt_attrs.push_back(attr);
-
-    attr.id = SAI_BRIDGE_PORT_ATTR_TUNNEL_ID;
-    attr.value.oid = tunnel->getTunnelId();
-    bpt_attrs.push_back(attr);
-
-    attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
-    attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
-    bpt_attrs.push_back(attr);
-
-    status = sai_bridge_api->create_bridge_port(
-            &info.bridge_port_tunnel_id,
-            gSwitchId,
-            (uint32_t)bpt_attrs.size(),
-            bpt_attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create tunnel bridge port for vni %u", vni);
-        throw std::runtime_error("vni creation failed");
-    }
+    info.bridge_port_tunnel_id = tunnel->getBridgePortId();
 
     // FIXME: Use "createVxlanTunnelMap()" for tunnel mapper creation
     auto tunnelEncapMapperEntry = tunnel->addEncapMapperEntry(info.bridge_id, vni);
@@ -545,13 +516,6 @@ bool VNetBitmapObject::clearBridgeInfoByVni(uint32_t vni, string tunnelName)
         }
 
         sai_status_t status;
-
-        status = sai_bridge_api->remove_bridge_port(bridgeInfo.bridge_port_tunnel_id);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to remove tunnel bridge port for VNI %u, SAI rc: %d", vni, status);
-            return false;
-        }
 
         status = sai_bridge_api->remove_bridge_port(bridgeInfo.bridge_port_rif_id);
         if (status != SAI_STATUS_SUCCESS)

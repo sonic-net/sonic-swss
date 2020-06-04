@@ -15,6 +15,11 @@
 #include "vxlanorch.h"
 #include "directory.h"
 #include "swssnet.h"
+#include "exec.h"
+#include "../cfgmgr/shellcmd.h"
+#include "sai_serialize.h"
+
+using namespace swss;
 
 /* Global variables */
 extern sai_object_id_t gSwitchId;
@@ -24,6 +29,8 @@ extern sai_next_hop_api_t *sai_next_hop_api;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
 extern sai_object_id_t  gUnderlayIfId;
+extern sai_bridge_api_t *sai_bridge_api;
+extern sai_switch_api_t *sai_switch_api;
 
 const map<MAP_T, uint32_t> vxlanTunnelMap =
 {
@@ -368,8 +375,63 @@ create_tunnel_termination(
     return term_table_id;
 }
 
-void
-remove_tunnel_termination(sai_object_id_t term_table_id)
+static sai_object_id_t create_tunnel_bridge_port(sai_object_id_t tunnel_oid)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+
+    vector<sai_attribute_t> attrs_bridge;
+    sai_object_id_t default1QBridge;
+    sai_status_t status;
+
+    attr.id = SAI_SWITCH_ATTR_DEFAULT_1Q_BRIDGE_ID;
+    attrs_bridge.push_back(attr);
+
+    status = sai_switch_api->get_switch_attribute(gSwitchId, (uint32_t)attrs_bridge.size(), attrs_bridge.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get default 1Q bridge, rv:%d", status);
+        throw "VxlanOrch initialization failure";
+    }
+
+    default1QBridge = attrs_bridge[0].value.oid;
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+    attr.value.s32 = SAI_BRIDGE_PORT_TYPE_TUNNEL;
+    attrs.push_back(attr);
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_TUNNEL_ID;
+    attr.value.oid = tunnel_oid;
+    attrs.push_back(attr);
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_BRIDGE_ID;
+    attr.value.oid = default1QBridge;
+    attrs.push_back(attr);
+
+    /* Create a bridge port with admin status set to UP */
+    attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+    attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_DISABLE;
+    attrs.push_back(attr);
+
+    sai_object_id_t m_bridge_port_id;
+    status = sai_bridge_api->create_bridge_port(&m_bridge_port_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Failed to add tunnel bridge port");
+    }
+
+    SWSS_LOG_NOTICE("Add tunnel bridge port to default 1Q bridge, bridge port id is %lu", m_bridge_port_id);
+
+    return m_bridge_port_id;
+}
+
+void remove_tunnel_termination(sai_object_id_t term_table_id)
 {
     if (term_table_id != SAI_NULL_OBJECT_ID)
     {
@@ -407,6 +469,15 @@ bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl)
 
         ids_.tunnel_id = create_tunnel(ids_.tunnel_encap_id, ids_.tunnel_decap_id, ip, gUnderlayIfId, encap_ttl);
 
+        shared_ptr<DBConnector> m_counter_db = shared_ptr<DBConnector>(new DBConnector(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0));
+        unique_ptr<Table> m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
+
+        /* Add tunnel name map to counter table */
+        FieldValueTuple tuple(tunnel_name_, sai_serialize_object_id(ids_.tunnel_id));
+        vector<FieldValueTuple> fields;
+        fields.push_back(tuple);
+        m_counterTable->set("", fields);
+
         ip = nullptr;
         if (!dst_ip_.isZero())
         {
@@ -417,6 +488,10 @@ bool VxlanTunnel::createTunnel(MAP_T encap, MAP_T decap, uint8_t encap_ttl)
         ids_.tunnel_term_id = create_tunnel_termination(ids_.tunnel_id, ips, ip, gVirtualRouterId);
         active_ = true;
         tunnel_map_ = { encap, decap };
+
+        /*Create bridge port of vxlan tunnel*/
+        ids_.tunnel_bridge_port_id = create_tunnel_bridge_port(ids_.tunnel_id);
+        SWSS_LOG_NOTICE("Create tunnel bridge port id is %lu", ids_.tunnel_bridge_port_id);
     }
     catch (const std::runtime_error& error)
     {
