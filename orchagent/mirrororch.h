@@ -32,6 +32,10 @@ struct MirrorEntry
     uint8_t ttl;
     uint8_t queue;
     string policer;
+    string dst_port;
+    string src_port;
+    string direction;
+    string type;
 
     struct
     {
@@ -117,6 +121,8 @@ private:
     void updateFdb(const FdbUpdate&);
     void updateLagMember(const LagMemberUpdate&);
     void updateVlanMember(const VlanMemberUpdate&);
+
+    bool configurePortMirrorSession(const string&, MirrorEntry&, bool enable);
 
     void doTask(Consumer& consumer);
 };

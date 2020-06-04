@@ -27,6 +27,10 @@
 #define MIRROR_SESSION_ROUTE_PREFIX         "route_prefix"
 #define MIRROR_SESSION_VLAN_ID              "vlan_id"
 #define MIRROR_SESSION_POLICER              "policer"
+#define MIRROR_SESSION_SRC_PORT             "src_port"
+#define MIRROR_SESSION_DST_PORT             "dst_port"
+#define MIRROR_SESSION_DIRECTION            "direction"
+#define MIRROR_SESSION_TYPE                 "type"
 
 #define MIRROR_SESSION_DEFAULT_VLAN_PRI 0
 #define MIRROR_SESSION_DEFAULT_VLAN_CFI 0
@@ -36,6 +40,7 @@
 #define MIRROR_SESSION_DSCP_MAX         63
 
 extern sai_mirror_api_t *sai_mirror_api;
+extern sai_port_api_t *sai_port_api;
 
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
@@ -324,6 +329,22 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
                 m_policerOrch->increaseRefCount(fvValue(i));
                 entry.policer = fvValue(i);
             }
+            else if (fvField(i) == MIRROR_SESSION_SRC_PORT)
+            {
+                entry.src_port = fvValue(i);
+            }
+            else if (fvField(i) == MIRROR_SESSION_DST_PORT)
+            {
+                entry.dst_port = fvValue(i);
+            }
+            else if (fvField(i) == MIRROR_SESSION_DIRECTION)
+            {
+                entry.direction = fvValue(i);
+            }
+            else if (fvField(i) == MIRROR_SESSION_TYPE)
+            {
+                entry.type = fvValue(i);
+            }
             else
             {
                 SWSS_LOG_ERROR("Failed to parse session %s configuration. Unknown attribute %s.\n", key.c_str(), fvField(i).c_str());
@@ -348,8 +369,16 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
 
     setSessionState(key, entry);
 
-    // Attach the destination IP to the routeOrch
-    m_routeOrch->attach(this, entry.dstIp);
+    if (entry.type == "SPAN" && !entry.dst_port.empty())
+    {
+        auto &session1 = m_syncdMirrors.find(key)->second;
+        activateSession(key, session1);
+    }
+    else
+    {
+        // Attach the destination IP to the routeOrch
+        m_routeOrch->attach(this, entry.dstIp);
+    }
 }
 
 task_process_status MirrorOrch::deleteEntry(const string& name)
@@ -375,7 +404,10 @@ task_process_status MirrorOrch::deleteEntry(const string& name)
 
     if (session.status)
     {
-        m_routeOrch->detach(this, session.dstIp);
+        if (session.type != "SPAN")
+        {
+            m_routeOrch->detach(this, session.dstIp);
+        }
         if (!deactivateSession(name, session))
         {
             SWSS_LOG_ERROR("Failed to remove mirror session %s", name.c_str());
@@ -613,6 +645,64 @@ bool MirrorOrch::updateSession(const string& name, MirrorEntry& session)
     return ret;
 }
 
+bool MirrorOrch::configurePortMirrorSession(const string& name, MirrorEntry& session, bool enable)
+{
+    sai_status_t status;
+    sai_attribute_t port_attr;
+    Port port;
+    bool rv1 = true , rv2 = true;
+
+    if (enable)
+    {
+        port_attr.value.objlist.count = 1;
+        port_attr.value.objlist.list = (long unsigned int *)calloc(port_attr.value.objlist.count, sizeof(sai_object_id_t));
+        port_attr.value.objlist.list[0] = session.sessionId;
+    }
+    else
+    {
+        port_attr.value.objlist.count = 0;
+    }
+
+    auto ports = tokenize(session.src_port, ',');
+    if (ports.size() != 0)
+    {
+        for (auto alias : ports)
+        {
+            Port port;
+            if (!gPortsOrch->getPort(alias, port))
+            {
+                SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
+                return false;
+            }
+            if (session.direction == "RX" || session.direction == "BOTH") {
+                port_attr.id = SAI_PORT_ATTR_INGRESS_MIRROR_SESSION;
+                status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to configure session %s to port %s, status %d, sessionId %x\n",
+                                    name.c_str(), port.m_alias.c_str(), status, session.sessionId);
+                    rv1 = false;
+                }
+            }
+            if (session.direction == "TX" || session.direction == "BOTH") {
+                port_attr.id = SAI_PORT_ATTR_EGRESS_MIRROR_SESSION;
+                status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to configure session %s to port %s, status %d, sessionId %x\n",
+                                    name.c_str(), port.m_alias.c_str(), status, session.sessionId);
+                    rv2 = false;
+                }
+            }
+        }
+    }
+
+    if (rv1 == false || rv2 == false)
+        return false;
+
+    return true;
+}
+
 bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
@@ -632,75 +722,95 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         attrs.push_back(attr);
     }
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
-    attr.value.oid = session.neighborInfo.portId;
-    attrs.push_back(attr);
-
-    attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
-    attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
-    attrs.push_back(attr);
-
-    // Add the VLAN header when the packet is sent out from a VLAN
-    if (session.neighborInfo.port.m_type == Port::VLAN)
+    if (session.type == "SPAN")
     {
-        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
-        attr.value.booldata = true;
+        Port dst_port;
+        if (!m_portsOrch->getPort(session.dst_port, dst_port))
+        {
+            SWSS_LOG_ERROR("Failed to locate Port/LAG %s", session.dst_port.c_str());
+            return false;
+        }
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+        attr.value.oid = dst_port.m_port_id;
         attrs.push_back(attr);
 
-        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
-        attr.value.u16 = ETH_P_8021Q;
-        attrs.push_back(attr);
-
-        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_ID;
-        attr.value.u16 = session.neighborInfo.port.m_vlan_info.vlan_id;
-        attrs.push_back(attr);
-
-        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_PRI;
-        attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_PRI;
-        attrs.push_back(attr);
-
-        attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_CFI;
-        attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_CFI;
+        attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
+        attr.value.oid = SAI_MIRROR_SESSION_TYPE_LOCAL;
         attrs.push_back(attr);
     }
+    else
+    {
+        attr.id = SAI_MIRROR_SESSION_ATTR_MONITOR_PORT;
+        attr.value.oid = session.neighborInfo.portId;
+        attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
-    attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
-    attrs.push_back(attr);
+        attr.id = SAI_MIRROR_SESSION_ATTR_TYPE;
+        attr.value.s32 = SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE;
+        attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
-    attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
-    attrs.push_back(attr);
+        // Add the VLAN header when the packet is sent out from a VLAN
+        if (session.neighborInfo.port.m_type == Port::VLAN)
+        {
+            attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_HEADER_VALID;
+            attr.value.booldata = true;
+            attrs.push_back(attr);
 
-    // TOS value format is the following:
-    // DSCP 6 bits | ECN 2 bits
-    attr.id = SAI_MIRROR_SESSION_ATTR_TOS;
-    attr.value.u16 = (uint16_t)(session.dscp << MIRROR_SESSION_DSCP_SHIFT);
-    attrs.push_back(attr);
+            attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_TPID;
+            attr.value.u16 = ETH_P_8021Q;
+            attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_TTL;
-    attr.value.u8 = session.ttl;
-    attrs.push_back(attr);
+            attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_ID;
+            attr.value.u16 = session.neighborInfo.port.m_vlan_info.vlan_id;
+            attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
-    copy(attr.value.ipaddr, session.srcIp);
-    attrs.push_back(attr);
+            attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_PRI;
+            attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_PRI;
+            attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
-    copy(attr.value.ipaddr, session.dstIp);
-    attrs.push_back(attr);
+            attr.id = SAI_MIRROR_SESSION_ATTR_VLAN_CFI;
+            attr.value.u8 = MIRROR_SESSION_DEFAULT_VLAN_CFI;
+            attrs.push_back(attr);
+        }
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
-    memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
-    attrs.push_back(attr);
+        attr.id = SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE;
+        attr.value.s32 = SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL;
+        attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
-    memcpy(attr.value.mac, session.neighborInfo.mac.getMac(), sizeof(sai_mac_t));
-    attrs.push_back(attr);
+        attr.id = SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION;
+        attr.value.u8 = MIRROR_SESSION_DEFAULT_IP_HDR_VER;
+        attrs.push_back(attr);
 
-    attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
-    attr.value.u16 = session.greType;
-    attrs.push_back(attr);
+        // TOS value format is the following:
+        // DSCP 6 bits | ECN 2 bits
+        attr.id = SAI_MIRROR_SESSION_ATTR_TOS;
+        attr.value.u16 = (uint16_t)(session.dscp << MIRROR_SESSION_DSCP_SHIFT);
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_TTL;
+        attr.value.u8 = session.ttl;
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS;
+        copy(attr.value.ipaddr, session.srcIp);
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS;
+        copy(attr.value.ipaddr, session.dstIp);
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS;
+        memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS;
+        memcpy(attr.value.mac, session.neighborInfo.mac.getMac(), sizeof(sai_mac_t));
+        attrs.push_back(attr);
+
+        attr.id = SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE;
+        attr.value.u16 = session.greType;
+        attrs.push_back(attr);
+    }
 
     if (!session.policer.empty())
     {
@@ -727,6 +837,18 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
     }
 
     session.status = true;
+
+    if (!session.src_port.empty() && !session.direction.empty())
+    {
+        status = configurePortMirrorSession(name, session, true);
+        if (status == false)
+        {
+            SWSS_LOG_ERROR("Failed to activate port mirror session %s\n", name.c_str());
+            session.status = false;
+            return false;
+        }
+    }
+
     setSessionState(name, session);
 
     MirrorSessionUpdate update = { name, true };
@@ -740,14 +862,25 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
 bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
 {
     SWSS_LOG_ENTER();
+    sai_status_t status;
 
     assert(session.status);
 
     MirrorSessionUpdate update = { name, false };
     notify(SUBJECT_TYPE_MIRROR_SESSION_CHANGE, static_cast<void *>(&update));
 
-    sai_status_t status = sai_mirror_api->
-        remove_mirror_session(session.sessionId);
+    if (!session.src_port.empty() && !session.direction.empty())
+    {
+        status = configurePortMirrorSession(name, session, false);
+        if (status == false)
+        {
+            SWSS_LOG_ERROR("Failed to deactivate port mirror session %s\n", name.c_str());
+            return false;
+        }
+    }
+
+    status = sai_mirror_api->remove_mirror_session(session.sessionId);
+
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to deactivate mirroring session %s\n", name.c_str());
