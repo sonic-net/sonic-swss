@@ -24,7 +24,7 @@ FgNhgOrch::FgNhgOrch(DBConnector *db, vector<string> &tableNames, NeighOrch *nei
         m_intfsOrch(intfsOrch),
         m_vrfOrch(vrfOrch)
 {
-    /* TODO: make Orch call with table priorities: table_name_with_pri_t after checking what is the implication of it */
+    /* TODO: make Orch call with table priorities: table_name_with_pri_t based on need */
      SWSS_LOG_ENTER();
 
 }
@@ -79,7 +79,7 @@ void calculate_bank_hash_bucket_start_indices(FgNhgEntry *fgNhgEntry)
 bool write_hash_bucket_change_to_sai(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid)
 {
     SWSS_LOG_ENTER();
-    // Modify next-hop group member
+
     sai_attribute_t nhgm_attr;
     nhgm_attr.id = SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_ID;
     nhgm_attr.value.oid = nh_oid;
@@ -274,7 +274,6 @@ bool FgNhgOrch::set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd
 
         for(auto memb: bank_member_changes[bank].nhs_to_del)
         {
-            //syncd_fg_route_entry->syncd_fgnhg_map[bank].erase(memb);
             syncd_fg_route_entry->active_nexthops.erase(memb);
         }
     }
@@ -294,7 +293,7 @@ bool FgNhgOrch::compute_and_set_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
         std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set)
 {
     SWSS_LOG_ENTER();
-    /* Optimization: negate addition and deletion on a single bank */
+
     for(uint32_t bank_idx = 0; bank_idx < bank_member_changes.size(); bank_idx++)
     {
         if(bank_member_changes[bank_idx].active_nhs.size() == 0)
@@ -400,16 +399,9 @@ bool FgNhgOrch::set_new_nhg_members(FGNextHopGroupEntry &syncd_fg_route_entry, F
 bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
-/* 
- * TODO:
 
-    if (m_nextHopGroupCount >= m_maxNextHopGroupCount)
-    {
-        SWSS_LOG_DEBUG("Failed to create new next hop group. \
-                        Reaching maximum number of next hop groups.");
-        return false;
-    }
-*/
+    /* TODO: Enforce total nexthopgroup count */
+
     if (m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
         m_syncdFGRouteTables.at(vrf_id).find(ipPrefix) != m_syncdFGRouteTables.at(vrf_id).end() &&
         m_syncdFGRouteTables.at(vrf_id).at(ipPrefix).nhg_key == nextHops)
@@ -610,10 +602,7 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
     }
     m_syncdFGRouteTables[vrf_id][ipPrefix].nhg_key = nextHops; 
 
-    /* Increment the ref_count for the next hops used by the next hop group. 
-    for (auto it : next_hop_set)
-        m_neighOrch->increaseNextHopRefCount(it);
-    */
+    /* TODO: increment next hop ref counts in neighorch */
     return true;
 }
 
@@ -751,6 +740,7 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
         {
             SWSS_LOG_INFO("%s: Received delete call for valid entry, deleting all associated FG_NHG and SAI objects %s",
                     __FUNCTION__, fgNhg_name.c_str());
+            m_FgNhgs.erase(fgNhg_entry);
             /* TODO: delete all associated FG_NHG and SAI objects */
         }
     }
@@ -797,7 +787,6 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
         else 
         {
             fgNhg_entry->second.prefixes.push_back(ip_prefix);
-            /* TODO: check if this works fine with pointers */
             fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
             /* TODO: delete regular ecmp handling for prefix */
             SWSS_LOG_INFO("%s FG_NHG added for group %s, prefix %s",
@@ -830,7 +819,7 @@ bool FgNhgOrch::doTaskFgNhg_member(const KeyOpFieldsValuesTuple & t)
     string op = kfvOp(t);
     string key = kfvKey(t);
     IpAddress next_hop = IpAddress(key);
-    /* TODO: query next-hop addr in all entries */
+    /* TODO: query next-hop addr via neighorch for existing routes */
 
     if (op == SET_COMMAND)
     {
@@ -904,7 +893,6 @@ void FgNhgOrch::doTask(Consumer& consumer) {
             SWSS_LOG_ERROR("%s Unknown table : %s", __FUNCTION__,table_name.c_str());
         }
 
-        /* TBD error handling for individual doTask*/
         if (entry_handled)
         {
             consumer.m_toSync.erase(it++);
