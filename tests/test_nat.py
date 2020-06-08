@@ -116,7 +116,8 @@ class TestNatFeature(object):
         #check the entry in asic db
         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
         keys = tbl.getKeys()
-        assert len(keys) == 2
+        # Keys should be 3, SNAT, DNAT and DNAT Pool entries
+        assert len(keys) == 3
 
         for key in keys:
            if (key.find("dst_ip:67.66.65.1")) or (key.find("src_ip:18.18.18.2")):
@@ -177,7 +178,8 @@ class TestNatFeature(object):
         #check the entry in asic db
         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
         keys = tbl.getKeys()
-        assert len(keys) == 2
+        # Keys should be 3, SNAT, DNAT and DNAT Pool entries
+        assert len(keys) == 3
         
         for key in keys:
             if (key.find("dst_ip:67.66.65.1")) and (key.find("key.l4_dst_port:670")):
@@ -251,7 +253,8 @@ class TestNatFeature(object):
         #check the entry in asic db
         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
         keys = tbl.getKeys()
-        assert len(keys) == 2
+        # Keys should be 4, SNAT, DNAT and 2 DNAT Pool entries
+        assert len(keys) == 4
         for key in keys:
            if (key.find("dst_ip:18.18.18.1")) or (key.find("src_ip:18.18.18.2")):
                assert True
@@ -324,7 +327,8 @@ class TestNatFeature(object):
         #check the entry in asic db
         tbl = swsscommon.Table(self.asicdb, "ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY")
         keys = tbl.getKeys()
-        assert len(keys) == 2
+        # Keys should be 4, SNAT, DNAT and 2 DNAT Pool entries
+        assert len(keys) == 4
         for key in keys:
            if (key.find("src_ip:18.18.18.2")) or (key.find("l4_src_port:182")):
                assert True
