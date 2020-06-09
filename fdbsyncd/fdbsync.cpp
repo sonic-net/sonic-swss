@@ -24,7 +24,7 @@ using namespace swss;
 
 FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb) :
     m_fdbTable(pipelineAppDB, APP_VXLAN_FDB_TABLE_NAME),
-    m_imetTable(pipelineAppDB, APP_EVPN_REMOTE_VNI_TABLE_NAME),
+    m_imetTable(pipelineAppDB, APP_VXLAN_REMOTE_VNI_TABLE_NAME),
     m_stateFdbRestoreTable(stateDb, STATE_EVPN_FDB_RESTORE_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME)
 {
@@ -32,7 +32,7 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb) :
     if (m_AppRestartAssist)
     {
         m_AppRestartAssist->registerAppTable(APP_VXLAN_FDB_TABLE_NAME, &m_fdbTable);
-        m_AppRestartAssist->registerAppTable(APP_EVPN_REMOTE_VNI_TABLE_NAME, &m_imetTable);
+        m_AppRestartAssist->registerAppTable(APP_VXLAN_REMOTE_VNI_TABLE_NAME, &m_imetTable);
     }
 }
 
@@ -300,7 +300,7 @@ void FdbSync::imetAddRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
 	// If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist->isWarmStartInProgress())
     {
-        m_AppRestartAssist->insertToMap(APP_EVPN_REMOTE_VNI_TABLE_NAME, key, fvVector, false);
+        m_AppRestartAssist->insertToMap(APP_VXLAN_REMOTE_VNI_TABLE_NAME, key, fvVector, false);
         return;
     }
     
@@ -327,7 +327,7 @@ void FdbSync::imetDelRoute(struct in_addr vtep, string vlan_str, uint32_t vni)
     // If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist->isWarmStartInProgress())
     {
-        m_AppRestartAssist->insertToMap(APP_EVPN_REMOTE_VNI_TABLE_NAME, key, fvVector, true);
+        m_AppRestartAssist->insertToMap(APP_VXLAN_REMOTE_VNI_TABLE_NAME, key, fvVector, true);
         return;
     }
     
