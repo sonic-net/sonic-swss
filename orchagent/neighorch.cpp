@@ -12,6 +12,7 @@ extern PortsOrch *gPortsOrch;
 extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 extern RouteOrch *gRouteOrch;
+extern FgNhgOrch *gFgNhgOrch;
 
 const int neighorch_pri = 30;
 
@@ -85,6 +86,8 @@ bool NeighOrch::addNextHop(const IpAddress &ipAddress, const string &alias)
     {
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
     }
+
+    gFgNhgOrch->validnexthopinNextHopGroup(nexthop);
 
     // For nexthop with incoming port which has down oper status, NHFLAGS_IFDOWN
     // flag Should be set on it.
@@ -215,6 +218,8 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
 
     NextHopKey nexthop = { ipAddress, alias };
     assert(hasNextHop(nexthop));
+
+    gFgNhgOrch->invalidnexthopinNextHopGroup(nexthop);
 
     if (m_syncdNextHops[nexthop].ref_count > 0)
     {

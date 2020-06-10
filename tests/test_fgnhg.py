@@ -50,6 +50,45 @@ def verify_programmed_nh_membs(db,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size
     for idx in idxs:
         assert idx == 1
 
+def shutdown_link(dvs, db, port):
+    dvs.servers[port].runcmd("ip link set down dev eth0") == 0
+
+    time.sleep(1)
+
+    tbl = swsscommon.Table(db, "PORT_TABLE")
+    (status, fvs) = tbl.get("Ethernet%d" % (port * 4))
+
+    assert status == True
+
+    oper_status = "unknown"
+
+    for v in fvs:
+	if v[0] == "oper_status":
+	    oper_status = v[1]
+	    break
+
+    assert oper_status == "down"
+
+
+def startup_link(dvs, db, port):
+    dvs.servers[port].runcmd("ip link set up dev eth0") == 0
+
+    time.sleep(1)
+
+    tbl = swsscommon.Table(db, "PORT_TABLE")
+    (status, fvs) = tbl.get("Ethernet%d" % (port * 4))
+
+    assert status == True
+
+    oper_status = "unknown"
+
+    for v in fvs:
+	if v[0] == "oper_status":
+	    oper_status = v[1]
+	    break
+
+    assert oper_status == "up"
+
 
 class TestFineGrainedNextHopGroup(object):
     def test_route_fgnhg(self, dvs, testlog):
@@ -80,7 +119,6 @@ class TestFineGrainedNextHopGroup(object):
         dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
         dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
         dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03")
-        dvs.runcmd("arp -s 10.0.0.7 00:00:00:00:00:04")
         dvs.runcmd("arp -s 10.0.0.9 00:00:00:00:00:05")
         dvs.runcmd("arp -s 10.0.0.11 00:00:00:00:00:06")
 
@@ -227,6 +265,21 @@ class TestFineGrainedNextHopGroup(object):
                     nh_oid_map[tbs] = fv[1]
 
         # Test addition of route with 0 members in bank
+        # ARP is not resolved for 10.0.0.7, so fg nhg should be created with 10.0.0.7
+        nh_memb_exp_count = {"10.0.0.9":30,"10.0.0.11":30}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
+        dvs.runcmd("arp -s 10.0.0.7 00:00:00:00:00:04")
+        time.sleep(1)
+
+        for tbs in nbtbl.getKeys():
+            (status, fvs) = nbtbl.get(tbs)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_NEXT_HOP_ATTR_IP":
+                    nh_oid_map[tbs] = fv[1]
+
+        # Now that ARP was resolved, 10.0.0.7 should be added as a valid fg nhg member
         nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
 
@@ -299,170 +352,23 @@ class TestFineGrainedNextHopGroup(object):
 
         nh_memb_exp_count = {"10.0.0.1":15,"10.0.0.5":15,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
-        # Remove route
-        ps._del(fg_nhg_prefix)
-        time.sleep(1)
 
-        keys = rtbl.getKeys()
-        for k in keys:
-            rt_key = json.loads(k)
-
-            assert rt_key['dest'] != fg_nhg_prefix
-
-        keys = nhg_member_tbl.getKeys()
-        assert len(keys) == 0
-
-
-        fg_nhg_name = "new_fgnhg_v4"
-        fg_nhg_prefix = "3.3.3.0/24"
-        # Test with non-divisible bucket size
-        bucket_size = 128
-
-        create_entry_tbl(
-            config_db,
-            "FG_NHG", '|', fg_nhg_name,
-            [
-                ("bucket_size", str(bucket_size)),
-            ],
-        )
-
-        create_entry_tbl(
-            config_db,
-            "FG_NHG_PREFIX", '|', fg_nhg_prefix,
-            [
-                ("FG_NHG", fg_nhg_name),
-            ],
-        )
-
-        create_entry_tbl(
-            config_db,
-            "FG_NHG_MEMBER", '|', "10.0.0.1",
-            [
-                ("FG_NHG", fg_nhg_name),
-                ("bank", "0"),
-            ],
-        )
-
-        create_entry_tbl(
-            config_db,
-            "FG_NHG_MEMBER", '|', "10.0.0.3",
-            [
-                ("FG_NHG", fg_nhg_name),
-                ("bank", "0"),
-            ],
-        )
-
-
-        create_entry_tbl(
-            config_db,
-            "FG_NHG_MEMBER", '|', "10.0.0.5",
-            [
-                ("FG_NHG", fg_nhg_name),
-                ("bank", "0"),
-            ],
-        )
-
-        create_entry_tbl(
-            config_db,
-            "FG_NHG_MEMBER", '|', "10.0.0.7",
-            [
-                ("FG_NHG", fg_nhg_name),
-                ("bank", "1"),
-            ],
-        )
-
-        create_entry_tbl(
-            config_db,
-            "FG_NHG_MEMBER", '|', "10.0.0.9",
-            [
-                ("FG_NHG", fg_nhg_name),
-                ("bank", "1"),
-            ],
-        )
-
-        create_entry_tbl(
-            config_db,
-            "FG_NHG_MEMBER", '|', "10.0.0.11",
-            [
-                ("FG_NHG", fg_nhg_name),
-                ("bank", "1"),
-            ],
-        )
-
-        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
-        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"), ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
-
-        ps.set(fg_nhg_prefix, fvs)
-
-        time.sleep(1)
-
-        # check if route was propagated to ASIC DB
-
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-
-        rtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
-        nhgtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
-        nhg_member_tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
-        nbtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
-
-        keys = rtbl.getKeys()
-
-        found_route = False
-        for k in keys:
-            rt_key = json.loads(k)
-
-            if rt_key['dest'] == fg_nhg_prefix:
-                found_route = True
-                break
-
-        assert found_route
-        # assert the route points to next hop group
-        (status, fvs) = rtbl.get(k)
-
-        for v in fvs:
-            if v[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
-                nhgid = v[1]
-
-        (status, fvs) = nhgtbl.get(nhgid)
-        assert status
-
-        keys = nhg_member_tbl.getKeys()
-        assert len(keys) == bucket_size
-
-        # Obtain oids of NEXT_HOP asic entries
-        nh_oid_map = {}
-
-        for tbs in nbtbl.getKeys():
-            (status, fvs) = nbtbl.get(tbs)
-            assert status == True
-            for fv in fvs:
-                if fv[0] == "SAI_NEXT_HOP_ATTR_IP":
-                    nh_oid_map[tbs] = fv[1]
-
-        # Test addition of route with 0 members in bank
-        nh_memb_exp_count = {"10.0.0.7":43,"10.0.0.9":43,"10.0.0.11":42}
+        # bring links down
+        shutdown_link(dvs, db, 0)	
+        nh_memb_exp_count = {"10.0.0.5":30,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
 
-        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.11"), ("ifname", "Ethernet12,Ethernet20")])
-        ps.set(fg_nhg_prefix, fvs)
-        time.sleep(1)
-
-        nh_memb_exp_count = {"10.0.0.7":65,"10.0.0.11":63}
+	shutdown_link(dvs, db, 2)
+        nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
 
-        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"), ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
-        ps.set(fg_nhg_prefix, fvs)
-        time.sleep(1)
-
-        nh_memb_exp_count = {"10.0.0.7":43,"10.0.0.9":42,"10.0.0.11":43}
+	# bring up link
+        startup_link(dvs, db, 2)
+        nh_memb_exp_count = {"10.0.0.5":30,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
 
-        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.7,10.0.0.9,10.0.0.11"), ("ifname", "Ethernet0,Ethernet4,Ethernet8,Ethernet12,Ethernet16,Ethernet20")])
-        ps.set(fg_nhg_prefix, fvs)
-        time.sleep(1)
-
-        nh_memb_exp_count = {"10.0.0.1":22,"10.0.0.3":21,"10.0.0.5":21,"10.0.0.7":21,"10.0.0.9":21,"10.0.0.11":22}
+        startup_link(dvs, db, 0)
+        nh_memb_exp_count = {"10.0.0.1":15,"10.0.0.5":15,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
 
         # Remove route
