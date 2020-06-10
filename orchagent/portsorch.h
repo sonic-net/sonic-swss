@@ -94,7 +94,6 @@ public:
     bool addSubPort(Port &port, const string &alias, const bool &adminUp = true, const uint32_t &mtu = 0);
     bool removeSubPort(const string &alias);
 private:
-
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_queueTable;
