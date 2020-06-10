@@ -61,6 +61,14 @@ NatSync::NatSync(RedisPipeline *pipelineAppDB, DBConnector *appDb, DBConnector *
     }
 }
 
+NatSync::~NatSync()
+{
+    if (m_AppRestartAssist)
+    {
+        delete m_AppRestartAssist;
+    }
+}
+
 /* To check the port init is done or not */
 bool NatSync::isPortInitDone(DBConnector *app_db)
 {
