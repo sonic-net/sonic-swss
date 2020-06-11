@@ -18,6 +18,12 @@
 #include <map>
 #include <inttypes.h>
 
+const string mirror_rx_direction                 = "RX";
+const string mirror_tx_direction                 = "TX";
+const string mirror_both_direction               = "BOTH";
+const string mirror_session_span                 = "SPAN";
+const string mirror_session_erspan               = "ERSPAN";
+
 /*
  * Contains session data specified by user in config file
  * and data required for MAC address and port resolution
@@ -122,6 +128,8 @@ private:
     void updateLagMember(const LagMemberUpdate&);
     void updateVlanMember(const VlanMemberUpdate&);
 
+    bool setUnsetPortMirror(Port port, bool ingress, bool set,
+                                    sai_object_id_t sessionId);
     bool configurePortMirrorSession(const string&, MirrorEntry&, bool enable);
 
     void doTask(Consumer& consumer);

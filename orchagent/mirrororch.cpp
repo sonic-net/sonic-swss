@@ -128,7 +128,7 @@ bool MirrorOrch::bake()
                     key, monitor_port + state_db_key_delimiter + next_hop_ip);
         }
 
-	removeSessionState(key);
+        removeSessionState(key);
     }
 
     return Orch::bake();
@@ -331,14 +331,40 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
             }
             else if (fvField(i) == MIRROR_SESSION_SRC_PORT)
             {
+                auto ports = tokenize(fvValue(i), ',');
+                if (ports.size() != 0)
+                {
+                    for (auto alias : ports)
+                    {
+                        Port port;
+                        if (!gPortsOrch->getPort(alias, port))
+                        {
+                            SWSS_LOG_ERROR("Failed to locate port/LAG %s", alias.c_str());
+                            return;
+                        }
+                    }
+                }
                 entry.src_port = fvValue(i);
             }
             else if (fvField(i) == MIRROR_SESSION_DST_PORT)
             {
+                Port dst_port;
+                if (!m_portsOrch->getPort(fvValue(i), dst_port))
+                {
+                    SWSS_LOG_ERROR("Failed to locate port %s", fvValue(i).c_str());
+                    return;
+                }
                 entry.dst_port = fvValue(i);
+
             }
             else if (fvField(i) == MIRROR_SESSION_DIRECTION)
             {
+                if (!(fvValue(i) == mirror_rx_direction || fvValue(i) == mirror_tx_direction
+                        || fvValue(i) == mirror_both_direction))
+                {
+                    SWSS_LOG_ERROR("Failed to get valid direction %s", fvValue(i).c_str());
+                    return;
+                }
                 entry.direction = fvValue(i);
             }
             else if (fvField(i) == MIRROR_SESSION_TYPE)
@@ -369,7 +395,7 @@ void MirrorOrch::createEntry(const string& key, const vector<FieldValueTuple>& d
 
     setSessionState(key, entry);
 
-    if (entry.type == "SPAN" && !entry.dst_port.empty())
+    if (entry.type == mirror_session_span && !entry.dst_port.empty())
     {
         auto &session1 = m_syncdMirrors.find(key)->second;
         activateSession(key, session1);
@@ -404,7 +430,7 @@ task_process_status MirrorOrch::deleteEntry(const string& name)
 
     if (session.status)
     {
-        if (session.type != "SPAN")
+        if (session.type != mirror_session_span)
         {
             m_routeOrch->detach(this, session.dstIp);
         }
@@ -645,24 +671,56 @@ bool MirrorOrch::updateSession(const string& name, MirrorEntry& session)
     return ret;
 }
 
-bool MirrorOrch::configurePortMirrorSession(const string& name, MirrorEntry& session, bool enable)
+bool MirrorOrch::setUnsetPortMirror(Port port,
+                                    bool ingress,
+                                    bool set,
+                                    sai_object_id_t sessionId)
 {
     sai_status_t status;
     sai_attribute_t port_attr;
-    Port port;
-    bool rv1 = true , rv2 = true;
-
-    if (enable)
+    port_attr.id = ingress ? SAI_PORT_ATTR_INGRESS_MIRROR_SESSION:
+                           SAI_PORT_ATTR_EGRESS_MIRROR_SESSION;
+    if (set)
     {
         port_attr.value.objlist.count = 1;
         port_attr.value.objlist.list = (long unsigned int *)calloc(port_attr.value.objlist.count, sizeof(sai_object_id_t));
-        port_attr.value.objlist.list[0] = session.sessionId;
+        port_attr.value.objlist.list[0] = sessionId;
     }
     else
     {
         port_attr.value.objlist.count = 0;
     }
 
+    if (port.m_type == Port::LAG)
+    {
+        vector<Port> portv;
+        m_portsOrch->getLagMember(port, portv);
+        for (const auto p : portv)
+        {
+            status = sai_port_api->set_port_attribute(p.m_port_id, &port_attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to configure mirror session port %s: %s, status %d, sessionId %x\n",
+                                port.m_alias.c_str(), p.m_alias.c_str(), status, sessionId);
+                return false;
+            }
+        }
+    }
+    else if (port.m_type == Port::PHY)
+    {
+        status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to configure mirror session to port %s, status %d, sessionId %x\n",
+                            port.m_alias.c_str(), status, sessionId);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool MirrorOrch::configurePortMirrorSession(const string& name, MirrorEntry& session, bool set)
+{
     auto ports = tokenize(session.src_port, ',');
     if (ports.size() != 0)
     {
@@ -671,34 +729,21 @@ bool MirrorOrch::configurePortMirrorSession(const string& name, MirrorEntry& ses
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
-                SWSS_LOG_ERROR("Failed to locate port %s", alias.c_str());
+                SWSS_LOG_ERROR("Failed to locate port/LAG %s", alias.c_str());
                 return false;
             }
-            if (session.direction == "RX" || session.direction == "BOTH") {
-                port_attr.id = SAI_PORT_ATTR_INGRESS_MIRROR_SESSION;
-                status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to configure session %s to port %s, status %d, sessionId %x\n",
-                                    name.c_str(), port.m_alias.c_str(), status, session.sessionId);
-                    rv1 = false;
-                }
+            if (session.direction == mirror_rx_direction  || session.direction == mirror_both_direction)
+            {
+                if (!setUnsetPortMirror(port, true, set, session.sessionId))
+                    return false;
             }
-            if (session.direction == "TX" || session.direction == "BOTH") {
-                port_attr.id = SAI_PORT_ATTR_EGRESS_MIRROR_SESSION;
-                status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
-                if (status != SAI_STATUS_SUCCESS)
-                {
-                    SWSS_LOG_ERROR("Failed to configure session %s to port %s, status %d, sessionId %x\n",
-                                    name.c_str(), port.m_alias.c_str(), status, session.sessionId);
-                    rv2 = false;
-                }
+            if (session.direction == mirror_tx_direction || session.direction == mirror_both_direction)
+            {
+                if (!setUnsetPortMirror(port, false, set, session.sessionId))
+                    return false;
             }
         }
     }
-
-    if (rv1 == false || rv2 == false)
-        return false;
 
     return true;
 }
@@ -722,7 +767,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         attrs.push_back(attr);
     }
 
-    if (session.type == "SPAN")
+    if (session.type == mirror_session_span)
     {
         Port dst_port;
         if (!m_portsOrch->getPort(session.dst_port, dst_port))
@@ -1176,6 +1221,24 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
     {
         const auto& name = it->first;
         auto& session = it->second;
+
+        // Check the following conditions:
+        // 1) Session is active
+        // 2) LAG is part of mirror session source ports.
+        // if the above condition matches then set/unset mirror configuration to new member port.
+        if (session.status &&
+            !session.src_port.empty() &&
+            session.src_port.find(update.lag.m_alias.c_str()) != std::string::npos)
+        {
+            if (session.direction == mirror_rx_direction  || session.direction == mirror_both_direction)
+            {
+                setUnsetPortMirror(update.member, true, update.add, session.sessionId);
+            }
+            if (session.direction == mirror_tx_direction || session.direction == mirror_both_direction)
+            {
+                setUnsetPortMirror(update.member, false, update.add, session.sessionId);
+            }
+        }
 
         // Check the following two conditions:
         // 1) the neighbor is LAG

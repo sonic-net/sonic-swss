@@ -595,6 +595,10 @@ Stores information about mirror sessions and their properties.
     ttl       = h8                    ; Session TTL
     queue     = h8                    ; Session output queue
     policer   = policer_name          ; Session policer name
+    dst_port  = PORT_TABLE|ifname     ; Session destination PORT
+    src_port  = PORT_TABLE|ifname     ; Session source PORT/LAG list
+    direction = "RX"/"TX"/"BOTH"      ; Session direction
+    type      = "SPAN"/"ERSPAN"       ; Session type. Default is ERSPAN
 
     ;value annotations
     mirror_session_name = 1*255VCHAR
@@ -623,6 +627,37 @@ Example:
         }
     ]
 
+    [
+        {
+            "MIRROR_SESSION_TABLE:session_2": {
+                "src_ip": "1.1.1.1",
+                "dst_ip": "2.2.2.2",
+                "gre_type": "0x6558",
+                "dscp": "50",
+                "ttl": "64",
+                "queue": "0"
+                "src_port": "Ethernet0,PortChannel001"
+                "direction": "BOTH"
+                "type": "ERSPAN"
+            },
+            "OP": "SET"
+        }
+    ]
+
+    [
+        {
+            "MIRROR_SESSION_TABLE:session_3": {
+                "type": "SPAN"
+                "dst_port": "Ethernet0"
+                "src_port": "Ethernet4,PortChannel002"
+                "direction": "BOTH"
+            },
+            "OP": "SET"
+        }
+    ]
+
+
+
 Equivalent RedisDB entry:
 
     127.0.0.1:6379> KEYS *MIRROR*
@@ -631,7 +666,7 @@ Equivalent RedisDB entry:
      1) "src_ip"
      2) "1.1.1.1"
      3) "dst_ip"
-     4) "2.2.2.2
+     4) "2.2.2.2"
      5) "gre_type"
      6) "0x6558"
      7) "dscp"
@@ -641,6 +676,39 @@ Equivalent RedisDB entry:
     11) "queue"
     12) "0"
 
+    127.0.0.1:6379> KEYS *MIRROR*
+    1) "MIRROR_SESSION_TABLE:session_2"
+    127.0.0.1:6379> HGETALL MIRROR_SESSION_TABLE:session_2
+     1) "src_ip"
+     2) "1.1.1.1"
+     3) "dst_ip"
+     4) "2.2.2.2"
+     5) "gre_type"
+     6) "0x6558"
+     7) "dscp"
+     8) "50"
+     9) "ttl"
+    10) "64"
+    11) "queue"
+    12) "0"
+    13) "src_port"
+    14) "Ethernet0,PortChannel001"
+    15) "direction"
+    16) "BOTH"
+    17) "type"
+    18) "ERSPAN"
+
+    127.0.0.1:6379> KEYS *MIRROR*
+    1) "MIRROR_SESSION_TABLE:session_1"
+    127.0.0.1:6379> HGETALL MIRROR_SESSION_TABLE:session_3i
+    1) "type"
+    2) "SPAN"
+    3) "dst_port"
+    4) "Ethernet0"
+    5) "src_port"
+    6) "Ethernet4,PortChannel002"
+    7) "direction"
+    8) "RX"
 ---------------------------------------------
 
 ### POLICER_TABLE
