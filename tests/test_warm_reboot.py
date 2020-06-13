@@ -1973,9 +1973,6 @@ class TestWarmReboot(object):
         check_kernel_reachable_v4_neigh_num(dvs, NUM_OF_NEIGHS)
         check_kernel_reachable_v6_neigh_num(dvs, NUM_OF_NEIGHS)
 
-        #check_kernel_stale_v4_neigh_num(dvs, NUM_OF_NEIGHS/2)
-        #check_kernel_stale_v6_neigh_num(dvs, NUM_OF_NEIGHS/2)
-
         check_redis_neigh_entries(dvs, tbl, 2*(NUM_OF_NEIGHS+NUM_OF_NEIGHS/2))
 
         (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
