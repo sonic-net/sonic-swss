@@ -2,7 +2,6 @@ import os
 import re
 import time
 import json
-import pytest
 
 from swsscommon import swsscommon
 
@@ -2027,7 +2026,6 @@ class TestWarmReboot(object):
             dvs.runcmd("ip link set down dev Ethernet{}".format(i*4))
 
         # start neighsyncd and restore_neighbors
-        marker = dvs.add_log_marker()
         start_neighsyncd(dvs)
         start_restore_neighbors(dvs)
 
