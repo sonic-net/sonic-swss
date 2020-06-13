@@ -36,7 +36,7 @@ BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
 NatOrch *gNatOrch;
-
+L2mcOrch *gL2mcOrch;
 bool gIsNatSupported = false;
 
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
@@ -89,6 +89,13 @@ bool OrchDaemon::init()
     TableConnector applDbFdb(m_applDb, APP_FDB_TABLE_NAME);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
+	    vector<string> app_l2mc_tables = {
+        APP_L2MC_VLAN_TABLE_NAME,
+        APP_L2MC_MEMBER_TABLE_NAME,
+        APP_L2MC_MROUTER_TABLE_NAME
+    };
+
+    gL2mcOrch = new L2mcOrch(m_applDb, app_l2mc_tables);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -282,6 +289,8 @@ bool OrchDaemon::init()
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(gNatOrch);
+	 m_orchList.push_back(gL2mcOrch);
+
 
     m_select = new Select();
 
