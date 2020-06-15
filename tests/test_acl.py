@@ -393,7 +393,6 @@ class TestAcl():
 
     def test_AclRedirectRule(self, dvs):        
         dvs.setup_db()
-        self.setup_db(dvs)
 
         # Bring up an IP interface with a neighbor
         dvs.set_interface_status("Ethernet4", "up")
