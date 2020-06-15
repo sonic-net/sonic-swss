@@ -23,10 +23,12 @@ extern "C" {
 #include <logger.h>
 
 #include "orchdaemon.h"
+#include "sai_serialize.h"
 #include "saihelper.h"
 #include "notifications.h"
 #include <signal.h>
 #include "warm_restart.h"
+#include "gearboxutils.h"
 
 using namespace std;
 using namespace swss;
@@ -99,7 +101,43 @@ void syncd_apply_view()
     {
         SWSS_LOG_ERROR("Failed to notify syncd APPLY_VIEW %d", status);
         exit(EXIT_FAILURE);
+    } 
+}
+
+/*
+ * If Gearbox is enabled...
+ * Create and initialize the external Gearbox PHYs. Upon success, store the
+ * new PHY OID in the database to be used later when creating the Gearbox
+ * ports.
+*/
+void init_gearbox_phys(DBConnector *applDb)
+{
+    Table* tmpGearboxTable = new Table(applDb, "_GEARBOX_TABLE");
+    map<int, gearbox_phy_t> gearboxPhyMap;
+    GearboxUtils gearbox;
+
+    if (gearbox.isGearboxEnabled(tmpGearboxTable))
+    {
+        gearboxPhyMap = gearbox.loadPhyMap(tmpGearboxTable);
+        SWSS_LOG_DEBUG("BOX: gearboxPhyMap size = %d.", (int) gearboxPhyMap.size());
+
+        for (auto it = gearboxPhyMap.begin(); it != gearboxPhyMap.end(); ++it)
+        {
+            SWSS_LOG_NOTICE("BOX: Initialize PHY %d.", it->first);
+
+            if (initSaiPhyApi(&it->second) != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("BOX: Failed to initialize PHY %d.", it->first);
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("BOX: Created new PHY phy_id:%d phy_oid:%s.", it->second.phy_id, it->second.phy_oid.c_str());
+                tmpGearboxTable->hset("phy:"+to_string(it->second.phy_id), "phy_oid", it->second.phy_oid.c_str());
+                tmpGearboxTable->hset("phy:"+to_string(it->second.phy_id), "firmware_major_version", it->second.firmware_major_version.c_str());
+            }
+        }
     }
+    delete tmpGearboxTable;
 }
 
 int main(int argc, char **argv)
@@ -213,6 +251,16 @@ int main(int argc, char **argv)
     attr.value.ptr = (void *)on_port_state_change;
     attrs.push_back(attr);
 
+#if 0
+    attr.id =  SAI_SWITCH_ATTR_HARDWARE_ACCESS_BUS;
+    attr.value.s32 = SAI_SWITCH_HARDWARE_ACCESS_BUS_MDIO;
+    attrs.push_back(attr);
+
+    attr.id =  SAI_SWITCH_ATTR_PLATFROM_CONTEXT;
+    attr.value.u64 = (sai_uint64_t) 0xffffffffffffffff;
+    attrs.push_back(attr);
+#endif
+
     attr.id = SAI_SWITCH_ATTR_SHUTDOWN_REQUEST_NOTIFY;
     attr.value.ptr = (void *)on_switch_shutdown_request;
     attrs.push_back(attr);
@@ -223,6 +271,11 @@ int main(int argc, char **argv)
         memcpy(attr.value.mac, gMacAddress.getMac(), 6);
         attrs.push_back(attr);
     }
+
+    /* Must be last Attribute */
+    attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
+    attr.value.u64 = gSwitchId;
+    attrs.push_back(attr);
 
     // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
     // since it is not using ASIC_DB, we can execute it before create_switch
@@ -258,7 +311,7 @@ int main(int argc, char **argv)
         status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to get MAC address from switch, rv:%d", status);
+            SWSS_LOG_ERROR("Fail to get MAC address from switch, rv:%d", status);
             exit(EXIT_FAILURE);
         }
         else
@@ -325,6 +378,8 @@ int main(int argc, char **argv)
     DBConnector appl_db("APPL_DB", 0);
     DBConnector config_db("CONFIG_DB", 0);
     DBConnector state_db("STATE_DB", 0);
+
+    init_gearbox_phys(&appl_db);
 
     auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
 
