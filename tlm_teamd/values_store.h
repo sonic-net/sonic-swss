@@ -13,6 +13,10 @@ using HashOfRecords = std::unordered_map<std::string, Records>;
 
 class ValuesStore
 {
+public:
+    ValuesStore(const swss::DBConnector * db) : m_db(db) {};
+    void update(const std::vector<StringPair> & dumps);
+
 private:
     enum class json_type
     {
@@ -22,9 +26,7 @@ private:
     };
 
     json_t * load_json(const std::string & data);
-
     std::vector<std::string> get_ports(json_t * root);
-
     std::pair<std::vector<std::string>, std::string> convert_path(const std::string & path);
     json_t * traverse(json_t * root, const std::vector<std::string> & path_array, const std::string & path);
     std::string unpack_string(json_t * root, const std::string & key, const std::string & path);
@@ -40,14 +42,7 @@ private:
     void update_db(const HashOfRecords & storage, const std::vector<std::string> & keys_to_refresh);
     void extract_values(const std::string & lag_name, json_t * root, HashOfRecords & storage);
 
-public:
-    ValuesStore(const swss::DBConnector * db) : m_db(db) {};
-
-    void update(const std::vector<StringPair> & dumps);
-
-private:
     HashOfRecords m_storage;  // our main storage
-
     const swss::DBConnector * m_db;
 
     const std::vector<std::pair<std::string, ValuesStore::json_type>> m_lag_paths = {
