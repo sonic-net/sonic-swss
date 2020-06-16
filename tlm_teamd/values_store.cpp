@@ -12,7 +12,7 @@
 std::vector<std::string> ValuesStore::get_ports(json_t * root)
 {
     std::vector<std::string> result;
-    json_t * ports = NULL;
+    json_t * ports = nullptr;
     int err = json_unpack(root, "{s:o}", "ports", &ports);
     if (err != 0)
     {
@@ -59,7 +59,7 @@ json_t * ValuesStore::traverse(json_t * root, const std::vector<std::string> & p
     json_t * cur_root = root;
     for (const auto & key: path_array)
     {
-        json_t * cur = NULL;
+        json_t * cur = nullptr;
         int err = json_unpack(cur_root, "{s:o}", key.c_str(), &cur);
         if (err != 0)
         {
@@ -78,7 +78,7 @@ json_t * ValuesStore::traverse(json_t * root, const std::vector<std::string> & p
 std::string ValuesStore::unpack_string(json_t * root, const std::string & key, const std::string & path)
 {
     const auto & c_key = key.c_str();
-    const char * str = 0;
+    const char * str = nullptr;
     int err = json_unpack(root, "{s:s}", c_key, &str);
     if (err != 0)
     {
@@ -350,9 +350,9 @@ void ValuesStore::update_db(const HashOfRecords & storage, const std::vector<std
         {
             fvp.emplace_back(row_pair);
         }
-        const auto & p = split_key(key);
-        swss::Table table(m_db, p.first);
-        table.set(p.second, fvp);
+        const auto & table_pair = split_key(key);
+        swss::Table table(m_db, table_pair.first);
+        table.set(table_pair.second, fvp);
     }
 }
 

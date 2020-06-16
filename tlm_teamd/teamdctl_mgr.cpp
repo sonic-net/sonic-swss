@@ -52,7 +52,7 @@ bool TeamdCtlMgr::add_lag(const std::string & lag_name)
             return false;
         }
 
-        int err = teamdctl_connect(tdc, lag_name.c_str(), NULL, NULL);
+        int err = teamdctl_connect(tdc, lag_name.c_str(), nullptr, nullptr);
         if (err)
         {
             SWSS_LOG_ERROR("Can't connect to teamd LAG='%s', error='%s'", lag_name.c_str(), strerror(-err));
