@@ -23,6 +23,7 @@
 #include "warm_restart.h"
 #include "gearboxparser.h"
 #include "gearboxutils.h"
+#include "schema.h"
 
 #include <unistd.h>
 
