@@ -204,7 +204,7 @@ json_t * ValuesStore::load_json(const std::string & data)
 ///
 /// Convert json input from all teamds to the temporary storage
 /// @param dumps dumps from all teamds. It is a vector of pairs. Each pair
-///              has a first elelemt - name of the LAG and a second element
+///              has a first element - name of the LAG and a second element
 ///              - json dump
 /// @return temporary storage
 ///
@@ -227,7 +227,7 @@ HashOfRecords ValuesStore::from_json(const std::vector<StringPair> & dumps)
 /// Extract a list of stale keys from the storage.
 /// The stale key is a key which a presented in the storage, but not presented
 /// in the temporary storage. That means that the key must be removed
-/// @param storage a refeference to the temporary storage
+/// @param storage a reference to the temporary storage
 /// @return list of stale keys
 ///
 std::vector<std::string> ValuesStore::get_old_keys(const HashOfRecords & storage)
@@ -293,7 +293,7 @@ void ValuesStore::remove_keys_db(const std::vector<std::string> & keys)
 /// 2. if not, we insert the key and value to the storage
 /// 3. if yes, we check that value of the key is not changed. If the value is changed we
 ///    replace that value with the value from the temporary storage
-/// This method returns a list of keys which shold be updated in the database
+/// This method returns a list of keys which should be updated in the database
 /// @param storage the temporary storage
 /// @retorun a list of keys which must be updated in the storage
 ///
@@ -337,7 +337,7 @@ std::vector<std::string> ValuesStore::update_storage(const HashOfRecords & stora
 }
 
 ///
-/// Update valuse in the db with values from the temprary storage
+/// Update values in the db with values from the temporary storage
 /// @param storage a reference to the temporary storage
 /// @param keys_to_refresh a list of keys which must be refreshed in the db
 ///

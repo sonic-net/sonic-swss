@@ -50,7 +50,7 @@ void update_interfaces(swss::SubscriberStateTable & table, TeamdCtlMgr & mgr)
 ///
 void sig_handler(int signo)
 {
-
+    (void)signo;
     g_run = false;
 }
 

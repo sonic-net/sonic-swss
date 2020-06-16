@@ -92,9 +92,9 @@ bool TeamdCtlMgr::remove_lag(const std::string & lag_name)
 ///
 /// Get json dump from teamd for LAG interface with name lag_name
 /// @param lag_name a name for LAG interface
-/// @return a pair. First element of the pair is true, if the method is successfull
+/// @return a pair. First element of the pair is true, if the method is successful
 ///         false otherwise. If the first element is true, the second element has a dump
-///         otherwise the secomd element is an empty string
+///         otherwise the second element is an empty string
 ///
 TeamdCtlDump TeamdCtlMgr::get_dump(const std::string & lag_name)
 {
