@@ -399,7 +399,7 @@ class TestAcl():
         dvs.add_ip_address("Ethernet4", "10.0.0.1/24")
         dvs.add_neighbor("Ethernet4", "10.0.0.2", "00:01:02:03:04:05")
 
-        next_hop_id = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)[0]
+        next_hop_id = self.dvs_acl.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", 1)[0]
             
         bind_ports = ["Ethernet0", "Ethernet8"]
         self.create_acl_table("test_acl_table", "L3", bind_ports)
