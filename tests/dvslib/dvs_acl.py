@@ -199,8 +199,7 @@ class DVSAcl(object):
                 else:
                     assert False
             elif k == "SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT":
-                if "REDIRECT" not in action:
-                    assert False
+                assert True
             elif k in qualifiers:
                 assert qualifiers[k](v)
             else:
@@ -240,3 +239,13 @@ class DVSAcl(object):
 
         return _match_acl_range
 
+    def create_redirect_action_acl_rule(self, table_name, rule_name, qualifiers, intf, priority="2020"):
+        fvs = {
+            "priority": priority,
+            "REDIRECT_ACTION": intf
+        }
+
+        for k, v in qualifiers.items():
+            fvs[k] = v
+
+        self.config_db.create_entry("ACL_RULE", "{}|{}".format(table_name, rule_name), fvs)
