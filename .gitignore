@@ -7,28 +7,19 @@
 
 # Packaging Files #
 ###################
-debian/files
-debian/libswsscommon-dev.debhelper.log
-debian/libswsscommon-dev.substvars
-debian/libswsscommon.debhelper.log
-debian/libswsscommon.postinst.debhelper
-debian/libswsscommon.postrm.debhelper
-debian/libswsscommon.substvars
-debian/swss.debhelper.log
-debian/swss.substvars
-debian/swss-dbg.debhelper.log
-debian/swss-dbg.substvars
-debian/libswsscommon-dev/
-debian/libswsscommon/
-debian/swss/
-debian/tmp/
 debian/.debhelper/
 debian/autoreconf.after
 debian/autoreconf.before
 debian/debhelper-build-stamp
+debian/files
+debian/*.debhelper.log
+debian/*.substvars
+
+debian/swss/
 debian/swss-dbg/
 
 aclocal.m4
+autom4te.cache/
 config.h
 config.h.in
 config.h.in~
@@ -38,8 +29,6 @@ configure
 libtool
 Makefile.in
 stamp-h1
-**/.deps/
-**/.libs/
 **/Makefile
 autom4te.cache
 
@@ -49,28 +38,31 @@ deps/
 
 # Executables #
 ###############
-teamsyncd/teamsyncd
-fpmsyncd/fpmsyncd
 cfgmgr/buffermgrd
 cfgmgr/intfmgrd
+cfgmgr/natmgrd
+cfgmgr/nbrmgrd
 cfgmgr/portmgrd
+cfgmgr/sflowmgrd
 cfgmgr/teammgrd
 cfgmgr/vlanmgrd
 cfgmgr/vrfmgrd
-cfgmgr/nbrmgrd
 cfgmgr/vxlanmgrd
 cfgmgr/natmgrd
 cfgmgr/sflowmgrd
-neighsyncd/neighsyncd
 portsyncd/portsyncd
-natsyncd/natsyncd
+fpmsyncd/fpmsyncd
 mclagsyncd/mclagsyncd
+natsyncd/natsyncd
+neighsyncd/neighsyncd
 orchagent/orchagent
-orchagent/routeresync
 orchagent/orchagent_restart_check
+orchagent/routeresync
+portsyncd/portsyncd
 swssconfig/swssconfig
 swssconfig/swssplayer
 tlm_teamd/tlm_teamd
+teamsyncd/teamsyncd
 tests/tests
 
 # Test Files #

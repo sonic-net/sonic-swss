@@ -114,7 +114,7 @@ class TestNat(object):
         self.app_db.wait_for_n_keys("NAT_TABLE", 0)
 
         #check the entry is not there in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
+        self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
     def test_AddNaPtStaticEntry(self, dvs, testlog):
         # initialize
