@@ -35,6 +35,7 @@ autom4te.cache
 # Dependency Folder #
 #####################
 deps/
+**/.deps
 
 # Executables #
 ###############
