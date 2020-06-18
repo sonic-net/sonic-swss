@@ -56,6 +56,8 @@ int main(int argc, char **argv)
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
+    NetDispatcher::getInstance().registerRawMessageHandler(RTM_NEWROUTE, &sync);
+	NetDispatcher::getInstance().registerRawMessageHandler(RTM_DELROUTE, &sync);
 
     while (true)
     {

@@ -32,6 +32,8 @@ public:
     {
     };
 
+    bool isRawProcessing(struct nlmsghdr *h);
+
 private:
     unsigned int m_bufSize;
     char *m_messageBuffer;
