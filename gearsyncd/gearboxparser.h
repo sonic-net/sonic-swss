@@ -22,8 +22,8 @@
 class GearboxParser: public GearParserBase
 {
 public:
-  bool parse();
-  void notifyGearboxConfigDone(bool success);
+    bool parse();
+    void notifyGearboxConfigDone(bool success);
 };
 
 #endif /* __GEARBOX_PARSER_H__ */

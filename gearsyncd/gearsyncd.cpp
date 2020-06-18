@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Broadcom Inc.
+ * Copyright 2020 Broadcom Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -32,9 +32,9 @@ using namespace swss;
 
 void usage()
 {
-  cout << "Usage: gearsyncd [-p gear_config.json]" << endl;
-  cout << "       -p gearbox_config.json: import gearbox config" << endl;
-  cout << "          use configDB data if not specified" << endl;
+    cout << "Usage: gearsyncd [-p gear_config.json]" << endl;
+    cout << "       -p gearbox_config.json: import gearbox config" << endl;
+    cout << "          use configDB data if not specified" << endl;
 }
 
 bool handleGearboxConfigFile(string file, bool warm);
@@ -154,12 +154,12 @@ bool handleGearboxConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, 
 
 bool handleGearboxConfigFile(string file, bool warm)
 {
-  GearboxParser parser;
-  bool ret;
+    GearboxParser parser;
+    bool ret;
 
-  parser.setWriteToDb(true);
-  parser.setConfigPath(file);
-  ret = parser.parse();
-  parser.notifyGearboxConfigDone(ret);   // if (!warm....)
-  return ret;
+    parser.setWriteToDb(true);
+    parser.setConfigPath(file);
+    ret = parser.parse();
+    parser.notifyGearboxConfigDone(ret);   // if (!warm....)
+    return ret;
 }

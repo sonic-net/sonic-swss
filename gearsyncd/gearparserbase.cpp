@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Broadcom Inc.
+ * Copyright 2020 Broadcom Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,48 +20,50 @@
 #include <sstream>
 
 void
-GearParserBase::init() {
+GearParserBase::init() 
+{
   m_writeToDb = false;
   m_rootInit = false;
   m_applDb = std::unique_ptr<swss::DBConnector>{new swss::DBConnector(APPL_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0)};
   m_producerStateTable = std::unique_ptr<swss::ProducerStateTable>{new swss::ProducerStateTable(m_applDb.get(), APP_GEARBOX_TABLE_NAME)};
 }
 
-GearParserBase::GearParserBase() {
-  init();
-}
-
-GearParserBase::~GearParserBase() {
-}
-
-json &
-GearParserBase::getJSONRoot()
+GearParserBase::GearParserBase() 
 {
-  // lazy instantiate
+    init();
+}
 
-  if (m_rootInit == false) {
+GearParserBase::~GearParserBase() 
+{
+}
 
-    std::ifstream infile(getConfigPath());
-    if (infile.is_open())
+json & GearParserBase::getJSONRoot()
+{
+    // lazy instantiate
+
+    if (m_rootInit == false) 
     {
-      std::string jsonBuffer;
-      std::string line;
+        std::ifstream infile(getConfigPath());
+        if (infile.is_open())
+        {
+            std::string jsonBuffer;
+            std::string line;
 
-      while (getline(infile, line)) {
-        jsonBuffer += line;
-      }
-      infile.close();
+            while (getline(infile, line)) 
+            {
+                jsonBuffer += line;
+            }
+            infile.close();
 
-      m_root = json::parse(jsonBuffer.c_str());
-      m_rootInit = true;
+            m_root = json::parse(jsonBuffer.c_str());
+            m_rootInit = true;
+        }
     }
-  }
-  return m_root;
+    return m_root;
 }
 
-bool 
-GearParserBase::writeToDb(std::string &key, std::vector<swss::FieldValueTuple> &attrs)
+bool GearParserBase::writeToDb(std::string &key, std::vector<swss::FieldValueTuple> &attrs)
 {
-  m_producerStateTable.get()->set(key.c_str(), attrs); 
-  return true;
+    m_producerStateTable.get()->set(key.c_str(), attrs); 
+    return true;
 }

@@ -226,7 +226,7 @@ std::map<int, gearbox_interface_t> GearboxUtils::loadInterfaceMap(Table *gearbox
                     interface.phy_id = std::stoi(val.second);
                     SWSS_LOG_DEBUG("BOX phy_id = %d", interface.phy_id);
                 }
-               else if (val.first == "line_lanes")
+                else if (val.first == "line_lanes")
                 {
                     std::stringstream ss(val.second);
 
@@ -452,7 +452,6 @@ std::map<int, gearbox_port_t> GearboxUtils::loadPortMap(Table *gearboxTable)
             gearboxPortMap[port.index] = port;
         }
     }
-
     return gearboxPortMap;
 }
 

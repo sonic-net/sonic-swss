@@ -22,11 +22,11 @@
 class PhyParser: public GearParserBase
 {
 public:
-  bool parse();
-  void setPhyId(int id) {m_phyId = id;};
-  int getPhyId() {return m_phyId;};
+    bool parse();
+    void setPhyId(int id) {m_phyId = id;};
+    int getPhyId() {return m_phyId;};
 private:
-  int m_phyId;
+    int m_phyId;
 };
 
 #endif /* __PHY_PARSER_H__ */

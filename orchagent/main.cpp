@@ -251,16 +251,6 @@ int main(int argc, char **argv)
     attr.value.ptr = (void *)on_port_state_change;
     attrs.push_back(attr);
 
-#if 0
-    attr.id =  SAI_SWITCH_ATTR_HARDWARE_ACCESS_BUS;
-    attr.value.s32 = SAI_SWITCH_HARDWARE_ACCESS_BUS_MDIO;
-    attrs.push_back(attr);
-
-    attr.id =  SAI_SWITCH_ATTR_PLATFROM_CONTEXT;
-    attr.value.u64 = (sai_uint64_t) 0xffffffffffffffff;
-    attrs.push_back(attr);
-#endif
-
     attr.id = SAI_SWITCH_ATTR_SHUTDOWN_REQUEST_NOTIFY;
     attr.value.ptr = (void *)on_switch_shutdown_request;
     attrs.push_back(attr);
@@ -311,7 +301,7 @@ int main(int argc, char **argv)
         status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Fail to get MAC address from switch, rv:%d", status);
+            SWSS_LOG_ERROR("Failed to get MAC address from switch, rv:%d", status);
             exit(EXIT_FAILURE);
         }
         else

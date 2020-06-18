@@ -34,29 +34,29 @@ using json = nlohmann::json;
 class GearParserBase
 {
 public:
-  GearParserBase();
-  virtual ~GearParserBase();
-  virtual bool parse() = 0;
-  void setWriteToDb(bool val) {m_writeToDb = val;}
-  bool getWriteToDb() {return m_writeToDb;}
-  void setConfigPath(std::string &path) {m_cfgPath = path;}
-  const std::string getConfigPath() {return m_cfgPath;}
-  std::unique_ptr<swss::ProducerStateTable> &getProducerStateTable() {return m_producerStateTable;}
+    GearParserBase();
+    virtual ~GearParserBase();
+    virtual bool parse() = 0;
+    void setWriteToDb(bool val) {m_writeToDb = val;}
+    bool getWriteToDb() {return m_writeToDb;}
+    void setConfigPath(std::string &path) {m_cfgPath = path;}
+    const std::string getConfigPath() {return m_cfgPath;}
+    std::unique_ptr<swss::ProducerStateTable> &getProducerStateTable() {return m_producerStateTable;}
 
 protected:
-  bool writeToDb(std::string &key, std::vector<swss::FieldValueTuple> &attrs);
-  json &getJSONRoot();
+    bool writeToDb(std::string &key, std::vector<swss::FieldValueTuple> &attrs);
+    json &getJSONRoot();
 
 private:
-  void init();
-  std::unique_ptr<swss::DBConnector> m_cfgDb;
-  std::unique_ptr<swss::DBConnector> m_applDb;
-  std::unique_ptr<swss::DBConnector> m_stateDb;
-  std::unique_ptr<swss::ProducerStateTable> m_producerStateTable;
-  std::string m_cfgPath;
-  bool m_writeToDb;
-  json m_root;
-  bool m_rootInit;
+    void init();
+    std::unique_ptr<swss::DBConnector> m_cfgDb;
+    std::unique_ptr<swss::DBConnector> m_applDb;
+    std::unique_ptr<swss::DBConnector> m_stateDb;
+    std::unique_ptr<swss::ProducerStateTable> m_producerStateTable;
+    std::string m_cfgPath;
+    bool m_writeToDb;
+    json m_root;
+    bool m_rootInit;
 };
 
 #endif // __GEAR_PARSER_BASE_H__
