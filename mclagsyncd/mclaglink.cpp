@@ -632,8 +632,8 @@ MclagLink::MclagLink(int port) :
 
 MclagLink::~MclagLink()
 {
-    delete m_messageBuffer;
-    delete m_messageBuffer_send;
+    delete[] m_messageBuffer;
+    delete[] m_messageBuffer_send;
     if (m_connected)
         close(m_connection_socket);
     if (m_server_up)
