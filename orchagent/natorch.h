@@ -288,6 +288,8 @@ private:
     bool addHwDnaptEntry(const NaptEntryKey &key);
     bool removeHwDnatEntry(const IpAddress &dstIp);
     bool removeHwDnaptEntry(const NaptEntryKey &key);
+    bool addHwDnatPoolEntry(const IpAddress &dstIp);
+    bool removeHwDnatPoolEntry(const IpAddress &dstIp);
 
     void addAllStaticConntrackEntries(void);
     void addConnTrackEntry(const IpAddress &ipAddr);
