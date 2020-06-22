@@ -1,0 +1,109 @@
+#pragma once
+
+#include "dbconnector.h"
+#include "orch.h"
+#include "producerstatetable.h"
+#include <unistd.h>
+
+#include <map>
+#include <set>
+#include <string>
+
+namespace swss {
+
+/* COPP Trap Table Fields */
+#define COPP_TRAP_ID_LIST_FIELD                "trap_ids"
+#define COPP_TRAP_GROUP_FIELD                  "trap_group"
+
+/* COPP Group Table Fields */
+#define COPP_GROUP_QUEUE_FIELD                 "queue"
+#define COPP_GROUP_TRAP_ACTION_FIELD           "trap_action"
+#define COPP_GROUP_TRAP_PRIORITY_FIELD         "trap_priority"
+#define COPP_GROUP_POLICER_METER_TYPE_FIELD    "meter_type"
+#define COPP_GROUP_POLICER_MODE_FIELD          "mode"
+#define COPP_GROUP_POLICER_COLOR_FIELD         "color"
+#define COPP_GROUP_POLICER_CBS_FIELD           "cbs"
+#define COPP_GROUP_POLICER_CIR_FIELD           "cir"
+#define COPP_GROUP_POLICER_PBS_FIELD           "pbs"
+#define COPP_GROUP_POLICER_PIR_FIELD           "pir"
+#define COPP_GROUP_POLICER_ACTION_GREEN_FIELD  "green_action"
+#define COPP_GROUP_POLICER_ACTION_RED_FIELD    "red_action"
+#define COPP_GROUP_POLICER_ACTION_YELLOW_FIELD "yellow_action"
+
+/* sflow genetlink fields */
+#define COPP_GROUP_GENETLINK_NAME_FIELD        "genetlink_name"
+#define COPP_GROUP_GENETLINK_MCGRP_NAME_FIELD  "genetlink_mcgrp_name"
+
+#define COPP_TRAP_TYPE_SAMPLEPACKET            "sample_packet"
+
+#define COPP_INIT_FILE "/etc/sonic/copp_cfg.json"
+
+struct CoppTrapConf
+{
+    std::string         trap_ids;
+    std::string         trap_group;
+};
+
+/* TrapName to TrapConf map  */
+typedef std::map<std::string, CoppTrapConf> CoppTrapConfMap;
+
+/* TrapGroupName to GroupConf map  */
+typedef std::map<std::string, std::string> CoppTrapIdTrapGroupMap;
+
+/* Trap Id to Enable/Disabled map */
+typedef std::map<std::string, bool> CoppTrapDisabledMap;
+
+/* Key to Field value Tuple map */
+typedef std::map<std::string, std::vector<FieldValueTuple>> CoppCfg;
+
+/* Restricted Copp group key to Field value map's map */
+typedef std::map<std::string, std::map<std::string, std::string>> CoppGroupRestrictedConf;
+
+class CoppMgr : public Orch
+{
+public:
+    CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb,
+        const std::vector<std::string> &tableNames);
+
+    using Orch::doTask;
+private:
+    Table                    m_cfgCoppTrapTable;
+    Table                    m_cfgCoppGroupTable;
+    ProducerStateTable       m_appCoppTable;
+    Table                    m_stateCoppTrapTable;
+    Table                    m_stateCoppGroupTable;
+    Table                    m_cfgFeatureTable;
+    Table                    m_coppTable;
+    CoppTrapConfMap          m_coppTrapConfMap;
+    CoppTrapIdTrapGroupMap   m_coppTrapIdTrapGroupMap;
+    CoppGroupRestrictedConf  m_coppGroupRestrictedMap;
+    CoppTrapDisabledMap      m_coppTrapDisabledMap;
+    CoppCfg                  m_coppGroupInitCfg;
+    CoppCfg                  m_coppTrapInitCfg;
+    
+
+    void doTask(Consumer &consumer);
+    void doCoppGroupTask(Consumer &consumer);
+    void doCoppTrapTask(Consumer &consumer);
+    void doFeatureTask(Consumer &consumer);
+
+    void getTrapGroupTrapIds(std::string trap_group, std::string &trap_ids);
+    void removeTrapIdsFromTrapGroup(std::string trap_group, std::string trap_ids);
+    void addTrapIdsToTrapGroup(std::string trap_group, std::string trap_ids);
+    bool coppGroupHasRestrictedFields (std::vector<FieldValueTuple> &fvs);
+    bool isTrapDisabled(std::string trap_id);
+    void setFeatureTrapIdsStatus(std::string feature, bool enable);
+    bool checkIfTrapGroupFeaturePending(std::string trap_group_name);
+
+    void setCoppGroupStateOk(std::string alias);
+    void delCoppGroupStateOk(std::string alias);
+
+    void setCoppTrapStateOk(std::string alias);
+    void delCoppTrapStateOk(std::string alias);
+    void coppGroupGetModifiedFvs(std::string key, std::vector<FieldValueTuple> &trap_group_fvs,
+                                 std::vector<FieldValueTuple> &modified_fvs, bool del_on_field_remove);
+    void parseInitFile(void);
+
+};
+
+}
