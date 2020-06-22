@@ -195,7 +195,7 @@ private:
     bool removeBridgePort(Port &port);
     bool setBridgePortLearnMode(Port &port, string learn_mode);
 
-    bool addVlan(string vlan);
+    bool addVlan(string vlan, string vlan_type);
     bool removeVlan(Port vlan);
     bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
     bool removeVlanMember(Port &vlan, Port &port);

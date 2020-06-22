@@ -266,6 +266,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             string mtu = DEFAULT_MTU_STR;
             vector<FieldValueTuple> fvVector;
             string members;
+            string vlan_type = "";
 
             /*
              * If state is already set for this vlan, but it doesn't exist in m_vlans set,
@@ -310,6 +311,12 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                      */
                     SWSS_LOG_DEBUG("%s mtu %s: Host VLAN mtu setting to be supported.", key.c_str(), mtu.c_str());
                 }
+                /* Vlan_type (management/control)*/
+                else if (fvField(i) == "vlan_type")
+                {
+                    vlan_type = fvValue(i);
+                    SWSS_LOG_DEBUG("%s type %s to be supported.", key.c_str(), vlan_type.c_str());
+                }
                 else if (fvField(i) == "members@") {
                     members = fvValue(i);
                 }
@@ -323,6 +330,13 @@ void VlanMgr::doVlanTask(Consumer &consumer)
 
             FieldValueTuple m("mtu", mtu);
             fvVector.push_back(m);
+
+            if(vlan_type != "")
+            {
+                FieldValueTuple vm("vlan_type", vlan_type);
+                fvVector.push_back(vm);
+            }
+
 
             m_appVlanTableProducer.set(key, fvVector);
             m_vlans.insert(key);
