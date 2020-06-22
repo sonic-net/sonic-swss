@@ -331,7 +331,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
             FieldValueTuple m("mtu", mtu);
             fvVector.push_back(m);
 
-            if(vlan_type != "")
+            if (!vlan_type.empty())
             {
                 FieldValueTuple vm("vlan_type", vlan_type);
                 fvVector.push_back(vm);

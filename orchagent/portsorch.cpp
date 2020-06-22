@@ -3246,14 +3246,14 @@ bool PortsOrch::addVlan(string vlan_alias, string vlan_type)
      *  2 = control
      *  Change this code once attribute and enums introduced in saivlan.h
      *  */
-    if(vlan_type != "")
+    if (!vlan_type.empty())
     {
         attr.id = SAI_VLAN_ATTR_META_DATA;
-        if(vlan_type == "management")
+        if (vlan_type == "management")
         {
             attr.value.u32 = 1;
         }
-        else if(vlan_type == "control")
+        else if (vlan_type == "control")
         {
             attr.value.u32 = 2;
         }
