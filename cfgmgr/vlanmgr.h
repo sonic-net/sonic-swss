@@ -4,6 +4,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "orch.h"
+#include "notifier.h"
 
 #include <set>
 #include <map>
@@ -19,14 +20,20 @@ public:
 
 private:
     ProducerStateTable m_appVlanTableProducer, m_appVlanMemberTableProducer;
+    ProducerStateTable m_appFdbTableProducer;
+    ProducerStateTable m_appSwitchTableProducer;
     Table m_cfgVlanTable, m_cfgVlanMemberTable;
     Table m_statePortTable, m_stateLagTable;
     Table m_stateVlanTable, m_stateVlanMemberTable;
     std::set<std::string> m_vlans;
+    NotificationConsumer* m_VlanStateNotificationConsumer;
 
     void doTask(Consumer &consumer);
+    void doTask(NotificationConsumer &consumer);
     void doVlanTask(Consumer &consumer);
     void doVlanMemberTask(Consumer &consumer);
+    void doFdbTask(Consumer &consumer);
+    void doSwitchTask(Consumer &consumer);
     void processUntaggedVlanMembers(std::string vlan, const std::string &members);
 
     bool addHostVlan(int vlan_id);

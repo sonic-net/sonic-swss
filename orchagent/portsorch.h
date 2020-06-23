@@ -9,6 +9,7 @@
 #include "observer.h"
 #include "macaddress.h"
 #include "producertable.h"
+#include "notificationproducer.h"
 #include "flex_counter_manager.h"
 #include "gearboxutils.h"
 #include "saihelper.h"
@@ -91,12 +92,15 @@ public:
     void decreasePortRefCount(const string &alias);
     bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);
     void setPort(string alias, Port port);
+    void erasePort(string alias);
     void getCpuPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
     bool getAclBindPortId(string alias, sai_object_id_t &port_id);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
+    void updateDbVlanOperStatus(const Port& port, string status) const;
+
     bool createBindAclTableGroup(sai_object_id_t  port_oid,
                    sai_object_id_t  acl_table_oid,
                    sai_object_id_t  &group_oid,
@@ -132,6 +136,7 @@ private:
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
     unique_ptr<Table> m_gearboxTable;
+    unique_ptr<Table> m_vlanTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
@@ -141,6 +146,7 @@ private:
     unique_ptr<Table> m_pgIndexTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
+    NotificationProducer* notifications;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
@@ -159,7 +165,8 @@ private:
     Port m_cpuPort;
     // TODO: Add Bridge/Vlan class
     sai_object_id_t m_default1QBridge;
-    sai_object_id_t m_defaultVlan;
+    sai_object_id_t m_defaultVlan_ObjId;
+    sai_vlan_id_t   m_defaultVlan_Id;
 
     typedef enum
     {
@@ -188,6 +195,14 @@ private:
     map<set<int>, tuple<string, uint32_t, int, string, int>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
+
+    /* mapping from SAI object ID to Name for faster 
+       retrieval of Port/VLAN from object ID for events
+
+       coming from SAI
+     */
+    unordered_map<sai_object_id_t, string> m_portOidToName;
+
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
 
@@ -273,6 +288,7 @@ private:
 
     bool setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
                                 vector<uint32_t> &serdes_val);
+    void updateLagOperStatus(Port &port, sai_port_oper_status_t status);
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();

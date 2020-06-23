@@ -48,13 +48,13 @@ def create_evpn_nvo(db, nvoname, tnlname):
     # create the VXLAN tunnel Term entry in Config DB
     create_entry_tbl(
         db,
-        "EVPN_NVO", nvoname,
+        "VXLAN_EVPN_NVO", nvoname,
         attrs,
     )
 
 def remove_evpn_nvo(db, nvoname):
     #conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-    delete_entry_tbl(db,"EVPN_NVO", nvoname,)
+    delete_entry_tbl(db,"VXLAN_EVPN_NVO", nvoname,)
 
 def create_vxlan_tunnel(db, name, src_ip):
     #conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
@@ -112,7 +112,7 @@ def create_evpn_remote_vni(db, vlan_id, remotevtep, vnid):
     #app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     create_entry_pst(
         db,
-        "EVPN_REMOTE_VNI_TABLE", "%s:%s" % (vlan_id, remotevtep),
+        "VXLAN_REMOTE_VNI_TABLE", "%s:%s" % (vlan_id, remotevtep),
         [
             ("vni", vnid),
         ],
@@ -122,31 +122,29 @@ def remove_evpn_remote_vni(db, vlan_id, remotevtep ):
     #app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
     delete_entry_pst(
         db,
-        "EVPN_REMOTE_VNI_TABLE", "%s:%s" % (vlan_id, remotevtep),
+        "VXLAN_REMOTE_VNI_TABLE", "%s:%s" % (vlan_id, remotevtep),
     )
 
 def get_vxlan_p2p_tunnel_bp(db, remote_ip):
     tnl_id = None
     bp = None
     print("remote_ip = " + remote_ip)
-    attributes = [("SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE", "SAI_TUNNEL_TERM_TABLE_ENTRY_TYPE_P2P"),
-             ("SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TUNNEL_TYPE", "SAI_TUNNEL_TYPE_VXLAN"),
-             ("SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_SRC_IP", remote_ip)
+    attributes = [("SAI_TUNNEL_ATTR_TYPE", "SAI_TUNNEL_TYPE_VXLAN"),
+             ("SAI_TUNNEL_ATTR_ENCAP_DST_IP", remote_ip)
             ]
-    tbl = swsscommon.Table(db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY")
+    tbl = swsscommon.Table(db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL")
     keys = tbl.getKeys()
     for key in keys:
         status, fvs = tbl.get(key)
-        assert status, "Error reading from table ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY"
+        assert status, "Error reading from table ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL"
         attrs = dict(attributes)
         num_match = 0
         for k, v in fvs:
             print("attr:value="+str(k)+":"+str(v))
             if k in attrs and attrs[k] == v:
                 num_match += 1
-            if k == "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_ACTION_TUNNEL_ID":
-                tnl_id = v
         if num_match == len(attributes):
+            tnl_id = str(key)
             break
         else:
             tnl_id = None
@@ -223,13 +221,16 @@ def test_evpnFdb(dvs, testlog):
     create_vxlan_tunnel(dvs.cdb, source_tnl_name, source_tnl_ip)
     time.sleep(1)
 
+
     nvo_name = "evpn_nvo"
     create_evpn_nvo(dvs.cdb, nvo_name, source_tnl_name)
     time.sleep(1)
 
+
     map_name_vlan_3 = "map_3_3"
     create_vxlan_tunnel_map(dvs.cdb, source_tnl_name, map_name_vlan_3, "3", "Vlan3")
     time.sleep(1)
+
 
     remote_ip_6 = "6.6.6.6"
     create_evpn_remote_vni(dvs.pdb, "Vlan3", remote_ip_6, "3")
@@ -254,10 +255,13 @@ def test_evpnFdb(dvs, testlog):
     tnl_bp_oid_6 = get_vxlan_p2p_tunnel_bp(dvs.adb, remote_ip_6)
     tnl_bp_oid_8 = get_vxlan_p2p_tunnel_bp(dvs.adb, remote_ip_8)
 
+
+
     # check that the FDB entry is inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", mac), ("bvid", vlan_oid_3)],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_ENDPOINT_IP", remote_ip_6),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", str(tnl_bp_oid_6)),
                     ]
@@ -279,7 +283,8 @@ def test_evpnFdb(dvs, testlog):
     # check that the FDB entry is deleted from ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", mac), ("bvid", vlan_oid_3)],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_ENDPOINT_IP", remote_ip_6),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", str(tnl_bp_oid_6)),
                     ]
@@ -337,12 +342,12 @@ def test_evpnFdb(dvs, testlog):
     )
     time.sleep(1)
 
-    #raw_input("Check ASIC_DB.........")
 
     # check that the FDB entry is inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", mac), ("bvid", str(dvs.getVlanOid("3")))],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_ENDPOINT_IP", remote_ip_6),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", str(tnl_bp_oid_6)),
                     ]
@@ -362,6 +367,7 @@ def test_evpnFdb(dvs, testlog):
 
     time.sleep(1)
 
+
     #UT-4 Evpn Sticky Mac add from remote
     mac = "52:54:00:25:06:E9"
     print("Creating Evpn Sticky FDB Vlan3:"+mac.lower()+":6.6.6.6 in APP-DB")
@@ -376,7 +382,6 @@ def test_evpnFdb(dvs, testlog):
     )
     time.sleep(1)
 
-    #raw_input("Check ASIC_DB.........")
 
     # check that the FDB entry is inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
@@ -399,6 +404,7 @@ def test_evpnFdb(dvs, testlog):
         "FDB", "Vlan3|"+mac.lower(),
         [
             ("port", "Ethernet0"),
+            ("type", "static"),
         ]
     )
     time.sleep(2)
@@ -488,7 +494,8 @@ def test_evpnFdb(dvs, testlog):
     # check that the FDB entry is not inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", mac), ("bvid", vlan_oid_3)],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_ENDPOINT_IP", remote_ip_6),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", str(tnl_bp_oid_6)),
                     ]
@@ -584,7 +591,8 @@ def test_evpnFdb(dvs, testlog):
     # check that the FDB entry is inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", mac), ("bvid", vlan_oid_3)],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_ENDPOINT_IP", remote_ip_6),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", str(tnl_bp_oid_6)),
                     ]
@@ -613,7 +621,8 @@ def test_evpnFdb(dvs, testlog):
     # check that the FDB entry is inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
             [("mac", mac), ("bvid", vlan_oid_3)],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE"),
+                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
+                     ("SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE", "true"),
                      ("SAI_FDB_ENTRY_ATTR_ENDPOINT_IP", remote_ip_8),
                      ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", str(tnl_bp_oid_8)),
                     ]
@@ -628,7 +637,7 @@ def test_evpnFdb(dvs, testlog):
     print("Deleting FDB Vlan3:52-54-00-25-06-E9:8.8.8.8 in ASIC-DB")
     delete_entry_tbl(dvs.adb, "ASIC_STATE", "SAI_OBJECT_TYPE_FDB_ENTRY:{\"bvid\":\""+vlan_oid_3+"\",\"mac\":\""+mac+"\",\"switch_id\":\""+switch_id+"\"}")
 
-    ntf = swsscommon.NotificationProducer(dvs.adb, "FDB_NOTIFICATIONS")
+    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
     fvp = swsscommon.FieldValuePairs()
     ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid_3+"\\\",\\\"mac\\\":\\\""+mac+"\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_AGED\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+str(tnl_bp_oid_8)+"\"}]}]"
     ntf.send("fdb_event", ntf_data, fvp)
@@ -647,7 +656,7 @@ def test_evpnFdb(dvs, testlog):
         ]
     )
 
-    ntf = swsscommon.NotificationProducer(dvs.adb, "FDB_NOTIFICATIONS")
+    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
     fvp = swsscommon.FieldValuePairs()
     ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid_3+"\\\",\\\"mac\\\":\\\"52:54:00:25:06:E9\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_LEARNED\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+iface_2_bridge_port_id["Ethernet0"]+"\"}]}]"
     ntf.send("fdb_event", ntf_data, fvp)

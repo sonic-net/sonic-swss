@@ -469,7 +469,7 @@ bool FdbOrch::getPort(const MacAddress& mac, uint16_t vlan, Port& port)
 
     if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, port))
     {
-        SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64, attr.value.oid);
+        SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64, bridge_port_id);
         return false;
     }
 
@@ -866,13 +866,20 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
     if (origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
     {
-        attr.value.s32 = (type == "dynamic") ? SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE : SAI_FDB_ENTRY_TYPE_STATIC;
+        attr.value.s32 = SAI_FDB_ENTRY_TYPE_STATIC;
     }
     else
     {
         attr.value.s32 = (type == "dynamic") ? SAI_FDB_ENTRY_TYPE_DYNAMIC : SAI_FDB_ENTRY_TYPE_STATIC;
     }
     attrs.push_back(attr);
+
+    if ((origin == FDB_ORIGIN_VXLAN_ADVERTIZED) && (type == "dynamic"))
+    {
+        attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
 
     attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
     attr.value.oid = port.m_bridge_port_id;
@@ -896,7 +903,9 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
         attr.value.ipaddr = ipaddr;
         attrs.push_back(attr);
     }
-    else if(macUpdate && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED) && (origin != oldOrigin))
+    else if(macUpdate 
+            && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED) 
+            && (origin != oldOrigin))
     {
         /* origin is changed from Remote-advertized to Local-provisioned
          * Remove the end-point ip attribute from fdb entry
@@ -909,7 +918,16 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
         attrs.push_back(attr);
     }
 
-    string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
+    if(macUpdate && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)) 
+    {
+        if((origin != oldOrigin)
+           || ((oldType == "dynamic") && (oldType != type)))
+        {
+            attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
+            attr.value.booldata = false;
+            attrs.push_back(attr);
+        }
+    }
 
     
     if(macUpdate)
