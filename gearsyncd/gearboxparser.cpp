@@ -50,10 +50,10 @@ bool GearboxParser::parse()
     {
         phys = root["phys"];
         if (phys.size() == 0) 
-      {
-        SWSS_LOG_ERROR("zero-sized 'phys' field in gearbox configuration");
-        return false;
-      }
+        {
+            SWSS_LOG_ERROR("zero-sized 'phys' field in gearbox configuration");
+            return false;
+        }
     } 
     catch (const std::exception& e) 
     {
@@ -64,7 +64,8 @@ bool GearboxParser::parse()
     for (uint32_t iter = 0; iter < phys.size(); iter++) 
     {
         phy = phys[iter];
-        try {
+        try 
+        {
             attrs.clear();
             swss::FieldValueTuple attr;
             if (phy.find("phy_id") == phy.end()) 

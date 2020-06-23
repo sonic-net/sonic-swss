@@ -22,10 +22,10 @@
 void
 GearParserBase::init() 
 {
-  m_writeToDb = false;
-  m_rootInit = false;
-  m_applDb = std::unique_ptr<swss::DBConnector>{new swss::DBConnector(APPL_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0)};
-  m_producerStateTable = std::unique_ptr<swss::ProducerStateTable>{new swss::ProducerStateTable(m_applDb.get(), APP_GEARBOX_TABLE_NAME)};
+    m_writeToDb = false;
+    m_rootInit = false;
+    m_applDb = std::unique_ptr<swss::DBConnector>{new swss::DBConnector(APPL_DB, swss::DBConnector::DEFAULT_UNIXSOCKET, 0)};
+    m_producerStateTable = std::unique_ptr<swss::ProducerStateTable>{new swss::ProducerStateTable(m_applDb.get(), APP_GEARBOX_TABLE_NAME)};
 }
 
 GearParserBase::GearParserBase() 
