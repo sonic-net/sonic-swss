@@ -265,40 +265,6 @@ def delete_vlan_interface(dvs, ifname, ipaddr):
     delete_entry_tbl(conf_db, "VLAN_INTERFACE", ifname)
     time.sleep(2)
 
-def create_phy_interface(dvs, ifname, vnet_name, ipaddr):
-    conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    exist_rifs = get_exist_entries(dvs, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE")
-
-    # create vlan interface in config db
-    create_entry_tbl(
-        conf_db,
-        "INTERFACE", '|', ifname,
-        [
-          ("vnet_name", vnet_name),
-        ],
-    )
-
-    #FIXME - This is created by IntfMgr
-    app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-    create_entry_pst(
-        app_db,
-        "INTF_TABLE", ':', ifname,
-        [
-            ("vnet_name", vnet_name),
-        ],
-    )
-    time.sleep(2)
-
-    create_entry_tbl(
-        conf_db,
-        "INTERFACE", '|', "%s|%s" % (ifname, ipaddr),
-        [
-          ("family", "IPv4"),
-        ],
-    )
-
-
 def create_evpn_nvo(dvs, nvoname, tnlname):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
@@ -432,27 +398,6 @@ def create_vlan1(dvs, vlan_name):
           ("vlanid", vlan_id),
         ],
     )
-
-def get_lo(dvs):
-    asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-    vr_id = get_default_vr_id(dvs)
-
-    tbl = swsscommon.Table(asic_db, 'ASIC_STATE:SAI_OBJECT_TYPE_ROUTER_INTERFACE')
-
-    entries = tbl.getKeys()
-    lo_id = None
-    for entry in entries:
-        status, fvs = tbl.get(entry)
-        assert status, "Got an error when get a key"
-        for key, value in fvs:
-            if key == 'SAI_ROUTER_INTERFACE_ATTR_TYPE' and value == 'SAI_ROUTER_INTERFACE_TYPE_LOOPBACK':
-                lo_id = entry
-                break
-        else:
-            assert False, 'Don\'t found loopback id'
-
-    return lo_id
-
 
 def get_switch_mac(dvs):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
