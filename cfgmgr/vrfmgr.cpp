@@ -273,9 +273,12 @@ void VrfMgr::doTask(Consumer &consumer)
                 m_stateVrfTable.del(vrfName);
             }
 
-            if (!delLink(vrfName))
+            if (consumer.getTableName() != CFG_VXLAN_EVPN_NVO_TABLE_NAME)
             {
-                SWSS_LOG_ERROR("Failed to remove vrf netdev %s", vrfName.c_str());
+                if (!delLink(vrfName))
+                {
+                    SWSS_LOG_ERROR("Failed to remove vrf netdev %s", vrfName.c_str());
+                }
             }
 
             SWSS_LOG_NOTICE("Removed vrf netdev %s", vrfName.c_str());

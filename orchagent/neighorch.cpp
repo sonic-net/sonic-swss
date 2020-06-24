@@ -623,12 +623,12 @@ sai_object_id_t NeighOrch::addTunnelNextHop(const NextHopKey& nh)
 
     if (nh_id == SAI_NULL_OBJECT_ID)
     {
-        SWSS_LOG_ERROR("Failed to create Tunnel next hop %s, %s|%d|%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+        SWSS_LOG_ERROR("Failed to create Tunnel next hop %s, %s@%d@%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
             nh.vni, nh.mac_address.to_string().c_str());
         throw std::runtime_error("NH Tunnel create failed for " + tun_name + " ip " + nh.ip_address.to_string());
     }
 
-    SWSS_LOG_NOTICE("Created Tunnel next hop %s, %s|%d|%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+    SWSS_LOG_NOTICE("Created Tunnel next hop %s, %s@%d@%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
             nh.vni, nh.mac_address.to_string().c_str());
 
     NextHopEntry next_hop_entry;
@@ -660,12 +660,12 @@ bool NeighOrch::removeTunnelNextHop(const NextHopKey& nh)
     IpAddress tnl_dip = nh.ip_address;
     if (!vxlan_orch->removeNextHopTunnel(tun_name, tnl_dip, nh.mac_address, nh.vni))
     {
-        SWSS_LOG_ERROR("Failed to remove Tunnel next hop %s, %s|%d|%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+        SWSS_LOG_ERROR("Failed to remove Tunnel next hop %s, %s@%d@%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
             nh.vni, nh.mac_address.to_string().c_str());
         return false;
     }
 
-    SWSS_LOG_NOTICE("Removed Tunnel next hop %s, %s|%d|%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+    SWSS_LOG_NOTICE("Removed Tunnel next hop %s, %s@%d@%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
             nh.vni, nh.mac_address.to_string().c_str());
     return true;
 }

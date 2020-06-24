@@ -79,6 +79,7 @@ public:
 
     bool createRemoteVtep(sai_object_id_t, const NextHopKey&);
     bool deleteRemoteVtep(sai_object_id_t, const NextHopKey&);
+    bool removeOverlayNextHops(sai_object_id_t, const NextHopGroupKey&);
 
     void notifyNextHopChangeObservers(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&, bool);
 private:
