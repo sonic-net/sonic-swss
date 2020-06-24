@@ -16,6 +16,11 @@ def create_entry_tbl(db, table, separator, key, pairs):
     tbl = swsscommon.Table(db, table)
     create_entry(tbl, key, pairs)
 
+def remove_entry_tbl(db, table, key):
+    tbl = swsscommon.Table(db, table)
+    tbl._del(key)
+    time.sleep(1)
+    
 def verify_programmed_nh_membs(db,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size):
     nh_memb_count = {}
     for key in nh_memb_exp_count:
@@ -371,6 +376,27 @@ class TestFineGrainedNextHopGroup(object):
         nh_memb_exp_count = {"10.0.0.1":15,"10.0.0.5":15,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
 
+        # remove fgnhg member
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", 
+            "10.0.0.1",           
+        )
+        nh_memb_exp_count = {"10.0.0.5":30,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
+        # add fgnhg member
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", '|', "10.0.0.1",
+            [
+                ("FG_NHG", fg_nhg_name),
+                ("bank", "0"),
+            ],
+        )
+        nh_memb_exp_count = {"10.0.0.1":15,"10.0.0.5":15,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+        
         # Remove route
         ps._del(fg_nhg_prefix)
         time.sleep(1)
@@ -383,3 +409,140 @@ class TestFineGrainedNextHopGroup(object):
 
         keys = nhg_member_tbl.getKeys()
         assert len(keys) == 0
+        
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG_PREFIX", 
+            fg_nhg_prefix,           
+        )
+        
+        # add normal route
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"), ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
+        ps.set(fg_nhg_prefix, fvs)
+
+        time.sleep(1)
+
+        # add fgnhg prefix
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_PREFIX", '|', fg_nhg_prefix,
+            [
+                ("FG_NHG", fg_nhg_name),
+            ],
+        )
+        
+        keys = rtbl.getKeys()
+
+        found_route = False
+        for k in keys:
+            rt_key = json.loads(k)
+
+            if rt_key['dest'] == fg_nhg_prefix:
+                found_route = True
+                break
+
+        assert found_route
+        # assert the route points to next hop group
+        (status, fvs) = rtbl.get(k)
+
+        for v in fvs:
+            if v[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
+                nhgid = v[1]
+
+        (status, fvs) = nhgtbl.get(nhgid)
+        assert status
+
+        keys = nhg_member_tbl.getKeys()
+        assert len(keys) == bucket_size
+
+        # Obtain oids of NEXT_HOP asic entries
+        nh_oid_map = {}
+
+        for tbs in nbtbl.getKeys():
+            (status, fvs) = nbtbl.get(tbs)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_NEXT_HOP_ATTR_IP":
+                    nh_oid_map[tbs] = fv[1]
+
+        nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
+        # remove fgnhg prefix
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG_PREFIX", 
+            fg_nhg_prefix,           
+        )
+
+        time.sleep(1)
+
+        # check ASIC route database
+        for key in rtbl.getKeys():
+            route = json.loads(key)
+            if route["dest"] == fg_nhg_prefix:
+                route_found = True
+        assert route_found == True
+        
+        # remove routes
+        ps._del(fg_nhg_prefix)
+        time.sleep(1)
+
+        keys = rtbl.getKeys()
+        for k in keys:
+            rt_key = json.loads(k)
+
+            assert rt_key['dest'] != fg_nhg_prefix
+
+        keys = nhg_member_tbl.getKeys()
+        assert len(keys) == 0
+        
+        # remove group fail since there's still nexthop member
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG", 
+            fg_nhg_name,
+        )
+        
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", 
+            "10.0.0.1",           
+        )
+        
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", 
+            "10.0.0.3",           
+        )
+        
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", 
+            "10.0.0.5",           
+        )
+        
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", 
+            "10.0.0.7",           
+        )
+        
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", 
+            "10.0.0.9",           
+        )
+        
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", 
+            "10.0.0.11",           
+        )
+       
+        # remove group should succeeds
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG", 
+            fg_nhg_name,
+        )

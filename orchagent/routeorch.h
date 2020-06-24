@@ -108,6 +108,12 @@ public:
     bool invalidnexthopinNextHopGroup(const NextHopKey&);
 
     void notifyNextHopChangeObservers(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&, bool);
+    const RouteTables& getSyncdRoutes(void)
+    {
+    	return m_syncdRoutes;
+    }
+    bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
+    bool removeRoute(sai_object_id_t, const IpPrefix&);
 private:
     SwitchOrch *m_switchOrch;
     NeighOrch *m_neighOrch;

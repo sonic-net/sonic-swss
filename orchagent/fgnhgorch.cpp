@@ -848,10 +848,19 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
         }
         else 
         {
-            SWSS_LOG_INFO("%s: Received delete call for valid entry, deleting all associated FG_NHG and SAI objects %s",
-                    __FUNCTION__, fgNhg_name.c_str());
-            m_FgNhgs.erase(fgNhg_entry);
-            /* TODO: delete all associated FG_NHG and SAI objects */
+        	/* delete all associated FG_NHG and SAI objects */
+        	if (fgNhg_entry->second.prefixes.size() == 0 && fgNhg_entry->second.nextHops.size() == 0)
+        	{
+        		m_FgNhgs.erase(fgNhg_entry);
+        		assert(m_FgNhgs.find(fgNhg_name) == fgNhgPrefixes.end());
+        		SWSS_LOG_INFO("%s: Received delete call for valid entry, deleting all associated FG_NHG and SAI objects %s",
+        				__FUNCTION__, fgNhg_name.c_str());
+        	}
+        	else
+        	{
+				SWSS_LOG_NOTICE("%s: still prefixes and nexthop in FG_NHG group %s", __FUNCTION__, fgNhg_name.c_str());
+				return false;
+        	}
         }
     }
     return true;
@@ -865,6 +874,7 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
     string key = kfvKey(t);
     IpPrefix ip_prefix = IpPrefix(key);
     auto prefix_entry = fgNhgPrefixes.find(ip_prefix);
+    bool route_handled = false;
 
     if (op == SET_COMMAND)
     {
@@ -896,9 +906,36 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
         }
         else 
         {
-            fgNhg_entry->second.prefixes.push_back(ip_prefix);
+        	/* delete regular ecmp handling for prefix */
+			sai_object_id_t vrf_id = gVirtualRouterId;
+			auto route_table_entry = gRouteOrch->getSyncdRoutes().find(vrf_id);
+			NextHopGroupKey nhg;
+			if (route_table_entry == gRouteOrch->getSyncdRoutes().end())
+			{
+				SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%lx\n", vrf_id);
+				return false;
+			}
+
+			/* ipprefix already exist in routeorch */
+			auto it_route = route_table_entry->second.find(ip_prefix);
+			if (it_route != route_table_entry->second.end())
+			{
+				nhg = it_route->second;
+				gRouteOrch->removeRoute(vrf_id, ip_prefix);
+				route_handled = true;
+			}
+
+        	fgNhg_entry->second.prefixes.push_back(ip_prefix);
             fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
-            /* TODO: delete regular ecmp handling for prefix */
+
+            /* add fgnhg route */
+            if (route_handled)
+            {
+            	addRoute(vrf_id, ip_prefix, nhg);
+            	SWSS_LOG_INFO("%s: Add route with ip prefix %s with nexthop group key %s", __FUNCTION__, ip_prefix.to_string().c_str(),
+            			nhg.to_string().c_str());
+            }
+
             SWSS_LOG_INFO("%s FG_NHG added for group %s, prefix %s",
                     __FUNCTION__, fgNhgPrefixes[ip_prefix]->fgNhg_name.c_str(), ip_prefix.to_string().c_str());
         }
@@ -913,9 +950,37 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
         }
         else
         {
-            /* TODO: search and delete local structure */
+        	/* remove fgnhg route entry */
+        	sai_object_id_t vrf_id = gVirtualRouterId;
+        	NextHopGroupKey nhg;
+        	if (m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
+        			m_syncdFGRouteTables.at(vrf_id).find(ip_prefix) != m_syncdFGRouteTables.at(vrf_id).end())
+        	{
+        		nhg = m_syncdFGRouteTables.at(vrf_id).at(ip_prefix).nhg_key;
+        		removeRoute(vrf_id, ip_prefix);
+        		route_handled = true;
+        		SWSS_LOG_INFO("%s FG_NHG prefix %s is removed from SAI",
+        				__FUNCTION__, ip_prefix.to_string().c_str());
+        	}
+
+        	/* search and delete local structure */
+        	for (uint32_t i = 0; i < prefix_entry->second->prefixes.size(); i++)
+        	{
+        		if (prefix_entry->second->prefixes[i] == ip_prefix)
+        		{
+        			prefix_entry->second->prefixes.erase(prefix_entry->second->prefixes.begin() + i);
+        			SWSS_LOG_INFO("%s FG_NHG prefix %s is deleted from group %s",
+        					__FUNCTION__, ip_prefix.to_string().c_str(), fgNhgPrefixes[ip_prefix]->fgNhg_name.c_str());
+        			break;
+        		}
+        	}
             fgNhgPrefixes.erase(ip_prefix);
-            /* TODO: reassign routeorch as the owner of th prefix and call for routeorch to add this route */
+
+            /* reassign routeorch as the owner of the prefix and call for routeorch to add this route */
+            if (route_handled)
+            {
+            	gRouteOrch->addRoute(vrf_id, ip_prefix, nhg);
+            }
             /* TODO: query next-hop ecmp group and delete if no more prefixes point to it */
         }
     }
@@ -929,11 +994,10 @@ bool FgNhgOrch::doTaskFgNhg_member(const KeyOpFieldsValuesTuple & t)
     string op = kfvOp(t);
     string key = kfvKey(t);
     IpAddress next_hop = IpAddress(key);
-    /* TODO: query next-hop addr via neighorch for existing routes */
+    NextHopKey nhk(next_hop.to_string());
 
     if (op == SET_COMMAND)
     {
-        /* TODO: skip addition if next-hop already exists */
         string fgNhg_name = "";
         uint32_t bank = 0;
         for (auto i : kfvFieldsValues(t))
@@ -961,15 +1025,52 @@ bool FgNhgOrch::doTaskFgNhg_member(const KeyOpFieldsValuesTuple & t)
         }
         else
         {
-            fgNhg_entry->second.nextHops[next_hop] = bank;
-            /* TODO: query and add next-hop into SAI group */
+        	/* skip addition if next-hop already exists */
+        	if (fgNhg_entry->second.nextHops.find(next_hop) != fgNhg_entry->second.nextHops.end())
+        	{
+        		SWSS_LOG_INFO("%s FG_NHG member %s already exists, skip", __FUNCTION__, next_hop.to_string().c_str());
+        		return true;
+        	}
+        	fgNhg_entry->second.nextHops[next_hop] = bank;
+
+			/* query and check the next hop is valid in neighOrcch */
+        	if (!m_neighOrch->hasNextHop(nhk))
+        	{
+        		SWSS_LOG_INFO("%s: Failed to get next hop %s in", __FUNCTION__, nhk.to_string().c_str());
+        		return false;
+        	}
+
+        	/* add next-hop into SAI group */
+        	if (!validnexthopinNextHopGroup(nhk))
+        	{
+        		return false;
+        	}
             SWSS_LOG_INFO("%s FG_NHG member added for group %s, next-hop %s",
                     __FUNCTION__, fgNhg_entry->second.fgNhg_name.c_str(), next_hop.to_string().c_str());
         }
     }
     else if (op == DEL_COMMAND)
     {
-        /* TODO: Delete handling */
+    	/* remove next hop from SAI group */
+    	if (!invalidnexthopinNextHopGroup(nhk))
+    	{
+    		return false;
+    	}
+
+    	SWSS_LOG_INFO("%s FG_NHG member removed for SAI group, next-hop %s",
+    			__FUNCTION__, next_hop.to_string().c_str());
+
+    	/* remove next-hop in fgnhg entry*/
+    	for (auto fgnhg_it = m_FgNhgs.begin(); fgnhg_it != m_FgNhgs.end(); ++fgnhg_it)
+    	{
+    		auto it = fgnhg_it->second.nextHops.find(next_hop);
+    		if (it != fgnhg_it->second.nextHops.end())
+    		{
+    			SWSS_LOG_INFO("%s FG_NHG member removed for group %s, next-hop %s",
+    					__FUNCTION__, fgnhg_it->second.fgNhg_name.c_str(), next_hop.to_string().c_str());
+    			fgnhg_it->second.nextHops.erase(it);
+    		}
+    	}
     }
     return true;
 }
