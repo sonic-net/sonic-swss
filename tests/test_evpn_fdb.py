@@ -1,10 +1,5 @@
 from swsscommon import swsscommon
-import os
-import sys
 import time
-import json
-import pytest
-from distutils.version import StrictVersion
 
 def create_entry(tbl, key, pairs):
     fvs = swsscommon.FieldValuePairs(pairs)
@@ -94,14 +89,8 @@ def create_vxlan_tunnel_map(db, tnlname, mapname, vni_id, vlan_id):
         attrs,
     )
 
-def remove_vxlan_tunnel_map(db, tnlname, mapname,vni_id, vlan_id):
+def remove_vxlan_tunnel_map(db, tnlname, mapname):
     #conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-
-    attrs = [
-            ("vni", vni_id),
-            ("vlan", vlan_id),
-    ]
-
     # create the VXLAN tunnel Term entry in Config DB
     delete_entry_tbl(
         db,
@@ -253,9 +242,6 @@ def test_evpnFdb(dvs, testlog):
     time.sleep(1)
 
     tnl_bp_oid_6 = get_vxlan_p2p_tunnel_bp(dvs.adb, remote_ip_6)
-    tnl_bp_oid_8 = get_vxlan_p2p_tunnel_bp(dvs.adb, remote_ip_8)
-
-
 
     # check that the FDB entry is inserted into ASIC DB
     ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
