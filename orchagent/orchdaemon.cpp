@@ -36,6 +36,8 @@ BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
 NatOrch *gNatOrch;
+MlagOrch *gMlagOrch;
+IsoGrpOrch *gIsoGrpOrch;
 
 bool gIsNatSupported = false;
 
@@ -270,6 +272,19 @@ bool OrchDaemon::init()
     TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
     gAclOrch = new AclOrch(acl_table_connectors, stateDbSwitchTable, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
 
+    vector<string> mlag_tables = {
+        { CFG_MCLAG_TABLE_NAME },
+        { CFG_MCLAG_INTF_TABLE_NAME }
+    };
+    gMlagOrch = new MlagOrch(m_configDb, mlag_tables);
+
+    TableConnector appDbIsoGrpTbl(m_applDb, APP_ISOLATION_GROUP_TABLE_NAME);
+    vector<TableConnector> iso_grp_tbl_ctrs = {
+        appDbIsoGrpTbl
+    };
+
+    gIsoGrpOrch = new IsoGrpOrch(iso_grp_tbl_ctrs);
+
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(mirror_orch);
     m_orchList.push_back(gAclOrch);
@@ -282,6 +297,8 @@ bool OrchDaemon::init()
     m_orchList.push_back(vnet_orch);
     m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(gNatOrch);
+    m_orchList.push_back(gMlagOrch);
+    m_orchList.push_back(gIsoGrpOrch);
 
     m_select = new Select();
 
