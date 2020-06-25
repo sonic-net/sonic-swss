@@ -43,6 +43,14 @@ cd sonic-swss/tests
 sudo pytest
 ```
 
+### Useful flags
+- `--keeptb`: By default, the containers used for the tests are cleaned up after the tests finish running. If you'd like to keep the containers after the test is finished, you can do so by adding the `--keeptb` flag.
+- `--imgname`: By default, the DVS framework uses `docker-sonic-vs:latest` to run the tests. You can specify a specific image (and version) to use by adding the `--imgname` flag, like so:
+
+    ```
+    sudo pytest --imgname=docker-sonic-vs:my-changes.333
+    ```
+
 ## Setting up a persistent test environment
 For those developing new features for SWSS or the DVS framework, you might find it helpful to setup a persistent DVS container that you can inspect and make modifications to (e.g. using `dpkg -i` to install a new version of SWSS to test a new feature).
 
@@ -78,20 +86,10 @@ For those developing new features for SWSS or the DVS framework, you might find 
     sudo pytest -v
     ```
 
-    This works for persistent DVS containers as well.
-
 - You can specify a specific test file, class, or even individual test case when you run the tests:
 
     ```
     sudo pytest <test_file_name>::<test_class_name>::<test_name>
-    ```
-
-    This works for persistent DVS containers as well.
-
-- You can specify a specific image:tag to use when running the tests *without a persistent DVS container*:
-
-    ```
-    sudo pytest --imgname=docker-sonic-vs:my-changes.333
     ```
 
 - You can automatically retry failed test cases **once**:
@@ -107,3 +105,6 @@ For those developing new features for SWSS or the DVS framework, you might find 
 
     You can mitigate this by editing the `DEFAULT_DOCKER_API_VERSION` in `/usr/local/lib/python2.7/dist-packages/docker/constants.py`, or by upgrading to a newer version of Docker CE. See [relevant GitHub discussion](https://github.com/drone/drone/issues/2048).
     
+## Further Reading
+- [How to develop new tests](./README.TestDevGuide.md)
+- [How to contribute to `dvslib`](./README.LibDevGuide.md)
