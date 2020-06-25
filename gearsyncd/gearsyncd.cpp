@@ -99,17 +99,10 @@ int main(int argc, char **argv)
                 handleGearboxConfigFile(gearbox_config_file, warm);
             }
         }
-
-        while (true)
-        {
-          // placeholder, at some point we may select on cfgDb.
-
-          sleep(1000);
-        }
     }
     catch (const std::exception& e)
     {
-        cerr << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
+        cerr << "Exception \"" << e.what() << "\" had been thrown in gearsyncd daemon" << endl;
         return EXIT_FAILURE;
     }
     return 1;
