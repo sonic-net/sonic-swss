@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 Broadcom Inc.
+ * Copyright 2019-2020 Broadcom Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#if !defined(__GEARBOX_PARSER_H__)
-#define __GEARBOX_PARSER_H__
+#pragma once 
 
 #include "gearparserbase.h"
 
@@ -26,4 +25,3 @@ public:
     void notifyGearboxConfigDone(bool success);
 };
 
-#endif /* __GEARBOX_PARSER_H__ */
