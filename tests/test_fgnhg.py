@@ -380,7 +380,7 @@ class TestFineGrainedNextHopGroup(object):
         remove_entry_tbl(
             config_db,
             "FG_NHG_MEMBER", 
-            "10.0.0.1",           
+            "10.0.0.1",
         )
         nh_memb_exp_count = {"10.0.0.5":30,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
@@ -396,7 +396,7 @@ class TestFineGrainedNextHopGroup(object):
         )
         nh_memb_exp_count = {"10.0.0.1":15,"10.0.0.5":15,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
-        
+
         # Remove route
         ps._del(fg_nhg_prefix)
         time.sleep(1)
@@ -413,9 +413,9 @@ class TestFineGrainedNextHopGroup(object):
         remove_entry_tbl(
             config_db,
             "FG_NHG_PREFIX", 
-            fg_nhg_prefix,           
+            fg_nhg_prefix,
         )
-        
+
         # add normal route
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"), ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
         ps.set(fg_nhg_prefix, fvs)
@@ -472,7 +472,7 @@ class TestFineGrainedNextHopGroup(object):
         remove_entry_tbl(
             config_db,
             "FG_NHG_PREFIX", 
-            fg_nhg_prefix,           
+            fg_nhg_prefix,
         )
 
         time.sleep(1)
@@ -484,7 +484,7 @@ class TestFineGrainedNextHopGroup(object):
                 route_found = True
         assert route_found == True
         
-        # remove routes
+        # remove prefix entry
         ps._del(fg_nhg_prefix)
         time.sleep(1)
 
@@ -496,7 +496,7 @@ class TestFineGrainedNextHopGroup(object):
 
         keys = nhg_member_tbl.getKeys()
         assert len(keys) == 0
-        
+
         # remove group fail since there's still nexthop member
         remove_entry_tbl(
             config_db,
@@ -507,37 +507,37 @@ class TestFineGrainedNextHopGroup(object):
         remove_entry_tbl(
             config_db,
             "FG_NHG_MEMBER", 
-            "10.0.0.1",           
+            "10.0.0.1",
         )
         
         remove_entry_tbl(
             config_db,
             "FG_NHG_MEMBER", 
-            "10.0.0.3",           
+            "10.0.0.3",
         )
         
         remove_entry_tbl(
             config_db,
             "FG_NHG_MEMBER", 
-            "10.0.0.5",           
+            "10.0.0.5",
         )
         
         remove_entry_tbl(
             config_db,
             "FG_NHG_MEMBER", 
-            "10.0.0.7",           
+            "10.0.0.7",
         )
         
         remove_entry_tbl(
             config_db,
             "FG_NHG_MEMBER", 
-            "10.0.0.9",           
+            "10.0.0.9",
         )
         
         remove_entry_tbl(
             config_db,
             "FG_NHG_MEMBER", 
-            "10.0.0.11",           
+            "10.0.0.11",
         )
        
         # remove group should succeeds

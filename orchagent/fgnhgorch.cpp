@@ -848,19 +848,19 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
         }
         else 
         {
-        	/* delete all associated FG_NHG and SAI objects */
-        	if (fgNhg_entry->second.prefixes.size() == 0 && fgNhg_entry->second.nextHops.size() == 0)
-        	{
-        		m_FgNhgs.erase(fgNhg_entry);
-        		assert(m_FgNhgs.find(fgNhg_name) == fgNhgPrefixes.end());
-        		SWSS_LOG_INFO("%s: Received delete call for valid entry, deleting all associated FG_NHG and SAI objects %s",
-        				__FUNCTION__, fgNhg_name.c_str());
-        	}
-        	else
-        	{
-				SWSS_LOG_NOTICE("%s: still prefixes and nexthop in FG_NHG group %s", __FUNCTION__, fgNhg_name.c_str());
-				return false;
-        	}
+            /* delete all associated FG_NHG and SAI objects */
+            if (fgNhg_entry->second.prefixes.size() == 0 && fgNhg_entry->second.nextHops.size() == 0)
+            {
+                m_FgNhgs.erase(fgNhg_entry);
+                assert(m_FgNhgs.find(fgNhg_name) == fgNhgPrefixes.end());
+                SWSS_LOG_INFO("%s: Received delete call for valid entry, deleting all associated FG_NHG and SAI objects %s",
+                        __FUNCTION__, fgNhg_name.c_str());
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("%s: still prefixes and nexthop in FG_NHG group %s", __FUNCTION__, fgNhg_name.c_str());
+                return false;
+            }
         }
     }
     return true;
@@ -906,34 +906,35 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
         }
         else 
         {
-        	/* delete regular ecmp handling for prefix */
-			sai_object_id_t vrf_id = gVirtualRouterId;
-			auto route_table_entry = gRouteOrch->getSyncdRoutes().find(vrf_id);
-			NextHopGroupKey nhg;
-			if (route_table_entry == gRouteOrch->getSyncdRoutes().end())
-			{
-				SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%lx\n", vrf_id);
-				return false;
-			}
+            /* delete regular ecmp handling for prefix */
+            sai_object_id_t vrf_id = gVirtualRouterId;
+            auto route_table_entry = gRouteOrch->getSyncdRoutes().find(vrf_id);
+            NextHopGroupKey nhg;
+            if (route_table_entry == gRouteOrch->getSyncdRoutes().end())
+            {
+                SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%lx\n", vrf_id);
+            }
+            else
+            {
+                /* ipprefix already exist in routeorch */
+                auto it_route = route_table_entry->second.find(ip_prefix);
+                if (it_route != route_table_entry->second.end())
+                {
+                    nhg = it_route->second;
+                    gRouteOrch->removeRoute(vrf_id, ip_prefix);
+                    route_handled = true;
+                }
+            }
 
-			/* ipprefix already exist in routeorch */
-			auto it_route = route_table_entry->second.find(ip_prefix);
-			if (it_route != route_table_entry->second.end())
-			{
-				nhg = it_route->second;
-				gRouteOrch->removeRoute(vrf_id, ip_prefix);
-				route_handled = true;
-			}
-
-        	fgNhg_entry->second.prefixes.push_back(ip_prefix);
+            fgNhg_entry->second.prefixes.push_back(ip_prefix);
             fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
 
             /* add fgnhg route */
             if (route_handled)
             {
-            	addRoute(vrf_id, ip_prefix, nhg);
-            	SWSS_LOG_INFO("%s: Add route with ip prefix %s with nexthop group key %s", __FUNCTION__, ip_prefix.to_string().c_str(),
-            			nhg.to_string().c_str());
+                addRoute(vrf_id, ip_prefix, nhg);
+                SWSS_LOG_INFO("%s: Add route with ip prefix %s with nexthop group key %s", __FUNCTION__, ip_prefix.to_string().c_str(),
+                    nhg.to_string().c_str());
             }
 
             SWSS_LOG_INFO("%s FG_NHG added for group %s, prefix %s",
@@ -950,36 +951,36 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
         }
         else
         {
-        	/* remove fgnhg route entry */
-        	sai_object_id_t vrf_id = gVirtualRouterId;
-        	NextHopGroupKey nhg;
-        	if (m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
-        			m_syncdFGRouteTables.at(vrf_id).find(ip_prefix) != m_syncdFGRouteTables.at(vrf_id).end())
-        	{
-        		nhg = m_syncdFGRouteTables.at(vrf_id).at(ip_prefix).nhg_key;
-        		removeRoute(vrf_id, ip_prefix);
-        		route_handled = true;
-        		SWSS_LOG_INFO("%s FG_NHG prefix %s is removed from SAI",
-        				__FUNCTION__, ip_prefix.to_string().c_str());
-        	}
+            /* remove fgnhg route entry */
+            sai_object_id_t vrf_id = gVirtualRouterId;
+            NextHopGroupKey nhg;
+            if (m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
+                    m_syncdFGRouteTables.at(vrf_id).find(ip_prefix) != m_syncdFGRouteTables.at(vrf_id).end())
+            {
+                nhg = m_syncdFGRouteTables.at(vrf_id).at(ip_prefix).nhg_key;
+                removeRoute(vrf_id, ip_prefix);
+                route_handled = true;
+                SWSS_LOG_INFO("%s FG_NHG prefix %s is removed from SAI",
+                        __FUNCTION__, ip_prefix.to_string().c_str());
+            }
 
-        	/* search and delete local structure */
-        	for (uint32_t i = 0; i < prefix_entry->second->prefixes.size(); i++)
-        	{
-        		if (prefix_entry->second->prefixes[i] == ip_prefix)
-        		{
-        			prefix_entry->second->prefixes.erase(prefix_entry->second->prefixes.begin() + i);
-        			SWSS_LOG_INFO("%s FG_NHG prefix %s is deleted from group %s",
-        					__FUNCTION__, ip_prefix.to_string().c_str(), fgNhgPrefixes[ip_prefix]->fgNhg_name.c_str());
-        			break;
-        		}
-        	}
+            /* search and delete local structure */
+            for (uint32_t i = 0; i < prefix_entry->second->prefixes.size(); i++)
+            {
+                if (prefix_entry->second->prefixes[i] == ip_prefix)
+                {
+                    prefix_entry->second->prefixes.erase(prefix_entry->second->prefixes.begin() + i);
+                    SWSS_LOG_INFO("%s FG_NHG prefix %s is deleted from group %s",
+                            __FUNCTION__, ip_prefix.to_string().c_str(), fgNhgPrefixes[ip_prefix]->fgNhg_name.c_str());
+                    break;
+                }
+            }
             fgNhgPrefixes.erase(ip_prefix);
 
             /* reassign routeorch as the owner of the prefix and call for routeorch to add this route */
             if (route_handled)
             {
-            	gRouteOrch->addRoute(vrf_id, ip_prefix, nhg);
+                gRouteOrch->addRoute(vrf_id, ip_prefix, nhg);
             }
             /* TODO: query next-hop ecmp group and delete if no more prefixes point to it */
         }
@@ -1025,52 +1026,52 @@ bool FgNhgOrch::doTaskFgNhg_member(const KeyOpFieldsValuesTuple & t)
         }
         else
         {
-        	/* skip addition if next-hop already exists */
-        	if (fgNhg_entry->second.nextHops.find(next_hop) != fgNhg_entry->second.nextHops.end())
-        	{
-        		SWSS_LOG_INFO("%s FG_NHG member %s already exists, skip", __FUNCTION__, next_hop.to_string().c_str());
-        		return true;
-        	}
-        	fgNhg_entry->second.nextHops[next_hop] = bank;
+            /* skip addition if next-hop already exists */
+            if (fgNhg_entry->second.nextHops.find(next_hop) != fgNhg_entry->second.nextHops.end())
+            {
+                SWSS_LOG_INFO("%s FG_NHG member %s already exists, skip", __FUNCTION__, next_hop.to_string().c_str());
+                return true;
+            }
+            fgNhg_entry->second.nextHops[next_hop] = bank;
 
-			/* query and check the next hop is valid in neighOrcch */
-        	if (!m_neighOrch->hasNextHop(nhk))
-        	{
-        		SWSS_LOG_INFO("%s: Failed to get next hop %s in", __FUNCTION__, nhk.to_string().c_str());
-        		return false;
-        	}
+            /* query and check the next hop is valid in neighOrcch */
+            if (!m_neighOrch->hasNextHop(nhk))
+            {
+                SWSS_LOG_INFO("%s: Failed to get next hop %s in", __FUNCTION__, nhk.to_string().c_str());
+                return true;
+            }
 
-        	/* add next-hop into SAI group */
-        	if (!validnexthopinNextHopGroup(nhk))
-        	{
-        		return false;
-        	}
+            /* add next-hop into SAI group */
+            if (!validnexthopinNextHopGroup(nhk))
+            {
+                return false;
+            }
             SWSS_LOG_INFO("%s FG_NHG member added for group %s, next-hop %s",
                     __FUNCTION__, fgNhg_entry->second.fgNhg_name.c_str(), next_hop.to_string().c_str());
         }
     }
     else if (op == DEL_COMMAND)
     {
-    	/* remove next hop from SAI group */
-    	if (!invalidnexthopinNextHopGroup(nhk))
-    	{
-    		return false;
-    	}
+        /* remove next hop from SAI group */
+        if (!invalidnexthopinNextHopGroup(nhk))
+        {
+            return false;
+        }
 
-    	SWSS_LOG_INFO("%s FG_NHG member removed for SAI group, next-hop %s",
-    			__FUNCTION__, next_hop.to_string().c_str());
+        SWSS_LOG_INFO("%s FG_NHG member removed for SAI group, next-hop %s",
+                __FUNCTION__, next_hop.to_string().c_str());
 
-    	/* remove next-hop in fgnhg entry*/
-    	for (auto fgnhg_it = m_FgNhgs.begin(); fgnhg_it != m_FgNhgs.end(); ++fgnhg_it)
-    	{
-    		auto it = fgnhg_it->second.nextHops.find(next_hop);
-    		if (it != fgnhg_it->second.nextHops.end())
-    		{
-    			SWSS_LOG_INFO("%s FG_NHG member removed for group %s, next-hop %s",
-    					__FUNCTION__, fgnhg_it->second.fgNhg_name.c_str(), next_hop.to_string().c_str());
-    			fgnhg_it->second.nextHops.erase(it);
-    		}
-    	}
+        /* remove next-hop in fgnhg entry*/
+        for (auto fgnhg_it = m_FgNhgs.begin(); fgnhg_it != m_FgNhgs.end(); ++fgnhg_it)
+        {
+            auto it = fgnhg_it->second.nextHops.find(next_hop);
+            if (it != fgnhg_it->second.nextHops.end())
+            {
+                SWSS_LOG_INFO("%s FG_NHG member removed for group %s, next-hop %s",
+                        __FUNCTION__, fgnhg_it->second.fgNhg_name.c_str(), next_hop.to_string().c_str());
+                fgnhg_it->second.nextHops.erase(it);
+            }
+        }
     }
     return true;
 }
