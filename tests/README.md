@@ -14,9 +14,9 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
     ```
     sudo modprobe team
     sudo apt install net-tools ethtool vlan
-    sudo pip install docker zipp==2.2.1 pytest==4.6.9 flaky redis
+    sudo pip3 install docker zipp==2.2.1 pytest==4.6.9 flaky redis distro==1.4.0
     ```
-3. Install `python-swsscommon_1.0.0_amd64.deb`. You will need to install all the dependencies as well in the following order:
+3. Install `python3-swsscommon_1.0.0_amd64.deb`. You will need to install all the dependencies as well in the following order:
 
     ```
     sudo dpkg -i libnl-3-200_3.5.0-1_amd64.deb
@@ -30,7 +30,10 @@ SWSS, Redis, and all the other required components run inside a virtual switch D
 
     You can find the dependencies [here](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/buildimage-vs-all/lastSuccessfulBuild/artifact/target/debs/stretch/), and get this package by:
     - [Building it from scratch](https://github.com/Azure/sonic-swss-common)
-    - [Downloading the latest build from Jenkins](https://sonic-jenkins.westus2.cloudapp.azure.com/job/common/job/sonic-swss-common-build/lastSuccessfulBuild/artifact/target/)
+    - Downloading the latest build from Jenkins
+      - [Debian](https://sonic-jenkins.westus2.cloudapp.azure.com/job/common/job/sonic-swss-common-build/lastSuccessfulBuild/artifact/target/)
+      - [Ubuntu 18.04](https://sonic-jenkins.westus2.cloudapp.azure.com/job/common/job/sonic-swss-common-build-ubuntu/lastSuccessfulBuild/artifact/target/)
+      - [Ubuntu 20.04](https://sonic-jenkins.westus2.cloudapp.azure.com/job/common/job/sonic-swss-common-build-ubuntu-20_04/lastSuccessfulBuild/artifact/target/)
 4. Load the `docker-sonic-vs.gz` file into docker. You can get the image by:
     - [Building it from scratch](https://github.com/Azure/sonic-buildimage)
     - [Downloading the latest build from Jenkins](https://sonic-jenkins.westus2.cloudapp.azure.com/job/vs/job/buildimage-vs-all/lastSuccessfulBuild/artifact/target/)
