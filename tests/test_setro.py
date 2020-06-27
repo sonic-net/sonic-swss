@@ -36,7 +36,7 @@ class TestSetRo(object):
 
         key = "SAI_OBJECT_TYPE_SWITCH:" + swRid
 
-        print key
+        print(key)
 
         ntf.send("set_ro", key, fvp)
 

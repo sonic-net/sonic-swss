@@ -60,7 +60,7 @@ class TestNat(object):
         # check NAT zone is set for interface in app db
         fvs = self.app_db.wait_for_entry("INTF_TABLE", "Ethernet0")
         zone = False
-        for f, v in fvs.items():
+        for f, v in list(fvs.items()):
             if f == "nat_zone" and v == '1':
                 zone = True
                 break

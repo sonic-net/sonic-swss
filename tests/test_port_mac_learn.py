@@ -85,7 +85,7 @@ class TestPortMacLearn(object):
         assert status == True
 
         learn_mode_map = self.get_learn_mode_map()
-        for key, value in learn_mode_map.items():
+        for key, value in list(learn_mode_map.items()):
             # set MAC learn mode to port
             tbl = swsscommon.Table(self.cdb, "PORT")
             fvs = swsscommon.FieldValuePairs([("learn_mode", key)])
@@ -151,7 +151,7 @@ class TestPortMacLearn(object):
         assert status == True
 
         learn_mode_map = self.get_learn_mode_map()
-        for key, value in learn_mode_map.items():
+        for key, value in list(learn_mode_map.items()):
             # set mac learn mode to PortChannel
             tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
             fvs = swsscommon.FieldValuePairs([("learn_mode", key)])

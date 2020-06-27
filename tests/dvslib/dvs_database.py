@@ -40,7 +40,7 @@ class DVSDatabase(object):
         """
 
         table = swsscommon.Table(self.db_connection, table_name)
-        formatted_entry = swsscommon.FieldValuePairs(entry.items())
+        formatted_entry = swsscommon.FieldValuePairs(list(entry.items()))
         table.set(key, formatted_entry)
 
     def update_entry(self, table_name, key, entry):
@@ -54,7 +54,7 @@ class DVSDatabase(object):
         """
 
         table = swsscommon.Table(self.db_connection, table_name)
-        formatted_entry = swsscommon.FieldValuePairs(entry.items())
+        formatted_entry = swsscommon.FieldValuePairs(list(entry.items()))
         table.set(key, formatted_entry)
 
     def get_entry(self, table_name, key):
@@ -168,7 +168,7 @@ class DVSDatabase(object):
 
         def _access_function():
             fv_pairs = self.get_entry(table_name, key)
-            return (all(fv_pairs.get(k) == v for k, v in expected_fields.items()), fv_pairs)
+            return (all(fv_pairs.get(k) == v for k, v in list(expected_fields.items())), fv_pairs)
 
         status, result = wait_for_result(_access_function,
                                          self._disable_strict_polling(polling_config))

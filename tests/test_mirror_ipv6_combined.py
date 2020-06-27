@@ -202,12 +202,12 @@ class TestMirror(object):
                 elif key == "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST":
                     assert set(list_attrs) == set(["SAI_ACL_BIND_POINT_TYPE_PORT", "SAI_ACL_BIND_POINT_TYPE_LAG"])
                 else:
-                    print("Encountered unexpected range attribute on mirror table: {}".format(key))
+                    print(("Encountered unexpected range attribute on mirror table: {}".format(key)))
                     assert False
             elif key == "SAI_ACL_TABLE_ATTR_ACL_STAGE":
                 assert value == "SAI_ACL_STAGE_INGRESS"
             else:
-                print("Encountered unexpected attribute on mirror table: {}".format(key))
+                print(("Encountered unexpected attribute on mirror table: {}".format(key)))
                 assert False
 
         # Delete the table

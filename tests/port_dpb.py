@@ -87,7 +87,7 @@ class Port():
         return self._oid
 
     def print_port(self):
-        print "Port: %s Lanes: %s Speed: %d, Index: %d"%(self._name, self._lanes, self._speed, self._index)
+        print("Port: %s Lanes: %s Speed: %d, Index: %d"%(self._name, self._lanes, self._speed, self._index))
 
     def port_merge(self, child_ports):
         child_ports.sort(key=lambda x: x.get_port_num())
@@ -218,7 +218,7 @@ class Port():
         (status, fvs) = self._asic_db_ptbl.get(self.get_oid())
         assert(status == True)
         fvs_dict = self.get_fvs_dict(fvs)
-        if (fvs_dict.has_key("SAI_PORT_ATTR_HW_LANE_LIST")):
+        if ("SAI_PORT_ATTR_HW_LANE_LIST" in fvs_dict):
             assert(fvs_dict['SAI_PORT_ATTR_HW_LANE_LIST'] == self.get_lanes_asic_db_str())
         assert(fvs_dict['SAI_PORT_ATTR_SPEED'] == str(self.get_speed()))
 

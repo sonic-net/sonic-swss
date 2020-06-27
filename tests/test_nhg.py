@@ -206,7 +206,7 @@ class TestNextHopGroup(object):
             if not fvs:
                 return None
 
-            print fvs
+            print(fvs)
             nhgid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
             if nhgid is None:
                 return None
@@ -216,7 +216,7 @@ class TestNextHopGroup(object):
 
         MAX_ECMP_COUNT = 512
         MAX_PORT_COUNT = 10
-        IP_INTEGER_BASE = int(ipaddress.IPv4Address(unicode("2.2.2.0")))
+        IP_INTEGER_BASE = int(ipaddress.IPv4Address(str("2.2.2.0")))
 
         config_db = dvs.get_config_db()
         fvs = {"NULL": "NULL"}
