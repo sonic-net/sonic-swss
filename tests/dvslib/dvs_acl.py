@@ -59,7 +59,7 @@ class DVSAcl(object):
 
         for group in acl_table_groups:
             fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP", group)
-            for k, v in fvs.items():
+            for k, v in list(fvs.items()):
                 if k == "SAI_ACL_TABLE_GROUP_ATTR_ACL_STAGE":
                     assert v == "SAI_ACL_STAGE_INGRESS"
                 elif k == "SAI_ACL_TABLE_GROUP_ATTR_ACL_BIND_POINT_TYPE_LIST":
@@ -87,7 +87,7 @@ class DVSAcl(object):
         member_groups = []
         for member in members:
             fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER", member)
-            for k, v in fvs.items():
+            for k, v in list(fvs.items()):
                 if k == "SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID":
                     assert v in acl_group_ids
                     member_groups.append(v)
@@ -131,7 +131,7 @@ class DVSAcl(object):
             "PACKET_ACTION": action
         }
 
-        for k, v in qualifiers.items():
+        for k, v in list(qualifiers.items()):
             fvs[k] = v
 
         self.config_db.create_entry("ACL_RULE", "{}|{}".format(table_name, rule_name), fvs)
@@ -172,7 +172,7 @@ class DVSAcl(object):
     def _check_acl_entry(self, entry, qualifiers, action, priority):
         acl_table_id = self.get_acl_table_id()
 
-        for k, v in entry.items():
+        for k, v in list(entry.items()):
             if k == "SAI_ACL_ENTRY_ATTR_TABLE_ID":
                 assert v == acl_table_id
             elif k == "SAI_ACL_ENTRY_ATTR_ADMIN_STATE":
@@ -218,7 +218,7 @@ class DVSAcl(object):
         def _match_acl_range(sai_acl_range):
             range_id = sai_acl_range.split(":", 1)[1]
             fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_RANGE", range_id)
-            for k, v in fvs.items():
+            for k, v in list(fvs.items()):
                 if k == "SAI_ACL_RANGE_ATTR_TYPE" and v == expected_type:
                     continue
                 elif k == "SAI_ACL_RANGE_ATTR_LIMIT" and v == expected_ports:

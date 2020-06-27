@@ -6,9 +6,9 @@ import json
 import redis
 import docker
 import pytest
-import commands
+import subprocess
 import tarfile
-import StringIO
+import io
 import subprocess
 
 from datetime import datetime
@@ -19,7 +19,7 @@ from dvslib import dvs_vlan
 from dvslib import dvs_lag
 
 def ensure_system(cmd):
-    (rc, output) = commands.getstatusoutput(cmd)
+    (rc, output) = subprocess.getstatusoutput(cmd)
     if rc:
         raise RuntimeError('Failed to run command: %s. rc=%d. output: %s' % (cmd, rc, output))
 
@@ -136,9 +136,9 @@ class VirtualServer(object):
         try:
             out = subprocess.check_output("ip netns exec %s %s" % (self.nsname, cmd), stderr=subprocess.STDOUT, shell=True)
         except subprocess.CalledProcessError as e:
-            print "------rc={} for cmd: {}------".format(e.returncode, e.cmd)
-            print e.output.rstrip()
-            print "------"
+            print(("------rc={} for cmd: {}------".format(e.returncode, e.cmd)))
+            print((e.output.rstrip()))
+            print("------")
             return e.returncode
         return 0
 
@@ -187,7 +187,7 @@ class DockerVirtualSwitch(object):
             for ctn in self.client.containers.list():
                 if ctn.name == name:
                     self.ctn = ctn
-                    (status, output) = commands.getstatusoutput("docker inspect --format '{{.HostConfig.NetworkMode}}' %s" % name)
+                    (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.HostConfig.NetworkMode}}' %s" % name)
                     ctn_sw_id = output.split(':')[1]
                     self.cleanup = False
             if self.ctn == None:
@@ -198,7 +198,7 @@ class DockerVirtualSwitch(object):
                 if ctn.id == ctn_sw_id or ctn.name == ctn_sw_id:
                     ctn_sw_name = ctn.name
 
-            (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % ctn_sw_name)
+            (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % ctn_sw_name)
             self.ctn_sw_pid = int(output)
 
             # create virtual servers
@@ -214,7 +214,7 @@ class DockerVirtualSwitch(object):
         else:
             self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
                     command="bash", stdin_open=True)
-            (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % self.ctn_sw.name)
+            (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % self.ctn_sw.name)
             self.ctn_sw_pid = int(output)
 
             # create virtual server
@@ -284,7 +284,7 @@ class DockerVirtualSwitch(object):
             # get process status
             res = self.ctn.exec_run("supervisorctl status")
             try:
-                out = res.output
+                out = res.output.decode('utf-8')
             except AttributeError:
                 out = res
             for l in out.split('\n'):
@@ -322,7 +322,7 @@ class DockerVirtualSwitch(object):
 
         res = self.ctn.exec_run("ip link show")
         try:
-            out = res.output
+            out = res.output.decode('utf-8')
         except AttributeError:
             out = res
         for l in out.split('\n'):
@@ -335,7 +335,7 @@ class DockerVirtualSwitch(object):
                 m = re.compile("(eth|lo|Bridge|Ethernet)").match(pname)
                 if not m:
                     self.ctn.exec_run("ip link del {}".format(pname))
-                    print "remove extra link {}".format(pname)
+                    print(("remove extra link {}".format(pname)))
         return
 
     def ctn_restart(self):
@@ -389,19 +389,19 @@ class DockerVirtualSwitch(object):
         res = self.ctn.exec_run(cmd)
         try:
             exitcode = res.exit_code
-            out = res.output
+            out = res.output.decode('utf-8')
         except AttributeError:
             exitcode = 0
             out = res
         if exitcode != 0:
-            print "-----rc={} for cmd {}-----".format(exitcode, cmd)
-            print out.rstrip()
-            print "-----"
+            print(("-----rc={} for cmd {}-----".format(exitcode, cmd)))
+            print((out.rstrip()))
+            print("-----")
 
         return (exitcode, out)
 
     def copy_file(self, path, filename):
-        tarstr = StringIO.StringIO()
+        tarstr = io.StringIO()
         tar = tarfile.open(fileobj=tarstr, mode="w")
         tar.add(filename, os.path.basename(filename))
         tar.close()
@@ -455,7 +455,7 @@ class DockerVirtualSwitch(object):
         while True and idle < timeout:
             message = pubsub.get_message()
             if message:
-                print message
+                print(message)
                 if ignore:
                     fds = message['channel'].split(':')
                     if fds[2] in ignore:
@@ -482,7 +482,7 @@ class DockerVirtualSwitch(object):
         while True and idle < timeout:
             message = pubsub.get_message()
             if message:
-                print message
+                print(message)
                 key = message['channel'].split(':', 1)[1]
                 # In producer/consumer_state_table scenarios, every entry will
                 # show up twice for every push/pop operation, so skip the second
@@ -524,7 +524,7 @@ class DockerVirtualSwitch(object):
         while True and idle < timeout:
             message = pubsub.get_message()
             if message:
-                print message
+                print(message)
                 key = message['channel'].split(':', 1)[1]
                 if ignore:
                     fds = message['channel'].split(':')

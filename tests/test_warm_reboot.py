@@ -661,7 +661,7 @@ class TestWarmReboot(object):
         # use "change" if neighbor is in FAILED state
         for i in range(0, len(ips), 2):
             (rc, output) = dvs.runcmd(['sh', '-c', "ip -4 neigh | grep {}".format(ips[i])])
-            print output
+            print(output)
             if output:
                 dvs.runcmd("ip neigh change {} dev {} lladdr {} nud reachable".format(ips[i], intfs[i/2], macs[i]))
             else:
@@ -669,7 +669,7 @@ class TestWarmReboot(object):
 
         for i in range(0, len(v6ips), 2):
             (rc, output) = dvs.runcmd(['sh', '-c', "ip -6 neigh | grep {}".format(v6ips[i])])
-            print output
+            print(output)
             if output:
                 dvs.runcmd("ip -6 neigh change {} dev {} lladdr {} nud reachable".format(v6ips[i], intfs[i/2], macs[i]))
             else:
@@ -995,9 +995,9 @@ class TestWarmReboot(object):
         # appDB port table operation
         orchStateCount = 0
         for message in pubsubMessages:
-            print message
+            print(message)
             key = message['channel'].split(':', 1)[1]
-            print key
+            print(key)
             if message['data'] != 'hset' and message['data'] != 'del':
                 continue
             if key.find(swsscommon.APP_PORT_TABLE_NAME)==0:
@@ -2040,7 +2040,7 @@ class TestWarmReboot(object):
         # waited 10 above already
         i = 10
         while (not kernel_restore_neighs_done(restoretbl)):
-            print "Waiting for kernel neighbors restore process done: {} seconds".format(i)
+            print("Waiting for kernel neighbors restore process done: {} seconds".format(i))
             time.sleep(10)
             i += 10
 
