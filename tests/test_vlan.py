@@ -1,4 +1,4 @@
-import platform
+import distro
 import pytest
 
 from distutils.version import StrictVersion
@@ -158,7 +158,7 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
-    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'),
+    @pytest.mark.skipif(StrictVersion(distro.linux_distribution()[1]) <= StrictVersion('8.9'),
                         reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
         (["Vla", "2"], 0),
@@ -185,7 +185,7 @@ class TestVlan(object):
             self.dvs_vlan.remove_vlan(vlan_id)
             self.dvs_vlan.get_and_verify_vlan_ids(0)
 
-    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'),
+    @pytest.mark.skipif(StrictVersion(distro.linux_distribution()[1]) <= StrictVersion('8.9'),
                         reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
         (["Vlan", "abc"], 0),
@@ -277,7 +277,7 @@ class TestVlan(object):
         self.dvs_vlan.remove_vlan(vlan)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
 
-    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'),
+    @pytest.mark.skipif(StrictVersion(distro.linux_distribution()[1]) <= StrictVersion('8.9'),
                         reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
         (["tagging_mode", "untagged"], [1, "SAI_VLAN_TAGGING_MODE_UNTAGGED"]),
@@ -385,7 +385,7 @@ class TestVlan(object):
 
         self.dvs_vlan.remove_vlan(vlan)
 
-    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'),
+    @pytest.mark.skipif(StrictVersion(distro.linux_distribution()[1]) <= StrictVersion('8.9'),
                         reason="Debian 8.9 or before has no support")
     @pytest.mark.parametrize("test_input, expected", [
         (["untagged"], ["SAI_VLAN_TAGGING_MODE_UNTAGGED"]),
