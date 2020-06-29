@@ -112,6 +112,27 @@ public:
     {
     	return m_syncdRoutes;
     }
+
+    int getNextHopGroupCount(void)
+    {
+    	return m_nextHopGroupCount;
+    }
+
+    void incNextHopGroupCount(void)
+    {
+        m_nextHopGroupCount++;
+    }
+
+    void decNextHopGroupCount(void)
+    {
+        m_nextHopGroupCount--;
+    }
+
+    int getMaxNextHopGroupCount(void)
+    {
+    	return m_maxNextHopGroupCount;
+    } 
+
     bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
     bool removeRoute(sai_object_id_t, const IpPrefix&);
 private:
