@@ -1,5 +1,3 @@
-from dvs_database import DVSDatabase
-
 class DVSMirror(object):
     def __init__(self, adb, cdb, sdb, cntrdb, appdb):
         self.asic_db = adb
@@ -7,12 +5,6 @@ class DVSMirror(object):
         self.state_db = sdb
         self.counters_db = cntrdb
         self.app_db = appdb
-
-    def src_ports_to_list():
-        src_port_list = []
-        for port in src_ports.split(","):
-            src_port_list.append(port)
-            src_port=",".join(src_port_list)
 
     def create_span_session(self, name, dst_port, src_ports=None, direction="BOTH", queue=None, policer=None):
         mirror_entry = {"type": "SPAN"}
