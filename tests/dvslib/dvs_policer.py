@@ -16,3 +16,4 @@ class DVSPolicer(object):
 
     def verify_no_policer(self):
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 0)
+

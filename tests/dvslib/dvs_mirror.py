@@ -97,3 +97,4 @@ class DVSMirror(object):
             self.verify_session_policer(dvs, entry["SAI_MIRROR_SESSION_ATTR_POLICER"], cir)
         if src_ports:
             self.verify_port_mirror_config(dvs, src_ports, direction, session_oid=session_oid)
+

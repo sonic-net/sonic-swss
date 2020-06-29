@@ -547,3 +547,4 @@ class TestMirror(object):
         # remove mirror session
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
+
