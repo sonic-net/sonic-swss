@@ -416,6 +416,8 @@ class TestFineGrainedNextHopGroup(object):
             fg_nhg_prefix,
         )
 
+        """
+
         # add normal route
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"), ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
         ps.set(fg_nhg_prefix, fvs)
@@ -546,3 +548,4 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG", 
             fg_nhg_name,
         )
+        """

@@ -975,12 +975,14 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
                 if (it_route != route_table_entry->second.end())
                 {
                     nhg = it_route->second;
+                    /* TODO
                     if(!gRouteOrch->removeRoute(vrf_id, ip_prefix))
                     {
                         SWSS_LOG_INFO("Failed to remove routeOrch route, %s:%s", 
                                 ip_prefix.to_string().c_str(), nhg.to_string().c_str());
                         return false;
                     }
+                    */
                     route_handled = true;
                 }
             }
@@ -1049,12 +1051,14 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
             /* reassign routeorch as the owner of the prefix and call for routeorch to add this route */
             if (route_handled)
             {
+                /* TODO;
                 if(!gRouteOrch->addRoute(vrf_id, ip_prefix, nhg))
                 {
                     SWSS_LOG_INFO("Failed to add routeorch route, %s:%s", 
                             ip_prefix.to_string().c_str(), nhg.to_string().c_str());
                     return false;
                 }
+                */
             }
         }
     }
