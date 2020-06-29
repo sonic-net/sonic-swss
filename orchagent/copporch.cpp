@@ -731,12 +731,12 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             if (it.second.trap_group_obj == m_trap_group_map[trap_group_name])
             {
                 trap_ids_to_reset.push_back(it.first);
-            }
-            sai_status = sai_hostif_api->remove_hostif_trap(it.second.trap_obj);
-            if (sai_status != SAI_STATUS_SUCCESS)
-            {
-                SWSS_LOG_ERROR("Failed to remove trap object %" PRId64 "", it.second.trap_obj);
-                return task_process_status::task_failed;
+                sai_status = sai_hostif_api->remove_hostif_trap(it.second.trap_obj);
+                if (sai_status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to remove trap object %" PRId64 "", it.second.trap_obj);
+                    return task_process_status::task_failed;
+                }
             }
         }
 

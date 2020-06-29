@@ -36,6 +36,8 @@ extern sai_router_interface_api_t *sai_router_intfs_api;
 
 #define UNREFERENCED_PARAMETER(P)       (P)
 
+#define UNDERLAY_RIF_DEFAULT_MTU 9100
+
 /* Global variables */
 sai_object_id_t gVirtualRouterId;
 sai_object_id_t gUnderlayIfId;
@@ -304,6 +306,10 @@ int main(int argc, char **argv)
 
     underlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
     underlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
+    underlay_intf_attrs.push_back(underlay_intf_attr);
+
+    underlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+    underlay_intf_attr.value.u32 = UNDERLAY_RIF_DEFAULT_MTU;
     underlay_intf_attrs.push_back(underlay_intf_attr);
 
     status = sai_router_intfs_api->create_router_interface(&gUnderlayIfId, gSwitchId, (uint32_t)underlay_intf_attrs.size(), underlay_intf_attrs.data());

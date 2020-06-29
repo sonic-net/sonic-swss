@@ -25,6 +25,12 @@ class TestWatermark(object):
     NEW_INTERVAL = 5
     DEFAULT_POLL_INTERVAL = 10
 
+    def setup_db(self, dvs):
+        self.asic_db = dvs.get_asic_db()
+        self.counters_db = dvs.get_counters_db()
+        self.config_db = dvs.get_config_db()
+        self.flex_db = dvs.get_flex_db()
+
     def enable_unittests(self, dvs, status):
         db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)    
         ntf = swsscommon.NotificationProducer(db, "SAI_VS_UNITTEST_CHANNEL")
@@ -80,24 +86,27 @@ class TestWatermark(object):
                   found = True
             assert found, "no such watermark found"
 
-    def get_oids(self, dvs, obj_type):
-
-        db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-        tbl = swsscommon.Table(db, "ASIC_STATE:{0}".format(obj_type))
-        keys = tbl.getKeys()
-        return keys
-
     def set_up_flex_counter(self, dvs):
+        queue_stats_entry = {"QUEUE_COUNTER_ID_LIST": "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES"}
         for q in self.qs:
-            dvs.runcmd("redis-cli -n 5 hset 'FLEX_COUNTER_TABLE:QUEUE_WATERMARK_STAT_COUNTER:{}' ".format(q) + \
-                      "QUEUE_COUNTER_ID_LIST SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES")
+            self.flex_db.create_entry("FLEX_COUNTER_TABLE",
+                                     "QUEUE_WATERMARK_STAT_COUNTER:{}".format(q),
+                                     queue_stats_entry)
 
+        pg_stats_entry = {"PG_COUNTER_ID_LIST": 
+        "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES,SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES"}
         for pg in self.pgs:
-            dvs.runcmd("redis-cli -n 5 hset 'FLEX_COUNTER_TABLE:PG_WATERMARK_STAT_COUNTER:{}' ".format(pg) + \
-                      "PG_COUNTER_ID_LIST 'SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES,SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES'")
+            self.flex_db.create_entry("FLEX_COUNTER_TABLE",
+                                     "PG_WATERMARK_STAT_COUNTER:{}".format(pg),
+                                     pg_stats_entry)
 
-        dvs.runcmd("redis-cli -n 4 hset 'FLEX_COUNTER_TABLE|PG_WATERMARK' 'FLEX_COUNTER_STATUS' 'enable'")
-        dvs.runcmd("redis-cli -n 4 hset 'FLEX_COUNTER_TABLE|QUEUE_WATERMARK' 'FLEX_COUNTER_STATUS' 'enable'")
+        fc_status_enable = {"FLEX_COUNTER_STATUS": "enable"}
+        self.config_db.create_entry("FLEX_COUNTER_TABLE",
+                                    "PG_WATERMARK",
+                                    fc_status_enable)
+        self.config_db.create_entry("FLEX_COUNTER_TABLE",
+                                    "QUEUE_WATERMARK",
+                                    fc_status_enable)
 
         self.populate_asic(dvs, "SAI_OBJECT_TYPE_QUEUE", SaiWmStats.queue_shared, "0")
         self.populate_asic(dvs, "SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", SaiWmStats.pg_shared, "0")
@@ -106,9 +115,8 @@ class TestWatermark(object):
         time.sleep(self.DEFAULT_TELEMETRY_INTERVAL*2)
 
     def set_up(self, dvs):
-        
-        self.qs = self.get_oids(dvs, "SAI_OBJECT_TYPE_QUEUE")
-        self.pgs = self.get_oids(dvs, "SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP")  
+        self.qs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_QUEUE")
+        self.pgs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP")
 
         db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
         tbl = swsscommon.Table(db, "COUNTERS_QUEUE_TYPE_MAP")                
@@ -125,7 +133,7 @@ class TestWatermark(object):
                  self.mc_q.append(q)
 
     def test_telemetry_period(self, dvs):
-        
+        self.setup_db(dvs)
         self.set_up(dvs)
         self.set_up_flex_counter(dvs)
         self.enable_unittests(dvs, "true")
@@ -153,7 +161,8 @@ class TestWatermark(object):
 
     @pytest.mark.skip(reason="This test is not stable enough")
     def test_lua_plugins(self, dvs):
-        
+
+        self.setup_db(dvs)
         self.set_up(dvs)
         self.set_up_flex_counter(dvs)
         self.enable_unittests(dvs, "true")
@@ -184,6 +193,7 @@ class TestWatermark(object):
     @pytest.mark.skip(reason="This test is not stable enough")
     def test_clear(self, dvs):
 
+        self.setup_db(dvs)
         self.set_up(dvs)
         self.enable_unittests(dvs, "true")
 

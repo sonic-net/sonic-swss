@@ -221,6 +221,7 @@ def create_vlan_interface(dvs, vlan_name, ifname, vnet_name, ipaddr):
         "VLAN_INTERFACE", '|', vlan_name,
         [
           ("vnet_name", vnet_name),
+          ("proxy_arp", "enabled"),
         ],
     )
 
@@ -231,6 +232,7 @@ def create_vlan_interface(dvs, vlan_name, ifname, vnet_name, ipaddr):
         "INTF_TABLE", ':', vlan_name,
         [
             ("vnet_name", vnet_name),
+            ("proxy_arp", "enabled"),
         ],
     )
     time.sleep(2)
@@ -393,6 +395,11 @@ def get_switch_mac(dvs):
     return mac
 
 
+def check_linux_intf_arp_proxy(dvs, ifname):
+    (exitcode, out) = dvs.runcmd("cat /proc/sys/net/ipv4/conf/{0}/proxy_arp_pvlan".format(ifname))
+    assert out != "1", "ARP proxy is not enabled for VNET interface in Linux kernel"
+
+
 loopback_id = 0
 def_vr_id = 0
 switch_mac = None
@@ -408,6 +415,7 @@ class VnetVxlanVrfTunnel(object):
     ASIC_VRF_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"
     ASIC_ROUTE_ENTRY        = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
     ASIC_NEXT_HOP           = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
+    ASIC_VLAN_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN"
 
     tunnel_map_ids       = set()
     tunnel_map_entry_ids = set()
@@ -563,7 +571,7 @@ class VnetVxlanVrfTunnel(object):
 
         return vr_set
 
-    def check_router_interface(self, dvs, name, vlan_oid=0):
+    def check_router_interface(self, dvs, intf_name, name, vlan_oid=0):
         # Check RIF in ingress VRF
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         global switch_mac
@@ -585,6 +593,12 @@ class VnetVxlanVrfTunnel(object):
 
         #IP2ME route will be created with every router interface
         new_route = get_created_entries(asic_db, self.ASIC_ROUTE_ENTRY, self.routes, 1)
+
+        if vlan_oid:
+            expected_attr = { 'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE': 'SAI_VLAN_FLOOD_CONTROL_TYPE_NONE' }
+            check_object(asic_db, self.ASIC_VLAN_TABLE, vlan_oid, expected_attr)
+
+        check_linux_intf_arp_proxy(dvs, intf_name)
 
         self.rifs.add(new_rif)
         self.routes.update(new_route)
@@ -688,6 +702,7 @@ class VnetBitmapVxlanTunnel(object):
     ASIC_BITMAP_ROUTER_ENTRY = "ASIC_STATE:SAI_OBJECT_TYPE_TABLE_BITMAP_ROUTER_ENTRY"
     ASIC_FDB_ENTRY           = "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY"
     ASIC_NEIGH_ENTRY         = "ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY"
+    ASIC_VLAN_TABLE          = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN"
 
     tunnel_map_ids        = set()
     tunnel_map_entry_ids  = set()
@@ -841,7 +856,7 @@ class VnetBitmapVxlanTunnel(object):
 
         self.vnet_bitmap_class_ids.remove(old_bitmap_class_id[0])
 
-    def check_router_interface(self, dvs, name, vlan_oid=0):
+    def check_router_interface(self, dvs, intf_name, name, vlan_oid=0):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
 
         expected_attrs = {
@@ -853,6 +868,7 @@ class VnetBitmapVxlanTunnel(object):
         if vlan_oid:
             expected_attrs.update({'SAI_ROUTER_INTERFACE_ATTR_TYPE': 'SAI_ROUTER_INTERFACE_TYPE_VLAN'})
             expected_attrs.update({'SAI_ROUTER_INTERFACE_ATTR_VLAN_ID': vlan_oid})
+            expected_attrs.update({'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE': 'SAI_VLAN_FLOOD_CONTROL_TYPE_NONE'})
         else:
             expected_attrs.update({'SAI_ROUTER_INTERFACE_ATTR_TYPE': 'SAI_ROUTER_INTERFACE_TYPE_PORT'})
 
@@ -860,6 +876,12 @@ class VnetBitmapVxlanTunnel(object):
         check_object(asic_db, self.ASIC_RIF_TABLE, new_rif, expected_attrs)
 
         new_bitmap_class_id  = get_created_entries(asic_db, self.ASIC_BITMAP_CLASS_ENTRY, self.vnet_bitmap_class_ids, 1)
+
+        if vlan_oid:
+            expected_attr = { 'SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE': 'SAI_VLAN_FLOOD_CONTROL_TYPE_NONE' }
+            check_object(asic_db, self.ASIC_VLAN_TABLE, vlan_oid, expected_attr)
+
+        check_linux_intf_arp_proxy(dvs, intf_name)
 
         self.rifs.add(new_rif)
         self.vnet_bitmap_class_ids.update(new_bitmap_class_id)
@@ -968,10 +990,10 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '10.10.10.10')
 
         vid = create_vlan_interface(dvs, "Vlan100", "Ethernet24", "Vnet_2000", "100.100.3.1/24")
-        vnet_obj.check_router_interface(dvs, 'Vnet_2000', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan100", 'Vnet_2000', vid)
 
         vid = create_vlan_interface(dvs, "Vlan101", "Ethernet28", "Vnet_2000", "100.100.4.1/24")
-        vnet_obj.check_router_interface(dvs, 'Vnet_2000', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan101", 'Vnet_2000', vid)
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet_2000', '10.10.10.1')
@@ -991,7 +1013,7 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_2001', '2001')
 
         create_phy_interface(dvs, "Ethernet4", "Vnet_2001", "100.102.1.1/24")
-        vnet_obj.check_router_interface(dvs, 'Vnet_2001')
+        vnet_obj.check_router_interface(dvs, "Ethernet4", 'Vnet_2001')
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "100.100.2.1/32", 'Vnet_2001', '10.10.10.2', "00:12:34:56:78:9A")
@@ -1051,7 +1073,7 @@ class TestVnetOrch(object):
         tun_id = vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '6.6.6.6')
 
         vid = create_vlan_interface(dvs, "Vlan1001", "Ethernet0", "Vnet_1", "1.1.10.1/24")
-        vnet_obj.check_router_interface(dvs, 'Vnet_1', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan1001", 'Vnet_1', vid)
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "1.1.1.10/32", 'Vnet_1', '100.1.1.10')
@@ -1078,7 +1100,7 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_2', '2222')
 
         vid = create_vlan_interface(dvs, "Vlan1002", "Ethernet4", "Vnet_2", "2.2.10.1/24")
-        vnet_obj.check_router_interface(dvs, 'Vnet_2', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan1002", 'Vnet_2', vid)
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "2.2.2.10/32", 'Vnet_2', '100.1.1.20')
@@ -1154,10 +1176,10 @@ class TestVnetOrch(object):
         tun_id = vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, '7.7.7.7')
 
         vid = create_vlan_interface(dvs, "Vlan2001", "Ethernet8", "Vnet_10", "5.5.10.1/24")
-        vnet_obj.check_router_interface(dvs, 'Vnet_10', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan2001", 'Vnet_10', vid)
 
         vid = create_vlan_interface(dvs, "Vlan2002", "Ethernet12", "Vnet_20", "8.8.10.1/24")
-        vnet_obj.check_router_interface(dvs, 'Vnet_20', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan2002", 'Vnet_20', vid)
 
         vnet_obj.fetch_exist_entries(dvs)
         create_vnet_routes(dvs, "5.5.5.10/32", 'Vnet_10', '50.1.1.10')
@@ -1218,10 +1240,10 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel(dvs, tunnel_name, 'fd:2::32')
 
         vid = create_vlan_interface(dvs, "Vlan300", "Ethernet24", 'Vnet3001', "100.100.3.1/24")
-        vnet_obj.check_router_interface(dvs, 'Vnet3001', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan300", 'Vnet3001', vid)
 
         vid = create_vlan_interface(dvs, "Vlan301", "Ethernet28", 'Vnet3001', "100.100.4.1/24")
-        vnet_obj.check_router_interface(dvs, 'Vnet3001', vid)
+        vnet_obj.check_router_interface(dvs, "Vlan301",  'Vnet3001', vid)
 
         create_vnet_routes(dvs, "100.100.1.1/32", 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000')
         vnet_obj.check_vnet_routes(dvs, 'Vnet3001', '2000:1000:2000:3000:4000:5000:6000:7000', tunnel_name)
@@ -1243,7 +1265,7 @@ class TestVnetOrch(object):
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet3002', '3002')
 
         create_phy_interface(dvs, "Ethernet60", 'Vnet3002', "100.102.1.1/24")
-        vnet_obj.check_router_interface(dvs, 'Vnet3002')
+        vnet_obj.check_router_interface(dvs, "Ethernet60", 'Vnet3002')
 
         create_vnet_routes(dvs, "100.100.2.1/32", 'Vnet3002', 'fd:2::34', "00:12:34:56:78:9A")
         vnet_obj.check_vnet_routes(dvs, 'Vnet3002', 'fd:2::34', tunnel_name, "00:12:34:56:78:9A")

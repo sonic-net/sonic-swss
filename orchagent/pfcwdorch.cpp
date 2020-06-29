@@ -59,7 +59,7 @@ void PfcWdOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
         return;
     }
 
-    if ((consumer.getDbId() == CONFIG_DB) && (consumer.getTableName() == CFG_PFC_WD_TABLE_NAME))
+    if ((consumer.getDbName() == "CONFIG_DB") && (consumer.getTableName() == CFG_PFC_WD_TABLE_NAME))
     {
         auto it = consumer.m_toSync.begin();
         while (it != consumer.m_toSync.end())
@@ -761,7 +761,7 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::doTask(Consumer& consumer)
         return;
     }
 
-    if ((consumer.getDbId() == APPL_DB) && (consumer.getTableName() == APP_PFC_WD_TABLE_NAME))
+    if ((consumer.getDbName() == "APPL_DB") && (consumer.getTableName() == APP_PFC_WD_TABLE_NAME))
     {
         auto it = consumer.m_toSync.begin();
         while (it != consumer.m_toSync.end())

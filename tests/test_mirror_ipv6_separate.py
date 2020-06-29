@@ -99,11 +99,15 @@ class TestMirror(object):
         assert len(fvs) > 0
         return { fv[0]: fv[1] for fv in fvs }
 
-    def create_acl_table(self, table, interfaces, type):
+    def create_acl_table(self, table, interfaces, type, stage=None):
+        attrs = [("policy_desc", "mirror_test"),
+                 ("type", type),
+                 ("ports", ",".join(interfaces))]
+        if stage:
+            attrs.append(("stage", stage))
+
         tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
-        fvs = swsscommon.FieldValuePairs([("policy_desc", "mirror_test"),
-                                          ("type", type),
-                                          ("ports", ",".join(interfaces))])
+        fvs = swsscommon.FieldValuePairs(attrs)
         tbl.set(table, fvs)
         time.sleep(1)
 
@@ -267,6 +271,56 @@ class TestMirror(object):
 
         # Delete the V6 table
         self.remove_acl_table(acl_table_v6)
+
+    def test_CreateMirrorIngressAndEgress(self, dvs, testlog):
+        self.setup_db(dvs)
+        asic_db = dvs.get_asic_db()
+
+        ingress_table = "INGRESS_TABLE"
+        duplicate_ingress_table = "INGRESS_TABLE_2"
+        ports = ["Ethernet0", "Ethernet4"]
+
+        # Create the table
+        self.create_acl_table(ingress_table, ports, "MIRROR")
+
+        # Check that the table has been created
+        table_ids = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 
+                                            len(asic_db.default_acl_tables) + 1)
+        table_entries = [oid for oid in table_ids if oid not in asic_db.default_acl_tables]
+        original_entry = table_entries[0]
+
+        # Attempt to create another MIRROR table with ingress ACLs
+        self.create_acl_table(duplicate_ingress_table, ports, "MIRROR")
+
+        # Check that there is still only one table, and that it is the original table
+        table_ids = asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 
+                                            len(asic_db.default_acl_tables) + 1)
+        table_entries = [oid for oid in table_ids if oid not in asic_db.default_acl_tables]
+        assert table_entries[0] == original_entry
+
+        egress_table = "EGRESS_TABLE"
+        duplicate_egress_table = "EGRESS_TABLE_2"
+
+        # Create the egress table
+        self.create_acl_table(egress_table, ports, "MIRROR", "egress")
+
+        # Check that there are two tables
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 
+                                len(asic_db.default_acl_tables) + 2)
+
+        # Attempt to create another MIRROR table with egress ACLs
+        self.create_acl_table(duplicate_egress_table, ports, "MIRROR", "egress")
+
+        # Check that there are still only two tables
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 
+                                len(asic_db.default_acl_tables) + 2)
+
+        self.remove_acl_table(ingress_table)
+        self.remove_acl_table(egress_table)
+        self.remove_acl_table(duplicate_ingress_table)
+        self.remove_acl_table(duplicate_egress_table)
+
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", len(asic_db.default_acl_tables))
 
     # Test case - create a MIRROR table and a MIRRORV6 table in separated mode
     # 0. predefine the VS platform: mellanox platform

@@ -35,6 +35,7 @@ extern sai_hostif_api_t* sai_hostif_api;
 extern sai_acl_api_t* sai_acl_api;
 extern sai_queue_api_t *sai_queue_api;
 extern sai_object_id_t gSwitchId;
+extern sai_fdb_api_t *sai_fdb_api;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
@@ -114,8 +115,6 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_ETHER_STATS_TX_NO_ERRORS,
     SAI_PORT_STAT_IP_IN_UCAST_PKTS,
     SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS,
-    SAI_PORT_STAT_IN_DROPPED_PKTS,
-    SAI_PORT_STAT_OUT_DROPPED_PKTS,
 };
 
 static const vector<sai_queue_stat_t> queue_stat_ids =
@@ -1584,7 +1583,7 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
-        return status; 
+        return status;
     }
 
     m_portCount--;
@@ -1773,7 +1772,7 @@ void PortsOrch::removePortFromPortListMap(sai_object_id_t port_id)
     {
         if (it->second == port_id)
         {
-            SWSS_LOG_NOTICE("Removing port-id %lx from port list map", port_id);
+            SWSS_LOG_NOTICE("Removing port-id %" PRIx64 " from port list map", port_id);
             it = m_portListLaneMap.erase(it);
             break;
         }
@@ -2273,18 +2272,18 @@ void PortsOrch::doPortTask(Consumer &consumer)
             if (bridge_port_oid != SAI_NULL_OBJECT_ID)
             {
                 // Bridge port OID is set on a port as long as
-                // port is part of at-least one VLAN. 
-                // Ideally this should be tracked by SAI redis. 
+                // port is part of at-least one VLAN.
+                // Ideally this should be tracked by SAI redis.
                 // Until then, let this snippet be here.
-                SWSS_LOG_WARN("Cannot remove port as bridge port OID is present %lx", bridge_port_oid);
+                SWSS_LOG_WARN("Cannot remove port as bridge port OID is present %" PRIx64 , bridge_port_oid);
                 it++;
                 continue;
-            } 
+            }
 
             if (m_portList[alias].m_init)
             {
                 deInitPort(alias, port_id);
-                SWSS_LOG_NOTICE("Removing hostif %lx for Port %s", hif_id, alias.c_str());
+                SWSS_LOG_NOTICE("Removing hostif %" PRIx64 " for Port %s", hif_id, alias.c_str());
                 sai_status_t status = sai_hostif_api->remove_hostif(hif_id);
                 if (status != SAI_STATUS_SUCCESS)
                 {
@@ -2294,7 +2293,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 Port p;
                 if (getPort(port_id, p))
                 {
-                    PortUpdate update = {p, false };
+                    PortUpdate update = {p, false};
                     notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
                 }
             }
@@ -2550,6 +2549,8 @@ void PortsOrch::doLagTask(Consumer &consumer)
             // Retrieve attributes
             uint32_t mtu = 0;
             string learn_mode;
+            bool operation_status_changed = false;
+            string operation_status;
 
             for (auto i : kfvFieldsValues(t))
             {
@@ -2563,13 +2564,22 @@ void PortsOrch::doLagTask(Consumer &consumer)
                 }
                 else if (fvField(i) == "oper_status")
                 {
-                    if (fvValue(i) == "down")
+                    operation_status = fvValue(i);
+                    if (!string_oper_status.count(operation_status))
                     {
-                        gNeighOrch->ifChangeInformNextHop(alias, false);
+                        SWSS_LOG_ERROR("Invalid operation status value:%s", operation_status.c_str());
+                        it++;
+                        continue;
                     }
-                    else
+
+                    gNeighOrch->ifChangeInformNextHop(alias,
+                                                 (operation_status == "up"));
+                    Port lag;
+                    if (getPort(alias, lag))
                     {
-                        gNeighOrch->ifChangeInformNextHop(alias, true);
+                        operation_status_changed = 
+                           (string_oper_status.at(operation_status) != 
+                                                    lag.m_oper_status);
                     }
                 }
             }
@@ -2592,6 +2602,19 @@ void PortsOrch::doLagTask(Consumer &consumer)
             }
             else
             {
+
+                if (!operation_status.empty())
+                {
+                    l.m_oper_status = string_oper_status.at(operation_status);
+                    m_portList[alias] = l;
+                }
+                if (operation_status_changed)
+                {
+                    PortOperStateUpdate update;
+                    update.port = l;
+                    update.operStatus = string_oper_status.at(operation_status);
+                    notify(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, static_cast<void *>(&update));
+                }
                 if (mtu != 0)
                 {
                     l.m_mtu = mtu;
@@ -3145,10 +3168,6 @@ bool PortsOrch::removeBridgePort(Port &port)
                 hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
         return false;
     }
-
-    /* Flush FDB entries pointing to this bridge port */
-    // TODO: Remove all FDB entries associated with this bridge port before
-    //       removing the bridge port itself
 
     /* Remove bridge port */
     status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
@@ -3830,6 +3849,9 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
     {
         SWSS_LOG_WARN("Inform nexthop operation failed for interface %s", port.m_alias.c_str());
     }
+
+    PortOperStateUpdate update = {port, status};
+    notify(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, static_cast<void *>(&update));
 }
 
 /*
