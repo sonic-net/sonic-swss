@@ -136,6 +136,11 @@ public:
         return getConsumerTable()->getDbConnector()->getDbId();
     }
 
+    std::string getDbName() const
+    {
+        return getConsumerTable()->getDbConnector()->getDbName();
+    }
+
     std::string dumpTuple(const swss::KeyOpFieldsValuesTuple &tuple);
     void dumpPendingTasks(std::vector<std::string> &ts);
 

@@ -15,6 +15,8 @@ from datetime import datetime
 from swsscommon import swsscommon
 from dvslib import dvs_database as dvs_db
 from dvslib import dvs_acl
+from dvslib import dvs_vlan
+from dvslib import dvs_lag
 
 def ensure_system(cmd):
     (rc, output) = commands.getstatusoutput(cmd)
@@ -981,14 +983,6 @@ class DockerVirtualSwitch(object):
 
         return self.state_db
 
-    def get_dvs_acl(self):
-        if not self.dvs_acl:
-            self.dvs_acl = dvs_acl.DVSAcl(self.get_asic_db(),
-                                          self.get_config_db(),
-                                          self.get_state_db(),
-                                          self.get_counters_db())
-        return self.dvs_acl
-
 @pytest.yield_fixture(scope="module")
 def dvs(request):
     name = request.config.getoption("--dvsname")
@@ -1009,6 +1003,8 @@ def testlog(request, dvs):
     yield testlog
     dvs.runcmd("logger === finish test %s ===" % request.node.name)
 
+
+################# DVSLIB module manager fixtures #############################
 @pytest.yield_fixture(scope="class")
 def dvs_acl_manager(request, dvs):
     request.cls.dvs_acl = dvs_acl.DVSAcl(dvs.get_asic_db(),
@@ -1016,8 +1012,18 @@ def dvs_acl_manager(request, dvs):
                                          dvs.get_state_db(),
                                          dvs.get_counters_db())
 
+@pytest.yield_fixture(scope="class")
+def dvs_lag_manager(request, dvs):
+    request.cls.dvs_lag = dvs_lag.DVSLag(dvs.get_config_db())
+
+@pytest.yield_fixture(scope="class")
+def dvs_vlan_manager(request, dvs):
+    request.cls.dvs_vlan = dvs_vlan.DVSVlan(dvs.get_asic_db(),
+                                            dvs.get_config_db(),
+                                            dvs.get_state_db(),
+                                            dvs.get_counters_db(),
+                                            dvs.get_app_db())
 ##################### DPB fixtures ###########################################
-@pytest.yield_fixture(scope="module")
 def create_dpb_config_file(dvs):
     cmd = "sonic-cfggen -j /etc/sonic/init_cfg.json -j /tmp/ports.json --print-data > /tmp/dpb_config_db.json"
     dvs.runcmd(['sh', '-c', cmd])
@@ -1026,7 +1032,6 @@ def create_dpb_config_file(dvs):
     cmd = "cp /tmp/dpb_config_db.json /etc/sonic/config_db.json"
     dvs.runcmd(cmd)
 
-@pytest.yield_fixture(scope="module")
 def remove_dpb_config_file(dvs):
     cmd = "mv /etc/sonic/config_db.json.bak /etc/sonic/config_db.json"
     dvs.runcmd(cmd)

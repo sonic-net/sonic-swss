@@ -27,6 +27,7 @@ class Port():
         self._asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         self._asic_db_ptbl = swsscommon.Table(self._asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         self._counters_db = redis.Redis(unix_socket_path=self._dvs.redis_sock, db=swsscommon.COUNTERS_DB)
+        self._dvs_asic_db = dvs.get_asic_db()
 
     def set_name(self, name):
         self._name = name
@@ -173,12 +174,26 @@ class Port():
     def sync_oid(self):
         self._oid = self._counters_db.hget("COUNTERS_PORT_NAME_MAP", self.get_name())
 
+    """
+        Expectation of the caller is that the port does exist in ASIC DB.
+    """
     def exists_in_asic_db(self):
         self.sync_oid()
         if self._oid is None:
             return False
         (status, _) = self._asic_db_ptbl.get(self._oid)
         return status
+
+    """
+        Expectation of the caller is that the port does NOT exists in ASIC DB.
+    """
+    def not_exists_in_asic_db(self):
+        self.sync_oid()
+        if self._oid is None:
+            return True
+
+        result = self._dvs_asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", self._oid)
+        return (not bool(result))
 
     def verify_config_db(self):
         (status, fvs) = self._cfg_db_ptbl.get(self.get_name())
