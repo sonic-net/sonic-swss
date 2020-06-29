@@ -18,11 +18,11 @@
 #include <map>
 #include <inttypes.h>
 
-const string mirror_rx_direction                 = "RX";
-const string mirror_tx_direction                 = "TX";
-const string mirror_both_direction               = "BOTH";
-const string mirror_session_span                 = "SPAN";
-const string mirror_session_erspan               = "ERSPAN";
+#define MIRROR_RX_DIRECTION      "RX"
+#define MIRROR_TX_DIRECTION      "TX"
+#define MIRROR_BOTH_DIRECTION    "BOTH"
+#define MIRROR_SESSION_SPAN      "SPAN"
+#define MIRROR_SESSION_ERSPAN    "ERSPAN"
 
 /*
  * Contains session data specified by user in config file
@@ -128,6 +128,9 @@ private:
     void updateLagMember(const LagMemberUpdate&);
     void updateVlanMember(const VlanMemberUpdate&);
 
+    bool checkPortExistsInSrcPortList(const string& port, const string& srcPort);
+    bool validateSrcPort(const string& srcPort);
+    bool validateDstPort(const string& dstPort);
     bool setUnsetPortMirror(Port port, bool ingress, bool set,
                                     sai_object_id_t sessionId);
     bool configurePortMirrorSession(const string&, MirrorEntry&, bool enable);

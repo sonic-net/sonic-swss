@@ -17,6 +17,8 @@ from dvslib import dvs_database as dvs_db
 from dvslib import dvs_acl
 from dvslib import dvs_vlan
 from dvslib import dvs_lag
+from dvslib import dvs_mirror
+from dvslib import dvs_policer
 
 def ensure_system(cmd):
     (rc, output) = commands.getstatusoutput(cmd)
@@ -816,6 +818,26 @@ class DockerVirtualSwitch(object):
         tbl._del(interface + ":" + ip)
         time.sleep(1)
 
+    def add_route(self, prefix, nexthop):
+        self.runcmd("ip route add " + prefix + " via " + nexthop)
+        time.sleep(1)
+
+    def remove_route(self, prefix):
+        self.runcmd("ip route del " + prefix)
+        time.sleep(1)
+
+    def create_fdb(self, vlan, mac, interface):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "FDB_TABLE")
+        fvs = swsscommon.FieldValuePairs([("port", interface),
+                                          ("type", "dynamic")])
+        tbl.set("Vlan" + vlan + ":" + mac, fvs)
+        time.sleep(1)
+
+    def remove_fdb(self, vlan, mac):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "FDB_TABLE")
+        tbl._del("Vlan" + vlan + ":" + mac)
+        time.sleep(1)
+
     def setup_db(self):
         self.pdb = swsscommon.DBConnector(0, self.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, self.redis_sock, 0)
@@ -1023,6 +1045,17 @@ def dvs_vlan_manager(request, dvs):
                                             dvs.get_state_db(),
                                             dvs.get_counters_db(),
                                             dvs.get_app_db())
+@pytest.yield_fixture(scope="class")
+def dvs_mirror_manager(request, dvs):
+    request.cls.dvs_mirror = dvs_mirror.DVSMirror(dvs.get_asic_db(),
+                                            dvs.get_config_db(),
+                                            dvs.get_state_db(),
+                                            dvs.get_counters_db(),
+                                            dvs.get_app_db())
+@pytest.yield_fixture(scope="class")
+def dvs_policer_manager(request, dvs):
+    request.cls.dvs_policer = dvs_policer.DVSPolicer(dvs.get_asic_db(),
+                                            dvs.get_config_db())
 ##################### DPB fixtures ###########################################
 def create_dpb_config_file(dvs):
     cmd = "sonic-cfggen -j /etc/sonic/init_cfg.json -j /tmp/ports.json --print-data > /tmp/dpb_config_db.json"

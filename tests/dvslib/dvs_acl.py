@@ -136,6 +136,16 @@ class DVSAcl(object):
 
         self.config_db.create_entry("ACL_RULE", "{}|{}".format(table_name, rule_name), fvs)
 
+    def create_mirror_acl_rule(self, table_name, rule_name, qualifiers, priority="2020"):
+        fvs = {
+            "priority": priority
+        }
+
+        for k, v in qualifiers.items():
+            fvs[k] = v
+
+        self.config_db.create_entry("ACL_RULE", "{}|{}".format(table_name, rule_name), fvs)
+
     def remove_acl_rule(self, table_name, rule_name):
         self.config_db.delete_entry("ACL_RULE", "{}|{}".format(table_name, rule_name))
 
