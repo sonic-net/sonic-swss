@@ -270,7 +270,7 @@ bool MirrorOrch::validateDstPort(const string& dstPort)
     Port port;
     if (!m_portsOrch->getPort(dstPort, port))
     {
-        SWSS_LOG_ERROR("Failed to locate port %s", dstPort.c_str());
+        SWSS_LOG_ERROR("Not supported port %s type %d", dstPort.c_str(), port.m_type);
         return false;
     }
     if (port.m_type != Port::PHY)
