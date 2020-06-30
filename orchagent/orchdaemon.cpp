@@ -39,6 +39,10 @@ NatOrch *gNatOrch;
 
 bool gIsNatSupported = false;
 
+#define SWITCH_SHUTDOWN_LOG_INTERVAL_IN_SECS 60
+bool gIsSwitchShutdown = false;
+
+
 OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
         m_applDb(applDb),
         m_configDb(configDb),
@@ -513,6 +517,19 @@ void OrchDaemon::start()
                 }
             }
         }
+        if (gIsSwitchShutdown) {
+            static time_t last_log = 0;
+
+            if ((time(NULL) - last_log) > SWITCH_SHUTDOWN_LOG_INTERVAL_IN_SECS) {
+                SWSS_LOG_ENTER();
+
+                SWSS_LOG_ERROR("Syncd stopped");
+
+                last_log = time(NULL)
+            }
+
+        }
+
     }
 }
 
