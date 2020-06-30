@@ -522,7 +522,7 @@ void OrchDaemon::start()
             if ((time(NULL) - last_log) > SWITCH_SHUTDOWN_LOG_INTERVAL_IN_SECS) {
                 SWSS_LOG_ERROR("Syncd stopped");
 
-                last_log = time(NULL)
+                last_log = time(NULL);
             }
 
         }
