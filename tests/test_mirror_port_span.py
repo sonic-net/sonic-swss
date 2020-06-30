@@ -223,7 +223,7 @@ class TestMirror(object):
         self.dvs_policer.verify_no_policer()
         self.dvs_mirror.verify_no_mirror()
 
-    def test_LAGMirorrSpanAddRemove(self, dvs, testlog):
+    def test_LAGMirrorSpanAddRemove(self, dvs, testlog):
         """
         This test covers the LAG mirror session creation and removal operations
         Operation flow:
