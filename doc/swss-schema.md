@@ -901,6 +901,12 @@ Stores information for physical switch ports managed by the switch chip. Ports t
     key                 = VRF_OBJECT_TABLE|vrf_name ; vrf_name start with 'Vrf' prefix
     state               = "ok"                      ; vrf entry exist in orchagent
 
+### PORT_INDEX_TABLE
+Provides a mapping between an interface's Linux ifIndex and the port index.
+
+    key       = PORT_INDEX_TABLE|ifname    ; Interface name : ifname must be unique
+    index     = 1*5DIGIT                   ; Port index
+    ifindex   = 1*5DIGIT                   ; Linux ifIndex, as given in "ip link show"
 
 ## Configuration files
 What configuration files should we have?  Do apps, orch agent each need separate files?
