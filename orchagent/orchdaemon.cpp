@@ -16,6 +16,7 @@ using namespace swss;
 /* select() function timeout retry time */
 #define SELECT_TIMEOUT 1000
 #define PFC_WD_POLL_MSECS 100
+#define SWITCH_SHUTDOWN_LOG_INTERVAL_IN_SECS 60
 
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
@@ -38,8 +39,6 @@ Directory<Orch*> gDirectory;
 NatOrch *gNatOrch;
 
 bool gIsNatSupported = false;
-
-#define SWITCH_SHUTDOWN_LOG_INTERVAL_IN_SECS 60
 bool gIsSwitchShutdown = false;
 
 
@@ -521,8 +520,6 @@ void OrchDaemon::start()
             static time_t last_log = 0;
 
             if ((time(NULL) - last_log) > SWITCH_SHUTDOWN_LOG_INTERVAL_IN_SECS) {
-                SWSS_LOG_ENTER();
-
                 SWSS_LOG_ERROR("Syncd stopped");
 
                 last_log = time(NULL)
