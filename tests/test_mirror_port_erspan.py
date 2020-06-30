@@ -1,10 +1,5 @@
 # This test suite covers the functionality of mirror feature in SwSS
-import platform
 import pytest
-import time
-
-from swsscommon import swsscommon
-from distutils.version import StrictVersion
 
 @pytest.mark.usefixtures("testlog")
 @pytest.mark.usefixtures('dvs_vlan_manager')
@@ -172,14 +167,14 @@ class TestMirror(object):
         dvs.set_interface_status("Ethernet4", "down")
         dvs.set_interface_status(vlan, "down")
 
+        # remove vlan member; remove vlan
+        self.dvs_vlan.remove_vlan_member(vlan_id, "Ethernet4")
+        self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+        self.dvs_vlan.remove_vlan(vlan_id)
+
         # remove mirror session
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
-
-        # remove vlan member; remove vlan
-        self.dvs_vlan.remove_vlan_member(vlan_id, "Ethernet4")
-        self.dvs_vlan.remove_vlan(vlan_id)
-
 
     def test_PortMirrorToLagAddRemove(self, dvs, testlog):
         """
@@ -212,7 +207,7 @@ class TestMirror(object):
         self.dvs_lag.create_port_channel_member("008", "Ethernet88")
                                                 
         # Verify the LAG has been initialized properly
-        lag_member_entries = self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 1)
+        lag_member_entries = self.dvs_lag.get_and_verify_port_channel_members(1)
         fvs = self.dvs_vlan.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", lag_member_entries[0])
         assert len(fvs) == 4
         assert fvs.get("SAI_LAG_MEMBER_ATTR_LAG_ID") == lag_entries[0]
@@ -344,8 +339,9 @@ class TestMirror(object):
         # bring down vlan and member; remove vlan member; remove vlan
         dvs.set_interface_status("Ethernet48", "down")
         dvs.set_interface_status("Vlan9", "down")
-        dvs.remove_vlan_member("9", "Ethernet48")
-        dvs.remove_vlan("9")
+        self.dvs_vlan.remove_vlan_member("9", "Ethernet48")
+        self.dvs_vlan.get_and_verify_vlan_member_ids(0)
+        self.dvs_vlan.remove_vlan("9")
 
         # remove route; remove neighbor; remove ip; bring down port
         dvs.remove_route("8.8.8.0/24")
@@ -397,7 +393,7 @@ class TestMirror(object):
         # mirror session move round 1
         # create port channel; create port channel member; bring up
         self.dvs_lag.create_port_channel("080")
-        lag_entries = self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 1)
+        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 1)
         self.dvs_lag.create_port_channel_member("080", "Ethernet32")
         dvs.set_interface_status("PortChannel080", "up")
         dvs.set_interface_status("Ethernet32", "up")
@@ -505,7 +501,7 @@ class TestMirror(object):
         
         # create port channel; create port channel member
         self.dvs_lag.create_port_channel("008")
-        lag_entries = self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 2)
+        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 2)
         self.dvs_lag.create_port_channel_member("008", "Ethernet88")
 
         # bring up port channel and port channel member

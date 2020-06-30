@@ -128,8 +128,8 @@ private:
     void updateLagMember(const LagMemberUpdate&);
     void updateVlanMember(const VlanMemberUpdate&);
 
-    bool checkPortExistsInSrcPortList(const string& port, const string& srcPort);
-    bool validateSrcPort(const string& srcPort);
+    bool checkPortExistsInSrcPortList(const string& port, const string& srcPortList);
+    bool validateSrcPortList(const string& srcPort);
     bool validateDstPort(const string& dstPort);
     bool setUnsetPortMirror(Port port, bool ingress, bool set,
                                     sai_object_id_t sessionId);

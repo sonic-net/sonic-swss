@@ -1,10 +1,5 @@
 # This test suite covers the functionality of mirror feature in SwSS
-import platform
 import pytest
-import time
-
-from swsscommon import swsscommon
-from distutils.version import StrictVersion
 
 @pytest.mark.usefixtures("testlog")
 @pytest.mark.usefixtures('dvs_vlan_manager')
@@ -69,6 +64,7 @@ class TestMirror(object):
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
         self.dvs_vlan.remove_vlan("10")
+        self.dvs_vlan.get_and_verify_vlan_ids(0)
 
 
     def test_PortMirrorMultiSpanAddRemove(self, dvs, testlog):
@@ -290,13 +286,8 @@ class TestMirror(object):
         2. Verify mirror and ACL config is proper.
         """
         dvs.setup_db()
-        pmap = dvs.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "")
-        pmap = dict(pmap)
-
         session = "MIRROR_SESSION"
         policer= "POLICER"
-        acl_table = "MIRROR_TABLE"
-        acl_rule = "MIRROR_RULE"
         dst_port = "Ethernet16"
 
         # create policer
@@ -317,9 +308,10 @@ class TestMirror(object):
         config_qualifiers = {"mirror_action": session, 
                              "DSCP": "8/56"}
         mirror_oid="1:" + member_ids[0]
-        expected_sai_qualifiers = {"SAI_ACL_ENTRY_ATTR_FIELD_DSCP": "8&mask:0x38",
-                                   "SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS": mirror_oid}
+        expected_sai_qualifiers = {"SAI_ACL_ENTRY_ATTR_FIELD_DSCP": self.dvs_acl.get_simple_qualifier_comparator("8&mask:0x38"),
+                                   "SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS": self.dvs_acl.get_simple_qualifier_comparator(mirror_oid)}
         self.dvs_acl.create_mirror_acl_rule("test", "mirror_rule", config_qualifiers)
+        self.dvs_acl.verify_acl_rule(expected_sai_qualifiers)
         self.dvs_acl.remove_acl_rule("test", "mirror_rule")
         self.dvs_acl.verify_no_acl_rules()
 
@@ -349,18 +341,16 @@ class TestMirror(object):
 
         session = "TEST_SESSION"
         dst_port = "Ethernet16"
-
-        session = "TEST_SESSION"
         src_port1="Ethernet8"
         src_port2="Ethernet4"
         po_src_port="PortChannel008"
 
         # create port channel; create port channel member
         self.dvs_lag.create_port_channel("008")
-        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 1)
+        self.dvs_lag.get_and_verify_port_channel(1)
         self.dvs_lag.create_port_channel_member("008", src_port1)
         self.dvs_lag.create_port_channel_member("008", src_port2)
-        lag_member_entries = self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 2)
+        self.dvs_lag.get_and_verify_port_channel_members(2)
 
         # bring up port channel and port channel member
         dvs.set_interface_status(po_src_port, "up")
@@ -393,7 +383,7 @@ class TestMirror(object):
 
         # Sub Test 4
         self.dvs_lag.remove_port_channel_member("008", "Ethernet4")
-        lag_member_entries = self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 1)
+        self.dvs_lag.get_and_verify_port_channel_members(1)
         src_ports = "PortChannel008,Ethernet40"
         src_asic_ports = ["Ethernet8", "Ethernet40"]
         self.dvs_mirror.create_span_session(session, dst_port, src_ports)
@@ -403,8 +393,9 @@ class TestMirror(object):
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
         self.dvs_lag.remove_port_channel_member("008", "Ethernet8")
-        lag_member_entries = self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 0)
+        self.dvs_lag.get_and_verify_port_channel_members(0)
         self.dvs_lag.remove_port_channel("008")
+        self.dvs_lag.get_and_verify_port_channel(0)
         self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 0)
 
 
@@ -431,10 +422,10 @@ class TestMirror(object):
 
         # create port channel; create port channel member
         self.dvs_lag.create_port_channel("008")
-        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 1)
+        self.dvs_lag.get_and_verify_port_channel(1)
         self.dvs_lag.create_port_channel_member("008", src_port1)
         self.dvs_lag.create_port_channel_member("008", src_port2)
-        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 2)
+        self.dvs_lag.get_and_verify_port_channel_members(2)
 
         # bring up port channel and port channel member
         dvs.set_interface_status(po_src_port, "up")
@@ -454,17 +445,17 @@ class TestMirror(object):
 
         # Add source port Ethernet40 to LAG
         self.dvs_lag.create_port_channel_member("008", "Ethernet40")
-        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 3)
+        self.dvs_lag.get_and_verify_port_channel_members(3)
         self.dvs_mirror.verify_session(dvs, session, src_ports=src_asic_ports)
 
         # Remove source port Ethernet40 from LAG
         self.dvs_lag.remove_port_channel_member("008", "Ethernet40")
-        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 2)
+        self.dvs_lag.get_and_verify_port_channel_members(2)
         self.dvs_mirror.verify_session(dvs, session, src_ports=src_asic_ports)
         
         # Remove one port from LAG
         self.dvs_lag.remove_port_channel_member("008", "Ethernet4")
-        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 1)
+        self.dvs_lag.get_and_verify_port_channel_members(1)
         src_asic_ports = ["Ethernet8"]
         self.dvs_mirror.verify_session(dvs, session, src_ports=src_asic_ports)
         
@@ -472,7 +463,8 @@ class TestMirror(object):
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
         self.dvs_lag.remove_port_channel_member("008", "Ethernet8")
-        self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER", 0)
+        self.dvs_lag.get_and_verify_port_channel_members(0)
         self.dvs_lag.remove_port_channel("008")
+        self.dvs_lag.get_and_verify_port_channel(0)
         self.dvs_vlan.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_LAG", 0)
 
