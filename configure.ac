@@ -90,7 +90,6 @@ AC_CONFIG_FILES([
     fpmsyncd/Makefile
     neighsyncd/Makefile
     gearsyncd/Makefile
-    gearsyncd/tests/Makefile
     natsyncd/Makefile
     portsyncd/Makefile
     teamsyncd/Makefile
