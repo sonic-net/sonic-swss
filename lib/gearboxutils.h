@@ -70,22 +70,22 @@ typedef struct
     int index;
     std::string mdio_addr;
     int system_speed;
-	std::string system_fec;
+    std::string system_fec;
     bool system_auto_neg;
-	std::string system_loopback;
-	bool system_training;
+    std::string system_loopback;
+    bool system_training;
     int line_speed;
-	std::string line_fec;
+    std::string line_fec;
     bool line_auto_neg;
-	std::string line_media_type;
-	std::string line_intf_type;
-	std::string line_loopback;
-	bool line_training;
+    std::string line_media_type;
+    std::string line_intf_type;
+    std::string line_loopback;
+    bool line_training;
     std::set<int> line_adver_speed;
     std::set<int> line_adver_fec;
-	bool line_adver_auto_neg;
-	bool line_adver_asym_pause;
-	std::string line_adver_media_type;
+    bool line_adver_auto_neg;
+    bool line_adver_asym_pause;
+    std::string line_adver_media_type;
 } gearbox_port_t;
 
 class GearboxUtils

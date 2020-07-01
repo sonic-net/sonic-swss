@@ -232,8 +232,8 @@ bool PhyParser::parse()
                 val = port["system_auto_neg"];
                 if (val.get<bool>() != false && val.get<bool>() != true) 
                 {
-         	        SWSS_LOG_ERROR("not a boolean: 'system_auto_neg' field of item %d of 'ports' field in phy configuration", iter);
-         	        return false;
+                    SWSS_LOG_ERROR("not a boolean: 'system_auto_neg' field of item %d of 'ports' field in phy configuration", iter);
+                    return false;
                 }
                 std::string systemAutoNegStr = val.get<bool>() == true ? "true" : "false";
                 attr = std::make_pair("system_auto_neg", systemAutoNegStr);
@@ -258,8 +258,8 @@ bool PhyParser::parse()
                 val = port["system_training"];
                 if (val.get<bool>() != false && val.get<bool>() != true) 
                 {
-         	        SWSS_LOG_ERROR("not a boolean: 'system_training' field of item %d of 'ports' field in phy configuration", iter);
-         	        return false;
+                    SWSS_LOG_ERROR("not a boolean: 'system_training' field of item %d of 'ports' field in phy configuration", iter);
+                    return false;
                 }
                 std::string systemTrainingStr = val.get<bool>() == true ? "true" : "false";
                 attr = std::make_pair("system_training", systemTrainingStr);
@@ -294,8 +294,8 @@ bool PhyParser::parse()
                 val = port["line_auto_neg"];
                 if (val.get<bool>() != false && val.get<bool>() != true) 
                 {
-         	        SWSS_LOG_ERROR("not a boolean: 'line_auto_neg' field of item %d of 'ports' field in phy configuration", iter);
-         	        return false;
+                    SWSS_LOG_ERROR("not a boolean: 'line_auto_neg' field of item %d of 'ports' field in phy configuration", iter);
+                    return false;
                 }
                 std::string lineAutoNegStr = val.get<bool>() == true ? "true" : "false";
                 attr = std::make_pair("line_auto_neg", lineAutoNegStr);
@@ -340,8 +340,8 @@ bool PhyParser::parse()
                 val = port["line_training"];
                 if (val.get<bool>() != false && val.get<bool>() != true) 
                 {
-         	        SWSS_LOG_ERROR("not a boolean: 'line_training' field of item %d of 'ports' field in phy configuration", iter);
-         	        return false;
+                    SWSS_LOG_ERROR("not a boolean: 'line_training' field of item %d of 'ports' field in phy configuration", iter);
+                    return false;
                 }
                 std::string lineTrainingStr = val.get<bool>() == true ? "true" : "false";
                 attr = std::make_pair("line_training", lineTrainingStr);
@@ -357,12 +357,12 @@ bool PhyParser::parse()
                 valsStr = "";
                 for (uint32_t iter1 = 0; iter1 < vals.size(); iter1++) 
                 {
-         	        val = vals[iter1];
-         	        if (valsStr.length() > 0) 
+                    val = vals[iter1];
+                    if (valsStr.length() > 0) 
                     {
-         		        valsStr += ",";
+                        valsStr += ",";
                     }
-         	        valsStr += std::to_string(val.get<int>());
+                    valsStr += std::to_string(val.get<int>());
                 }
                 attr = std::make_pair("line_adver_speed", valsStr);
                 attrs.push_back(attr);
@@ -377,12 +377,12 @@ bool PhyParser::parse()
                 valsStr = "";
                 for (uint32_t iter1 = 0; iter1 < vals.size(); iter1++) 
                 {
-         	        val = vals[iter1];
-         	        if (valsStr.length() > 0) 
+                    val = vals[iter1];
+                    if (valsStr.length() > 0) 
                     {
-         		        valsStr += ",";
-         	        }
-         	        valsStr += std::to_string(val.get<int>());
+                        valsStr += ",";
+                    }
+                    valsStr += std::to_string(val.get<int>());
                 }
                 attr = std::make_pair("line_adver_fec", valsStr);
                 attrs.push_back(attr);
@@ -397,7 +397,7 @@ bool PhyParser::parse()
                 if (val.get<bool>() != false && val.get<bool>() != true) 
                 {
                     SWSS_LOG_ERROR("not a boolean: 'line_adver_auto_neg' field of item %d of 'ports' field in phy configuration", iter);
-         	        return false;
+                    return false;
                 }
                 std::string lineAdverAutoNegStr = val.get<bool>() == true ? "true" : "false";
                 attr = std::make_pair("line_adver_auto_neg", lineAdverAutoNegStr);
@@ -412,8 +412,8 @@ bool PhyParser::parse()
                 val = port["line_adver_asym_pause"];
                 if (val.get<bool>() != false && val.get<bool>() != true) 
                 {
-         	        SWSS_LOG_ERROR("not a boolean: 'line_adver_asym_pause' field of item %d of 'ports' field in phy configuration", iter);
-         	        return false;
+                    SWSS_LOG_ERROR("not a boolean: 'line_adver_asym_pause' field of item %d of 'ports' field in phy configuration", iter);
+                    return false;
                 }
                 std::string lineAdverAsymPauseStr = val.get<bool>() == true ? "true" : "false";
                 attr = std::make_pair("line_adver_asym_pause", lineAdverAsymPauseStr);
