@@ -579,7 +579,7 @@ ssize_t  MclagLink::getFdbChange(char *msg_buf)
     return write;
 }
 
-MclagLink::MclagLink(int port) :
+MclagLink::MclagLink(uint16_t port) :
     MSG_BATCH_SIZE(256),
     m_bufSize(MCLAG_MAX_MSG_LEN * MSG_BATCH_SIZE),
     m_messageBuffer(NULL),
