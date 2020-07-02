@@ -17,7 +17,6 @@ extern sai_policer_api_t*   sai_policer_api;
 extern sai_object_id_t gSwitchId;
 extern PortsOrch* gPortsOrch;
 extern sai_port_api_t *sai_port_api;
-extern PolicerOrch* gPolicerOrch;
 
 static const string meter_type_field           = "METER_TYPE";
 static const string mode_field                 = "MODE";
@@ -204,11 +203,11 @@ task_process_status PolicerOrch::handlePolicerTable(Consumer& consumer)
 
     if (op == SET_COMMAND)
     {
-        // Mark the opeartion as an 'update', if the policer exists.
+        // Mark the operation as an 'update', if the policer exists.
         bool update = m_syncdPolicers.find(key) != m_syncdPolicers.end();
 
         vector<sai_attribute_t> attrs;
-		bool meter_type = false, mode = false;
+        bool meter_type = false, mode = false;
 
         for (auto i = kfvFieldsValues(tuple).begin();
                 i != kfvFieldsValues(tuple).end(); ++i)
@@ -288,7 +287,7 @@ task_process_status PolicerOrch::handlePolicerTable(Consumer& consumer)
             if (!meter_type || !mode)
             {
                 SWSS_LOG_ERROR("Failed to create policer %s,\
-                        missing madatory fields", key.c_str());
+                        missing mandatory fields", key.c_str());
                 return task_process_status::task_invalid_entry;
             }
 
@@ -506,27 +505,27 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
                 continue;
             }
 
-			sai_object_id_t policer_id;
+            sai_object_id_t policer_id;
             // Create a new policer
             if (!update)
-			{
-				sai_status_t status = sai_policer_api->create_policer(
-						&policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
-				if (status != SAI_STATUS_SUCCESS)
-				{
-					SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
-							storm_policer_name.c_str(), status);
-					/* 
-					 * Returning here since the same failure 
-					 * would be seen for the full iteration
-					 */
-					return task_process_status::task_need_retry;
-				}
+            {
+                sai_status_t status = sai_policer_api->create_policer(
+                        &policer_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
+                            storm_policer_name.c_str(), status);
+                    /* 
+                     * Returning here since the same failure 
+                     * would be seen for the full iteration
+                     */
+                    return task_process_status::task_need_retry;
+                }
 
-				SWSS_LOG_NOTICE("Created storm-control policer %s", storm_policer_name.c_str());
+                SWSS_LOG_NOTICE("Created storm-control policer %s", storm_policer_name.c_str());
                 m_syncdPolicers[storm_policer_name].policerOid = policer_id;
-				m_policerRefCounts[storm_policer_name] = 0;
-			}
+                m_policerRefCounts[storm_policer_name] = 0;
+            }
             // Update an existing policer
             else
             {
@@ -561,10 +560,10 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
             }
             policer_id = m_syncdPolicers[storm_policer_name].policerOid;
 
-			if(update)
-			{
-				SWSS_LOG_NOTICE("update storm-control policer %s id:%ld", storm_policer_name.c_str(),policer_id);
-			}
+            if(update)
+            {
+                SWSS_LOG_NOTICE("update storm-control policer %s id:%ld", storm_policer_name.c_str(),policer_id);
+            }
             port_attr.value.oid = policer_id;
 
             sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &port_attr);
@@ -576,7 +575,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
                 /*TODO: Do the below policer cleanup in an API*/
                 /*Remove the already created policer*/
                 if (SAI_STATUS_SUCCESS != sai_policer_api->remove_policer(
-                        m_syncdPolicers[storm_policer_name].policerOid))
+                            m_syncdPolicers[storm_policer_name].policerOid))
                 {
                     SWSS_LOG_ERROR("Failed to remove policer %s, rv:%d",
                             storm_policer_name.c_str(), status);
@@ -689,7 +688,7 @@ bool PolicerOrch::handlePhyDelete(Port &port)
             m_policerRefCounts.erase(storm_policer_name);
         }
     }
-   
+
     return true;
 }
 

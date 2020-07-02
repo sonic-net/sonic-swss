@@ -390,7 +390,7 @@ class TestStormControl(object):
 
         #Retrieved value of bps from ASIC_DB is converted back to user input kbps
         kbps = int(bps) / int(1000) * 8
-        print ("KBPS value")
+        print ("Kbps value")
         print (kbps)
 
         assert str(kbps) == str(kbps_value)
@@ -451,7 +451,7 @@ class TestStormControl(object):
         storm_list = ["broadcast","unknown-unicast","unknown-multicast"]
         kbps_value_list = [1000000,2000000,3000000]
 
-        #Create VLAN interface and add member
+        #Create LAG interface and add member
         self.create_port_channel(dvs,lag_name)
         self.add_port_channel_member(dvs,lag_name,member_interface)
 
