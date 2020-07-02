@@ -105,7 +105,6 @@ CoppOrch::CoppOrch(DBConnector* db, string tableName) :
     initDefaultHostIntfTable();
     initDefaultTrapGroup();
     initDefaultTrapIds();
-    enable_sflow_trap = false;
 };
 
 void CoppOrch::initDefaultHostIntfTable()

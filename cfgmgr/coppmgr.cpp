@@ -239,6 +239,7 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         std::vector<FieldValueTuple> trap_init_fvs = i.second;
         std::vector<FieldValueTuple> trap_fvs;
         auto key = std::find(trap_cfg_keys.begin(), trap_cfg_keys.end(), i.first);
+        bool null_cfg = false;
         if (key != trap_cfg_keys.end())
         {
             std::vector<FieldValueTuple> trap_cfg_fvs;
@@ -250,6 +251,12 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
                 bool field_found = false;
                 for (auto it2: trap_cfg_fvs)
                 {
+                    if(fvField(it2) == "NULL")
+                    {
+                        SWSS_LOG_DEBUG("Ignoring trap create for key %s",i.first.c_str());
+                        null_cfg = true;
+                        break;
+                    }
                     if(fvField(it1) == fvField(it2))
                     {
                         field_found = true;
@@ -261,7 +268,10 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
                     trap_fvs.push_back(it1);
                 }
             }
-            trap_cfg[i.first] = trap_fvs;
+            if (!null_cfg)
+            {
+                trap_cfg[i.first] = trap_fvs;
+            }
         }
         else
         {
@@ -493,6 +503,8 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                 trap_group = m_coppTrapConfMap[key].trap_group;
                 conf_present = true;
             }
+
+            bool null_cfg = false;
             for (auto i: kfvFieldsValues(t))
             {
                 if (fvField(i) == COPP_TRAP_GROUP_FIELD)
@@ -503,6 +515,32 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                 {
                     trap_ids = fvValue(i);
                 }
+                else if (fvField(i) == "NULL")
+                {
+                    null_cfg = true;
+                }
+            }
+            if (null_cfg)
+            {
+                if (!m_coppTrapConfMap[key].trap_group.empty())
+                {
+                    SWSS_LOG_DEBUG("Deleting trap key %s", key.c_str());
+                    removeTrapIdsFromTrapGroup(m_coppTrapConfMap[key].trap_group,
+                            m_coppTrapConfMap[key].trap_ids);
+                    trap_ids.clear();
+                    getTrapGroupTrapIds(m_coppTrapConfMap[key].trap_group, trap_ids);
+                    fvs.clear();
+                    FieldValueTuple fv(COPP_TRAP_ID_LIST_FIELD, trap_ids);
+                    fvs.push_back(fv);
+                    if (!checkIfTrapGroupFeaturePending(m_coppTrapConfMap[key].trap_group))
+                    {
+                        m_appCoppTable.set(m_coppTrapConfMap[key].trap_group, fvs);
+                    }
+                    m_coppTrapConfMap[key].trap_group = "";
+                    m_coppTrapConfMap[key].trap_ids = "";
+                }
+                it = consumer.m_toSync.erase(it);
+                continue;
             }
             /*Duplicate check*/
             if (conf_present &&
@@ -550,12 +588,15 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                                        m_coppTrapConfMap[key].trap_ids);
             fvs.clear();
             trap_ids.clear();
-            getTrapGroupTrapIds(m_coppTrapConfMap[key].trap_group, trap_ids);
-            FieldValueTuple fv(COPP_TRAP_ID_LIST_FIELD, trap_ids);
-            fvs.push_back(fv);
-            if (!checkIfTrapGroupFeaturePending(m_coppTrapConfMap[key].trap_group))
+            if (!m_coppTrapConfMap[key].trap_group.empty())
             {
-                m_appCoppTable.set(m_coppTrapConfMap[key].trap_group, fvs);
+                getTrapGroupTrapIds(m_coppTrapConfMap[key].trap_group, trap_ids);
+                FieldValueTuple fv(COPP_TRAP_ID_LIST_FIELD, trap_ids);
+                fvs.push_back(fv);
+                if (!checkIfTrapGroupFeaturePending(m_coppTrapConfMap[key].trap_group))
+                {
+                    m_appCoppTable.set(m_coppTrapConfMap[key].trap_group, fvs);
+                }
             }
             m_coppTrapConfMap.erase(key);
             delCoppTrapStateOk(key);
@@ -588,6 +629,8 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                 {
                     m_appCoppTable.set(trap_group, g_fvs);
                 }
+                m_coppTrapConfMap[key].trap_group = trap_group;
+                m_coppTrapConfMap[key].trap_ids = trap_ids;
             }
         }
         it = consumer.m_toSync.erase(it);
@@ -665,6 +708,7 @@ void CoppMgr::doCoppGroupTask(Consumer &consumer)
         string op = kfvOp(t);
         auto fvs = kfvFieldsValues(t);
         string trap_ids;
+        vector<FieldValueTuple> modified_fvs;
 
         if (op == SET_COMMAND)
         {
@@ -689,11 +733,10 @@ void CoppMgr::doCoppGroupTask(Consumer &consumer)
             getTrapGroupTrapIds(key, trap_ids);
             if (!trap_ids.empty())
             {
-                FieldValueTuple fv(COPP_TRAP_ID_LIST_FIELD, trap_ids); 
+                FieldValueTuple fv(COPP_TRAP_ID_LIST_FIELD, trap_ids);
                 fvs.push_back(fv);
             }
 
-            vector<FieldValueTuple> modified_fvs;
             coppGroupGetModifiedFvs(key, fvs, modified_fvs, false);
             if (!modified_fvs.empty())
             {
@@ -713,13 +756,27 @@ void CoppMgr::doCoppGroupTask(Consumer &consumer)
             if (m_coppGroupInitCfg.find(key) != m_coppGroupInitCfg.end())
             {
                 std::vector<FieldValueTuple> fvs = m_coppGroupInitCfg[key];
-                getTrapGroupTrapIds(key, trap_ids);
-                if (!trap_ids.empty())
+                if (m_coppGroupRestrictedMap.find(key) != m_coppGroupRestrictedMap.end())
                 {
-                    FieldValueTuple fv(COPP_TRAP_ID_LIST_FIELD, trap_ids); 
-                    fvs.push_back(fv);
+                    for (auto fv: fvs)
+                    {
+                        m_coppGroupRestrictedMap[key][fvField(fv)] = fvValue(fv);
+                    }
                 }
-                m_appCoppTable.set(key, fvs);
+                if (!checkIfTrapGroupFeaturePending(key))
+                {
+                    getTrapGroupTrapIds(key, trap_ids);
+                    if (!trap_ids.empty())
+                    {
+                        FieldValueTuple fv(COPP_TRAP_ID_LIST_FIELD, trap_ids);
+                        fvs.push_back(fv);
+                    }
+                    coppGroupGetModifiedFvs(key, fvs, modified_fvs, false);
+                    if (!modified_fvs.empty())
+                    {
+                        m_appCoppTable.set(key, modified_fvs);
+                    }
+                }
             }
             else
             {

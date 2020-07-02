@@ -52,7 +52,6 @@ public:
     CoppOrch(swss::DBConnector* db, std::string tableName);
 protected:
     object_map m_trap_group_map;
-    bool       enable_sflow_trap;
     std::unique_ptr<swss::Table> m_coppTable;
 
     TrapGroupPolicerTable m_trap_group_policer_map;

@@ -295,8 +295,6 @@ class TestCopp(object):
                         if fv[0] == "SAI_HOSTIF_ATTR_NAME":
                             assert fv[1] == trap_group[keys]
 
-
-
     def test_defaults(self, dvs, testlog):
         self.setup_copp(dvs)
         trap_keys = self.trap_atbl.getKeys()
@@ -569,7 +567,7 @@ class TestCopp(object):
             if trap_id not in restricted_traps:
                 assert trap_found != True
 
-    def test_init_group_del (self, dvs, testlog):
+    def test_override_trap_grp_cfg_del (self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
         fvs = swsscommon.FieldValuePairs([("cbs", "500"),("cir","500")])
@@ -604,43 +602,7 @@ class TestCopp(object):
                 if trap_id not in restricted_traps:
                     assert trap_found == True
 
-    def test_init_group_del (self, dvs, testlog):
-        self.setup_copp(dvs)
-        global copp_trap
-        fvs = swsscommon.FieldValuePairs([("cbs", "500"),("cir","500")])
-        self.trap_group_ctbl.set("queue1_group1", fvs)
-        time.sleep(2)
-
-
-        self.trap_group_ctbl._del("queue1_group1")
-        time.sleep(2)
-
-
-        trap_keys = self.trap_atbl.getKeys()
-        for traps in copp_trap:
-            if copp_trap[traps] != copp_group_queue1_group1:
-                continue
-            trap_ids = traps.split(",")
-            trap_group = copp_trap[traps]
-            for trap_id in trap_ids:
-                trap_type = traps_to_trap_type[trap_id]
-                trap_found = False
-                trap_group_oid = ""
-                for key in trap_keys:
-                    (status, fvs) = self.trap_atbl.get(key)
-                    assert status == True
-                    for fv in fvs:
-                        if fv[0] == "SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE":
-                           if fv[1] == trap_type:
-                               trap_found = True
-                    if trap_found:
-                        self.validate_trap_group(key,trap_group)
-                        break
-                if trap_id not in restricted_traps:
-                    assert trap_found == True
-
-
-    def test_init_trap_del(self, dvs, testlog):
+    def test_override_trap_cfg_del(self, dvs, testlog):
         self.setup_copp(dvs)
         global copp_trap
         traps = "ip2me,ssh"
@@ -672,3 +634,47 @@ class TestCopp(object):
                     assert trap_found == True
                 elif trap_id == "ssh":
                     assert trap_found == False
+
+    def test_empty_trap_cfg(self, dvs, testlog):
+        self.setup_copp(dvs)
+        global copp_trap
+        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
+        self.trap_ctbl.set("ip2me", fvs)
+        time.sleep(2)
+
+        trap_id = "ip2me"
+        trap_group = copp_trap["ip2me"]
+        trap_keys = self.trap_atbl.getKeys()
+        trap_type = traps_to_trap_type[trap_id]
+        trap_found = False
+        trap_group_oid = ""
+        for key in trap_keys:
+            (status, fvs) = self.trap_atbl.get(key)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE":
+                    if fv[1] == trap_type:
+                        trap_found = True
+            if trap_found:
+                self.validate_trap_group(key,trap_group)
+                break
+        assert trap_found == False
+
+        self.trap_ctbl._del("ip2me")
+        time.sleep(2)
+
+        trap_keys = self.trap_atbl.getKeys()
+        trap_type = traps_to_trap_type[trap_id]
+        trap_found = False
+        trap_group_oid = ""
+        for key in trap_keys:
+            (status, fvs) = self.trap_atbl.get(key)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE":
+                    if fv[1] == trap_type:
+                        trap_found = True
+            if trap_found:
+                self.validate_trap_group(key,trap_group)
+                break
+        assert trap_found == True
