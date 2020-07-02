@@ -149,8 +149,6 @@ class TestMirror(object):
                             "SAI_MIRROR_SESSION_ATTR_VLAN_CFI": "0"}
         self.dvs_mirror.verify_session(dvs, session, asic_db=expected_asic_db, src_ports=src_asic_ports, asic_size=16, direction="TX")
 
-        dvs.set_interface_status("Ethernet4", "down")
-
         # remove fdb entry
         dvs.remove_fdb(vlan_id, "66-66-66-66-66-66")
         self.dvs_mirror.verify_session_status(session, status="inactive")
