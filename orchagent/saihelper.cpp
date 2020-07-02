@@ -71,14 +71,14 @@ sai_status_t mdio_read(uint64_t platform_context,
   uint32_t mdio_addr, uint32_t reg_addr, 
   uint32_t number_of_registers, uint32_t *data)
 {
-    return SAI_STATUS_FAILURE;
+    return SAI_STATUS_NOT_IMPLEMENTED;
 }
 
 sai_status_t mdio_write(uint64_t platform_context, 
   uint32_t mdio_addr, uint32_t reg_addr, 
   uint32_t number_of_registers, uint32_t *data)
 {
-    return SAI_STATUS_FAILURE;
+    return SAI_STATUS_NOT_IMPLEMENTED;
 }
 
 const char *test_profile_get_value (
