@@ -46,6 +46,7 @@
 #define MATCH_L4_DST_PORT       "L4_DST_PORT"
 #define MATCH_ETHER_TYPE        "ETHER_TYPE"
 #define MATCH_IP_PROTOCOL       "IP_PROTOCOL"
+#define MATCH_NEXT_HEADER       "NEXT_HEADER"
 #define MATCH_TCP_FLAGS         "TCP_FLAGS"
 #define MATCH_IP_TYPE           "IP_TYPE"
 #define MATCH_DSCP              "DSCP"

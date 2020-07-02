@@ -44,6 +44,7 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_L4_DST_PORT,       SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT },
     { MATCH_ETHER_TYPE,        SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE },
     { MATCH_IP_PROTOCOL,       SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL },
+    { MATCH_NEXT_HEADER,       SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER },
     { MATCH_TCP_FLAGS,         SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS },
     { MATCH_IP_TYPE,           SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE },
     { MATCH_DSCP,              SAI_ACL_ENTRY_ATTR_FIELD_DSCP },
@@ -302,7 +303,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 value.aclfield.mask.u8 = 0x3F;
             }
         }
-        else if (attr_name == MATCH_IP_PROTOCOL)
+        else if (attr_name == MATCH_IP_PROTOCOL || attr_name == MATCH_NEXT_HEADER)
         {
             value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
             value.aclfield.mask.u8 = 0xFF;
@@ -384,6 +385,16 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
     {
         SWSS_LOG_ERROR("Failed to parse %s attribute %s value.", attr_name.c_str(), attr_value.c_str());
         return false;
+    }
+
+    // NOTE: Temporary workaround to support matching protocol numbers on MLNX platform.
+    // In a later SAI version we will transition to using NEXT_HEADER for IPv6 on all platforms.
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if ((m_tableType == ACL_TABLE_MIRRORV6 || m_tableType == ACL_TABLE_L3V6)
+            && platform == MLNX_PLATFORM_SUBSTRING
+            && attr_name == MATCH_IP_PROTOCOL)
+    {
+        attr_name = MATCH_NEXT_HEADER;
     }
 
     m_matches[aclMatchLookup[attr_name]] = value;
@@ -1354,9 +1365,22 @@ bool AclTable::create()
     attr.value.booldata = true;
     table_attrs.push_back(attr);
 
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
+    // NOTE: Temporary workaround to support matching protocol numbers on MLNX platform.
+    // In a later SAI version we will transition to using NEXT_HEADER for IPv6 on all platforms.
+    string platform = getenv("platform") ? getenv("platform") : "";
+    if ((type == ACL_TABLE_MIRRORV6 || type == ACL_TABLE_L3V6)
+            && platform == MLNX_PLATFORM_SUBSTRING)
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+    }
+    else
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+    }
 
     /*
      * Type of Tables and Supported Match Types (ASIC database)
