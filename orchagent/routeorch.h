@@ -131,7 +131,13 @@ public:
     int getMaxNextHopGroupCount(void)
     {
     	return m_maxNextHopGroupCount;
-    } 
+    }
+
+    EntityBulker<sai_route_api_t>           gRouteBulker;
+    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
+    bool removeRoute(RouteBulkContext& ctx);
+    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+	bool removeRoutePost(const RouteBulkContext& ctx);
 
 private:
     SwitchOrch *m_switchOrch;
@@ -149,14 +155,9 @@ private:
 
     NextHopObserverTable m_nextHopObservers;
 
-    EntityBulker<sai_route_api_t>           gRouteBulker;
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
-    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
-    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
-    bool removeRoute(RouteBulkContext& ctx);
-    bool removeRoutePost(const RouteBulkContext& ctx);
 
     std::string getLinkLocalEui64Addr(void);
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);

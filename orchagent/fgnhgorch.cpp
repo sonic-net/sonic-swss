@@ -975,14 +975,13 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
                 if (it_route != route_table_entry->second.end())
                 {
                     nhg = it_route->second;
-                    /* TODO
-                    if(!gRouteOrch->removeRoute(vrf_id, ip_prefix))
-                    {
-                        SWSS_LOG_INFO("Failed to remove routeOrch route, %s:%s", 
-                                ip_prefix.to_string().c_str(), nhg.to_string().c_str());
-                        return false;
-                    }
-                    */
+                    RouteBulkContext ctx;
+                    ctx.ip_prefix = ip_prefix;
+                    ctx.vrf_id = vrf_id;
+                    ctx.nhg = nhg;
+                    gRouteOrch->removeRoute(ctx);
+                    gRouteOrch->gRouteBulker.flush();
+                    gRouteOrch->removeRoutePost(ctx);
                     route_handled = true;
                 }
             }
@@ -1051,14 +1050,14 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
             /* reassign routeorch as the owner of the prefix and call for routeorch to add this route */
             if (route_handled)
             {
-                /* TODO;
-                if(!gRouteOrch->addRoute(vrf_id, ip_prefix, nhg))
-                {
-                    SWSS_LOG_INFO("Failed to add routeorch route, %s:%s", 
-                            ip_prefix.to_string().c_str(), nhg.to_string().c_str());
-                    return false;
-                }
-                */
+                RouteBulkContext ctx;
+                ctx.ip_prefix = ip_prefix;
+                ctx.vrf_id = vrf_id;
+                ctx.nhg = nhg;
+                gRouteOrch->addRoute(ctx, nhg);
+                // Flush the route bulker, so routes will be written to syncd and ASIC
+                gRouteOrch->gRouteBulker.flush();
+                gRouteOrch->addRoutePost(ctx, nhg);
             }
         }
     }
