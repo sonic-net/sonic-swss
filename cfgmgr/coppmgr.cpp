@@ -550,6 +550,8 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
+            removeTrapIdsFromTrapGroup(m_coppTrapConfMap[key].trap_group,
+                                       m_coppTrapConfMap[key].trap_ids);
             fvs.clear();
             string trap_group_trap_ids;
             addTrapIdsToTrapGroup(trap_group, trap_ids);
