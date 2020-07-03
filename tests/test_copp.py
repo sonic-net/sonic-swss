@@ -406,6 +406,61 @@ class TestCopp(object):
             if trap_id not in restricted_traps:
                 assert trap_found == True
 
+    def test_trap_ids_set(self, dvs, testlog):
+        self.setup_copp(dvs)
+        global copp_trap
+        traps = "bgp"
+        fvs = swsscommon.FieldValuePairs([("trap_ids", traps)])
+        self.trap_ctbl.set("bgp", fvs)
+        time.sleep(2)
+
+        old_traps = "bgp,bgpv6"
+        trap_keys = self.trap_atbl.getKeys()
+        trap_ids = old_traps.split(",")
+        trap_group = copp_trap[old_traps]
+        for trap_id in trap_ids:
+            trap_type = traps_to_trap_type[trap_id]
+            trap_found = False
+            trap_group_oid = ""
+            for key in trap_keys:
+                (status, fvs) = self.trap_atbl.get(key)
+                assert status == True
+                for fv in fvs:
+                    if fv[0] == "SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE":
+                        if fv[1] == trap_type:
+                            trap_found = True
+                if trap_found:
+                    self.validate_trap_group(key,trap_group)
+                    break
+            if trap_id == "bgp":
+                assert trap_found == True
+            elif trap_id == "bgpv6":
+                assert trap_found == False
+
+        traps = "bgp,bgpv6"
+        fvs = swsscommon.FieldValuePairs([("trap_ids", traps)])
+        self.trap_ctbl.set("bgp", fvs)
+        time.sleep(2)
+
+        trap_keys = self.trap_atbl.getKeys()
+        trap_ids = traps.split(",")
+        trap_group = copp_trap[traps]
+        for trap_id in trap_ids:
+            trap_type = traps_to_trap_type[trap_id]
+            trap_found = False
+            trap_group_oid = ""
+            for key in trap_keys:
+                (status, fvs) = self.trap_atbl.get(key)
+                assert status == True
+                for fv in fvs:
+                    if fv[0] == "SAI_HOSTIF_TRAP_ATTR_TRAP_TYPE":
+                        if fv[1] == trap_type:
+                            trap_found = True
+                if trap_found:
+                    self.validate_trap_group(key,trap_group)
+                    break
+            assert trap_found == True
+
     def test_trap_action_set(self, dvs, testlog):
         self.setup_copp(dvs)
         fvs = swsscommon.FieldValuePairs([("trap_action", "copy")])
