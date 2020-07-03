@@ -137,7 +137,7 @@ public:
     bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
     bool removeRoute(RouteBulkContext& ctx);
     bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
-	bool removeRoutePost(const RouteBulkContext& ctx);
+    bool removeRoutePost(const RouteBulkContext& ctx);
 
 private:
     SwitchOrch *m_switchOrch;
