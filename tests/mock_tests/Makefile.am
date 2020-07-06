@@ -1,7 +1,7 @@
 FLEX_CTR_DIR = $(top_srcdir)/orchagent/flex_counter
 DEBUG_CTR_DIR = $(top_srcdir)/orchagent/debug_counter
 
-INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR)
+INCLUDES = -I $(FLEX_CTR_DIR) -I $(DEBUG_CTR_DIR) -I $(top_srcdir)/lib
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -31,6 +31,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_table.cpp \
                 mock_hiredis.cpp \
                 mock_redisreply.cpp \
+                $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
                 $(top_srcdir)/orchagent/notifications.cpp \

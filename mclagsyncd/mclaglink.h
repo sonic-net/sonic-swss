@@ -106,7 +106,7 @@ public:
     RedisClient *p_redisClient_to_counters;/*redis client access to COUNTERS_DB*/
     std::set <mclag_fdb> *p_old_fdb;
 
-    MclagLink(int port = MCLAG_DEFAULT_PORT);
+    MclagLink(uint16_t port = MCLAG_DEFAULT_PORT);
     virtual ~MclagLink();
 
     /* Wait for connection (blocking) */

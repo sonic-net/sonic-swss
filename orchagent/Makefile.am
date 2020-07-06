@@ -1,4 +1,4 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I flex_counter -I debug_counter
+INCLUDES = -I $(top_srcdir)/lib -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I flex_counter -I debug_counter
 
 CFLAGS_SAI = -I /usr/include/sai
 
@@ -25,6 +25,7 @@ endif
 
 orchagent_SOURCES = \
             main.cpp \
+            $(top_srcdir)/lib/gearboxutils.cpp \
             orchdaemon.cpp \
             orch.cpp \
             notifications.cpp \
