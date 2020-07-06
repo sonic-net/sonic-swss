@@ -389,7 +389,8 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
 
     // NOTE: Temporary workaround to support matching protocol numbers on MLNX platform.
     // In a later SAI version we will transition to using NEXT_HEADER for IPv6 on all platforms.
-    string platform = getenv("platform") ? getenv("platform") : "";
+    auto platform_env_var = getenv("platform");
+    string platform = platform_env_var ? platform_env_var: "";
     if ((m_tableType == ACL_TABLE_MIRRORV6 || m_tableType == ACL_TABLE_L3V6)
             && platform == MLNX_PLATFORM_SUBSTRING
             && attr_name == MATCH_IP_PROTOCOL)
@@ -1367,7 +1368,8 @@ bool AclTable::create()
 
     // NOTE: Temporary workaround to support matching protocol numbers on MLNX platform.
     // In a later SAI version we will transition to using NEXT_HEADER for IPv6 on all platforms.
-    string platform = getenv("platform") ? getenv("platform") : "";
+    auto platform_env_var = getenv("platform");
+    string platform = platform_env_var ? platform_env_var: "";
     if ((type == ACL_TABLE_MIRRORV6 || type == ACL_TABLE_L3V6)
             && platform == MLNX_PLATFORM_SUBSTRING)
     {
