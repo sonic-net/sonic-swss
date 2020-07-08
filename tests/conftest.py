@@ -33,6 +33,8 @@ def ensure_system(cmd):
 def pytest_addoption(parser):
     parser.addoption("--dvsname", action="store", default=None,
                       help="dvs name")
+    parser.addoption("--vctns", action="store", default=None,
+                     help="vct namespace")
     parser.addoption("--keeptb", action="store_true", default=False,
                       help="keep testbed after test")
     parser.addoption("--imgname", action="store", default="docker-sonic-vs",
@@ -163,7 +165,7 @@ class DockerVirtualSwitch(object):
     FLEX_COUNTER_DB_ID = 5
     STATE_DB_ID = 6
 
-    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None):
+    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None, vct=None):
         self.basicd = ['redis-server',
                        'rsyslogd']
         self.swssd = ['orchagent',
@@ -180,6 +182,8 @@ class DockerVirtualSwitch(object):
         self.alld  = self.basicd + self.swssd + self.syncd + self.rtd + self.teamd + self.natd
         self.client = docker.from_env()
         self.appldb = None
+        self.dvsname = name
+        self.vct = vct
 
         if subprocess.check_call(["/sbin/modprobe", "team"]) != 0:
             raise NameError("cannot install kernel team module")
@@ -189,6 +193,8 @@ class DockerVirtualSwitch(object):
             self.cleanup = False
         else:
             self.cleanup = True
+        ctn_sw_id = -1
+        ctn_sw_name = ""
         if name != None:
             # get virtual switch container
             for ctn in self.client.containers.list():
@@ -198,7 +204,8 @@ class DockerVirtualSwitch(object):
                         (status, output) = commands.getstatusoutput("docker inspect --format '{{.HostConfig.NetworkMode}}' %s" % name)
                     else:
                         (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.HostConfig.NetworkMode}}' %s" % name)
-                    ctn_sw_id = output.split(':')[1]
+                    if output != 'none':
+                        ctn_sw_id = output.split(':')[1]
                     self.cleanup = False
             if self.ctn == None:
                 raise NameError("cannot find container %s" % name)
@@ -208,20 +215,22 @@ class DockerVirtualSwitch(object):
                 if ctn.id == ctn_sw_id or ctn.name == ctn_sw_id:
                     ctn_sw_name = ctn.name
 
-            if sys.version_info < (3, 0):
-                (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % ctn_sw_name)
+            if ctn_sw_name != "":
+                if sys.version_info < (3, 0):
+                    (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % ctn_sw_name)
+                else:
+                    (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % ctn_sw_name)
+                self.ctn_sw_pid = int(output)
+
+                # create virtual servers
+                self.servers = []
+                for i in range(32):
+                    server = VirtualServer(ctn_sw_name, self.ctn_sw_pid, i)
+                    self.servers.append(server)
+
+                self.mount = "/var/run/redis-vs/{}".format(ctn_sw_name)
             else:
-                (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % ctn_sw_name)
-            self.ctn_sw_pid = int(output)
-
-            # create virtual servers
-            self.servers = []
-            for i in range(32):
-                server = VirtualServer(ctn_sw_name, self.ctn_sw_pid, i)
-                self.servers.append(server)
-
-            self.mount = "/var/run/redis-vs/{}".format(ctn_sw_name)
-
+                self.mount = "/var/run/redis-vs/{}".format(name)
             self.net_cleanup()
             self.ctn_restart()
         else:
@@ -252,6 +261,7 @@ class DockerVirtualSwitch(object):
                     volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
 
         self.redis_sock = self.mount + '/' + "redis.sock"
+        self.redis_chassis_sock = self.mount + "/redis_chassis.sock"
         self.check_ctn_status_and_db_connect()
 
         # DB wrappers are declared here, lazy-loaded in the tests
@@ -348,14 +358,46 @@ class DockerVirtualSwitch(object):
             fds = re_space.split(l)
             if len(fds) > 1:
                 pname = fds[1].rstrip(":")
-                m = re.compile("(eth|lo|Bridge|Ethernet)").match(pname)
+                m = re.compile("(eth|lo|Bridge|Ethernet|vlan|inband)").match(pname)
                 if not m:
                     self.ctn.exec_run("ip link del {}".format(pname))
                     print("remove extra link {}".format(pname))
         return
 
+    def vct_connect(self):
+        # check if the instance belongs to virutal chassis topology, and requires reconnections
+        res = self.ctn.exec_run("ls /usr/share/sonic/hwsku/vct_connections.json")
+        if res.exit_code != 0:
+            return
+        res = self.ctn.exec_run("sonic-cfggen --print-data -j /usr/share/sonic/hwsku/vct_connections.json")
+        if res.exit_code != 0:
+            return
+        try:
+            out = json.loads( res.output )
+        except AttributeError:
+            out = res
+
+        ns = out[ "chassis_namespace" ]
+        chassbr = out[ "chassis_bridge" ]
+        if self.vct is None:
+            self.vct = DockerVirtualChassisTopology( ns, chassbr )
+        intfs = [ "eth%d" % i for i in range( 0, 33 ) ]
+        nbrconns = out[ "neighbor_connections" ]
+        (status, pid) = commands.getstatusoutput( "docker inspect --format"
+                                                  " '{{.State.Pid}}' %s" % self.dvsname )
+        self.vct.connect_ethintfs( intfs, nbrconns, pid, self.ctn.name )
+        for intf in intfs:
+            self.ctn.exec_run( "ip link set dev " + intf + " up" )
+        if "inband_address" in out:
+            iaddr = out[ "inband_address" ]
+            ifpair = out[ "inband_intf_pair" ]
+            ifname = out[ "inband_intf" ]
+            self.vct.connect( ifname, ifpair, pid )
+            self.ctn.exec_run( "ip link set dev " + ifpair + " up" )
+
     def ctn_restart(self):
         self.ctn.restart()
+        self.vct_connect()
 
     def restart(self):
         if self.appldb:
@@ -1026,13 +1068,86 @@ class DockerVirtualSwitch(object):
 
         return self.state_db
 
+class DockerVirtualChassisTopology(object):
+    def __init__( self, namespace=None, chassbr=None ):
+        self.nsname = namespace
+        self.chassbr = chassbr
+        self.ctns = {}
+
+        self.find_containers()
+
+    def find_containers( self ):
+        suffix = "." + self.nsname
+        for ctn in docker.from_env().containers.list():
+            if ctn.name.endswith(suffix):
+                self.ctns[ ctn.name ] = ctn
+        if self.chassbr is None and len( self.ctns ) > 0:
+            ret, res = self.ctn_runcmd( self.ctns.values()[0],
+                        "sonic-cfggen --print-data -j /usr/share/sonic/hwsku/vct_connections.json" )
+            if ret == 0:
+                out = json.loads( res )
+                self.chassbr = out[ "chassis_bridge" ]
+
+    def ctn_runcmd(self, ctn, cmd):
+        res = ctn.exec_run(cmd)
+        try:
+            exitcode = res.exit_code
+            out = res.output
+        except AttributeError:
+            exitcode = 0
+            out = res
+        if exitcode != 0:
+            print "-----rc={} for cmd {}-----".format(exitcode, cmd)
+            print out.rstrip()
+            print "-----"
+
+        return (exitcode, out)
+
+    def runcmd( self, cmd ):
+        try:
+            subprocess.check_output("sudo ip netns exec %s %s" % (self.nsname, cmd),
+                                    stderr=subprocess.STDOUT, shell=True)
+        except subprocess.CalledProcessError as e:
+            print "------rc={} for cmd: {}------".format(e.returncode, e.cmd)
+            print e.output.rstrip()
+            print "------"
+            return e.returncode
+        return 0
+
+    def connect( self, ifname, ifpair, pid ):
+        self.runcmd( " ip link del " + ifname )
+        self.runcmd( "ip link add " + ifname + " type veth peer name "
+                     + ifpair )
+        self.runcmd( "ip link set " + ifpair + " netns " + pid )
+        self.runcmd( "ip link set dev " + ifname + " up" )
+        self.runcmd( "brctl addif " + self.chassbr + " " +
+                     ifname )
+
+    def connect_ethintfs( self, intfs, nbrConns, pid, instName ):
+        for intf in intfs:
+            ifn = instName[:9] + "." + intf
+            self.runcmd( " ip link del " + ifn )
+            self.runcmd( "ip link add " + ifn + " type veth peer name " +  intf )
+            self.runcmd( "ip link set " + intf + " netns " + pid )
+            self.runcmd( "ip link set dev " + ifn + " up" )
+        for intf in nbrConns:
+            br = nbrConns[ intf ]
+            if br != "":
+                self.runcmd( " brctl addif " + br + " " + intf )
+
 @pytest.yield_fixture(scope="module")
 def dvs(request):
     name = request.config.getoption("--dvsname")
+    vctns = request.config.getoption("--vctns")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform)
+    vct = None
+    if vctns is not None:
+        vct = DockerVirtualChassisTopology( vctns, None )
+        if name is None:
+            name = "lc1." + vctns
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, vct)
     yield dvs
     if name == None:
         dvs.get_logs(request.module.__name__)
