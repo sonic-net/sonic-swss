@@ -6,6 +6,24 @@
 #include "teamdctl_mgr.h"
 
 ///
+/// Custom function for libteamdctl logger. IT is empty to prevent libteamdctl to spam us with the error messages
+/// @param tdc teamdctl descriptor
+/// @param priority priority of the message
+/// @param file file where error was raised
+/// @param line line in the file where error was raised
+/// @param fn function where the error was raised
+/// @param format format of the error message
+/// @param args arguments of the error message
+void teamdctl_log_function(struct teamdctl *tdc, int priority,
+                           const char *file, int line,
+                           const char *fn, const char *format,
+                           va_list args)
+{
+
+}
+
+
+///
 /// The destructor clean up handlers to teamds
 ///
 TeamdCtlMgr::~TeamdCtlMgr()
@@ -71,6 +89,8 @@ bool TeamdCtlMgr::try_add_lag(const std::string & lag_name)
         m_lags_to_add[lag_name]++;
         return false;
     }
+
+    teamdctl_set_log_fn(tdc, &teamdctl_log_function);
 
     int err = teamdctl_connect(tdc, lag_name.c_str(), nullptr, nullptr);
     if (err)
