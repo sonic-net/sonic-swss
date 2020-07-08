@@ -389,7 +389,6 @@ class DockerVirtualSwitch(object):
         for intf in intfs:
             self.ctn.exec_run( "ip link set dev " + intf + " up" )
         if "inband_address" in out:
-            iaddr = out[ "inband_address" ]
             ifpair = out[ "inband_intf_pair" ]
             ifname = out[ "inband_intf" ]
             self.vct.connect( ifname, ifpair, pid )
