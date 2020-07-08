@@ -5,6 +5,7 @@
 #include "logger.h"
 #include <sairedis.h>
 #include "warm_restart.h"
+#include "subscriberstatetable.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -453,6 +454,11 @@ void OrchDaemon::start()
         Selectable *s;
         int ret;
 
+        if (gIsSwitchShutdown)
+        {
+            handle_switch_shutdown();
+        }
+
         ret = m_select->select(&s, SELECT_TIMEOUT);
 
         if (ret == Select::ERROR)
@@ -516,17 +522,6 @@ void OrchDaemon::start()
                 }
             }
         }
-        if (gIsSwitchShutdown) {
-            static time_t last_log = 0;
-
-            if ((time(NULL) - last_log) > SWITCH_SHUTDOWN_LOG_INTERVAL_IN_SECS) {
-                SWSS_LOG_ERROR("Syncd stopped");
-
-                last_log = time(NULL);
-            }
-
-        }
-
     }
 }
 
@@ -668,3 +663,50 @@ bool OrchDaemon::warmRestartCheck()
     gSwitchOrch->restartCheckReply(op,  data, values);
     return ret;
 }
+
+void
+OrchDaemon::check_and_exit()
+{
+    SWSS_LOG_ENTER();
+
+    swss::SubscriberStateTable tbl(m_configDb, "CONTAINER_FEATURE");
+    std::deque<KeyOpFieldsValuesTuple> entries;
+
+    tbl.pops(entries);
+
+    for (auto& entry: entries) {
+        string key = kfvKey(entry);
+
+        if (key == "swss") {
+            auto values = kfvFieldsValues(entry);
+
+            for (auto it : values)
+            {
+                string field = fvField(it);
+                string value = fvValue(it);
+
+                if (field == "orchagent_exit_on_switch_shutdown") {
+                    if (value == "enable") {
+                        SWSS_LOG_ERROR("Exiting....");
+                        exit(EXIT_FAILURE);
+                    }
+                }
+            }
+            break;
+        }
+    }
+}
+
+void
+OrchDaemon::handle_switch_shutdown()
+{
+    SWSS_LOG_ENTER();
+
+    while(true) {
+        check_and_exit();
+        SWSS_LOG_ERROR("Syncd stopped");
+        sleep(SWITCH_SHUTDOWN_LOG_INTERVAL_IN_SECS);
+    }
+}
+
+

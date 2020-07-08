@@ -56,6 +56,9 @@ private:
     Select *m_select;
 
     void flush();
+
+    void handle_switch_shutdown();
+    void check_and_exit();
 };
 
 #endif /* SWSS_ORCHDAEMON_H */
