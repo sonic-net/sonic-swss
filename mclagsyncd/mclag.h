@@ -88,7 +88,10 @@ typedef enum mclag_syncd_msg_type_e_ {
     MCLAG_SYNCD_MSG_TYPE_FDB_OPERATION = 1,
     MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_DOMAIN = 4,
     MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_IFACE  = 5,
+<<<<<<< HEAD
     MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_UNIQUE_IP  = 6,
+=======
+>>>>>>> mclagsyncd enhancements as per HLD at Azure/SONIC#596
     MCLAG_SYNCD_MSG_TYPE_VLAN_MBR_UPDATES  = 7
 }mclag_syncd_msg_type_e;
 
@@ -100,6 +103,7 @@ typedef enum mclag_msg_type_e_ {
     MCLAG_MSG_TYPE_FLUSH_FDB = 3,
     MCLAG_MSG_TYPE_SET_INTF_MAC = 4,
     MCLAG_MSG_TYPE_SET_FDB = 5,
+<<<<<<< HEAD
     MCLAG_MSG_TYPE_FLUSH_FDB_BY_PORT = 6,
     MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_ENABLE = 7,
     MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_DISABLE = 8,
@@ -112,6 +116,19 @@ typedef enum mclag_msg_type_e_ {
     MCLAG_MSG_TYPE_PORT_MAC_LEARN_NLAPI     = 16,
     MCLAG_MSG_TYPE_SET_PEER_LINK_ISOLATION  = 18,
     MCLAG_MSG_TYPE_SET_ICCP_PEER_SYSTEM_ID  = 19 
+=======
+    MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_ENABLE = 6,
+    MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_DISABLE = 7,
+    MCLAG_MSG_TYPE_SET_ICCP_STATE           = 8,
+    MCLAG_MSG_TYPE_SET_ICCP_ROLE            = 9,
+    MCLAG_MSG_TYPE_SET_ICCP_SYSTEM_ID       = 10,
+    MCLAG_MSG_TYPE_DEL_ICCP_INFO            = 11,
+    MCLAG_MSG_TYPE_SET_REMOTE_IF_STATE      = 12,
+    MCLAG_MSG_TYPE_DEL_REMOTE_IF_INFO       = 13,
+    MCLAG_MSG_TYPE_SET_PEER_LINK_ISOLATION  = 14,
+    MCLAG_MSG_TYPE_SET_ICCP_PEER_SYSTEM_ID  = 15,
+    MCLAG_MSG_TYPE_FLUSH_FDB_BY_PORT = 20,
+>>>>>>> mclagsyncd enhancements as per HLD at Azure/SONIC#596
 }mclag_msg_type_e;
 
 typedef struct mclag_sub_option_hdr_t_ {    
