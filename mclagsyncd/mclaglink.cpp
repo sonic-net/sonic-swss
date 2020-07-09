@@ -39,8 +39,6 @@
 #include <sstream>
 #include "table.h"
 
-#include "nlapi.h"
-
 using namespace swss;
 using namespace std;
 
