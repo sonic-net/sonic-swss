@@ -23,13 +23,32 @@
 #define MCLAG_DEFAULT_IP   0x7f000006
 
 enum MCLAG_FDB_OP_TYPE {
-    MCLAG_FDB_OPER_ADD =1,
+    MCLAG_FDB_OPER_ADD = 1,
     MCLAG_FDB_OPER_DEL = 2,
 };
 
 enum MCLAG_FDB_TYPE {
-    MCLAG_FDB_TYPE_STATIC = 1,
+    MCLAG_FDB_TYPE_STATIC  = 1,
     MCLAG_FDB_TYPE_DYNAMIC = 2,
+    MCLAG_FDB_TYPE_DYNAMIC_LOCAL = 3, /* Used while sending MAC to Syncd to program with aging enabled. */
+};
+
+enum MCLAG_DOMAIN_CFG_OP_TYPE {
+    MCLAG_CFG_OPER_NONE       = 0,  //NOP
+    MCLAG_CFG_OPER_ADD        = 1,  //Add domain
+    MCLAG_CFG_OPER_DEL        = 2,  //Delete domain
+    MCLAG_CFG_OPER_UPDATE     = 3,   //update domain
+    MCLAG_CFG_OPER_ATTR_DEL   = 4   //Attribute del 
+};
+
+
+enum MCLAG_DOMAIN_CFG_ATTR_BMAP_FLAGS {
+    MCLAG_CFG_ATTR_NONE                  = 0x0,  
+    MCLAG_CFG_ATTR_SRC_ADDR              = 0x1,  
+    MCLAG_CFG_ATTR_PEER_ADDR             = 0x2,  
+    MCLAG_CFG_ATTR_PEER_LINK             = 0x4,   
+    MCLAG_CFG_ATTR_KEEPALIVE_INTERVAL    = 0x8,   
+    MCLAG_CFG_ATTR_SESSION_TIMEOUT       = 0x10   
 };
 
 /*
@@ -66,7 +85,11 @@ typedef struct mclag_msg_hdr_t_ {
 /*syncd send msg type to iccpd*/
 typedef enum mclag_syncd_msg_type_e_ {
     MCLAG_SYNCD_MSG_TYPE_NONE = 0,
-    MCLAG_SYNCD_MSG_TYPE_FDB_OPERATION = 1
+    MCLAG_SYNCD_MSG_TYPE_FDB_OPERATION = 1,
+    MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_DOMAIN = 4,
+    MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_IFACE  = 5,
+    MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_UNIQUE_IP  = 6,
+    MCLAG_SYNCD_MSG_TYPE_VLAN_MBR_UPDATES  = 7
 }mclag_syncd_msg_type_e;
 
 /*iccpd send msg type to syncd*/
@@ -78,7 +101,17 @@ typedef enum mclag_msg_type_e_ {
     MCLAG_MSG_TYPE_SET_INTF_MAC = 4,
     MCLAG_MSG_TYPE_SET_FDB = 5,
     MCLAG_MSG_TYPE_FLUSH_FDB_BY_PORT = 6,
-    MCLAG_MSG_TYPE_GET_FDB_CHANGES = 20
+    MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_ENABLE = 7,
+    MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_DISABLE = 8,
+    MCLAG_MSG_TYPE_SET_ICCP_STATE           = 9,
+    MCLAG_MSG_TYPE_SET_ICCP_ROLE            = 10,
+    MCLAG_MSG_TYPE_SET_ICCP_SYSTEM_ID       = 11,
+    MCLAG_MSG_TYPE_DEL_ICCP_INFO            = 12,
+    MCLAG_MSG_TYPE_SET_REMOTE_IF_STATE      = 13,
+    MCLAG_MSG_TYPE_DEL_REMOTE_IF_INFO       = 14,
+    MCLAG_MSG_TYPE_PORT_MAC_LEARN_NLAPI     = 16,
+    MCLAG_MSG_TYPE_SET_PEER_LINK_ISOLATION  = 18,
+    MCLAG_MSG_TYPE_SET_ICCP_PEER_SYSTEM_ID  = 19 
 }mclag_msg_type_e;
 
 typedef struct mclag_sub_option_hdr_t_ {    
@@ -88,6 +121,7 @@ typedef struct mclag_sub_option_hdr_t_ {
      * Length of option value, not including the header.
      */
     uint16_t op_len;
+    uint8_t data[];
 }mclag_sub_option_hdr_t;
 
 #define MCLAG_SUB_OPTION_HDR_LEN (sizeof (mclag_sub_option_hdr_t))
@@ -99,7 +133,14 @@ typedef enum mclag_sub_option_type_e_ {
     MCLAG_SUB_OPTION_TYPE_MAC_LEARN_ENABLE = 3,
     MCLAG_SUB_OPTION_TYPE_MAC_LEARN_DISABLE = 4,
     MCLAG_SUB_OPTION_TYPE_SET_MAC_SRC = 5,
-    MCLAG_SUB_OPTION_TYPE_SET_MAC_DST = 6
+    MCLAG_SUB_OPTION_TYPE_SET_MAC_DST = 6,
+    MCLAG_SUB_OPTION_TYPE_MCLAG_INTF_NAME = 7,
+    MCLAG_SUB_OPTION_TYPE_MCLAG_ID        = 8,
+    MCLAG_SUB_OPTION_TYPE_ICCP_ROLE       = 9,
+    MCLAG_SUB_OPTION_TYPE_SYSTEM_ID       = 10,
+    MCLAG_SUB_OPTION_TYPE_OPER_STATUS     = 11,
+    MCLAG_SUB_OPTION_TYPE_ISOLATION_STATE = 12,
+    MCLAG_SUB_OPTION_TYPE_PEER_SYSTEM_ID  = 13
 } mclag_sub_option_type_e;
 
 static inline size_t
@@ -162,3 +203,4 @@ mclag_msg_ok (const mclag_msg_hdr_t *hdr, size_t len)
 
 
 #endif
+
