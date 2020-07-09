@@ -672,8 +672,10 @@ OrchDaemon::checkAndExit()
     swss::Table tbl(m_configDb, "CONTAINER_FEATURE");
     string val;
 
-    if (tbl.hget("swss", "orchagent_exit_on_switch_shutdown", val)) {
-        if (val == "enable") {
+    if (tbl.hget("swss", "orchagent_exit_on_switch_shutdown", val))
+    {
+        if (val == "enable")
+        {
             SWSS_LOG_ERROR("Exiting....");
             exit(EXIT_FAILURE);
         }
@@ -685,7 +687,8 @@ OrchDaemon::handleSwitchShutdown()
 {
     SWSS_LOG_ENTER();
 
-    while(true) {
+    while(true)
+    {
         checkAndExit();
         SWSS_LOG_ERROR("Syncd stopped");
         sleep(SWITCH_SHUTDOWN_LOG_INTERVAL_IN_SECS);
