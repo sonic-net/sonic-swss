@@ -5,7 +5,7 @@
 #include "logger.h"
 #include <sairedis.h>
 #include "warm_restart.h"
-#include "subscriberstatetable.h"
+#include "table.h"
 
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
@@ -456,7 +456,7 @@ void OrchDaemon::start()
 
         if (gIsSwitchShutdown)
         {
-            handle_switch_shutdown();
+            handleSwitchShutdown();
         }
 
         ret = m_select->select(&s, SELECT_TIMEOUT);
@@ -665,45 +665,28 @@ bool OrchDaemon::warmRestartCheck()
 }
 
 void
-OrchDaemon::check_and_exit()
+OrchDaemon::checkAndExit()
 {
     SWSS_LOG_ENTER();
 
-    swss::SubscriberStateTable tbl(m_configDb, "CONTAINER_FEATURE");
-    std::deque<KeyOpFieldsValuesTuple> entries;
+    swss::Table tbl(m_configDb, "CONTAINER_FEATURE");
+    string val;
 
-    tbl.pops(entries);
-
-    for (auto& entry: entries) {
-        string key = kfvKey(entry);
-
-        if (key == "swss") {
-            auto values = kfvFieldsValues(entry);
-
-            for (auto it : values)
-            {
-                string field = fvField(it);
-                string value = fvValue(it);
-
-                if (field == "orchagent_exit_on_switch_shutdown") {
-                    if (value == "enable") {
-                        SWSS_LOG_ERROR("Exiting....");
-                        exit(EXIT_FAILURE);
-                    }
-                }
-            }
-            break;
+    if (tbl.hget("swss", "orchagent_exit_on_switch_shutdown", val)) {
+        if (val == "enable") {
+            SWSS_LOG_ERROR("Exiting....");
+            exit(EXIT_FAILURE);
         }
     }
 }
 
 void
-OrchDaemon::handle_switch_shutdown()
+OrchDaemon::handleSwitchShutdown()
 {
     SWSS_LOG_ENTER();
 
     while(true) {
-        check_and_exit();
+        checkAndExit();
         SWSS_LOG_ERROR("Syncd stopped");
         sleep(SWITCH_SHUTDOWN_LOG_INTERVAL_IN_SECS);
     }

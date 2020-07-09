@@ -57,8 +57,8 @@ private:
 
     void flush();
 
-    void handle_switch_shutdown();
-    void check_and_exit();
+    void handleSwitchShutdown();
+    void checkAndExit();
 };
 
 #endif /* SWSS_ORCHDAEMON_H */
