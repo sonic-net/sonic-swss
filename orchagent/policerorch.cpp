@@ -390,8 +390,8 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
     string key = kfvKey(tuple);
     string op = kfvOp(tuple);
 
-    /*<interface_name1>:<storm_type1>, <interface_name1>:<storm_type2>, ... (OR)
-      <interface_name1>:<storm_type1>, <interface_name2>:<storm_type1>, ...*/
+    /*<interface_name1>|<storm_type1>, <interface_name1>|<storm_type2>, ... (OR)
+      <interface_name1>|<storm_type1>, <interface_name2>|<storm_type1>, ...*/
     vector<string> storm_control_keys = tokenize(key, list_item_delimiter);
     for (string storm_key : storm_control_keys)
     {
@@ -402,8 +402,9 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
             /*continue here as there can be more interfaces*/
             continue;
         }
-        const auto interface_name = storm_key.substr(0,delimiter);
-        const auto storm_type = storm_key.substr(delimiter+1);
+        auto tokens = tokenize(storm_key, config_db_key_delimiter);
+        auto interface_name = tokens[0];
+        auto storm_type = tokens[1];
         Port port;
 
         /*Only proceed for Ethernet interfaces*/
@@ -424,12 +425,12 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
         }
 
         /*Policer Name: _<interface_name>_<storm_type>*/
-        const auto storm_policer_name = std::string("_").append(interface_name).append("_").append(storm_type);
+        const auto storm_policer_name = "_"+interface_name+"_"+storm_type;
 
         if (op == SET_COMMAND)
         {
             // Mark the opeartion as an 'update', if the policer exists.
-            bool update = m_syncdPolicers.find(key) != m_syncdPolicers.end();
+            bool update = m_syncdPolicers.find(storm_policer_name) != m_syncdPolicers.end();
             vector <sai_attribute_t> attrs;
             bool cir = false;
             sai_attribute_t attr;
@@ -439,7 +440,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
             attr.value.s32 = (sai_meter_type_t) meter_type_map.at("BYTES");
             attrs.push_back(attr);
 
-            /*Meter mode hardcoded to STORM_CONTROL*/
+            /*Policer mode hardcoded to STORM_CONTROL*/
             attr.id = SAI_POLICER_ATTR_MODE;
             attr.value.s32 = (sai_policer_mode_t) policer_mode_map.at("STORM_CONTROL");
             attrs.push_back(attr);
@@ -476,7 +477,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
             if (!cir)
             {
                 SWSS_LOG_ERROR("Failed to create storm control policer %s,\
-                        missing madatory fields", storm_policer_name.c_str());
+                        missing mandatory fields", storm_policer_name.c_str());
                 /*
                  * return here as the same error 
                  * would be seen for the complete iteration
@@ -529,7 +530,7 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
             // Update an existing policer
             else
             {
-                policer_id = m_syncdPolicers[key].policerOid;
+                policer_id = m_syncdPolicers[storm_policer_name].policerOid;
 
                 // The update operation has limitations that it could only update
                 // the rate and the size accordingly.
@@ -551,12 +552,10 @@ task_process_status PolicerOrch::handlePortStormControlTable(Consumer& consumer)
                     if (status != SAI_STATUS_SUCCESS)
                     {
                         SWSS_LOG_ERROR("Failed to update policer %s attribute, rv:%d",
-                                key.c_str(), status);
+                                storm_policer_name.c_str(), status);
                         continue;
                     }
                 }
-
-                SWSS_LOG_NOTICE("Update policer %s attributes", key.c_str());
             }
             policer_id = m_syncdPolicers[storm_policer_name].policerOid;
 
