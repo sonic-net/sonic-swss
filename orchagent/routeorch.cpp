@@ -1086,7 +1086,8 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     IpPrefix& ipPrefix = ctx.ip_prefix;
 
     if(m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
-            && vrf_id == gVirtualRouterId){
+            && vrf_id == gVirtualRouterId)
+    {
         /* Only support the default vrf for Fine Grained ECMP */
         SWSS_LOG_INFO("Reroute %s:%s to fgNhgOrch", ipPrefix.to_string().c_str(), 
                 nextHops.to_string().c_str());
@@ -1226,6 +1227,15 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     const sai_object_id_t& vrf_id = ctx.vrf_id;
     const IpPrefix& ipPrefix = ctx.ip_prefix;
 
+    if(m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
+            && vrf_id == gVirtualRouterId)
+    {
+        /* Only support the default vrf for Fine Grained ECMP */
+        SWSS_LOG_INFO("Reroute %s:%s to fgNhgOrch", ipPrefix.to_string().c_str(), 
+                nextHops.to_string().c_str());
+        return m_fgNhgOrch->addRoute(vrf_id, ipPrefix, nextHops);
+    }
+
     const auto& object_statuses = ctx.object_statuses;
 
     if (object_statuses.empty())
@@ -1355,7 +1365,8 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     IpPrefix& ipPrefix = ctx.ip_prefix;
 
     if(m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
-            && vrf_id == gVirtualRouterId){
+            && vrf_id == gVirtualRouterId)
+    {
         /* Only support the default vrf for Fine Grained ECMP */
         SWSS_LOG_INFO("Reroute %s to fgNhgOrch", ipPrefix.to_string().c_str());
         return m_fgNhgOrch->removeRoute(vrf_id, ipPrefix);
@@ -1415,6 +1426,14 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
     const sai_object_id_t& vrf_id = ctx.vrf_id;
     const IpPrefix& ipPrefix = ctx.ip_prefix;
+
+    if(m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
+            && vrf_id == gVirtualRouterId)
+    {
+        /* Only support the default vrf for Fine Grained ECMP */
+        SWSS_LOG_INFO("Reroute %s to fgNhgOrch", ipPrefix.to_string().c_str());
+        return m_fgNhgOrch->removeRoute(vrf_id, ipPrefix);
+    }
 
     auto& object_statuses = ctx.object_statuses;
 

@@ -121,12 +121,6 @@ class TestFineGrainedNextHopGroup(object):
         dvs.runcmd("config interface startup Ethernet16")
         dvs.runcmd("config interface startup Ethernet20")
 
-        dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
-        dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
-        dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03")
-        dvs.runcmd("arp -s 10.0.0.9 00:00:00:00:00:05")
-        dvs.runcmd("arp -s 10.0.0.11 00:00:00:00:00:06")
-
         dvs.servers[0].runcmd("ip link set down dev eth0") == 0
         dvs.servers[1].runcmd("ip link set down dev eth0") == 0
         dvs.servers[2].runcmd("ip link set down dev eth0") == 0
@@ -245,7 +239,29 @@ class TestFineGrainedNextHopGroup(object):
                 found_route = True
                 break
 
+        # Since we didn't populate ARP yet, the route shouldn't be programmed
+        assert (found_route == False)
+
+        dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
+        dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
+        dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03")
+        dvs.runcmd("arp -s 10.0.0.9 00:00:00:00:00:05")
+        dvs.runcmd("arp -s 10.0.0.11 00:00:00:00:00:06")
+        time.sleep(1)
+
+        keys = rtbl.getKeys()
+
+        found_route = False
+        for k in keys:
+            rt_key = json.loads(k)
+
+            if rt_key['dest'] == fg_nhg_prefix:
+                found_route = True
+                break
+        
+        # Now that ARP is populated, the route should be found
         assert found_route
+
         # assert the route points to next hop group
         (status, fvs) = rtbl.get(k)
 
@@ -367,7 +383,19 @@ class TestFineGrainedNextHopGroup(object):
         nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
 
+	shutdown_link(dvs, db, 3)
+	shutdown_link(dvs, db, 4)
+        nh_memb_exp_count = {"10.0.0.11":60}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+        shutdown_link(dvs, db, 5)
+
 	# bring up link
+        startup_link(dvs, db, 3)
+        startup_link(dvs, db, 4)
+        startup_link(dvs, db, 5)
+        nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
         startup_link(dvs, db, 2)
         nh_memb_exp_count = {"10.0.0.5":30,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)

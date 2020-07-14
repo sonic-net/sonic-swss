@@ -121,7 +121,7 @@ bool FgNhgOrch::validnexthopinNextHopGroup(const NextHopKey& nexthop)
             {
                 return true;
             }
-            
+
             for( auto active_nh : syncd_fg_route_entry->active_nexthops)
             {
                 bank_member_changes[fgNhgEntry->nextHops[active_nh.ip_address]].
@@ -245,6 +245,7 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
         std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set)
 {
     SWSS_LOG_ENTER();
+
     Bank_Member_Changes bank_member_change = bank_member_changes[bank];
     uint32_t add_idx = 0, del_idx = 0;
     FGNextHopGroupMap *bank_fgnhg_map = &(syncd_fg_route_entry->syncd_fgnhg_map[syncd_bank]);
@@ -353,12 +354,66 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
 }
 
 
-
-bool FgNhgOrch::set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-        uint32_t bank,std::vector<Bank_Member_Changes> &bank_member_changes, 
+bool FgNhgOrch::set_inactive_bank_to_next_available_active_bank(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+        uint32_t bank, std::vector<Bank_Member_Changes> bank_member_changes,
         std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set)
 {
     SWSS_LOG_ENTER();
+
+    uint32_t new_bank_idx = 0;
+    for( ; new_bank_idx < bank_member_changes.size(); new_bank_idx++)
+    {
+        if(bank_member_changes[new_bank_idx].active_nhs.size() +
+                bank_member_changes[new_bank_idx].nhs_to_add.size() != 0)
+        {
+            syncd_fg_route_entry->syncd_fgnhg_map[bank].clear();
+            syncd_fg_route_entry->inactive_to_active_map[bank] = new_bank_idx;
+
+            /* Create collated set of members which will be active in the bank */
+            for(auto memb: bank_member_changes[new_bank_idx].nhs_to_add)
+            {
+                bank_member_changes[new_bank_idx].active_nhs.push_back(memb);
+            }
+
+            for(uint32_t i = fgNhgEntry->hash_bucket_indices[bank].start_index;
+                i <= fgNhgEntry->hash_bucket_indices[bank].end_index; i++)
+            {
+                NextHopKey bank_nh_memb = bank_member_changes[new_bank_idx].
+                         active_nhs[i % bank_member_changes[new_bank_idx].active_nhs.size()];
+
+                if(!write_hash_bucket_change_to_sai(syncd_fg_route_entry, i,
+                    nhopgroup_members_set[bank_nh_memb]))
+                {
+                    return false;
+                }
+
+                syncd_fg_route_entry->syncd_fgnhg_map[bank][bank_nh_memb].push_back(i);
+            }
+            break;
+        }
+    }
+
+    if(new_bank_idx == bank_member_changes.size())
+    {
+        SWSS_LOG_NOTICE("No active next-hop members were found in any bank");
+        /* Case where there are no active banks */
+        /* Note: There is no way to set a NULL OID to the now inactive next-hops
+         * so we leave the next-hops as is in SAI, and future route/neighbor changes
+         * will take care of setting the next-hops to the correctly active nhs
+         */
+        syncd_fg_route_entry->syncd_fgnhg_map[bank].clear();
+    }
+
+    return true;
+}
+
+
+bool FgNhgOrch::set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+        uint32_t bank, std::vector<Bank_Member_Changes> &bank_member_changes, 
+        std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set)
+{
+    SWSS_LOG_ENTER();
+
     if(bank_member_changes[bank].nhs_to_add.size() > 0)
     {
         /* Previously inactive bank now transistions to active */
@@ -383,36 +438,11 @@ bool FgNhgOrch::set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd
     else if(bank_member_changes[bank].nhs_to_del.size() > 0)
     {
         /* Previously active bank now transistions to inactive */
-        for(uint32_t new_bank_idx = 0; new_bank_idx < bank_member_changes.size(); new_bank_idx++)
+        if(!set_inactive_bank_to_next_available_active_bank(syncd_fg_route_entry, fgNhgEntry,
+                    bank, bank_member_changes, nhopgroup_members_set))
         {
-            if(bank_member_changes[new_bank_idx].active_nhs.size() +
-                    bank_member_changes[new_bank_idx].nhs_to_add.size() != 0)
-            {
-                syncd_fg_route_entry->syncd_fgnhg_map[bank].clear();
-                syncd_fg_route_entry->inactive_to_active_map[bank] = new_bank_idx;
-
-                /* Create collated set of members which will be active in the bank */
-                for(auto memb: bank_member_changes[new_bank_idx].nhs_to_add)
-                {
-                    bank_member_changes[new_bank_idx].active_nhs.push_back(memb);
-                }
-
-                for(uint32_t i = fgNhgEntry->hash_bucket_indices[bank].start_index;
-                    i <= fgNhgEntry->hash_bucket_indices[bank].end_index; i++)
-                {
-                    NextHopKey bank_nh_memb = bank_member_changes[new_bank_idx].
-                             active_nhs[i % bank_member_changes[new_bank_idx].active_nhs.size()];
-
-                    if(!write_hash_bucket_change_to_sai(syncd_fg_route_entry, i,
-                        nhopgroup_members_set[bank_nh_memb]))
-                    {
-                        return false;
-                    }
-
-                    syncd_fg_route_entry->syncd_fgnhg_map[bank][bank_nh_memb].push_back(i);
-                }
-                break;
-            }
+            SWSS_LOG_INFO("Failed to map to active_bank and set nh in SAI");
+            return false;
         }
 
         for(auto memb: bank_member_changes[bank].nhs_to_del)
@@ -423,9 +453,25 @@ bool FgNhgOrch::set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd
     else
     {
         /* Previously inactive bank remains inactive */
-        set_active_bank_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
-                syncd_fg_route_entry->inactive_to_active_map[bank], bank, 
-                bank_member_changes, nhopgroup_members_set);
+        uint32_t active_bank = syncd_fg_route_entry->inactive_to_active_map[bank];
+        if(bank_member_changes[active_bank].active_nhs.size() == 0)
+        {
+            if(!set_inactive_bank_to_next_available_active_bank(syncd_fg_route_entry, fgNhgEntry,
+                        bank, bank_member_changes, nhopgroup_members_set))
+            {
+                SWSS_LOG_INFO("Failed to map to active_bank and set nh in SAI");
+                return false;
+            }
+        }
+        else
+        {
+            if(!set_active_bank_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
+                active_bank, bank, bank_member_changes, nhopgroup_members_set))
+            {
+                SWSS_LOG_INFO("Failed set_active_bank_hash_bucket_changes");
+                return false;
+            }
+        }
     }
     return true;
 }
@@ -470,6 +516,7 @@ bool FgNhgOrch::set_new_nhg_members(FGNextHopGroupEntry &syncd_fg_route_entry, F
     for(uint32_t i = 0; i < fgNhgEntry->hash_bucket_indices.size(); i++) 
     {
         uint32_t bank = i;
+        syncd_fg_route_entry.inactive_to_active_map[bank] = bank;
         if(i + 1 > syncd_fg_route_entry.syncd_fgnhg_map.size())
         {
             syncd_fg_route_entry.syncd_fgnhg_map.push_back(FGNextHopGroupMap());
