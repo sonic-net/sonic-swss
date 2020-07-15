@@ -74,7 +74,7 @@ class FgNhgOrch : public Orch
 {
 public:
     FgNhgPrefixes fgNhgPrefixes;
-    FgNhgOrch(DBConnector *db, vector<string> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch);
+    FgNhgOrch(DBConnector *db, DBConnector *stateDb, vector<string> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch);
 
     bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
     bool removeRoute(sai_object_id_t, const IpPrefix&);
@@ -87,23 +87,27 @@ private:
     VRFOrch *m_vrfOrch;
     FgNhgs m_FgNhgs;
     FGRouteTables m_syncdFGRouteTables;
+    Table m_stateWarmRestartRouteTable;
 
     bool set_new_nhg_members(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     std::vector<Bank_Member_Changes> &bank_member_changes, 
-                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool compute_and_set_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry,
                     FgNhgEntry *fgNhgEntry, std::vector<Bank_Member_Changes> &bank_member_changes,
-                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     uint32_t bank, uint32_t syncd_bank, std::vector<Bank_Member_Changes> bank_member_changes,
-                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     uint32_t bank,std::vector<Bank_Member_Changes> &bank_member_changes,
-                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool set_inactive_bank_to_next_available_active_bank(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    uint32_t bank, std::vector<Bank_Member_Changes> bank_member_changes,
-                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set);
+                        uint32_t bank, std::vector<Bank_Member_Changes> bank_member_changes,
+                        std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool remove_nhg(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry);
+    void set_state_db_route_entry(const IpPrefix&, uint32_t index, NextHopKey nextHop);
+    bool write_hash_bucket_change_to_sai(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
+            const IpPrefix &ipPrefix, NextHopKey nextHop);
 
     bool doTaskFgNhg(const KeyOpFieldsValuesTuple&);
     bool doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple&);
