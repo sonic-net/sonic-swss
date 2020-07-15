@@ -1,0 +1,12 @@
+{
+    "VIRTUAL_TOPOLOGY": {
+        "chassis_instances" : [ "0", "1" ],
+        "neighbor_instances" : [ "4" ],
+        "neighbor_connections" : {
+            "1-4": {
+                "1": "eth1",
+                "4" : "eth1"
+            }
+        }
+    }
+}

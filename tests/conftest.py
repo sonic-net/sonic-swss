@@ -8,6 +8,8 @@ import docker
 import pytest
 import tarfile
 import io
+import random
+import string
 import subprocess
 import sys
 if sys.version_info < (3, 0):
@@ -16,11 +18,11 @@ if sys.version_info < (3, 0):
 from datetime import datetime
 from swsscommon import swsscommon
 from dvslib import dvs_database as dvs_db
-from dvslib import dvs_acl
-from dvslib import dvs_vlan
-from dvslib import dvs_lag
-from dvslib import dvs_mirror
-from dvslib import dvs_policer
+# from dvslib import dvs_acl
+# from dvslib import dvs_vlan
+# from dvslib import dvs_lag
+# from dvslib import dvs_mirror
+# from dvslib import dvs_policer
 
 def ensure_system(cmd):
     if sys.version_info < (3, 0):
@@ -35,10 +37,15 @@ def pytest_addoption(parser):
                       help="dvs name")
     parser.addoption("--vctns", action="store", default=None,
                      help="vct namespace")
+    parser.addoption("--topo", action="store", default=None,
+                     help="vct topology file")
     parser.addoption("--keeptb", action="store_true", default=False,
                       help="keep testbed after test")
     parser.addoption("--imgname", action="store", default="docker-sonic-vs",
                       help="image name")
+
+def random_string(size=2, chars=string.ascii_uppercase + string.digits ):
+   return ''.join( random.choice( chars ) for x in range( size ))
 
 class AsicDbValidator(object):
     def __init__(self, dvs):
@@ -165,7 +172,8 @@ class DockerVirtualSwitch(object):
     FLEX_COUNTER_DB_ID = 5
     STATE_DB_ID = 6
 
-    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None, vct=None):
+    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None, vct=None,
+                 newctnname=None, ctnmounts=None,vctdata=None):
         self.basicd = ['redis-server',
                        'rsyslogd']
         self.swssd = ['orchagent',
@@ -235,31 +243,44 @@ class DockerVirtualSwitch(object):
             self.ctn_restart()
         else:
             self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
-                    command="bash", stdin_open=True)
+                                                     command="bash", stdin_open=True)
             if sys.version_info < (3, 0):
                 (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % self.ctn_sw.name)
             else:
                 (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % self.ctn_sw.name)
             self.ctn_sw_pid = int(output)
-
+            print("debian ctr created " + self.ctn_sw.name)
             # create virtual server
             self.servers = []
             for i in range(32):
                 server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
+            if vctdata is not None:
+                self.vct_connect(vctdata)
+                time.sleep(2)
+
             # mount redis to base to unique directory
             self.mount = "/var/run/redis-vs/{}".format(self.ctn_sw.name)
             ensure_system("mkdir -p {}".format(self.mount))
 
             self.environment = ["fake_platform={}".format(fakeplatform)] if fakeplatform else []
-
+            kwargs = {}
+            if newctnname is not None:
+               kwargs['name'] = newctnname
+               self.dvsname = newctnname
+            vols = { self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } }
+            if ctnmounts is not None:
+                for k,v in ctnmounts.iteritems():
+                    vols[k] = v
+            kwargs['volumes'] = vols
             # create virtual switch container
             self.ctn = self.client.containers.run(imgname, privileged=True, detach=True,
                     environment=self.environment,
-                    network_mode="container:%s" % self.ctn_sw.name,
-                    volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
-
+                    network_mode="container:%s" % self.ctn_sw.name, **kwargs)
+        _, output = commands.getstatusoutput( "docker inspect --format"
+                                              " '{{.State.Pid}}' %s" % self.ctn.name )
+        self.pid = int(output)
         self.redis_sock = self.mount + '/' + "redis.sock"
         self.redis_chassis_sock = self.mount + "/redis_chassis.sock"
         self.check_ctn_status_and_db_connect()
@@ -364,39 +385,20 @@ class DockerVirtualSwitch(object):
                     print("remove extra link {}".format(pname))
         return
 
-    def vct_connect(self):
-        # check if the instance belongs to virutal chassis topology, and requires reconnections
-        res = self.ctn.exec_run("ls /usr/share/sonic/hwsku/vct_connections.json")
-        if res.exit_code != 0:
-            return
-        res = self.ctn.exec_run("sonic-cfggen --print-data -j /usr/share/sonic/hwsku/vct_connections.json")
-        if res.exit_code != 0:
-            return
-        try:
-            out = json.loads( res.output )
-        except AttributeError:
-            out = res
-
-        ns = out[ "chassis_namespace" ]
-        chassbr = out[ "chassis_bridge" ]
-        if self.vct is None:
-            self.vct = DockerVirtualChassisTopology( ns, chassbr )
-        intfs = [ "eth%d" % i for i in range( 0, 33 ) ]
-        nbrconns = out[ "neighbor_connections" ]
-        (status, pid) = commands.getstatusoutput( "docker inspect --format"
-                                                  " '{{.State.Pid}}' %s" % self.dvsname )
-        self.vct.connect_ethintfs( intfs, nbrconns, pid, self.ctn.name )
-        for intf in intfs:
-            self.ctn.exec_run( "ip link set dev " + intf + " up" )
-        if "inband_address" in out:
-            ifpair = out[ "inband_intf_pair" ]
-            ifname = out[ "inband_intf" ]
-            self.vct.connect( ifname, ifpair, pid )
-            self.ctn.exec_run( "ip link set dev " + ifpair + " up" )
+    def vct_connect(self, vctdata):
+        if "inband_address" in vctdata:
+            ifpair = vctdata["inband_intf_pair"]
+            ifname = vctdata["inband_intf"]
+            iaddr = vctdata["inband_address"]
+            self.vct.connect(ifname, ifpair, str(self.ctn_sw_pid))
+            self.ctn_sw.exec_run("ip link set dev " + ifpair + " up")
+            self.ctn_sw.exec_run("ip link add link " + ifpair +
+                                 " name vlan4094 type vlan id 4094")
+            self.ctn_sw.exec_run("ip addr add " + iaddr + " dev vlan4094")
+            self.ctn_sw.exec_run("ip link set dev vlan4094 up")
 
     def ctn_restart(self):
         self.ctn.restart()
-        self.vct_connect()
 
     def restart(self):
         if self.appldb:
@@ -1068,24 +1070,74 @@ class DockerVirtualSwitch(object):
         return self.state_db
 
 class DockerVirtualChassisTopology(object):
-    def __init__( self, namespace=None, chassbr=None ):
-        self.nsname = namespace
-        self.chassbr = chassbr
-        self.ctns = {}
+    def __init__(self, namespace=None, chassbr=None, imgname=None, keeptb=False,
+                 fakeplatform=None, topoFile=None):
+        self.ns = namespace
+        self.chassbr = "br4chs"
+        self.keeptb = keeptb
+        self.fakeplatform = fakeplatform
+        self.topoFile = topoFile
+        self.imgname = imgname
+        self.ctninfo = {}
+        self.dvss = {}
+        if self.ns is None:
+           self.ns = random_string()
+        print("VCT ns: " + self.ns)
+        self.find_all_ctns()
+        with open(self.topoFile, "r") as f:
+            self.virt_topo = json.load(f)["VIRTUAL_TOPOLOGY"]
+        self.oper = "create"
+        self.handle_request()
 
-        self.find_containers()
+    def runcmd( self, cmd, addns=True ):
+        try:
+            netns = ""
+            if addns:
+               netns = "sudo ip netns exec %s" % self.ns
+            subprocess.check_output("%s %s" % (netns, cmd),
+                                    stderr=subprocess.STDOUT, shell=True)
+        except subprocess.CalledProcessError as e:
+            print "------rc={} for cmd: {}------".format(e.returncode, e.cmd)
+            print e.output.rstrip()
+            print "------"
+            return e.returncode
+        return 0
 
-    def find_containers( self ):
-        suffix = "." + self.nsname
+    def connect( self, ifname, ifpair, pid ):
+        self.runcmd("ip link del " + ifname)
+        self.runcmd("ip link add " + ifname + " type veth peer name " + ifpair)
+        self.runcmd("ip link set " + ifpair + " netns " + pid)
+        self.runcmd("ip link set dev " + ifname + " up")
+        self.runcmd("brctl addif " + self.chassbr + " " + ifname)
+
+    def connect_ethintfs( self, intfs, nbrConns, pid, ctnname ):
+        for intf in intfs:
+            ifn = ctnname[:9] + "." + intf
+            self.runcmd( "ip link add " + ifn + " type veth peer name " +  intf )
+            self.runcmd( "ip link set " + intf + " netns " + pid )
+            self.runcmd( "ip link set dev " + ifn + " up" )
+        for intf in nbrConns:
+            br = nbrConns[ intf ]
+            if br != "":
+                self.runcmd( " brctl addif " + br + " " + intf )
+
+    def find_all_ctns( self ):
+        suffix = "." + self.ns
         for ctn in docker.from_env().containers.list():
             if ctn.name.endswith(suffix):
-                self.ctns[ ctn.name ] = ctn
-        if self.chassbr is None and len( self.ctns ) > 0:
-            ret, res = self.ctn_runcmd( self.ctns.values()[0],
-                        "sonic-cfggen --print-data -j /usr/share/sonic/hwsku/vct_connections.json" )
+                self.dvss[ctn.name] = DockerVirtualSwitch(ctn.name, self.imgname, self.keeptb,
+                                                          self.fakeplatform, self)
+        if self.chassbr is None and len( self.dvss ) > 0:
+            ret, res = self.ctn_runcmd( self.dvss.values()[0].ctn,
+                        "sonic-cfggen --print-data -j /usr/share/sonic/virtual_chassis/vct_connections.json" )
             if ret == 0:
                 out = json.loads( res )
                 self.chassbr = out[ "chassis_bridge" ]
+
+    def get_ctn(self, ctnname):
+        if ctnname in self.dvss:
+           return self.dvss[ctnname].ctn
+        return None
 
     def ctn_runcmd(self, ctn, cmd):
         res = ctn.exec_run(cmd)
@@ -1102,57 +1154,238 @@ class DockerVirtualChassisTopology(object):
 
         return (exitcode, out)
 
-    def runcmd( self, cmd ):
-        try:
-            subprocess.check_output("sudo ip netns exec %s %s" % (self.nsname, cmd),
-                                    stderr=subprocess.STDOUT, shell=True)
-        except subprocess.CalledProcessError as e:
-            print "------rc={} for cmd: {}------".format(e.returncode, e.cmd)
-            print e.output.rstrip()
-            print "------"
-            return e.returncode
-        return 0
+    def set_ctninfo(self, ctn, name, pid):
+        self.ctninfo[ctn] = [name, pid]
 
-    def connect( self, ifname, ifpair, pid ):
-        self.runcmd( " ip link del " + ifname )
-        self.runcmd( "ip link add " + ifname + " type veth peer name "
-                     + ifpair )
-        self.runcmd( "ip link set " + ifpair + " netns " + pid )
-        self.runcmd( "ip link set dev " + ifname + " up" )
-        self.runcmd( "brctl addif " + self.chassbr + " " +
-                     ifname )
+    def get_ctninfo(self, ctn):
+        res = self.ctninfo[ctn]
+        return res[0], res[1]
 
-    def connect_ethintfs( self, intfs, nbrConns, pid, instName ):
-        for intf in intfs:
-            ifn = instName[:9] + "." + intf
-            self.runcmd( " ip link del " + ifn )
-            self.runcmd( "ip link add " + ifn + " type veth peer name " +  intf )
-            self.runcmd( "ip link set " + intf + " netns " + pid )
-            self.runcmd( "ip link set dev " + ifn + " up" )
-        for intf in nbrConns:
-            br = nbrConns[ intf ]
-            if br != "":
-                self.runcmd( " brctl addif " + br + " " + intf )
+    def runcmd_on_ctn(self, ctnname, cmd):
+        ctn = self.get_ctn(ctnname)
+        return self.ctn_runcmd(ctn, cmd)
+
+    def handle_request(self):
+        if self.oper == "verify":
+            self.verify_vct()
+            return
+        ctn = self.virt_topo["chassis_instances"]
+        # When virtual chassis is created,
+        # 1. new namespace and bridge for the chassis are created first
+        # 2. containers for each vs instance need to be created
+        # 3. neighbor connections are setup at last.
+        # when the virtual chassis is deleted,
+        # 1. bridge for neighbor connections are deleted
+        # 2. containers are deleted
+        # 3. namespace and chassis bridge are deleted
+        if self.oper == "create":
+            self.runcmd("sudo ip netns add " + self.ns, addns=False)
+            self.handle_bridge(self.chassbr)
+
+            for ctndir in ctn:
+                self.create_vct_ctn(ctndir)
+            if "neighbor_connections" in self.virt_topo:
+                self.handle_neighconn()
+        if self.oper == "delete":
+            for dv in self.dvss.values():
+                dv.destroy()
+            self.handle_bridge("br4chs")
+            self.runcmd("sudo ip netns del " + self.ns, addns=False)
+
+    def destroy(self):
+        self.verify_vct()
+        self.oper = "delete"
+        self.handle_request()
+
+    def restart(self):
+        for dv in self.dvss.values():
+            dv.restart()
+
+    def handle_bridge(self, brName):
+        if self.oper == "create":
+            self.runcmd(" brctl addbr " + brName)
+            self.runcmd(" ip link set dev " + brName + " up")
+        else:
+            self.runcmd(" ip link set dev " + brName + " down")
+            self.runcmd(" brctl delbr " + brName)
+        return
+
+    def create_vct_ctn(self, ctndir):
+        print("create_vct_ctn %s %s" % (ctndir, self.oper))
+        cwd = os.getcwd()
+        cfgdir = cwd + "/virtual_chassis/" + ctndir
+        cfgfile =  cfgdir + "/default_config.json"
+        with open(cfgfile, "r") as cfg:
+            defcfg = json.load(cfg)["DEVICE_METADATA"]["localhost"]
+            ctnname = defcfg["hostname"] + "." + self.ns
+            print(" ctnname %s " % ctnname)
+            vol = {}
+            vol[cfgdir] = {"bind": "/usr/share/sonic/virtual_chassis", "mode": "ro"}
+
+            # pass self.ns into the vs to be use for vs restarts by swss conftest.
+            # connection to chassbr is setup by chassis_connect.py within the vs
+            data = {}
+            data["chassis_namespace"] = self.ns
+            data["chassis_bridge"] = self.chassbr
+            if "inband_address" in defcfg.keys():
+                data["inband_intf"] = self.ns + "veth" + ctndir
+                data["inband_intf_pair"] = "inband"
+                data["inband_address"] = defcfg["inband_address"]
+            if ctnname not in self.dvss:
+                self.dvss[ctnname] = DockerVirtualSwitch(name=None, imgname=self.imgname,
+                                                         keeptb=self.keeptb,
+                                                         fakeplatform=self.fakeplatform,
+                                                         vct=self,newctnname=ctnname,
+                                                         ctnmounts=vol,vctdata=data)
+            self.set_ctninfo(ctndir, ctnname, self.dvss[ctnname].pid)
+        return
+
+    def add_vethpair(self, intf, ctn):
+        ctnname, pid = self.get_ctninfo(ctn)
+        ifn = ctnname[:9] + "." + intf
+        ifpair = intf
+
+        self.runcmd(" ip link add " + ifn + " type veth peer name " + ifpair)
+        self.runcmd(" ip link set " + ifn + " netns " + self.ns)
+        self.runcmd(" ip link set " + ifpair + " netns " + pid)
+        self.runcmd(" ip link set dev " + ifn + " up ")
+        self.runcmd_on_ctn(ctnname, " ip link set dev " + ifpair + " up")
+        return
+
+    def addto_br(self, intf, ctn, br):
+       ctnname, _ = self.get_ctninfo(ctn)
+       ifn = ctnname + "." + intf
+       print("add %s to bridge %s " % (ifn, br))
+       self.runcmd(" brctl addif " + br + " " + ifn)
+
+    def get_topo_neigh(self):
+        cwd = os.getcwd()
+        neighs_by_ctn = {}
+        for nck, ncv in self.virt_topo["neighbor_connections"].items():
+            ctndir = nck.split("-")[0]
+            nbrctndir = nck.split("-")[1]
+            nbrvethintf = int(ncv[nbrctndir].split("eth")[1])
+            nbrintf = "ethernet%d|" % ((nbrvethintf - 1) * 4)
+            cfgdir = cwd + "/virtual_chassis/" + ctndir
+            cfgfile = cfgdir + "/default_config.json"
+            ctnname = ""
+            with open(cfgfile, "r") as cfg:
+                defcfg = json.load(cfg)["DEVICE_METADATA"]["localhost"]
+                ctnname = defcfg["hostname"] + "." + self.ns
+            cfgfile = cwd + "/virtual_chassis/" + nbrctndir + "/default_config.json"
+            with open(cfgfile, "r") as cfg:
+                intfCfg = json.load(cfg)["INTERFACE"]
+                for key in intfCfg:
+                    nbraddr = ""
+                    if key.lower().startswith(nbrintf):
+                        intfaddr = re.split("/|\\|", key)
+                        if len(intfaddr) > 1:
+                            nbraddr = intfaddr[1]
+                        if nbraddr == "":
+                            continue
+                        if ctnname not in neighs_by_ctn:
+                            neighs_by_ctn[ctnname] = []
+                        neighs_by_ctn[ctnname].append((nbrvethintf - 1, nbraddr))
+        return neighs_by_ctn
+
+    def handle_neighconn(self):
+        if self.oper != "create":
+            return
+        neighs_by_ctn = self.get_topo_neigh()
+        for ctnname, nbraddrs in neighs_by_ctn.iteritems():
+            if ctnname not in self.dvss:
+                continue
+            for idx, nbraddr in nbraddrs:
+                self.dvss[ctnname].servers[idx].runcmd("ifconfig eth0 down ")
+                self.dvss[ctnname].servers[idx].runcmd("ifconfig eth0 up")
+                self.dvss[ctnname].servers[idx].runcmd("ifconfig eth0 " + nbraddr)
+        return
+
+    def verify_chassdb(self):
+        passed = True
+        cwd = os.getcwd()
+        ctn = self.virt_topo["chassis_instances"]
+        for ctndir in ctn:
+            cfgdir = cwd + "/virtual_chassis/" + ctndir
+            cfgfile = cfgdir + "/default_config.json"
+            with open(cfgfile, "r") as cfg:
+                defcfg = json.load(cfg)["DEVICE_METADATA"]["localhost"]
+                ctnname, _ = self.get_ctninfo(ctndir)
+                # verify connectivity to chassis-db from ctn
+                if "chassis_db_address" in defcfg:
+                    print("verify chassisdb connectivity to %s " % ctnname)
+                    _, out = self.runcmd_on_ctn(ctnname,
+                                    "sonic-db-cli CHASSIS_DB keys SYSTEM_PORT\"*\"")
+                    if len(out.split("\n")) != 97:
+                        print("FAILED:chassisdb in vs must have %s sysports" % out)
+                        print(len(out.split("\n")))
+                        passed = False
+        return passed
+
+    def verify_conns(self):
+        passed = True
+        if "neighbor_connections" not in self.virt_topo:
+            return passed
+        neighs_by_ctn = self.get_topo_neigh()
+        for ctnname, nbraddrs in neighs_by_ctn.iteritems():
+            for item in nbraddrs:
+                nbraddr = item[1]
+                print("verify neighbor connectivity from %s to %s nbrAddr " % (
+                   ctnname, nbraddr))
+                _, out = self.runcmd_on_ctn(ctnname, " ping -c 5 " + nbraddr)
+                if "5 received" not in out.split("\n")[-3]:
+                    print("FAILED:%s: ping %s \n res: %s " % (ctnname, nbraddr, out))
+                    passed = False
+        return passed
+
+    def verify_crashes(self):
+        ctn = self.virt_topo[ 'chassis_instances' ]
+        passed = True
+        # verify no crashes
+        for ctndir in ctn:
+            ctnname, _ = self.get_ctninfo(ctndir)
+            res, out = self.runcmd_on_ctn(ctnname,
+                                 " grep 'terminated by SIGABRT' /var/log/syslog ")
+            if out != "":
+                print("FAILED: container %s has agent termination(s)" % ctnname)
+                print(res, out)
+                passed = False
+        return passed
+
+    def verify_vct(self):
+        ret1 = self.verify_chassdb()
+        ret2 = self.verify_conns()
+        ret3 = self.verify_crashes()
+        if ret1 and ret2 and ret3:
+            print("All verifications PASSED")
+        print("Verifications completed")
 
 @pytest.yield_fixture(scope="module")
 def dvs(request):
     name = request.config.getoption("--dvsname")
     vctns = request.config.getoption("--vctns")
+    topo = request.config.getoption("--topo")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
     vct = None
-    if vctns is not None:
-        vct = DockerVirtualChassisTopology( vctns, None )
+    if vctns is not None or topo is not None:
+        vct = DockerVirtualChassisTopology(vctns, None, imgname, keeptb,
+                                           fakeplatform, topo)
         if name is None:
             name = "lc1." + vctns
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, vct)
+            dvs = vct.dvss[name]
+    else:
+        dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, vct)
     yield dvs
     if name == None:
         dvs.get_logs(request.module.__name__)
     else:
         dvs.get_logs()
-    dvs.destroy()
+    if vct is None:
+        dvs.destroy()
+    else:
+        vct.destroy()
 
 @pytest.yield_fixture
 def testlog(request, dvs):
@@ -1208,6 +1441,9 @@ def remove_dpb_config_file(dvs):
 @pytest.yield_fixture(scope="module")
 def dpb_setup_fixture(dvs):
     create_dpb_config_file(dvs)
-    dvs.restart()
+    if dvs.vct is None:
+        dvs.restart()
+    else:
+        dvs.vct.restart()
     yield
     remove_dpb_config_file(dvs)
