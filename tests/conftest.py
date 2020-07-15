@@ -18,11 +18,11 @@ if sys.version_info < (3, 0):
 from datetime import datetime
 from swsscommon import swsscommon
 from dvslib import dvs_database as dvs_db
-# from dvslib import dvs_acl
-# from dvslib import dvs_vlan
-# from dvslib import dvs_lag
-# from dvslib import dvs_mirror
-# from dvslib import dvs_policer
+from dvslib import dvs_acl
+from dvslib import dvs_vlan
+from dvslib import dvs_lag
+from dvslib import dvs_mirror
+from dvslib import dvs_policer
 
 def ensure_system(cmd):
     if sys.version_info < (3, 0):
@@ -1175,7 +1175,7 @@ class DockerVirtualChassisTopology(object):
         # 2. containers for each vs instance need to be created
         # 3. neighbor connections are setup at last.
         # when the virtual chassis is deleted,
-        # 1. bridge for neighbor connections are deleted
+        # 1. neighbors are deleted
         # 2. containers are deleted
         # 3. namespace and chassis bridge are deleted
         if self.oper == "create":
@@ -1239,24 +1239,6 @@ class DockerVirtualChassisTopology(object):
                                                          ctnmounts=vol,vctdata=data)
             self.set_ctninfo(ctndir, ctnname, self.dvss[ctnname].pid)
         return
-
-    def add_vethpair(self, intf, ctn):
-        ctnname, pid = self.get_ctninfo(ctn)
-        ifn = ctnname[:9] + "." + intf
-        ifpair = intf
-
-        self.runcmd(" ip link add " + ifn + " type veth peer name " + ifpair)
-        self.runcmd(" ip link set " + ifn + " netns " + self.ns)
-        self.runcmd(" ip link set " + ifpair + " netns " + pid)
-        self.runcmd(" ip link set dev " + ifn + " up ")
-        self.runcmd_on_ctn(ctnname, " ip link set dev " + ifpair + " up")
-        return
-
-    def addto_br(self, intf, ctn, br):
-       ctnname, _ = self.get_ctninfo(ctn)
-       ifn = ctnname + "." + intf
-       print("add %s to bridge %s " % (ifn, br))
-       self.runcmd(" brctl addif " + br + " " + ifn)
 
     def get_topo_neigh(self):
         cwd = os.getcwd()
