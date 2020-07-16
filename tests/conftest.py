@@ -173,7 +173,7 @@ class DockerVirtualSwitch(object):
     STATE_DB_ID = 6
 
     def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None, vct=None,
-                 newctnname=None, ctnmounts=None,vctdata=None):
+                 newctnname=None, ctnmounts=None):
         self.basicd = ['redis-server',
                        'rsyslogd']
         self.swssd = ['orchagent',
@@ -249,15 +249,14 @@ class DockerVirtualSwitch(object):
             else:
                 (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % self.ctn_sw.name)
             self.ctn_sw_pid = int(output)
-            print("debian ctr created " + self.ctn_sw.name)
             # create virtual server
             self.servers = []
             for i in range(32):
                 server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
-            if vctdata is not None:
-                self.vct_connect(vctdata)
+            if self.vct is not None:
+                self.vct_connect(newctnname)
                 time.sleep(2)
 
             # mount redis to base to unique directory
@@ -385,11 +384,12 @@ class DockerVirtualSwitch(object):
                     print("remove extra link {}".format(pname))
         return
 
-    def vct_connect(self, vctdata):
-        if "inband_address" in vctdata:
-            ifpair = vctdata["inband_intf_pair"]
-            ifname = vctdata["inband_intf"]
-            iaddr = vctdata["inband_address"]
+    def vct_connect(self, ctnname):
+        data = self.vct.get_inband(ctnname)
+        if "inband_address" in data:
+            ifpair = data["inband_intf_pair"]
+            ifname = data["inband_intf"]
+            iaddr = data["inband_address"]
             self.vct.connect(ifname, ifpair, str(self.ctn_sw_pid))
             self.ctn_sw.exec_run("ip link set dev " + ifpair + " up")
             self.ctn_sw.exec_run("ip link add link " + ifpair +
@@ -1080,6 +1080,7 @@ class DockerVirtualChassisTopology(object):
         self.imgname = imgname
         self.ctninfo = {}
         self.dvss = {}
+        self.inbands = {}
         if self.ns is None:
            self.ns = random_string()
         print("VCT ns: " + self.ns)
@@ -1194,6 +1195,8 @@ class DockerVirtualChassisTopology(object):
 
     def destroy(self):
         self.verify_vct()
+        if self.keeptb:
+            return
         self.oper = "delete"
         self.handle_request()
 
@@ -1211,34 +1214,36 @@ class DockerVirtualChassisTopology(object):
         return
 
     def create_vct_ctn(self, ctndir):
-        print("create_vct_ctn %s %s" % (ctndir, self.oper))
         cwd = os.getcwd()
         cfgdir = cwd + "/virtual_chassis/" + ctndir
         cfgfile =  cfgdir + "/default_config.json"
         with open(cfgfile, "r") as cfg:
             defcfg = json.load(cfg)["DEVICE_METADATA"]["localhost"]
             ctnname = defcfg["hostname"] + "." + self.ns
-            print(" ctnname %s " % ctnname)
             vol = {}
             vol[cfgdir] = {"bind": "/usr/share/sonic/virtual_chassis", "mode": "ro"}
 
             # pass self.ns into the vs to be use for vs restarts by swss conftest.
             # connection to chassbr is setup by chassis_connect.py within the vs
             data = {}
-            data["chassis_namespace"] = self.ns
-            data["chassis_bridge"] = self.chassbr
             if "inband_address" in defcfg.keys():
                 data["inband_intf"] = self.ns + "veth" + ctndir
                 data["inband_intf_pair"] = "inband"
                 data["inband_address"] = defcfg["inband_address"]
+            self.inbands[ctnname] = data
             if ctnname not in self.dvss:
                 self.dvss[ctnname] = DockerVirtualSwitch(name=None, imgname=self.imgname,
                                                          keeptb=self.keeptb,
                                                          fakeplatform=self.fakeplatform,
                                                          vct=self,newctnname=ctnname,
-                                                         ctnmounts=vol,vctdata=data)
+                                                         ctnmounts=vol)
             self.set_ctninfo(ctndir, ctnname, self.dvss[ctnname].pid)
         return
+
+    def get_inband(self, ctnname):
+        if ctnname in self.inbands:
+            return self.inbands[ctnname]
+        return {}
 
     def get_topo_neigh(self):
         cwd = os.getcwd()
