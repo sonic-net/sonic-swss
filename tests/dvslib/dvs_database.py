@@ -40,7 +40,7 @@ class DVSDatabase(object):
         """
 
         table = swsscommon.Table(self.db_connection, table_name)
-        formatted_entry = swsscommon.FieldValuePairs(entry.items())
+        formatted_entry = swsscommon.FieldValuePairs(list(entry.items()))
         table.set(key, formatted_entry)
 
     def update_entry(self, table_name, key, entry):
@@ -54,7 +54,7 @@ class DVSDatabase(object):
         """
 
         table = swsscommon.Table(self.db_connection, table_name)
-        formatted_entry = swsscommon.FieldValuePairs(entry.items())
+        formatted_entry = swsscommon.FieldValuePairs(list(entry.items()))
         table.set(key, formatted_entry)
 
     def get_entry(self, table_name, key):

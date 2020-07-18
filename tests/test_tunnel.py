@@ -5,7 +5,7 @@ from swsscommon import swsscommon
 
 
 def create_fvs(**kwargs):
-    return swsscommon.FieldValuePairs(kwargs.items())
+    return swsscommon.FieldValuePairs(list(kwargs.items()))
 
 
 class TestTunnelBase(object):
