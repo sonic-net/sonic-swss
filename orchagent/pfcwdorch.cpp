@@ -560,7 +560,8 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::registerInWdDb(const Port& port,
                 sai_serialize_object_id(queueId));
     }
 
-    string platform = getenv("platform") ? getenv("platform") : "";
+    auto platform_env_var = getenv("platform");
+    string platform = platform_env_var ? platform_env_var: "";
     if ((platform == BFN_PLATFORM_SUBSTRING)
         || (platform == BRCM_PLATFORM_SUBSTRING))
     {
