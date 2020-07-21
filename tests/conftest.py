@@ -1187,6 +1187,11 @@ class DockerVirtualChassisTopology(object):
                 self.create_vct_ctn(ctndir)
             if "neighbor_connections" in self.virt_topo:
                 self.handle_neighconn()
+            retry = 0
+            while self.verify_vct() is False and retry < 60:
+                print("wait for chassis to be ready")
+                time.sleep(2)
+                retry += 1
         if self.oper == "delete":
             for dv in self.dvss.values():
                 dv.destroy()
