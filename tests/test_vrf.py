@@ -248,7 +248,7 @@ class TestVrf(object):
 
         self.vrf_remove(dvs, "Vrf_a", state)
 
-    @pytest.mark.xfail("Test unstable, blocking PR builds")
+    @pytest.mark.xfail(reason="Test unstable, blocking PR builds")
     def test_VRFMgr_Capacity(self, dvs, testlog):
         self.setup_db(dvs)
 
