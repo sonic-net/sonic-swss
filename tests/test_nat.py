@@ -1,4 +1,5 @@
 import time
+import pytest
 
 class TestNat(object):
     def setup_db(self, dvs):
