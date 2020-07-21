@@ -3,7 +3,7 @@
 import collections
 import time
 
-from typing import Any, Callable
+from typing import Any, Callable, Tuple
 
 _PollingConfig = collections.namedtuple('PollingConfig', 'polling_interval timeout strict')
 
@@ -19,9 +19,9 @@ class PollingConfig(_PollingConfig):
 
 
 def wait_for_result(
-    polling_function: Callable[[], (bool, Any)],
+    polling_function: Callable[[], Tuple[bool, Any]],
     polling_config: PollingConfig,
-) -> (bool, Any):
+) -> Tuple[bool, Any]:
     """Run `polling_function` periodically using the specified `polling_config`.
 
     Args:

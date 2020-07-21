@@ -316,7 +316,7 @@ class DVSDatabase:
         return result
 
     @staticmethod
-    def _disable_strict_polling(polling_config: PollingConfig):
+    def _disable_strict_polling(polling_config: PollingConfig) -> PollingConfig:
         disabled_config = PollingConfig(polling_interval=polling_config.polling_interval,
                                         timeout=polling_config.timeout,
                                         strict=False)
