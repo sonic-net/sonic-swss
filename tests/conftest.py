@@ -276,7 +276,11 @@ class DockerVirtualSwitch(object):
             self.ctn = self.client.containers.run(imgname, privileged=True, detach=True,
                     environment=self.environment,
                     network_mode="container:%s" % self.ctn_sw.name, **kwargs)
-        _, output = commands.getstatusoutput("docker inspect --format"
+        if sys.version_info < (3, 0):
+            _, output = commands.getstatusoutput("docker inspect --format"
+                                              " '{{.State.Pid}}' %s" % self.ctn.name)
+        else:
+            _, output = subprocess.getstatusoutput("docker inspect --format"
                                               " '{{.State.Pid}}' %s" % self.ctn.name)
         self.pid = int(output)
         self.redis_sock = self.mount + '/' + "redis.sock"
