@@ -821,8 +821,22 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
         // handle PACKET_ACTION_REDIRECT in ACTION_PACKET_ACTION for backward compatibility
         else if (attr_value.find(PACKET_ACTION_REDIRECT) != string::npos)
         {
-            // resize attr_value to remove argument, _attr_value still has the argument
-            attr_value.resize(string(PACKET_ACTION_REDIRECT).length());
+            // check that we have a colon after redirect rule
+            size_t colon_pos = string(PACKET_ACTION_REDIRECT).length();
+
+            if (attr_value.c_str()[colon_pos] != ':')
+            {
+                SWSS_LOG_ERROR("Redirect action rule must have ':' after REDIRECT");
+                return false;
+            }
+
+            if (colon_pos + 1 == attr_value.length())
+            {
+                SWSS_LOG_ERROR("Redirect action rule must have a target after 'REDIRECT:' action");
+                return false;
+            }
+
+            _attr_value = _attr_value.substr(colon_pos+1);
 
             sai_object_id_t param_id = getRedirectObjectId(_attr_value);
             if (param_id == SAI_NULL_OBJECT_ID)
@@ -868,21 +882,8 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
 // This method should return sai attribute id of the redirect destination
 sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
 {
-    // check that we have a colon after redirect rule
-    size_t colon_pos = string(PACKET_ACTION_REDIRECT).length();
-    if (redirect_value[colon_pos] != ':')
-    {
-        SWSS_LOG_ERROR("Redirect action rule must have ':' after REDIRECT");
-        return SAI_NULL_OBJECT_ID;
-    }
-
-    if (colon_pos + 1 == redirect_value.length())
-    {
-        SWSS_LOG_ERROR("Redirect action rule must have a target after 'REDIRECT:' action");
-        return SAI_NULL_OBJECT_ID;
-    }
-
-    string target = redirect_value.substr(colon_pos + 1);
+   
+    string target = redirect_value;
 
     // Try to parse physical port and LAG first
     Port port;

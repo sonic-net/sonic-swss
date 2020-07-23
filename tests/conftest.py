@@ -118,6 +118,7 @@ class VirtualServer(object):
 
         # create netns
         if os.path.exists("/var/run/netns/%s" % self.nsname):
+            self.killall_processes()
             self.cleanup = False
         else:
             ensure_system("ip netns add %s" % self.nsname)
@@ -139,13 +140,16 @@ class VirtualServer(object):
             ensure_system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.pifname))
             ensure_system("nsenter -t %d -n sysctl -w net.ipv6.conf.%s.disable_ipv6=1" % (pid, self.pifname))
 
+    def killall_processes(self):
+        pids = subprocess.check_output("ip netns pids %s" % (self.nsname), shell=True).decode('utf-8')
+        if pids:
+            for pid in pids.split('\n'):
+                if len(pid) > 0:
+                    os.system("kill %s" % int(pid))
+
     def destroy(self):
         if self.cleanup:
-            pids = subprocess.check_output("ip netns pids %s" % (self.nsname), shell=True)
-            if pids:
-                for pid in pids.split('\n'):
-                    if len(pid) > 0:
-                        os.system("kill %s" % int(pid))
+            self.killall_processes()
             ensure_system("ip netns delete %s" % self.nsname)
 
     def runcmd(self, cmd):
@@ -463,7 +467,7 @@ class DockerVirtualSwitch(object):
         return (exitcode, out)
 
     def copy_file(self, path, filename):
-        tarstr = io.StringIO()
+        tarstr = io.BytesIO()
         tar = tarfile.open(fileobj=tarstr, mode="w")
         tar.add(filename, os.path.basename(filename))
         tar.close()

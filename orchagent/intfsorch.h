@@ -17,6 +17,7 @@ extern sai_object_id_t gVirtualRouterId;
 extern MacAddress gMacAddress;
 
 #define RIF_STAT_COUNTER_FLEX_COUNTER_GROUP "RIF_STAT_COUNTER"
+#define RIF_RATE_COUNTER_FLEX_COUNTER_GROUP "RIF_RATE_COUNTER"
 
 struct IntfsEntry
 {
@@ -36,7 +37,7 @@ public:
     sai_object_id_t getRouterIntfsId(const string&);
     bool isPrefixSubnet(const IpPrefix&, const string&);
     string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");
-
+    string getRifRateFlexCounterTableKey(string key);
     void increaseRouterIntfsRefCount(const string&);
     void decreaseRouterIntfsRefCount(const string&);
 

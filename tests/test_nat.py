@@ -1,4 +1,5 @@
 import time
+import pytest
 
 class TestNat(object):
     def setup_db(self, dvs):
@@ -277,3 +278,43 @@ class TestNat(object):
 
         # clear interfaces
         self.clear_interfaces(dvs)
+
+    @pytest.mark.xfail(reason="Test unstable, blocking PR builds")
+    def test_VerifyConntrackTimeoutForNatEntry(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
+
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
+
+        # add a static nat entry
+        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
+
+        # check the conntrack timeout for static entry
+        output = dvs.runcmd("conntrack -j -L -s 18.18.18.2 -p udp -q 67.66.65.1")
+        assert len(output) == 2
+
+        conntrack_list = list(output[1].split(" "))
+
+        src_exists = dst_exists = proto_exists = False
+        proto_index = 0
+
+        for i in conntrack_list:
+            if i == "src=18.18.18.2":
+                src_exists = True
+            elif i == "dst=67.66.65.1":
+                dst_exists = True
+            elif i == "udp":
+                proto_exists = True
+                proto_index = conntrack_list.index(i)
+
+        assert src_exists == True
+        assert dst_exists == True
+        assert proto_exists == True
+
+        if conntrack_list[proto_index + 7] < 432000 and conntrack_list[proto_index + 7] > 431900:
+            assert False
+
+        # delete a static nat entry
+        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+

@@ -31,7 +31,7 @@ class TestDot1p(object):
 
     def create_dot1p_profile(self):
         tbl = swsscommon.Table(self.config_db, CFG_DOT1P_TO_TC_MAP_TABLE_NAME)
-        fvs = swsscommon.FieldValuePairs(DOT1P_TO_TC_MAP.items())
+        fvs = swsscommon.FieldValuePairs(list(DOT1P_TO_TC_MAP.items()))
         tbl.set(CFG_DOT1P_TO_TC_MAP_KEY, fvs)
         time.sleep(1)
 

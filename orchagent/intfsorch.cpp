@@ -78,6 +78,24 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
     fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
     fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
     m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+
+    string rifRatePluginName = "rif_rates.lua";
+
+    try
+    {
+        string rifRateLuaScript = swss::loadLuaScript(rifRatePluginName);
+        string rifRateSha = swss::loadRedisScript(m_counter_db.get(), rifRateLuaScript);
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(RIF_PLUGIN_FIELD, rifRateSha);
+        fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
+        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
+        m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_WARN("RIF flex counter group plugins was not set successfully: %s", e.what());
+    }
 }
 
 sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
@@ -1140,7 +1158,6 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
     /* update RIF in FLEX_COUNTER_DB */
     string key = getRifFlexCounterTableKey(id);
 
-
     std::ostringstream counters_stream;
     for (const auto& it: rifStatIds)
     {
@@ -1150,7 +1167,6 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
     /* check the state of intf, if registering the intf to FC will result in runtime error */
     vector<FieldValueTuple> fieldValues;
     fieldValues.emplace_back(RIF_COUNTER_ID_LIST, counters_stream.str());
-
     m_flexCounterTable->set(key, fieldValues);
     SWSS_LOG_DEBUG("Registered interface %s to Flex counter", name.c_str());
 }
