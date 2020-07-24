@@ -122,7 +122,7 @@ void CoppMgr::setFeatureTrapIdsStatus(string feature, bool enable)
                             {
                                 m_appCoppTable.set(trap_group, modified_fvs);
                             }
-
+                            setCoppGroupStateOk(trap_group);
                         }
                     }
                     m_coppTrapDisabledMap.erase(it.first);
@@ -145,6 +145,7 @@ void CoppMgr::setFeatureTrapIdsStatus(string feature, bool enable)
                              (checkIfTrapGroupFeaturePending(trap_group)))
                         {
                             m_appCoppTable.del(trap_group);
+                            delCoppGroupStateOk(trap_group);
                         }
                     }
                 }
@@ -314,6 +315,7 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
             addTrapIdsToTrapGroup(trap_group, trap_ids);
             m_coppTrapConfMap[i.first].trap_group = trap_group;
             m_coppTrapConfMap[i.first].trap_ids = trap_ids;
+            setCoppTrapStateOk(i.first);
         }
     }
 
@@ -398,6 +400,7 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
         {
             m_appCoppTable.set(i.first, trap_app_fvs);
         }
+        setCoppGroupStateOk(i.first);
         auto g_cfg = std::find(group_cfg_keys.begin(), group_cfg_keys.end(), i.first);
         if (g_cfg != group_cfg_keys.end())
         {
@@ -528,6 +531,7 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                     removeTrapIdsFromTrapGroup(m_coppTrapConfMap[key].trap_group,
                             m_coppTrapConfMap[key].trap_ids);
                     trap_ids.clear();
+                    setCoppTrapStateOk(key);
                     getTrapGroupTrapIds(m_coppTrapConfMap[key].trap_group, trap_ids);
                     fvs.clear();
                     FieldValueTuple fv(COPP_TRAP_ID_LIST_FIELD, trap_ids);
@@ -536,6 +540,7 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                     {
                         m_appCoppTable.set(m_coppTrapConfMap[key].trap_group, fvs);
                     }
+                    setCoppGroupStateOk(m_coppTrapConfMap[key].trap_group);
                     m_coppTrapConfMap[key].trap_group = "";
                     m_coppTrapConfMap[key].trap_ids = "";
                 }
@@ -561,6 +566,7 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
             if (!checkIfTrapGroupFeaturePending(trap_group))
             {
                 m_appCoppTable.set(trap_group, fvs);
+                setCoppGroupStateOk(trap_group);
             }
 
             /* When the trap table's trap group is changed, the old trap group
@@ -578,6 +584,7 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                 if (!checkIfTrapGroupFeaturePending(m_coppTrapConfMap[key].trap_group))
                 {
                     m_appCoppTable.set(m_coppTrapConfMap[key].trap_group, fvs);
+                    setCoppGroupStateOk(m_coppTrapConfMap[key].trap_group);
                 }
             }
             m_coppTrapConfMap[key].trap_group = trap_group;
@@ -598,6 +605,7 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                 if (!checkIfTrapGroupFeaturePending(m_coppTrapConfMap[key].trap_group))
                 {
                     m_appCoppTable.set(m_coppTrapConfMap[key].trap_group, fvs);
+                    setCoppGroupStateOk(m_coppTrapConfMap[key].trap_group);
                 }
             }
             m_coppTrapConfMap.erase(key);
@@ -630,9 +638,11 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                 if (!checkIfTrapGroupFeaturePending(trap_group))
                 {
                     m_appCoppTable.set(trap_group, g_fvs);
+                    setCoppGroupStateOk(trap_group);
                 }
                 m_coppTrapConfMap[key].trap_group = trap_group;
                 m_coppTrapConfMap[key].trap_ids = trap_ids;
+                setCoppTrapStateOk(key);
             }
         }
         it = consumer.m_toSync.erase(it);
@@ -750,6 +760,7 @@ void CoppMgr::doCoppGroupTask(Consumer &consumer)
         {
             SWSS_LOG_NOTICE("%s: DEL",key.c_str());
             m_appCoppTable.del(key);
+            delCoppGroupStateOk(key);
 
             /* If the COPP group was part of init config, it needs to be recreated
              * with field values from init. The configuration delete should just clear
@@ -778,6 +789,7 @@ void CoppMgr::doCoppGroupTask(Consumer &consumer)
                     {
                         m_appCoppTable.set(key, modified_fvs);
                     }
+                    setCoppGroupStateOk(key);
                 }
             }
             else
@@ -787,7 +799,6 @@ void CoppMgr::doCoppGroupTask(Consumer &consumer)
                     m_coppGroupRestrictedMap.erase(key);
                 }
             }
-            delCoppGroupStateOk(key);
         }
         it = consumer.m_toSync.erase(it);
     }

@@ -894,7 +894,7 @@ bool CoppOrch::trapGroupProcessTrapIdChange (string trap_group_name,
         {
             if (!createGenetlinkHostIfTable(add_trap_ids))
             {
-                return task_process_status::task_failed;
+                return false;
             }
         }
     }
