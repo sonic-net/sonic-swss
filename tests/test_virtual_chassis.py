@@ -1,17 +1,10 @@
-import time
-import json
-import redis
 import pytest
-from swsscommon import swsscommon
 
 class TestVirtualChassis(object):
-    def test_connectivity(self, dvs, testlog):
-        if dvs.vct is None:
+    def test_connectivity(self, vct):
+        if vct is None:
             return
-        vct = dvs.vct
-        dvss = {}
         dvss = vct.dvss
-        ns = vct.ns
         nbrs = vct.get_topo_neigh()
         for name in dvss.iterkeys():
             dv = dvss[name]

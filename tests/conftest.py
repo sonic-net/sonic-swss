@@ -1077,7 +1077,7 @@ class DockerVirtualSwitch(object):
         return self.state_db
 
 class DockerVirtualChassisTopology(object):
-    def __init__(self, namespace=None, chassbr=None, imgname=None, keeptb=False,
+    def __init__(self, namespace=None, imgname=None, keeptb=False,
                  fakeplatform=None, topoFile=None):
         self.ns = namespace
         self.chassbr = "br4chs"
@@ -1216,6 +1216,13 @@ class DockerVirtualChassisTopology(object):
         for dv in self.dvss.values():
             dv.restart()
 
+    def get_logs(self, name):
+        for dv in self.dvss.values():
+            if dv.dvsname == None:
+                dv.get_logs(name)
+            else:
+                dv.get_logs()
+
     def handle_bridge(self, brName):
         if self.oper == "create":
             self.runcmd(" brctl addbr " + brName)
@@ -1338,37 +1345,36 @@ class DockerVirtualChassisTopology(object):
     def verify_vct(self):
         ret1 = self.verify_conns()
         ret2 = self.verify_crashes()
-        if ret1 and ret2:
-            print("All verifications PASSED")
-        print("Verifications completed")
+        print("vct verifications passed ? %s" % (ret1 and ret2))
         return ret1 and ret2
 
 @pytest.yield_fixture(scope="module")
 def dvs(request):
     name = request.config.getoption("--dvsname")
-    vctns = request.config.getoption("--vctns")
-    topo = request.config.getoption("--topo")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
-    vct = None
-    if vctns is not None or topo is not None:
-        vct = DockerVirtualChassisTopology(vctns, None, imgname, keeptb,
-                                           fakeplatform, topo)
-        if name is None:
-            name = "lc1." + vct.ns
-            dvs = vct.dvss[name]
-    else:
-        dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, vct)
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, None)
     yield dvs
     if name == None:
         dvs.get_logs(request.module.__name__)
     else:
         dvs.get_logs()
-    if vct is None:
-        dvs.destroy()
-    else:
-        vct.destroy()
+    dvs.destroy()
+
+@pytest.yield_fixture(scope="module")
+def vct(request):
+    vctns = request.config.getoption("--vctns")
+    topo = request.config.getoption("--topo")
+    keeptb = request.config.getoption("--keeptb")
+    imgname = request.config.getoption("--imgname")
+    fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
+    if not topo:
+        topo = "virtual_chassis/chassis_with_ecmp_neighbors.json"
+    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, fakeplatform, topo)
+    yield vct
+    vct.get_logs(request.module.__name__)
+    vct.destroy()
 
 @pytest.yield_fixture
 def testlog(request, dvs):
