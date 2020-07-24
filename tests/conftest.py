@@ -273,7 +273,7 @@ class DockerVirtualSwitch(object):
                self.dvsname = newctnname
             vols = { self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } }
             if ctnmounts is not None:
-                for k,v in ctnmounts.iteritems():
+                for k,v in ctnmounts.items():
                     vols[k] = v
             kwargs['volumes'] = vols
             # create virtual switch container
@@ -1301,7 +1301,7 @@ class DockerVirtualChassisTopology(object):
         if self.oper != "create":
             return
         neighs_by_ctn = self.get_topo_neigh()
-        for ctnname, nbraddrs in neighs_by_ctn.iteritems():
+        for ctnname, nbraddrs in neighs_by_ctn.items():
             if ctnname not in self.dvss:
                 continue
             for idx, nbraddr in nbraddrs:
@@ -1315,7 +1315,7 @@ class DockerVirtualChassisTopology(object):
         if "neighbor_connections" not in self.virt_topo:
             return passed
         neighs_by_ctn = self.get_topo_neigh()
-        for ctnname, nbraddrs in neighs_by_ctn.iteritems():
+        for ctnname, nbraddrs in neighs_by_ctn.items():
             for item in nbraddrs:
                 nbraddr = item[1]
                 print("verify neighbor connectivity from %s to %s nbrAddr " % (
