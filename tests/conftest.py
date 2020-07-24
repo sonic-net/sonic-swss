@@ -1370,6 +1370,7 @@ def vct(request):
     imgname = request.config.getoption("--imgname")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
     if not topo:
+        # use ecmp topology as default
         topo = "virtual_chassis/chassis_with_ecmp_neighbors.json"
     vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, fakeplatform, topo)
     yield vct
