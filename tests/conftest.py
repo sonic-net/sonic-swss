@@ -1218,7 +1218,7 @@ class DockerVirtualChassisTopology(object):
 
     def get_logs(self, name):
         for dv in self.dvss.values():
-            if dv.dvsname == None:
+            if not dv.dvsname:
                 dv.get_logs(name)
             else:
                 dv.get_logs()
