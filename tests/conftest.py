@@ -1329,6 +1329,8 @@ class DockerVirtualChassisTopology(object):
     def verify_crashes(self):
         ctn = self.virt_topo['chassis_instances']
         passed = True
+        # to avoid looking at crashes from previous runs,
+        # ignore the crashes check when testbed is preserved
         if self.keeptb:
             return passed
         # verify no crashes
