@@ -152,8 +152,6 @@ class TestFineGrainedNextHopGroup(object):
         dvs.servers[4].runcmd("ip link set up dev eth0") == 0
         dvs.servers[5].runcmd("ip link set up dev eth0") == 0
         
-        # TODO: add tests for link down scenarios
-
         fg_nhg_name = "fgnhg_v4"
         fg_nhg_prefix = "2.2.2.0/24"
         bucket_size = 60
@@ -326,6 +324,7 @@ class TestFineGrainedNextHopGroup(object):
         nh__exp_count = {"10.0.0.7@Ethernet12":20, "10.0.0.9@Ethernet16":20,"10.0.0.11@Ethernet20":20}
         swss_get_route_entry_state(state_db, nh__exp_count)
 
+        # Bring down 1 next hop
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.11"), ("ifname", "Ethernet12,Ethernet20")])
         ps.set(fg_nhg_prefix, fvs)
         time.sleep(1)
@@ -335,6 +334,7 @@ class TestFineGrainedNextHopGroup(object):
         nh__exp_count = {"10.0.0.7@Ethernet12":30, "10.0.0.11@Ethernet20":30}
         swss_get_route_entry_state(state_db, nh__exp_count)
 
+        # Bring up 1 next hop
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"), ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
         ps.set(fg_nhg_prefix, fvs)
         time.sleep(1)
@@ -344,6 +344,7 @@ class TestFineGrainedNextHopGroup(object):
         nh__exp_count = {"10.0.0.7@Ethernet12":20, "10.0.0.9@Ethernet16":20,"10.0.0.11@Ethernet20":20}
         swss_get_route_entry_state(state_db, nh__exp_count)
 
+        # Bring up bank 0 next-hops in route for the 1st time
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.7,10.0.0.9,10.0.0.11"), ("ifname", "Ethernet0,Ethernet4,Ethernet8,Ethernet12,Ethernet16,Ethernet20")])
         ps.set(fg_nhg_prefix, fvs)
         time.sleep(1)
@@ -353,7 +354,7 @@ class TestFineGrainedNextHopGroup(object):
         nh__exp_count = {"10.0.0.1@Ethernet0":10, "10.0.0.3@Ethernet4":10,"10.0.0.5@Ethernet8":10, "10.0.0.7@Ethernet12":10, "10.0.0.9@Ethernet16":10,"10.0.0.11@Ethernet20":10}
         swss_get_route_entry_state(state_db, nh__exp_count)
 
-        # Change nh group with 2 nhs instead of 3
+        # Bring down arbitratry # of next-hops from both banks at the same time
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.5,10.0.0.11"), ("ifname", "Ethernet0,Ethernet8,Ethernet20")])
         ps.set(fg_nhg_prefix, fvs)
         time.sleep(1)
@@ -363,7 +364,17 @@ class TestFineGrainedNextHopGroup(object):
         nh__exp_count = {"10.0.0.1@Ethernet0":15, "10.0.0.5@Ethernet8":15, "10.0.0.11@Ethernet20":30}
         swss_get_route_entry_state(state_db, nh__exp_count)
 
-        # Change nh group with 3 nhs from 2
+        # Bring down 1 member and bring up 1 member in bank 0 at the same time
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.11"), ("ifname", "Ethernet0,Ethernet4,Ethernet20")])
+        ps.set(fg_nhg_prefix, fvs)
+        time.sleep(1)
+
+        nh_memb_exp_count = {"10.0.0.1":15,"10.0.0.3":15,"10.0.0.11":30}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+        nh__exp_count = {"10.0.0.1@Ethernet0":15, "10.0.0.3@Ethernet4":15, "10.0.0.11@Ethernet20":30}
+        swss_get_route_entry_state(state_db, nh__exp_count)
+
+        # Bringup arbitrary # of next-hops from both banks at the same time
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.7,10.0.0.9,10.0.0.11"), ("ifname", "Ethernet0,Ethernet4,Ethernet8,Ethernet12,Ethernet16,Ethernet20")])
         ps.set(fg_nhg_prefix, fvs)
         time.sleep(1)
@@ -414,7 +425,7 @@ class TestFineGrainedNextHopGroup(object):
         nh__exp_count = {"10.0.0.1@Ethernet0":15,"10.0.0.5@Ethernet8":15, "10.0.0.7@Ethernet12":10, "10.0.0.9@Ethernet16":10,"10.0.0.11@Ethernet20":10}
         swss_get_route_entry_state(state_db, nh__exp_count)
 
-        # bring links down
+        # bring all links down one by one
         shutdown_link(dvs, db, 0)	
         nh_memb_exp_count = {"10.0.0.5":30,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
@@ -433,9 +444,11 @@ class TestFineGrainedNextHopGroup(object):
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
         nh__exp_count = {"10.0.0.11@Ethernet20":60}
         swss_get_route_entry_state(state_db, nh__exp_count)
+
+        # Bring down last link, there shouldn't be a crash or other bad orchagent state because of this
         shutdown_link(dvs, db, 5)
 
-	# bring up link
+	# bring all links up one by one
         startup_link(dvs, db, 3)
         startup_link(dvs, db, 4)
         startup_link(dvs, db, 5)

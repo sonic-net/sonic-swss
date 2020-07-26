@@ -170,7 +170,7 @@ bool FgNhgOrch::validnexthopinNextHopGroup(const NextHopKey& nexthop)
             if(!compute_and_set_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
                     bank_member_changes, nhopgroup_members_set, route_table.first))
             {
-                SWSS_LOG_INFO("Failed to set fine grained next hop %s",
+                SWSS_LOG_ERROR("Failed to set fine grained next hop %s",
                     nexthop.to_string().c_str());
                 return false;
             }
@@ -231,7 +231,7 @@ bool FgNhgOrch::invalidnexthopinNextHopGroup(const NextHopKey& nexthop)
             if(!compute_and_set_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
                     bank_member_changes, nhopgroup_members_set, route_table.first))
             {
-                SWSS_LOG_INFO("Failed to set fine grained next hop %s",
+                SWSS_LOG_ERROR("Failed to set fine grained next hop %s",
                     nexthop.to_string().c_str());
                 return false;
             }
@@ -304,6 +304,7 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
         bank_fgnhg_map->erase(bank_member_change.nhs_to_del[del_idx]);
         bank_member_change.active_nhs.push_back(bank_member_change.nhs_to_add[add_idx]);
         syncd_fg_route_entry->active_nexthops.erase(bank_member_change.nhs_to_del[del_idx]);
+        syncd_fg_route_entry->active_nexthops.insert(bank_member_change.nhs_to_add[add_idx]);
         del_idx++;
         add_idx++;
     }
