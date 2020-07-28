@@ -374,6 +374,26 @@ class TestFineGrainedNextHopGroup(object):
         nh__exp_count = {"10.0.0.1@Ethernet0":15, "10.0.0.3@Ethernet4":15, "10.0.0.11@Ethernet20":30}
         swss_get_route_entry_state(state_db, nh__exp_count)
 
+        # Bring down 2 members and bring up 1 member in bank 0 at the same time
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.5,10.0.0.11"), ("ifname", "Ethernet8,Ethernet20")])
+        ps.set(fg_nhg_prefix, fvs)
+        time.sleep(1)
+
+        nh_memb_exp_count = {"10.0.0.5":30,"10.0.0.11":30}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+        nh__exp_count = {"10.0.0.5@Ethernet8":30, "10.0.0.11@Ethernet20":30}
+        swss_get_route_entry_state(state_db, nh__exp_count)
+
+        # Bring up 2 members and bring down 1 member in bank 0 at the same time
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.11"), ("ifname", "Ethernet0,Ethernet4,Ethernet20")])
+        ps.set(fg_nhg_prefix, fvs)
+        time.sleep(1)
+
+        nh_memb_exp_count = {"10.0.0.1":15,"10.0.0.3":15,"10.0.0.11":30}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+        nh__exp_count = {"10.0.0.1@Ethernet0":15,"10.0.0.3@Ethernet4":15,"10.0.0.11@Ethernet20":30}
+        swss_get_route_entry_state(state_db, nh__exp_count)
+
         # Bringup arbitrary # of next-hops from both banks at the same time
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.7,10.0.0.9,10.0.0.11"), ("ifname", "Ethernet0,Ethernet4,Ethernet8,Ethernet12,Ethernet16,Ethernet20")])
         ps.set(fg_nhg_prefix, fvs)

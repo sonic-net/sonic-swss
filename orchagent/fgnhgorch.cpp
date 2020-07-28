@@ -305,6 +305,7 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
         bank_member_change.active_nhs.push_back(bank_member_change.nhs_to_add[add_idx]);
         syncd_fg_route_entry->active_nexthops.erase(bank_member_change.nhs_to_del[del_idx]);
         syncd_fg_route_entry->active_nexthops.insert(bank_member_change.nhs_to_add[add_idx]);
+
         del_idx++;
         add_idx++;
     }
@@ -320,6 +321,7 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
             /* Create collated list of members */
             bank_member_change.active_nhs.push_back(memb);
         }
+
         while(del_idx < bank_member_change.nhs_to_del.size())
         {
             HashBuckets *hash_buckets = &(bank_fgnhg_map->at(bank_member_change.nhs_to_del[del_idx]));
@@ -336,6 +338,7 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
                 bank_fgnhg_map->at(round_robin_nh).push_back(hash_buckets->at(i));
                 /* TODO: simple round robin can make the hash non-balanced, rebalance the hash */
             }
+
             bank_fgnhg_map->erase(bank_member_change.nhs_to_del[del_idx]);
             syncd_fg_route_entry->active_nexthops.erase(bank_member_change.nhs_to_del[del_idx]);
             del_idx++;
@@ -347,7 +350,7 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
         uint32_t exp_bucket_size = (1+ fgNhgEntry->hash_bucket_indices[syncd_bank].end_index - 
             fgNhgEntry->hash_bucket_indices[syncd_bank].start_index)/
             ((uint32_t)bank_member_change.active_nhs.size() + 
-             (uint32_t)bank_member_change.nhs_to_add.size());
+             (uint32_t)bank_member_change.nhs_to_add.size() - add_idx);
 
         while(add_idx < bank_member_change.nhs_to_add.size())
         {
@@ -360,10 +363,10 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
                 {
                     it = bank_member_change.active_nhs.begin();
                 }
-                vector<uint32_t> *map_entry = &(bank_fgnhg_map->at(*it)); 
+                vector<uint32_t> *map_entry = &(bank_fgnhg_map->at(*it));
                 if((*map_entry).size() <= 1)
                 {
-
+                    /* Case where the number of hash buckets for the nh is <= 1 */
                     SWSS_LOG_WARN("Next-hop %s has %d entries, either number of buckets were less or we hit a bug",
                             (*it).to_string().c_str(), ((int)(*map_entry).size()));
                     return false;
@@ -371,8 +374,6 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
                 else
                 {
                     uint32_t last_elem = map_entry->at((*map_entry).size() - 1);
-                    (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]].push_back(last_elem);
-                    (*map_entry).erase((*map_entry).end() - 1);
 
                     if(!write_hash_bucket_change_to_sai(syncd_fg_route_entry, last_elem, 
                         nhopgroup_members_set[bank_member_change.nhs_to_add[add_idx]],
@@ -380,8 +381,10 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
                     {
                         return false;
                     }
-                }
 
+                    (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]].push_back(last_elem);
+                    (*map_entry).erase((*map_entry).end() - 1);
+                }
                 it++;
             }
             syncd_fg_route_entry->active_nexthops.insert(bank_member_change.nhs_to_add[add_idx]);
@@ -524,16 +527,9 @@ bool FgNhgOrch::compute_and_set_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
 
     for(uint32_t bank_idx = 0; bank_idx < bank_member_changes.size(); bank_idx++)
     {
-        if(bank_member_changes[bank_idx].active_nhs.size() == 0)
-        {
-            if(!set_inactive_bank_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
-                        bank_idx, bank_member_changes, nhopgroup_members_set, ipPrefix))
-            {
-                return false;
-            }
-
-        }
-        else
+        if(bank_member_changes[bank_idx].active_nhs.size() != 0 ||
+                (bank_member_changes[bank_idx].nhs_to_add.size() != 0 &&
+                 bank_member_changes[bank_idx].nhs_to_del.size() != 0))
         {
             if(!set_active_bank_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
                         bank_idx, bank_idx, bank_member_changes, nhopgroup_members_set, ipPrefix))
@@ -541,7 +537,16 @@ bool FgNhgOrch::compute_and_set_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
                 return false;
             }
         }
+        else
+        {
+            if(!set_inactive_bank_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
+                        bank_idx, bank_member_changes, nhopgroup_members_set, ipPrefix))
+            {
+                return false;
+            }
+        }
     }
+
     return true;
 }
 

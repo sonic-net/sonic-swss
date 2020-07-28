@@ -13,9 +13,6 @@
 
 #include <map>
 
-/* Maximum next hop group number, TODO: enforcement of this */
-#define NHGRP_MAX_SIZE 128
-
 typedef uint32_t Bank;
 typedef std::set<NextHopKey> ActiveNextHops;
 typedef std::vector<sai_object_id_t> FGNextHopGroupMembers;
@@ -27,22 +24,23 @@ typedef std::map<Bank,Bank> InactiveBankMapsToBank;
 struct FGNextHopGroupEntry
 {
     sai_object_id_t         next_hop_group_id;      // next hop group id
-    int                     ref_count;              // reference count
-    FGNextHopGroupMembers   nhopgroup_members;      // ids of members indexed by <ip_address, if_alias>
-    ActiveNextHops          active_nexthops;
-    BankFGNextHopGroupMap   syncd_fgnhg_map;
-    NextHopGroupKey         nhg_key;
-    InactiveBankMapsToBank  inactive_to_active_map;
+    FGNextHopGroupMembers   nhopgroup_members;      // sai_object_ids of nexthopgroup members(0 - real_bucket_size - 1)
+    ActiveNextHops          active_nexthops;        // The set of nexthops(ip+alias)
+    BankFGNextHopGroupMap   syncd_fgnhg_map;        // Map of (bank) -> (nexthops) -> (index in nhopgroup_members)
+    NextHopGroupKey         nhg_key;                // Full next hop group key
+    InactiveBankMapsToBank  inactive_to_active_map; // Maps an inactive bank to an active one in terms of hash bkts
 };
 
 /*TODO: can we make an optimization here when we get multiple routes pointing to a fgnhg */
 typedef std::map<IpPrefix, FGNextHopGroupEntry> FGRouteTable;
-/* RouteTables: vrf_id, RouteTable */
+/* RouteTables: vrf_id, FGRouteTable */
 typedef std::map<sai_object_id_t, FGRouteTable> FGRouteTables;
-
+/* Name of the FG NHG group */
 typedef std::string FgNhg;
-
+/* Map from IP to Bank */
 typedef std::map<IpAddress, Bank> NextHops;
+
+/* Store the indices occupied by a bank */
 typedef struct
 {
     uint32_t start_index;
@@ -51,18 +49,20 @@ typedef struct
 
 typedef struct FgNhgEntry
 {
-    string fgNhg_name;
-    uint32_t configured_bucket_size;
-    uint32_t real_bucket_size;
-    NextHops nextHops;
-    std::vector<IpPrefix> prefixes;
-    std::vector<bank_index_range> hash_bucket_indices;
+    string fgNhg_name;                                  // Name of FG NHG group configured by user
+    uint32_t configured_bucket_size;                    // Bucket size configured by user
+    uint32_t real_bucket_size;                          // Real bucket size as queried from SAI
+    NextHops nextHops;                                  // The IP to Bank mapping configured by user
+    std::vector<IpPrefix> prefixes;                     // Prefix which desires FG behavior
+    std::vector<bank_index_range> hash_bucket_indices;  // The hash bucket indices for a bank
 } FgNhgEntry;
 
+/* Map from IP prefix to user configured FG NHG entries */
 typedef std::map<IpPrefix, FgNhgEntry*> FgNhgPrefixes; 
-
+/* Main structure to hold user configuration */
 typedef std::map<FgNhg, FgNhgEntry> FgNhgs;
 
+/* Helper struct populated at every route change to identify the next-hop changes which occured */
 typedef struct
 {
     std::vector<NextHopKey> nhs_to_del;
