@@ -36,7 +36,7 @@ TeamSync::TeamSync(DBConnector *db, DBConnector *stateDb, Select *select) :
         m_start_time = steady_clock::now();
         auto warmRestartIval = WarmStart::getWarmStartTimer(TEAMSYNCD_APP_NAME, "teamd");
         m_pending_timeout = warmRestartIval ? warmRestartIval : DEFAULT_WR_PENDING_TIMEOUT;
-        if (m_pending_timeout != MAXIMUM_WARMRESTART_TIMER_VALUE)
+        if (m_pending_timeout != DISABLE_WARMRESTART_TIMER_VALUE)
         {
             m_lagTable.create_temp_view();
             m_lagMemberTable.create_temp_view();
