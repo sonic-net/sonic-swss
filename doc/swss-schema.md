@@ -858,7 +858,7 @@ Stores information for physical switch ports managed by the switch chip. Ports t
                                             ; will preserver all LAG interface changes, but it will not apply them. The changes
                                             ; will only be applied when the timer expired. During the changes application the stale
                                             ; LAG entries will be removed, the new LAG entries will be created.
-                                            ; Supported range: 1-3600 or disable. 0 is invalid. disable is disabling teamsyncd reconciliation logic.
+                                            ; Supported range: 1-3600 or disable. 0 is invalid. disable is skipping teamsyncd reconciliation logic.
 
 
 ### VXLAN\_TUNNEL
