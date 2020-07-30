@@ -24,4 +24,4 @@ class TestVnetBitmapOrch(vnet.TestVnetOrch):
     Test cases use these "check" APIs in order to verify whether correct config is applied to ASIC_DB.
     '''
     def get_vnet_obj(self):
-        return vnet.VnetBitmapVxlanTunnel()
+        return vnet.VnetVxlanVrfTunnel()
