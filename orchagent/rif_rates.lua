@@ -34,7 +34,7 @@ for i = 1, n do
 
     if initialized == "DONE" or initialized == "COUNTERS_LAST" then
         -- Get old COUNTERS values
-        local in_octets_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_OCTETS_last')
+        local in_octets_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_OCTETS_last')
         local in_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_IN_PACKETS_last')
         local out_octets_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_OCTETS_last')
         local out_pkts_last = redis.call('HGET', rates_table_name .. ':' .. KEYS[i], 'SAI_ROUTER_INTERFACE_STAT_OUT_PACKETS_last')
