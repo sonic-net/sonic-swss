@@ -193,6 +193,7 @@ class DockerVirtualSwitch(object):
             self.cleanup = False
         else:
             self.cleanup = True
+        self.persistent = False
         if name != None:
             # get virtual switch container
             for ctn in self.client.containers.list():
@@ -203,7 +204,9 @@ class DockerVirtualSwitch(object):
                     else:
                         (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.HostConfig.NetworkMode}}' %s" % name)
                     ctn_sw_id = output.split(':')[1]
+                    # Persistent DVS is available.
                     self.cleanup = False
+                    self.persistent = True
             if self.ctn == None:
                 raise NameError("cannot find container %s" % name)
 
@@ -227,6 +230,10 @@ class DockerVirtualSwitch(object):
             self.mount = "/var/run/redis-vs/{}".format(ctn_sw_name)
 
             self.net_cleanup()
+            # As part of https://github.com/Azure/sonic-buildimage/pull/4499
+            # VS support dynamically create Front-panel ports so save the orginal
+            # config db for persistent DVS
+            self.runcmd("mv /etc/sonic/config_db.json /etc/sonic/config_db.json.orig")
             self.ctn_restart()
         else:
             self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
@@ -271,7 +278,13 @@ class DockerVirtualSwitch(object):
     def destroy(self):
         if self.appldb:
             del self.appldb
-        if self.cleanup:
+        # In case persisten dvs was used removed all the extra server link
+        # that were created
+        if self.persistent:
+            for s in self.servers:
+                s.destroy()
+        # persistent and clean-up flag are mutually exclusive
+        elif self.cleanup:
             self.ctn.remove(force=True)
             self.ctn_sw.remove(force=True)
             os.system("rm -rf {}".format(self.mount))
@@ -1043,6 +1056,10 @@ def dvs(request):
     else:
         dvs.get_logs()
     dvs.destroy()
+    # restore original config db
+    if dvs.persistent:
+        dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
+        dvs.ctn_restart()
 
 @pytest.yield_fixture
 def testlog(request, dvs):
