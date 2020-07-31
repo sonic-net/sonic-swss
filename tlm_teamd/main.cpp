@@ -107,6 +107,7 @@ int main()
             }
             else if (res == swss::Select::TIMEOUT)
             {
+                teamdctl_mgr.process_add_queue();
                 values_store.update(teamdctl_mgr.get_dumps());
             }
             else

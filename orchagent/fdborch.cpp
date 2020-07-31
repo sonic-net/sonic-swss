@@ -232,12 +232,13 @@ void FdbOrch::update(sai_fdb_event_t        type,
                            update.entry.mac.to_string().c_str(),
                            vlanName.c_str(), update.port.m_alias.c_str());
 
-            for (const auto& itr : m_entries)
+            for (auto itr = m_entries.begin(); itr != m_entries.end();)
             {
-                if (itr.port_name == update.port.m_alias)
+                auto next_item = std::next(itr);
+                if (itr->port_name == update.port.m_alias)
                 {
-                    update.entry.mac = itr.mac;
-                    update.entry.bv_id = itr.bv_id;
+                    update.entry.mac = itr->mac;
+                    update.entry.bv_id = itr->bv_id;
                     update.add = false;
 
                     storeFdbEntryState(update);
@@ -246,7 +247,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
                     {
                         observer->update(SUBJECT_TYPE_FDB_CHANGE, &update);
                     }
-                } 
+                }
+                itr = next_item;
             }
         }
         else if (bridge_port_id == SAI_NULL_OBJECT_ID)
