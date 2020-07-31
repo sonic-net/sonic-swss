@@ -1151,7 +1151,7 @@ class DockerVirtualChassisTopology(object):
         res = ctn.exec_run(cmd)
         try:
             exitcode = res.exit_code
-            out = res.output
+            out = res.output.decode('utf-8')
         except AttributeError:
             exitcode = 0
             out = res

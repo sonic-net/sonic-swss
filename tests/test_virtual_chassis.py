@@ -6,7 +6,7 @@ class TestVirtualChassis(object):
             return
         dvss = vct.dvss
         nbrs = vct.get_topo_neigh()
-        for name in dvss.iterkeys():
+        for name in dvss.keys():
             dv = dvss[name]
             #ping all vs's inband address
             for ctn in vct.inbands.keys():
