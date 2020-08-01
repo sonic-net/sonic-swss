@@ -36,11 +36,15 @@ class TestMirror(object):
         self.dvs_mirror.verify_session_status(session, status="inactive")
 
         # add IP address to Ethernet16
-        dvs.add_ip_address("Ethernet16", "10.0.0.0/31")
+        dvs.add_ip_address("Ethernet16", "10.0.0.0/30")
         self.dvs_mirror.verify_session_status(session, status="inactive")
 
         # add neighbor to Ethernet16
         dvs.add_neighbor("Ethernet16", "10.0.0.1", "02:04:06:08:10:12")
+        self.dvs_mirror.verify_session_status(session, status="inactive")
+
+        # add another neighbor to Ethernet16
+        dvs.add_neighbor("Ethernet16", "10.0.0.2", "02:04:06:08:10:13")
         self.dvs_mirror.verify_session_status(session, status="inactive")
 
         # add route to mirror destination via 10.0.0.1
@@ -60,10 +64,31 @@ class TestMirror(object):
         expected_state_db = {"status": "active",
                                 "monitor_port": "Ethernet16",
                                 "dst_mac": "02:04:06:08:10:12",
-                                "route_prefix": "2.2.2.2/32"}
+                                "route_prefix": "2.2.2.2/32",
+                                "next_hop_ip": "10.0.0.1@Ethernet16"}
         self.dvs_mirror.verify_session_status(session)
         self.dvs_mirror.verify_session(dvs, session, asic_db=expected_asic_db, state_db=expected_state_db, src_ports=src_asic_ports, asic_size=11)
-
+        # change route to mirror destination via 10.0.0.2
+        dvs.change_route("2.2.2.2", "10.0.0.2")
+        expected_asic_db = {"SAI_MIRROR_SESSION_ATTR_MONITOR_PORT": pmap.get("Ethernet16"),
+                            "SAI_MIRROR_SESSION_ATTR_TYPE": "SAI_MIRROR_SESSION_TYPE_ENHANCED_REMOTE",
+                            "SAI_MIRROR_SESSION_ATTR_ERSPAN_ENCAPSULATION_TYPE": "SAI_ERSPAN_ENCAPSULATION_TYPE_MIRROR_L3_GRE_TUNNEL",
+                            "SAI_MIRROR_SESSION_ATTR_IPHDR_VERSION": "4",
+                            "SAI_MIRROR_SESSION_ATTR_TOS": "32",
+                            "SAI_MIRROR_SESSION_ATTR_TTL": "100",
+                            "SAI_MIRROR_SESSION_ATTR_SRC_IP_ADDRESS": "1.1.1.1",
+                            "SAI_MIRROR_SESSION_ATTR_DST_IP_ADDRESS": "2.2.2.2",
+                            "SAI_MIRROR_SESSION_ATTR_DST_MAC_ADDRESS": "02:04:06:08:10:13",
+                            "SAI_MIRROR_SESSION_ATTR_SRC_MAC_ADDRESS": src_mac,
+                            "SAI_MIRROR_SESSION_ATTR_GRE_PROTOCOL_TYPE": "25944"}
+        expected_state_db = {"status": "active",
+                                "monitor_port": "Ethernet16",
+                                "dst_mac": "02:04:06:08:10:13",
+                                "route_prefix": "2.2.2.2/32",
+                                "next_hop_ip": "10.0.0.2@Ethernet16"}
+        self.dvs_mirror.verify_session_status(session)
+        self.dvs_mirror.verify_session(dvs, session, asic_db=expected_asic_db, state_db=expected_state_db, src_ports=src_asic_ports, asic_size=11)
+ 
         # remove route
         dvs.remove_route("2.2.2.2")
         self.dvs_mirror.verify_session_status(session, status="inactive")

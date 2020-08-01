@@ -1205,7 +1205,8 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         {
             session.nexthopInfo.nexthop = NextHopKey("0.0.0.0", "");
         }
-
+        // Update State DB Nexthop
+        setSessionState(name, session, MIRROR_SESSION_NEXT_HOP_IP);
         // Resolve the neighbor of the new next hop
         updateSession(name, session);
     }

@@ -946,6 +946,10 @@ class DockerVirtualSwitch(object):
         self.runcmd("ip route add " + prefix + " via " + nexthop)
         time.sleep(1)
     
+    def change_route(self, prefix, nexthop):
+        self.runcmd("ip route change " + prefix + " via " + nexthop)
+        time.sleep(1)
+
     def remove_route(self, prefix):
         self.runcmd("ip route del " + prefix)
         time.sleep(1)
