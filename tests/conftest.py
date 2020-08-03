@@ -278,7 +278,7 @@ class DockerVirtualSwitch(object):
     def destroy(self):
         if self.appldb:
             del self.appldb
-        # In case persisten dvs was used removed all the extra server link
+        # In case persistent dvs was used removed all the extra server link
         # that were created
         if self.persistent:
             for s in self.servers:
