@@ -105,7 +105,7 @@ int main(int argc, char **argv)
         cerr << "Exception \"" << e.what() << "\" had been thrown in gearsyncd daemon" << endl;
         return EXIT_FAILURE;
     }
-    return 1;
+    return 0;
 }
 
 bool handleGearboxConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm)
