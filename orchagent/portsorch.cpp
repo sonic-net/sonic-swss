@@ -42,6 +42,7 @@ extern BufferOrch *gBufferOrch;
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
 #define PORT_FLEX_STAT_COUNTER_POLL_MSECS "1000"
+#define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     "60000"
 #define QUEUE_FLEX_STAT_COUNTER_POLL_MSECS "10000"
 #define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
 #define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
@@ -111,6 +112,12 @@ const vector<sai_port_stat_t> portStatIds =
     SAI_PORT_STAT_ETHER_STATS_TX_NO_ERRORS,
     SAI_PORT_STAT_IP_IN_UCAST_PKTS,
     SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS,
+};
+
+static const vector<sai_port_stat_t> port_buffer_drop_stat_ids =
+{
+    SAI_PORT_STAT_IN_DROPPED_PKTS,
+    SAI_PORT_STAT_OUT_DROPPED_PKTS
 };
 
 static const vector<sai_queue_stat_t> queueStatIds =
@@ -1484,6 +1491,11 @@ string PortsOrch::getPortFlexCounterTableKey(string key)
     return string(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
+string PortsOrch::getPortBuffDropFlexCounterTableKey(string key)
+{
+    return string(PORT_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
+}
+
 string PortsOrch::getQueueFlexCounterTableKey(string key)
 {
     return string(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
@@ -1546,6 +1558,19 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 fields.emplace_back(PORT_COUNTER_ID_LIST, counters_stream.str());
 
                 m_flexCounterTable->set(key, fields);
+
+                delimiter = "";
+                string port_drop_key = getPortBuffDropFlexCounterTableKey(sai_serialize_object_id(p.m_port_id));
+                std::ostringstream port_buffer_drop_stream;
+                for (const auto& it: port_buffer_drop_stat_ids)
+                {
+                    port_buffer_drop_stream << delimiter << sai_serialize_port_stat(it);
+                    delimiter = comma;
+                }
+
+                fields.clear();
+                fields.emplace_back(PORT_COUNTER_ID_LIST, counters_stream.str());
+                m_flexCounterTable->set(port_drop_key, fields);
 
                 PortUpdate update = {p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
