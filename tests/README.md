@@ -54,7 +54,7 @@ For those developing new features for SWSS or the DVS framework, you might find 
 
     ```
     docker run --privileged -id --name sw debian bash
-    sudo ./create_vnet.sh sw
+    sudo ./create_vnet.sh -n 32 sw
     ```
 3. Start the DVS container:
 
@@ -96,6 +96,21 @@ For those developing new features for SWSS or the DVS framework, you might find 
     ```
     sudo pytest --imgname=docker-sonic-vs:my-changes.333
     ```
+
+- You can also preserve a non-persistent DVS container for debugging purposes:
+
+    ```
+    sudo pytest --keeptb
+    ```
+
+    Which should give you something like this in `docker ps`:
+
+    ```
+    CONTAINER ID        IMAGE                                                 COMMAND                  CREATED             STATUS              PORTS               NAMES
+    10bb406e7475        docker-sonic-vs:sonic-swss-build.1529                 "/usr/bin/supervisord"   3 hours ago         Up 3 hours                              ecstatic_swartz
+    edb35e9aa10b        debian:jessie                                         "bash"                   3 hours ago         Up 3 hours                              elegant_edison
+
+```
 
 - You can automatically retry failed test cases **once**:
 
