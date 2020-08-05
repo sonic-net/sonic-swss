@@ -150,7 +150,7 @@ For those developing new features for SWSS or the DVS framework, you might find 
     dpkg -r libswsscommon python3-swsscommon
     dpkg --purge libswsscommon python3-swsscommon
     rm -rf /usr/lib/python3/dist-packages/swsscommon/
-    dpkg -i libswsscommon.deb python-swsscommon.deb
+    dpkg -i libswsscommon.deb python3-swsscommon.deb
     ```
 
 -   You may encounter the following error message:
