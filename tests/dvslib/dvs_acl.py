@@ -402,7 +402,7 @@ class DVSAcl:
             self.verify_acl_rule(expected[priority], in_actions[priority], priority, entry)
 
     # FIXME: This `get_x_comparator` abstraction is a bit clunky, we should try to improve this later.
-    def get_simple_qualifier_comparator(self, expected_qualifier: str) -> Callable[str, bool]:
+    def get_simple_qualifier_comparator(self, expected_qualifier: str) -> Callable[[str], bool]:
         """Generate a method that compares if a given SAI qualifer matches `expected_qualifier`.
 
         Args:
@@ -416,7 +416,7 @@ class DVSAcl:
 
         return _match_qualifier
 
-    def get_port_list_comparator(self, expected_ports: List[str]) -> Callable[str, bool]:
+    def get_port_list_comparator(self, expected_ports: List[str]) -> Callable[[str], bool]:
         """Generate a method that compares if a list of SAI ports matches the ports from `expected_ports`.
 
         Args:
@@ -436,7 +436,7 @@ class DVSAcl:
 
         return _match_port_list
 
-    def get_acl_range_comparator(self, expected_type: str, expected_ports: str) -> Callable[str, bool]:
+    def get_acl_range_comparator(self, expected_type: str, expected_ports: str) -> Callable[[str], bool]:
         """Generate a method that compares if a SAI range object matches the range from `expected ports`.
 
         Args:
