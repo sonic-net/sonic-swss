@@ -101,12 +101,6 @@ For those developing new features for SWSS or the DVS framework, you might find 
     sudo pytest --imgname=docker-sonic-vs:my-changes.333
     ```
 
-- You can also preserve a non-persistent DVS container for debugging purposes:
-
-    ```
-    sudo pytest --keeptb
-    ```
-
 - You can automatically retry failed test cases **once**:
 
     ```
