@@ -119,6 +119,42 @@ class DVSDatabase:
 
         return result
 
+    def wait_for_fields(
+        self,
+        table_name: str,
+        key: str,
+        expected_fields: List[str],
+        polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
+    ) -> Dict[str, str]:
+        """Wait for the entry stored at `key` to have the specified fields and retrieve it.
+
+        This method is useful if you only care about a subset of the fields stored in the
+        specified entry.
+
+        Args:
+            table_name: The name of the table where the entry is stored.
+            key: The key that maps to the entry being checked.
+            expected_fields: The fields that we expect to see in the entry.
+            polling_config: The parameters to use to poll the db.
+
+        Returns:
+            The entry stored at `key`. If no entry is found, then an empty Dict is returned.
+        """
+        def __access_function():
+            fv_pairs = self.get_entry(table_name, key)
+            return (all(field in fv_pairs for field in expected_fields), fv_pairs)
+
+        status, result = wait_for_result(
+            __access_function,
+            self._disable_strict_polling(polling_config))
+
+        if not status:
+            assert not polling_config.strict, \
+                f"Expected fields not found: expected={expected_fields}, \
+                received={result}, key=\"{key}\", table=\"{table_name}\""
+
+        return result
+
     def wait_for_field_match(
         self,
         table_name: str,
@@ -126,9 +162,9 @@ class DVSDatabase:
         expected_fields: Dict[str, str],
         polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
     ) -> Dict[str, str]:
-        """Wait for the entry stored at `key` to have the specified fields and retrieve it.
+        """Wait for the entry stored at `key` to have the specified field/value pairs and retrieve it.
 
-        This method is useful if you only care about a subset of the fields stored in the
+        This method is useful if you only care about the contents of a subset of the fields stored in the
         specified entry.
 
         Args:
@@ -150,7 +186,42 @@ class DVSDatabase:
 
         if not status:
             assert not polling_config.strict, \
-                f"Expected fields not found: expected={expected_fields}, \
+                f"Expected field/value pairs not found: expected={expected_fields}, \
+                received={result}, key=\"{key}\", table=\"{table_name}\""
+
+        return result
+
+    def wait_for_field_negative_match(
+        self,
+        table_name: str,
+        key: str,
+        old_fields: Dict[str, str],
+        polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
+    ) -> Dict[str, str]:
+        """Wait for the entry stored at `key` to have different field/value pairs than the ones specified.
+
+        This method is useful if you expect some field to change, but you don't know their exact values.
+
+        Args:
+            table_name: The name of the table where the entry is stored.
+            key: The key that maps to the entry being checked.
+            old_fields: The original field/value pairs we expect to change.
+            polling_config: The parameters to use to poll the db.
+
+        Returns:
+            The entry stored at `key`. If no entry is found, then an empty Dict is returned.
+        """
+        def __access_function():
+            fv_pairs = self.get_entry(table_name, key)
+            return (all(k in fv_pairs and fv_pairs[k] != v for k, v in old_fields.items()), fv_pairs)
+
+        status, result = wait_for_result(
+            __access_function,
+            self._disable_strict_polling(polling_config))
+
+        if not status:
+            assert not polling_config.strict, \
+                f"Did not expect field/values to match, but they did: provided={old_fields}, \
                 received={result}, key=\"{key}\", table=\"{table_name}\""
 
         return result
