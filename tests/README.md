@@ -54,7 +54,7 @@ For those developing new features for SWSS or the DVS framework, you might find 
 
     ```
     docker run --privileged -id --name sw debian bash
-    sudo ./create_vnet.sh sw
+    sudo ./create_vnet.sh -n 32 sw
     ```
 3. Start the DVS container:
 
@@ -97,6 +97,20 @@ For those developing new features for SWSS or the DVS framework, you might find 
     sudo pytest --imgname=docker-sonic-vs:my-changes.333
     ```
 
+- You can also preserve a non-persistent DVS container for debugging purposes:
+
+    ```
+    sudo pytest --keeptb
+    ```
+
+    Which should give you something like this in `docker ps`:
+
+    ```
+    CONTAINER ID        IMAGE                                                 COMMAND                  CREATED             STATUS              PORTS               NAMES
+    10bb406e7475        docker-sonic-vs:sonic-swss-build.1529                 "/usr/bin/supervisord"   3 hours ago         Up 3 hours                              ecstatic_swartz
+    edb35e9aa10b        debian:jessie                                         "bash"                   3 hours ago         Up 3 hours                              elegant_edison
+    ```
+
 - You can automatically retry failed test cases **once**:
 
     ```
@@ -104,9 +118,44 @@ For those developing new features for SWSS or the DVS framework, you might find 
     ```
 
 ## Known Issues
--   ```
+-   You may encounter the test run being aborted before any cases are run:
+    ```
+    daall@baker:~/sonic-swss/tests$ sudo pytest test_acl.py 
+    ============================= test session starts ==============================
+    platform linux -- Python 3.6.9, pytest-4.6.9, py-1.9.0, pluggy-0.13.1
+    rootdir: /home/daall/sonic-swss/tests
+    plugins: flaky-3.7.0
+    collected 25 items                                                             
+
+    test_acl.py Aborted
+    ```
+    
+    When run with the `-sv` flags we get some more information:
+    ```
+    daall@baker:~/sonic-swss/tests$ sudo pytest -sv test_acl.py 
+    ============================= test session starts ==============================
+    platform linux -- Python 3.6.9, pytest-4.6.9, py-1.9.0, pluggy-0.13.1 -- /usr/bin/python3
+    cachedir: .pytest_cache
+    rootdir: /home/daall/sonic-swss/tests
+    plugins: flaky-3.7.0
+    collected 25 items                                                             
+
+    test_acl.py::TestAcl::test_AclTableCreation terminate called after throwing an instance of 'std::runtime_error'
+    what():  Sonic database config file doesn't exist at /var/run/redis/sonic-db/database_config.json
+    Aborted
+    ```
+
+    This indicates that something went wrong with the `libswsscommon` installation. The following should mitigate the issue:
+    ```
+    dpkg -r libswsscommon python3-swsscommon
+    dpkg --purge libswsscommon python3-swsscommon
+    rm -rf /usr/lib/python3/dist-packages/swsscommon/
+    dpkg -i libswsscommon.deb python3-swsscommon.deb
+    ```
+
+-   You may encounter the following error message:
+    ```
     ERROR: Error response from daemon: client is newer than server (client API version: x.xx, server API version: x.xx)
     ```
 
-    You can mitigate this by editing the `DEFAULT_DOCKER_API_VERSION` in `/usr/local/lib/python2.7/dist-packages/docker/constants.py`, or by upgrading to a newer version of Docker CE. See [relevant GitHub discussion](https://github.com/drone/drone/issues/2048).
-    
+    You can mitigate this by upgrading to a newer version of Docker CE or editing the `DEFAULT_DOCKER_API_VERSION` in `/usr/local/lib/python3/dist-packages/docker/constants.py`, or by upgrading to a newer version of Docker CE. See [relevant GitHub discussion](https://github.com/drone/drone/issues/2048).
