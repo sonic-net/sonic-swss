@@ -35,6 +35,7 @@ const map<string, sai_packet_action_t> packet_action_map =
 
 SwitchOrch::SwitchOrch(DBConnector *db, string tableName) :
         Orch(db, tableName),
+        m_switchTable(switchTable.first, switchTable.second),
         m_db(db)
 {
     m_restartCheckNotificationConsumer = new NotificationConsumer(db, "RESTARTCHECK");
@@ -206,4 +207,9 @@ bool SwitchOrch::setAgingFDB(uint32_t sec)
     }
     SWSS_LOG_NOTICE("Set switch %" PRIx64 " fdb_aging_time %u sec", gSwitchId, sec);
     return true;
+}
+
+void SwitchOrch::set_switch_capability(const std::vector<FieldValueTuple>& values)
+{
+     m_switchTable.set("switch", values);
 }
