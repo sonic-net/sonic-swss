@@ -5,9 +5,7 @@ import pytest
 @pytest.mark.usefixtures('dvs_vlan_manager')
 @pytest.mark.usefixtures('dvs_lag_manager')
 @pytest.mark.usefixtures('dvs_mirror_manager')
-@pytest.mark.usefixtures('dvs_acl_manager')
 @pytest.mark.usefixtures('dvs_policer_manager')
-
 class TestMirror(object):
     def test_PortMirrorAddRemove(self, dvs, testlog):
         """
@@ -277,7 +275,7 @@ class TestMirror(object):
         self.dvs_mirror.remove_mirror_session(session)
         self.dvs_mirror.verify_no_mirror()
 
-    def test_PortMirrorPolicerWithAcl(self, dvs, testlog):
+    def test_PortMirrorPolicerWithAcl(self, dvs, dvs_acl, testlog):
         """
         This test covers the port mirroring with policer and ACL configurations.
         Operation flow:
@@ -299,25 +297,29 @@ class TestMirror(object):
         self.dvs_mirror.verify_session_status(session)
 
         member_ids = dvs.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION", 1)
- 
+
         # create acl table
         bind_ports = ["Ethernet0", "Ethernet4"]
-        self.dvs_acl.create_acl_table("test", "mirror", bind_ports)
-        self.dvs_acl.verify_acl_group_num(len(bind_ports))
+        dvs_acl.create_acl_table("test", "mirror", bind_ports)
+        dvs_acl.verify_acl_table_count(1)
+        dvs_acl.verify_acl_table_groups(len(bind_ports))
 
-        config_qualifiers = {"mirror_action": session, 
-                             "DSCP": "8/56"}
-        mirror_oid="1:" + member_ids[0]
-        expected_sai_qualifiers = {"SAI_ACL_ENTRY_ATTR_FIELD_DSCP": self.dvs_acl.get_simple_qualifier_comparator("8&mask:0x38"),
-                                   "SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_INGRESS": self.dvs_acl.get_simple_qualifier_comparator(mirror_oid)}
-        self.dvs_acl.create_mirror_acl_rule("test", "mirror_rule", config_qualifiers)
-        self.dvs_acl.verify_acl_rule(expected_sai_qualifiers)
-        self.dvs_acl.remove_acl_rule("test", "mirror_rule")
-        self.dvs_acl.verify_no_acl_rules()
+        config_qualifiers = {"DSCP": "8/56"}
 
-        self.dvs_acl.remove_acl_table("test")
-        self.dvs_acl.verify_acl_table_count(0)
-        
+        mirror_oid = "1:" + member_ids[0]
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_DSCP": dvs_acl.get_simple_qualifier_comparator("8&mask:0x38")
+        }
+
+        dvs_acl.create_mirror_acl_rule("test", "mirror_rule", config_qualifiers, session)
+        dvs_acl.verify_mirror_acl_rule(expected_sai_qualifiers, mirror_oid)
+
+        dvs_acl.remove_acl_rule("test", "mirror_rule")
+        dvs_acl.verify_no_acl_rules()
+
+        dvs_acl.remove_acl_table("test")
+        dvs_acl.verify_acl_table_count(0)
+
         self.dvs_mirror.remove_mirror_session(session)
 
         self.dvs_policer.remove_policer(policer)
