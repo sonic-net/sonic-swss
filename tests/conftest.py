@@ -16,7 +16,7 @@ if sys.version_info < (3, 0):
 from datetime import datetime
 from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
-from dvslib.dvs_common import PollingConfig
+from dvslib.dvs_common import PollingConfig, wait_for_result
 from dvslib.dvs_acl import DVSAcl
 from dvslib import dvs_vlan
 from dvslib import dvs_lag
@@ -332,7 +332,7 @@ class DockerVirtualSwitch(object):
 
             time.sleep(1)
 
-    def check_swss_ready(self, timeout=60):
+    def check_swss_ready(self, timeout=300):
         """Verify that SWSS is ready to receive inputs.
 
         Almost every part of orchagent depends on ports being created and initialized
@@ -344,9 +344,13 @@ class DockerVirtualSwitch(object):
 
         # Verify that all ports have been initialized and configured
         app_db = self.get_app_db()
-        startup_polling_config = PollingConfig(2, timeout, strict=True)
-        app_db.wait_for_entry("PORT_TABLE", "PortInitDone", startup_polling_config)
-        app_db.wait_for_entry("PORT_TABLE", "PortConfigDone", startup_polling_config)
+        startup_polling_config = PollingConfig(5, timeout, strict=True)
+
+        def _polling_function():
+            port_table_keys = app_db.get_keys("PORT_TABLE")
+            return ("PortInitDone" in port_table_keys and "PortConfigDone" in port_table_keys, None)
+
+        wait_for_result(_polling_function, startup_polling_config)
 
         # Verify that all ports have been created
         asic_db = self.get_asic_db()
