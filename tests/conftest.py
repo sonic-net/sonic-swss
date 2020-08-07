@@ -158,7 +158,7 @@ class DockerVirtualSwitch(object):
     FLEX_COUNTER_DB_ID = 5
     STATE_DB_ID = 6
 
-    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None):
+    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None, log_path=None):
         self.basicd = ['redis-server',
                        'rsyslogd']
         self.swssd = ['orchagent',
@@ -178,6 +178,8 @@ class DockerVirtualSwitch(object):
 
         if subprocess.check_call(["/sbin/modprobe", "team"]) != 0:
             raise NameError("cannot install kernel team module")
+
+        self.log_path = log_path
 
         self.ctn = None
         if keeptb:
@@ -450,21 +452,23 @@ class DockerVirtualSwitch(object):
         self.ctn.put_archive(path, tarstr.getvalue())
         tarstr.close()
 
-    def get_logs(self, modname=None):
-        stream, stat = self.ctn.get_archive("/var/log/")
-        if modname == None:
-            log_dir = "log"
-        else:
-            log_dir = "log/{}".format(modname)
-        os.system("rm -rf {}".format(log_dir))
-        ensure_system("mkdir -p {}".format(log_dir))
-        p = subprocess.Popen(["tar", "--no-same-owner", "-C", "./{}".format(log_dir), "-x"], stdin=subprocess.PIPE)
+    def get_logs(self):
+        log_dir = os.path.join("log", self.log_path) if self.log_path else "log"
+
+        ensure_system(f"rm -rf {log_dir}")
+        ensure_system(f"mkdir -p {log_dir}")
+
+        p = subprocess.Popen(["tar", "--no-same-owner", "-C", os.path.join("./", log_dir), "-x"], stdin=subprocess.PIPE)
+
+        stream, _ = self.ctn.get_archive("/var/log/")
         for x in stream:
             p.stdin.write(x)
         p.stdin.close()
         p.wait()
+
         if p.returncode:
-            raise RuntimeError("Failed to unpack the archive.")
+            raise RuntimeError("Failed to unpack the log archive.")
+
         ensure_system("chmod a+r -R log")
 
     def add_log_marker(self, file=None):
@@ -970,12 +974,14 @@ def dvs(request) -> DockerVirtualSwitch:
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform)
+
+    log_path = name if name else request.module.__name__
+
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path)
+
     yield dvs
-    if name == None:
-        dvs.get_logs(request.module.__name__)
-    else:
-        dvs.get_logs()
+
+    dvs.get_logs()
     dvs.destroy()
 
 @pytest.yield_fixture
