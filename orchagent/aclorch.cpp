@@ -2109,11 +2109,11 @@ bool AclRange::remove(sai_object_id_t *oids, int oidsCnt)
 {
     SWSS_LOG_ENTER();
 
-    for (int oidIdx = 0; oidIdx < oidsCnt; oidsCnt++)
+    for (int oidIdx = 0; oidIdx < oidsCnt; oidIdx++)
     {
         for (auto it : m_ranges)
         {
-            if (it.second->m_oid == oids[oidsCnt])
+            if (it.second->m_oid == oids[oidIdx])
             {
                 return it.second->remove();
             }
