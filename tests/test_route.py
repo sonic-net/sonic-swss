@@ -5,9 +5,10 @@ import json
 import pytest
 
 from swsscommon import swsscommon
+from dvslib.dvs_common import PollingConfig
 
 
-class TestRoute(object):
+class TestRouteBase(object):
     def setup_db(self, dvs):
         self.pdb = dvs.get_app_db()
         self.adb = dvs.get_asic_db()
@@ -65,6 +66,8 @@ class TestRoute(object):
         dvs.servers[2].runcmd("ip address flush dev eth0")
         dvs.servers[3].runcmd("ip address flush dev eth0")
 
+class TestRoute(TestRouteBase):
+    """ Functionality tests for route """
     def test_RouteAddRemoveIpv4Route(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -585,6 +588,98 @@ class TestRoute(object):
         dvs.servers[3].runcmd("ip route del default dev eth0")
         dvs.servers[3].runcmd("ip address del 20.0.1.2/24 dev eth0")
 
+class TestRoutePerf(TestRouteBase):
+    """ Performance tests for route """
+    def test_PerfAddRemoveRoute(self, dvs, testlog):
+        self.setup_db(dvs)
+        self.clear_srv_config(dvs)
+        numRoutes = 10000   # number of routes to add/remove
+        timeout = 30        # timeout if routes are not successfully added/removed in 30 seconds
+
+        # generate addresses of routes
+        addrs = []
+        for i in range(numRoutes):
+            addrs.append("%d.%d.%d.%d/%d" % (100 + int(i / 256 ** 2), int(i / 256), i % 256, 0, 24))
+
+        # create l3 interface
+        self.create_l3_intf("Ethernet0", "")
+        self.create_l3_intf("Ethernet4", "")
+
+        # set ip address
+        self.add_ip_address("Ethernet0", "10.0.0.0/31")
+        self.add_ip_address("Ethernet4", "10.0.0.2/31")
+
+        # bring up interface
+        self.set_admin_status("Ethernet0", "up")
+        self.set_admin_status("Ethernet4", "up")
+
+        # set ip address and default route
+        dvs.servers[0].runcmd("ip address add 10.0.0.1/31 dev eth0")
+        dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
+
+        dvs.servers[1].runcmd("ip address add 10.0.0.3/31 dev eth0")
+        dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
+
+        fieldValues = [{"nexthop": "10.0.0.1", "ifname": "Ethernet0"}, {"nexthop": "10.0.0.3", "ifname": "Ethernet4"}]
+
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping -c 1 10.0.0.3")
+
+        # get number of routes before adding new routes
+        startNumRoutes = len(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"))
+
+        # add route entries
+        timeStart = time.time()
+        for i in range(numRoutes):
+            self.create_route_entry(addrs[i], fieldValues[i % 2])
+
+        # wait until all routes are added into ASIC database
+        pollingCfg = PollingConfig(polling_interval=0.01, timeout=timeout, strict=True) # extend timeout since routes may take longer than 5 seconds (default timeout) to load
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", startNumRoutes + numRoutes, pollingCfg)
+        print("Time to add %d routes is %.2f seconds. " % (numRoutes, time.time() - timeStart))
+
+        # confirm all routes are added
+        asicAddrs = set()
+        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
+            route = json.loads(key)
+            asicAddrs.add(route["dest"])
+        for addr in addrs:
+            assert addr in asicAddrs
+
+        #remove route entries
+        timeStart = time.time()
+        for i in range(numRoutes):
+            self.remove_route_entry(addrs[i])
+
+        # wait until all routes are removed from ASIC database
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", startNumRoutes, pollingCfg)
+        print("Time to remove %d routes is %.2f seconds. " % (numRoutes, time.time() - timeStart))
+
+        # confirm all routes are removed
+        asicAddrs = set()
+        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
+            route = json.loads(key)
+            asicAddrs.add(route["dest"])
+        for addr in addrs:
+            assert not addr in asicAddrs
+
+        # remove ip address
+        self.remove_ip_address("Ethernet0", "10.0.0.0/31")
+        self.remove_ip_address("Ethernet4", "10.0.0.2/31")
+
+        # remove l3 interface
+        self.remove_l3_intf("Ethernet0")
+        self.remove_l3_intf("Ethernet4")
+
+        self.set_admin_status("Ethernet0", "down")
+        self.set_admin_status("Ethernet4", "down")
+
+        # remove ip address and default route
+        dvs.servers[0].runcmd("ip route del default dev eth0")
+        dvs.servers[0].runcmd("ip address del 10.0.0.1/31 dev eth0")
+
+        dvs.servers[1].runcmd("ip route del default dev eth0")
+        dvs.servers[1].runcmd("ip address del 10.0.0.3/31 dev eth0")
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
