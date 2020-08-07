@@ -45,6 +45,10 @@ def pytest_addoption(parser):
                       help="keep testbed after test")
     parser.addoption("--imgname", action="store", default="docker-sonic-vs",
                       help="image name")
+    parser.addoption("--max_cpu",
+                     action="store",
+                     default=2,
+                     help="Max number of CPU cores to use, if available. (default = 2)")
 
 
 class AsicDbValidator(DVSDatabase):
@@ -158,7 +162,15 @@ class DockerVirtualSwitch(object):
     FLEX_COUNTER_DB_ID = 5
     STATE_DB_ID = 6
 
-    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None, log_path=None):
+    def __init__(
+            self,
+            name=None,
+            imgname=None,
+            keeptb=False,
+            fakeplatform=None,
+            log_path=None,
+            max_cpu=2
+    ):
         self.basicd = ['redis-server',
                        'rsyslogd']
         self.swssd = ['orchagent',
@@ -243,10 +255,13 @@ class DockerVirtualSwitch(object):
             self.environment = ["fake_platform={}".format(fakeplatform)] if fakeplatform else []
 
             # create virtual switch container
-            self.ctn = self.client.containers.run(imgname, privileged=True, detach=True,
-                    environment=self.environment,
-                    network_mode="container:%s" % self.ctn_sw.name,
-                    volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
+            self.ctn = self.client.containers.run(imgname,
+                                                  privileged=True,
+                                                  detach=True,
+                                                  environment=self.environment,
+                                                  network_mode=f"container:{self.ctn_sw.name}",
+                                                  volumes={self.mount: {"bind": "/var/run/redis", "mode": "rw"}},
+                                                  cpu_shares=max_cpu)
 
         self.redis_sock = self.mount + '/' + "redis.sock"
 
@@ -973,11 +988,11 @@ def dvs(request) -> DockerVirtualSwitch:
     name = request.config.getoption("--dvsname")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
+    max_cpu = request.config.getoption("--max_cpu")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
-
     log_path = name if name else request.module.__name__
 
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path)
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu)
 
     yield dvs
 
