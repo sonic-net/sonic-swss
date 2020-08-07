@@ -29,6 +29,7 @@ local initialized = redis.call('HGET', rates_table_name, 'INIT_DONE')
 
 logit(initialized)
 
+local n = table.getn(KEYS)
 for i = 1, n do
     -- Get new COUNTERS values
     local in_ucast_pkts = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_UCAST_PKTS')

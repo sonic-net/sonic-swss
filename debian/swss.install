@@ -1,4 +1,3 @@
 swssconfig/sample/netbouncer.json etc/swss/config.d
-swssconfig/sample/00-copp.config.json etc/swss/config.d
 neighsyncd/restore_neighbors.py usr/bin
 fpmsyncd/bgp_eoiu_marker.py  usr/bin

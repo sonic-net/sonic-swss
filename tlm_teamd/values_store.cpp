@@ -16,7 +16,7 @@ std::vector<std::string> ValuesStore::get_ports(json_t * root)
     int err = json_unpack(root, "{s:o}", "ports", &ports);
     if (err != 0)
     {
-        throw std::runtime_error("Can't find 'ports' in the json dump object");
+        return result;
     }
 
     const char * key;
