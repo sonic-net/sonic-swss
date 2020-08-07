@@ -23,6 +23,12 @@ from dvslib import dvs_lag
 from dvslib import dvs_mirror
 from dvslib import dvs_policer
 
+# FIXME: For the sake of stabilizing the PR pipeline we currently assume there are 32 front-panel
+# ports in the system (much like the rest of the test suite). This should be adjusted to accomodate
+# a dynamic number of ports. GitHub Issue: Azure/sonic-swss#1384.
+NUM_PORTS = 32
+
+
 def ensure_system(cmd):
     if sys.version_info < (3, 0):
         (rc, output) = commands.getstatusoutput(cmd)
@@ -30,6 +36,7 @@ def ensure_system(cmd):
         (rc, output) = subprocess.getstatusoutput(cmd)
     if rc:
         raise RuntimeError('Failed to run command: %s. rc=%d. output: %s' % (cmd, rc, output))
+
 
 def pytest_addoption(parser):
     parser.addoption("--dvsname", action="store", default=None,
@@ -53,7 +60,7 @@ class AsicDbValidator(DVSDatabase):
         self.hostifoidmap = {}
         self.hostifnamemap = {}
 
-        keys = self.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", 32)
+        keys = self.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", NUM_PORTS)
         for k in keys:
             fvs = self.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", k)
             port_oid = fvs.get("SAI_HOSTIF_ATTR_OBJ_ID")
@@ -204,7 +211,7 @@ class DockerVirtualSwitch(object):
 
             # create virtual servers
             self.servers = []
-            for i in range(32):
+            for i in range(NUM_PORTS):
                 server = VirtualServer(ctn_sw_name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
@@ -223,7 +230,7 @@ class DockerVirtualSwitch(object):
 
             # create virtual server
             self.servers = []
-            for i in range(32):
+            for i in range(NUM_PORTS):
                 server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
@@ -325,9 +332,6 @@ class DockerVirtualSwitch(object):
 
             time.sleep(1)
 
-    # FIXME: For the sake of stabilizing the PR pipeline this method currently assumes 32 ports
-    # (much like the rest of the test suite). This should be adjusted to accomodate a dynamic
-    # number of ports. GitHub Issue: Azure/sonic-swss#1384.
     def check_swss_ready(self, timeout=60):
         """Verify that SWSS is ready to receive inputs.
 
@@ -336,7 +340,7 @@ class DockerVirtualSwitch(object):
         has started running but before it has had time to initialize all the ports, then the
         first several tests will fail.
         """
-        num_ports = 32
+        num_ports = NUM_PORTS
 
         # Verify that all ports have been initialized and configured
         app_db = self.get_app_db()
