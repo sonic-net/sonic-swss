@@ -33,7 +33,7 @@ const map<string, sai_packet_action_t> packet_action_map =
     {"trap",    SAI_PACKET_ACTION_TRAP}
 };
 
-SwitchOrch::SwitchOrch(DBConnector *db, string tableName) :
+SwitchOrch::SwitchOrch(DBConnector *db, string tableName, TableConnector switchTable):
         Orch(db, tableName),
         m_switchTable(switchTable.first, switchTable.second),
         m_db(db)
