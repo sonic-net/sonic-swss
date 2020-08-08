@@ -166,8 +166,8 @@ class DockerVirtualSwitch(object):
     FLEX_COUNTER_DB_ID = 5
     STATE_DB_ID = 6
 
-    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None, vct=None,
-                 newctnname=None, ctnmounts=None):
+    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None, log_path=None,
+                 vct=None,newctnname=None, ctnmounts=None):
         self.basicd = ['redis-server',
                        'rsyslogd']
         self.swssd = ['orchagent',
@@ -189,6 +189,8 @@ class DockerVirtualSwitch(object):
 
         if subprocess.check_call(["/sbin/modprobe", "team"]) != 0:
             raise NameError("cannot install kernel team module")
+
+        self.log_path = log_path
 
         self.ctn = None
         if keeptb:
@@ -495,21 +497,23 @@ class DockerVirtualSwitch(object):
         self.ctn.put_archive(path, tarstr.getvalue())
         tarstr.close()
 
-    def get_logs(self, modname=None):
-        stream, stat = self.ctn.get_archive("/var/log/")
-        if modname == None:
-            log_dir = "log"
-        else:
-            log_dir = "log/{}".format(modname)
-        os.system("rm -rf {}".format(log_dir))
-        ensure_system("mkdir -p {}".format(log_dir))
-        p = subprocess.Popen(["tar", "--no-same-owner", "-C", "./{}".format(log_dir), "-x"], stdin=subprocess.PIPE)
+    def get_logs(self):
+        log_dir = os.path.join("log", self.log_path) if self.log_path else "log"
+
+        ensure_system(f"rm -rf {log_dir}")
+        ensure_system(f"mkdir -p {log_dir}")
+
+        p = subprocess.Popen(["tar", "--no-same-owner", "-C", os.path.join("./", log_dir), "-x"], stdin=subprocess.PIPE)
+
+        stream, _ = self.ctn.get_archive("/var/log/")
         for x in stream:
             p.stdin.write(x)
         p.stdin.close()
         p.wait()
+
         if p.returncode:
-            raise RuntimeError("Failed to unpack the archive.")
+            raise RuntimeError("Failed to unpack the log archive.")
+
         ensure_system("chmod a+r -R log")
 
     def add_log_marker(self, file=None):
@@ -1011,7 +1015,7 @@ class DockerVirtualSwitch(object):
 
 class DockerVirtualChassisTopology(object):
     def __init__(self, namespace=None, imgname=None, keeptb=False,
-                 fakeplatform=None, topoFile=None):
+                 fakeplatform=None, topoFile=None, log_path=None):
         self.ns = namespace
         self.chassbr = "br4chs"
         self.keeptb = keeptb
@@ -1021,6 +1025,7 @@ class DockerVirtualChassisTopology(object):
         self.ctninfo = {}
         self.dvss = {}
         self.inbands = {}
+        self.log_path = log_path
         if self.ns is None:
            self.ns = random_string()
         print("VCT ns: " + self.ns)
@@ -1067,7 +1072,7 @@ class DockerVirtualChassisTopology(object):
         for ctn in docker.from_env().containers.list():
             if ctn.name.endswith(suffix):
                 self.dvss[ctn.name] = DockerVirtualSwitch(ctn.name, self.imgname, self.keeptb,
-                                                          self.fakeplatform, self)
+                                                          self.fakeplatform, ctn.name, self)
         if self.chassbr is None and len(self.dvss) > 0:
             ret, res = self.ctn_runcmd(self.dvss.values()[0].ctn,
                         "sonic-cfggen --print-data -j /usr/share/sonic/virtual_chassis/vct_connections.json")
@@ -1187,6 +1192,7 @@ class DockerVirtualChassisTopology(object):
                 self.dvss[ctnname] = DockerVirtualSwitch(name=None, imgname=self.imgname,
                                                          keeptb=self.keeptb,
                                                          fakeplatform=self.fakeplatform,
+                                                         log_path=self.log_path,
                                                          vct=self,newctnname=ctnname,
                                                          ctnmounts=vol)
             self.set_ctninfo(ctndir, ctnname, self.dvss[ctnname].pid)
@@ -1289,12 +1295,13 @@ def dvs(request) -> DockerVirtualSwitch:
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, None)
+
+    log_path = name if name else request.module.__name__
+
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path)
     yield dvs
-    if name == None:
-        dvs.get_logs(request.module.__name__)
-    else:
-        dvs.get_logs()
+
+    dvs.get_logs()
     dvs.destroy()
 
 @pytest.yield_fixture(scope="module")
@@ -1307,7 +1314,9 @@ def vct(request):
     if not topo:
         # use ecmp topology as default
         topo = "virtual_chassis/chassis_with_ecmp_neighbors.json"
-    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, fakeplatform, topo)
+    log_path = request.module.__name__
+    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, fakeplatform, topo,
+                                       log_path)
     yield vct
     vct.get_logs(request.module.__name__)
     vct.destroy()
