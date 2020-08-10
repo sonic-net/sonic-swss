@@ -43,6 +43,7 @@ class NatSync : public NetMsg
 {
 public:
     NatSync(RedisPipeline *pipelineAppDB, DBConnector *appDb, DBConnector *stateDb, NfNetlink *nfnl);
+    ~NatSync();
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 

@@ -4113,7 +4113,7 @@ void NatMgr::setDynamicAllForwardOrAclbasedRules(const string &opCmd, const stri
         /* After deletion, set acl_interface to None */  
         if (opCmd == DELETE)
         {
-            m_natBindingInfo[dynamicKey].acl_interface == NONE_STRING;
+            m_natBindingInfo[dynamicKey].acl_interface = NONE_STRING;
         }
     }
 
