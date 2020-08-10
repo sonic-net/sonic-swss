@@ -79,6 +79,18 @@ For those developing new features for SWSS or the DVS framework, you might find 
     ```
 
 ## Other useful test parameters
+- You can specify a maximum amount of cores for the DVS to use (we recommend 2):
+    ```
+    sudo pytest --max_cpu 2
+    ```
+
+    For a persistent DVS:
+    ```
+    docker run --privileged -v /var/run/redis-vs/sw:/var/run/redis --network container:sw -d --name vs --cpus 2 docker-sonic-vs
+    ```
+
+    For specific details about the performance impact of this, see [the Docker docs.](https://docs.docker.com/config/containers/resource_constraints/#configure-the-default-cfs-scheduler)
+
 - You can see the output of all test cases that have been run by adding the verbose flag:
 
     ```
