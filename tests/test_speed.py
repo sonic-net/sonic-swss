@@ -26,9 +26,9 @@ class TestSpeedSet:
         asic_port_records = adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         for k in asic_port_records:
             fvs = adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", k)
-            for fv in fvs:
-                if fv[0] == "SAI_PORT_ATTR_SPEED":
-                    configured_speed_list.append(fv[1])
+            for fv in fvs.keys():
+                if fv == "SAI_PORT_ATTR_SPEED":
+                    configured_speed_list.append(fvs[fv])
                     break
 
             if len(configured_speed_list):
