@@ -316,11 +316,11 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
      */
     if(del_idx < bank_member_change.nhs_to_del.size())
     {
-        for(auto memb: bank_member_change.nhs_to_add)
-        {
-            /* Create collated list of members */
-            bank_member_change.active_nhs.push_back(memb);
-        }
+        uint32_t num_buckets_in_bank = 1 + fgNhgEntry->hash_bucket_indices[syncd_bank].end_index -
+            fgNhgEntry->hash_bucket_indices[syncd_bank].start_index;
+        uint32_t exp_bucket_size = num_buckets_in_bank / (uint32_t)bank_member_change.active_nhs.size();
+        uint32_t num_nhs_with_one_more = (num_buckets_in_bank % (uint32_t)bank_member_change.active_nhs.size());
+
 
         while(del_idx < bank_member_change.nhs_to_del.size())
         {
@@ -336,7 +336,44 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
                     return false;
                 }
                 bank_fgnhg_map->at(round_robin_nh).push_back(hash_buckets->at(i));
-                /* TODO: simple round robin can make the hash non-balanced, rebalance the hash */
+
+                /* Logic below ensure that # hash buckets assigned to a nh is equalized */
+                if(num_nhs_with_one_more == 0)
+                {
+                    if(bank_fgnhg_map->at(round_robin_nh).size() == exp_bucket_size)
+                    {
+                        SWSS_LOG_INFO("%s reached %d, don't remove more buckets", 
+                                (bank_member_change.active_nhs[i % bank_member_change.active_nhs.size()]).to_string().c_str(), 
+                                exp_bucket_size);
+                        bank_member_change.active_nhs.erase(bank_member_change.active_nhs.begin() + 
+                            (i % bank_member_change.active_nhs.size()));
+                    }
+                    else if(bank_fgnhg_map->at(round_robin_nh).size() > exp_bucket_size)
+                    {
+                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %lu, exp_size %d",
+                                round_robin_nh.to_string().c_str(), bank_fgnhg_map->at(round_robin_nh).size(),
+                                exp_bucket_size);
+                    }
+                }
+                else
+                {
+                    if(bank_fgnhg_map->at(round_robin_nh).size() == exp_bucket_size +1)
+                    {
+
+                        SWSS_LOG_INFO("%s reached %d, don't remove more buckets num_nhs_with_one_more %d", 
+                                (bank_member_change.active_nhs[i %bank_member_change.active_nhs.size()]).to_string().c_str(), 
+                                exp_bucket_size +1, num_nhs_with_one_more -1);
+                        bank_member_change.active_nhs.erase(bank_member_change.active_nhs.begin() + 
+                            (i % bank_member_change.active_nhs.size()));
+                        num_nhs_with_one_more--;
+                    }
+                    else if(bank_fgnhg_map->at(round_robin_nh).size() > exp_bucket_size +1)
+                    {
+                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %lu, exp_size %d",
+                                round_robin_nh.to_string().c_str(), bank_fgnhg_map->at(round_robin_nh).size(),
+                                exp_bucket_size + 1);
+                    }
+                }
             }
 
             bank_fgnhg_map->erase(bank_member_change.nhs_to_del[del_idx]);
@@ -347,17 +384,31 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
 
     if(add_idx < bank_member_change.nhs_to_add.size())
     {
-        uint32_t exp_bucket_size = (1+ fgNhgEntry->hash_bucket_indices[syncd_bank].end_index - 
-            fgNhgEntry->hash_bucket_indices[syncd_bank].start_index)/
-            ((uint32_t)bank_member_change.active_nhs.size() + 
-             (uint32_t)bank_member_change.nhs_to_add.size() - add_idx);
+        uint32_t total_nhs = (uint32_t)bank_member_change.active_nhs.size() +
+                         (uint32_t)bank_member_change.nhs_to_add.size() - add_idx;
+        uint32_t num_buckets_in_bank = 1+ fgNhgEntry->hash_bucket_indices[syncd_bank].end_index -
+            fgNhgEntry->hash_bucket_indices[syncd_bank].start_index;
+        uint32_t exp_bucket_size = num_buckets_in_bank/total_nhs;
+        uint32_t num_nhs_with_one_more = (num_buckets_in_bank % total_nhs);
+        uint32_t num_nhs_with_eq_to_exp = total_nhs - num_nhs_with_one_more;
+        uint32_t add_nh_exp_bucket_size = exp_bucket_size;
 
         while(add_idx < bank_member_change.nhs_to_add.size())
         {
             (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]] = 
                 std::vector<uint32_t>();
             auto it = bank_member_change.active_nhs.begin();
-            while(bank_fgnhg_map->at(bank_member_change.nhs_to_add[add_idx]).size() != exp_bucket_size)
+            if(num_nhs_with_eq_to_exp > 0)
+            {
+                num_nhs_with_eq_to_exp--;
+            }
+            else
+            {
+                add_nh_exp_bucket_size = exp_bucket_size + 1;
+                num_nhs_with_one_more--;
+            }
+
+            while(bank_fgnhg_map->at(bank_member_change.nhs_to_add[add_idx]).size() != add_nh_exp_bucket_size)
             {
                 if(it == bank_member_change.active_nhs.end())
                 {
@@ -385,7 +436,45 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
                     (*bank_fgnhg_map)[bank_member_change.nhs_to_add[add_idx]].push_back(last_elem);
                     (*map_entry).erase((*map_entry).end() - 1);
                 }
-                it++;
+                /* Logic below ensure that # hash buckets assigned to a nh is equalized */
+                if(num_nhs_with_one_more == 0)
+                {
+                    if(map_entry->size() == exp_bucket_size)
+                    {
+                        SWSS_LOG_INFO("%s reached %d, don't remove more buckets", it->to_string().c_str(), exp_bucket_size);
+                        it = bank_member_change.active_nhs.erase(it);
+                    }
+                    else if(map_entry->size() < exp_bucket_size)
+                    {
+                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %lu, exp_size %d",
+                                it->to_string().c_str(), map_entry->size(), exp_bucket_size);
+                        it++;
+                    }
+                    else
+                    {
+                        it++;
+                    }
+                }
+                else
+                {
+                    if(map_entry->size() == exp_bucket_size +1)
+                    {
+                        SWSS_LOG_INFO("%s reached %d, don't remove more buckets num_nhs_with_one_more %d", 
+                                it->to_string().c_str(), exp_bucket_size + 1, num_nhs_with_one_more -1);
+                        it = bank_member_change.active_nhs.erase(it);
+                        num_nhs_with_one_more--;
+                    }
+                    else if(map_entry->size() < exp_bucket_size)
+                    {
+                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %lu, exp_size %d",
+                                it->to_string().c_str(), map_entry->size(), exp_bucket_size + 1);
+                        it++;
+                    }
+                    else
+                    {
+                        it++;
+                    }
+                }
             }
             syncd_fg_route_entry->active_nexthops.insert(bank_member_change.nhs_to_add[add_idx]);
             add_idx++;

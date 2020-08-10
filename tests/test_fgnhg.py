@@ -49,6 +49,10 @@ def verify_programmed_nh_membs(db,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size
     for idx,memb in memb_dict.items():
         nh_memb_count[memb] = 1 + nh_memb_count[memb]
         idxs[idx] = idxs[idx] + 1
+
+    print nh_memb_count
+    print "\n"
+    print nh_memb_exp_count
     for key in nh_memb_exp_count:
         print key
         assert nh_memb_count[key] == nh_memb_exp_count[key]
@@ -669,3 +673,275 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG", 
             fg_nhg_name,
         )
+
+        intf_tbl.set("Ethernet24", fvs)
+        intf_tbl.set("Ethernet28", fvs)
+        intf_tbl.set("Ethernet32", fvs)
+        intf_tbl.set("Ethernet36", fvs)
+
+        intf_tbl.set("Ethernet24|10.0.0.12/31", fvs)
+        intf_tbl.set("Ethernet28|10.0.0.14/31", fvs)
+        intf_tbl.set("Ethernet32|10.0.0.16/31", fvs)
+        intf_tbl.set("Ethernet36|10.0.0.18/31", fvs)
+
+        dvs.runcmd("config interface startup Ethernet24")
+        dvs.runcmd("config interface startup Ethernet28")
+        dvs.runcmd("config interface startup Ethernet32")
+        dvs.runcmd("config interface startup Ethernet36")
+
+        dvs.servers[6].runcmd("ip link set down dev eth0") == 0
+        dvs.servers[7].runcmd("ip link set down dev eth0") == 0
+        dvs.servers[8].runcmd("ip link set down dev eth0") == 0
+        dvs.servers[9].runcmd("ip link set down dev eth0") == 0
+
+        dvs.servers[6].runcmd("ip link set up dev eth0") == 0
+        dvs.servers[7].runcmd("ip link set up dev eth0") == 0
+        dvs.servers[8].runcmd("ip link set up dev eth0") == 0
+        dvs.servers[9].runcmd("ip link set up dev eth0") == 0
+
+        fg_nhg_name = "new_fgnhg_v4"
+        fg_nhg_prefix = "3.3.3.0/24"
+        # Test with non-divisible bucket size
+        bucket_size = 128
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG", '|', fg_nhg_name,
+            [
+                ("bucket_size", str(bucket_size)),
+            ],
+        )
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_PREFIX", '|', fg_nhg_prefix,
+            [
+                ("FG_NHG", fg_nhg_name),
+            ],
+        )
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", '|', "10.0.0.1",
+            [
+                ("FG_NHG", fg_nhg_name),
+                ("bank", "0"),
+            ],
+        )
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", '|', "10.0.0.3",
+            [
+                ("FG_NHG", fg_nhg_name),
+                ("bank", "0"),
+            ],
+        )
+
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", '|', "10.0.0.5",
+            [
+                ("FG_NHG", fg_nhg_name),
+                ("bank", "0"),
+            ],
+        )
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", '|', "10.0.0.7",
+            [
+                ("FG_NHG", fg_nhg_name),
+                ("bank", "0"),
+            ],
+        )
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", '|', "10.0.0.9",
+            [
+                ("FG_NHG", fg_nhg_name),
+                ("bank", "0"),
+            ],
+        )
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", '|', "10.0.0.11",
+            [
+                ("FG_NHG", fg_nhg_name),
+                ("bank", "1"),
+            ],
+        )
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", '|', "10.0.0.13",
+            [
+                ("FG_NHG", fg_nhg_name),
+                ("bank", "1"),
+            ],
+        )
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", '|', "10.0.0.15",
+            [
+                ("FG_NHG", fg_nhg_name),
+                ("bank", "1"),
+            ],
+        )
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", '|', "10.0.0.17",
+            [
+                ("FG_NHG", fg_nhg_name),
+                ("bank", "1"),
+            ],
+        )
+
+        create_entry_tbl(
+            config_db,
+            "FG_NHG_MEMBER", '|', "10.0.0.19",
+            [
+                ("FG_NHG", fg_nhg_name),
+                ("bank", "1"),
+            ],
+        )
+        dvs.runcmd("arp -s 10.0.0.13 00:00:00:00:00:13")
+        dvs.runcmd("arp -s 10.0.0.15 00:00:00:00:00:15")
+        dvs.runcmd("arp -s 10.0.0.17 00:00:00:00:00:17")
+        dvs.runcmd("arp -s 10.0.0.19 00:00:00:00:00:19")
+
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.11"), 
+            ("ifname", "Ethernet0,Ethernet20")])
+
+        ps.set(fg_nhg_prefix, fvs)
+
+        time.sleep(1)
+
+        # check if route was propagated to ASIC DB
+
+        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
+
+        rtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+        nhgtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
+        nhg_member_tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        nbtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+
+        keys = rtbl.getKeys()
+
+        found_route = False
+        for k in keys:
+            rt_key = json.loads(k)
+
+            if rt_key['dest'] == fg_nhg_prefix:
+                found_route = True
+                break
+
+        assert found_route
+        # assert the route points to next hop group
+        (status, fvs) = rtbl.get(k)
+
+        for v in fvs:
+            if v[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
+                nhgid = v[1]
+
+        (status, fvs) = nhgtbl.get(nhgid)
+        assert status
+
+        keys = nhg_member_tbl.getKeys()
+        assert len(keys) == bucket_size
+
+        # Obtain oids of NEXT_HOP asic entries
+        nh_oid_map = {}
+
+        for tbs in nbtbl.getKeys():
+            (status, fvs) = nbtbl.get(tbs)
+            assert status == True
+            for fv in fvs:
+                if fv[0] == "SAI_NEXT_HOP_ATTR_IP":
+                    nh_oid_map[tbs] = fv[1]
+
+        # Test addition of route with 0 members in bank
+        nh_memb_exp_count = {"10.0.0.1":64,"10.0.0.11":64}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.11,10.0.0.13,10.0.0.15"), 
+            ("ifname", "Ethernet0,Ethernet4,Ethernet8,Ethernet20,Ethernet24,Ethernet28")])
+        ps.set(fg_nhg_prefix, fvs)
+        time.sleep(1)
+        nh_memb_exp_count = {"10.0.0.1":22,"10.0.0.3":21,"10.0.0.5":21,"10.0.0.11":22,"10.0.0.13":21,"10.0.0.15":21}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
+
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.7,10.0.0.9,10.0.0.11,10.0.0.13,10.0.0.15,10.0.0.17,10.0.0.19"), 
+            ("ifname", "Ethernet0,Ethernet4,Ethernet8,Ethernet12,Ethernet16,Ethernet20,Ethernet24,Ethernet28,Ethernet32,Ethernet36")])
+        ps.set(fg_nhg_prefix, fvs)
+        time.sleep(1)
+        nh_memb_exp_count = {"10.0.0.1":13,"10.0.0.3":13,"10.0.0.5":13,"10.0.0.7":12,"10.0.0.9":13,"10.0.0.11":13,"10.0.0.13":13,"10.0.0.15":13,"10.0.0.17":12,"10.0.0.19":13}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
+
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.3,10.0.0.5,10.0.0.7,10.0.0.9,10.0.0.11,10.0.0.13,10.0.0.19"), 
+            ("ifname", "Ethernet4,Ethernet8,Ethernet12,Ethernet16,Ethernet20,Ethernet24,Ethernet36")])
+        ps.set(fg_nhg_prefix, fvs)
+        time.sleep(1)
+        nh_memb_exp_count = {"10.0.0.3":16,"10.0.0.5":16,"10.0.0.7":16,"10.0.0.9":16,"10.0.0.11":22,"10.0.0.13":21,"10.0.0.19":21}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
+
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.3,10.0.0.7,10.0.0.9,10.0.0.13,10.0.0.15,10.0.0.17,10.0.0.19"), 
+            ("ifname", "Ethernet4,Ethernet12,Ethernet16,Ethernet24,Ethernet28,Ethernet32,Ethernet36")])
+        ps.set(fg_nhg_prefix, fvs)
+        time.sleep(1)
+        nh_memb_exp_count = {"10.0.0.3":22,"10.0.0.7":21,"10.0.0.9":21,"10.0.0.13":16,"10.0.0.15":16,"10.0.0.17":16,"10.0.0.19":16}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
+
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.11"), ("ifname", "Ethernet12,Ethernet20")])
+        ps.set(fg_nhg_prefix, fvs)
+        time.sleep(1)
+        nh_memb_exp_count = {"10.0.0.7":64,"10.0.0.11":64}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
+
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.5,10.0.0.7,10.0.0.9"), ("ifname", "Ethernet8,Ethernet12,Ethernet16")])
+        ps.set(fg_nhg_prefix, fvs)
+        time.sleep(1)
+        nh_memb_exp_count = {"10.0.0.5":43,"10.0.0.7":43,"10.0.0.9":42}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
+
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.7,10.0.0.9,10.0.0.11"), ("ifname", "Ethernet0,Ethernet4,Ethernet8,Ethernet12,Ethernet16,Ethernet20")])
+        ps.set(fg_nhg_prefix, fvs)
+        time.sleep(1)
+        nh_memb_exp_count = {"10.0.0.1":12,"10.0.0.3":13,"10.0.0.5":13,"10.0.0.7":13,"10.0.0.9":13,"10.0.0.11":64}
+        verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+
+
+        # Remove route
+        ps._del(fg_nhg_prefix)
+        time.sleep(1)
+
+        keys = rtbl.getKeys()
+        for k in keys:
+            rt_key = json.loads(k)
+
+            assert rt_key['dest'] != fg_nhg_prefix
+
+        keys = nhg_member_tbl.getKeys()
+        assert len(keys) == 0
+
+
+        # remove fgnhg prefix
+        remove_entry_tbl(
+            config_db,
+            "FG_NHG_PREFIX", 
+            fg_nhg_prefix,
+        )
+
