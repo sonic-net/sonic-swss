@@ -502,13 +502,12 @@ class TestRoute(TestRouteBase):
             fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", key)
             status = bool(fvs)
             assert status == True
-            for fv in list(fvs.items()):
-                if fv[0] == "SAI_NEXT_HOP_ATTR_IP" and fv[1] == "20.0.1.2":
-                    nexthop2_found = True
-                    nexthop2_oid = key
-                if fv[0] == "SAI_NEXT_HOP_ATTR_IP" and fv[1] == "10.0.0.2":
-                    nexthop1_found = True
-                    nexthop1_oid = key
+            if fvs["SAI_NEXT_HOP_ATTR_IP"] == "20.0.1.2":
+                nexthop2_found = True
+                nexthop2_oid = key
+            if fvs["SAI_NEXT_HOP_ATTR_IP"] == "10.0.0.2":
+                nexthop1_found = True
+                nexthop1_oid = key
 
         assert nexthop1_found == True and nexthop2_found == True
 
@@ -520,18 +519,14 @@ class TestRoute(TestRouteBase):
                 fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", key)
                 status = bool(fvs)
                 assert status == True
-                for fv in list(fvs.items()):
-                    if fv[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
-                        assert fv[1] == nexthop1_oid
-                        route1_found = True
+                assert fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"] == nexthop1_oid
+                route1_found = True
             if route["dest"] == "20.0.1.2/32" and route["vr"] == vrf_1_oid:
                 fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", key)
                 status = bool(fvs)
                 assert status == True
-                for fv in list(fvs.items()):
-                    if fv[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
-                        assert fv[1] == nexthop2_oid
-                        route2_found = True
+                assert fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"] == nexthop2_oid
+                route2_found = True
         assert route1_found == True and route2_found == True
 
         # Ping should work
@@ -593,10 +588,10 @@ class TestRoutePerf(TestRouteBase):
         self.clear_srv_config(dvs)
         numRoutes = 10000   # number of routes to add/remove
 
-        # generate addresses of routes
-        addrs = []
+        # generate ip prefixes of routes
+        prefixes = []
         for i in range(numRoutes):
-            addrs.append("%d.%d.%d.%d/%d" % (100 + int(i / 256 ** 2), int(i / 256), i % 256, 0, 24))
+            prefixes.append("%d.%d.%d.%d/%d" % (100 + int(i / 256 ** 2), int(i / 256), i % 256, 0, 24))
 
         # create l3 interface
         self.create_l3_intf("Ethernet0", "")
@@ -628,36 +623,36 @@ class TestRoutePerf(TestRouteBase):
         # add route entries
         timeStart = time.time()
         for i in range(numRoutes):
-            self.create_route_entry(addrs[i], fieldValues[i % 2])
+            self.create_route_entry(prefixes[i], fieldValues[i % 2])
 
         # wait until all routes are added into ASIC database
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", startNumRoutes + numRoutes) # default timeout is 5 seconds
         print("Time to add %d routes is %.2f seconds. " % (numRoutes, time.time() - timeStart))
 
         # confirm all routes are added
-        asicAddrs = set()
+        asicPrefixes = set()
         for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
             route = json.loads(key)
-            asicAddrs.add(route["dest"])
-        for addr in addrs:
-            assert addr in asicAddrs
+            asicPrefixes.add(route["dest"])
+        for prefix in prefixes:
+            assert prefix in asicPrefixes
 
-        #remove route entries
+        # remove route entries
         timeStart = time.time()
         for i in range(numRoutes):
-            self.remove_route_entry(addrs[i])
+            self.remove_route_entry(prefixes[i])
 
         # wait until all routes are removed from ASIC database
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", startNumRoutes) # default timeout is 5 seconds
         print("Time to remove %d routes is %.2f seconds. " % (numRoutes, time.time() - timeStart))
 
         # confirm all routes are removed
-        asicAddrs = set()
+        asicPrefixes = set()
         for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
             route = json.loads(key)
-            asicAddrs.add(route["dest"])
-        for addr in addrs:
-            assert not addr in asicAddrs
+            asicPrefixes.add(route["dest"])
+        for prefix in prefixes:
+            assert not prefix in asicPrefixes
 
         # remove ip address
         self.remove_ip_address("Ethernet0", "10.0.0.0/31")
