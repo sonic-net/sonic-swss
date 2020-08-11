@@ -5,6 +5,8 @@ import json
 import pytest
 
 from swsscommon import swsscommon
+from dvslib.dvs_common import wait_for_result
+from dvslib.dvs_database import DVSDatabase
 
 class TestRouteBase(object):
     def setup_db(self, dvs):
@@ -19,7 +21,7 @@ class TestRouteBase(object):
     def create_vrf(self, vrf_name):
         initial_entries = set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"))
 
-        self.cdb.create_entry("VRF", vrf_name, {'empty': 'empty'})
+        self.cdb.create_entry("VRF", vrf_name, {"empty": "empty"})
         time.sleep(1)
 
         current_entries = set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"))
@@ -58,6 +60,52 @@ class TestRouteBase(object):
         tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
         tbl._del(key)
 
+    def check_route_entries(self, destinations):
+        def _access_function():
+            route_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+            route_destinations = [json.loads(route_entry)["dest"]
+                                  for route_entry in route_entries]
+            return (all(destination in route_destinations for destination in destinations), None)
+
+        wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
+
+    def check_route_entries_with_vrf(self, destinations, vrf_oids):
+        def _access_function():
+            route_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+            route_destination_vrf = [(json.loads(route_entry)["dest"], json.loads(route_entry)["vr"])
+                                           for route_entry in route_entries]
+            return (all((destination, vrf_oid) in route_destination_vrf
+                        for destination, vrf_oid in zip(destinations, vrf_oids)), None)
+
+        wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
+
+    def check_route_entries_nexthop(self, destinations, vrf_oids, nexthops):
+        def _access_function_nexthop():
+            nexthop_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+            nexthop_oids = dict([(self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", key)["SAI_NEXT_HOP_ATTR_IP"], key)
+                                 for key in nexthop_entries])
+            return (all(nexthop in nexthop_oids for nexthop in nexthops), nexthop_oids)
+
+        status, nexthop_oids = wait_for_result(_access_function_nexthop, DVSDatabase.DEFAULT_POLLING_CONFIG)
+
+        def _access_function_route_nexthop():
+            route_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+            route_destination_nexthop = dict([((json.loads(route_entry)["dest"], json.loads(route_entry)["vr"]), 
+                                               self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", route_entry).get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"))
+                                               for route_entry in route_entries])
+            return (all(route_destination_nexthop.get((destination, vrf_oid)) == nexthop_oids.get(nexthop)
+                        for destination, vrf_oid, nexthop in zip(destinations, vrf_oids, nexthops)), None)
+
+        wait_for_result(_access_function_route_nexthop, DVSDatabase.DEFAULT_POLLING_CONFIG)
+
+    def check_deleted_route_entries(self, destinations):
+        def _access_function():
+            route_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
+            route_destinations = [json.loads(route_entry)["dest"] for route_entry in route_entries]
+            return (all(destination not in route_destinations for destination in destinations), None)
+
+        wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
+
     def clear_srv_config(self, dvs):
         dvs.servers[0].runcmd("ip address flush dev eth0")
         dvs.servers[1].runcmd("ip address flush dev eth0")
@@ -95,32 +143,21 @@ class TestRoute(TestRouteBase):
 
         # add route entry
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 2.2.2.0/24 10.0.0.1\"")
-        time.sleep(1)
 
         # check application database
-        route_entries = self.pdb.get_keys("ROUTE_TABLE")
-        assert "2.2.2.0/24" in route_entries
+        self.pdb.wait_for_entry("ROUTE_TABLE", "2.2.2.0/24")
 
         # check ASIC route database
-        route_found = False
-        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
-            route = json.loads(key)
-            if route["dest"] == "2.2.2.0/24":
-                route_found = True
-        assert route_found == True
+        self.check_route_entries(["2.2.2.0/24"])
 
         # remove route entry
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 2.2.2.0/24 10.0.0.1\"")
-        time.sleep(1)
 
         # check application database
-        route_entries = self.pdb.get_keys("ROUTE_TABLE")
-        assert "2.2.2.0/24" not in route_entries
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "2.2.2.0/24")
 
         # check ASIC route database
-        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
-            route = json.loads(key)
-            assert route["dest"] != "2.2.2.0/24"
+        self.check_deleted_route_entries(["2.2.2.0/24"])
 
         # remove ip address
         self.remove_ip_address("Ethernet0", "10.0.0.0/31")
@@ -169,32 +206,21 @@ class TestRoute(TestRouteBase):
 
         # add route entry
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 3000::0/64 2000::2\"")
-        time.sleep(2)
 
         # check application database
-        route_entries = self.pdb.get_keys("ROUTE_TABLE")
-        assert "3000::/64" in route_entries
+        self.pdb.wait_for_entry("ROUTE_TABLE", "3000::/64")
 
         # check ASIC route database
-        route_found = False
-        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
-            route = json.loads(key)
-            if route["dest"] == "3000::/64":
-                route_found = True
-        assert route_found == True
+        self.check_route_entries(["3000::/64"])
 
         # remove route entry
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 3000::0/64 2000::2\"")
-        time.sleep(1)
 
         # check application database
-        route_entries = self.pdb.get_keys("ROUTE_TABLE")
-        assert "3000::/64" not in route_entries
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE", "3000::/64")
 
         # check ASIC route database
-        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
-            route = json.loads(key)
-            assert route["dest"] != "3000::/64"
+        self.check_deleted_route_entries(["3000::/64"])
 
         # remove ip address
         self.remove_ip_address("Ethernet0", "2000::1/64")
@@ -252,8 +278,6 @@ class TestRoute(TestRouteBase):
         dvs.servers[3].runcmd("ip address add 10.0.0.3/31 dev eth0")
         dvs.servers[3].runcmd("ip route add default via 10.0.0.2")
 
-        time.sleep(1)
-
         # get neighbor entry
         dvs.servers[0].runcmd("ping -c 1 10.0.0.3")
         dvs.servers[2].runcmd("ping -c 1 10.0.0.3")
@@ -261,40 +285,24 @@ class TestRoute(TestRouteBase):
         # add route
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 2.2.2.0/24 10.0.0.1 vrf Vrf_1\"")
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 3.3.3.0/24 10.0.0.1 vrf Vrf_2\"")
-        time.sleep(1)
 
         # check application database
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_1")
-        assert "2.2.2.0/24" in route_entries
-
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_2")
-        assert "3.3.3.0/24" in route_entries
+        self.pdb.wait_for_entry("ROUTE_TABLE:Vrf_1", "2.2.2.0/24")
+        self.pdb.wait_for_entry("ROUTE_TABLE:Vrf_2", "3.3.3.0/24")
 
         # check ASIC route database
-        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
-            route = json.loads(key)
-            if route["dest"] == "2.2.2.0/24" and route["vr"] == vrf_1_oid:
-                route_Vrf_1_found = True
-            if route["dest"] == "3.3.3.0/24" and route["vr"] == vrf_2_oid:
-                route_Vrf_2_found = True
-        assert route_Vrf_1_found == True and route_Vrf_2_found == True
+        self.check_route_entries_with_vrf(["2.2.2.0/24", "3.3.3.0/24"], [vrf_1_oid, vrf_2_oid])
 
         # remove route
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 2.2.2.0/24 10.0.0.1 vrf Vrf_1\"")
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 3.3.3.0/24 10.0.0.1 vrf Vrf_2\"")
-        time.sleep(1)
 
         # check application database
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_1")
-        assert "2.2.2.0/24" not in route_entries
-
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_2")
-        assert "3.3.3.0/24" not in route_entries
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE:Vrf_1", "2.2.2.0/24")
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE:Vrf_2", "3.3.3.0/24")
 
         # check ASIC route database
-        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
-            route = json.loads(key)
-            assert route["dest"] != "2.2.2.0/24" and route["dest"] != "3.3.3.0/24"
+        self.check_deleted_route_entries(["2.2.2.0/24", "3.3.3.0/24"])
 
         # remove ip address
         self.remove_ip_address("Ethernet0", "10.0.0.0/31")
@@ -368,45 +376,28 @@ class TestRoute(TestRouteBase):
         # get neighbor entry
         dvs.servers[0].runcmd("ping -6 -c 1 2001::2")
         dvs.servers[2].runcmd("ping -6 -c 1 2001::2")
-        time.sleep(2)
 
         # add route
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 3000::0/64 2000::2 vrf Vrf_1\"")
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 4000::0/64 2000::2 vrf Vrf_2\"")
-        time.sleep(2)
 
         # check application database
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_1")
-        assert "3000::/64" in route_entries
-
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_2")
-        assert "4000::/64" in route_entries
+        self.pdb.wait_for_entry("ROUTE_TABLE:Vrf_1", "3000::/64")
+        self.pdb.wait_for_entry("ROUTE_TABLE:Vrf_2", "4000::/64")
 
         # check ASIC route database
-        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
-            route = json.loads(key)
-            if route["dest"] == "3000::/64" and route["vr"] == vrf_1_oid:
-                route_Vrf_1_found = True
-            if route["dest"] == "4000::/64" and route["vr"] == vrf_2_oid:
-                route_Vrf_2_found = True
-        assert route_Vrf_1_found == True and route_Vrf_2_found == True
-
+        self.check_route_entries_with_vrf(["3000::/64", "4000::/64"], [vrf_1_oid, vrf_2_oid])
 
         # remove route
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 3000::0/64 2000::2 vrf Vrf_1\"")
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ipv6 route 4000::0/64 2000::2 vrf Vrf_2\"")
 
         # check application database
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_1")
-        assert "3000::/64" not in route_entries
-
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_2")
-        assert "4000::/64" not in route_entries
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE:Vrf_1", "3000::/64")
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE:Vrf_2", "4000::/64")
 
         # check ASIC route database
-        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
-            route = json.loads(key)
-            assert route["dest"] != "3000::/64" and route["dest"] != "4000::/64"
+        self.check_deleted_route_entries(["3000::/64", "4000::/64"])
 
         # remove ip address
         self.remove_ip_address("Ethernet0", "2000::1/64")
@@ -478,8 +469,6 @@ class TestRoute(TestRouteBase):
         dvs.servers[3].runcmd("ip address add 20.0.1.2/24 dev eth0")
         dvs.servers[3].runcmd("ip route add default via 20.0.1.1")
 
-        time.sleep(1)
-
         # get neighbor entry
         dvs.servers[0].runcmd("ping -c 1 10.0.1.2")
         dvs.servers[2].runcmd("ping -c 1 20.0.1.2")
@@ -487,47 +476,13 @@ class TestRoute(TestRouteBase):
         # add route
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 20.0.1.2/32 20.0.1.2 vrf Vrf_1 nexthop-vrf Vrf_2\"")
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 10.0.0.2/32 10.0.0.2 vrf Vrf_2 nexthop-vrf Vrf_1\"")
-        time.sleep(1)
 
         # check application database
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_1")
-        assert "20.0.1.2" in route_entries
-
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_2")
-        assert "10.0.0.2" in route_entries
+        self.pdb.wait_for_entry("ROUTE_TABLE:Vrf_1", "20.0.1.2")
+        self.pdb.wait_for_entry("ROUTE_TABLE:Vrf_2", "10.0.0.2")
 
         # check ASIC neighbor interface database
-        nexthop_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
-        for key in nexthop_entries:
-            fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", key)
-            status = bool(fvs)
-            assert status == True
-            if fvs["SAI_NEXT_HOP_ATTR_IP"] == "20.0.1.2":
-                nexthop2_found = True
-                nexthop2_oid = key
-            if fvs["SAI_NEXT_HOP_ATTR_IP"] == "10.0.0.2":
-                nexthop1_found = True
-                nexthop1_oid = key
-
-        assert nexthop1_found == True and nexthop2_found == True
-
-        # check ASIC route database
-        route_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
-        for key in route_entries:
-            route = json.loads(key)
-            if route["dest"] == "10.0.0.2/32" and route["vr"] == vrf_2_oid:
-                fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", key)
-                status = bool(fvs)
-                assert status == True
-                assert fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"] == nexthop1_oid
-                route1_found = True
-            if route["dest"] == "20.0.1.2/32" and route["vr"] == vrf_1_oid:
-                fvs = self.adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", key)
-                status = bool(fvs)
-                assert status == True
-                assert fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"] == nexthop2_oid
-                route2_found = True
-        assert route1_found == True and route2_found == True
+        self.check_route_entries_nexthop(["10.0.0.2/32", "20.0.1.2/32"], [vrf_2_oid, vrf_1_oid], ["10.0.0.2", "20.0.1.2"])
 
         # Ping should work
         ping_stats = dvs.servers[0].runcmd("ping -c 1 20.0.1.2")
@@ -536,19 +491,13 @@ class TestRoute(TestRouteBase):
         # remove route
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 20.0.1.2/32 20.0.1.2 vrf Vrf_1 nexthop-vrf Vrf_2\"")
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"no ip route 10.0.0.2/32 10.0.0.2 vrf Vrf_2 nexthop-vrf Vrf_1\"")
-        time.sleep(1)
 
         # check application database
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_1")
-        assert "20.0.1.2" not in route_entries
-
-        route_entries = self.pdb.get_keys("ROUTE_TABLE:Vrf_2")
-        assert "10.0.0.2" not in route_entries
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE:Vrf_1", "20.0.1.2")
+        self.pdb.wait_for_deleted_entry("ROUTE_TABLE:Vrf_2", "10.0.0.2")
 
         # check ASIC route database
-        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
-            route = json.loads(key)
-            assert route["dest"] != "10.0.0.2/32" and route["dest"] != "20.0.1.2/32"
+        self.check_deleted_route_entries(["10.0.0.2/32", "20.0.1.2/32"])
 
         # remove ip address
         self.remove_ip_address("Ethernet0", "10.0.0.1/24")
@@ -630,12 +579,7 @@ class TestRoutePerf(TestRouteBase):
         print("Time to add %d routes is %.2f seconds. " % (numRoutes, time.time() - timeStart))
 
         # confirm all routes are added
-        asicPrefixes = set()
-        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
-            route = json.loads(key)
-            asicPrefixes.add(route["dest"])
-        for prefix in prefixes:
-            assert prefix in asicPrefixes
+        self.check_route_entries(prefixes)
 
         # remove route entries
         timeStart = time.time()
@@ -647,12 +591,7 @@ class TestRoutePerf(TestRouteBase):
         print("Time to remove %d routes is %.2f seconds. " % (numRoutes, time.time() - timeStart))
 
         # confirm all routes are removed
-        asicPrefixes = set()
-        for key in self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"):
-            route = json.loads(key)
-            asicPrefixes.add(route["dest"])
-        for prefix in prefixes:
-            assert not prefix in asicPrefixes
+        self.check_deleted_route_entries(prefixes)
 
         # remove ip address
         self.remove_ip_address("Ethernet0", "10.0.0.0/31")
