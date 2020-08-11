@@ -38,8 +38,9 @@ namespace swss
         m_conn->fd = socket(AF_UNIX, SOCK_DGRAM, 0);
     }
 
-    DBConnector::DBConnector(const std::string& dbName, unsigned int timeout, bool isTcpConn)
+    DBConnector::DBConnector(const std::string& dbName, unsigned int timeout, bool isTcpConn, const string& nameSpace)
         : m_dbName(dbName)
+        , m_namespace(nameSpace)
     {
         if (swss::SonicDBConfig::isInit() == false)
             swss::SonicDBConfig::initialize("./database_config.json");
@@ -59,6 +60,12 @@ namespace swss
             m_conn->unix_sock.path = strdup(swss::SonicDBConfig::getDbSock(dbName).c_str());
             m_conn->fd = socket(AF_UNIX, SOCK_DGRAM, 0);
         }
+    }
+
+    DBConnector::DBConnector(const string& dbName, unsigned int timeout, bool isTcpConn)
+        : DBConnector(dbName, timeout, isTcpConn, EMPTY_NAMESPACE)
+    {
+        // Empty contructor
     }
 
     int DBConnector::getDbId() const
