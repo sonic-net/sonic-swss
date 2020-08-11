@@ -48,6 +48,7 @@ def pytest_addoption(parser):
     parser.addoption("--max_cpu",
                      action="store",
                      default=2,
+                     type=int,
                      help="Max number of CPU cores to use, if available. (default = 2)")
 
 
@@ -261,7 +262,7 @@ class DockerVirtualSwitch(object):
                                                   environment=self.environment,
                                                   network_mode=f"container:{self.ctn_sw.name}",
                                                   volumes={self.mount: {"bind": "/var/run/redis", "mode": "rw"}},
-                                                  cpu_shares=max_cpu)
+                                                  cpu_count=max_cpu)
 
         self.redis_sock = self.mount + '/' + "redis.sock"
 
