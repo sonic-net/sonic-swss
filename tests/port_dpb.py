@@ -1,5 +1,4 @@
 from swsscommon import swsscommon
-import redis
 import time
 import os
 import pytest
@@ -26,7 +25,7 @@ class Port():
         self._app_db_ptbl = swsscommon.Table(self._app_db, swsscommon.APP_PORT_TABLE_NAME)
         self._asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         self._asic_db_ptbl = swsscommon.Table(self._asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        self._counters_db = redis.Redis(unix_socket_path=self._dvs.redis_sock, db=swsscommon.COUNTERS_DB)
+        self._counters_db = dvs.get_counters_db()
         self._dvs_asic_db = dvs.get_asic_db()
 
     def set_name(self, name):
@@ -87,7 +86,7 @@ class Port():
         return self._oid
 
     def print_port(self):
-        print "Port: %s Lanes: %s Speed: %d, Index: %d"%(self._name, self._lanes, self._speed, self._index)
+        print("Port: %s Lanes: %s Speed: %d, Index: %d"%(self._name, self._lanes, self._speed, self._index))
 
     def port_merge(self, child_ports):
         child_ports.sort(key=lambda x: x.get_port_num())
@@ -111,7 +110,7 @@ class Port():
         child_port_list = []
         port_num = self.get_port_num()
         num_lanes = len(self._lanes)
-        offset = num_lanes/child_ports;
+        offset = num_lanes//child_ports
         lanes_per_child = offset
         for i in range(child_ports):
             child_port_num = port_num + (i * offset)
@@ -120,7 +119,7 @@ class Port():
             child_port_lanes = []
             for j in range(lanes_per_child):
                 child_port_lanes.append(self._lanes[(i*offset)+j])
-            child_port_speed = self._speed/child_ports
+            child_port_speed = self._speed//child_ports
             child_port_index = self._index
 
             child_port = Port(self._dvs, child_port_name)
@@ -172,7 +171,11 @@ class Port():
         return status
 
     def sync_oid(self):
-        self._oid = self._counters_db.hget("COUNTERS_PORT_NAME_MAP", self.get_name())
+        fvs = dict(self._counters_db.get_entry("COUNTERS_PORT_NAME_MAP", ""))
+        try:
+            self._oid = fvs[self.get_name()]
+        except KeyError:
+            self._oid = None
 
     """
         Expectation of the caller is that the port does exist in ASIC DB.
@@ -218,7 +221,7 @@ class Port():
         (status, fvs) = self._asic_db_ptbl.get(self.get_oid())
         assert(status == True)
         fvs_dict = self.get_fvs_dict(fvs)
-        if (fvs_dict.has_key("SAI_PORT_ATTR_HW_LANE_LIST")):
+        if "SAI_PORT_ATTR_HW_LANE_LIST" in fvs_dict:
             assert(fvs_dict['SAI_PORT_ATTR_HW_LANE_LIST'] == self.get_lanes_asic_db_str())
         assert(fvs_dict['SAI_PORT_ATTR_SPEED'] == str(self.get_speed()))
 

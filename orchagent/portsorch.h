@@ -10,10 +10,14 @@
 #include "macaddress.h"
 #include "producertable.h"
 #include "flex_counter_manager.h"
+#include "gearboxutils.h"
+#include "saihelper.h"
+
 
 #define FCS_LEN 4
 #define VLAN_TAG_LEN 4
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
+#define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
@@ -121,10 +125,12 @@ public:
 
     bool addSubPort(Port &port, const string &alias, const bool &adminUp = true, const uint32_t &mtu = 0);
     bool removeSubPort(const string &alias);
+    void getLagMember(Port &lag, vector<Port> &portv);
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
     unique_ptr<Table> m_portTable;
+    unique_ptr<Table> m_gearboxTable;
     unique_ptr<Table> m_queueTable;
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
@@ -137,6 +143,7 @@ private:
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
+    std::string getPortRateFlexCounterTableKey(std::string s);
 
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
@@ -159,11 +166,26 @@ private:
         PORT_CONFIG_DONE,
     } port_config_state_t;
 
+    typedef enum
+    {
+        MAC_PORT_TYPE,
+        PHY_PORT_TYPE,
+        LINE_PORT_TYPE,
+    } dest_port_type_t;
+
+    bool m_gearboxEnabled = false;
+    map<int, gearbox_phy_t> m_gearboxPhyMap;
+    map<int, gearbox_interface_t> m_gearboxInterfaceMap;
+    map<int, gearbox_lane_t> m_gearboxLaneMap;
+    map<int, gearbox_port_t> m_gearboxPortMap;
+    map<sai_object_id_t, tuple<sai_object_id_t, sai_object_id_t>> m_gearboxPortListLaneMap;
+
     port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;
     sai_uint32_t m_portCount;
     map<set<int>, sai_object_id_t> m_portListLaneMap;
-    map<set<int>, tuple<string, uint32_t, int, string>> m_lanesAliasSpeedMap;
+    map<set<int>, tuple<string, uint32_t, int, string, int>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
+    unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
 
@@ -206,26 +228,28 @@ private:
     bool removeLagMember(Port &lag, Port &port);
     bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
-    void getLagMember(Port &lag, vector<Port> &portv);
 
     bool addPort(const set<int> &lane_set, uint32_t speed, int an=0, string fec="");
     sai_status_t removePort(sai_object_id_t port_id);
-    bool initPort(const string &alias, const set<int> &lane_set);
+    bool initPort(const string &alias, const int index, const set<int> &lane_set);
     void deInitPort(string alias, sai_object_id_t port_id);
 
-    bool setPortAdminStatus(sai_object_id_t id, bool up);
+    bool setPortAdminStatus(Port &port, bool up);
     bool getPortAdminStatus(sai_object_id_t id, bool& up);
     bool setPortMtu(sai_object_id_t id, sai_uint32_t mtu);
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
-    bool setPortFec(sai_object_id_t id, sai_port_fec_mode_t mode);
+    bool setPortFec(Port &port, sai_port_fec_mode_t mode);
     bool setPortPfcAsym(Port &port, string pfc_asym);
+    bool getDestPortId(sai_object_id_t src_port_id, dest_port_type_t port_type, sai_object_id_t &des_port_id);
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
-    bool setPortSpeed(sai_object_id_t port_id, sai_uint32_t speed);
-    bool getPortSpeed(sai_object_id_t port_id, sai_uint32_t &speed);
+    bool setPortSpeed(Port &port, sai_uint32_t speed);
+    bool getPortSpeed(sai_object_id_t id, sai_uint32_t &speed);
+    bool setGearboxPortsAttr(Port &port, sai_port_attr_t id, void *value);
+    bool setGearboxPortAttr(Port &port, dest_port_type_t port_type, sai_port_attr_t id, void *value);
 
     bool setPortAdvSpeed(sai_object_id_t port_id, sai_uint32_t speed);
 
@@ -249,6 +273,8 @@ private:
                                 vector<uint32_t> &serdes_val);
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
+    void initGearbox();
+    bool initGearboxPort(Port &port);
 };
 #endif /* SWSS_PORTSORCH_H */
 

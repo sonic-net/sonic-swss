@@ -6,22 +6,37 @@ import json
 import redis
 import docker
 import pytest
-import commands
 import tarfile
-import StringIO
+import io
 import subprocess
+import sys
+if sys.version_info < (3, 0):
+    import commands
 
 from datetime import datetime
 from swsscommon import swsscommon
-from dvslib import dvs_database as dvs_db
-from dvslib import dvs_acl
+from dvslib.dvs_database import DVSDatabase
+from dvslib.dvs_common import PollingConfig, wait_for_result
+from dvslib.dvs_acl import DVSAcl
 from dvslib import dvs_vlan
 from dvslib import dvs_lag
+from dvslib import dvs_mirror
+from dvslib import dvs_policer
+
+# FIXME: For the sake of stabilizing the PR pipeline we currently assume there are 32 front-panel
+# ports in the system (much like the rest of the test suite). This should be adjusted to accomodate
+# a dynamic number of ports. GitHub Issue: Azure/sonic-swss#1384.
+NUM_PORTS = 32
+
 
 def ensure_system(cmd):
-    (rc, output) = commands.getstatusoutput(cmd)
+    if sys.version_info < (3, 0):
+        (rc, output) = commands.getstatusoutput(cmd)
+    else:
+        (rc, output) = subprocess.getstatusoutput(cmd)
     if rc:
         raise RuntimeError('Failed to run command: %s. rc=%d. output: %s' % (cmd, rc, output))
+
 
 def pytest_addoption(parser):
     parser.addoption("--dvsname", action="store", default=None,
@@ -31,54 +46,37 @@ def pytest_addoption(parser):
     parser.addoption("--imgname", action="store", default="docker-sonic-vs",
                       help="image name")
 
-class AsicDbValidator(object):
-    def __init__(self, dvs):
-        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
 
-        # get default dot1q vlan id
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+class AsicDbValidator(DVSDatabase):
+    def __init__(self, db_id: str, connector: str):
+        DVSDatabase.__init__(self, db_id, connector)
 
-        keys = atbl.getKeys()
-        assert len(keys) == 1
-        self.default_vlan_id = keys[0]
+        # Get default .1Q Vlan ID
+        self.default_vlan_id = self.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN", 1)[0]
 
-        # build port oid to front port name mapping
+        # Build port OID to front port name mapping
         self.portoidmap = {}
         self.portnamemap = {}
         self.hostifoidmap = {}
         self.hostifnamemap = {}
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")
-        keys = atbl.getKeys()
 
-        assert len(keys) == 32
+        keys = self.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", NUM_PORTS)
         for k in keys:
-            (status, fvs) = atbl.get(k)
-
-            assert status == True
-
-            for fv in fvs:
-                if fv[0] == "SAI_HOSTIF_ATTR_OBJ_ID":
-                    port_oid = fv[1]
-                elif fv[0] == "SAI_HOSTIF_ATTR_NAME":
-                    port_name = fv[1]
+            fvs = self.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", k)
+            port_oid = fvs.get("SAI_HOSTIF_ATTR_OBJ_ID")
+            port_name = fvs.get("SAI_HOSTIF_ATTR_NAME")
 
             self.portoidmap[port_oid] = port_name
             self.portnamemap[port_name] = port_oid
             self.hostifoidmap[k] = port_name
             self.hostifnamemap[port_name] = k
 
-        # get default acl table and acl rules
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
-        keys = atbl.getKeys()
+        # Get default ACL table and ACL rules
+        self.default_acl_tables = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
+        assert len(self.default_acl_tables) >= 0
 
-        assert len(keys) >= 0
-        self.default_acl_tables = keys
+        self.default_acl_entries = self.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 0)
 
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
-        keys = atbl.getKeys()
-
-        assert len(keys) == 0
-        self.default_acl_entries = keys
 
 class ApplDbValidator(object):
     def __init__(self, dvs):
@@ -102,6 +100,7 @@ class VirtualServer(object):
 
         # create netns
         if os.path.exists("/var/run/netns/%s" % self.nsname):
+            self.killall_processes()
             self.cleanup = False
         else:
             ensure_system("ip netns add %s" % self.nsname)
@@ -123,22 +122,25 @@ class VirtualServer(object):
             ensure_system("nsenter -t %d -n ip link set arp off dev %s" % (pid, self.pifname))
             ensure_system("nsenter -t %d -n sysctl -w net.ipv6.conf.%s.disable_ipv6=1" % (pid, self.pifname))
 
+    def killall_processes(self):
+        pids = subprocess.check_output("ip netns pids %s" % (self.nsname), shell=True).decode('utf-8')
+        if pids:
+            for pid in pids.split('\n'):
+                if len(pid) > 0:
+                    os.system("kill %s" % int(pid))
+
     def destroy(self):
         if self.cleanup:
-            pids = subprocess.check_output("ip netns pids %s" % (self.nsname), shell=True)
-            if pids:
-                for pid in pids.split('\n'):
-                    if len(pid) > 0:
-                        os.system("kill %s" % int(pid))
+            self.killall_processes()
             ensure_system("ip netns delete %s" % self.nsname)
 
     def runcmd(self, cmd):
         try:
             out = subprocess.check_output("ip netns exec %s %s" % (self.nsname, cmd), stderr=subprocess.STDOUT, shell=True)
         except subprocess.CalledProcessError as e:
-            print "------rc={} for cmd: {}------".format(e.returncode, e.cmd)
-            print e.output.rstrip()
-            print "------"
+            print("------rc={} for cmd: {}------".format(e.returncode, e.cmd))
+            print(e.output.rstrip())
+            print("------")
             return e.returncode
         return 0
 
@@ -146,7 +148,7 @@ class VirtualServer(object):
         return subprocess.Popen("ip netns exec %s %s" % (self.nsname, cmd), shell=True)
 
     def runcmd_output(self, cmd):
-        return subprocess.check_output("ip netns exec %s %s" % (self.nsname, cmd), shell=True)
+        return subprocess.check_output("ip netns exec %s %s" % (self.nsname, cmd), shell=True).decode('utf-8')
 
 class DockerVirtualSwitch(object):
     APP_DB_ID = 0
@@ -156,7 +158,7 @@ class DockerVirtualSwitch(object):
     FLEX_COUNTER_DB_ID = 5
     STATE_DB_ID = 6
 
-    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None):
+    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None, log_path=None):
         self.basicd = ['redis-server',
                        'rsyslogd']
         self.swssd = ['orchagent',
@@ -177,6 +179,8 @@ class DockerVirtualSwitch(object):
         if subprocess.check_call(["/sbin/modprobe", "team"]) != 0:
             raise NameError("cannot install kernel team module")
 
+        self.log_path = log_path
+
         self.ctn = None
         if keeptb:
             self.cleanup = False
@@ -187,7 +191,10 @@ class DockerVirtualSwitch(object):
             for ctn in self.client.containers.list():
                 if ctn.name == name:
                     self.ctn = ctn
-                    (status, output) = commands.getstatusoutput("docker inspect --format '{{.HostConfig.NetworkMode}}' %s" % name)
+                    if sys.version_info < (3, 0):
+                        (status, output) = commands.getstatusoutput("docker inspect --format '{{.HostConfig.NetworkMode}}' %s" % name)
+                    else:
+                        (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.HostConfig.NetworkMode}}' %s" % name)
                     ctn_sw_id = output.split(':')[1]
                     self.cleanup = False
             if self.ctn == None:
@@ -198,12 +205,15 @@ class DockerVirtualSwitch(object):
                 if ctn.id == ctn_sw_id or ctn.name == ctn_sw_id:
                     ctn_sw_name = ctn.name
 
-            (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % ctn_sw_name)
+            if sys.version_info < (3, 0):
+                (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % ctn_sw_name)
+            else:
+                (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % ctn_sw_name)
             self.ctn_sw_pid = int(output)
 
             # create virtual servers
             self.servers = []
-            for i in range(32):
+            for i in range(NUM_PORTS):
                 server = VirtualServer(ctn_sw_name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
@@ -214,12 +224,15 @@ class DockerVirtualSwitch(object):
         else:
             self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
                     command="bash", stdin_open=True)
-            (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % self.ctn_sw.name)
+            if sys.version_info < (3, 0):
+                (status, output) = commands.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % self.ctn_sw.name)
+            else:
+                (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.State.Pid}}' %s" % self.ctn_sw.name)
             self.ctn_sw_pid = int(output)
 
             # create virtual server
             self.servers = []
-            for i in range(32):
+            for i in range(NUM_PORTS):
                 server = VirtualServer(self.ctn_sw.name, self.ctn_sw_pid, i)
                 self.servers.append(server)
 
@@ -236,7 +249,6 @@ class DockerVirtualSwitch(object):
                     volumes={ self.mount: { 'bind': '/var/run/redis', 'mode': 'rw' } })
 
         self.redis_sock = self.mount + '/' + "redis.sock"
-        self.check_ctn_status_and_db_connect()
 
         # DB wrappers are declared here, lazy-loaded in the tests
         self.app_db = None
@@ -246,7 +258,8 @@ class DockerVirtualSwitch(object):
         self.flex_db = None
         self.state_db = None
 
-        self.dvs_acl = None
+        # Make sure everything is up and running before turning over control to the caller
+        self.check_ready_status_and_init_db()
 
     def destroy(self):
         if self.appldb:
@@ -258,24 +271,30 @@ class DockerVirtualSwitch(object):
             for s in self.servers:
                 s.destroy()
 
-    def check_ctn_status_and_db_connect(self):
+    def check_ready_status_and_init_db(self):
         try:
             # temp fix: remove them once they are moved to vs start.sh
             self.ctn.exec_run("sysctl -w net.ipv6.conf.default.disable_ipv6=0")
             for i in range(0, 128, 4):
                 self.ctn.exec_run("sysctl -w net.ipv6.conf.eth%d.disable_ipv6=1" % (i + 1))
-            self.check_ready()
+
+            # Verify that all of the device services have started.
+            self.check_services_ready()
+
+            # Initialize the databases.
             self.init_asicdb_validator()
             self.appldb = ApplDbValidator(self)
-        except:
+
+            # Verify that SWSS has finished initializing.
+            self.check_swss_ready()
+
+        except Exception:
             self.get_logs()
             self.destroy()
             raise
 
-
-    def check_ready(self, timeout=30):
-        '''check if all processes in the dvs is ready'''
-
+    def check_services_ready(self, timeout=30):
+        """"Check if all processes in the DVS are ready."""
         re_space = re.compile('\s+')
         process_status = {}
         ready = False
@@ -284,7 +303,7 @@ class DockerVirtualSwitch(object):
             # get process status
             res = self.ctn.exec_run("supervisorctl status")
             try:
-                out = res.output
+                out = res.output.decode('utf-8')
             except AttributeError:
                 out = res
             for l in out.split('\n'):
@@ -315,6 +334,30 @@ class DockerVirtualSwitch(object):
 
             time.sleep(1)
 
+    def check_swss_ready(self, timeout=300):
+        """Verify that SWSS is ready to receive inputs.
+
+        Almost every part of orchagent depends on ports being created and initialized
+        before they can proceed with their processing. If we start the tests after orchagent
+        has started running but before it has had time to initialize all the ports, then the
+        first several tests will fail.
+        """
+        num_ports = NUM_PORTS
+
+        # Verify that all ports have been initialized and configured
+        app_db = self.get_app_db()
+        startup_polling_config = PollingConfig(5, timeout, strict=True)
+
+        def _polling_function():
+            port_table_keys = app_db.get_keys("PORT_TABLE")
+            return ("PortInitDone" in port_table_keys and "PortConfigDone" in port_table_keys, None)
+
+        wait_for_result(_polling_function, startup_polling_config)
+
+        # Verify that all ports have been created
+        asic_db = self.get_asic_db()
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_ports + 1)  # +1 CPU Port
+
     def net_cleanup(self):
         """clean up network, remove extra links"""
 
@@ -322,7 +365,7 @@ class DockerVirtualSwitch(object):
 
         res = self.ctn.exec_run("ip link show")
         try:
-            out = res.output
+            out = res.output.decode('utf-8')
         except AttributeError:
             out = res
         for l in out.split('\n'):
@@ -335,7 +378,7 @@ class DockerVirtualSwitch(object):
                 m = re.compile("(eth|lo|Bridge|Ethernet)").match(pname)
                 if not m:
                     self.ctn.exec_run("ip link del {}".format(pname))
-                    print "remove extra link {}".format(pname)
+                    print("remove extra link {}".format(pname))
         return
 
     def ctn_restart(self):
@@ -345,7 +388,7 @@ class DockerVirtualSwitch(object):
         if self.appldb:
             del self.appldb
         self.ctn_restart()
-        self.check_ctn_status_and_db_connect()
+        self.check_ready_status_and_init_db()
 
     # start processes in SWSS
     def start_swss(self):
@@ -383,25 +426,25 @@ class DockerVirtualSwitch(object):
         time.sleep(1)
 
     def init_asicdb_validator(self):
-        self.asicdb = AsicDbValidator(self)
+        self.asicdb = AsicDbValidator(self.ASIC_DB_ID, self.redis_sock)
 
     def runcmd(self, cmd):
         res = self.ctn.exec_run(cmd)
         try:
             exitcode = res.exit_code
-            out = res.output
+            out = res.output.decode('utf-8')
         except AttributeError:
             exitcode = 0
             out = res
         if exitcode != 0:
-            print "-----rc={} for cmd {}-----".format(exitcode, cmd)
-            print out.rstrip()
-            print "-----"
+            print("-----rc={} for cmd {}-----".format(exitcode, cmd))
+            print(out.rstrip())
+            print("-----")
 
         return (exitcode, out)
 
     def copy_file(self, path, filename):
-        tarstr = StringIO.StringIO()
+        tarstr = io.BytesIO()
         tar = tarfile.open(fileobj=tarstr, mode="w")
         tar.add(filename, os.path.basename(filename))
         tar.close()
@@ -409,21 +452,23 @@ class DockerVirtualSwitch(object):
         self.ctn.put_archive(path, tarstr.getvalue())
         tarstr.close()
 
-    def get_logs(self, modname=None):
-        stream, stat = self.ctn.get_archive("/var/log/")
-        if modname == None:
-            log_dir = "log"
-        else:
-            log_dir = "log/{}".format(modname)
-        os.system("rm -rf {}".format(log_dir))
-        ensure_system("mkdir -p {}".format(log_dir))
-        p = subprocess.Popen(["tar", "--no-same-owner", "-C", "./{}".format(log_dir), "-x"], stdin=subprocess.PIPE)
+    def get_logs(self):
+        log_dir = os.path.join("log", self.log_path) if self.log_path else "log"
+
+        ensure_system(f"rm -rf {log_dir}")
+        ensure_system(f"mkdir -p {log_dir}")
+
+        p = subprocess.Popen(["tar", "--no-same-owner", "-C", os.path.join("./", log_dir), "-x"], stdin=subprocess.PIPE)
+
+        stream, _ = self.ctn.get_archive("/var/log/")
         for x in stream:
             p.stdin.write(x)
         p.stdin.close()
         p.wait()
+
         if p.returncode:
-            raise RuntimeError("Failed to unpack the archive.")
+            raise RuntimeError("Failed to unpack the log archive.")
+
         ensure_system("chmod a+r -R log")
 
     def add_log_marker(self, file=None):
@@ -437,13 +482,15 @@ class DockerVirtualSwitch(object):
         return marker
 
     def SubscribeAppDbObject(self, objpfx):
-        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APPL_DB)
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APPL_DB,
+                        encoding="utf-8", decode_responses=True)
         pubsub = r.pubsub()
         pubsub.psubscribe("__keyspace@0__:%s*" % objpfx)
         return pubsub
 
     def SubscribeAsicDbObject(self, objpfx):
-        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.ASIC_DB)
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.ASIC_DB,
+                        encoding="utf-8", decode_responses=True)
         pubsub = r.pubsub()
         pubsub.psubscribe("__keyspace@1__:ASIC_STATE:%s*" % objpfx)
         return pubsub
@@ -455,7 +502,7 @@ class DockerVirtualSwitch(object):
         while True and idle < timeout:
             message = pubsub.get_message()
             if message:
-                print message
+                print(message)
                 if ignore:
                     fds = message['channel'].split(':')
                     if fds[2] in ignore:
@@ -472,7 +519,8 @@ class DockerVirtualSwitch(object):
         return (nadd, ndel)
 
     def GetSubscribedAppDbObjects(self, pubsub, ignore=None, timeout=10):
-        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APPL_DB)
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.APPL_DB,
+                        encoding="utf-8", decode_responses=True)
 
         addobjs = []
         delobjs = []
@@ -482,7 +530,7 @@ class DockerVirtualSwitch(object):
         while True and idle < timeout:
             message = pubsub.get_message()
             if message:
-                print message
+                print(message)
                 key = message['channel'].split(':', 1)[1]
                 # In producer/consumer_state_table scenarios, every entry will
                 # show up twice for every push/pop operation, so skip the second
@@ -515,7 +563,8 @@ class DockerVirtualSwitch(object):
 
 
     def GetSubscribedAsicDbObjects(self, pubsub, ignore=None, timeout=10):
-        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.ASIC_DB)
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.ASIC_DB,
+                        encoding="utf-8", decode_responses=True)
 
         addobjs = []
         delobjs = []
@@ -524,7 +573,7 @@ class DockerVirtualSwitch(object):
         while True and idle < timeout:
             message = pubsub.get_message()
             if message:
-                print message
+                print(message)
                 key = message['channel'].split(':', 1)[1]
                 if ignore:
                     fds = message['channel'].split(':')
@@ -546,7 +595,8 @@ class DockerVirtualSwitch(object):
 
     def SubscribeDbObjects(self, dbobjs):
         # assuming all the db object pairs are in the same db instance
-        r = redis.Redis(unix_socket_path=self.redis_sock)
+        r = redis.Redis(unix_socket_path=self.redis_sock, encoding="utf-8",
+                        decode_responses=True)
         pubsub = r.pubsub()
         substr = ""
         for db, obj in dbobjs:
@@ -816,6 +866,26 @@ class DockerVirtualSwitch(object):
         tbl._del(interface + ":" + ip)
         time.sleep(1)
 
+    def add_route(self, prefix, nexthop):
+        self.runcmd("ip route add " + prefix + " via " + nexthop)
+        time.sleep(1)
+
+    def remove_route(self, prefix):
+        self.runcmd("ip route del " + prefix)
+        time.sleep(1)
+
+    def create_fdb(self, vlan, mac, interface):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "FDB_TABLE")
+        fvs = swsscommon.FieldValuePairs([("port", interface),
+                                          ("type", "dynamic")])
+        tbl.set("Vlan" + vlan + ":" + mac, fvs)
+        time.sleep(1)
+
+    def remove_fdb(self, vlan, mac):
+        tbl = swsscommon.ProducerStateTable(self.pdb, "FDB_TABLE")
+        tbl._del("Vlan" + vlan + ":" + mac)
+        time.sleep(1)
+
     def setup_db(self):
         self.pdb = swsscommon.DBConnector(0, self.redis_sock, 0)
         self.adb = swsscommon.DBConnector(1, self.redis_sock, 0)
@@ -838,7 +908,8 @@ class DockerVirtualSwitch(object):
         assert len(keys) == 1
 
         swVid = keys[0]
-        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.ASIC_DB)
+        r = redis.Redis(unix_socket_path=self.redis_sock, db=swsscommon.ASIC_DB,
+                        encoding="utf-8", decode_responses=True)
         swRid = r.hget("VIDTORID", swVid)
 
         assert swRid is not None
@@ -849,106 +920,20 @@ class DockerVirtualSwitch(object):
         fvp = swsscommon.FieldValuePairs([(attr, val)])
         key = "SAI_OBJECT_TYPE_SWITCH:" + swRid
 
-        ntf.send("set_ro", key, fvp)
-
-    def create_acl_table(self, table, type, ports):
-        tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
-        fvs = swsscommon.FieldValuePairs([("policy_desc", table),
-                                          ("type", type),
-                                          ("ports", ",".join(ports))])
-        tbl.set(table, fvs)
-        time.sleep(1)
-
-    def remove_acl_table(self, table):
-        tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
-        tbl._del(table)
-        time.sleep(1)
-
-    def update_acl_table(self, table, fvs):
-        tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
-        tbl.set(table, fvs)
-        time.sleep(1)
-
-    def get_acl_table_ids(self):
-        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
-        keys = tbl.getKeys()
-
-        for k in self.asicdb.default_acl_tables:
-            assert k in keys
-
-        acl_tables = [k for k in keys if k not in self.asicdb.default_acl_tables]
-
-        return acl_tables
-
-    def verify_if_any_acl_table_created(self):
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
-        keys = atbl.getKeys()
-        for k in  dvs.asicdb.default_acl_tables:
-            assert k in keys
-        acl_tables = [k for k in keys if k not in dvs.asicdb.default_acl_tables]
-
-        if len(acl_tables) != 0:
-            return True
-
-        return False
-
-    def verify_acl_group_num(self, expt):
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
-        acl_table_groups = atbl.getKeys()
-        assert len(acl_table_groups) == expt
-
-        for k in acl_table_groups:
-            (status, fvs) = atbl.get(k)
-            assert status == True
-            for fv in fvs:
-                if fv[0] == "SAI_ACL_TABLE_GROUP_ATTR_ACL_STAGE":
-                    assert fv[1] == "SAI_ACL_STAGE_INGRESS"
-                elif fv[0] == "SAI_ACL_TABLE_GROUP_ATTR_ACL_BIND_POINT_TYPE_LIST":
-                    assert fv[1] == "1:SAI_ACL_BIND_POINT_TYPE_PORT"
-                elif fv[0] == "SAI_ACL_TABLE_GROUP_ATTR_TYPE":
-                    assert fv[1] == "SAI_ACL_TABLE_GROUP_TYPE_PARALLEL"
-                else:
-                    assert False
-
-    def get_acl_group_ids(self):
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
-        acl_table_groups = atbl.getKeys()
-        return acl_table_groups
-
-    def get_fvs_dict(self, fvs):
-        fvs_dict = {}
-        for fv in fvs:
-            fvs_dict.update({fv[0]:fv[1]})
-        return fvs_dict
-
-    def verify_acl_group_member(self, acl_group_id, acl_table_id):
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP_MEMBER")
-        keys = atbl.getKeys()
-
-        for k in keys:
-            (status, fvs) = atbl.get(k)
-            assert status == True
-            assert len(fvs) == 3
-            fvs_dict = self.get_fvs_dict(fvs)
-            if (fvs_dict["SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_GROUP_ID"] == acl_group_id and
-                    fvs_dict["SAI_ACL_TABLE_GROUP_MEMBER_ATTR_ACL_TABLE_ID"] == acl_table_id) :
-                return True
-        assert False
-
-    def verify_acl_port_binding(self, bind_ports):
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE_GROUP")
-        acl_table_groups = atbl.getKeys()
-        assert len(acl_table_groups) == len(bind_ports)
+        # explicit convert unicode string to str for python2
+        ntf.send("set_ro", str(key), fvp)
 
     def get_app_db(self):
         if not self.app_db:
-            self.app_db = dvs_db.DVSDatabase(self.APP_DB_ID, self.redis_sock)
+            self.app_db = DVSDatabase(self.APP_DB_ID, self.redis_sock)
 
         return self.app_db
 
+    # FIXME: Now that AsicDbValidator is using DVSDatabase we should converge this with
+    # that implementation. Save it for a follow-up PR.
     def get_asic_db(self):
         if not self.asic_db:
-            db = dvs_db.DVSDatabase(self.ASIC_DB_ID, self.redis_sock)
+            db = DVSDatabase(self.ASIC_DB_ID, self.redis_sock)
             db.default_acl_tables = self.asicdb.default_acl_tables
             db.default_acl_entries = self.asicdb.default_acl_entries
             db.port_name_map = self.asicdb.portnamemap
@@ -961,40 +946,42 @@ class DockerVirtualSwitch(object):
 
     def get_counters_db(self):
         if not self.counters_db:
-            self.counters_db = dvs_db.DVSDatabase(self.COUNTERS_DB_ID, self.redis_sock)
+            self.counters_db = DVSDatabase(self.COUNTERS_DB_ID, self.redis_sock)
 
         return self.counters_db
 
     def get_config_db(self):
         if not self.config_db:
-            self.config_db = dvs_db.DVSDatabase(self.CONFIG_DB_ID, self.redis_sock)
+            self.config_db = DVSDatabase(self.CONFIG_DB_ID, self.redis_sock)
 
         return self.config_db
 
     def get_flex_db(self):
         if not self.flex_db:
-            self.flex_db = dvs_db.DVSDatabase(self.FLEX_COUNTER_DB_ID, self.redis_sock)
+            self.flex_db = DVSDatabase(self.FLEX_COUNTER_DB_ID, self.redis_sock)
 
         return self.flex_db
 
     def get_state_db(self):
         if not self.state_db:
-            self.state_db = dvs_db.DVSDatabase(self.STATE_DB_ID, self.redis_sock)
+            self.state_db = DVSDatabase(self.STATE_DB_ID, self.redis_sock)
 
         return self.state_db
 
 @pytest.yield_fixture(scope="module")
-def dvs(request):
+def dvs(request) -> DockerVirtualSwitch:
     name = request.config.getoption("--dvsname")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform)
+
+    log_path = name if name else request.module.__name__
+
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path)
+
     yield dvs
-    if name == None:
-        dvs.get_logs(request.module.__name__)
-    else:
-        dvs.get_logs()
+
+    dvs.get_logs()
     dvs.destroy()
 
 @pytest.yield_fixture
@@ -1005,16 +992,17 @@ def testlog(request, dvs):
 
 
 ################# DVSLIB module manager fixtures #############################
-@pytest.yield_fixture(scope="class")
-def dvs_acl_manager(request, dvs):
-    request.cls.dvs_acl = dvs_acl.DVSAcl(dvs.get_asic_db(),
-                                         dvs.get_config_db(),
-                                         dvs.get_state_db(),
-                                         dvs.get_counters_db())
+@pytest.fixture(scope="class")
+def dvs_acl(request, dvs) -> DVSAcl:
+    return DVSAcl(dvs.get_asic_db(),
+                  dvs.get_config_db(),
+                  dvs.get_state_db(),
+                  dvs.get_counters_db())
 
 @pytest.yield_fixture(scope="class")
 def dvs_lag_manager(request, dvs):
-    request.cls.dvs_lag = dvs_lag.DVSLag(dvs.get_config_db())
+    request.cls.dvs_lag = dvs_lag.DVSLag(dvs.get_asic_db(),
+                                         dvs.get_config_db())
 
 @pytest.yield_fixture(scope="class")
 def dvs_vlan_manager(request, dvs):
@@ -1023,6 +1011,17 @@ def dvs_vlan_manager(request, dvs):
                                             dvs.get_state_db(),
                                             dvs.get_counters_db(),
                                             dvs.get_app_db())
+@pytest.yield_fixture(scope="class")
+def dvs_mirror_manager(request, dvs):
+    request.cls.dvs_mirror = dvs_mirror.DVSMirror(dvs.get_asic_db(),
+                                            dvs.get_config_db(),
+                                            dvs.get_state_db(),
+                                            dvs.get_counters_db(),
+                                            dvs.get_app_db())
+@pytest.yield_fixture(scope="class")
+def dvs_policer_manager(request, dvs):
+    request.cls.dvs_policer = dvs_policer.DVSPolicer(dvs.get_asic_db(),
+                                            dvs.get_config_db())
 ##################### DPB fixtures ###########################################
 def create_dpb_config_file(dvs):
     cmd = "sonic-cfggen -j /etc/sonic/init_cfg.json -j /tmp/ports.json --print-data > /tmp/dpb_config_db.json"

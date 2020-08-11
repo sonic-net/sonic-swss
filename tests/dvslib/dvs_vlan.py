@@ -1,4 +1,4 @@
-from dvs_database import DVSDatabase
+from .dvs_database import DVSDatabase
 
 class DVSVlan(object):
     def __init__(self, adb, cdb, sdb, cntrdb, appdb):

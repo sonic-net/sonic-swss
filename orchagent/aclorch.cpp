@@ -44,6 +44,7 @@ acl_rule_attr_lookup_t aclMatchLookup =
     { MATCH_L4_DST_PORT,       SAI_ACL_ENTRY_ATTR_FIELD_L4_DST_PORT },
     { MATCH_ETHER_TYPE,        SAI_ACL_ENTRY_ATTR_FIELD_ETHER_TYPE },
     { MATCH_IP_PROTOCOL,       SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL },
+    { MATCH_NEXT_HEADER,       SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER },
     { MATCH_TCP_FLAGS,         SAI_ACL_ENTRY_ATTR_FIELD_TCP_FLAGS },
     { MATCH_IP_TYPE,           SAI_ACL_ENTRY_ATTR_FIELD_ACL_IP_TYPE },
     { MATCH_DSCP,              SAI_ACL_ENTRY_ATTR_FIELD_DSCP },
@@ -302,7 +303,7 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
                 value.aclfield.mask.u8 = 0x3F;
             }
         }
-        else if (attr_name == MATCH_IP_PROTOCOL)
+        else if (attr_name == MATCH_IP_PROTOCOL || attr_name == MATCH_NEXT_HEADER)
         {
             value.aclfield.data.u8 = to_uint<uint8_t>(attr_value);
             value.aclfield.mask.u8 = 0xFF;
@@ -384,6 +385,17 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
     {
         SWSS_LOG_ERROR("Failed to parse %s attribute %s value.", attr_name.c_str(), attr_value.c_str());
         return false;
+    }
+
+    // NOTE: Temporary workaround to support matching protocol numbers on MLNX platform.
+    // In a later SAI version we will transition to using NEXT_HEADER for IPv6 on all platforms.
+    auto platform_env_var = getenv("platform");
+    string platform = platform_env_var ? platform_env_var: "";
+    if ((m_tableType == ACL_TABLE_MIRRORV6 || m_tableType == ACL_TABLE_L3V6)
+            && platform == MLNX_PLATFORM_SUBSTRING
+            && attr_name == MATCH_IP_PROTOCOL)
+    {
+        attr_name = MATCH_NEXT_HEADER;
     }
 
     m_matches[aclMatchLookup[attr_name]] = value;
@@ -809,8 +821,22 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
         // handle PACKET_ACTION_REDIRECT in ACTION_PACKET_ACTION for backward compatibility
         else if (attr_value.find(PACKET_ACTION_REDIRECT) != string::npos)
         {
-            // resize attr_value to remove argument, _attr_value still has the argument
-            attr_value.resize(string(PACKET_ACTION_REDIRECT).length());
+            // check that we have a colon after redirect rule
+            size_t colon_pos = string(PACKET_ACTION_REDIRECT).length();
+
+            if (attr_value.c_str()[colon_pos] != ':')
+            {
+                SWSS_LOG_ERROR("Redirect action rule must have ':' after REDIRECT");
+                return false;
+            }
+
+            if (colon_pos + 1 == attr_value.length())
+            {
+                SWSS_LOG_ERROR("Redirect action rule must have a target after 'REDIRECT:' action");
+                return false;
+            }
+
+            _attr_value = _attr_value.substr(colon_pos+1);
 
             sai_object_id_t param_id = getRedirectObjectId(_attr_value);
             if (param_id == SAI_NULL_OBJECT_ID)
@@ -856,21 +882,8 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
 // This method should return sai attribute id of the redirect destination
 sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
 {
-    // check that we have a colon after redirect rule
-    size_t colon_pos = string(PACKET_ACTION_REDIRECT).length();
-    if (redirect_value[colon_pos] != ':')
-    {
-        SWSS_LOG_ERROR("Redirect action rule must have ':' after REDIRECT");
-        return SAI_NULL_OBJECT_ID;
-    }
-
-    if (colon_pos + 1 == redirect_value.length())
-    {
-        SWSS_LOG_ERROR("Redirect action rule must have a target after 'REDIRECT:' action");
-        return SAI_NULL_OBJECT_ID;
-    }
-
-    string target = redirect_value.substr(colon_pos + 1);
+   
+    string target = redirect_value;
 
     // Try to parse physical port and LAG first
     Port port;
@@ -1354,9 +1367,23 @@ bool AclTable::create()
     attr.value.booldata = true;
     table_attrs.push_back(attr);
 
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
-    attr.value.booldata = true;
-    table_attrs.push_back(attr);
+    // NOTE: Temporary workaround to support matching protocol numbers on MLNX platform.
+    // In a later SAI version we will transition to using NEXT_HEADER for IPv6 on all platforms.
+    auto platform_env_var = getenv("platform");
+    string platform = platform_env_var ? platform_env_var: "";
+    if ((type == ACL_TABLE_MIRRORV6 || type == ACL_TABLE_L3V6)
+            && platform == MLNX_PLATFORM_SUBSTRING)
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+    }
+    else
+    {
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+    }
 
     /*
      * Type of Tables and Supported Match Types (ASIC database)
@@ -2193,7 +2220,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
                 break;
         }
     }
-    m_switchTable.set("switch", fvVector);
+    m_switchOrch->set_switch_capability(fvVector);
 
     sai_attribute_t attrs[2];
     attrs[0].id = SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY;
@@ -2335,7 +2362,7 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
     }
 
     fvVector.emplace_back(field, acl_action_value_stream.str());
-    m_switchTable.set("switch", fvVector);
+    m_switchOrch->set_switch_capability(fvVector);
 }
 
 void AclOrch::initDefaultAclActionCapabilities(acl_stage_type_t stage)
@@ -2437,7 +2464,7 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
         fvVector.emplace_back(field, acl_action_value_stream.str());
     }
 
-    m_switchTable.set("switch", fvVector);
+    m_switchOrch->set_switch_capability(fvVector);
 }
 
 sai_acl_action_type_t AclOrch::getAclActionFromAclEntry(sai_acl_entry_attr_t attr)
@@ -2450,10 +2477,10 @@ sai_acl_action_type_t AclOrch::getAclActionFromAclEntry(sai_acl_entry_attr_t att
     return static_cast<sai_acl_action_type_t>(attr - SAI_ACL_ENTRY_ATTR_ACTION_START);
 };
 
-AclOrch::AclOrch(vector<TableConnector>& connectors, TableConnector switchTable,
+AclOrch::AclOrch(vector<TableConnector>& connectors, SwitchOrch *switchOrch,
         PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *dtelOrch) :
         Orch(connectors),
-        m_switchTable(switchTable.first, switchTable.second),
+        m_switchOrch(switchOrch),
         m_mirrorOrch(mirrorOrch),
         m_neighOrch(neighOrch),
         m_routeOrch(routeOrch),

@@ -197,14 +197,14 @@ void MclagLink::setPortIsolate(char *msg)
     cur = msg;
 
     /*get isolate src port infor*/
-    op_hdr = (mclag_sub_option_hdr_t *)cur;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
     cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
     isolate_src_port.insert(0, (const char*)cur, op_hdr->op_len);
 
     cur = cur + op_hdr->op_len;
 
     /*get isolate dst ports infor*/
-    op_hdr = (mclag_sub_option_hdr_t *)cur;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
     cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
     isolate_dst_port.insert(0, (const char*)cur, op_hdr->op_len);
 
@@ -265,7 +265,7 @@ void MclagLink::setPortMacLearnMode(char *msg)
     cur = msg;
 
     /*get port learning mode info*/
-    op_hdr = (mclag_sub_option_hdr_t *)cur;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
     if (op_hdr->op_type == MCLAG_SUB_OPTION_TYPE_MAC_LEARN_ENABLE)
     {
         learn_mode = "hardware";
@@ -319,7 +319,7 @@ void MclagLink::setFdbFlushByPort(char *msg)
 
     cur = msg;
     /*get port infor*/
-    op_hdr = (mclag_sub_option_hdr_t *)cur;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
     cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
     port.insert(0, (const char*)cur, op_hdr->op_len);
 
@@ -340,14 +340,14 @@ void MclagLink::setIntfMac(char *msg)
     cur = msg;
 
     /*get intf key name*/
-    op_hdr = (mclag_sub_option_hdr_t *)cur;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
     cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
     intf_key.insert(0, (const char*)cur, op_hdr->op_len);
 
     cur = cur + op_hdr->op_len;
 
     /*get mac*/
-    op_hdr = (mclag_sub_option_hdr_t *)cur;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
     cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
     mac_value.insert(0, (const char*)cur, op_hdr->op_len);
 
@@ -379,7 +379,7 @@ void MclagLink::setFdbEntry(char *msg, int msg_len)
     {
         memset(key, 0, 64);
 
-        fdb_info = (struct mclag_fdb_info *)(cur + index * sizeof(struct mclag_fdb_info));
+        fdb_info = reinterpret_cast<struct mclag_fdb_info *>(static_cast<void *>(cur + index * sizeof(struct mclag_fdb_info)));
 
         fdb.mac = fdb_info->mac;
         fdb.port_name = fdb_info->port_name;
@@ -502,7 +502,7 @@ ssize_t  MclagLink::getFdbChange(char *msg_buf)
     {
         if (MCLAG_MAX_SEND_MSG_LEN - infor_len < sizeof(struct mclag_fdb_info))
         {
-            msg_head = (mclag_msg_hdr_t *)infor_start;
+            msg_head = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
             msg_head->version = 1;
             msg_head->msg_len = (unsigned short)infor_len;
             msg_head->msg_type = MCLAG_SYNCD_MSG_TYPE_FDB_OPERATION;
@@ -535,7 +535,7 @@ ssize_t  MclagLink::getFdbChange(char *msg_buf)
     {
         if (MCLAG_MAX_SEND_MSG_LEN - infor_len < sizeof(struct mclag_fdb_info))
         {
-            msg_head = (mclag_msg_hdr_t *)infor_start;
+            msg_head = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
             msg_head->version = 1;
             msg_head->msg_len = (unsigned short)infor_len;
             msg_head->msg_type = MCLAG_SYNCD_MSG_TYPE_FDB_OPERATION;
@@ -567,7 +567,7 @@ ssize_t  MclagLink::getFdbChange(char *msg_buf)
     if (infor_len <= sizeof(mclag_msg_hdr_t)) /*no fdb entry need notifying iccpd*/
         return 1;
 
-    msg_head = (mclag_msg_hdr_t *)infor_start;
+    msg_head = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
     msg_head->version = 1;
     msg_head->msg_len = (unsigned short)infor_len;
     msg_head->msg_type = MCLAG_SYNCD_MSG_TYPE_FDB_OPERATION;
@@ -579,7 +579,7 @@ ssize_t  MclagLink::getFdbChange(char *msg_buf)
     return write;
 }
 
-MclagLink::MclagLink(int port) :
+MclagLink::MclagLink(uint16_t port) :
     MSG_BATCH_SIZE(256),
     m_bufSize(MCLAG_MAX_MSG_LEN * MSG_BATCH_SIZE),
     m_messageBuffer(NULL),
@@ -676,7 +676,7 @@ uint64_t MclagLink::readData()
 
     while (true)
     {
-        hdr = (mclag_msg_hdr_t *)(m_messageBuffer + start);
+        hdr = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(m_messageBuffer + start));
         left = m_pos - start;
         if (left < MCLAG_MSG_HDR_LEN)
             break;

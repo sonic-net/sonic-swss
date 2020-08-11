@@ -32,7 +32,7 @@ class TestWatermark(object):
         self.flex_db = dvs.get_flex_db()
 
     def enable_unittests(self, dvs, status):
-        db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)    
+        db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         ntf = swsscommon.NotificationProducer(db, "SAI_VS_UNITTEST_CHANNEL")
         fvp = swsscommon.FieldValuePairs()
         ntf.send("enable_unittests", status, fvp)
@@ -42,7 +42,8 @@ class TestWatermark(object):
         db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         ntf = swsscommon.NotificationProducer(db, "SAI_VS_UNITTEST_CHANNEL")
 
-        r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB)
+        r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB,
+                        encoding="utf-8", decode_responses=True)
         rid = r.hget("VIDTORID", obj_id)
 
         assert rid is not None
@@ -50,7 +51,8 @@ class TestWatermark(object):
         fvp = swsscommon.FieldValuePairs([(attr, val)])
         key = rid
 
-        ntf.send("set_stats", key, fvp)
+        # explicit convert unicode string to str for python2
+        ntf.send("set_stats", str(key), fvp)
 
     def populate_asic(self, dvs, obj_type, attr, val):
 
@@ -60,7 +62,7 @@ class TestWatermark(object):
 
         for obj_id in oids:
             self.set_counter(dvs, obj_type, obj_id, attr, val)
-    
+
     def populate_asic_all(self, dvs, val):
         self.populate_asic(dvs, "SAI_OBJECT_TYPE_QUEUE", SaiWmStats.queue_shared, val)
         self.populate_asic(dvs, "SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP", SaiWmStats.pg_shared, val)
@@ -71,7 +73,7 @@ class TestWatermark(object):
 
         counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
         table = swsscommon.Table(counters_db, table_name)
-        
+
         for obj_id in obj_ids:
 
             ret = table.get(obj_id)
@@ -93,7 +95,7 @@ class TestWatermark(object):
                                      "QUEUE_WATERMARK_STAT_COUNTER:{}".format(q),
                                      queue_stats_entry)
 
-        pg_stats_entry = {"PG_COUNTER_ID_LIST": 
+        pg_stats_entry = {"PG_COUNTER_ID_LIST":
         "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES,SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES"}
         for pg in self.pgs:
             self.flex_db.create_entry("FLEX_COUNTER_TABLE",
@@ -119,7 +121,7 @@ class TestWatermark(object):
         self.pgs = self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_INGRESS_PRIORITY_GROUP")
 
         db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
-        tbl = swsscommon.Table(db, "COUNTERS_QUEUE_TYPE_MAP")                
+        tbl = swsscommon.Table(db, "COUNTERS_QUEUE_TYPE_MAP")
 
         self.uc_q = []
         self.mc_q = []
@@ -156,7 +158,7 @@ class TestWatermark(object):
         self.verify_value(dvs, self.pgs, WmTables.periodic, SaiWmStats.pg_shared, "0")
         self.verify_value(dvs, self.pgs, WmTables.periodic, SaiWmStats.pg_headroom, "0")
         self.verify_value(dvs, self.qs, WmTables.periodic, SaiWmStats.queue_shared, "0")
-     
+
         self.enable_unittests(dvs, "false")
 
     @pytest.mark.skip(reason="This test is not stable enough")
@@ -173,7 +175,7 @@ class TestWatermark(object):
             self.verify_value(dvs, self.qs, table_name, SaiWmStats.queue_shared, "192")
             self.verify_value(dvs, self.pgs, table_name, SaiWmStats.pg_headroom, "192")
             self.verify_value(dvs, self.pgs, table_name, SaiWmStats.pg_shared, "192")
-        
+
         self.populate_asic_all(dvs, "96")
 
         for table_name in [WmTables.user, WmTables.persistent]:
@@ -182,7 +184,7 @@ class TestWatermark(object):
             self.verify_value(dvs, self.pgs, table_name, SaiWmStats.pg_shared, "192")
 
         self.populate_asic_all(dvs, "288")
-        
+
         for table_name in [WmTables.user, WmTables.persistent]:
             self.verify_value(dvs, self.qs, table_name, SaiWmStats.queue_shared, "288")
             self.verify_value(dvs, self.pgs, table_name, SaiWmStats.pg_headroom, "288")
@@ -209,9 +211,9 @@ class TestWatermark(object):
 
         # make sure the rest is untouched
 
-        self.verify_value(dvs, self.pgs, WmTables.user, SaiWmStats.pg_headroom, "288") 
-        self.verify_value(dvs, self.pgs, WmTables.persistent, SaiWmStats.pg_shared, "288") 
-        self.verify_value(dvs, self.pgs, WmTables.persistent, SaiWmStats.pg_headroom, "288") 
+        self.verify_value(dvs, self.pgs, WmTables.user, SaiWmStats.pg_headroom, "288")
+        self.verify_value(dvs, self.pgs, WmTables.persistent, SaiWmStats.pg_shared, "288")
+        self.verify_value(dvs, self.pgs, WmTables.persistent, SaiWmStats.pg_headroom, "288")
 
         # clear queue unicast persistent watermark, and verify that multicast watermark and user watermarks are not affected
 
@@ -224,8 +226,8 @@ class TestWatermark(object):
 
         # make sure the rest is untouched
 
-        self.verify_value(dvs, self.mc_q, WmTables.persistent, SaiWmStats.queue_shared, "288") 
-        self.verify_value(dvs, self.uc_q, WmTables.user, SaiWmStats.queue_shared, "288") 
-        self.verify_value(dvs, self.mc_q, WmTables.user, SaiWmStats.queue_shared, "288") 
+        self.verify_value(dvs, self.mc_q, WmTables.persistent, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.uc_q, WmTables.user, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.mc_q, WmTables.user, SaiWmStats.queue_shared, "288")
 
         self.enable_unittests(dvs, "false")

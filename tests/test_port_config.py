@@ -28,12 +28,14 @@ class TestPortConfig(object):
 
 
     def getPortOid(self, dvs, port_name):
-        cnt_r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.COUNTERS_DB)
+        cnt_r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.COUNTERS_DB,
+                            encoding="utf-8", decode_responses=True)
         return cnt_r.hget("COUNTERS_PORT_NAME_MAP", port_name);
 
 
     def getVIDfromRID(self, dvs, port_rid):
-        asic_r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB)
+        asic_r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB,
+                             encoding="utf-8", decode_responses=True)
         return asic_r.hget("RIDTOVID", port_rid);
 
     def test_port_hw_lane(self, dvs):

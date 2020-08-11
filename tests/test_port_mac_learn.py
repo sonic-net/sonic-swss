@@ -60,7 +60,7 @@ class TestPortMacLearn(object):
             return True
         else:
             return False
-        
+
     def test_PortMacLearnMode(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -126,7 +126,7 @@ class TestPortMacLearn(object):
                                           ("mtu", "9100")])
         tbl.set("PortChannel001", fvs)
         time.sleep(1)
-        
+
         # create vlan
         tbl = swsscommon.Table(self.cdb, "VLAN")
         fvs = swsscommon.FieldValuePairs([("vlanid", "3")])

@@ -63,7 +63,7 @@ class TestPortDPB(object):
         #print "**** 4X10G --> 4X25G passed ****"
         dpb.breakin(dvs, ["Ethernet0", "Ethernet1", "Ethernet2", "Ethernet3"])
         #print "**** 4X25G --> 1X100G passed ****"
-        dpb.breakout(dvs, "Ethernet0", maxBreakOut/2)
+        dpb.breakout(dvs, "Ethernet0", maxBreakOut//2)
         #print "**** 1X100G --> 2X50G passed ****"
         dpb.breakin(dvs, ["Ethernet0", "Ethernet2"])
         #print "**** 2X50G --> 1X100G passed ****"

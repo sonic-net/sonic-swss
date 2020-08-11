@@ -59,6 +59,8 @@ NatSync::NatSync(RedisPipeline *pipelineAppDB, DBConnector *appDb, DBConnector *
         m_AppRestartAssist->registerAppTable(APP_NAT_TWICE_TABLE_NAME, &m_natTwiceTable);
         m_AppRestartAssist->registerAppTable(APP_NAPT_TWICE_TABLE_NAME, &m_naptTwiceTable);
     }
+
+    setTimeoutNotifier = std::make_shared<swss::NotificationProducer>(appDb, "SETTIMEOUTNAT");
 }
 
 NatSync::~NatSync()
@@ -490,6 +492,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                 {
                     m_naptTwiceTable.set(key, fvVector);
                     SWSS_LOG_NOTICE("Twice NAPT entry with key %s added to APP_DB", key.c_str());
+                    setTimeoutNotifier->send("SET-TWICE-NAPT", key, fvVector);
                     m_naptTwiceTable.set(reverseEntryKey, reverseFvVector);
                     SWSS_LOG_NOTICE("Twice NAPT entry with reverse key %s added to APP_DB", reverseEntryKey.c_str());
                 }
@@ -530,6 +533,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                 {
                     m_natTwiceTable.set(key, fvVector);
                     SWSS_LOG_NOTICE("Twice NAT entry with key %s added to APP_DB", key.c_str());
+                    setTimeoutNotifier->send("SET-TWICE-NAT", key, fvVector);
                     m_natTwiceTable.set(reverseEntryKey, reverseFvVector);
                     SWSS_LOG_NOTICE("Twice NAT entry with reverse key %s added to APP_DB", reverseEntryKey.c_str());
                 }
@@ -682,6 +686,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                         {
                             m_naptTable.set(key, fvVector);
                             SWSS_LOG_NOTICE("SNAPT entry with key %s added to APP_DB", key.c_str());
+                            setTimeoutNotifier->send("SET-SINGLE-NAPT", key, fvVector);
                             m_naptTable.set(reverseEntryKey, reverseFvVector);
                             SWSS_LOG_NOTICE("Implicit DNAPT entry with key %s added to APP_DB", reverseEntryKey.c_str());
                         }
@@ -786,6 +791,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                         {
                             m_natTable.set(key, fvVector);
                             SWSS_LOG_NOTICE("SNAT entry with key %s added to APP_DB", key.c_str());
+                            setTimeoutNotifier->send("SET-SINGLE-NAT", key, fvVector);
                             m_natTable.set(reverseEntryKey, reverseFvVector);
                             SWSS_LOG_NOTICE("Implicit DNAT entry with key %s added to APP_DB", reverseEntryKey.c_str());
                         }
@@ -890,6 +896,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                     {
                         m_naptTable.set(key, fvVector);
                         SWSS_LOG_NOTICE("DNAPT entry with key %s added to APP_DB", key.c_str());
+                        setTimeoutNotifier->send("SET-SINGLE-NAPT", key, fvVector);
                         m_naptTable.set(reverseEntryKey, reverseFvVector);
                         SWSS_LOG_NOTICE("Implicit SNAPT entry with key %s added to APP_DB", reverseEntryKey.c_str());
                     }
@@ -963,6 +970,7 @@ int NatSync::addNatEntry(struct nfnl_ct *ct, struct naptEntry &entry, bool addFl
                     {
                         m_natTable.set(key, fvVector);
                         SWSS_LOG_NOTICE("DNAT entry with key %s added to APP_DB", key.c_str());
+                        setTimeoutNotifier->send("SET-SINGLE-NAT", key, fvVector);
                         m_natTable.set(reverseEntryKey, reverseFvVector);
                         SWSS_LOG_NOTICE("Implicit SNAT entry with key %s added to APP_DB", reverseEntryKey.c_str());
                     }

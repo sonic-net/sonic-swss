@@ -1,16 +1,18 @@
-INCLUDES = -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I flex_counter -I debug_counter
+INCLUDES = -I $(top_srcdir)/lib -I $(top_srcdir) -I $(top_srcdir)/warmrestart -I flex_counter -I debug_counter
 
 CFLAGS_SAI = -I /usr/include/sai
 
 swssdir = $(datadir)/swss
 
 dist_swss_DATA = \
+		 rif_rates.lua \
 		 pfc_detect_innovium.lua  \
 		 pfc_detect_mellanox.lua  \
 		 pfc_detect_broadcom.lua \
 		 pfc_detect_barefoot.lua \
 		 pfc_detect_nephos.lua \
 		 pfc_restore.lua \
+		 port_rates.lua \
 		 watermark_queue.lua \
 		 watermark_pg.lua \
 		 watermark_bufferpool.lua
@@ -25,6 +27,7 @@ endif
 
 orchagent_SOURCES = \
             main.cpp \
+            $(top_srcdir)/lib/gearboxutils.cpp \
             orchdaemon.cpp \
             orch.cpp \
             notifications.cpp \

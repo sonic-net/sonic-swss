@@ -1,8 +1,27 @@
 #include <cstring>
+#include <algorithm>
 
 #include <logger.h>
 
 #include "teamdctl_mgr.h"
+
+///
+/// Custom function for libteamdctl logger. IT is empty to prevent libteamdctl to spam us with the error messages
+/// @param tdc teamdctl descriptor
+/// @param priority priority of the message
+/// @param file file where error was raised
+/// @param line line in the file where error was raised
+/// @param fn function where the error was raised
+/// @param format format of the error message
+/// @param args arguments of the error message
+void teamdctl_log_function(struct teamdctl *tdc, int priority,
+                           const char *file, int line,
+                           const char *fn, const char *format,
+                           va_list args)
+{
+
+}
+
 
 ///
 /// The destructor clean up handlers to teamds
@@ -31,10 +50,11 @@ bool TeamdCtlMgr::has_key(const std::string & lag_name) const
 }
 
 ///
-/// Adds a LAG interface with lag_name to the manager
-/// This method allocates structures to connect to teamd
+/// Public method to add a LAG interface with lag_name to the manager
+/// This method tries to add. If the method can't add the LAG interface,
+/// this action will be postponed.
 /// @param lag_name a name for LAG interface
-/// @return true if the lag was added successfully, false otherwise
+/// @return true if the lag was added or postponed successfully, false otherwise
 ///
 bool TeamdCtlMgr::add_lag(const std::string & lag_name)
 {
@@ -43,25 +63,50 @@ bool TeamdCtlMgr::add_lag(const std::string & lag_name)
         SWSS_LOG_DEBUG("The LAG '%s' was already added. Skip adding it.", lag_name.c_str());
         return true;
     }
-    else
-    {
-        auto tdc = teamdctl_alloc();
-        if (!tdc)
-        {
-            SWSS_LOG_ERROR("Can't allocate memory for teamdctl handler. LAG='%s'", lag_name.c_str());
-            return false;
-        }
+    return try_add_lag(lag_name);
+}
 
-        int err = teamdctl_connect(tdc, lag_name.c_str(), nullptr, nullptr);
-        if (err)
-        {
-            SWSS_LOG_ERROR("Can't connect to teamd LAG='%s', error='%s'", lag_name.c_str(), strerror(-err));
-            teamdctl_free(tdc);
-            return false;
-        }
-        m_handlers.emplace(lag_name, tdc);
-        SWSS_LOG_NOTICE("The LAG '%s' has been added.", lag_name.c_str());
+///
+/// Try to adds a LAG interface with lag_name to the manager
+/// This method allocates structures to connect to teamd
+/// if the method can't add, it will retry to add next time
+/// @param lag_name a name for LAG interface
+/// @return true if the lag was added successfully, false otherwise
+///
+bool TeamdCtlMgr::try_add_lag(const std::string & lag_name)
+{
+    if (m_lags_to_add.find(lag_name) == m_lags_to_add.end())
+    {
+        m_lags_to_add[lag_name] = 0;
     }
+
+    int attempt = m_lags_to_add[lag_name];
+
+    auto tdc = teamdctl_alloc();
+    if (!tdc)
+    {
+        SWSS_LOG_ERROR("Can't allocate memory for teamdctl handler. LAG='%s'. attempt=%d", lag_name.c_str(), attempt);
+        m_lags_to_add[lag_name]++;
+        return false;
+    }
+
+    teamdctl_set_log_fn(tdc, &teamdctl_log_function);
+
+    int err = teamdctl_connect(tdc, lag_name.c_str(), nullptr, nullptr);
+    if (err)
+    {
+        if (attempt != 0)
+        {
+            SWSS_LOG_WARN("Can't connect to teamd LAG='%s', error='%s'. attempt=%d", lag_name.c_str(), strerror(-err), attempt);
+        }
+        teamdctl_free(tdc);
+        m_lags_to_add[lag_name]++;
+        return false;
+    }
+
+    m_handlers.emplace(lag_name, tdc);
+    m_lags_to_add.erase(lag_name);
+    SWSS_LOG_NOTICE("The LAG '%s' has been added.", lag_name.c_str());
 
     return true;
 }
@@ -82,11 +127,37 @@ bool TeamdCtlMgr::remove_lag(const std::string & lag_name)
         m_handlers.erase(lag_name);
         SWSS_LOG_NOTICE("The LAG '%s' has been removed.", lag_name.c_str());
     }
+    else if (m_lags_to_add.find(lag_name) != m_lags_to_add.end())
+    {
+        m_lags_to_add.erase(lag_name);
+        SWSS_LOG_DEBUG("The LAG '%s' has been removed from adding queue.", lag_name.c_str());
+    }
     else
     {
         SWSS_LOG_WARN("The LAG '%s' hasn't been added. Can't remove it", lag_name.c_str());
     }
     return true;
+}
+
+///
+/// Process the queue with postponed add operations for LAG.
+///
+void TeamdCtlMgr::process_add_queue()
+{
+    std::vector<std::string> lag_names_to_add;
+    std::transform(m_lags_to_add.begin(), m_lags_to_add.end(), lag_names_to_add.begin(), [](auto pair) { return pair.first; });
+    for (const auto lag_name: lag_names_to_add)
+    {
+        bool result = try_add_lag(lag_name);
+        if (!result)
+        {
+            if (m_lags_to_add[lag_name] == TeamdCtlMgr::max_attempts_to_add)
+            {
+                SWSS_LOG_ERROR("Can't connect to teamd after %d attempts. LAG '%s'", TeamdCtlMgr::max_attempts_to_add, lag_name.c_str());
+                m_lags_to_add.erase(lag_name);
+            }
+        }
+    }
 }
 
 ///
