@@ -237,3 +237,7 @@ class TestPortDPBVlan(object):
         for vlan_name in vlan_names:
             self.dvs_vlan.remove_vlan(vlan_name)
         self.dvs_vlan.get_and_verify_vlan_ids(0)
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

@@ -155,3 +155,7 @@ class TestPortConfig(object):
             assert hw_lane_value == "1:%s" % (new_lanes[i])
 
 
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

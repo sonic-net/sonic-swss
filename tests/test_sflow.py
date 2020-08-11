@@ -136,3 +136,7 @@ class TestSflow:
 
         self.cdb.delete_entry("SFLOW", "global")
         self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

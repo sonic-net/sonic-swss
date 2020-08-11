@@ -72,3 +72,7 @@ class TestPolicer(object):
         tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
         policer_entries = tbl.getKeys()
         assert len(policer_entries) == 0
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

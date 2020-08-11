@@ -318,3 +318,7 @@ class TestNat(object):
         # delete a static nat entry
         dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
 
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass
