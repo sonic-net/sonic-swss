@@ -38,7 +38,7 @@ namespace swss
         m_conn->fd = socket(AF_UNIX, SOCK_DGRAM, 0);
     }
 
-    DBConnector::DBConnector(const std::string& dbName, unsigned int timeout, bool isTcpConn, const string& nameSpace)
+    DBConnector::DBConnector(const std::string& dbName, unsigned int timeout, bool isTcpConn, const std::string& nameSpace)
         : m_dbName(dbName)
         , m_namespace(nameSpace)
     {
@@ -62,7 +62,7 @@ namespace swss
         }
     }
 
-    DBConnector::DBConnector(const string& dbName, unsigned int timeout, bool isTcpConn)
+    DBConnector::DBConnector(const std::string& dbName, unsigned int timeout, bool isTcpConn)
         : DBConnector(dbName, timeout, isTcpConn, EMPTY_NAMESPACE)
     {
         // Empty contructor
