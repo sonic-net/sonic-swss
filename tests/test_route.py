@@ -565,6 +565,7 @@ class TestRoutePerf(TestRouteBase):
 
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 10.0.0.3")
+        dvs.servers[1].runcmd("ping -c 1 10.0.0.1")
 
         # get number of routes before adding new routes
         startNumRoutes = len(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"))
