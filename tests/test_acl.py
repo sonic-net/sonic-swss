@@ -1399,9 +1399,13 @@ class TestAcl(BaseTestAcl):
         self.create_acl_table("test_acl_table", "L3", bind_ports)
         acl_table_id = self.get_acl_table_id(dvs)
 
-        config_qualifiers = {"L4_SRC_PORT": "65000"}
-        self.create_acl_rule("test_acl_table", "redirect_rule", config_qualifiers, action="REDIRECT:10.0.0.2@Ethernet4", priority="20")
-        acl_rule_id = self.get_acl_rule_id()
+        # create acl rule
+        tbl = swsscommon.Table(self.cdb, "ACL_RULE")
+        fvs = swsscommon.FieldValuePairs([
+                                        ("priority", "20"),
+                                        ("L4_SRC_PORT", "65000"),
+                                        ("PACKET_ACTION", "REDIRECT:10.0.0.2@Ethernet4")])
+        tbl.set("test_acl_table|redirect_rule", fvs)
         
         # check acl table in asic db
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
@@ -1438,6 +1442,7 @@ class TestAcl(BaseTestAcl):
         (status, fvs) = atbl.get(acl_entry[0])
         assert status == False
 
+        config_qualifiers = {"L4_SRC_PORT": "65000"}
         self.dvs_acl.create_redirect_action_acl_rule("test_acl_table", "redirect_action_rule", config_qualifiers, intf="Ethernet4", priority="20")
         keys = atbl.getKeys()
 
