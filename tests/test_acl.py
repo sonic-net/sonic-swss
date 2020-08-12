@@ -184,6 +184,17 @@ class BaseTestAcl(object):
             else:
                 assert False
 
+    def create_redirect_action_acl_rule(self, table_name, rule_name, qualifiers, intf, priority="2020"):
+        fvs = {
+            "priority": priority,
+            "REDIRECT_ACTION": intf
+        }
+
+        for k, v in qualifiers.items():
+            fvs[k] = v
+
+        self.config_db.create_entry("ACL_RULE", "{}|{}".format(table_name, rule_name), fvs)
+
 
 class TestAcl(BaseTestAcl):
     def test_AclTableCreation(self, dvs, testlog):
@@ -1358,6 +1369,111 @@ class TestAcl(BaseTestAcl):
         time.sleep(1)
 
         atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
+        keys = atbl.getKeys()
+        assert len(keys) >= 1
+
+        # remove neighbor
+        dvs.remove_neighbor("Ethernet4", "10.0.0.2")
+
+        # remove interface ip
+        dvs.remove_ip_address("Ethernet4", "10.0.0.1/24")
+
+        # bring down interface
+        dvs.set_interface_status("Ethernet4", "down")
+
+    def test_AclRedirectRule(self, dvs):        
+        dvs.setup_db()
+        self.setup_db(dvs)
+
+        # Bring up an IP interface with a neighbor
+        dvs.set_interface_status("Ethernet4", "up")
+        dvs.add_ip_address("Ethernet4", "10.0.0.1/24")
+        dvs.add_neighbor("Ethernet4", "10.0.0.2", "00:01:02:03:04:05")
+
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+        keys = atbl.getKeys()
+        assert len(keys) == 1
+        next_hop_id = keys[0]
+
+        bind_ports = ["Ethernet0", "Ethernet8"]
+        self.create_acl_table("test_acl_table", "L3", bind_ports)
+        acl_table_id = self.get_acl_table_id(dvs)
+
+        config_qualifiers = {"L4_SRC_PORT": "65000"}
+        self.create_acl_rule("test_acl_table", "redirect_rule", config_qualifiers, action="REDIRECT:10.0.0.2@Ethernet4", priority="20")
+        acl_rule_id = self.get_acl_rule_id()
+        
+        # check acl table in asic db
+        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
+        keys = atbl.getKeys()
+
+        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+        assert len(acl_entry) == 1
+
+        (status, fvs) = atbl.get(acl_entry[0])
+        assert status == True
+        assert len(fvs) == 6
+        for fv in fvs:
+            if fv[0] == "SAI_ACL_ENTRY_ATTR_TABLE_ID":
+                assert fv[1] == acl_table_id
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_ADMIN_STATE":
+                assert fv[1] == "true"
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_PRIORITY":
+                assert fv[1] == "20"
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_COUNTER":
+                assert True
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT":
+                assert fv[1] == "65000&mask:0xffff"
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT":
+                assert fv[1] == next_hop_id
+            else:
+                assert False
+
+        # remove acl rule
+        tbl = swsscommon.Table(self.cdb, "ACL_TABLE")
+        tbl._del("test_acl_table|redirect_rule")
+
+        time.sleep(1)
+
+        (status, fvs) = atbl.get(acl_entry[0])
+        assert status == False
+
+        self.dvs_acl.create_redirect_action_acl_rule("test_acl_table", "redirect_action_rule", config_qualifiers, intf="Ethernet4", priority="20")
+        keys = atbl.getKeys()
+
+        acl_entry = [k for k in keys if k not in dvs.asicdb.default_acl_entries]
+        assert len(acl_entry) == 1
+
+        (status, fvs) = atbl.get(acl_entry[0])
+        assert status == True
+        assert len(fvs) == 6
+        for fv in fvs:
+            if fv[0] == "SAI_ACL_ENTRY_ATTR_TABLE_ID":
+                assert fv[1] == acl_table_id
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_ADMIN_STATE":
+                assert fv[1] == "true"
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_PRIORITY":
+                assert fv[1] == "20"
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_COUNTER":
+                assert True
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_FIELD_L4_SRC_PORT":
+                assert fv[1] == "65000&mask:0xffff"
+            elif fv[0] == "SAI_ACL_ENTRY_ATTR_ACTION_REDIRECT":
+                assert fv[1] == next_hop_id
+            else:
+                assert False
+
+        tbl._del("test_acl_table|redirect_action_rule")
+
+        time.sleep(1)
+
+        (status, fvs) = atbl.get(acl_entry[0])
+        assert status == False
+
+        tbl._del("test_acl_table")
+
+        time.sleep(1)
+
         keys = atbl.getKeys()
         assert len(keys) >= 1
 
