@@ -16,13 +16,12 @@ class TestRouteBase(object):
 
     def set_admin_status(self, interface, status):
         self.cdb.update_entry("PORT", interface, {"admin_status": status})
-        time.sleep(1)
 
     def create_vrf(self, vrf_name):
         initial_entries = set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"))
 
         self.cdb.create_entry("VRF", vrf_name, {"empty": "empty"})
-        time.sleep(1)
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER", len(initial_entries) + 1)
 
         current_entries = set(self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER"))
         assert len(current_entries - initial_entries) == 1
@@ -30,26 +29,21 @@ class TestRouteBase(object):
 
     def remove_vrf(self, vrf_name):
         self.cdb.delete_entry("VRF", vrf_name)
-        time.sleep(1)
 
     def create_l3_intf(self, interface, vrf_name):
         if len(vrf_name) == 0:
             self.cdb.create_entry("INTERFACE", interface, {"NULL": "NULL"})
         else:
             self.cdb.create_entry("INTERFACE", interface, {"vrf_name": vrf_name})
-        time.sleep(1)
 
     def remove_l3_intf(self, interface):
         self.cdb.delete_entry("INTERFACE", interface)
-        time.sleep(1)
 
     def add_ip_address(self, interface, ip):
         self.cdb.create_entry("INTERFACE", interface + "|" + ip, {"NULL": "NULL"})
-        time.sleep(1)
 
     def remove_ip_address(self, interface, ip):
         self.cdb.delete_entry("INTERFACE", interface + "|" + ip)
-        time.sleep(1)
 
     def create_route_entry(self, key, pairs):
         tbl = swsscommon.ProducerStateTable(self.pdb.db_connection, "ROUTE_TABLE")
