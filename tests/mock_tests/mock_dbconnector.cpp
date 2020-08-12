@@ -61,6 +61,14 @@ namespace swss
         }
     }
 
+    DBConnector *DBConnector::newConnector(unsigned int timeout) const
+    {
+          DBConnector *ret;
+          ret = new DBConnector(getDbName(), timeout, (m_conn->connection_type == REDIS_CONN_TCP));
+          return ret;
+    }
+
+
     int DBConnector::getDbId() const
     {
         return m_dbId;
