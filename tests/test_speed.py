@@ -22,17 +22,18 @@ class TestSpeedSet:
 
         # Get speed from the first port we hit in ASIC DB port walk, and
         # assume that its the initial configured speed for all ports, and
-        # dynamic buffer profile has already been created for it.
+        # as new port configuration file i.e. 'platform.json' guarantees
+        # 100G as initial port speed for all ports and the dynamic buffer
+        # profile has already been created for it.
         asic_port_records = adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT")
         for k in asic_port_records:
             fvs = adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", k)
-            for fv in fvs.keys():
-                if fv == "SAI_PORT_ATTR_SPEED":
-                    configured_speed_list.append(fvs[fv])
-                    break
+            if "SAI_PORT_ATTR_SPEED" in fvs.keys():
+                configured_speed_list.append(fvs["SAI_PORT_ATTR_SPEED"])
+                break
 
-            if len(configured_speed_list):
-                break;
+            if configured_speed_list:
+                break
 
         # Check if the buffer profiles make it to Config DB
         cdb.wait_for_n_keys("BUFFER_PROFILE", num_buffer_profiles)
