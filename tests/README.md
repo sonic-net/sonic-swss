@@ -163,3 +163,8 @@ For those developing new features for SWSS or the DVS framework, you might find 
     ```
 
     You can mitigate this by upgrading to a newer version of Docker CE or editing the `DEFAULT_DOCKER_API_VERSION` in `/usr/local/lib/python3/dist-packages/docker/constants.py`, or by upgrading to a newer version of Docker CE. See [relevant GitHub discussion](https://github.com/drone/drone/issues/2048).
+
+-   Currently when pytest are run using --force-flaky and if the last test case fails pytest tear-down the module before retrying the failed test case and invoke module
+    setup again to run fail test case. This is know issue of pytest w.r.t flaky as tracked here (https://github.com/box/flaky/issues/128) and 
+    (https://github.com/pytest-dev/pytest-rerunfailures/issues/51). Because of this issue all the logs are lost till last test case run as modules is teardown and setup again.
+    To avoid this as workaround a dummy always-pass test case is added in all modules/test files. 
