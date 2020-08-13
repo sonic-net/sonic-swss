@@ -295,6 +295,8 @@ class TestDtel(object):
         tbl._del("EVENT_TYPE_QUEUE_REPORT_THRESHOLD_BREACH")
         tbl._del("EVENT_TYPE_QUEUE_REPORT_TAIL_DROP")
         tbl._del("EVENT_TYPE_DROP_REPORT")
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

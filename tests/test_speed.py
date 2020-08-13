@@ -57,6 +57,8 @@ class TestSpeedSet:
 
                 expected_fields = {"profile": "[BUFFER_PROFILE|{}]".format(expected_new_profile_name)}
                 cdb.wait_for_field_match("BUFFER_PG", expected_pg_table, expected_fields)
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

@@ -382,6 +382,8 @@ class TestFdb(object):
         dvs.runcmd("sonic-clear fdb all")
         dvs.remove_vlan_member("2", "Ethernet0")
         dvs.remove_vlan("2")
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

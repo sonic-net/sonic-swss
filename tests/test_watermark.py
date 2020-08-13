@@ -231,6 +231,8 @@ class TestWatermark(object):
         self.verify_value(dvs, self.mc_q, WmTables.user, SaiWmStats.queue_shared, "288")
 
         self.enable_unittests(dvs, "false")
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

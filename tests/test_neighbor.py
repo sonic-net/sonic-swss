@@ -390,6 +390,8 @@ class TestNeighbor(object):
             current_neigh_entries_cnt = len(tbl.getKeys())
             dec_neigh_entries_cnt = (old_neigh_entries_cnt - current_neigh_entries_cnt)
             assert dec_neigh_entries_cnt == 1
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():

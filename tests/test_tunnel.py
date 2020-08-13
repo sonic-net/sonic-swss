@@ -229,6 +229,8 @@ class TestSymmetricTunnel(TestTunnelBase):
                                     ecn_mode="standard", ttl_mode="pipe")
         self.remove_and_test_tunnel(db, asicdb, "IPINIPv6Symmetric")
 
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
