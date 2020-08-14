@@ -42,7 +42,7 @@ def pytest_addoption(parser):
     parser.addoption("--dvsname", action="store", default=None,
                       help="dvs name")
     
-    parser.addoption("--force-dvs", action="store_true", default=False,
+    parser.addoption("--forcedvs", action="store_true", default=False,
                       help="force persistent dvs when ports < 32 ")
  
     parser.addoption("--keeptb", action="store_true", default=False,
@@ -175,7 +175,7 @@ class DockerVirtualSwitch(object):
             fakeplatform=None,
             log_path=None,
             max_cpu=2,
-            force-dvs=None,
+            forcedvs=None,
     ):
         self.basicd = ['redis-server',
                        'rsyslogd']
@@ -226,7 +226,7 @@ class DockerVirtualSwitch(object):
             if self.num_net_interfaces > NUM_PORTS:
                 raise ValueError("persistent dvs is not valid for testbed with ports > %d" % NUM_PORTS)
 
-            if self.num_net_interfaces < NUM_PORTS and not force-dvs:
+            if self.num_net_interfaces < NUM_PORTS and not forcedvs:
                 raise ValueError("persistent dvs does not have %d ports needed by testbed" % NUM_PORTS)
 
             # get base container
@@ -1028,14 +1028,14 @@ class DockerVirtualSwitch(object):
 @pytest.yield_fixture(scope="module")
 def dvs(request) -> DockerVirtualSwitch:
     name = request.config.getoption("--dvsname")
-    force-dvs = request.config.getoption("--force-dvs")
+    forcedvs = request.config.getoption("--forcedvs")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
     log_path = name if name else request.module.__name__
 
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, force-dvs)
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, forcedvs)
 
     yield dvs
 

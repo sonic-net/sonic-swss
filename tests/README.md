@@ -71,10 +71,10 @@ For those developing new features for SWSS or the DVS framework, you might find 
     ```
     sudo pytest --dvsname=vs
     ```
-    By default if number of ports in persistent DVS < 32 (needed by testbed) then test will be aborted. To overcome that --force-dvs option can be used.
+    By default if number of ports in persistent DVS < 32 (needed by testbed) then test will be aborted. To overcome that --forcedvs option can be used.
 
     ```
-    sudo pytest --dvsname=vs --force-dvs
+    sudo pytest --dvsname=vs --forcedvs
     ```
 
 
