@@ -41,6 +41,10 @@ def ensure_system(cmd):
 def pytest_addoption(parser):
     parser.addoption("--dvsname", action="store", default=None,
                       help="dvs name")
+    
+    parser.addoption("--force-dvs", action="store_true", default=False,
+                      help="force persistent dvs when ports < 32 ")
+ 
     parser.addoption("--keeptb", action="store_true", default=False,
                       help="keep testbed after test")
     parser.addoption("--imgname", action="store", default="docker-sonic-vs",
@@ -170,7 +174,8 @@ class DockerVirtualSwitch(object):
             keeptb=False,
             fakeplatform=None,
             log_path=None,
-            max_cpu=2
+            max_cpu=2,
+            force-dvs = None,
     ):
         self.basicd = ['redis-server',
                        'rsyslogd']
@@ -215,6 +220,14 @@ class DockerVirtualSwitch(object):
                     self.persistent = True
             if self.ctn == None:
                 raise NameError("cannot find container %s" % name)
+
+            self.num_net_interfaces = self.net_interface_count()
+
+            if self.num_net_interfaces > NUM_PORTS:
+                raise ValueError("persistent dvs is not valid for testbed with ports > %d" % NUM_PORTS)
+
+            if self.num_net_interfaces < NUM_PORTS and not force-dvs:
+                raise ValueError("persistent dvs does not have %d ports needed by testbed" % NUM_PORTS)
 
             # get base container
             for ctn in self.client.containers.list():
@@ -409,6 +422,21 @@ class DockerVirtualSwitch(object):
                     self.ctn.exec_run("ip link del {}".format(pname))
                     print("remove extra link {}".format(pname))
         return
+
+    def net_interface_count(self):
+        """get the interface count in persistent DVS Container
+           if not found or some error then return 0 as default"""
+
+        res = self.ctn.exec_run(['sh', '-c', 'ip link show | grep -oE eth[0-9]+ | grep -vc eth0'])
+        if not res.exit_code:
+            try:
+                out = res.output.decode('utf-8')
+            except AttributeError:
+                return 0
+            return int(out.rstrip('\n'))
+        else:
+            return 0
+
 
     def ctn_restart(self):
         self.ctn.restart()
@@ -898,7 +926,7 @@ class DockerVirtualSwitch(object):
     def add_route(self, prefix, nexthop):
         self.runcmd("ip route add " + prefix + " via " + nexthop)
         time.sleep(1)
-
+    
     def remove_route(self, prefix):
         self.runcmd("ip route del " + prefix)
         time.sleep(1)
@@ -1000,13 +1028,14 @@ class DockerVirtualSwitch(object):
 @pytest.yield_fixture(scope="module")
 def dvs(request) -> DockerVirtualSwitch:
     name = request.config.getoption("--dvsname")
+    force-dvs = request.config.getoption("--force-dvs")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
     log_path = name if name else request.module.__name__
 
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu)
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, force-dvs)
 
     yield dvs
 
