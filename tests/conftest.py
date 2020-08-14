@@ -175,7 +175,7 @@ class DockerVirtualSwitch(object):
             fakeplatform=None,
             log_path=None,
             max_cpu=2,
-            force-dvs = None,
+            force-dvs=None,
     ):
         self.basicd = ['redis-server',
                        'rsyslogd']
