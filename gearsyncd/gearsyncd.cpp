@@ -67,7 +67,7 @@ int main(int argc, char **argv)
             break;
         case 'h':
             usage();
-            return 1;
+            return EXIT_FAILURE;
         default: /* '?' */
             usage();
             return EXIT_FAILURE;
@@ -105,7 +105,7 @@ int main(int argc, char **argv)
         cerr << "Exception \"" << e.what() << "\" had been thrown in gearsyncd daemon" << endl;
         return EXIT_FAILURE;
     }
-    return 1;
+    return EXIT_SUCCESS;
 }
 
 bool handleGearboxConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm)
