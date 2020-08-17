@@ -28,6 +28,10 @@ using namespace swss;
 // #define SOCK_DIR           "/var/run/macsec/"
 #define SOCK_DIR           "./"
 
+constexpr std::uint64_t RETRY_TIME = 30;
+/* retry interval, in millisecond */
+constexpr std::uint64_t RETRY_INTERVAL = 100;
+
 static std::istringstream& operator>>(
     std::istringstream &istream,
     MACsecMgr::MACsecProfile::Policy & policy)
@@ -201,12 +205,26 @@ MACsecMgr::MACsecMgr(
 {
 }
 
+MACsecMgr::~MACsecMgr()
+{
+    // Disable MACsec for all ports
+    for (auto itr = m_macsec_ports.begin(); itr != m_macsec_ports.end();)
+    {
+        // disableMACsec function will delete the current iterator,
+        // to use cur_port as a backup of the current iterator avoids
+        // that the next iterator cannot be found from a deleted iterator
+        auto cur_port = itr++;
+        const TaskArgs temp;
+        disableMACsec(cur_port->first, temp);
+    }
+}
+
 void MACsecMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
     using TaskType = std::tuple<const std::string,const std::string>;
-    using TaskFunc = TaskResult (MACsecMgr::*)(const std::string &, const TaskArgs &);
+    using TaskFunc = task_process_status (MACsecMgr::*)(const std::string &, const TaskArgs &);
     const static std::map<TaskType, TaskFunc > TaskMap = {
         { { CFG_MACSEC_PROFILE_TABLE_NAME, SET_COMMAND }, &MACsecMgr::loadProfile},
         { { CFG_MACSEC_PROFILE_TABLE_NAME, DEL_COMMAND }, &MACsecMgr::removeProfile},
@@ -218,7 +236,7 @@ void MACsecMgr::doTask(Consumer &consumer)
     auto itr = consumer.m_toSync.begin();
     while (itr != consumer.m_toSync.end())
     {
-        TaskResult task_done = TaskResult::ERROR;
+        task_process_status task_done = task_failed;
         auto & message = itr->second;
         const std::string & op = kfvOp(message);
 
@@ -237,24 +255,26 @@ void MACsecMgr::doTask(Consumer &consumer)
                 op.c_str());
         }
 
-        if (task_done == UNFINISHED)
+        if (task_done == task_need_retry)
         {
             SWSS_LOG_DEBUG(
-                "Task %s - %s cannot finish",
+                "Task %s - %s need retry",
                 table_name.c_str(),
                 op.c_str());
             ++itr;
         }
         else
         {
-            if (task_done == TaskResult::ERROR)
+            if (task_done != task_success)
             {
-                SWSS_LOG_WARN("Task fail");
+                SWSS_LOG_WARN("Task %s - %s fail",
+                    table_name.c_str(),
+                    op.c_str());
             }
             else
             {
                 SWSS_LOG_DEBUG(
-                    "Task %s - %s finished",
+                    "Task %s - %s success",
                     table_name.c_str(),
                     op.c_str());
             }
@@ -283,7 +303,7 @@ bool MACsecMgr::MACsecProfile::update(const TaskArgs & ta)
         && GetValue(ta, rekey_period);
 }
 
-MACsecMgr::TaskResult MACsecMgr::loadProfile(
+task_process_status MACsecMgr::loadProfile(
     const std::string & profile_name,
     const TaskArgs & profile_attr)
 {
@@ -293,12 +313,6 @@ MACsecMgr::TaskResult MACsecMgr::loadProfile(
         std::piecewise_construct,
         std::make_tuple(profile_name),
         std::make_tuple());
-    if (profile.second)
-    {
-        // Hot update
-        SWSS_LOG_DEBUG("Hot update");
-    }
-    TaskResult result = ERROR;
     try
     {
         if (profile.first->second.update(profile_attr))
@@ -306,17 +320,29 @@ MACsecMgr::TaskResult MACsecMgr::loadProfile(
             SWSS_LOG_NOTICE(
                 "The MACsec profile '%s' is loaded",
                 profile_name.c_str());
-            result = FINISHED;
         }
+        // If the profile has been used
+        if (profile.second)
+        {
+            for (auto & port : m_macsec_ports)
+            {
+                if (port.second.profile_name == profile_name)
+                {
+                    // Hot update
+                    SWSS_LOG_DEBUG("Hot update");
+                }
+            }
+        }
+        return task_success;
     }
     catch(const std::invalid_argument & e)
     {
         SWSS_LOG_WARN("%s", e.what());
+        return task_failed;
     }
-    return result;
 }
 
-MACsecMgr::TaskResult MACsecMgr::removeProfile(
+task_process_status MACsecMgr::removeProfile(
     const std::string & profile_name,
     const TaskArgs & profile_attr)
 {
@@ -328,7 +354,7 @@ MACsecMgr::TaskResult MACsecMgr::removeProfile(
         SWSS_LOG_WARN(
             "The MACsec profile '%s' wasn't loaded",
             profile_name.c_str());
-        return ERROR;
+        return task_invalid_entry;
     }
 
     // The MACsec profile cannot be removed if it is occupied
@@ -347,14 +373,14 @@ MACsecMgr::TaskResult MACsecMgr::removeProfile(
             "The MACsec profile '%s' is used by the port '%s'",
             profile_name.c_str(),
             port->first.c_str());
-        return UNFINISHED;
+        return task_need_retry;
     }
     SWSS_LOG_NOTICE("The MACsec profile '%s' is removed", profile_name.c_str());
     m_profiles.erase(profile);
-    return FINISHED;
+    return task_success;
 }
 
-MACsecMgr::TaskResult MACsecMgr::enableMACsec(
+task_process_status MACsecMgr::enableMACsec(
     const std::string & port_name,
     const TaskArgs & port_attr)
 {
@@ -376,7 +402,7 @@ MACsecMgr::TaskResult MACsecMgr::enableMACsec(
             "The MACsec profile '%s' for the port '%s' isn't ready",
             profile_name.c_str(),
             port_name.c_str());
-        return UNFINISHED;
+        return task_need_retry;
     }
     auto & profile = itr->second;
 
@@ -384,7 +410,7 @@ MACsecMgr::TaskResult MACsecMgr::enableMACsec(
     if (!isPortStateOk(port_name))
     {
         SWSS_LOG_DEBUG("The port '%s' isn't ready", port_name.c_str());
-        return UNFINISHED;
+        return task_need_retry;
     }
 
     // Create MKA Session object
@@ -400,7 +426,7 @@ MACsecMgr::TaskResult MACsecMgr::enableMACsec(
                 "The MACsec profile '%s' on the port '%s' has been loaded",
                 profile_name.c_str(),
                 port_name.c_str());
-            return FINISHED;
+            return task_success;
         }
         else
         {
@@ -411,7 +437,7 @@ MACsecMgr::TaskResult MACsecMgr::enableMACsec(
                 port_name.c_str(),
                 profile_name.c_str());
             auto result = disableMACsec(port_name, port_attr);
-            if (result != FINISHED)
+            if (result != task_success)
             {
                 return result;
             }
@@ -429,11 +455,19 @@ MACsecMgr::TaskResult MACsecMgr::enableMACsec(
             port_name.c_str(),
             strerror(errno));
         m_macsec_ports.erase(port.first);
-        return ERROR;
+        return task_need_retry;
+    }
+    else if (session.wpa_supplicant_pid == 0)
+    {
+        SWSS_LOG_WARN("Cannot start the wpa_supplicant of the port '%s' : %s",
+        port_name.c_str(),
+        strerror(errno));
+        m_macsec_ports.erase(port.first);
+        return task_failed;
     }
 
     // Enable MACsec
-    if (!enableMACsec(port_name, session, profile))
+    if (!configureMACsec(port_name, session, profile))
     {
         SWSS_LOG_WARN("The MACsec profile '%s' on the port '%s' loading fail",
             profile_name.c_str(),
@@ -443,10 +477,10 @@ MACsecMgr::TaskResult MACsecMgr::enableMACsec(
     SWSS_LOG_NOTICE("The MACsec profile '%s' on the port '%s' loading success",
         profile_name.c_str(),
         port_name.c_str());
-    return FINISHED;
+    return task_success;
 }
 
-MACsecMgr::TaskResult MACsecMgr::disableMACsec(
+task_process_status MACsecMgr::disableMACsec(
     const std::string & port_name,
     const TaskArgs & port_attr)
 {
@@ -457,25 +491,25 @@ MACsecMgr::TaskResult MACsecMgr::disableMACsec(
     {
         SWSS_LOG_NOTICE("The MACsec was not enabled on the port '%s'",
             port_name.c_str());
-        return FINISHED;
+        return task_success;
     }
     auto & session = itr->second;
-    TaskResult ret = FINISHED;
-    if (!disableMACsec(port_name, session))
+    task_process_status ret = task_success;
+    if (!unconfigureMACsec(port_name, session))
     {
         SWSS_LOG_WARN(
             "Cannot stop MKA session on the port '%s'",
             port_name.c_str());
-        ret = ERROR;
+        ret = task_failed;
     }
     if (!stopWPASupplicant(session.wpa_supplicant_pid))
     {
         SWSS_LOG_WARN(
             "Cannot stop WPA_SUPPLICANT process of the port '%s'",
             port_name.c_str());
-        ret = ERROR;
+        ret = task_failed;
     }
-    if (ret == FINISHED)
+    if (ret == task_success)
     {
         SWSS_LOG_NOTICE("The MACsec profile '%s' on the port '%s' is removed",
             itr->second.profile_name.c_str(),
@@ -522,7 +556,8 @@ pid_t MACsecMgr::startWPASupplicant(const std::string & sock) const
     {
         // Wait wpa_supplicant ready
         bool wpa_supplicant_loading = false;
-        do
+        auto retry_time = RETRY_TIME;
+        while(!wpa_supplicant_loading && retry_time > 0)
         {
             try
             {
@@ -531,9 +566,20 @@ pid_t MACsecMgr::startWPASupplicant(const std::string & sock) const
             }
             catch(const std::runtime_error&)
             {
+                retry_time--;
+                std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_INTERVAL));
             }
-        } while(!wpa_supplicant_loading);
-        SWSS_LOG_DEBUG("Start wpa_supplicant success");
+        }
+        if (wpa_supplicant_loading)
+        {
+            SWSS_LOG_DEBUG("Start wpa_supplicant success");
+        }
+        else
+        {
+            stopWPASupplicant(wpa_supplicant_pid);
+            wpa_supplicant_pid = 0;
+            SWSS_LOG_WARN("Cannot connect to wpa_supplicant.");
+        }
     }
     return wpa_supplicant_pid;
 }
@@ -556,7 +602,7 @@ bool MACsecMgr::stopWPASupplicant(pid_t pid) const
     return status == 0;
 }
 
-bool MACsecMgr::enableMACsec(
+bool MACsecMgr::configureMACsec(
     const std::string & port_name,
     const MKASession & session,
     const MACsecProfile & profile) const
@@ -676,7 +722,7 @@ bool MACsecMgr::enableMACsec(
     return true;
 }
 
-bool MACsecMgr::disableMACsec(
+bool MACsecMgr::unconfigureMACsec(
     const std::string & port_name,
     const MKASession & session) const
 {

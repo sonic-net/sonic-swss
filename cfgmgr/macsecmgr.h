@@ -37,7 +37,7 @@ class MACsecMgr : public Orch
 public:
     using Orch::doTask;
     MACsecMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
-
+    ~MACsecMgr();
 private:
     void doTask(Consumer &consumer);
 
@@ -77,16 +77,10 @@ private:
     std::map<std::string, struct MACsecProfile> m_profiles;
     std::map<std::string, MKASession>           m_macsec_ports;
 
-    enum TaskResult
-    {
-        FINISHED,
-        UNFINISHED,
-        ERROR,
-    };
-    TaskResult removeProfile(const std::string & profile_name, const TaskArgs & profile_attr);
-    TaskResult loadProfile(const std::string & profile_name, const TaskArgs & profile_attr);
-    TaskResult enableMACsec(const std::string & port_name, const TaskArgs & port_attr);
-    TaskResult disableMACsec(const std::string & port_name, const TaskArgs & port_attr);
+    task_process_status removeProfile(const std::string & profile_name, const TaskArgs & profile_attr);
+    task_process_status loadProfile(const std::string & profile_name, const TaskArgs & profile_attr);
+    task_process_status enableMACsec(const std::string & port_name, const TaskArgs & port_attr);
+    task_process_status disableMACsec(const std::string & port_name, const TaskArgs & port_attr);
 
 
     Table m_statePortTable;
@@ -94,8 +88,8 @@ private:
     bool isPortStateOk(const std::string & port_name);
     pid_t startWPASupplicant(const std::string & sock) const;
     bool stopWPASupplicant(pid_t pid) const;
-    bool enableMACsec(const std::string & port_name, const MKASession & session, const MACsecProfile & profile) const;
-    bool disableMACsec(const std::string & port_name, const MKASession & session) const;
+    bool configureMACsec(const std::string & port_name, const MKASession & session, const MACsecProfile & profile) const;
+    bool unconfigureMACsec(const std::string & port_name, const MKASession & session) const;
 };
 
 }
