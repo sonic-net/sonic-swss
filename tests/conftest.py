@@ -53,34 +53,55 @@ def pytest_addoption(parser):
 
 
 class AsicDbValidator(DVSDatabase):
-    def __init__(self, db_id: str, connector: str):
+    def __init__(self, db_id: int, connector: str):
         DVSDatabase.__init__(self, db_id, connector)
+        self._wait_for_asic_db_to_initialize()
+        self._populate_default_asic_db_values()
+        self._generate_oid_to_interface_mapping()
 
-        # Get default .1Q Vlan ID
-        self.default_vlan_id = self.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN", 1)[0]
+    def _wait_for_asic_db_to_initialize(self) -> None:
+        """Wait up to 30 seconds for the default fields to appear in ASIC DB."""
+        def _verify_db_contents():
+            # We expect only the default VLAN
+            if len(self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN")) != 1:
+                return (False, None)
 
-        # Build port OID to front port name mapping
+            if len(self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")) != NUM_PORTS:
+                return (False, None)
+
+            if len(self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")) != 0:
+                return (False, None)
+
+            return (True, None)
+
+        # Verify that ASIC DB has been fully initialized
+        init_polling_config = PollingConfig(2, 30, strict=True)
+        wait_for_result(_verify_db_contents, init_polling_config)
+
+    def _generate_oid_to_interface_mapping(self) -> None:
+        """Generate the OID->Name mappings for ports and host interfaces."""
         self.portoidmap = {}
         self.portnamemap = {}
         self.hostifoidmap = {}
         self.hostifnamemap = {}
 
-        keys = self.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", NUM_PORTS)
-        for k in keys:
-            fvs = self.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", k)
+        host_intfs = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")
+        for intf in host_intfs:
+            fvs = self.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", intf)
             port_oid = fvs.get("SAI_HOSTIF_ATTR_OBJ_ID")
             port_name = fvs.get("SAI_HOSTIF_ATTR_NAME")
 
             self.portoidmap[port_oid] = port_name
             self.portnamemap[port_name] = port_oid
-            self.hostifoidmap[k] = port_name
-            self.hostifnamemap[port_name] = k
+            self.hostifoidmap[intf] = port_name
+            self.hostifnamemap[port_name] = intf
 
-        # Get default ACL table and ACL rules
+    def _populate_default_asic_db_values(self) -> None:
+        # Get default .1Q Vlan ID
+        self.default_vlan_id = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN")[0]
+
         self.default_acl_tables = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
-        assert len(self.default_acl_tables) >= 0
-
-        self.default_acl_entries = self.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 0)
+        self.default_acl_entries = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
 
 
 class ApplDbValidator(object):
@@ -310,7 +331,7 @@ class DockerVirtualSwitch(object):
             raise
 
     def check_services_ready(self, timeout=30):
-        """"Check if all processes in the DVS are ready."""
+        """Check if all processes in the DVS are ready."""
         re_space = re.compile('\s+')
         process_status = {}
         ready = False
