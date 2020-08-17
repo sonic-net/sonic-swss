@@ -41,10 +41,8 @@ def ensure_system(cmd):
 def pytest_addoption(parser):
     parser.addoption("--dvsname", action="store", default=None,
                       help="dvs name")
-    
     parser.addoption("--forcedvs", action="store_true", default=False,
-                      help="force persistent dvs when ports < 32 ")
- 
+                      help="force persistent dvs when ports < 32")
     parser.addoption("--keeptb", action="store_true", default=False,
                       help="keep testbed after test")
     parser.addoption("--imgname", action="store", default="docker-sonic-vs",
