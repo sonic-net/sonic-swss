@@ -2386,6 +2386,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                             else
                             {
                                 /* Port is already down, setting fec mode*/
+                                p.m_fec_mode = fec_mode_map[fec_mode]
                                 if (setPortFec(p, p.m_fec_mode))
                                 {
                                     m_portList[alias] = p;
