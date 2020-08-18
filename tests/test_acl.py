@@ -466,7 +466,7 @@ class TestAclRuleValidation:
             dvs.stop_swss()
             dvs.start_swss()
             # reinit ASIC DB validator object
-            dvs.init_asicdb_validator()
+            dvs.init_asic_db_validator()
 
             action_values = self.get_acl_actions_supported(dvs_acl, stage)
             # Now, PACKET_ACTION is not supported and REDIRECT_ACTION is supported
