@@ -182,3 +182,9 @@ class TestPortDPBAcl(object):
         for aclTable in aclTableNames:
             dvs_acl.remove_acl_table(aclTable)
         dvs_acl.verify_acl_table_count(0)
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

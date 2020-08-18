@@ -2358,17 +2358,46 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         /* reset fec mode upon mode change */
                         if (p.m_fec_mode != fec_mode_map[fec_mode])
                         {
-                            p.m_fec_mode = fec_mode_map[fec_mode];
-                            if (setPortFec(p, p.m_fec_mode))
+                            if (p.m_admin_state_up)
                             {
-                                m_portList[alias] = p;
-                                SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                /* Bring port down before applying fec mode*/
+                                if (!setPortAdminStatus(p, false))
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set fec mode", alias.c_str());
+                                    it++;
+                                    continue;
+                                }
+
+                                p.m_admin_state_up = false;
+                                p.m_fec_mode = fec_mode_map[fec_mode];
+
+                                if (setPortFec(p, p.m_fec_mode))
+                                {
+                                    m_portList[alias] = p;
+                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                    it++;
+                                    continue;
+                                }
                             }
                             else
                             {
-                                SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
-                                it++;
-                                continue;
+                                /* Port is already down, setting fec mode*/
+                                p.m_fec_mode = fec_mode_map[fec_mode];
+                                if (setPortFec(p, p.m_fec_mode))
+                                {
+                                    m_portList[alias] = p;
+                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                    it++;
+                                    continue;
+                                }
                             }
                         }
                     }

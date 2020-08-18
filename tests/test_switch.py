@@ -71,3 +71,9 @@ class TestSwitch(object):
         vxlan_switch_test(dvs, switch_oid, "12345", "00:01:02:03:04:05")
 
         vxlan_switch_test(dvs, switch_oid, "56789", "00:0A:0B:0C:0D:0E")
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

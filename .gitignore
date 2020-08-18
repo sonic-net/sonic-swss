@@ -51,8 +51,8 @@ cfgmgr/vrfmgrd
 cfgmgr/vxlanmgrd
 cfgmgr/natmgrd
 cfgmgr/sflowmgrd
-portsyncd/portsyncd
 fpmsyncd/fpmsyncd
+gearsyncd/gearsyncd
 mclagsyncd/mclagsyncd
 natsyncd/natsyncd
 neighsyncd/neighsyncd

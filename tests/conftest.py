@@ -47,43 +47,71 @@ def pytest_addoption(parser):
                      help="vct namespace")
     parser.addoption("--topo", action="store", default=None,
                      help="vct topology file")
+    parser.addoption("--forcedvs", action="store_true", default=False,
+                      help="force persistent dvs when ports < 32")
     parser.addoption("--keeptb", action="store_true", default=False,
                       help="keep testbed after test")
     parser.addoption("--imgname", action="store", default="docker-sonic-vs",
                       help="image name")
+    parser.addoption("--max_cpu",
+                     action="store",
+                     default=2,
+                     type=int,
+                     help="Max number of CPU cores to use, if available. (default = 2)")
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
    return ''.join(random.choice(chars) for x in range(size))
 
 class AsicDbValidator(DVSDatabase):
-    def __init__(self, db_id: str, connector: str):
+    def __init__(self, db_id: int, connector: str):
         DVSDatabase.__init__(self, db_id, connector)
+        self._wait_for_asic_db_to_initialize()
+        self._populate_default_asic_db_values()
+        self._generate_oid_to_interface_mapping()
 
-        # Get default .1Q Vlan ID
-        self.default_vlan_id = self.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN", 1)[0]
+    def _wait_for_asic_db_to_initialize(self) -> None:
+        """Wait up to 30 seconds for the default fields to appear in ASIC DB."""
+        def _verify_db_contents():
+            # We expect only the default VLAN
+            if len(self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN")) != 1:
+                return (False, None)
 
-        # Build port OID to front port name mapping
+            if len(self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")) != NUM_PORTS:
+                return (False, None)
+
+            if len(self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")) != 0:
+                return (False, None)
+
+            return (True, None)
+
+        # Verify that ASIC DB has been fully initialized
+        init_polling_config = PollingConfig(2, 30, strict=True)
+        wait_for_result(_verify_db_contents, init_polling_config)
+
+    def _generate_oid_to_interface_mapping(self) -> None:
+        """Generate the OID->Name mappings for ports and host interfaces."""
         self.portoidmap = {}
         self.portnamemap = {}
         self.hostifoidmap = {}
         self.hostifnamemap = {}
 
-        keys = self.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", NUM_PORTS)
-        for k in keys:
-            fvs = self.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", k)
+        host_intfs = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")
+        for intf in host_intfs:
+            fvs = self.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF", intf)
             port_oid = fvs.get("SAI_HOSTIF_ATTR_OBJ_ID")
             port_name = fvs.get("SAI_HOSTIF_ATTR_NAME")
 
             self.portoidmap[port_oid] = port_name
             self.portnamemap[port_name] = port_oid
-            self.hostifoidmap[k] = port_name
-            self.hostifnamemap[port_name] = k
+            self.hostifoidmap[intf] = port_name
+            self.hostifnamemap[port_name] = intf
 
-        # Get default ACL table and ACL rules
+    def _populate_default_asic_db_values(self) -> None:
+        # Get default .1Q Vlan ID
+        self.default_vlan_id = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN")[0]
+
         self.default_acl_tables = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
-        assert len(self.default_acl_tables) >= 0
-
-        self.default_acl_entries = self.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 0)
+        self.default_acl_entries = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
 
 
 class ApplDbValidator(object):
@@ -166,8 +194,19 @@ class DockerVirtualSwitch(object):
     FLEX_COUNTER_DB_ID = 5
     STATE_DB_ID = 6
 
-    def __init__(self, name=None, imgname=None, keeptb=False, fakeplatform=None, log_path=None,
-                 vct=None,newctnname=None, ctnmounts=None):
+    def __init__(
+            self,
+            name=None,
+            imgname=None,
+            keeptb=False,
+            fakeplatform=None,
+            log_path=None,
+            max_cpu=2,
+            forcedvs=None,
+            vct=None,
+            newctnname=None,
+            ctnmounts=None
+    ):
         self.basicd = ['redis-server',
                        'rsyslogd']
         self.swssd = ['orchagent',
@@ -199,6 +238,7 @@ class DockerVirtualSwitch(object):
             self.cleanup = True
         ctn_sw_id = -1
         ctn_sw_name = None
+        self.persistent = False
         if name != None:
             # get virtual switch container
             for ctn in self.client.containers.list():
@@ -210,9 +250,19 @@ class DockerVirtualSwitch(object):
                         (status, output) = subprocess.getstatusoutput("docker inspect --format '{{.HostConfig.NetworkMode}}' %s" % name)
                     if output != 'none':
                         ctn_sw_id = output.split(':')[1]
+                    # Persistent DVS is available.
                     self.cleanup = False
+                    self.persistent = True
             if self.ctn == None:
                 raise NameError("cannot find container %s" % name)
+
+            self.num_net_interfaces = self.net_interface_count()
+
+            if self.num_net_interfaces > NUM_PORTS:
+                raise ValueError("persistent dvs is not valid for testbed with ports > %d" % NUM_PORTS)
+
+            if self.num_net_interfaces < NUM_PORTS and not forcedvs:
+                raise ValueError("persistent dvs does not have %d ports needed by testbed" % NUM_PORTS)
 
             # get base container
             for ctn in self.client.containers.list():
@@ -236,6 +286,10 @@ class DockerVirtualSwitch(object):
             else:
                 self.mount = "/var/run/redis-vs/{}".format(name)
             self.net_cleanup()
+            # As part of https://github.com/Azure/sonic-buildimage/pull/4499
+            # VS support dynamically create Front-panel ports so save the orginal
+            # config db for persistent DVS
+            self.runcmd("mv /etc/sonic/config_db.json /etc/sonic/config_db.json.orig")
             self.ctn_restart()
         else:
             self.ctn_sw = self.client.containers.run('debian:jessie', privileged=True, detach=True,
@@ -269,9 +323,13 @@ class DockerVirtualSwitch(object):
                     vols[k] = v
             kwargs['volumes'] = vols
             # create virtual switch container
-            self.ctn = self.client.containers.run(imgname, privileged=True, detach=True,
-                    environment=self.environment,
-                    network_mode="container:%s" % self.ctn_sw.name, **kwargs)
+            self.ctn = self.client.containers.run(imgname,
+                                                  privileged=True,
+                                                  detach=True,
+                                                  environment=self.environment,
+                                                  network_mode=f"container:{self.ctn_sw.name}",
+                                                  cpu_count=max_cpu,
+                                                  **kwargs)
         if sys.version_info < (3, 0):
             _, output = commands.getstatusoutput("docker inspect --format"
                                               " '{{.State.Pid}}' %s" % self.ctn.name)
@@ -296,7 +354,13 @@ class DockerVirtualSwitch(object):
     def destroy(self):
         if self.appldb:
             del self.appldb
-        if self.cleanup:
+        # In case persistent dvs was used removed all the extra server link
+        # that were created
+        if self.persistent:
+            for s in self.servers:
+                s.destroy()
+        # persistent and clean-up flag are mutually exclusive
+        elif self.cleanup:
             self.ctn.remove(force=True)
             self.ctn_sw.remove(force=True)
             os.system("rm -rf {}".format(self.mount))
@@ -326,7 +390,7 @@ class DockerVirtualSwitch(object):
             raise
 
     def check_services_ready(self, timeout=30):
-        """"Check if all processes in the DVS are ready."""
+        """Check if all processes in the DVS are ready."""
         re_space = re.compile('\s+')
         process_status = {}
         ready = False
@@ -413,6 +477,20 @@ class DockerVirtualSwitch(object):
                     print("remove extra link {}".format(pname))
         return
 
+    def net_interface_count(self):
+        """get the interface count in persistent DVS Container
+           if not found or some error then return 0 as default"""
+
+        res = self.ctn.exec_run(['sh', '-c', 'ip link show | grep -oE eth[0-9]+ | grep -vc eth0'])
+        if not res.exit_code:
+            try:
+                out = res.output.decode('utf-8')
+            except AttributeError:
+                return 0
+            return int(out.rstrip('\n'))
+        else:
+            return 0
+      
     def vct_connect(self, ctnname):
         data = self.vct.get_inband(ctnname)
         if "inband_address" in data:
@@ -914,7 +992,7 @@ class DockerVirtualSwitch(object):
     def add_route(self, prefix, nexthop):
         self.runcmd("ip route add " + prefix + " via " + nexthop)
         time.sleep(1)
-
+    
     def remove_route(self, prefix):
         self.runcmd("ip route del " + prefix)
         time.sleep(1)
@@ -1014,8 +1092,16 @@ class DockerVirtualSwitch(object):
         return self.state_db
 
 class DockerVirtualChassisTopology(object):
-    def __init__(self, namespace=None, imgname=None, keeptb=False,
-                 fakeplatform=None, topoFile=None, log_path=None):
+    def __init__(
+            self, 
+            namespace=None, 
+            imgname=None, 
+            keeptb=False,
+            fakeplatform=None,
+            log_path=None,
+            max_cpu=2,
+            forcedvs=None,
+            topoFile=None ):
         self.ns = namespace
         self.chassbr = "br4chs"
         self.keeptb = keeptb
@@ -1026,6 +1112,8 @@ class DockerVirtualChassisTopology(object):
         self.dvss = {}
         self.inbands = {}
         self.log_path = log_path
+        self.max_cpu = max_cpu
+        self.forcedvs = forcedvs
         if self.ns is None:
            self.ns = random_string()
         print("VCT ns: " + self.ns)
@@ -1072,7 +1160,9 @@ class DockerVirtualChassisTopology(object):
         for ctn in docker.from_env().containers.list():
             if ctn.name.endswith(suffix):
                 self.dvss[ctn.name] = DockerVirtualSwitch(ctn.name, self.imgname, self.keeptb,
-                                                          self.fakeplatform, ctn.name, self)
+                                                          self.fakeplatform, log_path=ctn.name,
+                                                          max_cpu=self.max_cpu, forcedvs=self.forcedvs,
+                                                          vct=self)
         if self.chassbr is None and len(self.dvss) > 0:
             ret, res = self.ctn_runcmd(self.dvss.values()[0].ctn,
                         "sonic-cfggen --print-data -j /usr/share/sonic/virtual_chassis/vct_connections.json")
@@ -1193,6 +1283,8 @@ class DockerVirtualChassisTopology(object):
                                                          keeptb=self.keeptb,
                                                          fakeplatform=self.fakeplatform,
                                                          log_path=self.log_path,
+                                                         max_cpu=self.max_cpu,
+                                                         forcedvs=self.forcedvs,
                                                          vct=self,newctnname=ctnname,
                                                          ctnmounts=vol)
             self.set_ctninfo(ctndir, ctnname, self.dvss[ctnname].pid)
@@ -1292,31 +1384,39 @@ class DockerVirtualChassisTopology(object):
 @pytest.yield_fixture(scope="module")
 def dvs(request) -> DockerVirtualSwitch:
     name = request.config.getoption("--dvsname")
+    forcedvs = request.config.getoption("--forcedvs")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
+    max_cpu = request.config.getoption("--max_cpu")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
-
     log_path = name if name else request.module.__name__
 
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path)
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, forcedvs)
+
     yield dvs
 
     dvs.get_logs()
     dvs.destroy()
+    # restore original config db
+    if dvs.persistent:
+        dvs.runcmd("mv /etc/sonic/config_db.json.orig /etc/sonic/config_db.json")
+        dvs.ctn_restart()
 
 @pytest.yield_fixture(scope="module")
 def vct(request):
     vctns = request.config.getoption("--vctns")
     topo = request.config.getoption("--topo")
+    forcedvs = request.config.getoption("--forcedvs")
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
+    max_cpu = request.config.getoption("--max_cpu")
+    log_path = vctns if vctns else request.module.__name__
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
     if not topo:
         # use ecmp topology as default
         topo = "virtual_chassis/chassis_with_ecmp_neighbors.json"
-    log_path = request.module.__name__
-    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, fakeplatform, topo,
-                                       log_path)
+    vct = DockerVirtualChassisTopology(vctns, imgname, keeptb, fakeplatform, log_path, max_cpu,
+                                       forcedvs, topo)
     yield vct
     vct.get_logs(request.module.__name__)
     vct.destroy()

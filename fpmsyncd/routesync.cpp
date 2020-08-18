@@ -216,6 +216,15 @@ void RouteSync::onVnetRouteMsg(int nlmsg_type, struct nl_object *obj, string vne
     string vnet_dip =  vnet + string(":") + destipprefix;
     SWSS_LOG_DEBUG("Receive new vnet route message %s", vnet_dip.c_str());
 
+    /* Ignore IPv6 link-local and mc addresses as Vnet routes */
+    auto family = rtnl_route_get_family(route_obj);
+    if (family == AF_INET6 &&
+       (IN6_IS_ADDR_LINKLOCAL(nl_addr_get_binary_addr(dip)) || IN6_IS_ADDR_MULTICAST(nl_addr_get_binary_addr(dip))))
+    {
+        SWSS_LOG_INFO("Ignore linklocal vnet routes %d for %s", nlmsg_type, vnet_dip.c_str());
+        return;
+    }
+
     if (nlmsg_type == RTM_DELROUTE)
     {
         /* Duplicated delete as we do not know if it is a VXLAN tunnel route*/
