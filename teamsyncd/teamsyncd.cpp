@@ -48,12 +48,17 @@ int main(int argc, char **argv)
                 if(received_sigterm)
                 {
                   sync.cleanTeamSync();
-                  received_sigterm = false;
+                  break;
                 }
 
                 Selectable *temps;
                 s.select(&temps, 1000); // block for a second
                 sync.periodic();
+            }
+            if(received_sigterm)
+            {
+                SWSS_LOG_NOTICE("Received SIGTERM Exiting");
+                break;
             }
         }
         catch (const std::exception& e)

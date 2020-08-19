@@ -71,6 +71,7 @@ int main(int argc, char **argv)
             {
                 teammgr.cleanTeamProcesses(SIGTERM);
                 received_sigterm = false;
+                break;
             }
             
             Selectable *sel;
@@ -91,6 +92,7 @@ int main(int argc, char **argv)
             auto *c = (Executor *)sel;
             c->execute();
         }
+        SWSS_LOG_NOTICE("Exiting");
     }
     catch (const exception &e)
     {
