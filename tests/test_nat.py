@@ -283,7 +283,7 @@ class TestNat(object):
         # clear interfaces
         self.clear_interfaces(dvs)
 
-    @pytest.mark.skip("See FIXME comment")
+    @pytest.mark.skip("Issue #1409")
     def test_VerifyConntrackTimeoutForNatEntry(self, dvs, testlog):
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
