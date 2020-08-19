@@ -1266,13 +1266,13 @@ class DockerVirtualChassisTopology(object):
 
     def create_vct_ctn(self, ctndir):
         cwd = os.getcwd()
-        cfgdir = cwd + "/virtual_chassis/" + ctndir
-        cfgfile =  cfgdir + "/default_config.json"
-        with open(cfgfile, "r") as cfg:
+        chassis_config_dir = cwd + "/virtual_chassis/" + ctndir
+        chassis_config_file =  chassis_config_dir + "/default_config.json"
+        with open(chassis_config_file, "r") as cfg:
             defcfg = json.load(cfg)["DEVICE_METADATA"]["localhost"]
             ctnname = defcfg["hostname"] + "." + self.ns
             vol = {}
-            vol[cfgdir] = {"bind": "/usr/share/sonic/virtual_chassis", "mode": "ro"}
+            vol[chassis_config_dir] = {"bind": "/usr/share/sonic/virtual_chassis", "mode": "ro"}
 
             # pass self.ns into the vs to be use for vs restarts by swss conftest.
             # connection to chassbr is setup by chassis_connect.py within the vs
@@ -1300,57 +1300,69 @@ class DockerVirtualChassisTopology(object):
         return {}
 
     def get_topo_neigh(self):
-        cwd = os.getcwd()
-        neighs_by_ctn = {}
+        instance_to_neighbor_map = {}
         if "neighbor_connections" not in self.virt_topo:
-            return neighs_by_ctn
-        for nck, ncv in self.virt_topo["neighbor_connections"].items():
-            ctndir = nck.split("-")[0]
-            nbrctndir = nck.split("-")[1]
-            nbrvethintf = int(ncv[nbrctndir].split("eth")[1])
-            nbrintf = "ethernet%d|" % ((nbrvethintf - 1) * 4)
-            vethintf = int(ncv[ctndir].split("eth")[1])
-            cfgdir = cwd + "/virtual_chassis/" + ctndir
-            cfgfile = cfgdir + "/default_config.json"
-            ctnname = ""
-            with open(cfgfile, "r") as cfg:
-                defcfg = json.load(cfg)["DEVICE_METADATA"]["localhost"]
-                ctnname = defcfg["hostname"] + "." + self.ns
-            cfgfile = cwd + "/virtual_chassis/" + nbrctndir + "/default_config.json"
-            with open(cfgfile, "r") as cfg:
-                intfCfg = json.load(cfg)["INTERFACE"]
-                for key in intfCfg:
-                    nbraddr = ""
-                    if key.lower().startswith(nbrintf):
-                        intfaddr = re.split("/|\\|", key)
-                        if len(intfaddr) > 1:
-                            nbraddr = intfaddr[1]
-                        if nbraddr == "":
+            return instance_to_neighbor_map
+
+        working_dir = os.getcwd()
+        for conn, endpoints in self.virt_topo["neighbor_connections"].items():
+            chassis_instance = conn.split('-')[0]
+            neighbor_instance = conn.split('-')[1]
+
+            chassis_config_dir = os.path.join(working_dir, "virtual_chassis", chassis_instance)
+            chassis_config_file = os.path.join(chassis_config_dir, "default_config.json")
+            instance_container_name = ""
+            with open(chassis_config_file, "r") as cfg:
+                device_info = json.load(cfg)["DEVICE_METADATA"]["localhost"]
+                instance_container_name = device_info["hostname"] + "." + self.ns
+
+            chassis_veth_intf = int(endpoints[chassis_instance].split("eth")[1])
+            chassis_host_intf = f"Ethernet{(chassis_veth_intf - 1) * 4}"
+
+            chassis_config_file = os.path.join(working_dir, "virtual_chassis", neighbor_instance, "default_config.json")
+            with open(chassis_config_file, "r") as cfg:
+                intf_config = json.load(cfg)["INTERFACE"]
+                for key in intf_config:
+                    neighbor_address = ""
+                    if key.lower().startswith(f"{chassis_host_intf}|".lower()):
+                        host_intf_address = re.split("/|\\|", key)
+
+                        if len(host_intf_address) > 1:
+                            neighbor_address = host_intf_address[1]
+
+                        if neighbor_address == "":
                             continue
-                        if ctnname not in neighs_by_ctn:
-                            neighs_by_ctn[ctnname] = []
-                        neighs_by_ctn[ctnname].append((vethintf - 1, nbraddr))
-        return neighs_by_ctn
+
+                        if instance_container_name not in instance_to_neighbor_map:
+                            instance_to_neighbor_map[instance_container_name] = []
+
+                        instance_to_neighbor_map[instance_container_name].append((chassis_veth_intf - 1,
+                                                                                  neighbor_address,
+                                                                                  chassis_host_intf))
+
+        return instance_to_neighbor_map
 
     def handle_neighconn(self):
         if self.oper != "create":
             return
-        neighs_by_ctn = self.get_topo_neigh()
-        for ctnname, nbraddrs in neighs_by_ctn.items():
+
+        instance_to_neighbor_map = self.get_topo_neigh()
+        for ctnname, nbraddrs in instance_to_neighbor_map.items():
             if ctnname not in self.dvss:
                 continue
-            for idx, nbraddr in nbraddrs:
-                self.dvss[ctnname].servers[idx].runcmd("ifconfig eth0 down ")
-                self.dvss[ctnname].servers[idx].runcmd("ifconfig eth0 up")
-                self.dvss[ctnname].servers[idx].runcmd("ifconfig eth0 " + nbraddr)
-        return
+
+            for server, neighbor_address, host_intf in nbraddrs:
+                self.dvss[ctnname].servers[server].runcmd("ifconfig eth0 down")
+                self.dvss[ctnname].servers[server].runcmd("ifconfig eth0 up")
+                self.dvss[ctnname].servers[server].runcmd(f"ifconfig eth0 {neighbor_address}")
+                self.dvss[ctnname].runcmd(f"config interface startup {host_intf}")
 
     def verify_conns(self):
         passed = True
         if "neighbor_connections" not in self.virt_topo:
             return passed
-        neighs_by_ctn = self.get_topo_neigh()
-        for ctnname, nbraddrs in neighs_by_ctn.items():
+        instance_to_neighbor_map = self.get_topo_neigh()
+        for ctnname, nbraddrs in instance_to_neighbor_map.items():
             for item in nbraddrs:
                 nbraddr = item[1]
                 print("verify neighbor connectivity from %s to %s nbrAddr " % (
