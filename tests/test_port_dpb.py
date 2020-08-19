@@ -40,9 +40,6 @@ class TestPortDPB(object):
     Empty --> Not Tested
     '''
 
-    '''
-    @pytest.mark.skip()
-    '''
     def test_port_breakout_one(self, dvs):
         dpb = DPB()
         dpb.breakout(dvs, "Ethernet0", maxBreakOut)
@@ -70,10 +67,6 @@ class TestPortDPB(object):
         dpb.change_speed_and_verify(dvs, ["Ethernet0"], speed40G)
         #print "**** 1X100G --> 1X40G passed ****"
 
-    '''
-    @pytest.mark.skip()
-    '''
-    @pytest.mark.xfail(reason="test stability issue: Azure/sonic-swss#1222")
     def test_port_breakout_multiple(self, dvs):
         dpb = DPB()
         port_names = ["Ethernet0", "Ethernet12", "Ethernet64", "Ethernet112"]
@@ -84,7 +77,7 @@ class TestPortDPB(object):
         dpb.breakin(dvs, ["Ethernet64", "Ethernet65", "Ethernet66", "Ethernet67"])
         dpb.breakin(dvs, ["Ethernet112", "Ethernet113", "Ethernet114", "Ethernet115"])
 
-    @pytest.mark.skip()
+    @pytest.mark.skip("breakout_all takes too long to execute")
     def test_port_breakout_all(self, dvs):
         dpb = DPB()
         port_names = []
