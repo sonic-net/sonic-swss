@@ -1,4 +1,3 @@
-from dvslib.dvs_common import PollingConfig
 class DVSMirror(object):
     def __init__(self, adb, cdb, sdb, cntrdb, appdb):
         self.asic_db = adb
@@ -67,13 +66,10 @@ class DVSMirror(object):
                 assert "SAI_PORT_ATTR_EGRESS_MIRROR_SESSION" not in member.keys() or member["SAI_PORT_ATTR_EGRESS_MIRROR_SESSION"] == "0:null"
 
     def verify_session_db(self, dvs, name, asic_table=None, asic=None, state=None, asic_size=None):
-
-        mirror_session_db_poll = PollingConfig(polling_interval=0.01, timeout=120, strict=True)
-
         if asic:
-            dvs.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION", asic_table, asic, mirror_session_db_poll)
+            dvs.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION", asic_table, asic)
         if state:
-            dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", name, state, mirror_session_db_poll)
+            dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", name, state)
 
     def verify_session_policer(self, dvs, policer_oid, cir):
         if cir:

@@ -1206,9 +1206,6 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
             session.nexthopInfo.nexthop = NextHopKey("0.0.0.0", "");
         }
 
-        SWSS_LOG_NOTICE("Update mirror session state db %s nexthop to %s",
-                        name.c_str(), session.nexthopInfo.nexthop.to_string().c_str());
-
         // Update State DB Nexthop
         setSessionState(name, session, MIRROR_SESSION_NEXT_HOP_IP);
 
