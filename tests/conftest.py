@@ -1226,6 +1226,7 @@ class DockerVirtualChassisTopology(object):
                 self.create_vct_ctn(ctndir)
             if "neighbor_connections" in self.virt_topo:
                 self.handle_neighconn()
+                self.handle_chassis_connections()
             retry = 0
             while self.verify_vct() is False and retry < 10:
                 print("wait for chassis to be ready")
@@ -1318,9 +1319,7 @@ class DockerVirtualChassisTopology(object):
 
             neighbor_veth_intf = int(endpoints[neighbor_instance].split("eth")[1])
             neighbor_host_intf = f"Ethernet{(neighbor_veth_intf - 1) * 4}"
-
             chassis_veth_intf = int(endpoints[chassis_instance].split("eth")[1])
-            chassis_host_intf = f"Ethernet{(chassis_veth_intf - 1) * 4}"
 
             neighbor_config_file = os.path.join(working_dir, "virtual_chassis", neighbor_instance, "default_config.json")
             with open(neighbor_config_file, "r") as cfg:
@@ -1340,8 +1339,7 @@ class DockerVirtualChassisTopology(object):
                             instance_to_neighbor_map[chassis_container_name] = []
 
                         instance_to_neighbor_map[chassis_container_name].append((chassis_veth_intf - 1,
-                                                                                 neighbor_address,
-                                                                                 chassis_host_intf))
+                                                                                 neighbor_address))
 
         return instance_to_neighbor_map
 
@@ -1354,11 +1352,52 @@ class DockerVirtualChassisTopology(object):
             if ctnname not in self.dvss:
                 continue
 
-            for server, neighbor_address, host_intf in nbraddrs:
+            for server, neighbor_address in nbraddrs:
                 self.dvss[ctnname].servers[server].runcmd("ifconfig eth0 down")
                 self.dvss[ctnname].servers[server].runcmd("ifconfig eth0 up")
                 self.dvss[ctnname].servers[server].runcmd(f"ifconfig eth0 {neighbor_address}")
-                self.dvss[ctnname].runcmd(f"config interface startup {host_intf}")
+
+    def get_chassis_instance_port_statuses(self):
+        instance_to_port_status_map = {}
+        if "neighbor_connections" not in self.virt_topo:
+            return instance_to_neighbor_map
+
+        working_dir = os.getcwd()
+        for conn, endpoints in self.virt_topo["neighbor_connections"].items():
+            chassis_instance = conn.split('-')[0]
+
+            chassis_config_dir = os.path.join(working_dir, "virtual_chassis", chassis_instance)
+            chassis_config_file = os.path.join(chassis_config_dir, "default_config.json")
+            with open(chassis_config_file, "r") as cfg:
+                config = json.load(cfg)
+                device_info = config["DEVICE_METADATA"]["localhost"]
+                chassis_container_name = device_info["hostname"] + "." + self.ns
+
+                port_info = config["PORT"]
+            
+            for port, config in port_info.items():
+                if "admin_status" not in config:
+                    continue
+
+                if chassis_container_name not in instance_to_port_status_map:
+                    instance_to_port_status_map[chassis_container_name] = []
+
+                instance_to_port_status_map[chassis_container_name].append((port, config.get("admin_status")))
+            
+            return instance_to_port_status_map
+
+    def handle_chassis_connections(self):
+        if self.oper != "create":
+            return
+        
+        instance_to_port_status_map = self.get_chassis_instance_port_statuses()
+        for chassis_instance, port_statuses in instance_to_port_status_map.items():
+            if chassis_instance not in self.dvss:
+                continue
+
+            for port, status in port_statuses:
+                command = "startup" if status == "up" else "shutdown"
+                self.dvss[chassis_instance].runcmd(f"config interface {command} {port}")
 
     def verify_conns(self):
         passed = True
