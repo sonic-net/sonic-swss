@@ -426,7 +426,12 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
         if (is_lo)
         {
-            addLoopbackIntf(alias);
+            if (m_loopbackIntfList.find(alias) == m_loopbackIntfList.end())
+            {
+                addLoopbackIntf(alias);
+                m_loopbackIntfList.insert(alias);
+                SWSS_LOG_INFO("Added %s loopback interface", alias.c_str());
+            }
         }
         else
         {
@@ -540,6 +545,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         if (is_lo)
         {
             delLoopbackIntf(alias);
+            m_loopbackIntfList.erase(alias);
         }
 
         if (!subIntfAlias.empty())
