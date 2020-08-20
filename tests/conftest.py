@@ -1311,20 +1311,23 @@ class DockerVirtualChassisTopology(object):
 
             chassis_config_dir = os.path.join(working_dir, "virtual_chassis", chassis_instance)
             chassis_config_file = os.path.join(chassis_config_dir, "default_config.json")
-            instance_container_name = ""
+            chassis_container_name = ""
             with open(chassis_config_file, "r") as cfg:
                 device_info = json.load(cfg)["DEVICE_METADATA"]["localhost"]
-                instance_container_name = device_info["hostname"] + "." + self.ns
+                chassis_container_name = device_info["hostname"] + "." + self.ns
+
+            neighbor_veth_intf = int(endpoints[neighbor_instance].split("eth")[1])
+            neighbor_host_intf = f"Ethernet{(neighbor_veth_intf - 1) * 4}"
 
             chassis_veth_intf = int(endpoints[chassis_instance].split("eth")[1])
             chassis_host_intf = f"Ethernet{(chassis_veth_intf - 1) * 4}"
 
-            chassis_config_file = os.path.join(working_dir, "virtual_chassis", neighbor_instance, "default_config.json")
-            with open(chassis_config_file, "r") as cfg:
+            neighbor_config_file = os.path.join(working_dir, "virtual_chassis", neighbor_instance, "default_config.json")
+            with open(neighbor_config_file, "r") as cfg:
                 intf_config = json.load(cfg)["INTERFACE"]
                 for key in intf_config:
                     neighbor_address = ""
-                    if key.lower().startswith(f"{chassis_host_intf}|".lower()):
+                    if key.lower().startswith(f"{neighbor_host_intf}|"):
                         host_intf_address = re.split("/|\\|", key)
 
                         if len(host_intf_address) > 1:
@@ -1333,12 +1336,12 @@ class DockerVirtualChassisTopology(object):
                         if neighbor_address == "":
                             continue
 
-                        if instance_container_name not in instance_to_neighbor_map:
-                            instance_to_neighbor_map[instance_container_name] = []
+                        if chassis_container_name not in instance_to_neighbor_map:
+                            instance_to_neighbor_map[chassis_container_name] = []
 
-                        instance_to_neighbor_map[instance_container_name].append((chassis_veth_intf - 1,
-                                                                                  neighbor_address,
-                                                                                  chassis_host_intf))
+                        instance_to_neighbor_map[chassis_container_name].append((chassis_veth_intf - 1,
+                                                                                 neighbor_address,
+                                                                                 chassis_host_intf))
 
         return instance_to_neighbor_map
 
