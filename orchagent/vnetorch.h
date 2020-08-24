@@ -174,6 +174,8 @@ public:
 
     sai_object_id_t getTunnelNextHop(tunnelEndpoint& endp);
     bool removeTunnelNextHop(tunnelEndpoint& endp);
+    void increaseNextHopRefCount(const nextHop&);
+    void decreaseNextHopRefCount(const nextHop&);
 
     ~VNetVrfObject();
 

@@ -163,6 +163,47 @@ bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
     return true;
 }
 
+void VNetVrfObject::increaseNextHopRefCount(const nextHop& nh)
+{
+    /* Return when there is no next hop (dropped) */
+    if (nh.ips.getSize() == 0)
+    {
+        return;
+    }
+    else if (nh.ips.getSize() == 1)
+    {
+        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
+        if (nexthop.ip_address.isZero())
+            gIntfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
+        else
+            gNeighOrch->increaseNextHopRefCount(nexthop);
+    }
+    else
+    {
+        /* FIXME - Handle ECMP routes */
+    }
+}
+void VNetVrfObject::decreaseNextHopRefCount(const nextHop& nh)
+{
+    /* Return when there is no next hop (dropped) */
+    if (nh.ips.getSize() == 0)
+    {
+        return;
+    }
+    else if (nh.ips.getSize() == 1)
+    {
+        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
+        if (nexthop.ip_address.isZero())
+            gIntfsOrch->decreaseRouterIntfsRefCount(nexthop.alias);
+        else
+            gNeighOrch->decreaseNextHopRefCount(nexthop);
+    }
+    else
+    {
+        /* FIXME - Handle ECMP routes */
+    }
+}
+
 bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
 {
     if (hasRoute(ipPrefix))
@@ -171,6 +212,7 @@ bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
         return false;
     }
 
+    increaseNextHopRefCount(nh);
     routes_[ipPrefix] = nh;
     return true;
 }
@@ -194,6 +236,8 @@ bool VNetVrfObject::removeRoute(IpPrefix& ipPrefix)
     }
     else
     {
+        nextHop nh = routes_[ipPrefix];
+        decreaseNextHopRefCount(nh);
         routes_.erase(ipPrefix);
     }
     return true;
