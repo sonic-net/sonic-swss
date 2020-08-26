@@ -208,14 +208,11 @@ MACsecMgr::MACsecMgr(
 MACsecMgr::~MACsecMgr()
 {
     // Disable MACsec for all ports
-    for (auto itr = m_macsec_ports.begin(); itr != m_macsec_ports.end();)
+    while (!m_macsec_ports.empty())
     {
-        // disableMACsec function will delete the current iterator,
-        // to use cur_port as a backup of the current iterator avoids
-        // that the next iterator cannot be found from a deleted iterator
-        auto cur_port = itr++;
+        auto port = m_macsec_ports.begin();
         const TaskArgs temp;
-        disableMACsec(cur_port->first, temp);
+        disableMACsec(port->first, temp);
     }
 }
 
