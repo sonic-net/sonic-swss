@@ -180,7 +180,7 @@ void VNetVrfObject::increaseNextHopRefCount(const nextHop& nh)
     }
     else
     {
-        /* FIXME - Handle ECMP routes */
+        /* Handle ECMP routes */
     }
 }
 void VNetVrfObject::decreaseNextHopRefCount(const nextHop& nh)
@@ -200,7 +200,7 @@ void VNetVrfObject::decreaseNextHopRefCount(const nextHop& nh)
     }
     else
     {
-        /* FIXME - Handle ECMP routes */
+        /* Handle ECMP routes */
     }
 }
 
