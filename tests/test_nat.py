@@ -1,5 +1,4 @@
 import time
-import pytest
 
 from dvslib.dvs_common import wait_for_result
 from dvslib.dvs_database import DVSDatabase
@@ -309,6 +308,8 @@ class TestNat(object):
 
             if int(conntrack_list[proto_index + 7]) > 432000 or int(conntrack_list[proto_index + 7]) < 431900:
                 return (False, None)
+
+            return (True, None)
 
         wait_for_result(_check_conntrack_for_static_entry, DVSDatabase.DEFAULT_POLLING_CONFIG)
 
