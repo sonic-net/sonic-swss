@@ -18,6 +18,7 @@ maxRootPorts = 32
 maxBreakOut = 4
 
 @pytest.mark.usefixtures('dpb_setup_fixture')
+@pytest.mark.xfail(reason="sonic cfggen bug: buildimage#5263")
 class TestPortDPB(object):
 
     '''
