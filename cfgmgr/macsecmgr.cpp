@@ -41,8 +41,8 @@ static std::istringstream& operator>>(
     std::string policy_str = istream.str();
     std::transform(
         policy_str.begin(),
-        policy_str.begin(),
         policy_str.end(),
+        policy_str.begin(),
         ::tolower);
     if (policy_str == "bypass")
     {
@@ -74,8 +74,8 @@ static bool get_value(
     std::string target_field = field;
     std::transform(
         target_field.begin(),
-        target_field.begin(),
         target_field.end(),
+        target_field.begin(),
         ::tolower);
     auto itr = std::find_if(
         ta.begin(),
@@ -85,8 +85,8 @@ static bool get_value(
             std::string field = fvField(entry);
             std::transform(
                 field.begin(),
-                field.begin(),
                 field.end(),
+                field.begin(),
                 ::tolower);
             return field == target_field;
         });
