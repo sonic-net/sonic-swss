@@ -174,9 +174,13 @@ void VNetVrfObject::increaseNextHopRefCount(const nextHop& nh)
     {
         NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
         if (nexthop.ip_address.isZero())
+        {
             gIntfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
+        }
         else
+        {
             gNeighOrch->increaseNextHopRefCount(nexthop);
+        }
     }
     else
     {
@@ -194,9 +198,13 @@ void VNetVrfObject::decreaseNextHopRefCount(const nextHop& nh)
     {
         NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
         if (nexthop.ip_address.isZero())
+        {
             gIntfsOrch->decreaseRouterIntfsRefCount(nexthop.alias);
+        }
         else
+        {
             gNeighOrch->decreaseNextHopRefCount(nexthop);
+        }
     }
     else
     {
