@@ -2578,11 +2578,16 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         {
             // Retrieve attributes
             uint32_t mtu = 0;
+            MacAddress mac;
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
+                }
+                if (fvField(i) == "mac")
+                {
+                    mac = MacAddress(fvValue(i));
                 }
             }
 
@@ -2615,6 +2620,15 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                     if (vl.m_rif_id)
                     {
                         gIntfsOrch->setRouterIntfsMtu(vl);
+                    }
+                }
+                if (mac)
+                {
+                    vl.m_mac = mac;
+                    m_portList[vlan_alias] = vl;
+                    if (vl.m_rif_id)
+                    {
+                        gIntfsOrch->setRouterIntfsMac(vl);
                     }
                 }
             }

@@ -186,6 +186,28 @@ bool IntfsOrch::setRouterIntfsMtu(const Port &port)
     return true;
 }
 
+bool IntfsOrch::setRouterIntfsMac(const Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+    memcpy(attr.value.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
+
+    sai_status_t status = sai_router_intfs_api->
+            set_router_interface_attribute(port.m_rif_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set router interface %s MAC to %s, rv:%d",
+                port.m_alias.c_str(), port.m_mac.to_string().c_str(), status);
+        return false;
+    }
+    SWSS_LOG_NOTICE("Set router interface %s MAC to %s",
+            port.m_alias.c_str(), port.m_mac.to_string().c_str());
+    return true;
+}
+
 bool IntfsOrch::setRouterIntfsNatZoneId(Port &port)
 {
     SWSS_LOG_ENTER();
@@ -887,7 +909,15 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     attrs.push_back(attr);
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
-    memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+    if (port.m_mac)
+    {
+        memcpy(attr.value.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
+    }
+    else
+    {
+        memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+
+    }
     attrs.push_back(attr);
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
