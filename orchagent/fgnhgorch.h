@@ -78,8 +78,8 @@ public:
 
     bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
     bool removeRoute(sai_object_id_t, const IpPrefix&);
-    bool validnexthopinNextHopGroup(const NextHopKey&);
-    bool invalidnexthopinNextHopGroup(const NextHopKey&);
+    bool validNextHopInNextHopGroup(const NextHopKey&);
+    bool invalidNextHopInNextHopGroup(const NextHopKey&);
 
 private:
     NeighOrch *m_neighOrch;
@@ -102,12 +102,16 @@ private:
                     uint32_t bank,std::vector<Bank_Member_Changes> &bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     bool set_inactive_bank_to_next_available_active_bank(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                        uint32_t bank, std::vector<Bank_Member_Changes> bank_member_changes,
-                        std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
-    bool remove_nhg(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry);
+                    uint32_t bank, std::vector<Bank_Member_Changes> bank_member_changes,
+                    std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
     void set_state_db_route_entry(const IpPrefix&, uint32_t index, NextHopKey nextHop);
-    bool write_hash_bucket_change_to_sai(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
-            const IpPrefix &ipPrefix, NextHopKey nextHop);
+    bool write_hash_bucket_change(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
+                    const IpPrefix &ipPrefix, NextHopKey nextHop);
+    bool create_fine_grained_next_hop_group(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+                    const NextHopGroupKey &nextHops);
+    bool remove_fine_grained_next_hop_group(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry);
+    bool create_fine_grained_route_entry(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+                    sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
 
     bool doTaskFgNhg(const KeyOpFieldsValuesTuple&);
     bool doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple&);

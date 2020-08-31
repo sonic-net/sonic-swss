@@ -50,11 +50,7 @@ def verify_programmed_nh_membs(db,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size
         nh_memb_count[memb] = 1 + nh_memb_count[memb]
         idxs[idx] = idxs[idx] + 1
 
-    print nh_memb_count
-    print "\n"
-    print nh_memb_exp_count
     for key in nh_memb_exp_count:
-        print key
         assert nh_memb_count[key] == nh_memb_exp_count[key]
     for idx in idxs:
         assert idx == 1
@@ -72,9 +68,9 @@ def shutdown_link(dvs, db, port):
     oper_status = "unknown"
 
     for v in fvs:
-	if v[0] == "oper_status":
-	    oper_status = v[1]
-	    break
+        if v[0] == "oper_status":
+            oper_status = v[1]
+            break
 
     assert oper_status == "down"
 
@@ -92,9 +88,9 @@ def startup_link(dvs, db, port):
     oper_status = "unknown"
 
     for v in fvs:
-	if v[0] == "oper_status":
-	    oper_status = v[1]
-	    break
+        if v[0] == "oper_status":
+            oper_status = v[1]
+            break
 
     assert oper_status == "up"
 
@@ -456,14 +452,14 @@ class TestFineGrainedNextHopGroup(object):
         nh__exp_count = {"10.0.0.5@Ethernet8":30, "10.0.0.7@Ethernet12":10, "10.0.0.9@Ethernet16":10,"10.0.0.11@Ethernet20":10}
         swss_get_route_entry_state(state_db, nh__exp_count)
 
-	shutdown_link(dvs, db, 2)
+        shutdown_link(dvs, db, 2)
         nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
         nh__exp_count = {"10.0.0.7@Ethernet12":20, "10.0.0.9@Ethernet16":20,"10.0.0.11@Ethernet20":20}
         swss_get_route_entry_state(state_db, nh__exp_count)
 
-	shutdown_link(dvs, db, 3)
-	shutdown_link(dvs, db, 4)
+        shutdown_link(dvs, db, 3)
+        shutdown_link(dvs, db, 4)
         nh_memb_exp_count = {"10.0.0.11":60}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
         nh__exp_count = {"10.0.0.11@Ethernet20":60}

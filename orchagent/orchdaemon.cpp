@@ -128,7 +128,6 @@ bool OrchDaemon::init()
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch);
     gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch);
 
-    /* TODO: add table priorities to fgnhg_tables: table_name_with_pri_t after checking what is the implication of it */
     vector<string> fgnhg_tables = {
         CFG_FG_NHG,
         CFG_FG_NHG_PREFIX,

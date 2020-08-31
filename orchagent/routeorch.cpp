@@ -31,7 +31,6 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, 
         m_intfsOrch(intfsOrch),
         m_vrfOrch(vrfOrch),
         m_fgNhgOrch(fgNhgOrch),
-	m_fgNhgOrch(fgNhgOrch),
         m_nextHopGroupCount(0),
         m_resync(false)
 {
@@ -336,7 +335,7 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop)
         nhopgroup->second.nhopgroup_members[nexthop] = nexthop_id;
     }
 
-    if(!m_fgNhgOrch->validnexthopinNextHopGroup(nexthop))
+    if (!m_fgNhgOrch->validNextHopInNextHopGroup(nexthop))
     {
         return false;
     }
@@ -373,7 +372,7 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop)
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
 
-    if(!m_fgNhgOrch->invalidnexthopinNextHopGroup(nexthop))
+    if (!m_fgNhgOrch->invalidNextHopInNextHopGroup(nexthop))
     {
         return false;
     }
@@ -1085,7 +1084,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
 
-    if(m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
+    if (m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
             && vrf_id == gVirtualRouterId)
     {
         /* Only support the default vrf for Fine Grained ECMP */
@@ -1227,7 +1226,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     const sai_object_id_t& vrf_id = ctx.vrf_id;
     const IpPrefix& ipPrefix = ctx.ip_prefix;
 
-    if(m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
+    if (m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
             && vrf_id == gVirtualRouterId)
     {
         /* Only support the default vrf for Fine Grained ECMP */
@@ -1364,7 +1363,7 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
 
-    if(m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
+    if (m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
             && vrf_id == gVirtualRouterId)
     {
         /* Only support the default vrf for Fine Grained ECMP */
@@ -1427,7 +1426,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     const sai_object_id_t& vrf_id = ctx.vrf_id;
     const IpPrefix& ipPrefix = ctx.ip_prefix;
 
-    if(m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
+    if (m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
             && vrf_id == gVirtualRouterId)
     {
         /* Only support the default vrf for Fine Grained ECMP */
