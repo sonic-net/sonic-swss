@@ -30,15 +30,36 @@
 #include <vector>
 #include <memory>
 
+
+#undef SWSS_LOG_ERROR
+#undef SWSS_LOG_WARN
+#undef SWSS_LOG_NOTICE
+#undef SWSS_LOG_INFO
+#undef SWSS_LOG_DEBUG
+#undef SWSS_LOG_ENTER
+
+#define SWSS_LOG_ERROR(MSG, ...)       printf("ERROR %s :- %s: " MSG"\n", __FILE__, __FUNCTION__, ##__VA_ARGS__)
+#define SWSS_LOG_WARN(MSG, ...)        printf("WARN %s :- %s: " MSG"\n", __FILE__, __FUNCTION__, ##__VA_ARGS__)
+#define SWSS_LOG_NOTICE(MSG, ...)      printf("NOTICE %s :- %s: " MSG"\n", __FILE__, __FUNCTION__, ##__VA_ARGS__)
+#define SWSS_LOG_INFO(MSG, ...)        printf("INFO %s :- %s: " MSG"\n", __FILE__, __FUNCTION__, ##__VA_ARGS__)
+#define SWSS_LOG_DEBUG(MSG, ...)       printf("DEBUG %s :- %s: " MSG"\n", __FILE__, __FUNCTION__, ##__VA_ARGS__)
+#define SWSS_LOG_ENTER()               printf("ENTER %s : - %s : %d\n", __FILE__, __FUNCTION__, __LINE__)
+
 using namespace swss;
 
 // AN is a 2 bit number, it can only be 0, 1, 2 or 3
 #define MAX_SA_NUMBER (3)
 
+using macsec_an_t = std::uint32_t;
+
 class MACsecOrch : public Orch
 {
 public:
-    MACsecOrch(DBConnector *app_db, DBConnector *state_db, const std::vector<std::string> &tables, PortsOrch * port_orch);
+    MACsecOrch(
+        DBConnector *app_db,
+        DBConnector *state_db,
+        const std::vector<std::string> &tables,
+        PortsOrch * port_orch);
     ~MACsecOrch();
 
 private:
@@ -68,10 +89,20 @@ private:
     Table m_state_macsec_egress_sa;
     Table m_state_macsec_ingress_sa;
 
+    DBConnector         m_counter_db;
+    Table               m_macsec_counters_map;
+    FlexCounterManager  m_macsec_stat_manager;
+
     Table m_gearbox_table;
     bool m_gearbox_enabled;
     map<int, gearbox_phy_t> m_gearbox_phy_map;
     map<int, gearbox_interface_t> m_gearbox_interface_map;
+    struct ACLTable
+    {
+        sai_object_id_t m_table_id;
+        sai_object_id_t m_eapol_packet_forward_entry_id;
+        sai_object_id_t m_data_packet_entry_id;
+    };
     struct MACsecSC
     {
         sai_uint8_t     m_encoding_an;
@@ -88,6 +119,8 @@ private:
         std::map<sai_uint64_t, MACsecSC>    m_egress_scs;
         std::map<sai_uint64_t, MACsecSC>    m_ingress_scs;
         bool                                m_enable_encrypt;
+        ACLTable                            m_egress_acl_table;
+        ACLTable                            m_ingress_acl_table;
     };
     struct MACsecObject
     {
@@ -109,16 +142,24 @@ private:
     std::shared_ptr<MACsecPort> createMACsecPort(const Port & port, sai_object_id_t switch_id);
     bool deleteMACsecPort(const std::string & port_name);
 
-    // bool createACL;
-    // bool deleteACL;
-
     task_process_status updateMACsecSC(
         const std::string & port_sci,
         const TaskArgs & sc_attr,
         sai_int32_t direction);
+    task_process_status setEncodingAN(
+        MACsecSC &sc,
+        const TaskArgs & sc_attr,
+        sai_int32_t direction);
+    task_process_status crateMACsecSC(
+        MACsecSC &sc,
+        const std::string & port_name,
+        const TaskArgs & sc_attr,
+        sai_uint64_t sci,
+        sai_object_id_t flow_id,
+        sai_object_id_t switch_id,
+        sai_int32_t direction);
     task_process_status deleteMACsecSC(
         const std::string & port_sci,
-        const TaskArgs & sc_attr,
         sai_int32_t direction);
     bool createMACsecSC(
         sai_object_id_t & sc_id,
@@ -136,14 +177,13 @@ private:
         sai_int32_t direction);
     task_process_status deleteMACsecSA(
         const std::string & port_sci_an,
-        const TaskArgs & sa_attr,
         sai_int32_t direction);
     bool createMACsecSA(
         sai_object_id_t & sa_id,
         sai_object_id_t switch_id,
         sai_int32_t direction,
         sai_object_id_t sc_id,
-        sai_uint8_t an,
+        macsec_an_t an,
         bool encryption_enable,
         bool sak_256_bit,
         sai_macsec_sak_t sak,
@@ -153,6 +193,41 @@ private:
         sai_uint64_t pn
         );
     bool deleteMACsecSA(sai_object_id_t sa_id);
+
+    void installCounter(
+        const std::string & obj_name,
+        sai_object_id_t obj_id,
+        const std::vector<std::string> & stats);
+    void uninstallCounter(const std::string & obj_name, sai_object_id_t obj_id);
+
+    bool initACLTable(
+        ACLTable & acl_table,
+        const Port & port,
+        sai_object_id_t switch_id,
+        sai_int32_t direction);
+    bool deinitACLTable(ACLTable & acl_table, const Port & port);
+    bool createACLTable(
+        sai_object_id_t & table_id,
+        sai_object_id_t switch_id,
+        sai_int32_t direction);
+    bool deleteACLTable(sai_object_id_t table_id);
+    bool bindACLTabletoPort(sai_object_id_t table_id, sai_object_id_t port_id);
+    bool unbindACLTable(sai_object_id_t port_id);
+    bool createACLEAPOLEntry(
+        sai_object_id_t & entry_id,
+        sai_object_id_t table_id,
+        sai_object_id_t switch_id);
+    bool createACLDataEntry(
+        sai_object_id_t & entry_id,
+        sai_object_id_t table_id,
+        sai_object_id_t switch_id);
+    bool setACLEntryPacketAction(
+        sai_object_id_t entry_id,
+        sai_object_id_t flow_id);
+    bool setACLEntryMACsecFlow(
+        sai_object_id_t entry_id,
+        sai_object_id_t flow_id);
+    bool deleteACLEntry(sai_object_id_t entry_id);
 };
 
 #endif

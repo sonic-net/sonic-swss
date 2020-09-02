@@ -22,7 +22,8 @@ enum class CounterType
     PORT,
     QUEUE,
     PORT_DEBUG,
-    SWITCH_DEBUG
+    SWITCH_DEBUG,
+    MACSEC,
 };
 
 // FlexCounterManager allows users to manage a group of flex counters.
