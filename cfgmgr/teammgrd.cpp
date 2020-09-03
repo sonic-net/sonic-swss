@@ -65,15 +65,8 @@ int main(int argc, char **argv)
             s.addSelectables(o->getSelectables());
         }
 
-        while (true)
-        {
-            if(received_sigterm)
-            {
-                teammgr.cleanTeamProcesses(SIGTERM);
-                received_sigterm = false;
-                break;
-            }
-            
+        while (!received_sigterm)
+        {            
             Selectable *sel;
             int ret;
 
@@ -92,6 +85,7 @@ int main(int argc, char **argv)
             auto *c = (Executor *)sel;
             c->execute();
         }
+        teammgr.cleanTeamProcesses(SIGTERM);
         SWSS_LOG_NOTICE("Exiting");
     }
     catch (const exception &e)
