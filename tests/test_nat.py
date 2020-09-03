@@ -1,5 +1,8 @@
 import time
-import pytest
+
+from dvslib.dvs_common import wait_for_result
+from dvslib.dvs_database import DVSDatabase
+
 
 class TestNat(object):
     def setup_db(self, dvs):
@@ -279,11 +282,7 @@ class TestNat(object):
         # clear interfaces
         self.clear_interfaces(dvs)
 
-    @pytest.mark.xfail(reason="Test unstable, blocking PR builds")
     def test_VerifyConntrackTimeoutForNatEntry(self, dvs, testlog):
-        # initialize
-        self.setup_db(dvs)
-
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
 
@@ -291,30 +290,34 @@ class TestNat(object):
         dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
 
         # check the conntrack timeout for static entry
-        output = dvs.runcmd("conntrack -j -L -s 18.18.18.2 -p udp -q 67.66.65.1")
-        assert len(output) == 2
+        def _check_conntrack_for_static_entry():
+            output = dvs.runcmd("conntrack -j -L -s 18.18.18.2 -p udp -q 67.66.65.1")
+            if len(output) != 2:
+                return (False, None)
 
-        conntrack_list = list(output[1].split(" "))
+            conntrack_list = list(output[1].split(" "))
 
-        src_exists = dst_exists = proto_exists = False
-        proto_index = 0
+            src_exists = "src=18.18.18.2" in conntrack_list
+            dst_exists = "dst=67.66.65.1" in conntrack_list
+            proto_exists = "udp" in conntrack_list
 
-        for i in conntrack_list:
-            if i == "src=18.18.18.2":
-                src_exists = True
-            elif i == "dst=67.66.65.1":
-                dst_exists = True
-            elif i == "udp":
-                proto_exists = True
-                proto_index = conntrack_list.index(i)
+            if not src_exists or not dst_exists or not proto_exists:
+                return (False, None)
 
-        assert src_exists == True
-        assert dst_exists == True
-        assert proto_exists == True
+            proto_index = conntrack_list.index("udp")
 
-        if conntrack_list[proto_index + 7] < 432000 and conntrack_list[proto_index + 7] > 431900:
-            assert False
+            if int(conntrack_list[proto_index + 7]) > 432000 or int(conntrack_list[proto_index + 7]) < 431900:
+                return (False, None)
+
+            return (True, None)
+
+        wait_for_result(_check_conntrack_for_static_entry, DVSDatabase.DEFAULT_POLLING_CONFIG)
 
         # delete a static nat entry
         dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
 
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

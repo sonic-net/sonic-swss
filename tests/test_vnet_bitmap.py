@@ -25,3 +25,8 @@ class TestVnetBitmapOrch(vnet.TestVnetOrch):
     '''
     def get_vnet_obj(self):
         return vnet.VnetVxlanVrfTunnel()
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

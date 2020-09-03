@@ -426,7 +426,12 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
         if (is_lo)
         {
-            addLoopbackIntf(alias);
+            if (m_loopbackIntfList.find(alias) == m_loopbackIntfList.end())
+            {
+                addLoopbackIntf(alias);
+                m_loopbackIntfList.insert(alias);
+                SWSS_LOG_INFO("Added %s loopback interface", alias.c_str());
+            }
         }
         else
         {
@@ -540,6 +545,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         if (is_lo)
         {
             delLoopbackIntf(alias);
+            m_loopbackIntfList.erase(alias);
         }
 
         if (!subIntfAlias.empty())
@@ -587,19 +593,27 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 
         std::vector<FieldValueTuple> fvVector;
         FieldValueTuple f("family", ip_prefix.isV4() ? IPV4_NAME : IPV6_NAME);
-        FieldValueTuple s("scope", "global");
-        fvVector.push_back(s);
-        fvVector.push_back(f);
 
-        m_appIntfTableProducer.set(appKey, fvVector);
-        m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");
+        // Don't send link local config to AppDB and Orchagent
+        if (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE)
+        {
+            FieldValueTuple s("scope", "global");
+            fvVector.push_back(s);
+            fvVector.push_back(f);
+            m_appIntfTableProducer.set(appKey, fvVector);
+            m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");
+        }
     }
     else if (op == DEL_COMMAND)
     {
         setIntfIp(alias, "del", ip_prefix);
 
-        m_appIntfTableProducer.del(appKey);
-        m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
+        // Don't send link local config to AppDB and Orchagent
+        if (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE)
+        {
+            m_appIntfTableProducer.del(appKey);
+            m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
+        }
     }
     else
     {

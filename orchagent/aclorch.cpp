@@ -2220,7 +2220,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
                 break;
         }
     }
-    m_switchTable.set("switch", fvVector);
+    m_switchOrch->set_switch_capability(fvVector);
 
     sai_attribute_t attrs[2];
     attrs[0].id = SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY;
@@ -2362,7 +2362,7 @@ void AclOrch::putAclActionCapabilityInDB(acl_stage_type_t stage)
     }
 
     fvVector.emplace_back(field, acl_action_value_stream.str());
-    m_switchTable.set("switch", fvVector);
+    m_switchOrch->set_switch_capability(fvVector);
 }
 
 void AclOrch::initDefaultAclActionCapabilities(acl_stage_type_t stage)
@@ -2464,7 +2464,7 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
         fvVector.emplace_back(field, acl_action_value_stream.str());
     }
 
-    m_switchTable.set("switch", fvVector);
+    m_switchOrch->set_switch_capability(fvVector);
 }
 
 sai_acl_action_type_t AclOrch::getAclActionFromAclEntry(sai_acl_entry_attr_t attr)
@@ -2477,10 +2477,10 @@ sai_acl_action_type_t AclOrch::getAclActionFromAclEntry(sai_acl_entry_attr_t att
     return static_cast<sai_acl_action_type_t>(attr - SAI_ACL_ENTRY_ATTR_ACTION_START);
 };
 
-AclOrch::AclOrch(vector<TableConnector>& connectors, TableConnector switchTable,
+AclOrch::AclOrch(vector<TableConnector>& connectors, SwitchOrch *switchOrch,
         PortsOrch *portOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch, DTelOrch *dtelOrch) :
         Orch(connectors),
-        m_switchTable(switchTable.first, switchTable.second),
+        m_switchOrch(switchOrch),
         m_mirrorOrch(mirrorOrch),
         m_neighOrch(neighOrch),
         m_routeOrch(routeOrch),
