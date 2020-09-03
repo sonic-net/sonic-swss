@@ -9,7 +9,6 @@ maxAclTables = 16
 
 
 @pytest.mark.usefixtures('dpb_setup_fixture')
-@pytest.mark.xfail(reason="sonic cfggen bug: buildimage#5263")
 class TestPortDPBAcl(object):
     def test_acl_table_empty_port_list(self, dvs_acl):
         # Create ACL table "test" and bind it to Ethernet0
