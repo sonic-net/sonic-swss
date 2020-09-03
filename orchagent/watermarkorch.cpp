@@ -13,6 +13,7 @@
 #define CLEAR_QUEUE_SHARED_UNI_REQUEST "Q_SHARED_UNI"
 #define CLEAR_QUEUE_SHARED_MULTI_REQUEST "Q_SHARED_MULTI"
 #define CLEAR_BUFFER_POOL_REQUEST "BUFFER_POOL"
+#define CLEAR_HEADROOM_POOL_REQUEST "HEADROOM_POOL"
 
 extern PortsOrch *gPortsOrch;
 extern BufferOrch *gBufferOrch;
@@ -209,6 +210,12 @@ void WatermarkOrch::doTask(NotificationConsumer &consumer)
         "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES",
         gBufferOrch->getBufferPoolNameOidMap());
     }
+    else if (data == CLEAR_HEADROOM_POOL_REQUEST)
+    {
+        clearSingleWm(table,
+        "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES",
+        gBufferOrch->getBufferPoolNameOidMap());
+    }
     else
     {
         SWSS_LOG_WARN("Unknown watermark clear request data: %s", data.c_str());
@@ -252,6 +259,8 @@ void WatermarkOrch::doTask(SelectableTimer &timer)
             "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_multicast_queue_ids);
         clearSingleWm(m_periodicWatermarkTable.get(),
             "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES", gBufferOrch->getBufferPoolNameOidMap());
+        clearSingleWm(m_periodicWatermarkTable.get(),
+            "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES", gBufferOrch->getBufferPoolNameOidMap());
         SWSS_LOG_DEBUG("Periodic watermark cleared by timer!");
     }
 }
