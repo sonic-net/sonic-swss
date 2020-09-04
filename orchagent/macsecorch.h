@@ -91,13 +91,13 @@ private:
     };
     struct MACsecSC
     {
-        sai_uint8_t     m_encoding_an;
-        bool            m_xpn64_enable;
-        sai_object_id_t m_sc_id;
-        sai_object_id_t m_sa_ids[MAX_SA_NUMBER + 1];
-        sai_object_id_t m_flow_id;
-        sai_object_id_t m_entry_id;
-        sai_uint32_t    m_acl_priority;
+        macsec_an_t                             m_encoding_an;
+        bool                                    m_xpn64_enable;
+        sai_object_id_t                         m_sc_id;
+        std::map<macsec_an_t, sai_object_id_t>  m_sa_ids;
+        sai_object_id_t                         m_flow_id;
+        sai_object_id_t                         m_entry_id;
+        sai_uint32_t                            m_acl_priority;
     };
     struct MACsecPort
     {
@@ -198,7 +198,6 @@ private:
         sai_macsec_auth_key_t auth_key,
         sai_uint64_t pn);
     bool deleteMACsecSA(sai_object_id_t sa_id);
-    std::uint8_t get_active_sa_count(const MACsecSC &sc) const;
 
     /* Counter */
     void installCounter(
