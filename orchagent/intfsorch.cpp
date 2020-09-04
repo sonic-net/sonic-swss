@@ -468,6 +468,7 @@ bool IntfsOrch::removeIntf(const string& alias, sai_object_id_t vrf_id, const Ip
             gPortsOrch->decreasePortRefCount(alias);
             m_syncdIntfses.erase(alias);
             m_vrfOrch->decreaseVrfRefCount(vrf_id);
+            m_vnetInfses.erase(alias);
 
             if (port.m_type == Port::SUBPORT)
             {
@@ -841,7 +842,6 @@ void IntfsOrch::doTask(Consumer &consumer)
 
                 if (vnet_orch->delIntf(alias, vnet_name, ip_prefix_in_key ? &ip_prefix : nullptr))
                 {
-                    m_vnetInfses.erase(alias);
                     it = consumer.m_toSync.erase(it);
                 }
                 else
