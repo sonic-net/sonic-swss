@@ -84,13 +84,13 @@ class BgpStateGet():
             if "ipv4Unicast" in peer_info and "peers" in peer_info["ipv4Unicast"]:
                 self.new_ipv4_n = peer_info["ipv4Unicast"]["peers"].keys()
                 for i in range (0, len(self.new_ipv4_n)):
-                    self.new_ipv4_n_state[self.new_ipv4_n[i]] =
+                    self.new_ipv4_n_state[self.new_ipv4_n[i]] = \
                     peer_info["ipv4Unicast"]["peers"][self.new_ipv4_n[i]]["state"]
 
             if "ipv6Unicast" in peer_info and "peers" in peer_info["ipv6Unicast"]:
                 self.new_ipv6_n = peer_info["ipv6Unicast"]["peers"].keys()
                 for i in range (0, len(self.new_ipv6_n)):
-                    self.new_ipv6_n_state[self.new_ipv6_n[i]] =
+                    self.new_ipv6_n_state[self.new_ipv6_n[i]] = \
                     peer_info["ipv6Unicast"]["peers"][self.new_ipv6_n[i]]["state"]
 
         except Exception:
