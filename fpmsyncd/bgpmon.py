@@ -25,17 +25,12 @@ Description: bgpmon.py -- populating bgp related information in stateDB.
 """
 
 import commands
-import copy
-import errno
 import json
 import os
-import sys
 import syslog
 import swsssdk
 import time
 import traceback
-from swsscommon import swsscommon
-from time import gmtime, strftime
 
 class BgpStateGet():
     def __init__(self):
