@@ -38,8 +38,11 @@ using namespace swss;
 
 using macsec_an_t = std::uint32_t;
 
+class MACsecOrchContext;
+
 class MACsecOrch : public Orch
 {
+    friend class MACsecOrchContext;
 public:
     MACsecOrch(
         DBConnector *app_db,
@@ -117,7 +120,7 @@ private:
     {
         sai_object_id_t                                 m_egress_id;
         sai_object_id_t                                 m_ingress_id;
-        map<std::string, std::shared_ptr<MACsecPort> >  m_ports;
+        map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;
         bool                                            m_sci_in_ingress_macsec_acl;
     };
     map<sai_object_id_t, MACsecObject>              m_macsec_objs;
@@ -128,66 +131,79 @@ private:
     bool getGearboxSwitchId(const std::string &port_name, sai_object_id_t &switch_id) const;
 
     /* MACsec Object */
-    map<sai_object_id_t, MACsecObject>::iterator initMACsecObject(sai_object_id_t switch_id);
-    bool deinitMACsecObject(map<sai_object_id_t, MACsecObject>::iterator switch_id);
+    bool initMACsecObject(sai_object_id_t switch_id);
     bool deinitMACsecObject(sai_object_id_t switch_id);
 
     /* MACsec Port */
-    std::shared_ptr<MACsecPort> createMACsecPort(
+    bool createMACsecPort(
+        MACsecPort &macsec_port,
         const std::string &port_name,
-        sai_object_id_t port_id,
+        const TaskArgs & port_attr,
+        const MACsecObject &macsec_obj,
+        sai_object_id_t line_port_id,
         sai_object_id_t switch_id);
-    bool deleteMACsecPort(const std::string &port_name);
+    bool createMACsecPort(
+        sai_object_id_t &macsec_port_id,
+        sai_object_id_t line_port_id,
+        sai_object_id_t switch_id,
+        sai_macsec_direction_t direction);
+    bool updateMACsecPort(MACsecPort &macsec_port, const TaskArgs & port_attr);
+    bool deleteMACsecPort(
+        const MACsecPort &macsec_port,
+        const std::string &port_name,
+        const MACsecObject &macsec_obj,
+        sai_object_id_t line_port_id);
+    bool deleteMACsecPort(sai_object_id_t macsec_port_id);
 
     /* MACsec Flow */
     bool createMACsecFlow(
         sai_object_id_t &flow_id,
         sai_object_id_t switch_id,
-        sai_int32_t direction);
+        sai_macsec_direction_t direction);
     bool deleteMACsecFlow(sai_object_id_t flow_id);
 
     /* MACsec SC */
     task_process_status updateMACsecSC(
         const std::string &port_sci,
         const TaskArgs &sc_attr,
-        sai_int32_t direction);
-    task_process_status setEncodingAN(
+        sai_macsec_direction_t direction);
+    bool setEncodingAN(
         MACsecSC &sc,
         const TaskArgs &sc_attr,
-        sai_int32_t direction);
-    task_process_status createMACsecSC(
+        sai_macsec_direction_t direction);
+    bool createMACsecSC(
         MACsecPort &macsec_port,
         const std::string &port_name,
         const TaskArgs &sc_attr,
         const MACsecObject &macsec_obj,
         sai_uint64_t sci,
         sai_object_id_t switch_id,
-        sai_int32_t direction);
-    task_process_status deleteMACsecSC(
-        const std::string &port_sci,
-        sai_int32_t direction);
+        sai_macsec_direction_t direction);
     bool createMACsecSC(
         sai_object_id_t &sc_id,
         sai_object_id_t switch_id,
-        sai_int32_t direction,
+        sai_macsec_direction_t direction,
         sai_object_id_t flow_id,
         sai_uint64_t sci,
         sai_uint32_t ssci,
         bool xpn64_enable);
+    task_process_status deleteMACsecSC(
+        const std::string &port_sci,
+        sai_macsec_direction_t direction);
     bool deleteMACsecSC(sai_object_id_t sc_id);
 
     /* MACsec SA */
     task_process_status createMACsecSA(
         const std::string &port_sci_an,
         const TaskArgs &sa_attr,
-        sai_int32_t direction);
+        sai_macsec_direction_t direction);
     task_process_status deleteMACsecSA(
         const std::string &port_sci_an,
-        sai_int32_t direction);
+        sai_macsec_direction_t direction);
     bool createMACsecSA(
         sai_object_id_t &sa_id,
         sai_object_id_t switch_id,
-        sai_int32_t direction,
+        sai_macsec_direction_t direction,
         sai_object_id_t sc_id,
         macsec_an_t an,
         bool encryption_enable,
@@ -211,19 +227,20 @@ private:
         ACLTable &acl_table,
         sai_object_id_t port_id,
         sai_object_id_t switch_id,
-        sai_int32_t direction,
+        sai_macsec_direction_t direction,
         bool sci_in_sectag);
     bool deinitACLTable(
-        ACLTable &acl_table,
-        sai_object_id_t port_id);
+        const ACLTable &acl_table,
+        sai_object_id_t port_id,
+        sai_macsec_direction_t direction);
     bool createACLTable(
         sai_object_id_t &table_id,
         sai_object_id_t switch_id,
-        sai_int32_t direction,
+        sai_macsec_direction_t direction,
         bool sci_in_sectag);
     bool deleteACLTable(sai_object_id_t table_id);
-    bool bindACLTabletoPort(sai_object_id_t table_id, sai_object_id_t port_id);
-    bool unbindACLTable(sai_object_id_t port_id);
+    bool bindACLTabletoPort(sai_object_id_t table_id, sai_object_id_t port_id, sai_macsec_direction_t direction);
+    bool unbindACLTable(sai_object_id_t port_id, sai_macsec_direction_t direction);
     bool createACLEAPOLEntry(
         sai_object_id_t &entry_id,
         sai_object_id_t table_id,
@@ -249,23 +266,5 @@ private:
         sai_object_id_t switch_id,
         sai_uint32_t &priority) const;
 };
-
-// The following code is only for debugging
-
-// #undef SWSS_LOG_ERROR
-// #undef SWSS_LOG_WARN
-// #undef SWSS_LOG_NOTICE
-// #undef SWSS_LOG_INFO
-// #undef SWSS_LOG_DEBUG
-// #undef SWSS_LOG_ENTER
-
-// #define SWSS_LOG_ERROR(MSG, ...)       printf("ERROR %s :- %s: " MSG"\n", __FILE__, __FUNCTION__, ##__VA_ARGS__)
-// #define SWSS_LOG_WARN(MSG, ...)        printf("WARN %s :- %s: " MSG"\n", __FILE__, __FUNCTION__, ##__VA_ARGS__)
-// #define SWSS_LOG_NOTICE(MSG, ...)      printf("NOTICE %s :- %s: " MSG"\n", __FILE__, __FUNCTION__, ##__VA_ARGS__)
-// #define SWSS_LOG_INFO(MSG, ...)        printf("INFO %s :- %s: " MSG"\n", __FILE__, __FUNCTION__, ##__VA_ARGS__)
-// #define SWSS_LOG_DEBUG(MSG, ...)       printf("DEBUG %s :- %s: " MSG"\n", __FILE__, __FUNCTION__, ##__VA_ARGS__)
-// #define SWSS_LOG_ENTER()               printf("ENTER %s : - %s : %d\n", __FILE__, __FUNCTION__, __LINE__)
-
-void break_point();
 
 #endif  // ORCHAGENT_MACSECORCH_H_
