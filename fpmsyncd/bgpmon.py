@@ -34,6 +34,14 @@ import traceback
 
 class BgpStateGet():
     def __init__(self):
+        # list ipv4_n stores the IPV4 Neighbor peer Ip address
+        # dic ipv4_n_state stores the IPV4 Neighbor peer state entries
+        # list ipv6_n stores the IPV4 Neighbor peer Ip address
+        # dic ipv6_n_state stores the IPV4 Neighbor peer state entries
+        # list new_ipv4_n stores the new snapshot of IPV4 Neighbor ip address
+        # dic new_ipv4_n_state stores the new snapshot of IPV4 Neighbor states 
+        # list new_ipv6_n stores the new snapshot of IPV6 Neighbor ip address
+        # dic new_ipv6_n_state stores the new snapshot of IPV4 Neighbor states 
         self.ipv4_n = []
         self.ipv4_n_state = {}
         self.ipv6_n = []
@@ -42,9 +50,8 @@ class BgpStateGet():
         self.new_ipv4_n_state = {}
         self.new_ipv6_n = []
         self.new_ipv6_n_state = {}
-        self.retrieve_fail_cnt = 0
         self.cached_timestamp = 0
-        self.db = swsssdk.SonicV2Connector(host='127.0.0.1')
+        self.db = swsssdk.SonicV2Connector()
         self.db.connect(self.db.STATE_DB, False)
         self.db.delete_all_by_pattern(self.db.STATE_DB, "NEIGH_STATE_TABLE|*" )
 
@@ -57,7 +64,6 @@ class BgpStateGet():
         try:
             timestamp = os.stat("/var/log/frr/frr.log").st_mtime
             if timestamp != self.cached_timestamp:
-                #syslog.syslog("bgpmon timestamp diff detected: {}".format(timestamp))
                 self.cached_timestamp = timestamp
                 return True
             else:
@@ -67,15 +73,15 @@ class BgpStateGet():
 
     # Get a new snapshot of BGP neighbors and store them in the "new" location
     def get_all_neigh_states(self):
-        # Clean up the "new" dictionaries
-        del self.new_ipv4_n[:]
-        self.new_ipv4_n_state.clear()
-        del self.new_ipv6_n[:]
-        self.new_ipv6_n_state.clear()
         try:
             cmd = "vtysh -c 'show bgp summary json'"
             output = commands.getoutput(cmd)
             peer_info = json.loads(output)
+            # no exception, safe to Clean the "new" lists/dic for new sanpshot
+            del self.new_ipv4_n[:]
+            self.new_ipv4_n_state.clear()
+            del self.new_ipv6_n[:]
+            self.new_ipv6_n_state.clear()
             if "ipv4Unicast" in peer_info and "peers" in peer_info["ipv4Unicast"]:
                 self.new_ipv4_n = peer_info["ipv4Unicast"]["peers"].keys()
                 for i in range (0, len(self.new_ipv4_n)):
@@ -89,7 +95,6 @@ class BgpStateGet():
                     peer_info["ipv6Unicast"]["peers"][self.new_ipv6_n[i]]["state"]
 
         except Exception:
-            self.retrieve_fail_cnt += 1
             syslog.syslog(syslog.LOG_ERR, "*ERROR* get_all_neigh_states Exception: %s"
                     % (traceback.format_exc()))
 
@@ -99,7 +104,7 @@ class BgpStateGet():
             neighb = self.new_ipv4_n[i]
             key = "NEIGH_STATE_TABLE|%s" % neighb
             if neighb in self.ipv4_n:
-                # only update the entry if sate changed
+                # only update the entry if state changed
                 if self.ipv4_n_state[neighb] != self.new_ipv4_n_state[neighb]:
                     # state changed. Update state DB for this entry
                     state = self.new_ipv4_n_state[neighb]
