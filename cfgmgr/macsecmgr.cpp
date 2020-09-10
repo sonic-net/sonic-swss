@@ -63,6 +63,32 @@ static std::istringstream& operator>>(
     return istream;
 }
 
+static std::istringstream &operator>>(
+    std::istringstream &istream,
+    bool &b)
+{
+    std::string buffer = istream.str();
+    std::transform(
+        buffer.begin(),
+        buffer.end(),
+        buffer.begin(),
+        ::tolower);
+    if (buffer == "true" || buffer == "1")
+    {
+        b = true;
+    }
+    else if (buffer == "false" || buffer == "0")
+    {
+        b = false;
+    }
+    else
+    {
+        throw std::invalid_argument("Invalid bool string : " + buffer);
+    }
+
+    return istream;
+}
+
 template<class T>
 static bool get_value(
     const MACsecMgr::TaskArgs & ta,
@@ -287,17 +313,34 @@ bool MACsecMgr::MACsecProfile::update(const TaskArgs & ta)
 {
     SWSS_LOG_ENTER();
 
+    // The following fields are optional
+    if (GetValue(ta, fallback_cak) && !GetValue(ta, fallback_ckn))
+    {
+        return false;
+    }
+    if (!GetValue(ta, enable_replay_protect))
+    {
+        enable_replay_protect = false;
+    }
+    if (!GetValue(ta, replay_window))
+    {
+        replay_window = 0;
+    }
+    if (!GetValue(ta, send_sci))
+    {
+        send_sci = true;
+    }
+    if (!GetValue(ta, rekey_period))
+    {
+        rekey_period = 0;
+    }
+
+    // The following fields are necessary
     return GetValue(ta, priority)
         && GetValue(ta, cipher_suite)
         && GetValue(ta, primary_cak)
         && GetValue(ta, primary_ckn)
-        && GetValue(ta, fallback_cak)
-        && GetValue(ta, fallback_ckn)
-        && GetValue(ta, policy)
-        && GetValue(ta, enable_replay_protect)
-        && GetValue(ta, replay_window)
-        && GetValue(ta, send_sci)
-        && GetValue(ta, rekey_period);
+        && GetValue(ta, policy);
 }
 
 task_process_status MACsecMgr::loadProfile(
