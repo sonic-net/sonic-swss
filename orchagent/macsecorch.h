@@ -17,13 +17,14 @@
 
 #define COUNTERS_MACSEC_NAME_MAP            "COUNTERS_MACSEC_NAME_MAP"
 #define COUNTERS_MACSEC_ATTR_TABLE          "COUNTERS_MACSEC_ATTR"
-#define MACSEC_ATTR_ID_LIST                 "MACSEC_ATTR_ID_LIST"
+#define MACSEC_SA_ATTR_ID_LIST              "MACSEC_SA_ATTR_ID_LIST"
 
 // End define
 
 #include "orch.h"
 
 #include "portsorch.h"
+#include "flex_counter_manager.h"
 
 #include <dbconnector.h>
 
@@ -218,6 +219,7 @@ private:
 
     /* Counter */
     void installCounter(
+        CounterType counter_type,
         const std::string &obj_name,
         sai_object_id_t obj_id,
         const std::vector<std::string> &stats);

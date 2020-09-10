@@ -1837,12 +1837,12 @@ task_process_status MACsecOrch::createMACsecSA(
     fvVector.emplace_back("state", "ok");
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        installCounter(port_sci_an, sc->m_sa_ids[an], macsec_egress_sa_stats);
+        installCounter(CounterType::MACSEC_SA, port_sci_an, sc->m_sa_ids[an], macsec_egress_sa_stats);
         m_state_macsec_egress_sa.set(join('|', port_name, sci, an), fvVector);
     }
     else
     {
-        installCounter(port_sci_an, sc->m_sa_ids[an], macsec_ingress_sa_stats);
+        installCounter(CounterType::MACSEC_SA, port_sci_an, sc->m_sa_ids[an], macsec_ingress_sa_stats);
         m_state_macsec_ingress_sa.set(join('|', port_name, sci, an), fvVector);
     }
 
@@ -1998,6 +1998,7 @@ bool MACsecOrch::deleteMACsecSA(sai_object_id_t sa_id)
 }
 
 void MACsecOrch::installCounter(
+    CounterType counter_type,
     const std::string &obj_name,
     sai_object_id_t obj_id,
     const std::vector<std::string> &stats)
@@ -2012,7 +2013,7 @@ void MACsecOrch::installCounter(
     {
         counter_stats.emplace(stat);
     }
-    m_macsec_attr_flex_counter_manager.setCounterIdList(obj_id, CounterType::MACSEC, counter_stats);
+    m_macsec_attr_flex_counter_manager.setCounterIdList(obj_id, counter_type, counter_stats);
 }
 
 void MACsecOrch::uninstallCounter(const std::string &obj_name, sai_object_id_t obj_id)
