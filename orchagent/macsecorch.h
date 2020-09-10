@@ -16,7 +16,8 @@
 #define STATE_MACSEC_INGRESS_SA_TABLE_NAME  "MACSEC_INGRESS_SA_TABLE"
 
 #define COUNTERS_MACSEC_NAME_MAP            "COUNTERS_MACSEC_NAME_MAP"
-#define COUNTERS_MACSEC_TABLE               "COUNTERS_MACSEC"
+#define COUNTERS_MACSEC_ATTR_TABLE          "COUNTERS_MACSEC_ATTR"
+#define MACSEC_ATTR_ID_LIST                 "MACSEC_ATTR_ID_LIST"
 
 // End define
 
@@ -80,12 +81,12 @@ private:
 
     DBConnector         m_counter_db;
     Table               m_macsec_counters_map;
-    FlexCounterManager  m_macsec_stat_manager;
+    FlexCounterManager  m_macsec_attr_flex_counter_manager;
 
-    Table m_gearbox_table;
-    bool m_gearbox_enabled;
-    map<int, gearbox_phy_t> m_gearbox_phy_map;
-    map<int, gearbox_interface_t> m_gearbox_interface_map;
+    Table                           m_gearbox_table;
+    bool                            m_gearbox_enabled;
+    map<int, gearbox_phy_t>         m_gearbox_phy_map;
+    map<int, gearbox_interface_t>   m_gearbox_interface_map;
     struct ACLTable
     {
         sai_object_id_t         m_table_id;

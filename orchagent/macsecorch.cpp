@@ -597,8 +597,8 @@ MACsecOrch::MACsecOrch(
                             m_state_macsec_ingress_sa(state_db, STATE_MACSEC_INGRESS_SA_TABLE_NAME),
                             m_counter_db("COUNTERS_DB", 0),
                             m_macsec_counters_map(&m_counter_db, COUNTERS_MACSEC_NAME_MAP),
-                            m_macsec_stat_manager(
-                                COUNTERS_MACSEC_TABLE,
+                            m_macsec_attr_flex_counter_manager(
+                                COUNTERS_MACSEC_ATTR_TABLE,
                                 StatsMode::READ,
                                 MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
                             m_gearbox_table(app_db, "_GEARBOX_TABLE"),
@@ -2012,12 +2012,12 @@ void MACsecOrch::installCounter(
     {
         counter_stats.emplace(stat);
     }
-    m_macsec_stat_manager.setCounterIdList(obj_id, CounterType::MACSEC, counter_stats);
+    m_macsec_attr_flex_counter_manager.setCounterIdList(obj_id, CounterType::MACSEC, counter_stats);
 }
 
 void MACsecOrch::uninstallCounter(const std::string &obj_name, sai_object_id_t obj_id)
 {
-    m_macsec_stat_manager.clearCounterIdList(obj_id);
+    m_macsec_attr_flex_counter_manager.clearCounterIdList(obj_id);
 
     RedisClient redisClient(&m_counter_db);
     redisClient.hdel(COUNTERS_PORT_NAME_MAP, obj_name);
