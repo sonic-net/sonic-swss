@@ -82,7 +82,7 @@ private:
 
     DBConnector         m_counter_db;
     Table               m_macsec_counters_map;
-    FlexCounterManager  m_macsec_attr_flex_counter_manager;
+    FlexCounterManager  m_macsec_flex_counter_manager;
 
     Table                           m_gearbox_table;
     bool                            m_gearbox_enabled;

@@ -34,11 +34,11 @@ const unordered_map<bool, string> FlexCounterManager::status_lookup =
 
 const unordered_map<CounterType, string> FlexCounterManager::counter_id_field_lookup =
 {
-    { CounterType::PORT_DEBUG,   PORT_DEBUG_COUNTER_ID_LIST },
-    { CounterType::SWITCH_DEBUG, SWITCH_DEBUG_COUNTER_ID_LIST },
-    { CounterType::PORT,         PORT_COUNTER_ID_LIST },
-    { CounterType::QUEUE,        QUEUE_COUNTER_ID_LIST },
-    { CounterType::MACSEC_SA,    MACSEC_SA_ATTR_ID_LIST },
+    { CounterType::PORT_DEBUG,      PORT_DEBUG_COUNTER_ID_LIST },
+    { CounterType::SWITCH_DEBUG,    SWITCH_DEBUG_COUNTER_ID_LIST },
+    { CounterType::PORT,            PORT_COUNTER_ID_LIST },
+    { CounterType::QUEUE,           QUEUE_COUNTER_ID_LIST },
+    { CounterType::MACSEC_SA_ATTR,  MACSEC_SA_ATTR_ID_LIST },
 };
 
 FlexCounterManager::FlexCounterManager(
