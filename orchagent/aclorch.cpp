@@ -1036,6 +1036,12 @@ bool AclRuleL3V6::validateAddMatch(string attr_name, string attr_value)
         return false;
     }
 
+    if (attr_name == MATCH_ETHER_TYPE)
+    {
+        SWSS_LOG_ERROR("Ethertype match is not supported for table type L3V6");
+        return false;
+    }
+
     return AclRule::validateAddMatch(attr_name, attr_value);
 }
 
@@ -1356,7 +1362,7 @@ bool AclTable::create()
         return status == SAI_STATUS_SUCCESS;
     }
 
-    if (type != ACL_TABLE_MIRRORV6)
+    if (type != ACL_TABLE_MIRRORV6 && type != ACL_TABLE_L3V6)
     {
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE;
         attr.value.booldata = true;
