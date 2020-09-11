@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python2
 
 """"
 Description: bgpmon.py -- populating bgp related information in stateDB.
@@ -34,22 +34,14 @@ import traceback
 
 class BgpStateGet():
     def __init__(self):
-        # list ipv4_n stores the IPV4 Neighbor peer Ip address
-        # dic ipv4_n_state stores the IPV4 Neighbor peer state entries
-        # list ipv6_n stores the IPV4 Neighbor peer Ip address
-        # dic ipv6_n_state stores the IPV4 Neighbor peer state entries
-        # list new_ipv4_n stores the new snapshot of IPV4 Neighbor ip address
-        # dic new_ipv4_n_state stores the new snapshot of IPV4 Neighbor states 
-        # list new_ipv6_n stores the new snapshot of IPV6 Neighbor ip address
-        # dic new_ipv6_n_state stores the new snapshot of IPV4 Neighbor states 
-        self.ipv4_n = []
-        self.ipv4_n_state = {}
-        self.ipv6_n = []
-        self.ipv6_n_state = {}
-        self.new_ipv4_n = []
-        self.new_ipv4_n_state = {}
-        self.new_ipv6_n = []
-        self.new_ipv6_n_state = {}
+        # list peer_l stores the Neighbor peer Ip address
+        # dic peer_state stores the Neighbor peer state entries
+        # list new_peer_l stores the new snapshot of Neighbor peer ip address
+        # dic new_peer_state stores the new snapshot of Neighbor peer states 
+        self.peer_l = []
+        self.peer_state = {}
+        self.new_peer_l = []
+        self.new_peer_state = {}
         self.cached_timestamp = 0
         self.db = swsssdk.SonicV2Connector()
         self.db.connect(self.db.STATE_DB, False)
@@ -73,87 +65,58 @@ class BgpStateGet():
 
     # Get a new snapshot of BGP neighbors and store them in the "new" location
     def get_all_neigh_states(self):
+        ipv6_peer_l = []
         try:
             cmd = "vtysh -c 'show bgp summary json'"
             output = commands.getoutput(cmd)
             peer_info = json.loads(output)
             # no exception, safe to Clean the "new" lists/dic for new sanpshot
-            del self.new_ipv4_n[:]
-            self.new_ipv4_n_state.clear()
-            del self.new_ipv6_n[:]
-            self.new_ipv6_n_state.clear()
+            del self.new_peer_l[:]
+            self.new_peer_state.clear()
             if "ipv4Unicast" in peer_info and "peers" in peer_info["ipv4Unicast"]:
-                self.new_ipv4_n = peer_info["ipv4Unicast"]["peers"].keys()
-                for i in range (0, len(self.new_ipv4_n)):
-                    self.new_ipv4_n_state[self.new_ipv4_n[i]] = \
-                    peer_info["ipv4Unicast"]["peers"][self.new_ipv4_n[i]]["state"]
+                self.new_peer_l = peer_info["ipv4Unicast"]["peers"].keys()
+                for i in range (0, len(self.new_peer_l)):
+                    self.new_peer_state[self.new_peer_l[i]] = \
+                    peer_info["ipv4Unicast"]["peers"][self.new_peer_l[i]]["state"]
 
             if "ipv6Unicast" in peer_info and "peers" in peer_info["ipv6Unicast"]:
-                self.new_ipv6_n = peer_info["ipv6Unicast"]["peers"].keys()
-                for i in range (0, len(self.new_ipv6_n)):
-                    self.new_ipv6_n_state[self.new_ipv6_n[i]] = \
-                    peer_info["ipv6Unicast"]["peers"][self.new_ipv6_n[i]]["state"]
+                ipv6_peer_l = peer_info["ipv6Unicast"]["peers"].keys()
+                self.new_peer_l.extend(ipv6_peer_l)
+                for i in range (0, len(ipv6_peer_l)):
+                    self.new_peer_state[ipv6_peer_l[i]] = \
+                    peer_info["ipv6Unicast"]["peers"][ipv6_peer_l[i]]["state"]
 
         except Exception:
             syslog.syslog(syslog.LOG_ERR, "*ERROR* get_all_neigh_states Exception: %s"
                     % (traceback.format_exc()))
 
     def update_neigh_states(self):
-        # handle IPV4 case
-        for i in range (0, len(self.new_ipv4_n)):
-            neighb = self.new_ipv4_n[i]
-            key = "NEIGH_STATE_TABLE|%s" % neighb
-            if neighb in self.ipv4_n:
+        for i in range (0, len(self.new_peer_l)):
+            peer = self.new_peer_l[i]
+            key = "NEIGH_STATE_TABLE|%s" % peer
+            if peer in self.peer_l:
                 # only update the entry if state changed
-                if self.ipv4_n_state[neighb] != self.new_ipv4_n_state[neighb]:
+                if self.peer_state[peer] != self.new_peer_state[peer]:
                     # state changed. Update state DB for this entry
-                    state = self.new_ipv4_n_state[neighb]
+                    state = self.new_peer_state[peer]
                     self.db.set(self.db.STATE_DB, key, 'state', state)
-                    self.ipv4_n_state[neighb] = state
+                    self.peer_state[peer] = state
                 # remove this neighbor from old list since it is accounted for
-                self.ipv4_n.remove(neighb)
+                self.peer_l.remove(peer)
             else:
                 # New neighbor found case. Add to dictionary and state DB
-                state = self.new_ipv4_n_state[neighb]
+                state = self.new_peer_state[peer]
                 self.db.set(self.db.STATE_DB, key, 'state', state)
-                self.ipv4_n_state[neighb] = state
+                self.peer_state[peer] = state
         # Check for stale state entries to be cleaned up
-        while len(self.ipv4_n) > 0:
+        while len(self.peer_l) > 0:
             # remove this from the stateDB and the current nighbor state entry
-            neighb = self.ipv4_n.pop(0)
-            del_key = "NEIGH_STATE_TABLE|%s" % neighb
+            peer = self.peer_l.pop(0)
+            del_key = "NEIGH_STATE_TABLE|%s" % peer
             self.db.delete(self.db.STATE_DB, del_key)
-            del self.ipv4_n_state[neighb]
+            del self.peer_state[peer]
         # Save the new List
-        self.ipv4_n = self.new_ipv4_n[:]
-
-        # handle IPV6 case
-        for i in range (0, len(self.new_ipv6_n)):
-            neighb = self.new_ipv6_n[i]
-            key = "NEIGH_STATE_TABLE|%s" % neighb
-            if neighb in self.ipv6_n:
-                # only update the entry if sate changed
-                if self.ipv6_n_state[neighb] != self.new_ipv6_n_state[neighb]:
-                    # state changed. Update state DB for this entry
-                    state = self.new_ipv6_n_state[neighb]
-                    self.db.set(self.db.STATE_DB, key, 'state', state)
-                    self.ipv6_n_state[neighb] = state
-                # remove this neighbor from old list since it is accounted for
-                self.ipv6_n.remove(neighb)
-            else:
-                # New neighbor found case. Add to dictionary and state DB
-                state = self.new_ipv6_n_state[neighb]
-                self.db.set(self.db.STATE_DB, key, 'state', state)
-                self.ipv6_n_state[neighb] = state
-        # Check for stale state entries to be cleaned up
-        while len(self.ipv6_n) > 0:
-            # remove this from the stateDB and the current nighbor state entry
-            neighb = self.ipv6_n.pop(0)
-            del_key = "NEIGH_STATE_TABLE|%s" % neighb
-            self.db.delete(self.db.STATE_DB, del_key)
-            del self.ipv6_n_state[neighb]
-        # Save the new List
-        self.ipv6_n = self.new_ipv6_n[:]
+        self.peer_l = self.new_peer_l[:]
 
 def main():
 
