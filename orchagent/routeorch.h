@@ -108,9 +108,19 @@ public:
     bool invalidnexthopinNextHopGroup(const NextHopKey&);
 
     void notifyNextHopChangeObservers(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&, bool);
-    const RouteTables& getSyncdRoutes(void)
+    const NextHopGroupKey getSyncdRoute(sai_object_id_t vrf_id, const IpPrefix& ipPrefix)
     {
-    	return m_syncdRoutes;
+        NextHopGroupKey nhg;
+        auto route_table = m_syncdRoutes.find(vrf_id);
+        if (route_table != m_syncdRoutes.end())
+        {
+            auto route_entry = route_table->second.find(ipPrefix);
+            if (route_entry != route_table->second.end())
+            {
+                nhg = route_entry->second;
+            }
+        }
+        return nhg;
     }
 
     int getNextHopGroupCount(void)
@@ -133,12 +143,6 @@ public:
     	return m_maxNextHopGroupCount;
     }
 
-    EntityBulker<sai_route_api_t>           gRouteBulker;
-    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
-    bool removeRoute(RouteBulkContext& ctx);
-    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
-    bool removeRoutePost(const RouteBulkContext& ctx);
-
 private:
     SwitchOrch *m_switchOrch;
     NeighOrch *m_neighOrch;
@@ -155,9 +159,14 @@ private:
 
     NextHopObserverTable m_nextHopObservers;
 
+    EntityBulker<sai_route_api_t>           gRouteBulker;
     ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
 
     void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
+    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
+    bool removeRoute(RouteBulkContext& ctx);
+    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    bool removeRoutePost(const RouteBulkContext& ctx);
 
     std::string getLinkLocalEui64Addr(void);
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);

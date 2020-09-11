@@ -5,6 +5,7 @@
 #include "observer.h"
 #include "intfsorch.h"
 #include "neighorch.h"
+#include "producerstatetable.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -39,6 +40,8 @@ typedef std::map<sai_object_id_t, FGRouteTable> FGRouteTables;
 typedef std::string FgNhg;
 /* Map from IP to Bank */
 typedef std::map<IpAddress, Bank> NextHops;
+/* Cache currently ongoing FG_NHG PREFIX additions/deletions */
+typedef std::map<IpPrefix, NextHopGroupKey> FgPrefixOpCache;
 
 /* Store the indices occupied by a bank */
 typedef struct
@@ -74,7 +77,7 @@ class FgNhgOrch : public Orch
 {
 public:
     FgNhgPrefixes fgNhgPrefixes;
-    FgNhgOrch(DBConnector *db, DBConnector *stateDb, vector<string> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch);
+    FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<string> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch);
 
     bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
     bool removeRoute(sai_object_id_t, const IpPrefix&);
@@ -88,6 +91,9 @@ private:
     FgNhgs m_FgNhgs;
     FGRouteTables m_syncdFGRouteTables;
     Table m_stateWarmRestartRouteTable;
+    ProducerStateTable m_routeTable;
+    FgPrefixOpCache m_fgPrefixAddCache;
+    FgPrefixOpCache m_fgPrefixDelCache;
 
     bool set_new_nhg_members(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     std::vector<Bank_Member_Changes> &bank_member_changes, 

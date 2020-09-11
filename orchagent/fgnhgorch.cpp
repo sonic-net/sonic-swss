@@ -16,12 +16,13 @@ extern sai_route_api_t*             sai_route_api;
 extern RouteOrch *gRouteOrch;
 extern CrmOrch *gCrmOrch;
 
-FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *stateDb, vector<string> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
+FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<string> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
         Orch(db, tableNames),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
         m_vrfOrch(vrfOrch),
-        m_stateWarmRestartRouteTable(stateDb, STATE_FG_ROUTE_TABLE_NAME)
+        m_stateWarmRestartRouteTable(stateDb, STATE_FG_ROUTE_TABLE_NAME),
+        m_routeTable(appDb, APP_ROUTE_TABLE_NAME)
 {
      SWSS_LOG_ENTER();
 }
@@ -1189,6 +1190,33 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
 }
 
 
+vector<FieldValueTuple> generate_route_table_from_nhg_key(NextHopGroupKey nhg)
+{
+    vector<FieldValueTuple> fvVector;
+    std::set<NextHopKey> nhks = nhg.getNextHops();
+    string nexthops = nhks.begin()->ip_address.to_string();
+    string ifnames = nhks.begin()->alias;
+
+    for (auto nhk: nhks)
+    {
+        if (nhk == *(nhks.begin()))
+        {
+            continue;
+        }
+        nexthops += "," + nhk.ip_address.to_string();
+        ifnames += "," + nhk.alias;
+    }
+
+    FieldValueTuple nh("nexthop", nexthops);
+    FieldValueTuple idx("ifname", ifnames);
+    SWSS_LOG_INFO("Generated fv nhs %s, fv ifnames %s", nexthops.c_str(), ifnames.c_str());
+
+    fvVector.push_back(nh);
+    fvVector.push_back(idx);
+    return fvVector;
+}
+
+
 bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
 {
     SWSS_LOG_ENTER();
@@ -1196,7 +1224,6 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
     string key = kfvKey(t);
     IpPrefix ip_prefix = IpPrefix(key);
     auto prefix_entry = fgNhgPrefixes.find(ip_prefix);
-    bool route_handled = false;
 
     if (op == SET_COMMAND)
     {
@@ -1226,54 +1253,47 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
             SWSS_LOG_INFO("FG_NHG entry not received yet, continue");
             return false;
         }
-        else 
+
+        /* delete regular ecmp handling for prefix */
+        sai_object_id_t vrf_id = gVirtualRouterId;
+        NextHopGroupKey nhg = gRouteOrch->getSyncdRoute(vrf_id, ip_prefix);
+        auto addCache = m_fgPrefixAddCache.find(ip_prefix);
+        if (addCache == m_fgPrefixAddCache.end())
         {
-            /* delete regular ecmp handling for prefix */
-            sai_object_id_t vrf_id = gVirtualRouterId;
-            auto route_table_entry = gRouteOrch->getSyncdRoutes().find(vrf_id);
-            NextHopGroupKey nhg;
-            if (route_table_entry == gRouteOrch->getSyncdRoutes().end())
+            if (nhg.getSize() == 0)
             {
-                SWSS_LOG_INFO("Failed to find route table, vrf_id 0x%lx", vrf_id);
+                SWSS_LOG_INFO("Route does not exist in routeorch, don't need to migrate route to fgnhgorch");
+                fgNhg_entry->second.prefixes.push_back(ip_prefix);
+                fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
             }
             else
             {
-                /* ipprefix already exist in routeorch */
-                auto it_route = route_table_entry->second.find(ip_prefix);
-                if (it_route != route_table_entry->second.end())
-                {
-                    nhg = it_route->second;
-                    RouteBulkContext ctx;
-                    ctx.ip_prefix = ip_prefix;
-                    ctx.vrf_id = vrf_id;
-                    ctx.nhg = nhg;
-                    gRouteOrch->removeRoute(ctx);
-                    gRouteOrch->gRouteBulker.flush();
-                    gRouteOrch->removeRoutePost(ctx);
-                    route_handled = true;
-                }
+                SWSS_LOG_INFO("Route exists in routeorch, deleting from APP_DB to begin migration");
+                m_fgPrefixAddCache[ip_prefix] = nhg;
+                m_routeTable.del(ip_prefix.to_string());
+                return false;
             }
-
-            fgNhg_entry->second.prefixes.push_back(ip_prefix);
-            fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
-
-            /* add fgnhg route */
-            if (route_handled)
-            {
-                if (!addRoute(vrf_id, ip_prefix, nhg))
-                {
-                    SWSS_LOG_INFO("Failed to add fg route, %s:%s", 
-                            ip_prefix.to_string().c_str(), nhg.to_string().c_str());
-                    return false;
-                }
-                SWSS_LOG_INFO("Add route with ip prefix %s with nexthop group key %s", 
-                        ip_prefix.to_string().c_str(),nhg.to_string().c_str());
-            }
-
-            SWSS_LOG_INFO("FG_NHG added for group %s, prefix %s",
-                    fgNhgPrefixes[ip_prefix]->fgNhg_name.c_str(), ip_prefix.to_string().c_str());
         }
-       
+        else
+        {
+            if (nhg.getSize() == 0)
+            {
+                /* Case where APP_DB route entry was present and the route delete was completed */
+                SWSS_LOG_INFO("Route removed in routeorch, now do an APP_DB addition");
+                fgNhg_entry->second.prefixes.push_back(ip_prefix);
+                fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
+                m_routeTable.set(ip_prefix.to_string(), generate_route_table_from_nhg_key(addCache->second));
+                m_fgPrefixAddCache.erase(addCache);
+                SWSS_LOG_INFO("Performed APP_DB addition with prefix %s", ip_prefix.to_string().c_str());
+            }
+            else
+            {
+                SWSS_LOG_INFO("Route exists in routeorch, and APP_DB route was deleted, waiting for routeorch delete to complete");
+                return false;
+            }
+        }
+        SWSS_LOG_INFO("FG_NHG added for group %s, prefix %s",
+                fgNhgPrefixes[ip_prefix]->fgNhg_name.c_str(), ip_prefix.to_string().c_str());
     }
     else if (op == DEL_COMMAND)
     {
@@ -1282,52 +1302,68 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
             SWSS_LOG_INFO("FG_NHG prefix doesn't exists, ignore");
             return true;
         }
-        else
-        {
-            /* remove fgnhg route entry */
-            sai_object_id_t vrf_id = gVirtualRouterId;
-            NextHopGroupKey nhg;
-            if (m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
+        /* delete fine grained ecmp handling for prefix */
+        auto fgNhg_entry = prefix_entry->second;
+        sai_object_id_t vrf_id = gVirtualRouterId;
+        NextHopGroupKey nhg;
+        if (m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
                     m_syncdFGRouteTables.at(vrf_id).find(ip_prefix) != m_syncdFGRouteTables.at(vrf_id).end())
-            {
-                nhg = m_syncdFGRouteTables.at(vrf_id).at(ip_prefix).nhg_key;
-                if (!removeRoute(vrf_id, ip_prefix))
-                {
-                    SWSS_LOG_INFO("Failed to remove fg route, %s:%s", 
-                                ip_prefix.to_string().c_str(), nhg.to_string().c_str());
-                    return false;
-                }
-                route_handled = true;
-                SWSS_LOG_INFO("FG_NHG prefix %s is removed from SAI",
-                        ip_prefix.to_string().c_str());
-            }
+        {
+            nhg = m_syncdFGRouteTables.at(vrf_id).at(ip_prefix).nhg_key;
+        } 
 
-            /* search and delete local structure */
-            for (uint32_t i = 0; i < prefix_entry->second->prefixes.size(); i++)
+        auto delCache = m_fgPrefixDelCache.find(ip_prefix);
+        if (delCache == m_fgPrefixDelCache.end())
+        {
+            if (nhg.getSize() == 0)
             {
-                if (prefix_entry->second->prefixes[i] == ip_prefix)
+                SWSS_LOG_INFO("Route does not exist in fgnhgorch, proceed with deletion of local structures");
+                for (uint32_t i = 0; i < fgNhg_entry->prefixes.size(); i++)
                 {
-                    prefix_entry->second->prefixes.erase(prefix_entry->second->prefixes.begin() + i);
-                    SWSS_LOG_INFO("FG_NHG prefix %s is deleted from group %s",
-                            ip_prefix.to_string().c_str(), fgNhgPrefixes[ip_prefix]->fgNhg_name.c_str());
-                    break;
+                    if(fgNhg_entry->prefixes[i] == ip_prefix)
+                    {
+                        fgNhg_entry->prefixes.erase(fgNhg_entry->prefixes.begin() + i);
+                        break;
+                    }
                 }
-            }
-            fgNhgPrefixes.erase(ip_prefix);
 
-            /* reassign routeorch as the owner of the prefix and call for routeorch to add this route */
-            if (route_handled)
+                fgNhgPrefixes.erase(ip_prefix); 
+            }
+            else
             {
-                RouteBulkContext ctx;
-                ctx.ip_prefix = ip_prefix;
-                ctx.vrf_id = vrf_id;
-                ctx.nhg = nhg;
-                gRouteOrch->addRoute(ctx, nhg);
-                // Flush the route bulker, so routes will be written to syncd and ASIC
-                gRouteOrch->gRouteBulker.flush();
-                gRouteOrch->addRoutePost(ctx, nhg);
+                SWSS_LOG_INFO("Route exists in fgNhgOrch, deleting from APP_DB");
+                m_fgPrefixDelCache[ip_prefix] = nhg;
+                m_routeTable.del(ip_prefix.to_string());
+                return false;
             }
         }
+        else
+        {
+            if (nhg.getSize() == 0)
+            {
+                /* Case where fgnhgorch route entry was present and the route delete was completed */
+                SWSS_LOG_INFO("Route removed in fgNhgOrch, now do an APP_DB addition");
+                for (uint32_t i = 0; i < fgNhg_entry->prefixes.size(); i++)
+                {
+                    if (fgNhg_entry->prefixes[i] == ip_prefix)
+                    {
+                        fgNhg_entry->prefixes.erase(fgNhg_entry->prefixes.begin() + i);
+                        break;
+                    }
+                }
+                fgNhgPrefixes.erase(ip_prefix); 
+
+                m_routeTable.set(ip_prefix.to_string(), generate_route_table_from_nhg_key(delCache->second));
+                SWSS_LOG_INFO("Perform APP_DB addition with prefix %s", ip_prefix.to_string().c_str());
+            }
+            else
+            {
+                SWSS_LOG_INFO("Route exists in fgNhgOrch, and APP_DB route was deleted, waiting for fgNhgOrch delete to complete");
+                return false;
+            }
+        }
+        SWSS_LOG_INFO("FG_NHG removed for group prefix %s", ip_prefix.to_string().c_str());
+
     }
     return true;
 }
@@ -1356,7 +1392,7 @@ bool FgNhgOrch::doTaskFgNhg_member(const KeyOpFieldsValuesTuple & t)
                 bank = stoi(fvValue(i));
             }
         }
-        if (fgNhg_name == "")
+        if (fgNhg_name.empty())
         {
             SWSS_LOG_ERROR("Received FG_NHG with empty name for key %s", kfvKey(t).c_str());
             return true;
@@ -1396,10 +1432,13 @@ bool FgNhgOrch::doTaskFgNhg_member(const KeyOpFieldsValuesTuple & t)
     }
     else if (op == DEL_COMMAND)
     {
-        /* remove next hop from SAI group */
-        if (!invalidNextHopInNextHopGroup(nhk))
+        /* remove next hop from SAI group if its a resolved nh which is programmed to SAI*/
+        if (m_neighOrch->hasNextHop(nhk))
         {
-            return false;
+            if (!invalidNextHopInNextHopGroup(nhk))
+            {
+                return false;
+            }
         }
 
         SWSS_LOG_INFO("FG_NHG member removed for SAI group, next-hop %s",

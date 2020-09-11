@@ -322,7 +322,7 @@ namespace aclorch_test
                 CFG_FG_NHG_PREFIX,
                 CFG_FG_NHG_MEMBER
             };
-            gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
+            gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
 
             ASSERT_EQ(gRouteOrch, nullptr);
             gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
