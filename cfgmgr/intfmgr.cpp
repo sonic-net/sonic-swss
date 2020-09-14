@@ -420,8 +420,9 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         /* if to change vrf then skip */
         if (isIntfChangeVrf(alias, vrf_name))
         {
-            SWSS_LOG_ERROR("%s can not change to %s directly, skipping", alias.c_str(), vrf_name.c_str());
-            return true;
+            SWSS_LOG_NOTICE("%s change to %s", alias.c_str(), vrf_name.c_str());
+            FieldValueTuple fvTuple("vrf_name", vrf_name);
+            data.push_back(fvTuple);
         }
 
         if (is_lo)

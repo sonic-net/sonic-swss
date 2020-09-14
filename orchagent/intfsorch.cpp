@@ -383,6 +383,21 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
                 gPortsOrch->setPort(alias, port);
             }
         }
+        else if ( !ip_prefix )
+        {
+            if (port.m_vr_id != vrf_id)
+            {
+                Port port_tmp = port;
+
+                m_vrfOrch->decreaseVrfRefCount(port.m_vr_id);
+                removeRouterIntfs(port);
+                port_tmp.m_vr_id = vrf_id;
+                port_tmp.m_rif_id = 0;
+                addRouterIntfs(vrf_id, port_tmp);
+                m_vrfOrch->increaseVrfRefCount(vrf_id);
+                m_syncdIntfses[alias].vrf_id = vrf_id;
+            }
+        }
     }
 
     if (!ip_prefix || m_syncdIntfses[alias].ip_addresses.count(*ip_prefix))
