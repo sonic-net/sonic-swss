@@ -22,6 +22,7 @@ private:
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
 
     std::set<std::string> m_subIntfList;
+    std::set<std::string> m_loopbackIntfList;
 
     void setIntfIp(const std::string &alias, const std::string &opCmd, const IpPrefix &ipPrefix);
     void setIntfVrf(const std::string &alias, const std::string &vrfName);
