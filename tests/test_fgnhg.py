@@ -721,7 +721,7 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG_MEMBER", '|', "10.0.0.1",
             [
                 ("FG_NHG", fg_nhg_name),
-                ("bank", "0"),
+                ("bank", "1"),
             ],
         )
 
@@ -730,7 +730,7 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG_MEMBER", '|', "10.0.0.3",
             [
                 ("FG_NHG", fg_nhg_name),
-                ("bank", "0"),
+                ("bank", "1"),
             ],
         )
 
@@ -740,7 +740,7 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG_MEMBER", '|', "10.0.0.5",
             [
                 ("FG_NHG", fg_nhg_name),
-                ("bank", "0"),
+                ("bank", "1"),
             ],
         )
 
@@ -749,7 +749,7 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG_MEMBER", '|', "10.0.0.7",
             [
                 ("FG_NHG", fg_nhg_name),
-                ("bank", "0"),
+                ("bank", "1"),
             ],
         )
 
@@ -758,7 +758,7 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG_MEMBER", '|', "10.0.0.9",
             [
                 ("FG_NHG", fg_nhg_name),
-                ("bank", "0"),
+                ("bank", "1"),
             ],
         )
 
@@ -767,7 +767,7 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG_MEMBER", '|', "10.0.0.11",
             [
                 ("FG_NHG", fg_nhg_name),
-                ("bank", "1"),
+                ("bank", "0"),
             ],
         )
 
@@ -776,7 +776,7 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG_MEMBER", '|', "10.0.0.13",
             [
                 ("FG_NHG", fg_nhg_name),
-                ("bank", "1"),
+                ("bank", "0"),
             ],
         )
 
@@ -785,7 +785,7 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG_MEMBER", '|', "10.0.0.15",
             [
                 ("FG_NHG", fg_nhg_name),
-                ("bank", "1"),
+                ("bank", "0"),
             ],
         )
 
@@ -794,7 +794,7 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG_MEMBER", '|', "10.0.0.17",
             [
                 ("FG_NHG", fg_nhg_name),
-                ("bank", "1"),
+                ("bank", "0"),
             ],
         )
 
@@ -803,7 +803,7 @@ class TestFineGrainedNextHopGroup(object):
             "FG_NHG_MEMBER", '|', "10.0.0.19",
             [
                 ("FG_NHG", fg_nhg_name),
-                ("bank", "1"),
+                ("bank", "0"),
             ],
         )
         dvs.runcmd("arp -s 10.0.0.13 00:00:00:00:00:13")
@@ -909,7 +909,7 @@ class TestFineGrainedNextHopGroup(object):
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.5,10.0.0.7,10.0.0.9"), ("ifname", "Ethernet8,Ethernet12,Ethernet16")])
         ps.set(fg_nhg_prefix, fvs)
         time.sleep(1)
-        nh_memb_exp_count = {"10.0.0.5":43,"10.0.0.7":43,"10.0.0.9":42}
+        nh_memb_exp_count = {"10.0.0.5":42,"10.0.0.7":44,"10.0.0.9":42}
         verify_programmed_nh_membs(adb,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
 
 

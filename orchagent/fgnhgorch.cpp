@@ -43,9 +43,9 @@ void calculate_bank_hash_bucket_start_indices(FgNhgEntry *fgNhgEntry)
     vector<uint32_t> memb_per_bank;
     for (auto nh : fgNhgEntry->nextHops)
     {
-        if (nh.second + 1 > num_banks)
+        while (nh.second + 1 > num_banks)
         {
-            num_banks = nh.second + 1;
+            num_banks++;
             memb_per_bank.push_back(0);
         }
         memb_per_bank[nh.second] = memb_per_bank[nh.second] + 1;
