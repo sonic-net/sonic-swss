@@ -234,11 +234,13 @@ class TestNextHopGroup(object):
             assert dvs.servers[i].runcmd("ip link set up dev eth0") == 0
 
         app_db = dvs.get_app_db()
+        asic_db = dvs.get_asic_db()
         ps = swsscommon.ProducerStateTable(app_db.db_connection, "ROUTE_TABLE")
 
         # Add first batch of routes with unique nexthop groups in AppDB
         route_count = 0
         r = 0
+        asic_routes_count = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"))
         while route_count < MAX_ECMP_COUNT:
             r += 1
             fmt = '{{0:0{}b}}'.format(MAX_PORT_COUNT)
@@ -251,11 +253,13 @@ class TestNextHopGroup(object):
             ps.set(route_ipprefix, fvs)
             route_count += 1
 
-        asic_db = dvs.get_asic_db()
-
         # Wait and check ASIC DB the count of nexthop groups used
         asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", MAX_ECMP_COUNT)
-        asic_routes_count = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"))
+
+        # Wait and check ASIC DB the count of routes
+        # Expect asic_routes_count + MAX_ECMP_COUNT - 1 since 2.2.2.0/24 is already set in the previous test case and counted in asic_routes_count
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", asic_routes_count + MAX_ECMP_COUNT - 1)
+        asic_routes_count += MAX_ECMP_COUNT - 1
 
         # Add second batch of routes with unique nexthop groups in AppDB
         # Add more routes with new nexthop group in AppDBdd
