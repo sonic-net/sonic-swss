@@ -87,6 +87,9 @@ class BgpStateGet():
             if key == "ipv4Unicast" or key == "ipv6Unicast":
                 self.update_new_peer_states(value)
 
+    # This method will take the caller's dictionary which contains the peer state operation
+    # That need to be updated in StateDB using Redis pipeline.
+    # The data{} will be cleared at the end of this method before returning to caller.
     def flush_pipe(self, data):
         """Dump each entry in data{} into State DB via redis pipeline.
         Args:
@@ -108,10 +111,10 @@ class BgpStateGet():
                 # Add or Modify case
                 self.pipe.hmset(key, value)
         self.pipe.execute()
+        data.clear()
 
     def update_neigh_states(self):
         data = {}
-        pipe_count = 0
         for i in range (0, len(self.new_peer_l)):
             peer = self.new_peer_l[i]
             key = "NEIGH_STATE_TABLE|%s" % peer
@@ -121,7 +124,6 @@ class BgpStateGet():
                     # state changed. Update state DB for this entry
                     state = self.new_peer_state[peer]
                     data[key] = {'state':state}
-                    pipe_count += 1
                     self.peer_state[peer] = state
                 # remove this neighbor from old list since it is accounted for
                 self.peer_l.remove(peer)
@@ -129,26 +131,20 @@ class BgpStateGet():
                 # New neighbor found case. Add to dictionary and state DB
                 state = self.new_peer_state[peer]
                 data[key] = {'state':state}
-                pipe_count += 1
                 self.peer_state[peer] = state
-            if pipe_count > PIPE_BATCH_MAX_COUNT:
+            if len(data) > PIPE_BATCH_MAX_COUNT:
                 self.flush_pipe(data)
-                data = {}
-                pipe_count = 0
         # Check for stale state entries to be cleaned up
         while len(self.peer_l) > 0:
             # remove this from the stateDB and the current nighbor state entry
             peer = self.peer_l.pop(0)
             del_key = "NEIGH_STATE_TABLE|%s" % peer
             data[del_key] = None
-            pipe_count += 1
             del self.peer_state[peer]
-            if pipe_count > PIPE_BATCH_MAX_COUNT:
+            if len(data) > PIPE_BATCH_MAX_COUNT:
                 self.flush_pipe(data)
-                data = {}
-                pipe_count = 0
         # If anything in the pipeline not yet flushed, flush them now
-        if pipe_count > 0:
+        if len(data) > 0:
             self.flush_pipe(data)
         # Save the new List
         self.peer_l = self.new_peer_l[:]
