@@ -29,7 +29,6 @@ import os
 import syslog
 import swsssdk
 import time
-import traceback
 
 PIPE_BATCH_MAX_COUNT = 50
 
