@@ -1146,12 +1146,6 @@ bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
         return false;
     }
 
-    if (m_tableType == ACL_TABLE_MIRRORV6 && attr_name == MATCH_ETHER_TYPE)
-    {
-        SWSS_LOG_ERROR("ETHER_TYPE match is not supported for table of type MIRRORV6");
-        return false;
-    }
-
     return AclRule::validateAddMatch(attr_name, attr_value);
 }
 

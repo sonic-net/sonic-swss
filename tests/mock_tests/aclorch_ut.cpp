@@ -388,7 +388,6 @@ namespace aclorch_test
             vector<swss::FieldValueTuple> fields;
 
             fields.push_back({ "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" });
-            fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL", "true" });
 
@@ -400,6 +399,7 @@ namespace aclorch_test
             switch (acl_table.type)
             {
                 case ACL_TABLE_L3:
+                    fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" });
                     fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP", "true" });
                     fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_DST_IP", "true" });
                     break;
@@ -898,7 +898,7 @@ namespace aclorch_test
     //
     // Using fixed ports = {"1,2"} for now.
     // The bind operations will be another separately test cases.
-    TEST_F(AclOrchTest, ACL_Creation_and_Destorying)
+    TEST_F(AclOrchTest, ACL_Creation_and_Destruction)
     {
         auto orch = createAclOrch();
 
