@@ -2992,7 +2992,7 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 /* Assert the port doesn't belong to any LAG already */
                 assert(!port.m_lag_id && !port.m_lag_member_id);
 
-                if (!addLagMember(lag, port))
+                if (!addLagMember(lag, port, (status == "disabled")))
                 {
                     it++;
                     continue;
@@ -3758,7 +3758,7 @@ void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
     }
 }
 
-bool PortsOrch::addLagMember(Port &lag, Port &port)
+bool PortsOrch::addLagMember(Port &lag, Port &port, bool disableForwarding)
 {
     SWSS_LOG_ENTER();
 
@@ -3778,6 +3778,17 @@ bool PortsOrch::addLagMember(Port &lag, Port &port)
     attr.id = SAI_LAG_MEMBER_ATTR_PORT_ID;
     attr.value.oid = port.m_port_id;
     attrs.push_back(attr);
+
+    if (disableForwarding)
+    {
+        attr.id = SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+
+        attr.id = SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
 
     sai_object_id_t lag_member_id;
     sai_status_t status = sai_lag_api->create_lag_member(&lag_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -3870,6 +3881,10 @@ bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
         return false;
     }
 
+    SWSS_LOG_NOTICE("%s collection on LAG member %s",
+        enableCollection ? "Enable" : "Disable",
+        lagMember.m_alias.c_str());
+
     return true;
 }
 
@@ -3892,6 +3907,10 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
             lagMember.m_alias.c_str());
         return false;
     }
+
+    SWSS_LOG_NOTICE("%s distribution on LAG member %s",
+        enableDistribution ? "Enable" : "Disable",
+        lagMember.m_alias.c_str());
 
     return true;
 }
