@@ -75,12 +75,12 @@ struct MockSAIAPI
     MockSAIFunc(set_acl_entry_attribute);
 };
 
-static MockSAIAPI mock_api;
+// static MockSAIAPI mock_api;
 
-static MockSAIAPI *sai_macsec_api = &mock_api;
-static MockSAIAPI *sai_acl_api = &mock_api;
-static MockSAIAPI *sai_port_api = &mock_api;
-static MockSAIAPI *sai_switch_api = &mock_api;
+// static MockSAIAPI *sai_macsec_api = &mock_api;
+// static MockSAIAPI *sai_acl_api = &mock_api;
+// static MockSAIAPI *sai_port_api = &mock_api;
+// static MockSAIAPI *sai_switch_api = &mock_api;
 
 #define MOCK_RETURN_BOOL return true;
 
@@ -92,10 +92,10 @@ static MockSAIAPI *sai_switch_api = &mock_api;
 #define EAPOL_ETHER_TYPE 0x888e
 #define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 1000
 
-// extern sai_macsec_api_t *sai_macsec_api;
-// extern sai_acl_api_t *sai_acl_api;
-// extern sai_port_api_t *sai_port_api;
-// extern sai_switch_api_t *sai_switch_api;
+extern sai_macsec_api_t *sai_macsec_api;
+extern sai_acl_api_t *sai_acl_api;
+extern sai_port_api_t *sai_port_api;
+extern sai_switch_api_t *sai_switch_api;
 
 static const std::vector<std::string> macsec_egress_sa_stats =
     {
@@ -2021,7 +2021,7 @@ void MACsecOrch::uninstallCounter(const std::string &obj_name, sai_object_id_t o
     m_macsec_flex_counter_manager.clearCounterIdList(obj_id);
 
     RedisClient redisClient(&m_counter_db);
-    redisClient.hdel(COUNTERS_PORT_NAME_MAP, obj_name);
+    redisClient.hdel(COUNTERS_MACSEC_NAME_MAP, obj_name);
 }
 
 bool MACsecOrch::initACLTable(
