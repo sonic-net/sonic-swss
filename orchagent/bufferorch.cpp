@@ -39,8 +39,7 @@ BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) :
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
-    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
-    m_countersDbRedisClient(m_countersDb.get())
+    m_countersDb(new DBConnector("COUNTERS_DB", 0))
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
@@ -342,7 +341,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             // Specifically, we push the buffer pool name to oid mapping upon the creation of the oid
             // In pg and queue case, this mapping installment is deferred to FlexCounterOrch at a reception of field
             // "FLEX_COUNTER_STATUS"
-            m_countersDbRedisClient.hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
+            m_countersDb->hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
         }
     }
     else if (op == DEL_COMMAND)
@@ -356,7 +355,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
-        m_countersDbRedisClient.hdel(COUNTERS_BUFFER_POOL_NAME_MAP, object_name);
+        m_countersDb->hdel(COUNTERS_BUFFER_POOL_NAME_MAP, object_name);
     }
     else
     {
