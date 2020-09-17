@@ -1149,6 +1149,39 @@ The packet action could be:
 }
 ```
 
+### BREAKOUT_CFG
+
+This table is introduced as part of Dynamic Port Breakout(DPB) feature.
+It shows the current breakout mode of all ports(root ports).
+The list of root ports, all possible breakout modes, and default breakout modes
+ are obtained/derived from platform.json and hwsku.json files.
+
+```
+"BREAKOUT_CFG": {
+    "Ethernet0": {
+        "brkout_mode": "4x25G[10G]"
+    },
+    "Ethernet4": {
+        "brkout_mode": "4x25G[10G]"
+    },
+    "Ethernet8": {
+        "brkout_mode": "4x25G[10G]"
+    },
+
+        ......
+
+    "Ethernet116": {
+        "brkout_mode": "2x50G"
+    },
+    "Ethernet120": {
+        "brkout_mode": "2x50G"
+    },
+    "Ethernet124": {
+        "brkout_mode": "2x50G"
+    }
+}
+```
+
 For Developers
 ==============
 

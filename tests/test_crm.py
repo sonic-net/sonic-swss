@@ -904,3 +904,9 @@ class TestCrm(object):
         assert threshold_high == 90
         threshold_type = getCrmConfigStr(dvs, 'Config', 'fdb_entry_threshold_type')
         assert threshold_type == 'percentage'
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

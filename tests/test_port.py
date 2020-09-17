@@ -221,3 +221,9 @@ class TestPort(object):
         for fv in fvs:
             if fv[0] == "SAI_PORT_ATTR_SERDES_IPREDRIVER":
                 assert fv[1] == ipre_val_asic
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass
