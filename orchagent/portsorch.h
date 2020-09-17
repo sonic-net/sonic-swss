@@ -171,7 +171,7 @@ private:
 
     bool addLag(string lag);
     bool removeLag(Port lag);
-    bool addLagMember(Port &lag, Port &port);
+    bool addLagMember(Port &lag, Port &port, bool disableForwarding);
     bool removeLagMember(Port &lag, Port &port);
     bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
