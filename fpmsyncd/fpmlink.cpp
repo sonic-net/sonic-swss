@@ -220,7 +220,7 @@ uint64_t FpmLink::readData()
             }
             else
             {
-            NetDispatcher::getInstance().onNetlinkMessage(msg);
+                NetDispatcher::getInstance().onNetlinkMessage(msg);
             }
             nlmsg_free(msg);
         }
