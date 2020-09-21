@@ -59,7 +59,8 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
         {
             if (len < (int)sizeof(*rtnh)
                 || rtnh->rtnh_len > len)
-            break;
+                break;
+
             if (rtnh->rtnh_len > sizeof(*rtnh)) 
             {
                 memset(subtb, 0, sizeof(subtb));
