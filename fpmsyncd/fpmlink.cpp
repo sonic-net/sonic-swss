@@ -12,7 +12,8 @@ using namespace std;
 void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
         int len)
 {
-    while (RTA_OK(rta, len)) {
+    while (RTA_OK(rta, len)) 
+    {
         if (rta->rta_type <= max)
             tb[rta->rta_type] = rta;
         rta = RTA_NEXT(rta, len);
@@ -33,7 +34,8 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
         return 0;
 
     len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct rtmsg)));
-    if (len < 0) {
+    if (len < 0) 
+    {
         return 0;
     }
 
@@ -53,11 +55,13 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
         len = (int)RTA_PAYLOAD(tb[RTA_MULTIPATH]);
         struct rtattr *subtb[RTA_MAX + 1];
         
-        for (;;) {
+        for (;;) 
+        {
             if (len < (int)sizeof(*rtnh)
                 || rtnh->rtnh_len > len)
             break;
-            if (rtnh->rtnh_len > sizeof(*rtnh)) {
+            if (rtnh->rtnh_len > sizeof(*rtnh)) 
+            {
                 memset(subtb, 0, sizeof(subtb));
                 netlink_parse_rtattr(subtb, RTA_MAX, RTNH_DATA(rtnh),
                                       (int)(rtnh->rtnh_len - sizeof(*rtnh)));
