@@ -380,7 +380,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "%s/%u", 
                 inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE), dst_len);
 
-    SWSS_LOG_NOTICE("Receive route message dest ip prefix: %s Op:%s", 
+    SWSS_LOG_DEBUG("Receive route message dest ip prefix: %s Op:%s", 
                     destipprefix,
                     nlmsg_type == RTM_NEWROUTE ? "add":"del");
 
