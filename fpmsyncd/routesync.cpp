@@ -73,7 +73,8 @@ char *RouteSync::prefix_mac2str(char *mac, char *buf, int size)
 void RouteSync::netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
                                                 int len)
 {
-    while (RTA_OK(rta, len)) {
+    while (RTA_OK(rta, len)) 
+    {
         if (rta->rta_type <= max)
             tb[rta->rta_type] = rta;
         rta = RTA_NEXT(rta, len);
@@ -158,10 +159,12 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
     if (tb[RTA_GATEWAY])
         gate = RTA_DATA(tb[RTA_GATEWAY]);
 
-    if (h->nlmsg_type == RTM_NEWROUTE) {
-        if (!tb[RTA_MULTIPATH]) {
+    if (h->nlmsg_type == RTM_NEWROUTE) 
+    {
+        if (!tb[RTA_MULTIPATH]) 
+        {
             gw_af = AF_INET; // default value
-			if (gate)
+            if (gate)
             {
                 if (RTA_PAYLOAD(tb[RTA_GATEWAY]) <= IPV4_MAX_BYTE)
                 {
@@ -200,7 +203,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             {
                 parse_encap(tb[RTA_ENCAP], encap_value, rmac, vlan);
             }
-            SWSS_LOG_NOTICE("Rx MsgType:%d Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%d", h->nlmsg_type,
+            SWSS_LOG_DEBUG("Rx MsgType:%d Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%d", h->nlmsg_type,
                             nexthopaddr, encap, encap_value, rmac.c_str(), vlan);
 
             if (encap_value == 0 || vlan == 0
@@ -218,13 +221,16 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             struct rtnexthop *rtnh = (struct rtnexthop *)RTA_DATA(tb[RTA_MULTIPATH]);
             len = (int)RTA_PAYLOAD(tb[RTA_MULTIPATH]);
 
-            for (;;) {
+            for (;;) 
+            {
                 uint16_t encap = 0;
                 if (len < (int)sizeof(*rtnh)
                     || rtnh->rtnh_len > len)
-                break;
+                    break;
+
                 gate = 0;
-                if (rtnh->rtnh_len > sizeof(*rtnh)) {
+                if (rtnh->rtnh_len > sizeof(*rtnh)) 
+                {
                     memset(subtb, 0, sizeof(subtb));
 
                     netlink_parse_rtattr(subtb, RTA_MAX, RTNH_DATA(rtnh),
@@ -272,7 +278,7 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                     {
                         parse_encap(subtb[RTA_ENCAP], encap_value, rmac, vlan);
                     }
-                    SWSS_LOG_NOTICE("Multipath Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%d",
+                    SWSS_LOG_DEBUG("Multipath Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%d",
                                     nexthopaddr, encap, encap_value, rmac.c_str(), vlan);
 
                     if (encap_value == 0 || vlan == 0
@@ -325,7 +331,8 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
 
     if (rtm->rtm_family == AF_INET)
     {
-        if (rtm->rtm_dst_len > IPV4_MAX_BITLEN) {
+        if (rtm->rtm_dst_len > IPV4_MAX_BITLEN)
+        {
             return;
         }
         memcpy(dstaddr, dest, IPV4_MAX_BYTE);
@@ -333,14 +340,15 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     }
     else if (rtm->rtm_family == AF_INET6)
     {
-        if (rtm->rtm_dst_len > IPV6_MAX_BITLEN) {
+        if (rtm->rtm_dst_len > IPV6_MAX_BITLEN) 
+        {
             return;
         }
         memcpy(dstaddr, dest, IPV6_MAX_BYTE);
         dst_len = rtm->rtm_dst_len;
     }
 
-    SWSS_LOG_INFO("Rx MsgType:%d Family:%d Prefix:%s/%d", h->nlmsg_type, rtm->rtm_family,
+    SWSS_LOG_DEBUG("Rx MsgType:%d Family:%d Prefix:%s/%d", h->nlmsg_type, rtm->rtm_family,
                     inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE), dst_len);
 
     /* Table corresponding to route. */
@@ -465,7 +473,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     if (!warmRestartInProgress)
     {
         m_routeTable.set(destipprefix, fvVector);
-        SWSS_LOG_NOTICE("RouteTable set msg: %s vtep:%s vni:%s mac:%s intf:%s",
+        SWSS_LOG_DEBUG("RouteTable set msg: %s vtep:%s vni:%s mac:%s intf:%s",
                        destipprefix, nexthops.c_str(), vni_list.c_str(), mac_list.c_str(), intf_list.c_str());
     }
 
@@ -495,7 +503,8 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
         return;
     /* Length validity. */
     len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
-    if (len < 0) {
+    if (len < 0) 
+    {
         SWSS_LOG_INFO("%s: Message received from netlink is of a broken size %d %zu",
             __PRETTY_FUNCTION__, h->nlmsg_len,
             (size_t)NLMSG_LENGTH(sizeof(struct ndmsg)));
