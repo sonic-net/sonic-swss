@@ -417,7 +417,6 @@ ref_resolve_status Orch::resolveFieldRefValue(
 
 void Orch::removeMeFromObjsReferencedByMe(
     type_map &type_maps,
-    referenced_object &obj,
     const string &table,
     const string &obj_name,
     const string &field,
@@ -450,7 +449,7 @@ void Orch::setObjectReference(
     auto field_ref = obj.m_objsReferencingByMe.find(field);
 
     if (field_ref != obj.m_objsReferencingByMe.end())
-        removeMeFromObjsReferencedByMe(type_maps, obj, table, obj_name, field, field_ref->second);
+        removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field, field_ref->second);
 
     obj.m_objsReferencingByMe[field] = referenced_obj;
 
@@ -479,7 +478,7 @@ void Orch::removeObject(
 
     for (auto field_ref : obj.m_objsReferencingByMe)
     {
-        removeMeFromObjsReferencedByMe(type_maps, obj, table, obj_name, field_ref.first, field_ref.second);
+        removeMeFromObjsReferencedByMe(type_maps, table, obj_name, field_ref.first, field_ref.second);
     }
 
     // Update the field store

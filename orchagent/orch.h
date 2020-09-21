@@ -237,7 +237,7 @@ protected:
     void addExecutor(Executor* executor);
     Executor *getExecutor(std::string executorName);
 private:
-    void removeMeFromObjsReferencedByMe(type_map &type_maps, referenced_object &obj, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name);
+    void removeMeFromObjsReferencedByMe(type_map &type_maps, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name);
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
 };
 
