@@ -82,7 +82,23 @@ struct MockSAIAPI
 // static MockSAIAPI *sai_port_api = &mock_api;
 // static MockSAIAPI *sai_switch_api = &mock_api;
 
-#define MOCK_RETURN_BOOL return true;
+extern sai_object_id_t   gSwitchId;
+
+#define MOCK_GEARBOX_SWITCH_ID_AND_RETURN_TRUE  \
+do                                              \
+{                                               \
+    switch_id = gSwitchId;                      \
+    return true;                                \
+}while(0);
+
+#define MOCK_GEARBOX_LINE_PORT_ID(port)     \
+do                                          \
+{                                           \
+    port->m_line_port_id = port->m_port_id; \
+}while(0);
+
+// #undef SWSS_LOG_ENTER
+// #define SWSS_LOG_ENTER()    swss::Logger::ScopeLogger logger ## __LINE__ (__LINE__, __PRETTY_FUNCTION__)
 
 /* Finish Debug */
 
@@ -192,7 +208,7 @@ static bool get_value(
             fvValue(*itr).c_str());
         return true;
     }
-    SWSS_LOG_WARN("Cannot find field : %s", field.c_str());
+    SWSS_LOG_DEBUG("Cannot find field : %s", field.c_str());
     return false;
 }
 
@@ -236,10 +252,18 @@ static bool hex_to_binary(
             return false;
         }
         std::stringstream stream;
+        if (
+            !!!std::isxdigit(static_cast<std::uint8_t>(hex_str[hex_cur]))
+            || !!!std::isxdigit(static_cast<std::uint8_t>(hex_str[hex_cur + 1])))
+        {
+            return false;
+        }
         stream << std::hex;
         stream << hex_str[hex_cur++];
         stream << hex_str[hex_cur++];
-        stream >> buffer[buffer_cur++];
+        std::uint32_t value;
+        stream >> value;
+        buffer[buffer_cur++] = static_cast<std::uint8_t>(value);
     }
     return hex_cur == hex_str.length();
 }
@@ -262,7 +286,7 @@ static std::istringstream &operator>>(
         sak.m_sak_256_enable = false;
         convert_done = hex_to_binary(
             buffer,
-            &sak.m_sak[8],
+            sak.m_sak,
             sizeof(sak.m_sak) / 2);
     }
     else if (buffer.length() == sizeof(sak.m_sak) * 2)
@@ -406,6 +430,7 @@ public:
                 return nullptr;
             }
             m_port = std::move(port);
+            MOCK_GEARBOX_LINE_PORT_ID(m_port);
         }
         return m_port.get();
     }
@@ -962,7 +987,7 @@ bool MACsecOrch::getGearboxSwitchId(const std::string &port_name, sai_object_id_
 
 bool MACsecOrch::getGearboxSwitchId(const Port &port, sai_object_id_t &switch_id) const
 {
-    MOCK_RETURN_BOOL;
+    MOCK_GEARBOX_SWITCH_ID_AND_RETURN_TRUE;
     SWSS_LOG_ENTER();
 
     auto phy_id = m_gearbox_interface_map.find(port.m_index);
@@ -1669,20 +1694,21 @@ task_process_status MACsecOrch::deleteMACsecSC(
     deleteACLEntry(ctx.get_macsec_sc()->m_entry_id);
     ctx.get_acl_table()->m_available_acl_priorities.insert(ctx.get_macsec_sc()->m_acl_priority);
 
+    if (!deleteMACsecSC(ctx.get_macsec_sc()->m_sc_id))
+    {
+        SWSS_LOG_WARN("The MACsec SC %s cannot be deleted", port_sci.c_str());
+        result = task_failed;
+    }
+
     if (ctx.get_macsec_obj()->m_sci_in_ingress_macsec_acl)
     {
-        if (deleteMACsecFlow(ctx.get_macsec_sc()->m_flow_id))
+        if (!deleteMACsecFlow(ctx.get_macsec_sc()->m_flow_id))
         {
             SWSS_LOG_WARN("Cannot delete MACsec flow");
             result = task_failed;
         }
     }
 
-    if (!deleteMACsecSC(ctx.get_macsec_sc()->m_sc_id))
-    {
-        SWSS_LOG_WARN("The MACsec SC %s cannot be deleted", port_sci.c_str());
-        result = task_failed;
-    }
     auto scs =
         (direction == SAI_MACSEC_DIRECTION_EGRESS)
             ? &ctx.get_macsec_port()->m_egress_scs
@@ -1940,23 +1966,24 @@ bool MACsecOrch::createMACsecSA(
     attrs.push_back(attr);
 
     attr.id = SAI_MACSEC_SA_ATTR_ENCRYPTION_ENABLE;
-    attr.value.u8 = encryption_enable;
+    attr.value.booldata = encryption_enable;
     attrs.push_back(attr);
 
     attr.id = SAI_MACSEC_SA_ATTR_SAK_256_BITS;
-    attr.value.u8 = sak_256_bit;
+    attr.value.booldata = sak_256_bit;
     attrs.push_back(attr);
 
     attr.id = SAI_MACSEC_SA_ATTR_SAK;
     std::copy(sak, sak + sizeof(attr.value.macsecsak), attr.value.macsecsak);
     attrs.push_back(attr);
 
-    if (xpn64_enable)
-    {
+    // Valid when SAI_MACSEC_SC_ATTR_MACSEC_XPN64_ENABLE == true.
+    // if (xpn64_enable)
+    // {
         attr.id = SAI_MACSEC_SA_ATTR_SALT;
         std::copy(salt, salt + sizeof(attr.value.macsecsalt), attr.value.macsecsalt);
         attrs.push_back(attr);
-    }
+    // }
 
     attr.id = SAI_MACSEC_SA_ATTR_AUTH_KEY;
     std::copy(auth_key, auth_key + sizeof(attr.value.macsecauthkey), attr.value.macsecauthkey);
@@ -2235,6 +2262,9 @@ bool MACsecOrch::createACLEAPOLEntry(
     sai_attribute_t attr;
     std::vector<sai_attribute_t> attrs;
 
+    static const MacAddress nearest_non_tpmr_bridge("01:80:c2:00:00:03");
+    static const MacAddress mac_address_mask("ff:ff:ff:ff:ff:ff");
+
     attr.id = SAI_ACL_ENTRY_ATTR_TABLE_ID;
     attr.value.oid = table_id;
     attrs.push_back(attr);
@@ -2248,10 +2278,7 @@ bool MACsecOrch::createACLEAPOLEntry(
     attr.value.booldata = true;
     attrs.push_back(attr);
     attr.id = SAI_ACL_ENTRY_ATTR_FIELD_DST_MAC;
-    static const MacAddress nearest_non_tpmr_bridge("01:80:c2:00:00:03");
     nearest_non_tpmr_bridge.getMac(attr.value.aclfield.data.mac);
-    attrs.push_back(attr);
-    static const MacAddress mac_address_mask("ff:ff:ff:ff:ff:ff");
     mac_address_mask.getMac(attr.value.aclfield.mask.mac);
     attr.value.aclfield.enable = true;
     attrs.push_back(attr);
@@ -2299,9 +2326,6 @@ bool MACsecOrch::createACLDataEntry(
     attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
     attr.value.aclaction.enable = true;
     attrs.push_back(attr);
-    attr.id = SAI_ACL_TABLE_ATTR_FIELD_MACSEC_SCI;
-    attr.value.booldata = sci_in_sectag;
-    attrs.push_back(attr);
     if (sci_in_sectag)
     {
         attr.id = SAI_ACL_ENTRY_ATTR_FIELD_MACSEC_SCI;
@@ -2324,6 +2348,7 @@ bool MACsecOrch::setACLEntryPacketAction(sai_object_id_t entry_id, sai_object_id
     sai_attribute_t attr;
 
     attr.id = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
+    attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
     attr.value.aclaction.enable = true;
     if (sai_acl_api->set_acl_entry_attribute(
             entry_id,
@@ -2361,6 +2386,7 @@ bool MACsecOrch::setACLEntryMACsecFlow(sai_object_id_t entry_id, sai_object_id_t
     }
 
     attr.id = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
+    attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
     attr.value.aclaction.enable = false;
     if (sai_acl_api->set_acl_entry_attribute(
             entry_id,
