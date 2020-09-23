@@ -159,6 +159,18 @@ fpm_msg_align (size_t len)
  */
 #define FPM_MSG_HDR_LEN (fpm_msg_align (sizeof (fpm_msg_hdr_t)))
 
+typedef struct fpm_custom_msg_t_ {
+	unsigned char status; /* Indicates success or failure */
+} fpm_custom_msg_t;
+
+#define FPM_CUSTOM_MSG_LEN (fpm_msg_align (sizeof (fpm_custom_msg_t)))
+
+typedef struct fpm_netlink_msg_t_ {
+	struct nlmsghdr n;
+	struct rtmsg r;
+} fpm_netlink_msg_t;
+
+
 /*
  * fpm_data_len_to_msg_len
  *

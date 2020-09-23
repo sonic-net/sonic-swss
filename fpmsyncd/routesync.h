@@ -6,6 +6,7 @@
 #include "netmsg.h"
 #include "warmRestartHelper.h"
 #include <string.h>
+#include <bits/stdc++.h>
 
 using namespace std;
 
@@ -21,7 +22,8 @@ public:
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
     WarmStartHelper  m_warmStartHelper;
-
+    uint32_t getIfIndex(const char *);
+    std::vector<KeyOpFieldsValuesTuple> dbExistVector;
 private:
     /* regular route table */
     ProducerStateTable  m_routeTable;

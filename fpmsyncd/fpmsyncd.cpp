@@ -7,7 +7,9 @@
 #include "warmRestartHelper.h"
 #include "fpmsyncd/fpmlink.h"
 #include "fpmsyncd/routesync.h"
-
+#include "fpmsyncd/errfpmroute.h"
+#include "errorlistener.h"
+#include "errormap.h"
 
 using namespace std;
 using namespace swss;
@@ -47,38 +49,43 @@ static bool eoiuFlagsSet(Table &bgpStateTable)
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("fpmsyncd");
-    DBConnector db("APPL_DB", 0);
-    RedisPipeline pipeline(&db);
-    RouteSync sync(&pipeline);
-
+    try
+    {
+	  DBConnector db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+	  DBConnector cfgDb(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+	  RedisPipeline pipeline(&db);
+	  RouteSync sync(&pipeline);
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
 
-    while (true)
-    {
-        try
-        {
-            FpmLink fpm;
-            Select s;
-            SelectableTimer warmStartTimer(timespec{0, 0});
-            // Before eoiu flags detected, check them periodically. It also stop upon detection of reconciliation done.
-            SelectableTimer eoiuCheckTimer(timespec{0, 0});
-            // After eoiu flags are detected, start a hold timer before starting reconciliation.
-            SelectableTimer eoiuHoldTimer(timespec{0, 0});
-            /*
-             * Pipeline should be flushed right away to deal with state pending
-             * from previous try/catch iterations.
-             */
-            pipeline.flush();
+	ErrFpmRoute err_notif(&cfgDb);
+	while (true)
+	{
+	    try
+	    {
+		FpmLink fpm;
+		Select s;
+		SelectableTimer warmStartTimer(timespec{0, 0});
+		// Before eoiu flags detected, check them periodically. It also stop upon detection of reconciliation done.
+		SelectableTimer eoiuCheckTimer(timespec{0, 0});
+		// After eoiu flags are detected, start a hold timer before starting reconciliation.
+		SelectableTimer eoiuHoldTimer(timespec{0, 0});
+		/*
+		 * Pipeline should be flushed right away to deal with state pending
+		 * from previous try/catch iterations.
+		 */
+		pipeline.flush();
 
-            cout << "Waiting for fpm-client connection..." << endl;
-            fpm.accept();
-            cout << "Connected!" << endl;
+		cout << "Waiting for fpm-client connection..." << endl;
+		fpm.accept();
+		err_notif.setFd(fpm.getFd());
+		cout << "Connected!" << endl;
 
-            s.addSelectable(&fpm);
+		s.addSelectable(&fpm);
+		s.addSelectable(&err_notif.cfgTrigger);
 
             /* If warm-restart feature is enabled, execute 'restoration' logic */
             bool warmStartEnabled = sync.m_warmStartHelper.checkAndStart();
@@ -135,6 +142,7 @@ int main(int argc, char **argv)
                     }
                     if (sync.m_warmStartHelper.inProgress())
                     {
+						sync.dbExistVector.clear();
                         sync.m_warmStartHelper.reconcile();
                         SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
                     }
@@ -142,6 +150,8 @@ int main(int argc, char **argv)
                     s.removeSelectable(temps);
                     pipeline.flush();
                     SWSS_LOG_DEBUG("Pipeline flushed");
+					//Send positive ACK for identical entries already present in APP_DB
+					err_notif.sendImplicitAck(sync);
                 }
                 else if (temps == &eoiuCheckTimer)
                 {
@@ -174,6 +184,64 @@ int main(int argc, char **argv)
                     else
                     {
                         s.removeSelectable(&eoiuCheckTimer);
+			}
+		    }
+		    else if (temps == (Selectable *)err_notif.routeErrorListener)
+		    {
+			std::string key; 
+			std::string op;
+			std::vector<swss::FieldValueTuple> values;
+			if(!err_notif.routeErrorListener->getError(key, op, values))
+			{
+			    IpPrefix ip_prefix = IpPrefix(key);
+			    SWSS_LOG_NOTICE("key=%s, operation=%s\n", key.c_str(), op.c_str());
+			    IpAddresses ip_addresses;
+			    string alias, strRc;
+			    if (op == "remove")
+				continue;
+			    for (auto entry : values)
+			    {
+				if (fvField(entry) == "nexthop")
+				    ip_addresses = IpAddresses(fvValue(entry));
+				if (fvField(entry) == "ifname")
+				    alias = fvValue(entry);
+				if (fvField(entry) == "rc")
+				    strRc = fvValue(entry);
+			    }			
+			    if (ip_addresses.getSize() == 0)
+			    {
+				SWSS_LOG_NOTICE("ip address size is empty\n");
+				continue;
+			    }
+			    err_notif.sendMsg(ip_prefix, ip_addresses,  alias, false, sync, strRc); 
+			}
+		    }
+		    else if(temps == (Selectable *)&err_notif.cfgTrigger)
+		    {
+			std::deque<KeyOpFieldsValuesTuple> entries;
+			err_notif.cfgTrigger.pops(entries);
+			string cfgEnable;
+			for (auto entry: entries)
+			{
+			    std::string key = kfvKey(entry);
+			    std::string op = kfvOp(entry);
+			    SWSS_LOG_NOTICE("key=%s, operation=%s\n", key.c_str(), op.c_str());
+			    for (auto i : kfvFieldsValues(entry))
+			    {
+				if (fvField(i) == "enable")
+				    cfgEnable = fvValue(i);
+			    }
+			}
+			SWSS_LOG_NOTICE("New cfgEnable=%s,existing routeErrorListener count=%d\n", cfgEnable.c_str(), s.isQueueEmpty());
+			if("true" == cfgEnable)
+			{
+			    err_notif.routeErrorListener = new ErrorListener(APP_ROUTE_TABLE_NAME, (ERR_NOTIFY_FAIL | ERR_NOTIFY_POSITIVE_ACK));
+			    s.addSelectable(err_notif.routeErrorListener);
+			}
+			else
+			{
+			    s.removeSelectable(err_notif.routeErrorListener);
+			    delete err_notif.routeErrorListener;
                     }
                 }
                 else if (!warmStartEnabled || sync.m_warmStartHelper.isReconciled())
@@ -190,8 +258,16 @@ int main(int argc, char **argv)
         catch (const exception& e)
         {
             cout << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
+		SWSS_LOG_ERROR("Exception %s  had been thrown in deamon loc-1",e.what());
             return 0;
         }
+	}
+    }
+    catch (const exception& e)
+    {
+	cout << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
+	SWSS_LOG_ERROR("Exception %s  had been thrown in deamon loc-2",e.what());
+	return 0;
     }
 
     return 1;

@@ -27,6 +27,12 @@ class WarmStartHelper {
                     const std::string  &dockerName,
                     const std::string  &appName);
 
+    WarmStartHelper(RedisPipeline      *pipeline,
+                    ProducerStateTable *syncTable,
+                    const std::string  &syncTableName,
+                    const std::string  &dockerName,
+                    const std::string  &appName,
+                    std::vector<KeyOpFieldsValuesTuple> *identicalVector);
     ~WarmStartHelper();
 
     /* fvVector type to be used to host AppDB restored elements */
@@ -58,6 +64,7 @@ class WarmStartHelper {
 
     const std::string printKFV(const std::string                  &key,
                                const std::vector<FieldValueTuple> &fv);
+    kfvVector *m_identicalVector; // buffer struct to hold common of  old state and new state
 
   private:
 
