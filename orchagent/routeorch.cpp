@@ -843,6 +843,66 @@ bool RouteOrch::isRefCounterZero(const NextHopGroupKey &nexthops) const
     return m_syncdNextHopGroups.at(nexthops).ref_count == 0;
 }
 
+const NextHopGroupKey RouteOrch::getSyncdRouteNhgKey(sai_object_id_t vrf_id, const IpPrefix& ipPrefix)
+{
+    NextHopGroupKey nhg;
+    auto route_table = m_syncdRoutes.find(vrf_id);
+    if (route_table != m_syncdRoutes.end())
+    {
+        auto route_entry = route_table->second.find(ipPrefix);
+        if (route_entry != route_table->second.end())
+        {
+            nhg = route_entry->second;
+        }
+    }
+    return nhg;
+}
+
+bool RouteOrch::createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id, vector<sai_attribute_t> &nhg_attrs)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_nextHopGroupCount >= m_maxNextHopGroupCount)
+    {
+        SWSS_LOG_DEBUG("Failed to create new next hop group. \
+                Reaching maximum number of next hop groups.");
+        return false;
+    }
+
+    sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
+                                                      gSwitchId,
+                                                      (uint32_t)nhg_attrs.size(),
+                                                      nhg_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create next hop group rv:%d", status);
+        return false;
+    }
+
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+    m_nextHopGroupCount++;
+
+    return true;
+}
+
+bool RouteOrch::removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d",
+                next_hop_group_id, status);
+        return false;
+    }
+
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+    m_nextHopGroupCount--;
+
+    return true;
+}
+
 bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 {
     SWSS_LOG_ENTER();

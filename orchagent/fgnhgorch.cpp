@@ -154,19 +154,15 @@ bool FgNhgOrch::create_fine_grained_next_hop_group(FGNextHopGroupEntry &syncd_fg
     nhg_attrs.push_back(nhg_attr);
 
     sai_object_id_t next_hop_group_id;
-    sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
-                                                                    gSwitchId,
-                                                                    (uint32_t)nhg_attrs.size(),
-                                                                    nhg_attrs.data());
-    if (status != SAI_STATUS_SUCCESS)
+
+    if (!gRouteOrch->createFineGrainedNextHopGroup(next_hop_group_id, nhg_attrs))
     {
-        SWSS_LOG_ERROR("Failed to create next hop group %s, rv:%d",
-                       nextHops.to_string().c_str(), status);
+        SWSS_LOG_ERROR("Failed to create next hop group %s",
+                       nextHops.to_string().c_str());
         return false;
     }
 
-    gRouteOrch->incNextHopGroupCount();
-    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+    syncd_fg_route_entry.next_hop_group_id = next_hop_group_id;
 
     if (platform == VS_PLATFORM_SUBSTRING)
     {
@@ -177,11 +173,15 @@ bool FgNhgOrch::create_fine_grained_next_hop_group(FGNextHopGroupEntry &syncd_fg
     {
         nhg_attr.id = SAI_NEXT_HOP_GROUP_ATTR_REAL_SIZE;
         nhg_attr.value.u32 = 0;
-        status = sai_next_hop_group_api->get_next_hop_group_attribute(next_hop_group_id, 1, &nhg_attr);
+        sai_status_t status = sai_next_hop_group_api->get_next_hop_group_attribute(next_hop_group_id, 1, &nhg_attr);
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to query next hop group %s SAI_NEXT_HOP_GROUP_ATTR_REAL_SIZE, rv:%d",
                        nextHops.to_string().c_str(), status);
+            if (!remove_fine_grained_next_hop_group(&syncd_fg_route_entry, fgNhgEntry))
+            {
+                SWSS_LOG_ERROR("Failed to clean-up after next hop group real_size query failure");
+            }
             return false;
         }
         fgNhgEntry->real_bucket_size = nhg_attr.value.u32;
@@ -190,8 +190,6 @@ bool FgNhgOrch::create_fine_grained_next_hop_group(FGNextHopGroupEntry &syncd_fg
     calculate_bank_hash_bucket_start_indices(fgNhgEntry);
 
     SWSS_LOG_NOTICE("fgnhgorch created next hop group %s of size %d", nextHops.to_string().c_str(), fgNhgEntry->real_bucket_size);
-
-    syncd_fg_route_entry.next_hop_group_id = next_hop_group_id;
     return true;
 }
 
@@ -213,15 +211,10 @@ bool FgNhgOrch::remove_fine_grained_next_hop_group(FGNextHopGroupEntry *syncd_fg
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
 
-    status = sai_next_hop_group_api->remove_next_hop_group(syncd_fg_route_entry->next_hop_group_id);
-    if (status != SAI_STATUS_SUCCESS)
+    if (!gRouteOrch->removeFineGrainedNextHopGroup(syncd_fg_route_entry->next_hop_group_id))
     {
-        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d",
-                syncd_fg_route_entry->next_hop_group_id, status);
         return false;
     }
-    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
-    gRouteOrch->decNextHopGroupCount();
 
     return true;
 }
@@ -1001,13 +994,6 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
             return false;
         }
 
-        if (gRouteOrch->getNextHopGroupCount() >= gRouteOrch->getMaxNextHopGroupCount())
-        {
-            SWSS_LOG_WARN("Failed to create new next hop group. \
-                        Reached maximum number of next hop groups.");
-            return false;
-        }
-
         FGNextHopGroupEntry syncd_fg_route_entry;
         if (!create_fine_grained_next_hop_group(syncd_fg_route_entry, fgNhgEntry, nextHops))
         {
@@ -1256,7 +1242,7 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
 
         /* delete regular ecmp handling for prefix */
         sai_object_id_t vrf_id = gVirtualRouterId;
-        NextHopGroupKey nhg = gRouteOrch->getSyncdRoute(vrf_id, ip_prefix);
+        NextHopGroupKey nhg = gRouteOrch->getSyncdRouteNhgKey(vrf_id, ip_prefix);
         auto addCache = m_fgPrefixAddCache.find(ip_prefix);
         if (addCache == m_fgPrefixAddCache.end())
         {

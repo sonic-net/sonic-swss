@@ -86,7 +86,7 @@ def get_nh_oid_map(asic_db):
     return nh_oid_map
 
 
-def verify_programmed_nh_membs(asic_db,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size):
+def verify_programmed_fg_asic_db_entry(asic_db,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size):
     def _access_function():
         false_ret = (False, None)
         ret = True
@@ -167,7 +167,7 @@ def validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_ma
     for ip, cnt in nh_memb_exp_count.items():
         state_db_entry_memb_exp_count[ip + '@' + ip_to_if_map[ip]] = cnt
 
-    verify_programmed_nh_membs(asic_db,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
+    verify_programmed_fg_asic_db_entry(asic_db,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
     verify_programmed_fg_state_db_entry(state_db, state_db_entry_memb_exp_count)
 
 
@@ -496,9 +496,9 @@ class TestFineGrainedNextHopGroup(object):
             dvs.runcmd("config interface startup " + if_name_key)
             shutdown_link(dvs, app_db, i)
             startup_link(dvs, app_db, i)
-            bank = 0
+            bank = 1
             if i >= NUM_NHs/2:
-                bank = 1
+                bank = 0
             fvs = {"FG_NHG": fg_nhg_name, "bank": str(bank)}
             create_entry(config_db, FG_NHG_MEMBER, "10.0.0." + str(1 + i*2), fvs)
             ip_to_if_map["10.0.0." + str(1 + i*2)] = if_name_key
@@ -554,7 +554,7 @@ class TestFineGrainedNextHopGroup(object):
                             fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
 
         # Add 2 nhs to bank 0 and remove all nh from bank 1
-        nh_memb_exp_count = {"10.0.0.5":43,"10.0.0.7":43,"10.0.0.9":42}
+        nh_memb_exp_count = {"10.0.0.5":42,"10.0.0.7":44,"10.0.0.9":42}
         program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
                             fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
 

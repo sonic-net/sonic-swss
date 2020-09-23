@@ -108,40 +108,9 @@ public:
     bool invalidnexthopinNextHopGroup(const NextHopKey&);
 
     void notifyNextHopChangeObservers(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&, bool);
-    const NextHopGroupKey getSyncdRoute(sai_object_id_t vrf_id, const IpPrefix& ipPrefix)
-    {
-        NextHopGroupKey nhg;
-        auto route_table = m_syncdRoutes.find(vrf_id);
-        if (route_table != m_syncdRoutes.end())
-        {
-            auto route_entry = route_table->second.find(ipPrefix);
-            if (route_entry != route_table->second.end())
-            {
-                nhg = route_entry->second;
-            }
-        }
-        return nhg;
-    }
-
-    int getNextHopGroupCount(void)
-    {
-    	return m_nextHopGroupCount;
-    }
-
-    void incNextHopGroupCount(void)
-    {
-        m_nextHopGroupCount++;
-    }
-
-    void decNextHopGroupCount(void)
-    {
-        m_nextHopGroupCount--;
-    }
-
-    int getMaxNextHopGroupCount(void)
-    {
-    	return m_maxNextHopGroupCount;
-    }
+    const NextHopGroupKey getSyncdRouteNhgKey(sai_object_id_t vrf_id, const IpPrefix& ipPrefix);
+    bool createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id, vector<sai_attribute_t> &nhg_attrs);
+    bool removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id);
 
 private:
     SwitchOrch *m_switchOrch;
