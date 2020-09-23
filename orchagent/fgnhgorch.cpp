@@ -60,7 +60,7 @@ void calculate_bank_hash_bucket_start_indices(FgNhgEntry *fgNhgEntry)
 
     for (uint32_t i = 0; i < memb_per_bank.size(); i++)
     {
-        bank_index_range bir;
+        BankIndexRange bir;
         bir.start_index = prev_idx;
         bir.end_index = bir.start_index + (buckets_per_nexthop * memb_per_bank[i]) + split_extra_buckets_among_bank - 1;
         if (extra_buckets > 0)
@@ -83,7 +83,7 @@ void calculate_bank_hash_bucket_start_indices(FgNhgEntry *fgNhgEntry)
 }
 
 
-void FgNhgOrch::set_state_db_route_entry(const IpPrefix &ipPrefix, uint32_t index, NextHopKey nextHop)
+void FgNhgOrch::setStateDbRouteEntry(const IpPrefix &ipPrefix, uint32_t index, NextHopKey nextHop)
 {
     SWSS_LOG_ENTER();
 
@@ -114,7 +114,7 @@ void FgNhgOrch::set_state_db_route_entry(const IpPrefix &ipPrefix, uint32_t inde
 }
 
 
-bool FgNhgOrch::write_hash_bucket_change(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
+bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
         const IpPrefix &ipPrefix, NextHopKey nextHop)
 {
     SWSS_LOG_ENTER();
@@ -132,12 +132,12 @@ bool FgNhgOrch::write_hash_bucket_change(FGNextHopGroupEntry *syncd_fg_route_ent
         return false;
     }
 
-    set_state_db_route_entry(ipPrefix, index, nextHop);
+    setStateDbRouteEntry(ipPrefix, index, nextHop);
     return true;
 }
 
 
-bool FgNhgOrch::create_fine_grained_next_hop_group(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+bool FgNhgOrch::createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
         const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
@@ -178,7 +178,7 @@ bool FgNhgOrch::create_fine_grained_next_hop_group(FGNextHopGroupEntry &syncd_fg
         {
             SWSS_LOG_ERROR("Failed to query next hop group %s SAI_NEXT_HOP_GROUP_ATTR_REAL_SIZE, rv:%d",
                        nextHops.to_string().c_str(), status);
-            if (!remove_fine_grained_next_hop_group(&syncd_fg_route_entry, fgNhgEntry))
+            if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry, fgNhgEntry))
             {
                 SWSS_LOG_ERROR("Failed to clean-up after next hop group real_size query failure");
             }
@@ -194,7 +194,7 @@ bool FgNhgOrch::create_fine_grained_next_hop_group(FGNextHopGroupEntry &syncd_fg
 }
 
 
-bool FgNhgOrch::remove_fine_grained_next_hop_group(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry)
+bool FgNhgOrch::removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry)
 {
     SWSS_LOG_ENTER();
     sai_status_t status;
@@ -220,7 +220,7 @@ bool FgNhgOrch::remove_fine_grained_next_hop_group(FGNextHopGroupEntry *syncd_fg
 }
 
 
-bool FgNhgOrch::create_fine_grained_route_entry(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+bool FgNhgOrch::createFineGrainedRouteEntry(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
         sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
@@ -238,7 +238,7 @@ bool FgNhgOrch::create_fine_grained_route_entry(FGNextHopGroupEntry &syncd_fg_ro
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
 
         /* Clean up the newly created next hop group entry */
-        if (!remove_fine_grained_next_hop_group(&syncd_fg_route_entry, fgNhgEntry))
+        if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry, fgNhgEntry))
         {
             SWSS_LOG_ERROR("Failed to clean-up after route creation failure");
         }
@@ -282,8 +282,8 @@ bool FgNhgOrch::validNextHopInNextHopGroup(const NextHopKey& nexthop)
             FgNhgEntry *fgNhgEntry = prefix_entry->second;
             std::map<NextHopKey,sai_object_id_t> nhopgroup_members_set;
 
-            std::vector<Bank_Member_Changes> bank_member_changes(
-                fgNhgEntry->hash_bucket_indices.size(), Bank_Member_Changes());
+            std::vector<BankMemberChanges> bank_member_changes(
+                fgNhgEntry->hash_bucket_indices.size(), BankMemberChanges());
 
             if (syncd_fg_route_entry->active_nexthops.find(nexthop) !=
                     syncd_fg_route_entry->active_nexthops.end())
@@ -301,7 +301,7 @@ bool FgNhgOrch::validNextHopInNextHopGroup(const NextHopKey& nexthop)
                     nhs_to_add.push_back(nexthop);
             nhopgroup_members_set[nexthop] = m_neighOrch->getNextHopId(nexthop);
 
-            if (!compute_and_set_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
+            if (!computeAndSetHashBucketChanges(syncd_fg_route_entry, fgNhgEntry, 
                     bank_member_changes, nhopgroup_members_set, route_table.first))
             {
                 SWSS_LOG_ERROR("Failed to set fine grained next hop %s",
@@ -342,8 +342,8 @@ bool FgNhgOrch::invalidNextHopInNextHopGroup(const NextHopKey& nexthop)
             FgNhgEntry *fgNhgEntry = prefix_entry->second;
             std::map<NextHopKey,sai_object_id_t> nhopgroup_members_set;
 
-            std::vector<Bank_Member_Changes> bank_member_changes(
-                fgNhgEntry->hash_bucket_indices.size(), Bank_Member_Changes());
+            std::vector<BankMemberChanges> bank_member_changes(
+                fgNhgEntry->hash_bucket_indices.size(), BankMemberChanges());
 
             if (syncd_fg_route_entry->active_nexthops.find(nexthop) ==
                     syncd_fg_route_entry->active_nexthops.end())
@@ -368,7 +368,7 @@ bool FgNhgOrch::invalidNextHopInNextHopGroup(const NextHopKey& nexthop)
             bank_member_changes[fgNhgEntry->nextHops[nexthop.ip_address]].
                     nhs_to_del.push_back(nexthop);
 
-            if (!compute_and_set_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
+            if (!computeAndSetHashBucketChanges(syncd_fg_route_entry, fgNhgEntry, 
                     bank_member_changes, nhopgroup_members_set, route_table.first))
             {
                 SWSS_LOG_ERROR("Failed to set fine grained next hop %s",
@@ -384,7 +384,7 @@ bool FgNhgOrch::invalidNextHopInNextHopGroup(const NextHopKey& nexthop)
 }
 
 
-/* set_active_bank_hash_bucket_changes: Sets hash buckets for active banks and called on a PER bank basis
+/* setActiveBankHashBucketChanges: Sets hash buckets for active banks and called on a PER bank basis
  * This function deals with a scenario where next-hop changes occured for the route,
  * and the next-hop change didn't cause an entire bank to go active/inactive.
  * The function uses bank_member_changes to compute the hash buckets to modify, in order to satisy the next-hop 
@@ -394,13 +394,13 @@ bool FgNhgOrch::invalidNextHopInNextHopGroup(const NextHopKey& nexthop)
  * for nh 2 to nh 1 and nh 3. Leading to 30 hash buckets, each, for nh 1 and nh 3, and none for nh 2. 
  * Thereby achieving consistent and layered hashing.
  */
-bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-        uint32_t bank, uint32_t syncd_bank, std::vector<Bank_Member_Changes> bank_member_changes, 
+bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+        uint32_t bank, uint32_t syncd_bank, std::vector<BankMemberChanges> bank_member_changes, 
         std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix &ipPrefix)
 {
     SWSS_LOG_ENTER();
 
-    Bank_Member_Changes bank_member_change = bank_member_changes[bank];
+    BankMemberChanges bank_member_change = bank_member_changes[bank];
     uint32_t add_idx = 0, del_idx = 0;
     FGNextHopGroupMap *bank_fgnhg_map = &(syncd_fg_route_entry->syncd_fgnhg_map[syncd_bank]);
 
@@ -410,7 +410,7 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
         HashBuckets *hash_buckets = &(bank_fgnhg_map->at(bank_member_change.nhs_to_del[del_idx]));
         for (uint32_t i = 0; i < hash_buckets->size(); i++)
         {
-            if (!write_hash_bucket_change(syncd_fg_route_entry, hash_buckets->at(i), 
+            if (!writeHashBucketChange(syncd_fg_route_entry, hash_buckets->at(i), 
                         nhopgroup_members_set[bank_member_change.nhs_to_add[add_idx]],
                         ipPrefix, bank_member_change.nhs_to_add[add_idx]))
             {
@@ -449,7 +449,7 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
                 NextHopKey round_robin_nh = bank_member_change.active_nhs[i %
                     bank_member_change.active_nhs.size()];
 
-                if (!write_hash_bucket_change(syncd_fg_route_entry, hash_buckets->at(i), 
+                if (!writeHashBucketChange(syncd_fg_route_entry, hash_buckets->at(i), 
                         nhopgroup_members_set[round_robin_nh], ipPrefix, round_robin_nh))
                 {
                     return false;
@@ -549,7 +549,7 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
                 {
                     uint32_t last_elem = map_entry->at((*map_entry).size() - 1);
 
-                    if (!write_hash_bucket_change(syncd_fg_route_entry, last_elem, 
+                    if (!writeHashBucketChange(syncd_fg_route_entry, last_elem, 
                         nhopgroup_members_set[bank_member_change.nhs_to_add[add_idx]],
                         ipPrefix, bank_member_change.nhs_to_add[add_idx]))
                     {
@@ -611,8 +611,8 @@ bool FgNhgOrch::set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
 }
 
 
-bool FgNhgOrch::set_inactive_bank_to_next_available_active_bank(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-        uint32_t bank, std::vector<Bank_Member_Changes> bank_member_changes,
+bool FgNhgOrch::setInactiveBankToNextAvailableActiveBank(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+        uint32_t bank, std::vector<BankMemberChanges> bank_member_changes,
         std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix &ipPrefix)
 {
     SWSS_LOG_ENTER();
@@ -638,7 +638,7 @@ bool FgNhgOrch::set_inactive_bank_to_next_available_active_bank(FGNextHopGroupEn
                 NextHopKey bank_nh_memb = bank_member_changes[new_bank_idx].
                          active_nhs[i % bank_member_changes[new_bank_idx].active_nhs.size()];
 
-                if (!write_hash_bucket_change(syncd_fg_route_entry, i,
+                if (!writeHashBucketChange(syncd_fg_route_entry, i,
                     nhopgroup_members_set[bank_nh_memb],ipPrefix, bank_nh_memb ))
                 {
                     return false;
@@ -665,7 +665,7 @@ bool FgNhgOrch::set_inactive_bank_to_next_available_active_bank(FGNextHopGroupEn
 }
 
 
-/* set_inactive_bank_hash_bucket_changes: Sets hash buckets for inactive banks and called on a PER bank basis.
+/* setInactiveBankHashBucketChanges: Sets hash buckets for inactive banks and called on a PER bank basis.
  * This function deals with scenarios where next-hop changes occured for the route,
  * and the next-hop change causes an active bank to become inactive, or an inactive bank to become active or
  * inactive bank to remain inactive.
@@ -676,8 +676,8 @@ bool FgNhgOrch::set_inactive_bank_to_next_available_active_bank(FGNextHopGroupEn
  * This function will identify that all of bank 0's nh are down and re-assign all the hash buckets(0-29) for these nhs to
  * nhs from bank 1, along with making local struct changes to track this for future route/neigh changes. 
  */
-bool FgNhgOrch::set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-        uint32_t bank,std::vector<Bank_Member_Changes> &bank_member_changes, 
+bool FgNhgOrch::setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+        uint32_t bank,std::vector<BankMemberChanges> &bank_member_changes, 
         std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix &ipPrefix)
 {
     SWSS_LOG_ENTER();
@@ -692,7 +692,7 @@ bool FgNhgOrch::set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd
             NextHopKey bank_nh_memb = bank_member_changes[bank].
                 nhs_to_add[i % bank_member_changes[bank].nhs_to_add.size()];
 
-            if (!write_hash_bucket_change(syncd_fg_route_entry, i, 
+            if (!writeHashBucketChange(syncd_fg_route_entry, i, 
                   nhopgroup_members_set[bank_nh_memb], ipPrefix, bank_nh_memb))
             {
                 return false;
@@ -706,7 +706,7 @@ bool FgNhgOrch::set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd
     else if (bank_member_changes[bank].nhs_to_del.size() > 0)
     {
         /* Previously active bank now transistions to inactive */
-        if (!set_inactive_bank_to_next_available_active_bank(syncd_fg_route_entry, fgNhgEntry,
+        if (!setInactiveBankToNextAvailableActiveBank(syncd_fg_route_entry, fgNhgEntry,
                     bank, bank_member_changes, nhopgroup_members_set, ipPrefix))
         {
             SWSS_LOG_INFO("Failed to map to active_bank and set nh in SAI");
@@ -724,7 +724,7 @@ bool FgNhgOrch::set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd
         uint32_t active_bank = syncd_fg_route_entry->inactive_to_active_map[bank];
         if (bank_member_changes[active_bank].active_nhs.size() == 0)
         {
-            if (!set_inactive_bank_to_next_available_active_bank(syncd_fg_route_entry, fgNhgEntry,
+            if (!setInactiveBankToNextAvailableActiveBank(syncd_fg_route_entry, fgNhgEntry,
                         bank, bank_member_changes, nhopgroup_members_set, ipPrefix))
             {
                 SWSS_LOG_INFO("Failed to map to active_bank and set nh in SAI");
@@ -733,10 +733,10 @@ bool FgNhgOrch::set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd
         }
         else
         {
-            if (!set_active_bank_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
+            if (!setActiveBankHashBucketChanges(syncd_fg_route_entry, fgNhgEntry, 
                 active_bank, bank, bank_member_changes, nhopgroup_members_set, ipPrefix))
             {
-                SWSS_LOG_INFO("Failed set_active_bank_hash_bucket_changes");
+                SWSS_LOG_INFO("Failed setActiveBankHashBucketChanges");
                 return false;
             }
         }
@@ -745,8 +745,8 @@ bool FgNhgOrch::set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd
 }
 
 
-bool FgNhgOrch::compute_and_set_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, 
-        FgNhgEntry *fgNhgEntry, std::vector<Bank_Member_Changes> &bank_member_changes, 
+bool FgNhgOrch::computeAndSetHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry, 
+        FgNhgEntry *fgNhgEntry, std::vector<BankMemberChanges> &bank_member_changes, 
         std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set,
         const IpPrefix &ipPrefix)
 {
@@ -763,7 +763,7 @@ bool FgNhgOrch::compute_and_set_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
              * simultaneously, nhs were added(nhs_to_add > 0). 
              * Route this to fn which deals with active banks
              */
-            if (!set_active_bank_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
+            if (!setActiveBankHashBucketChanges(syncd_fg_route_entry, fgNhgEntry, 
                         bank_idx, bank_idx, bank_member_changes, nhopgroup_members_set, ipPrefix))
             {
                 return false;
@@ -771,7 +771,7 @@ bool FgNhgOrch::compute_and_set_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
         }
         else
         {
-            if (!set_inactive_bank_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, 
+            if (!setInactiveBankHashBucketChanges(syncd_fg_route_entry, fgNhgEntry, 
                         bank_idx, bank_member_changes, nhopgroup_members_set, ipPrefix))
             {
                 return false;
@@ -783,8 +783,8 @@ bool FgNhgOrch::compute_and_set_hash_bucket_changes(FGNextHopGroupEntry *syncd_f
 }
 
 
-bool FgNhgOrch::set_new_nhg_members(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry, 
-        std::vector<Bank_Member_Changes> &bank_member_changes, std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set,
+bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry, 
+        std::vector<BankMemberChanges> &bank_member_changes, std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set,
         const IpPrefix &ipPrefix)
 {
     SWSS_LOG_ENTER();
@@ -852,7 +852,7 @@ bool FgNhgOrch::set_new_nhg_members(FGNextHopGroupEntry &syncd_fg_route_entry, F
                 SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d",
                    syncd_fg_route_entry.next_hop_group_id, next_hop_group_member_id, status);
                 
-                if (!remove_fine_grained_next_hop_group(&syncd_fg_route_entry, fgNhgEntry))
+                if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry, fgNhgEntry))
                 {
                     SWSS_LOG_ERROR("Failed to clean-up after next-hop member creation failure");
                 }
@@ -860,7 +860,7 @@ bool FgNhgOrch::set_new_nhg_members(FGNextHopGroupEntry &syncd_fg_route_entry, F
                 return false;
             }
 
-            set_state_db_route_entry(ipPrefix, j, bank_nh_memb);
+            setStateDbRouteEntry(ipPrefix, j, bank_nh_memb);
             syncd_fg_route_entry.syncd_fgnhg_map[i][bank_nh_memb].push_back(j);
             syncd_fg_route_entry.active_nexthops.insert(bank_nh_memb);
             syncd_fg_route_entry.nhopgroup_members.push_back(next_hop_group_member_id);
@@ -899,8 +899,8 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
     bool next_hop_to_add = false;
 
     /* Default init with # of banks */
-    std::vector<Bank_Member_Changes> bank_member_changes(
-            fgNhgEntry->hash_bucket_indices.size(), Bank_Member_Changes());
+    std::vector<BankMemberChanges> bank_member_changes(
+            fgNhgEntry->hash_bucket_indices.size(), BankMemberChanges());
     if (fgNhgEntry->hash_bucket_indices.size() == 0)
     {
         /* Only happens the 1st time when hash_bucket_indices are not inited
@@ -909,7 +909,7 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
         {
             while(bank_member_changes.size() <= it.second)
             {
-                bank_member_changes.push_back(Bank_Member_Changes());
+                bank_member_changes.push_back(BankMemberChanges());
             }
         }
     }
@@ -977,7 +977,7 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
             }
         }
 
-        if (!compute_and_set_hash_bucket_changes(syncd_fg_route_entry, fgNhgEntry, bank_member_changes, 
+        if (!computeAndSetHashBucketChanges(syncd_fg_route_entry, fgNhgEntry, bank_member_changes, 
                 nhopgroup_members_set, ipPrefix))
         {
             return false;
@@ -995,17 +995,17 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
         }
 
         FGNextHopGroupEntry syncd_fg_route_entry;
-        if (!create_fine_grained_next_hop_group(syncd_fg_route_entry, fgNhgEntry, nextHops))
+        if (!createFineGrainedNextHopGroup(syncd_fg_route_entry, fgNhgEntry, nextHops))
         {
             return false;
         }
 
-        if (!set_new_nhg_members(syncd_fg_route_entry, fgNhgEntry, bank_member_changes, nhopgroup_members_set, ipPrefix))
+        if (!setNewNhgMembers(syncd_fg_route_entry, fgNhgEntry, bank_member_changes, nhopgroup_members_set, ipPrefix))
         {
             return false;
         }
 
-        if (!create_fine_grained_route_entry(syncd_fg_route_entry, fgNhgEntry, vrf_id, ipPrefix, nextHops))
+        if (!createFineGrainedRouteEntry(syncd_fg_route_entry, fgNhgEntry, vrf_id, ipPrefix, nextHops))
         {
             return false;
         }
@@ -1078,7 +1078,7 @@ bool FgNhgOrch::removeRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
     }
 
     FGNextHopGroupEntry *syncd_fg_route_entry = &(it_route->second);
-    if (!remove_fine_grained_next_hop_group(syncd_fg_route_entry, fgNhgEntry))
+    if (!removeFineGrainedNextHopGroup(syncd_fg_route_entry, fgNhgEntry))
     {
         SWSS_LOG_ERROR("Failed to clean-up fine grained ECMP SAI group");
         return false;
@@ -1176,8 +1176,9 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
 }
 
 
-vector<FieldValueTuple> generate_route_table_from_nhg_key(NextHopGroupKey nhg)
+vector<FieldValueTuple> FgNhgOrch::generateRouteTableFromNhgKey(NextHopGroupKey nhg)
 {
+    SWSS_LOG_ENTER();
     vector<FieldValueTuple> fvVector;
     std::set<NextHopKey> nhks = nhg.getNextHops();
     string nexthops = nhks.begin()->ip_address.to_string();
@@ -1203,7 +1204,7 @@ vector<FieldValueTuple> generate_route_table_from_nhg_key(NextHopGroupKey nhg)
 }
 
 
-bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
+bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
 {
     SWSS_LOG_ENTER();
     string op = kfvOp(t);
@@ -1268,7 +1269,7 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
                 SWSS_LOG_INFO("Route removed in routeorch, now do an APP_DB addition");
                 fgNhg_entry->second.prefixes.push_back(ip_prefix);
                 fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
-                m_routeTable.set(ip_prefix.to_string(), generate_route_table_from_nhg_key(addCache->second));
+                m_routeTable.set(ip_prefix.to_string(), generateRouteTableFromNhgKey(addCache->second));
                 m_fgPrefixAddCache.erase(addCache);
                 SWSS_LOG_INFO("Performed APP_DB addition with prefix %s", ip_prefix.to_string().c_str());
             }
@@ -1339,7 +1340,7 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
                 }
                 fgNhgPrefixes.erase(ip_prefix); 
 
-                m_routeTable.set(ip_prefix.to_string(), generate_route_table_from_nhg_key(delCache->second));
+                m_routeTable.set(ip_prefix.to_string(), generateRouteTableFromNhgKey(delCache->second));
                 SWSS_LOG_INFO("Perform APP_DB addition with prefix %s", ip_prefix.to_string().c_str());
             }
             else
@@ -1355,7 +1356,7 @@ bool FgNhgOrch::doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple & t)
 }
 
 
-bool FgNhgOrch::doTaskFgNhg_member(const KeyOpFieldsValuesTuple & t)
+bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
 {
     SWSS_LOG_ENTER();
     string op = kfvOp(t);
@@ -1446,7 +1447,8 @@ bool FgNhgOrch::doTaskFgNhg_member(const KeyOpFieldsValuesTuple & t)
 }
         
 
-void FgNhgOrch::doTask(Consumer& consumer) {
+void FgNhgOrch::doTask(Consumer& consumer) 
+{
     SWSS_LOG_ENTER();
     const string & table_name = consumer.getTableName();
     auto it = consumer.m_toSync.begin();
@@ -1461,11 +1463,11 @@ void FgNhgOrch::doTask(Consumer& consumer) {
         }
         else if (table_name == CFG_FG_NHG_PREFIX)
         {
-            entry_handled = doTaskFgNhg_prefix(t);
+            entry_handled = doTaskFgNhgPrefix(t);
         }
         else if (table_name == CFG_FG_NHG_MEMBER)
         {
-            entry_handled = doTaskFgNhg_member(t);
+            entry_handled = doTaskFgNhgMember(t);
         }
         else
         {

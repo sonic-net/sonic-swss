@@ -48,7 +48,7 @@ typedef struct
 {
     uint32_t start_index;
     uint32_t end_index;
-} bank_index_range;
+} BankIndexRange;
 
 typedef struct FgNhgEntry
 {
@@ -57,7 +57,7 @@ typedef struct FgNhgEntry
     uint32_t real_bucket_size;                          // Real bucket size as queried from SAI
     NextHops nextHops;                                  // The IP to Bank mapping configured by user
     std::vector<IpPrefix> prefixes;                     // Prefix which desires FG behavior
-    std::vector<bank_index_range> hash_bucket_indices;  // The hash bucket indices for a bank
+    std::vector<BankIndexRange> hash_bucket_indices;  // The hash bucket indices for a bank
 } FgNhgEntry;
 
 /* Map from IP prefix to user configured FG NHG entries */
@@ -71,7 +71,7 @@ typedef struct
     std::vector<NextHopKey> nhs_to_del;
     std::vector<NextHopKey> nhs_to_add;
     std::vector<NextHopKey> active_nhs;
-} Bank_Member_Changes;
+} BankMemberChanges;
 
 class FgNhgOrch : public Orch
 {
@@ -95,33 +95,34 @@ private:
     FgPrefixOpCache m_fgPrefixAddCache;
     FgPrefixOpCache m_fgPrefixDelCache;
 
-    bool set_new_nhg_members(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    std::vector<Bank_Member_Changes> &bank_member_changes, 
+    bool setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+                    std::vector<BankMemberChanges> &bank_member_changes, 
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
-    bool compute_and_set_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry,
-                    FgNhgEntry *fgNhgEntry, std::vector<Bank_Member_Changes> &bank_member_changes,
+    bool computeAndSetHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry,
+                    FgNhgEntry *fgNhgEntry, std::vector<BankMemberChanges> &bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
-    bool set_active_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    uint32_t bank, uint32_t syncd_bank, std::vector<Bank_Member_Changes> bank_member_changes,
+    bool setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+                    uint32_t bank, uint32_t syncd_bank, std::vector<BankMemberChanges> bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
-    bool set_inactive_bank_hash_bucket_changes(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    uint32_t bank,std::vector<Bank_Member_Changes> &bank_member_changes,
+    bool setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+                    uint32_t bank,std::vector<BankMemberChanges> &bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
-    bool set_inactive_bank_to_next_available_active_bank(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    uint32_t bank, std::vector<Bank_Member_Changes> bank_member_changes,
+    bool setInactiveBankToNextAvailableActiveBank(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+                    uint32_t bank, std::vector<BankMemberChanges> bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
-    void set_state_db_route_entry(const IpPrefix&, uint32_t index, NextHopKey nextHop);
-    bool write_hash_bucket_change(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
+    void setStateDbRouteEntry(const IpPrefix&, uint32_t index, NextHopKey nextHop);
+    bool writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
                     const IpPrefix &ipPrefix, NextHopKey nextHop);
-    bool create_fine_grained_next_hop_group(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+    bool createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     const NextHopGroupKey &nextHops);
-    bool remove_fine_grained_next_hop_group(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry);
-    bool create_fine_grained_route_entry(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
+    bool removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry);
+    bool createFineGrainedRouteEntry(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
 
+    vector<FieldValueTuple> generateRouteTableFromNhgKey(NextHopGroupKey nhg);
     bool doTaskFgNhg(const KeyOpFieldsValuesTuple&);
-    bool doTaskFgNhg_prefix(const KeyOpFieldsValuesTuple&);
-    bool doTaskFgNhg_member(const KeyOpFieldsValuesTuple&);
+    bool doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple&);
+    bool doTaskFgNhgMember(const KeyOpFieldsValuesTuple&);
     void doTask(Consumer& consumer);
 };
 
