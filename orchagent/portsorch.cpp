@@ -3155,7 +3155,7 @@ bool PortsOrch::flushFdbEntries(Port port)
     if (SAI_STATUS_SUCCESS != rv)
     {
         SWSS_LOG_ERROR("Flushing FDB for port %s failed. rv:%d", port.m_alias.c_str(), rv);
-	return false;
+        return false;
     }
 
     return true;
