@@ -667,10 +667,6 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
     if (!warmRestartInProgress)
     {
-        /*Delete vni & router_mac fields to handle route update scenario
-         * This operation is idempotent and generate only one event to consumer*/
-        m_routeTable.hdel(destipprefix, "vni_label");
-        m_routeTable.hdel(destipprefix, "router_mac");
         m_routeTable.set(destipprefix, fvVector);
         SWSS_LOG_DEBUG("RouteTable set msg: %s %s %s",
                        destipprefix, nexthops.c_str(), ifnames.c_str());
