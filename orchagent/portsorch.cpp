@@ -3130,7 +3130,7 @@ void PortsOrch::doTask(Consumer &consumer)
     }
 }
 
-bool PortsOrch::flushFDBEntries(sai_object_id_t bridge_port_id)
+bool PortsOrch::flushFdbEntries(Port port)
 {
     vector<sai_attribute_t>    attrs;
     sai_attribute_t            attr;
@@ -3138,23 +3138,23 @@ bool PortsOrch::flushFDBEntries(sai_object_id_t bridge_port_id)
 
     SWSS_LOG_ENTER();
 
-    if (SAI_NULL_OBJECT_ID == bridge_port_id)
+    if (SAI_NULL_OBJECT_ID == port.m_bridge_port_id)
     {
-        SWSS_LOG_WARN("Couldn't flush FDB. Bridge port OID: 0x%" PRIx64,
-                      bridge_port_id);
+        SWSS_LOG_WARN("Couldn't flush FDB entries for port: %s",
+                      port.m_alias.c_str());
         return false;
     }
 
     attr.id = SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID;
-    attr.value.oid = bridge_port_id;
+    attr.value.oid = port.m_bridge_port_id;
     attrs.push_back(attr);
 
-    SWSS_LOG_INFO("Flushing FDB bridge_port_oid: 0x%" PRIx64, bridge_port_id);
+    SWSS_LOG_INFO("Flushing FDB entries for port: %s", port.m_alias.c_str());
 
     rv = sai_fdb_api->flush_fdb_entries(gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (SAI_STATUS_SUCCESS != rv)
     {
-        SWSS_LOG_ERROR("Flushing FDB failed. rv:%d", rv);
+        SWSS_LOG_ERROR("Flushing FDB for port %s failed. rv:%d", port.m_alias.c_str(), rv);
 	return false;
     }
 
@@ -3463,9 +3463,9 @@ bool PortsOrch::removeBridgePort(Port &port)
     }
 
     //Flush the FDB entires corresponding to the port
-    if (!flushFDBEntries(port.m_bridge_port_id))
+    if (!flushFdbEntries(port))
     {	    
-        SWSS_LOG_ERROR("Failed to flush FDB entries for the port %s",
+        SWSS_LOG_ERROR("Failed to flush FDB entries for port %s",
                 port.m_alias.c_str());
         return false;
     }
