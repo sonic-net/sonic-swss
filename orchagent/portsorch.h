@@ -159,7 +159,7 @@ private:
     Port m_cpuPort;
     // TODO: Add Bridge/Vlan class
     sai_object_id_t m_default1QBridge;
-    sai_object_id_t m_defaultVlan;
+    Port m_defaultVlan;
 
     typedef enum
     {
