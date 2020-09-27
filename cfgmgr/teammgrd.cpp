@@ -85,7 +85,7 @@ int main(int argc, char **argv)
             auto *c = (Executor *)sel;
             c->execute();
         }
-        teammgr.cleanTeamProcesses(SIGTERM);
+        teammgr.cleanTeamProcesses();
         SWSS_LOG_NOTICE("Exiting");
     }
     catch (const exception &e)
