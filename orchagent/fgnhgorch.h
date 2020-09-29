@@ -52,10 +52,10 @@ typedef struct
 
 typedef struct FgNhgEntry
 {
-    string fgNhg_name;                                  // Name of FG NHG group configured by user
+    string fg_nhg_name;                                  // Name of FG NHG group configured by user
     uint32_t configured_bucket_size;                    // Bucket size configured by user
     uint32_t real_bucket_size;                          // Real bucket size as queried from SAI
-    NextHops nextHops;                                  // The IP to Bank mapping configured by user
+    NextHops next_hops;                                  // The IP to Bank mapping configured by user
     std::vector<IpPrefix> prefixes;                     // Prefix which desires FG behavior
     std::vector<BankIndexRange> hash_bucket_indices;  // The hash bucket indices for a bank
 } FgNhgEntry;
@@ -110,6 +110,7 @@ private:
     bool setInactiveBankToNextAvailableActiveBank(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     uint32_t bank, std::vector<BankMemberChanges> bank_member_changes,
                     std::map<NextHopKey,sai_object_id_t> &nhopgroup_members_set, const IpPrefix&);
+    void calculateBankHashBucketStartIndices(FgNhgEntry *fgNhgEntry);
     void setStateDbRouteEntry(const IpPrefix&, uint32_t index, NextHopKey nextHop);
     bool writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry, uint32_t index, sai_object_id_t nh_oid,
                     const IpPrefix &ipPrefix, NextHopKey nextHop);

@@ -28,20 +28,20 @@ FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, 
 }
 
 
-/* calculate_bank_hash_bucket_start_indices: generates the hash_bucket_indices for all banks
+/* calculateBankHashBucketStartIndices: generates the hash_bucket_indices for all banks
  * and stores it in fgNhgEntry for the group. 
  * The function will identify the # of next-hops assigned to each bank and 
  * assign the total number of hash buckets for a bank, based on the proportional
  * number of next-hops in the bank. 
  * eg: Bank0: 6 nh, Bank1: 3 nh, total buckets: 30 => 
- *      calculate_bank_hash_bucket_start_indices: Bank0: Bucket# 0-19, Bank1: Bucket# 20-29
+ *      calculateBankHashBucketStartIndices: Bank0: Bucket# 0-19, Bank1: Bucket# 20-29
  */
-void calculate_bank_hash_bucket_start_indices(FgNhgEntry *fgNhgEntry)
+void FgNhgOrch::calculateBankHashBucketStartIndices(FgNhgEntry *fgNhgEntry)
 {
     SWSS_LOG_ENTER();
     uint32_t num_banks = 0;
     vector<uint32_t> memb_per_bank;
-    for (auto nh : fgNhgEntry->nextHops)
+    for (auto nh : fgNhgEntry->next_hops)
     {
         while (nh.second + 1 > num_banks)
         {
@@ -51,8 +51,8 @@ void calculate_bank_hash_bucket_start_indices(FgNhgEntry *fgNhgEntry)
         memb_per_bank[nh.second] = memb_per_bank[nh.second] + 1;
     }
 
-    uint32_t buckets_per_nexthop = fgNhgEntry->real_bucket_size/((uint32_t)fgNhgEntry->nextHops.size());
-    uint32_t extra_buckets = fgNhgEntry->real_bucket_size - (buckets_per_nexthop*((uint32_t)fgNhgEntry->nextHops.size()));
+    uint32_t buckets_per_nexthop = fgNhgEntry->real_bucket_size/((uint32_t)fgNhgEntry->next_hops.size());
+    uint32_t extra_buckets = fgNhgEntry->real_bucket_size - (buckets_per_nexthop*((uint32_t)fgNhgEntry->next_hops.size()));
     uint32_t split_extra_buckets_among_bank = extra_buckets/num_banks;
     extra_buckets = extra_buckets - (split_extra_buckets_among_bank*num_banks);
 
@@ -187,7 +187,7 @@ bool FgNhgOrch::createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_rout
         fgNhgEntry->real_bucket_size = nhg_attr.value.u32;
     }
 
-    calculate_bank_hash_bucket_start_indices(fgNhgEntry);
+    calculateBankHashBucketStartIndices(fgNhgEntry);
 
     SWSS_LOG_NOTICE("fgnhgorch created next hop group %s of size %d", nextHops.to_string().c_str(), fgNhgEntry->real_bucket_size);
     return true;
@@ -293,11 +293,11 @@ bool FgNhgOrch::validNextHopInNextHopGroup(const NextHopKey& nexthop)
 
             for (auto active_nh : syncd_fg_route_entry->active_nexthops)
             {
-                bank_member_changes[fgNhgEntry->nextHops[active_nh.ip_address]].
+                bank_member_changes[fgNhgEntry->next_hops[active_nh.ip_address]].
                     active_nhs.push_back(active_nh);
             }
 
-            bank_member_changes[fgNhgEntry->nextHops[nexthop.ip_address]].
+            bank_member_changes[fgNhgEntry->next_hops[nexthop.ip_address]].
                     nhs_to_add.push_back(nexthop);
             nhopgroup_members_set[nexthop] = m_neighOrch->getNextHopId(nexthop);
 
@@ -359,13 +359,13 @@ bool FgNhgOrch::invalidNextHopInNextHopGroup(const NextHopKey& nexthop)
                     continue;
                 }
 
-                bank_member_changes[fgNhgEntry->nextHops[active_nh.ip_address]].
+                bank_member_changes[fgNhgEntry->next_hops[active_nh.ip_address]].
                     active_nhs.push_back(active_nh);
 
                 nhopgroup_members_set[active_nh] = m_neighOrch->getNextHopId(active_nh);
             }
 
-            bank_member_changes[fgNhgEntry->nextHops[nexthop.ip_address]].
+            bank_member_changes[fgNhgEntry->next_hops[nexthop.ip_address]].
                     nhs_to_del.push_back(nexthop);
 
             if (!computeAndSetHashBucketChanges(syncd_fg_route_entry, fgNhgEntry, 
@@ -905,7 +905,7 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
     {
         /* Only happens the 1st time when hash_bucket_indices are not inited
          */
-        for (auto it : fgNhgEntry->nextHops)
+        for (auto it : fgNhgEntry->next_hops)
         {
             while(bank_member_changes.size() <= it.second)
             {
@@ -924,10 +924,10 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
                     nhk.to_string().c_str(), nextHops.to_string().c_str());
             continue;
         }
-        else if (fgNhgEntry->nextHops.find(nhk.ip_address) == fgNhgEntry->nextHops.end())
+        else if (fgNhgEntry->next_hops.find(nhk.ip_address) == fgNhgEntry->next_hops.end())
         {
             SWSS_LOG_WARN("Could not find next-hop %s in Fine Grained next-hop group entry for prefix %s, skipping",
-                    nhk.to_string().c_str(), fgNhgEntry->fgNhg_name.c_str());
+                    nhk.to_string().c_str(), fgNhgEntry->fg_nhg_name.c_str());
             continue;
         }
         else if (m_neighOrch->isNextHopFlagSet(nhk, NHFLAGS_IFDOWN))
@@ -939,7 +939,7 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
 
         if (syncd_fg_route_entry_it == m_syncdFGRouteTables.at(vrf_id).end())
         {
-            bank_member_changes[fgNhgEntry->nextHops[nhk.ip_address]].
+            bank_member_changes[fgNhgEntry->next_hops[nhk.ip_address]].
                 nhs_to_add.push_back(nhk);
             next_hop_to_add = true;
         }
@@ -949,7 +949,7 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
             if (syncd_fg_route_entry->active_nexthops.find(nhk) == 
                 syncd_fg_route_entry->active_nexthops.end())
             {
-                bank_member_changes[fgNhgEntry->nextHops[nhk.ip_address]].
+                bank_member_changes[fgNhgEntry->next_hops[nhk.ip_address]].
                     nhs_to_add.push_back(nhk);
             }
         }
@@ -967,12 +967,12 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
         {
             if (nhopgroup_members_set.find(nhk) == nhopgroup_members_set.end())
             {
-                bank_member_changes[fgNhgEntry->nextHops[nhk.ip_address]].
+                bank_member_changes[fgNhgEntry->next_hops[nhk.ip_address]].
                     nhs_to_del.push_back(nhk);
             }
             else
             {
-                bank_member_changes[fgNhgEntry->nextHops[nhk.ip_address]].
+                bank_member_changes[fgNhgEntry->next_hops[nhk.ip_address]].
                     active_nhs.push_back(nhk);
             }
         }
@@ -1107,8 +1107,8 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
     SWSS_LOG_ENTER();
     string op = kfvOp(t);
     string key = kfvKey(t);
-    string fgNhg_name = key; 
-    auto fgNhg_entry = m_FgNhgs.find(fgNhg_name);
+    string fg_nhg_name = key; 
+    auto fgNhg_entry = m_FgNhgs.find(fg_nhg_name);
 
     if (op == SET_COMMAND)
     {
@@ -1133,7 +1133,7 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
             if (bucket_size != (fgNhg_entry->second).configured_bucket_size)
             {
                 SWSS_LOG_WARN("Received request to change %s's bucket size to %d, unsupported operation, skipping",
-                        fgNhg_name.c_str(), bucket_size);
+                        fg_nhg_name.c_str(), bucket_size);
                 return true;
             }
         }
@@ -1141,10 +1141,10 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
         {
             FgNhgEntry fgNhgEntry;
             fgNhgEntry.configured_bucket_size = bucket_size;
-            fgNhgEntry.fgNhg_name = fgNhg_name;
+            fgNhgEntry.fg_nhg_name = fg_nhg_name;
             SWSS_LOG_INFO("Added new FG_NHG entry with configured_bucket_size %d", 
                     fgNhgEntry.configured_bucket_size);
-            m_FgNhgs[fgNhg_name] = fgNhgEntry;
+            m_FgNhgs[fg_nhg_name] = fgNhgEntry;
         }
     }
     else if (op == DEL_COMMAND)
@@ -1152,22 +1152,22 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
         if (fgNhg_entry == m_FgNhgs.end())
         {
             SWSS_LOG_INFO("Received delete call for non-existent entry %s",
-                    fgNhg_name.c_str());
+                    fg_nhg_name.c_str());
         }
         else 
         {
             /* Check if there are no child objects associated prior to deleting */
-            if (fgNhg_entry->second.prefixes.size() == 0 && fgNhg_entry->second.nextHops.size() == 0)
+            if (fgNhg_entry->second.prefixes.size() == 0 && fgNhg_entry->second.next_hops.size() == 0)
             {
                 m_FgNhgs.erase(fgNhg_entry);
-                assert(m_FgNhgs.find(fgNhg_name) == fgNhgPrefixes.end());
+                assert(m_FgNhgs.find(fg_nhg_name) == fgNhgPrefixes.end());
                 SWSS_LOG_INFO("Received delete call for valid entry with no further dependencies, deleting %s",
-                        fgNhg_name.c_str());
+                        fg_nhg_name.c_str());
             }
             else
             {
                 SWSS_LOG_INFO("Child Prefix/Member entries are still associated with this FG_NHG %s", 
-                        fgNhg_name.c_str());
+                        fg_nhg_name.c_str());
                 return false;
             }
         }
@@ -1220,21 +1220,21 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
             return true;
         }
 
-        string fgNhg_name = "";
+        string fg_nhg_name = "";
         for (auto i : kfvFieldsValues(t))
         {
             if (fvField(i) == "FG_NHG")
             {
-                fgNhg_name = fvValue(i);
+                fg_nhg_name = fvValue(i);
             }
         }
-        if (fgNhg_name.empty())
+        if (fg_nhg_name.empty())
         {
             SWSS_LOG_ERROR("Received FG_NHG with empty name for key %s", kfvKey(t).c_str());
             return true;
         }
 
-        auto fgNhg_entry = m_FgNhgs.find(fgNhg_name);
+        auto fgNhg_entry = m_FgNhgs.find(fg_nhg_name);
         if (fgNhg_entry == m_FgNhgs.end())
         {
             SWSS_LOG_INFO("FG_NHG entry not received yet, continue");
@@ -1280,7 +1280,7 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
             }
         }
         SWSS_LOG_INFO("FG_NHG added for group %s, prefix %s",
-                fgNhgPrefixes[ip_prefix]->fgNhg_name.c_str(), ip_prefix.to_string().c_str());
+                fgNhgPrefixes[ip_prefix]->fg_nhg_name.c_str(), ip_prefix.to_string().c_str());
     }
     else if (op == DEL_COMMAND)
     {
@@ -1366,26 +1366,26 @@ bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
 
     if (op == SET_COMMAND)
     {
-        string fgNhg_name = "";
+        string fg_nhg_name = "";
         uint32_t bank = 0;
         for (auto i : kfvFieldsValues(t))
         {
             if (fvField(i) == "FG_NHG")
             {
-                fgNhg_name = fvValue(i);
+                fg_nhg_name = fvValue(i);
             }
             else if (fvField(i) == "bank")
             {
                 bank = stoi(fvValue(i));
             }
         }
-        if (fgNhg_name.empty())
+        if (fg_nhg_name.empty())
         {
             SWSS_LOG_ERROR("Received FG_NHG with empty name for key %s", kfvKey(t).c_str());
             return true;
         }
 
-        auto fgNhg_entry = m_FgNhgs.find(fgNhg_name);
+        auto fgNhg_entry = m_FgNhgs.find(fg_nhg_name);
         if (fgNhg_entry == m_FgNhgs.end())
         {
             SWSS_LOG_INFO("FG_NHG entry not received yet, continue");
@@ -1394,12 +1394,12 @@ bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
         else
         {
             /* skip addition if next-hop already exists */
-            if (fgNhg_entry->second.nextHops.find(next_hop) != fgNhg_entry->second.nextHops.end())
+            if (fgNhg_entry->second.next_hops.find(next_hop) != fgNhg_entry->second.next_hops.end())
             {
                 SWSS_LOG_INFO("FG_NHG member %s already exists, skip", next_hop.to_string().c_str());
                 return true;
             }
-            fgNhg_entry->second.nextHops[next_hop] = bank;
+            fgNhg_entry->second.next_hops[next_hop] = bank;
 
             /* query and check the next hop is valid in neighOrcch */
             if (!m_neighOrch->hasNextHop(nhk))
@@ -1414,7 +1414,7 @@ bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
                 return false;
             }
             SWSS_LOG_INFO("FG_NHG member added for group %s, next-hop %s",
-                    fgNhg_entry->second.fgNhg_name.c_str(), next_hop.to_string().c_str());
+                    fgNhg_entry->second.fg_nhg_name.c_str(), next_hop.to_string().c_str());
         }
     }
     else if (op == DEL_COMMAND)
@@ -1434,12 +1434,12 @@ bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
         /* remove next-hop in fgnhg entry*/
         for (auto fgnhg_it = m_FgNhgs.begin(); fgnhg_it != m_FgNhgs.end(); ++fgnhg_it)
         {
-            auto it = fgnhg_it->second.nextHops.find(next_hop);
-            if (it != fgnhg_it->second.nextHops.end())
+            auto it = fgnhg_it->second.next_hops.find(next_hop);
+            if (it != fgnhg_it->second.next_hops.end())
             {
                 SWSS_LOG_INFO("FG_NHG member removed for group %s, next-hop %s",
-                        fgnhg_it->second.fgNhg_name.c_str(), next_hop.to_string().c_str());
-                fgnhg_it->second.nextHops.erase(it);
+                        fgnhg_it->second.fg_nhg_name.c_str(), next_hop.to_string().c_str());
+                fgnhg_it->second.next_hops.erase(it);
             }
         }
     }
