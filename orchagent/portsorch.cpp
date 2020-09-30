@@ -444,6 +444,16 @@ void PortsOrch::removeDefaultBridgePorts()
         }
         if (attr.value.s32 == SAI_BRIDGE_PORT_TYPE_PORT)
         {
+            Port port;
+	    getPortByBridgePortId(bridge_port_list[i], port);
+
+            //Flush the FDB entires corresponding to the port
+            if (!flushFdbEntries(port))
+            {	    
+                SWSS_LOG_ERROR("Failed to flush FDB entries for port %s",
+                               port.m_alias.c_str());
+            }
+
             status = sai_bridge_api->remove_bridge_port(bridge_port_list[i]);
             if (status != SAI_STATUS_SUCCESS)
             {
