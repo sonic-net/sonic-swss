@@ -10,12 +10,14 @@
 #include "orch.h"
 #include "request_parser.h"
 #include "vrforch.h"
+#include "routeorch.h"
 
 using namespace std;
 using namespace swss;
 
 extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
+extern RouteOrch *gRouteOrch;
 
 bool VRFOrch::addOperation(const Request& request)
 {
@@ -86,6 +88,7 @@ bool VRFOrch::addOperation(const Request& request)
         vrf_id_table_[router_id] = vrf_name;
         m_stateVrfObjectTable.hset(vrf_name, "state", "ok");
         SWSS_LOG_NOTICE("VRF '%s' was added", vrf_name.c_str());
+        gRouteOrch->vrfDefaultRoute(router_id, SET_COMMAND);
     }
     else
     {
@@ -124,6 +127,7 @@ bool VRFOrch::delOperation(const Request& request)
         return false;
 
     sai_object_id_t router_id = vrf_table_[vrf_name].vrf_id;
+    gRouteOrch->vrfDefaultRoute(router_id, DEL_COMMAND);
     sai_status_t status = sai_virtual_router_api->remove_virtual_router(router_id);
     if (status != SAI_STATUS_SUCCESS)
     {

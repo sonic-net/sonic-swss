@@ -70,49 +70,7 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, 
 
     SWSS_LOG_NOTICE("Maximum number of ECMP groups supported is %d", m_maxNextHopGroupCount);
 
-    IpPrefix default_ip_prefix("0.0.0.0/0");
-
-    sai_route_entry_t unicast_route_entry;
-    unicast_route_entry.vr_id = gVirtualRouterId;
-    unicast_route_entry.switch_id = gSwitchId;
-    copy(unicast_route_entry.destination, default_ip_prefix);
-    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
-
-    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
-    attr.value.s32 = SAI_PACKET_ACTION_DROP;
-
-    status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create IPv4 default route with packet action drop");
-        throw runtime_error("Failed to create IPv4 default route with packet action drop");
-    }
-
-    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
-
-    /* Add default IPv4 route into the m_syncdRoutes */
-    m_syncdRoutes[gVirtualRouterId][default_ip_prefix] = NextHopGroupKey();
-
-    SWSS_LOG_NOTICE("Create IPv4 default route with packet action drop");
-
-    IpPrefix v6_default_ip_prefix("::/0");
-
-    copy(unicast_route_entry.destination, v6_default_ip_prefix);
-    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
-
-    status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create IPv6 default route with packet action drop");
-        throw runtime_error("Failed to create IPv6 default route with packet action drop");
-    }
-
-    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
-
-    /* Add default IPv6 route into the m_syncdRoutes */
-    m_syncdRoutes[gVirtualRouterId][v6_default_ip_prefix] = NextHopGroupKey();
-
-    SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
+    vrfDefaultRoute(gVirtualRouterId, SET_COMMAND);
 
     /* All the interfaces have the same MAC address and hence the same
      * auto-generated link-local ipv6 address with eui64 interface-id.
@@ -1481,4 +1439,89 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
     }
 
     return true;
+}
+
+void RouteOrch::vrfDefaultRoute(sai_object_id_t vrf_id, string op)
+{
+    IpPrefix default_ip_prefix("0.0.0.0/0");
+
+    sai_route_entry_t unicast_route_entry;
+    unicast_route_entry.vr_id = vrf_id;
+    unicast_route_entry.switch_id = gSwitchId;
+    copy(unicast_route_entry.destination, default_ip_prefix);
+    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
+
+    sai_status_t status = SAI_STATUS_FAILURE;
+    sai_attribute_t attr;
+    attr.id = SAI_ROUTE_ENTRY_ATTR_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_DROP;
+
+    if (op == SET_COMMAND)
+    {
+        sai_status_t status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create IPv4 default route with packet action drop");
+            throw runtime_error("Failed to create IPv4 default route with packet action drop");
+        }
+
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+
+        /* Add default IPv4 route into the m_syncdRoutes */
+        m_syncdRoutes[vrf_id][default_ip_prefix] = NextHopGroupKey();
+
+        SWSS_LOG_NOTICE("Create IPv4 default route with packet action drop");
+    }
+    else
+    {
+        if (vrf_id != gVirtualRouterId)
+        {
+            sai_status_t status = sai_route_api->remove_route_entry(&unicast_route_entry);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to remove IPv4 default route for non default VRF!!!");
+                throw runtime_error("Failed to remove IPv4 default route for non default VRF!!!");
+            }
+
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
+        }
+    }
+
+    IpPrefix v6_default_ip_prefix("::/0");
+
+    copy(unicast_route_entry.destination, v6_default_ip_prefix);
+    subnet(unicast_route_entry.destination, unicast_route_entry.destination);
+
+    if (op == SET_COMMAND)
+    {
+        status = sai_route_api->create_route_entry(&unicast_route_entry, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to create IPv6 default route with packet action drop");
+            throw runtime_error("Failed to create IPv6 default route with packet action drop");
+        }
+
+        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+
+        /* Add default IPv6 route into the m_syncdRoutes */
+        m_syncdRoutes[vrf_id][v6_default_ip_prefix] = NextHopGroupKey();
+
+        SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
+    }
+    else
+    {
+        if (vrf_id != gVirtualRouterId)
+        {
+            status = sai_route_api->remove_route_entry(&unicast_route_entry);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to create IPv6 default route for non default VRF!!!");
+                throw runtime_error("Failed to create IPv6 default route for non default VRF!!!");
+            }
+
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
+
+            m_syncdRoutes.erase(vrf_id);
+        }
+    }
 }
