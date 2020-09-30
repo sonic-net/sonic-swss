@@ -32,7 +32,7 @@ for i = n, 1, -1 do
     local persistent_hdrm_pool_wm = redis.call('HGET', persistent_table_name .. ':' .. KEYS[i], sai_hdrm_pool_watermark_stat_name)
     local periodic_hdrm_pool_wm = redis.call('HGET', periodic_table_name .. ':' .. KEYS[i], sai_hdrm_pool_watermark_stat_name)
 
-    if buffer_pool_wm:
+    if buffer_pool_wm then
         buffer_pool_wm = tonumber(buffer_pool_wm)
 
         redis.call('HSET', user_table_name .. ':' .. KEYS[i], sai_buffer_pool_watermark_stat_name,
@@ -43,7 +43,7 @@ for i = n, 1, -1 do
                    periodic_buffer_pool_wm and math.max(buffer_pool_wm, periodic_buffer_pool_wm) or buffer_pool_wm)
     end
 
-    if hdrm_pool_wm:
+    if hdrm_pool_wm then
         hdrm_pool_wm = tonumber(hdrm_pool_wm)
 
         redis.call('HSET', user_table_name .. ':' .. KEYS[i], sai_hdrm_pool_watermark_stat_name,
