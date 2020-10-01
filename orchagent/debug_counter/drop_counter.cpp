@@ -329,7 +329,7 @@ unordered_set<string> DropCounter::getSupportedDropReasons(sai_debug_counter_att
         {
             drop_reason = sai_serialize_egress_drop_reason(static_cast<sai_out_drop_reason_t>(drop_reason_list.list[i]));
             // in case of unsupported counter, enum value is returned as a str
-            if (drop_reason.length() < INGRESS_DROP_REASON_PREFIX_LENGTH)
+            if (drop_reason.length() < EGRESS_DROP_REASON_PREFIX_LENGTH)
             {
                 continue;
             }
