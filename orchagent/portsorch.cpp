@@ -26,6 +26,7 @@
 #include "countercheckorch.h"
 #include "notifier.h"
 #include "redisclient.h"
+#include "fdborch.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -41,6 +42,7 @@ extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
+extern FdbOrch *gFdbOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -444,15 +446,6 @@ void PortsOrch::removeDefaultBridgePorts()
         }
         if (attr.value.s32 == SAI_BRIDGE_PORT_TYPE_PORT)
         {
-            Port port;
-            getPortByBridgePortId(bridge_port_list[i], port);
-
-            //Flush the FDB entires corresponding to the port
-            if (!flushFdbEntries(port))
-            {	    
-                SWSS_LOG_ERROR("Failed to flush FDB entries for port %s", port.m_alias.c_str());
-            }
-
             status = sai_bridge_api->remove_bridge_port(bridge_port_list[i]);
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -3139,36 +3132,6 @@ void PortsOrch::doTask(Consumer &consumer)
     }
 }
 
-bool PortsOrch::flushFdbEntries(Port port)
-{
-    vector<sai_attribute_t>    attrs;
-    sai_attribute_t            attr;
-    sai_status_t               rv = SAI_STATUS_SUCCESS;
-
-    SWSS_LOG_ENTER();
-
-    if (SAI_NULL_OBJECT_ID == port.m_bridge_port_id)
-    {
-        SWSS_LOG_WARN("Couldn't flush FDB entries for port: %s", port.m_alias.c_str());
-        return false;
-    }
-
-    attr.id = SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID;
-    attr.value.oid = port.m_bridge_port_id;
-    attrs.push_back(attr);
-
-    SWSS_LOG_INFO("Flushing FDB entries for port: %s", port.m_alias.c_str());
-
-    rv = sai_fdb_api->flush_fdb_entries(gSwitchId, (uint32_t)attrs.size(), attrs.data());
-    if (SAI_STATUS_SUCCESS != rv)
-    {
-        SWSS_LOG_ERROR("Flushing FDB for port %s failed. rv:%d", port.m_alias.c_str(), rv);
-        return false;
-    }
-
-    return true;
-}
-
 void PortsOrch::initializeQueues(Port &port)
 {
     SWSS_LOG_ENTER();
@@ -3471,12 +3434,8 @@ bool PortsOrch::removeBridgePort(Port &port)
     }
 
     //Flush the FDB entires corresponding to the port
-    if (!flushFdbEntries(port))
-    {	    
-        SWSS_LOG_ERROR("Failed to flush FDB entries for port %s",
-                port.m_alias.c_str());
-        return false;
-    }
+    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
 
     /* Remove bridge port */
     status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
