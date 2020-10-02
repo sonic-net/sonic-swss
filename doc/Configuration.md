@@ -27,6 +27,7 @@ Table of Contents
          * [Management Interface](#management-interface)  
          * [Management port](#management-port)  
          * [Management VRF](#management-vrf)  
+         * [Mirroring](#mirroring)  
          * [MAP_PFC_PRIORITY_TO_QUEUE](#map_pfc_priority_to_queue)  
          * [NTP and SYSLOG servers](#ntp-and-syslog-servers)  
          * [Port](#port)   
@@ -789,6 +790,46 @@ instead of data network.
      }
   }
 }
+```
+
+
+### Mirroring
+
+```
+{
+"MIRROR_SESSION_TABLE:session_1": {
+    "src_ip": "1.1.1.1",
+    "dst_ip": "2.2.2.2",
+    "gre_type": "0x6558",
+    "dscp": "50",
+    "ttl": "64",
+    "queue": "0"
+  }
+}
+
+{
+"MIRROR_SESSION_TABLE:session_2": {
+    "src_ip": "1.1.1.1",
+    "dst_ip": "2.2.2.2",
+    "gre_type": "0x6558",
+    "dscp": "50",
+    "ttl": "64",
+    "queue": "0",
+    "src_port": "Ethernet0,PortChannel001",
+    "direction": "BOTH",
+    "type": "ERSPAN"
+  }
+}
+
+{
+"MIRROR_SESSION_TABLE:session_3": {
+     "type": "SPAN"
+     "dst_port": "Ethernet0"
+     "src_port": "Ethernet4,PortChannel002"
+     "direction": "BOTH"
+  }
+}
+
 ```
 
 ### MAP_PFC_PRIORITY_TO_QUEUE
