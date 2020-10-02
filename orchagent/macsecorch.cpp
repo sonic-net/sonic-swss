@@ -104,7 +104,7 @@ do                                          \
 
 /* Global Variables*/
 
-#define PRIORITY_LIMITATION 32
+#define AVAILABLE_ACL_PRIORITIES_LIMITATION 32
 #define EAPOL_ETHER_TYPE 0x888e
 #define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 1000
 
@@ -1238,7 +1238,7 @@ bool MACsecOrch::createMACsecPort(
     sai_attribute_t attr;
     std::vector<sai_attribute_t> attrs;
 
-    attr.id = SAI_MACSEC_SA_ATTR_MACSEC_DIRECTION;
+    attr.id = SAI_MACSEC_PORT_ATTR_MACSEC_DIRECTION;
     attr.value.s32 = direction;
     attrs.push_back(attr);
     attr.id = SAI_MACSEC_PORT_ATTR_PORT_ID;
@@ -1267,11 +1267,11 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
     if (get_value(port_attr, "enable", macsec_port.m_enable))
     {
         std::vector<MACsecOrch::MACsecSC *> macsec_scs;
-        for (auto sc : macsec_port.m_egress_scs)
+        for (auto &sc : macsec_port.m_egress_scs)
         {
             macsec_scs.push_back(&sc.second);
         }
-        for (auto sc : macsec_port.m_ingress_scs)
+        for (auto &sc : macsec_port.m_ingress_scs)
         {
             macsec_scs.push_back(&sc.second);
         }
@@ -1280,18 +1280,18 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
             // Change the ACL entry action from packet action to MACsec flow
             if (macsec_port.m_enable)
             {
-                if (!setACLEntryMACsecFlow(macsec_sc->m_entry_id, macsec_sc->m_flow_id))
+                if (!setACLEntryMACsecFlowActive(macsec_sc->m_entry_id, macsec_sc->m_flow_id, true))
                 {
                     SWSS_LOG_WARN("Cannot change the ACL entry action from packet action to MACsec flow");
                     return false;
                 }
                 auto an = macsec_sc->m_encoding_an;
                 auto flow_id = macsec_sc->m_flow_id;
-                recover.add_action([this, an, flow_id]() { this->setACLEntryPacketAction(an, flow_id); });
+                recover.add_action([this, an, flow_id]() { this->setACLEntryMACsecFlowActive(an, flow_id, false); });
             }
             else
             {
-                setACLEntryPacketAction(macsec_sc->m_encoding_an, macsec_sc->m_flow_id);
+                setACLEntryMACsecFlowActive(macsec_sc->m_encoding_an, macsec_sc->m_flow_id, false);
             }
         }
     }
@@ -1310,7 +1310,7 @@ bool MACsecOrch::deleteMACsecPort(
 
     bool result = true;
 
-    for (auto sc : macsec_port.m_egress_scs)
+    for (auto &sc : macsec_port.m_egress_scs)
     {
         const std::string port_sci = join(':', port_name, sc.first);
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS) != task_success)
@@ -1318,7 +1318,7 @@ bool MACsecOrch::deleteMACsecPort(
             result &= false;
         }
     }
-    for (auto sc : macsec_port.m_ingress_scs)
+    for (auto &sc : macsec_port.m_ingress_scs)
     {
         const std::string port_sci = join(':', port_name, sc.first);
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_INGRESS) != task_success)
@@ -1396,7 +1396,7 @@ bool MACsecOrch::createMACsecFlow(
     sai_attribute_t attr;
     std::vector<sai_attribute_t> attrs;
 
-    attr.id = SAI_MACSEC_SA_ATTR_MACSEC_DIRECTION;
+    attr.id = SAI_MACSEC_FLOW_ATTR_MACSEC_DIRECTION;
     attr.value.s32 = direction;
     attrs.push_back(attr);
     if (sai_macsec_api->create_macsec_flow(
@@ -1685,7 +1685,7 @@ task_process_status MACsecOrch::deleteMACsecSC(
 
     auto result = task_success;
 
-    for (auto sa : ctx.get_macsec_sc()->m_sa_ids)
+    for (auto &sa : ctx.get_macsec_sc()->m_sa_ids)
     {
         const std::string port_sci_an = join(':', port_sci, sa.first);
         deleteMACsecSA(port_sci_an, direction);
@@ -1821,6 +1821,23 @@ task_process_status MACsecOrch::createMACsecSA(
 
     RecoverStack recover;
 
+    // If this SA is the first SA
+    // change the ACL entry action from packet action to MACsec flow
+    if (ctx.get_macsec_port()->m_enable && sc->m_sa_ids.empty())
+    {
+        if (!setACLEntryMACsecFlowActive(sc->m_entry_id, sc->m_flow_id, true))
+        {
+            SWSS_LOG_WARN("Cannot change the ACL entry action from packet action to MACsec flow");
+            return task_failed;
+        }
+        recover.add_action([this, sc]() {
+            this->setACLEntryMACsecFlowActive(
+                sc->m_encoding_an,
+                sc->m_flow_id,
+                false);
+        });
+    }
+
     if (!createMACsecSA(
             sc->m_sa_ids[an],
             *ctx.get_switch_id(),
@@ -1842,22 +1859,6 @@ task_process_status MACsecOrch::createMACsecSA(
         this->deleteMACsecSA(sc->m_sa_ids[an]);
         sc->m_sa_ids.erase(an);
     });
-
-    // If this SA is the first SA
-    // change the ACL entry action from packet action to MACsec flow
-    if (ctx.get_macsec_port()->m_enable && sc->m_sa_ids.size() == 1)
-    {
-        if (!setACLEntryMACsecFlow(sc->m_entry_id, sc->m_flow_id))
-        {
-            SWSS_LOG_WARN("Cannot change the ACL entry action from packet action to MACsec flow");
-            return task_failed;
-        }
-        recover.add_action([this, sc]() {
-            this->setACLEntryPacketAction(
-                sc->m_encoding_an,
-                sc->m_flow_id);
-        });
-    }
 
     std::vector<FieldValueTuple> fvVector;
     fvVector.emplace_back("state", "ok");
@@ -1901,16 +1902,6 @@ task_process_status MACsecOrch::deleteMACsecSA(
         return task_success;
     }
 
-    // If this SA is the last SA
-    // change the ACL entry action from MACsec flow to packet action
-    if (ctx.get_macsec_sc()->m_sa_ids.size() == 1)
-    {
-        if (!setACLEntryPacketAction(ctx.get_macsec_sc()->m_entry_id, ctx.get_macsec_sc()->m_flow_id))
-        {
-            SWSS_LOG_WARN("Cannot change the ACL entry action from MACsec flow to packet action");
-        }
-    }
-
     auto result = task_success;
 
     uninstallCounter(port_sci_an, ctx.get_macsec_sc()->m_sa_ids[an]);
@@ -1920,6 +1911,18 @@ task_process_status MACsecOrch::deleteMACsecSA(
         result = task_failed;
     }
     ctx.get_macsec_sc()->m_sa_ids.erase(an);
+
+    // If this SA is the last SA
+    // change the ACL entry action from MACsec flow to packet action
+    if (ctx.get_macsec_sc()->m_sa_ids.empty())
+    {
+        if (!setACLEntryMACsecFlowActive(ctx.get_macsec_sc()->m_entry_id, ctx.get_macsec_sc()->m_flow_id, false))
+        {
+            SWSS_LOG_WARN("Cannot change the ACL entry action from MACsec flow to packet action");
+            result = task_failed;
+        }
+    }
+
 
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
@@ -2105,7 +2108,7 @@ bool MACsecOrch::initACLTable(
     sai_uint32_t priority = minimum_priority + 1;
     while (priority < maximum_priority)
     {
-        if (acl_table.m_available_acl_priorities.size() >= PRIORITY_LIMITATION)
+        if (acl_table.m_available_acl_priorities.size() >= AVAILABLE_ACL_PRIORITIES_LIMITATION)
         {
             break;
         }
@@ -2343,40 +2346,14 @@ bool MACsecOrch::createACLDataEntry(
     return true;
 }
 
-bool MACsecOrch::setACLEntryPacketAction(sai_object_id_t entry_id, sai_object_id_t flow_id)
+bool MACsecOrch::setACLEntryMACsecFlowActive(sai_object_id_t entry_id, sai_object_id_t flow_id, bool active)
 {
     sai_attribute_t attr;
 
-    attr.id = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
-    attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
-    attr.value.aclaction.enable = true;
-    if (sai_acl_api->set_acl_entry_attribute(
-            entry_id,
-            &attr) != SAI_STATUS_SUCCESS)
-    {
-        return false;
-    }
-
+    SWSS_LOG_NOTICE("GANZE entry %lu flow %lu active %s", entry_id, flow_id, active ? "TRUE" : "FALSE");
     attr.id = SAI_ACL_ENTRY_ATTR_ACTION_MACSEC_FLOW;
     attr.value.aclaction.parameter.oid = flow_id;
-    attr.value.aclaction.enable = false;
-
-    if (sai_acl_api->set_acl_entry_attribute(
-            entry_id,
-            &attr) != SAI_STATUS_SUCCESS)
-    {
-        return false;
-    }
-    return true;
-}
-
-bool MACsecOrch::setACLEntryMACsecFlow(sai_object_id_t entry_id, sai_object_id_t flow_id)
-{
-    sai_attribute_t attr;
-
-    attr.id = SAI_ACL_ENTRY_ATTR_ACTION_MACSEC_FLOW;
-    attr.value.aclaction.parameter.oid = flow_id;
-    attr.value.aclaction.enable = true;
+    attr.value.aclaction.enable = active;
 
     if (sai_acl_api->set_acl_entry_attribute(
             entry_id,
@@ -2387,7 +2364,7 @@ bool MACsecOrch::setACLEntryMACsecFlow(sai_object_id_t entry_id, sai_object_id_t
 
     attr.id = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
     attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
-    attr.value.aclaction.enable = false;
+    attr.value.aclaction.enable = !active;
     if (sai_acl_api->set_acl_entry_attribute(
             entry_id,
             &attr) != SAI_STATUS_SUCCESS)

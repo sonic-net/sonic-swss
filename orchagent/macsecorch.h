@@ -38,7 +38,7 @@ using namespace swss;
 // AN is a 2 bit number, it can only be 0, 1, 2 or 3
 #define MAX_SA_NUMBER (3)
 
-using macsec_an_t = std::uint32_t;
+using macsec_an_t = std::uint16_t;
 
 class MACsecOrchContext;
 
@@ -255,12 +255,10 @@ private:
         bool sci_in_sectag,
         sai_uint64_t sci,
         sai_uint32_t priority);
-    bool setACLEntryPacketAction(
+    bool setACLEntryMACsecFlowActive(
         sai_object_id_t entry_id,
-        sai_object_id_t flow_id);
-    bool setACLEntryMACsecFlow(
-        sai_object_id_t entry_id,
-        sai_object_id_t flow_id);
+        sai_object_id_t flow_id,
+        bool active);
     bool deleteACLEntry(sai_object_id_t entry_id);
     bool get_acl_maximum_priority(
         sai_object_id_t switch_id,
