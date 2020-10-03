@@ -2618,11 +2618,16 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         {
             // Retrieve attributes
             uint32_t mtu = 0;
+            string vlan_type = "";
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
+                }
+                else if (fvField(i) == "vlan_type")
+                {
+                    vlan_type = fvValue(i);
                 }
             }
 
@@ -2633,7 +2638,7 @@ void PortsOrch::doVlanTask(Consumer &consumer)
              */
             if (m_portList.find(vlan_alias) == m_portList.end())
             {
-                if (!addVlan(vlan_alias))
+                if (!addVlan(vlan_alias, vlan_type))
                 {
                     it++;
                     continue;
@@ -3487,17 +3492,47 @@ bool PortsOrch::setBridgePortLearnMode(Port &port, string learn_mode)
     return true;
 }
 
-bool PortsOrch::addVlan(string vlan_alias)
+bool PortsOrch::addVlan(string vlan_alias, string vlan_type)
 {
     SWSS_LOG_ENTER();
 
     sai_object_id_t vlan_oid;
+    vector<sai_attribute_t> attrs;
 
     sai_vlan_id_t vlan_id = (uint16_t)stoi(vlan_alias.substr(4));
     sai_attribute_t attr;
     attr.id = SAI_VLAN_ATTR_VLAN_ID;
     attr.value.u16 = vlan_id;
-    sai_status_t status = sai_vlan_api->create_vlan(&vlan_oid, gSwitchId, 1, &attr);
+    attrs.push_back(attr);
+
+    /* SAI support is yet to be added for vlan_type attribute.
+     * For now, we can use SAI_VLAN_ATTR_META_DATA attr_id with
+     * hard-coded values. New enums yet to be introduced in SAI
+     * for values
+     *  0 = data (default)
+     *  1 = management
+     *  2 = control
+     *  Change this code once attribute and enums introduced in saivlan.h
+     *  */
+    if (!vlan_type.empty())
+    {
+        attr.id = SAI_VLAN_ATTR_META_DATA;
+        if (vlan_type == "management")
+        {
+            attr.value.u32 = 1;
+        }
+        else if (vlan_type == "control")
+        {
+            attr.value.u32 = 2;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Invalid Vlan mode %s vid:%hu", vlan_type.c_str(), vlan_id);
+            return false;
+        }
+        attrs.push_back(attr);
+    }
+    sai_status_t status = sai_vlan_api->create_vlan(&vlan_oid, gSwitchId, (uint32_t)attrs.size(), attrs.data());
 
     if (status != SAI_STATUS_SUCCESS)
     {
