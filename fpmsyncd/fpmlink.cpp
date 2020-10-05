@@ -39,7 +39,7 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
         return 0;
     }
 
-    memset(tb, 0, sizeof tb);
+    memset(tb, 0, sizeof(tb));
     netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
 
     if (!tb[RTA_MULTIPATH])
