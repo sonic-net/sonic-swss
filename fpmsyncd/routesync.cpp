@@ -70,17 +70,6 @@ char *RouteSync::prefix_mac2str(char *mac, char *buf, int size)
     return ptr;
 }
 
-void RouteSync::netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
-                                                int len)
-{
-    while (RTA_OK(rta, len)) 
-    {
-        if (rta->rta_type <= max)
-            tb[rta->rta_type] = rta;
-        rta = RTA_NEXT(rta, len);
-    }
-}
-
 /**
  * netlink_parse_rtattr_nested() - Parses a nested route attribute
  * @tb:         Pointer to array for storing rtattr in.
@@ -285,13 +274,16 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                         || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
                         return false;
 
-                    if(ecmp_count)
+                    if(gate)
                     {
-                        getEvpnNextHopSep(nexthops, vni_list, mac_list, intf_list);
-                    }
+                        if(ecmp_count)
+                        {
+                            getEvpnNextHopSep(nexthops, vni_list, mac_list, intf_list);
+                        }
 
-                    getEvpnNextHopGwIf(nexthopaddr, encap_value, nexthops, vni_list, mac_list, intf_list, rmac, vlan);
-                    ecmp_count++;
+                        getEvpnNextHopGwIf(nexthopaddr, encap_value, nexthops, vni_list, mac_list, intf_list, rmac, vlan);
+                        ecmp_count++;
+                    }
                 }
 
                 if (rtnh->rtnh_len == 0)
@@ -505,7 +497,7 @@ void RouteSync::onMsgRaw(struct nlmsghdr *h)
     len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct ndmsg)));
     if (len < 0) 
     {
-        SWSS_LOG_INFO("%s: Message received from netlink is of a broken size %d %zu",
+        SWSS_LOG_ERROR("%s: Message received from netlink is of a broken size %d %zu",
             __PRETTY_FUNCTION__, h->nlmsg_len,
             (size_t)NLMSG_LENGTH(sizeof(struct ndmsg)));
         return;
