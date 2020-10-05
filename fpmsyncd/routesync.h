@@ -10,6 +10,10 @@
 
 using namespace std;
 
+/* Parse the Raw netlink msg */
+extern void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
+                                                int len);
+
 namespace swss {
 
 class RouteSync : public NetMsg
@@ -36,10 +40,6 @@ private:
 
     /* Handle regular route (include VRF route) */
     void onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf);
-
-    /* Parse the Raw netlink msg */
-    void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
-            int len);
 
     void parse_encap(struct rtattr *tb, uint32_t &encap_value, string &rmac, uint32_t &vlan);
 
