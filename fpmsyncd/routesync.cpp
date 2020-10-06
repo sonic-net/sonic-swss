@@ -313,7 +313,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     rtm = (struct rtmsg *)NLMSG_DATA(h);
 
     /* Parse attributes and extract fields of interest. */
-    memset(tb, 0, sizeof tb);
+    memset(tb, 0, sizeof(tb));
     netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
 
     if (tb[RTA_DST])
