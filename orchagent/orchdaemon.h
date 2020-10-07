@@ -7,6 +7,7 @@
 #include "select.h"
 
 #include "portsorch.h"
+#include "fabricportsorch.h"
 #include "intfsorch.h"
 #include "neighorch.h"
 #include "routeorch.h"
@@ -42,23 +43,41 @@ public:
     OrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *);
     ~OrchDaemon();
 
-    bool init();
+    virtual bool init();
     void start();
     bool warmRestoreAndSyncUp();
     void getTaskToSync(vector<string> &ts);
     bool warmRestoreValidation();
 
     bool warmRestartCheck();
+
+    void addOrchList(Orch* o);
+    void setFabricEnabled(bool enabled)
+    {
+        m_fabricEnabled = enabled;
+    }
 private:
     DBConnector *m_applDb;
     DBConnector *m_configDb;
     DBConnector *m_stateDb;
     DBConnector *m_chassisAppDb;
 
+    bool m_fabricEnabled = false;
+
     std::vector<Orch *> m_orchList;
     Select *m_select;
 
     void flush();
+};
+
+class FabricOrchDaemon : public OrchDaemon
+{
+public:
+    FabricOrchDaemon(DBConnector *, DBConnector *, DBConnector *);
+    bool init() override;
+private:
+    DBConnector *m_applDb;
+    DBConnector *m_configDb;
 };
 
 #endif /* SWSS_ORCHDAEMON_H */

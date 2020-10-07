@@ -1,6 +1,7 @@
 #include <unordered_map>
 #include "flexcounterorch.h"
 #include "portsorch.h"
+#include "fabricportsorch.h"
 #include "select.h"
 #include "notifier.h"
 #include "sai_serialize.h"
@@ -12,6 +13,7 @@
 extern sai_port_api_t *sai_port_api;
 
 extern PortsOrch *gPortsOrch;
+extern FabricPortsOrch *gFabricPortsOrch;
 extern IntfsOrch *gIntfsOrch;
 extern BufferOrch *gBufferOrch;
 
@@ -56,7 +58,12 @@ void FlexCounterOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (!gPortsOrch->allPortsReady())
+    if (gPortsOrch && !gPortsOrch->allPortsReady())
+    {
+        return;
+    }
+
+    if (gFabricPortsOrch && !gFabricPortsOrch->allPortsReady())
     {
         return;
     }
@@ -116,24 +123,27 @@ void FlexCounterOrch::doTask(Consumer &consumer)
                     // This can be because generateQueueMap() installs a fundamental list of queue stats
                     // that need to be polled. So my doubt here is if queue watermark stats shall be piggybacked
                     // into the same function as they may not be counted as fundamental
-                    if((key == QUEUE_KEY) && (value == "enable"))
+                    if(gPortsOrch && (key == QUEUE_KEY) && (value == "enable"))
                     {
                         gPortsOrch->generateQueueMap();
                     }
-                    if((key == PG_WATERMARK_KEY) && (value == "enable"))
+                    if(gPortsOrch && (key == PG_WATERMARK_KEY) && (value == "enable"))
                     {
                         gPortsOrch->generatePriorityGroupMap();
                     }
-                    if((key == RIF_KEY) && (value == "enable"))
+                    if(gIntfsOrch && (key == RIF_KEY) && (value == "enable"))
                     {
                         gIntfsOrch->generateInterfaceMap();
                     }
                     // Install COUNTER_ID_LIST/ATTR_ID_LIST only when hearing buffer pool watermark enable event
-                    if ((key == BUFFER_POOL_WATERMARK_KEY) && (value == "enable"))
+                    if (gBufferOrch && (key == BUFFER_POOL_WATERMARK_KEY) && (value == "enable"))
                     {
                         gBufferOrch->generateBufferPoolWatermarkCounterIdList();
                     }
-
+                    if (gFabricPortsOrch)
+                    {
+                        gFabricPortsOrch->generateQueueStats();
+                    }
                     vector<FieldValueTuple> fieldValues;
                     fieldValues.emplace_back(FLEX_COUNTER_STATUS_FIELD, value);
                     m_flexCounterGroupTable->set(flexCounterGroupMap[key], fieldValues);
