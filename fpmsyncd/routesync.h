@@ -41,12 +41,12 @@ private:
     /* Handle regular route (include VRF route) */
     void onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf);
 
-    void parse_encap(struct rtattr *tb, uint32_t &encap_value, string &rmac, uint32_t &vlan);
+    void parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac, uint32_t &vlan);
 
-    void netlink_parse_rtattr_nested(struct rtattr **tb, int max,
+    void parseRtAttrNested(struct rtattr **tb, int max,
                  struct rtattr *rta);
 
-    char *prefix_mac2str(char *mac, char *buf, int size);
+    char *prefixMac2Str(char *mac, char *buf, int size);
 
 
     /* Handle prefix route */

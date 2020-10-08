@@ -15,7 +15,9 @@ void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
     while (RTA_OK(rta, len)) 
     {
         if (rta->rta_type <= max)
+        {
             tb[rta->rta_type] = rta;
+        }
         rta = RTA_NEXT(rta, len);
     }
 }
@@ -29,14 +31,15 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
 
     rtm = (struct rtmsg *)NLMSG_DATA(h);
 
-    if (h->nlmsg_type != RTM_NEWROUTE
-        && h->nlmsg_type != RTM_DELROUTE)
-        return 0;
+    if (h->nlmsg_type != RTM_NEWROUTE && h->nlmsg_type != RTM_DELROUTE)
+    {
+        return false;
+    }
 
     len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct rtmsg)));
     if (len < 0) 
     {
-        return 0;
+        return false;
     }
 
     memset(tb, 0, sizeof(tb));
@@ -45,7 +48,9 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
     if (!tb[RTA_MULTIPATH])
     {
         if (tb[RTA_ENCAP_TYPE])
+        {
             encap_type = *(short *)RTA_DATA(tb[RTA_ENCAP_TYPE]);
+        }
     }
     else
     {
@@ -57,9 +62,10 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
         
         for (;;) 
         {
-            if (len < (int)sizeof(*rtnh)
-                || rtnh->rtnh_len > len)
+            if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
+            {
                 break;
+            }
 
             if (rtnh->rtnh_len > sizeof(*rtnh)) 
             {
@@ -74,7 +80,9 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
             }
 
             if (rtnh->rtnh_len == 0)
+            {
                 break;
+            }
 
             len -= NLMSG_ALIGN(rtnh->rtnh_len);
             rtnh = RTNH_NEXT(rtnh);                
@@ -84,9 +92,11 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
     SWSS_LOG_INFO("Rx MsgType:%d Encap:%d", h->nlmsg_type, encap_type);
 
     if (encap_type > 0)
-        return 1;
+    {
+        return true;
+    }
 
-    return 0;
+    return false;
 }
 
 FpmLink::FpmLink(unsigned short port) :
@@ -204,6 +214,12 @@ uint64_t FpmLink::readData()
 
             nlmsghdr *nl_hdr = (nlmsghdr *)fpm_msg_data(hdr);
 
+            /*
+             * EVPN Type5 Add Routes need to be process in Raw mode as they contain 
+             * RMAC, VLAN and L3VNI information.
+             * Where as all other route will be using rtnl api to extract information 
+             * from the netlink msg.
+           * */
             isRaw = isRawProcessing(nl_hdr);
 
             nl_msg *msg = nlmsg_convert(nl_hdr);
@@ -216,6 +232,7 @@ uint64_t FpmLink::readData()
 
             if (isRaw)
             {
+                /* EVPN Type5 Add route processing */
                 NetDispatcher::getInstance().onNetlinkMessageRaw(msg);
             }
             else

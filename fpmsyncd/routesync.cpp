@@ -54,14 +54,18 @@ RouteSync::RouteSync(RedisPipeline *pipeline) :
     rtnl_link_alloc_cache(m_nl_sock, AF_UNSPEC, &m_link_cache);
 }
 
-char *RouteSync::prefix_mac2str(char *mac, char *buf, int size)
+char *RouteSync::prefixMac2Str(char *mac, char *buf, int size)
 {
     char *ptr = buf;
 
     if (!mac)
+    {
         return NULL;
+    }
     if (!buf)
+    {
         return NULL;
+    }
 
     snprintf(ptr, (ETHER_ADDR_STRLEN), "%02x:%02x:%02x:%02x:%02x:%02x",
             (uint8_t)mac[0], (uint8_t)mac[1],
@@ -71,41 +75,42 @@ char *RouteSync::prefix_mac2str(char *mac, char *buf, int size)
 }
 
 /**
- * netlink_parse_rtattr_nested() - Parses a nested route attribute
+ * parseRtAttrNested() - Parses a nested route attribute
  * @tb:         Pointer to array for storing rtattr in.
  * @max:        Max number to store.
  * @rta:        Pointer to rtattr to look for nested items in.
  */
-void RouteSync::netlink_parse_rtattr_nested(struct rtattr **tb, int max,
+void RouteSync::parseRtAttrNested(struct rtattr **tb, int max,
                                                             struct rtattr *rta)
 {
 	netlink_parse_rtattr(tb, max, (struct rtattr *)RTA_DATA(rta), (int)RTA_PAYLOAD(rta));
 }
 
 /**
- * @parse_encap() - Parses encapsulated attributes
+ * @parseEncap() - Parses encapsulated attributes
  * @tb:         Pointer to rtattr to look for nested items in.
  * @labels:     Pointer to store vni in.
  *
  * Return:      void.
  */
-void RouteSync::parse_encap(struct rtattr *tb, uint32_t &encap_value, string &rmac, uint32_t &vlan)
+void RouteSync::parseEncap(struct rtattr *tb, uint32_t &encap_value, string &rmac, uint32_t &vlan)
 {
     struct rtattr *tb_encap[3] = {0};
     char mac_buf[MAX_ADDR_SIZE+1];
     char mac_val[MAX_ADDR_SIZE+1];
 
-    netlink_parse_rtattr_nested(tb_encap, 3, tb);
+    parseRtAttrNested(tb_encap, 3, tb);
     encap_value = *(uint32_t *)RTA_DATA(tb_encap[VXLAN_VNI]);
     memcpy(&mac_buf, RTA_DATA(tb_encap[VXLAN_RMAC]), MAX_ADDR_SIZE);
     vlan = *(uint32_t *)RTA_DATA(tb_encap[VXLAN_VLAN]);
 
-    SWSS_LOG_DEBUG("Rx MAC %s VNI %d Vlan %d",
-        prefix_mac2str(mac_buf, mac_val, ETHER_ADDR_STRLEN), encap_value, vlan);
+    SWSS_LOG_INFO("Rx MAC %s VNI %d Vlan %d",
+        prefixMac2Str(mac_buf, mac_val, ETHER_ADDR_STRLEN), encap_value, vlan);
     rmac = mac_val;
 
     return;
 }
+
 void RouteSync::getEvpnNextHopSep(string& nexthops, string& vni_list,  
                    string& mac_list, string& intf_list)
 {
@@ -185,19 +190,22 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             inet_ntop(gw_af, gateaddr, nexthopaddr, MAX_ADDR_SIZE);
 
             if (tb[RTA_ENCAP_TYPE])
+            {
                 encap = *(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]);
+            }
 
             if (tb[RTA_ENCAP] && tb[RTA_ENCAP_TYPE]
                 && (*(uint16_t *)RTA_DATA(tb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN)) 
             {
-                parse_encap(tb[RTA_ENCAP], encap_value, rmac, vlan);
+                parseEncap(tb[RTA_ENCAP], encap_value, rmac, vlan);
             }
             SWSS_LOG_DEBUG("Rx MsgType:%d Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%d", h->nlmsg_type,
                             nexthopaddr, encap, encap_value, rmac.c_str(), vlan);
 
-            if (encap_value == 0 || vlan == 0
-                || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+            if (encap_value == 0 || vlan == 0 || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
+            {
                 return false;
+            }
 
             getEvpnNextHopGwIf(nexthopaddr, encap_value, nexthops, vni_list, mac_list, intf_list, rmac, vlan);
         }
@@ -213,9 +221,10 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
             for (;;) 
             {
                 uint16_t encap = 0;
-                if (len < (int)sizeof(*rtnh)
-                    || rtnh->rtnh_len > len)
+                if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
+                {
                     break;
+                }
 
                 gate = 0;
                 if (rtnh->rtnh_len > sizeof(*rtnh)) 
@@ -226,7 +235,9 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                                           (int)(rtnh->rtnh_len - sizeof(*rtnh)));
 
                     if (subtb[RTA_GATEWAY])
+                    {
                         gate = RTA_DATA(subtb[RTA_GATEWAY]);
+                    }
 
                     if (gate)
                     {
@@ -260,23 +271,26 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                     inet_ntop(gw_af, gateaddr, nexthopaddr, MAX_ADDR_SIZE);
 
                     if (subtb[RTA_ENCAP_TYPE])
+                    {
                         encap = *(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]);
+                    }
 
                     if (subtb[RTA_ENCAP] && subtb[RTA_ENCAP_TYPE]
                         && (*(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]) == NH_ENCAP_VXLAN))
                     {
-                        parse_encap(subtb[RTA_ENCAP], encap_value, rmac, vlan);
+                        parseEncap(subtb[RTA_ENCAP], encap_value, rmac, vlan);
                     }
                     SWSS_LOG_DEBUG("Multipath Nexthop:%s encap:%d encap_value:%d rmac:%s vlan:%d",
                                     nexthopaddr, encap, encap_value, rmac.c_str(), vlan);
 
-                    if (encap_value == 0 || vlan == 0
-                        || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
-                        return false;
-
-                    if(gate)
+                    if (encap_value == 0 || vlan == 0 || MacAddress(rmac) == MacAddress("00:00:00:00:00:00"))
                     {
-                        if(ecmp_count)
+                        return false;
+                    }
+
+                    if (gate)
+                    {
+                        if (ecmp_count)
                         {
                             getEvpnNextHopSep(nexthops, vni_list, mac_list, intf_list);
                         }
@@ -287,7 +301,9 @@ bool RouteSync::getEvpnNextHop(struct nlmsghdr *h, int received_bytes,
                 }
 
                 if (rtnh->rtnh_len == 0)
+                {
                     break;
+                }
 
                 len -= NLMSG_ALIGN(rtnh->rtnh_len);
                 rtnh = RTNH_NEXT(rtnh);
@@ -317,9 +333,13 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
 
     if (tb[RTA_DST])
+    {
         dest = RTA_DATA(tb[RTA_DST]);
+    }
     else
+    {
         dest = anyaddr;
+    }
 
     if (rtm->rtm_family == AF_INET)
     {
@@ -345,9 +365,13 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
 
     /* Table corresponding to route. */
     if (tb[RTA_TABLE])
+    {
         vrf_index = *(int *)RTA_DATA(tb[RTA_TABLE]);
+    }
     else
+    {
         vrf_index = rtm->rtm_table;
+    }
 
     if (vrf_index)
     {
@@ -372,7 +396,7 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "%s/%u", 
                 inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE), dst_len);
 
-    SWSS_LOG_DEBUG("Receive route message dest ip prefix: %s Op:%s", 
+    SWSS_LOG_INFO("Receive route message dest ip prefix: %s Op:%s", 
                     destipprefix,
                     nlmsg_type == RTM_NEWROUTE ? "add":"del");
 
@@ -404,7 +428,6 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
     }
     else if (nlmsg_type != RTM_NEWROUTE)
     {
-        SWSS_LOG_NOTICE("Unknown message-type: %d for %s", nlmsg_type, destipprefix);
         return;
     }
 
