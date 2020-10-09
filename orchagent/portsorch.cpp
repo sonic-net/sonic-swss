@@ -2992,7 +2992,7 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 /* Assert the port doesn't belong to any LAG already */
                 assert(!port.m_lag_id && !port.m_lag_member_id);
 
-                if (!addLagMember(lag, port, (status == "disabled")))
+                if (!addLagMember(lag, port, (status == "enabled")))
                 {
                     it++;
                     continue;
@@ -3758,7 +3758,7 @@ void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
     }
 }
 
-bool PortsOrch::addLagMember(Port &lag, Port &port, bool disableForwarding)
+bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
 {
     SWSS_LOG_ENTER();
 
@@ -3779,7 +3779,7 @@ bool PortsOrch::addLagMember(Port &lag, Port &port, bool disableForwarding)
     attr.value.oid = port.m_port_id;
     attrs.push_back(attr);
 
-    if (disableForwarding)
+    if (!enableForwarding)
     {
         attr.id = SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE;
         attr.value.booldata = true;
