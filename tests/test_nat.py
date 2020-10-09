@@ -94,8 +94,8 @@ class TestNat(object):
             "entry_type": "static"
         }
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
 
         for key in keys:
             assert "\"dst_ip\":\"67.66.65.1\"" in key or "\"src_ip\":\"18.18.18.2\"" in key
@@ -140,8 +140,8 @@ class TestNat(object):
 
         assert fvs == {"translated_ip": "18.18.18.2", "translated_l4_port": "180", "nat_type": "dnat", "entry_type": "static"}
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
         for key in keys:
             if "\"dst_ip\":\"67.66.65.1\"" in key and "\"l4_dst_port\":\"670\"" in key:
                 assert True
@@ -196,8 +196,8 @@ class TestNat(object):
         fvs = self.app_db.wait_for_entry("NAT_TWICE_TABLE", "18.18.18.2:18.18.18.1")
         assert fvs == {"translated_src_ip": "67.66.65.1", "translated_dst_ip": "67.66.65.2", "entry_type": "static"}
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        #check the entry in asic db, 4 keys = SNAT, DNAT and 2 DNAT_Pools
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 4)
         for key in keys:
             assert "\"dst_ip\":\"67.66.65.1\"" in key or "\"src_ip\":\"18.18.18.2\"" in key
 
@@ -248,8 +248,8 @@ class TestNat(object):
         fvs = self.app_db.wait_for_entry("NAPT_TWICE_TABLE", "UDP:18.18.18.2:182:18.18.18.1:181")
         assert fvs == {"translated_src_ip": "67.66.65.1", "translated_src_l4_port": "660", "translated_dst_ip": "67.66.65.2", "translated_dst_l4_port": "670", "entry_type": "static"}
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        #check the entry in asic db, 4 keys = SNAT, DNAT and 2 DNAT_Pools
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 4)
         for key in keys:
             if "\"src_ip\":\"18.18.18.2\"" in key or "\"l4_src_port\":\"182\"" in key:
                 assert True
