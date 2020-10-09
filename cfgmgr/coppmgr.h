@@ -50,14 +50,11 @@ typedef std::map<std::string, CoppTrapConf> CoppTrapConfMap;
 /* TrapGroupName to GroupConf map  */
 typedef std::map<std::string, std::string> CoppTrapIdTrapGroupMap;
 
-/* Trap Id to Enable/Disabled map */
-typedef std::map<std::string, bool> CoppTrapDisabledMap;
-
 /* Key to Field value Tuple map */
 typedef std::map<std::string, std::vector<FieldValueTuple>> CoppCfg;
 
 /* Restricted Copp group key to Field value map's map */
-typedef std::map<std::string, std::map<std::string, std::string>> CoppGroupRestrictedConf;
+typedef std::map<std::string, std::map<std::string, std::string>> CoppGroupFvs;
 
 class CoppMgr : public Orch
 {
@@ -67,19 +64,15 @@ public:
 
     using Orch::doTask;
 private:
-    Table                    m_cfgCoppTrapTable;
-    Table                    m_cfgCoppGroupTable;
-    ProducerStateTable       m_appCoppTable;
-    Table                    m_stateCoppTrapTable;
-    Table                    m_stateCoppGroupTable;
-    Table                    m_cfgFeatureTable;
-    Table                    m_coppTable;
-    CoppTrapConfMap          m_coppTrapConfMap;
-    CoppTrapIdTrapGroupMap   m_coppTrapIdTrapGroupMap;
-    CoppGroupRestrictedConf  m_coppGroupRestrictedMap;
-    CoppTrapDisabledMap      m_coppTrapDisabledMap;
-    CoppCfg                  m_coppGroupInitCfg;
-    CoppCfg                  m_coppTrapInitCfg;
+    Table                  m_cfgCoppTrapTable, m_cfgCoppGroupTable, m_cfgFeatureTable, m_coppTable;
+    Table                  m_stateCoppTrapTable, m_stateCoppGroupTable;
+    ProducerStateTable     m_appCoppTable;
+    CoppTrapConfMap        m_coppTrapConfMap;
+    CoppTrapIdTrapGroupMap m_coppTrapIdTrapGroupMap;
+    CoppGroupFvs           m_coppGroupFvs;
+    std::set<std::string>  m_coppDisabledTrapIds;
+    CoppCfg                m_coppGroupInitCfg;
+    CoppCfg                m_coppTrapInitCfg;
     
 
     void doTask(Consumer &consumer);
@@ -90,10 +83,9 @@ private:
     void getTrapGroupTrapIds(std::string trap_group, std::string &trap_ids);
     void removeTrapIdsFromTrapGroup(std::string trap_group, std::string trap_ids);
     void addTrapIdsToTrapGroup(std::string trap_group, std::string trap_ids);
-    bool coppGroupHasRestrictedFields (std::vector<FieldValueTuple> &fvs);
     bool isTrapDisabled(std::string trap_id);
     void setFeatureTrapIdsStatus(std::string feature, bool enable);
-    bool checkIfTrapGroupFeaturePending(std::string trap_group_name);
+    bool checkTrapGroupPending(std::string trap_group_name);
 
     void setCoppGroupStateOk(std::string alias);
     void delCoppGroupStateOk(std::string alias);
@@ -103,6 +95,8 @@ private:
     void coppGroupGetModifiedFvs(std::string key, std::vector<FieldValueTuple> &trap_group_fvs,
                                  std::vector<FieldValueTuple> &modified_fvs, bool del_on_field_remove);
     void parseInitFile(void);
+    bool isTrapGroupInstalled(std::string key);
+    void mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::string> &cfg_keys, Table &cfgTable);
 
 };
 
