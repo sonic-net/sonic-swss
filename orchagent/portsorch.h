@@ -93,7 +93,6 @@ public:
     void setPort(string alias, Port port);
     void getCpuPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
-    bool getAclBindPortId(string alias, sai_object_id_t &port_id);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;

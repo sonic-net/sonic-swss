@@ -1555,10 +1555,10 @@ void AclTable::update(SubjectType type, void *cntx)
     }
 
     PortUpdate *update = static_cast<PortUpdate *>(cntx);
-
     Port &port = update->port;
+
     sai_object_id_t bind_port_id;
-    if (!gPortsOrch->getAclBindPortId(port.m_alias, bind_port_id))
+    if (!AclOrch::getAclBindPortId(port, bind_port_id))
     {
         SWSS_LOG_ERROR("Failed to get port %s bind port ID",
                        port.m_alias.c_str());
@@ -2634,7 +2634,14 @@ bool AclOrch::updateAclTablePorts(AclTable &newTable, AclTable &curTable)
         }
         else if (curTable.portSet.find(p) != curTable.portSet.end())
         {
-            gPortsOrch->getAclBindPortId(p, port_oid);
+            Port port;
+            if (!gPortsOrch->getPort(p, port))
+            {
+                SWSS_LOG_ERROR("Unable to retrieve OID for port %s", p.c_str());
+                continue;
+            }
+
+            getAclBindPortId(port, port_oid);
             assert(port_oid != SAI_NULL_OBJECT_ID);
             assert(curTable.ports.find(port_oid) != curTable.ports.end());
             if (curTable.ports[port_oid] != SAI_NULL_OBJECT_ID)
@@ -2661,7 +2668,7 @@ bool AclOrch::updateAclTablePorts(AclTable &newTable, AclTable &curTable)
             continue;
         }
 
-        if (!gPortsOrch->getAclBindPortId(p, port_oid))
+        if (!getAclBindPortId(port, port_oid))
         {
             // We do NOT expect this to happen at all.
             // If at all happens, lets catch it here!
@@ -3170,7 +3177,7 @@ bool AclOrch::processAclTablePorts(string portList, AclTable &aclTable)
         }
 
         sai_object_id_t bind_port_id;
-        if (!gPortsOrch->getAclBindPortId(alias, bind_port_id))
+        if (!getAclBindPortId(port, bind_port_id))
         {
             SWSS_LOG_ERROR("Failed to get port %s bind port ID for ACL table %s",
                     alias.c_str(), aclTable.id.c_str());
@@ -3565,4 +3572,35 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
     m_AclTables.erase(table_oid);
 
     return SAI_STATUS_SUCCESS;
+}
+
+bool AclOrch::getAclBindPortId(Port &port, sai_object_id_t &port_id)
+{
+    SWSS_LOG_ENTER();
+
+    switch (port.m_type)
+    {
+        case Port::PHY:
+            if (port.m_lag_member_id != SAI_NULL_OBJECT_ID)
+            {
+                SWSS_LOG_WARN("Invalid configuration. Bind table to LAG member %s is not allowed", port.m_alias.c_str());
+                return false;
+            }
+            else
+            {
+                port_id = port.m_port_id;
+            }
+            break;
+        case Port::LAG:
+            port_id = port.m_lag_id;
+            break;
+        case Port::VLAN:
+            port_id = port.m_vlan_info.vlan_oid;
+            break;
+        default:
+            SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", port.m_alias.c_str(), port.m_type);
+            return false;
+    }
+
+    return true;
 }
