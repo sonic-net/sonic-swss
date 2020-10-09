@@ -387,12 +387,12 @@ bool AclRule::validateAddMatch(string attr_name, string attr_value)
         return false;
     }
 
-    // NOTE: For backwards compatibility, allow users to substitute IP_PROTOCOL for NEXT_HEADER.
-    // This should be removed after the 202012 release.
+    // TODO: For backwards compatibility, users can substitute IP_PROTOCOL for NEXT_HEADER.
+    // This should be removed in a future release.
     if ((m_tableType == ACL_TABLE_MIRRORV6 || m_tableType == ACL_TABLE_L3V6)
             && attr_name == MATCH_IP_PROTOCOL)
     {
-        SWSS_LOG_WARN("Support for IP protocol on IPv6 tables will be removed in the next release, please switch to using NEXT_HEADER instead!");
+        SWSS_LOG_WARN("Support for IP protocol on IPv6 tables will be removed in a future release, please switch to using NEXT_HEADER instead!");
         attr_name = MATCH_NEXT_HEADER;
     }
 
@@ -1046,13 +1046,8 @@ bool AclRuleL3V6::validateAddMatch(string attr_name, string attr_value)
         return false;
     }
 
-    // NOTE: For backwards compatibility, allow users to substitute IP_PROTOCOL for NEXT_HEADER.
-    // This check should be added after the 202012 release.
-    // if (attr_name == MATCH_IP_PROTOCOL)
-    // {
-    //    SWSS_LOG_ERROR("IP Protocol match is not supported for table type L3V6");
-    //    return false;
-    // }
+    // TODO: For backwards compatibility, users can substitute IP_PROTOCOL for NEXT_HEADER.
+    // Should add a check for IP_PROTOCOL in a future release.
 
     return AclRule::validateAddMatch(attr_name, attr_value);
 }
@@ -1149,8 +1144,8 @@ bool AclRuleMirror::validateAddMatch(string attr_name, string attr_value)
         return false;
     }
 
-    // NOTE: For backwards compatibility, allow users to substitute IP_PROTOCOL for NEXT_HEADER.
-    // This check should be expanded after the 202012 release.
+    // TODO: For backwards compatibility, users can substitute IP_PROTOCOL for NEXT_HEADER.
+    // This check should be expanded to include IP_PROTOCOL in a future release.
     if (m_tableType == ACL_TABLE_MIRRORV6 &&
             (attr_name == MATCH_SRC_IP || attr_name == MATCH_DST_IP ||
              attr_name == MATCH_ICMP_TYPE || attr_name == MATCH_ICMP_CODE ||
