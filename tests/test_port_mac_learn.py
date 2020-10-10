@@ -60,7 +60,7 @@ class TestPortMacLearn(object):
             return True
         else:
             return False
-        
+
     def test_PortMacLearnMode(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -126,7 +126,7 @@ class TestPortMacLearn(object):
                                           ("mtu", "9100")])
         tbl.set("PortChannel001", fvs)
         time.sleep(1)
-        
+
         # create vlan
         tbl = swsscommon.Table(self.cdb, "VLAN")
         fvs = swsscommon.FieldValuePairs([("vlanid", "3")])
@@ -181,3 +181,9 @@ class TestPortMacLearn(object):
         tbl = swsscommon.Table(self.cdb, "PORTCHANNEL")
         tbl._del("PortChannel001")
         time.sleep(1)
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

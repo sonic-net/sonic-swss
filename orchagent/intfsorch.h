@@ -17,12 +17,14 @@ extern sai_object_id_t gVirtualRouterId;
 extern MacAddress gMacAddress;
 
 #define RIF_STAT_COUNTER_FLEX_COUNTER_GROUP "RIF_STAT_COUNTER"
+#define RIF_RATE_COUNTER_FLEX_COUNTER_GROUP "RIF_RATE_COUNTER"
 
 struct IntfsEntry
 {
     std::set<IpPrefix>  ip_addresses;
     int                 ref_count;
     sai_object_id_t     vrf_id;
+    bool                proxy_arp;
 };
 
 typedef map<string, IntfsEntry> IntfsTable;
@@ -35,7 +37,7 @@ public:
     sai_object_id_t getRouterIntfsId(const string&);
     bool isPrefixSubnet(const IpPrefix&, const string&);
     string getRouterIntfsAlias(const IpAddress &ip, const string &vrf_name = "");
-
+    string getRifRateFlexCounterTableKey(string key);
     void increaseRouterIntfsRefCount(const string&);
     void decreaseRouterIntfsRefCount(const string&);
 
@@ -59,6 +61,8 @@ public:
     {
         return m_syncdIntfses;
     }
+
+    bool updateSyncdIntfPfx(const string &alias, const IpPrefix &ip_prefix, bool add = true);
 
 private:
 
@@ -87,6 +91,9 @@ private:
 
     void addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
     void removeDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix);
+
+    bool setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_type_t vlan_flood_type);
+    bool setIntfProxyArp(const string &alias, const string &proxy_arp);
 };
 
 #endif /* SWSS_INTFSORCH_H */

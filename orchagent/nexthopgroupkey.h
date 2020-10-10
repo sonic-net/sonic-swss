@@ -152,6 +152,11 @@ public:
         return m_overlay_nexthops;
     }
 
+    void clear()
+    {
+        m_nexthops.clear();
+    }
+
 private:
     std::set<NextHopKey> m_nexthops;
     bool m_overlay_nexthops;

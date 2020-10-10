@@ -60,16 +60,47 @@ void Request::parseKey(const KeyOpFieldsValuesTuple& request)
 
     // split the key by separator
     std::vector<std::string> key_items;
-    size_t f_position = 0;
-    size_t e_position = full_key_.find(key_separator_);
-    while (e_position != std::string::npos)
+    size_t key_item_start = 0;
+    size_t key_item_end = full_key_.find(key_separator_);
+    while (key_item_end != std::string::npos)
     {
-        key_items.push_back(full_key_.substr(f_position, e_position - f_position));
-        f_position = e_position + 1;
-        e_position = full_key_.find(key_separator_, f_position);
+        key_items.push_back(full_key_.substr(key_item_start, key_item_end - key_item_start));
+        key_item_start = key_item_end + 1;
+        key_item_end = full_key_.find(key_separator_, key_item_start);
     }
-    key_items.push_back(full_key_.substr(f_position, full_key_.length()));
+    key_items.push_back(full_key_.substr(key_item_start, full_key_.length()));
 
+    /*
+     * Attempt to parse an IPv6 address only if the following conditions are met:
+     * - The key separator is ":" 
+     *     - The above logic will already correctly parse IPv6 addresses using other key separators
+     *     - Special consideration is only needed for ":" key separators since IPv6 addresses also use ":" as the field separator
+     * - The number of parsed key items exceeds the number of expected key items
+     *     - If we have too many key items and the last key item is supposed to be an IP or prefix, there is a chance that it was an 
+     *       IPv6 address that got segmented during parsing
+     *     - The above logic will always break an IPv6 address into at least 2 parts, so if an IPv6 address has been parsed incorrectly it will
+     *       always increase the number of key items
+     * - The last key item is an IP address or prefix
+     *     - This runs under the assumption that an IPv6 address, if present, will always be the last key item
+     */
+    if (key_separator_ == ':' and 
+        key_items.size() > number_of_key_items_ and 
+        (request_description_.key_item_types.back() == REQ_T_IP or request_description_.key_item_types.back() == REQ_T_IP_PREFIX))
+    {
+        // Remove key_items so that key_items.size() is correct, then assemble the removed items into an IPv6 address
+        std::vector<std::string> ip_addr_groups(--key_items.begin() + number_of_key_items_, key_items.end());
+        key_items.erase(--key_items.begin() + number_of_key_items_, key_items.end());
+
+        std::string ip_string;
+
+        for (const auto &i : ip_addr_groups)
+        {
+            ip_string += i + ":";
+        }
+        ip_string.pop_back(); // remove extra ":" from end of string
+
+        key_items.push_back(ip_string);
+    }
     if (key_items.size() != number_of_key_items_)
     {
         throw std::invalid_argument(std::string("Wrong number of key items. Expected ")

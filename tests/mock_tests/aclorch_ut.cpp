@@ -2,11 +2,13 @@
 
 extern sai_object_id_t gSwitchId;
 
+extern SwitchOrch *gSwitchOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
 extern RouteOrch *gRouteOrch;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
+extern FgNhgOrch *gFgNhgOrch;
 
 extern FdbOrch *gFdbOrch;
 extern MirrorOrch *gMirrorOrch;
@@ -18,6 +20,7 @@ extern sai_port_api_t *sai_port_api;
 extern sai_vlan_api_t *sai_vlan_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_route_api_t *sai_route_api;
+extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 
 namespace aclorch_test
 {
@@ -121,7 +124,7 @@ namespace aclorch_test
         AclOrch *m_aclOrch;
         swss::DBConnector *config_db;
 
-        MockAclOrch(swss::DBConnector *config_db, swss::DBConnector *state_db,
+        MockAclOrch(swss::DBConnector *config_db, swss::DBConnector *state_db, SwitchOrch *switchOrch,
                     PortsOrch *portsOrch, MirrorOrch *mirrorOrch, NeighOrch *neighOrch, RouteOrch *routeOrch) :
             config_db(config_db)
         {
@@ -130,9 +133,7 @@ namespace aclorch_test
 
             vector<TableConnector> acl_table_connectors = { confDbAclTable, confDbAclRuleTable };
 
-            TableConnector stateDbSwitchTable(state_db, "SWITCH_CAPABILITY");
-
-            m_aclOrch = new AclOrch(acl_table_connectors, stateDbSwitchTable, portsOrch, mirrorOrch,
+            m_aclOrch = new AclOrch(acl_table_connectors, switchOrch, portsOrch, mirrorOrch,
                                     neighOrch, routeOrch);
         }
 
@@ -258,6 +259,7 @@ namespace aclorch_test
             sai_api_query(SAI_API_VLAN, (void **)&sai_vlan_api);
             sai_api_query(SAI_API_ROUTE, (void **)&sai_route_api);
             sai_api_query(SAI_API_ACL, (void **)&sai_acl_api);
+            sai_api_query(SAI_API_NEXT_HOP_GROUP, (void **)&sai_next_hop_group_api);
 
             sai_attribute_t attr;
 
@@ -282,6 +284,10 @@ namespace aclorch_test
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
 
             gVirtualRouterId = attr.value.oid;
+
+            TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
+            ASSERT_EQ(gSwitchOrch, nullptr);
+            gSwitchOrch = new SwitchOrch(m_app_db.get(), APP_SWITCH_TABLE_NAME, stateDbSwitchTable);
 
             // Create dependencies ...
 
@@ -310,8 +316,16 @@ namespace aclorch_test
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch);
 
+            ASSERT_EQ(gFgNhgOrch, nullptr);
+            vector<string> fgnhg_tables = {
+                CFG_FG_NHG,
+                CFG_FG_NHG_PREFIX,
+                CFG_FG_NHG_MEMBER
+            };
+            gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
+
             ASSERT_EQ(gRouteOrch, nullptr);
-            gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gNeighOrch, gIntfsOrch, gVrfOrch);
+            gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
 
             TableConnector applDbFdb(m_app_db.get(), APP_FDB_TABLE_NAME);
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
@@ -339,6 +353,8 @@ namespace aclorch_test
         {
             AclTestBase::TearDown();
 
+            delete gSwitchOrch;
+            gSwitchOrch = nullptr;
             delete gFdbOrch;
             gFdbOrch = nullptr;
             delete gMirrorOrch;
@@ -355,6 +371,8 @@ namespace aclorch_test
             gCrmOrch = nullptr;
             delete gPortsOrch;
             gPortsOrch = nullptr;
+            delete gFgNhgOrch;
+            gFgNhgOrch = nullptr; 
 
             auto status = sai_switch_api->remove_switch(gSwitchId);
             ASSERT_EQ(status, SAI_STATUS_SUCCESS);
@@ -372,7 +390,7 @@ namespace aclorch_test
 
         shared_ptr<MockAclOrch> createAclOrch()
         {
-            return make_shared<MockAclOrch>(m_config_db.get(), m_state_db.get(), gPortsOrch, gMirrorOrch,
+            return make_shared<MockAclOrch>(m_config_db.get(), m_state_db.get(), gSwitchOrch, gPortsOrch, gMirrorOrch,
                                             gNeighOrch, gRouteOrch);
         }
 
@@ -381,7 +399,6 @@ namespace aclorch_test
             vector<swss::FieldValueTuple> fields;
 
             fields.push_back({ "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" });
-            fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL", "true" });
 
@@ -393,6 +410,7 @@ namespace aclorch_test
             switch (acl_table.type)
             {
                 case ACL_TABLE_L3:
+                    fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" });
                     fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP", "true" });
                     fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_DST_IP", "true" });
                     break;
@@ -891,7 +909,7 @@ namespace aclorch_test
     //
     // Using fixed ports = {"1,2"} for now.
     // The bind operations will be another separately test cases.
-    TEST_F(AclOrchTest, ACL_Creation_and_Destorying)
+    TEST_F(AclOrchTest, ACL_Creation_and_Destruction)
     {
         auto orch = createAclOrch();
 

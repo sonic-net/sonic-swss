@@ -13,6 +13,8 @@ extern "C" {
 #include <getopt.h>
 #include <unistd.h>
 #include <inttypes.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <sys/time.h>
 #include "timestamp.h"
@@ -21,10 +23,12 @@ extern "C" {
 #include <logger.h>
 
 #include "orchdaemon.h"
+#include "sai_serialize.h"
 #include "saihelper.h"
 #include "notifications.h"
 #include <signal.h>
 #include "warm_restart.h"
+#include "gearboxutils.h"
 
 using namespace std;
 using namespace swss;
@@ -33,6 +37,8 @@ extern sai_switch_api_t *sai_switch_api;
 extern sai_router_interface_api_t *sai_router_intfs_api;
 
 #define UNREFERENCED_PARAMETER(P)       (P)
+
+#define UNDERLAY_RIF_DEFAULT_MTU 9100
 
 /* Global variables */
 sai_object_id_t gVirtualRouterId;
@@ -49,6 +55,7 @@ bool gSwssRecord = true;
 bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
 bool gSyncMode = false;
+char *gAsicInstance = NULL;
 
 extern bool gIsNatSupported;
 
@@ -57,7 +64,7 @@ string gRecordFile;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-s]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-i INST_ID] [-s]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -67,6 +74,7 @@ void usage()
     cout << "    -d record_location: set record logs folder location (default .)" << endl;
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
+    cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
     cout << "    -s: enable synchronous mode" << endl;
 }
 
@@ -93,7 +101,43 @@ void syncd_apply_view()
     {
         SWSS_LOG_ERROR("Failed to notify syncd APPLY_VIEW %d", status);
         exit(EXIT_FAILURE);
+    } 
+}
+
+/*
+ * If Gearbox is enabled...
+ * Create and initialize the external Gearbox PHYs. Upon success, store the
+ * new PHY OID in the database to be used later when creating the Gearbox
+ * ports.
+*/
+void init_gearbox_phys(DBConnector *applDb)
+{
+    Table* tmpGearboxTable = new Table(applDb, "_GEARBOX_TABLE");
+    map<int, gearbox_phy_t> gearboxPhyMap;
+    GearboxUtils gearbox;
+
+    if (gearbox.isGearboxEnabled(tmpGearboxTable))
+    {
+        gearboxPhyMap = gearbox.loadPhyMap(tmpGearboxTable);
+        SWSS_LOG_DEBUG("BOX: gearboxPhyMap size = %d.", (int) gearboxPhyMap.size());
+
+        for (auto it = gearboxPhyMap.begin(); it != gearboxPhyMap.end(); ++it)
+        {
+            SWSS_LOG_NOTICE("BOX: Initialize PHY %d.", it->first);
+
+            if (initSaiPhyApi(&it->second) != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("BOX: Failed to initialize PHY %d.", it->first);
+            }
+            else
+            {
+                SWSS_LOG_NOTICE("BOX: Created new PHY phy_id:%d phy_oid:%s.", it->second.phy_id, it->second.phy_oid.c_str());
+                tmpGearboxTable->hset("phy:"+to_string(it->second.phy_id), "phy_oid", it->second.phy_oid.c_str());
+                tmpGearboxTable->hset("phy:"+to_string(it->second.phy_id), "firmware_major_version", it->second.firmware_major_version.c_str());
+            }
+        }
     }
+    delete tmpGearboxTable;
 }
 
 int main(int argc, char **argv)
@@ -116,12 +160,16 @@ int main(int argc, char **argv)
 
     string record_location = ".";
 
-    while ((opt = getopt(argc, argv, "b:m:r:d:hs")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:d:i:hs")) != -1)
     {
         switch (opt)
         {
         case 'b':
             gBatchSize = atoi(optarg);
+            break;
+        case 'i':
+            gAsicInstance = (char *)calloc(strlen(optarg)+1, sizeof(char));
+            memcpy(gAsicInstance, optarg, strlen(optarg));
             break;
         case 'm':
             gMacAddress = MacAddress(optarg);
@@ -182,7 +230,6 @@ int main(int argc, char **argv)
     attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
     attr.value.booldata = true;
     attrs.push_back(attr);
-
     attr.id = SAI_SWITCH_ATTR_FDB_EVENT_NOTIFY;
     attr.value.ptr = (void *)on_fdb_event;
     attrs.push_back(attr);
@@ -215,6 +262,11 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
+    /* Must be last Attribute */
+    attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
+    attr.value.u64 = gSwitchId;
+    attrs.push_back(attr);
+
     // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
     // since it is not using ASIC_DB, we can execute it before create_switch
     // when g_syncMode is set to true here, create_switch will wait the response from syncd
@@ -226,6 +278,13 @@ int main(int argc, char **argv)
         sai_switch_api->set_switch_attribute(gSwitchId, &attr);
     }
 
+    if (gAsicInstance)
+    {
+        attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
+        attr.value.s8list.count = (uint32_t)(strlen(gAsicInstance)+1);
+        attr.value.s8list.list = (int8_t*)gAsicInstance;
+        attrs.push_back(attr);
+    }
 
     status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -292,6 +351,10 @@ int main(int argc, char **argv)
     underlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
     underlay_intf_attrs.push_back(underlay_intf_attr);
 
+    underlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+    underlay_intf_attr.value.u32 = UNDERLAY_RIF_DEFAULT_MTU;
+    underlay_intf_attrs.push_back(underlay_intf_attr);
+
     status = sai_router_intfs_api->create_router_interface(&gUnderlayIfId, gSwitchId, (uint32_t)underlay_intf_attrs.size(), underlay_intf_attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -305,6 +368,8 @@ int main(int argc, char **argv)
     DBConnector appl_db("APPL_DB", 0);
     DBConnector config_db("CONFIG_DB", 0);
     DBConnector state_db("STATE_DB", 0);
+
+    init_gearbox_phys(&appl_db);
 
     auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
 

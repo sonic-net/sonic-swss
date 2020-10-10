@@ -64,7 +64,6 @@ private:
     unique_ptr<ProducerTable> m_flexCounterTable;
 
     unique_ptr<DBConnector> m_countersDb;
-    RedisClient m_countersDbRedisClient;
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
 };

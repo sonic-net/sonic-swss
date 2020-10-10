@@ -15,8 +15,10 @@
 
 #define VNET_BITMAP_SIZE 32
 #define VNET_TUNNEL_SIZE 40960
+#define VNET_ROUTE_FULL_MASK_OFFSET_MAX 3000
 #define VNET_NEIGHBOR_MAX 0xffff
 #define VXLAN_ENCAP_TTL 128
+#define VNET_BITMAP_RIF_MTU 9100
 
 extern sai_object_id_t gVirtualRouterId;
 
@@ -173,6 +175,8 @@ public:
 
     sai_object_id_t getTunnelNextHop(tunnelEndpoint& endp);
     bool removeTunnelNextHop(tunnelEndpoint& endp);
+    void increaseNextHopRefCount(const nextHop&);
+    void decreaseNextHopRefCount(const nextHop&);
 
     ~VNetVrfObject();
 
@@ -265,7 +269,7 @@ private:
     static uint32_t getBitmapId(const string& name);
     static void recycleBitmapId(const string& name);
     
-    static uint32_t getFreeTunnelRouteTableOffset();
+    static uint32_t getFreeTunnelRouteTableOffset(IpPrefix ipPfx);
     static void recycleTunnelRouteTableOffset(uint32_t offset);
 
     static uint16_t getFreeTunnelId();

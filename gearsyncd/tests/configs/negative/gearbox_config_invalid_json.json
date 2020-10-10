@@ -1,0 +1,49 @@
+
+  "phys": [
+    {
+      "phy_id": 0,
+      "name": "example-1",
+      "address": "0x1000",
+      "lib_name": "libsai_phy_example1.so",
+      "firmware_path": "/tmp/phy-example1.bin",
+      "config_file": "tests/configs/positive/phy1_config_1.json",
+      "sai_init_config_file": "/usr/share/sonic/hwsku/example-1.bcm",     
+      "phy_access": "mdio",
+      "bus_id": 0
+    },
+    {
+      "phy_id": 1,
+      "name": "example-2",
+      "address": "0x2000",
+      "lib_name": "libsai_phy_example2.so",
+      "firmware_path": "/tmp/phy-example2.bin",
+      "config_file": "tests/configs/positive/phy2_config_1.json",
+      "sai_init_config_file": "/usr/share/sonic/hwsku/example-2.bcm",     
+      "phy_access": "i2c",
+      "bus_id": 1
+    }
+  ],
+  "interfaces": [
+    {
+      "name": "Ethernet0",
+      "index": 0,
+      "phy_id" : 0,
+      "system_lanes": [38,39],
+      "line_lanes": [30,31,32,33]
+    },
+    {
+      "name": "Ethernet1",
+      "index": 1,
+      "phy_id" : 0,
+      "system_lanes": [40,41],
+      "line_lanes": [34,35,36,37]
+    },
+    {
+      "name": "Ethernet2",
+      "index": 2,
+      "phy_id" : 1,
+      "system_lanes": [4,5],
+      "line_lanes": [0,1,2,3]
+    }
+  ]
+}

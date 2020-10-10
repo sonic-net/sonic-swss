@@ -49,7 +49,13 @@ map<string, sai_port_attr_t> qos_to_attr_map = {
     {tc_to_queue_field_name, SAI_PORT_ATTR_QOS_TC_TO_QUEUE_MAP},
     {tc_to_pg_map_field_name, SAI_PORT_ATTR_QOS_TC_TO_PRIORITY_GROUP_MAP},
     {pfc_to_pg_map_name, SAI_PORT_ATTR_QOS_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP},
-    {pfc_to_queue_map_name, SAI_PORT_ATTR_QOS_PFC_PRIORITY_TO_QUEUE_MAP}
+    {pfc_to_queue_map_name, SAI_PORT_ATTR_QOS_PFC_PRIORITY_TO_QUEUE_MAP},
+    {scheduler_field_name, SAI_PORT_ATTR_QOS_SCHEDULER_PROFILE_ID}
+};
+
+map<string, sai_meter_type_t> scheduler_meter_map = {
+    {"packets", SAI_METER_TYPE_PACKETS},
+    {"bytes", SAI_METER_TYPE_BYTES}
 };
 
 type_map QosOrch::m_qos_maps = {
@@ -813,28 +819,35 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
                 // TODO: The meaning is to be able to adjus priority of the given scheduler group.
                 // However currently SAI model does not provide such ability.
             }
+            else if (fvField(*i) == scheduler_meter_type_field_name)
+            {
+                sai_meter_type_t meter_value = scheduler_meter_map.at(fvValue(*i));
+                attr.id = SAI_SCHEDULER_ATTR_METER_TYPE;
+                attr.value.s32 = meter_value;
+                sai_attr_list.push_back(attr);
+            }
             else if (fvField(*i) == scheduler_min_bandwidth_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_RATE;
-                attr.value.u64 = stoul(fvValue(*i));
+                attr.value.u64 = stoull(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_min_bandwidth_burst_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MIN_BANDWIDTH_BURST_RATE;
-                attr.value.u64 = stoul(fvValue(*i));
+                attr.value.u64 = stoull(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_max_bandwidth_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_RATE;
-                attr.value.u64 = stoul(fvValue(*i));
+                attr.value.u64 = stoull(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else if (fvField(*i) == scheduler_max_bandwidth_burst_rate_field_name)
             {
                 attr.id = SAI_SCHEDULER_ATTR_MAX_BANDWIDTH_BURST_RATE;
-                attr.value.u64 = stoul(fvValue(*i));
+                attr.value.u64 = stoull(fvValue(*i));
                 sai_attr_list.push_back(attr);
             }
             else {

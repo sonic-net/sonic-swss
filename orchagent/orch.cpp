@@ -326,7 +326,7 @@ bool Orch::parseReference(type_map &type_maps, string &ref_in, string &type_name
         SWSS_LOG_ERROR("invalid reference received:%s\n", ref_in.c_str());
         return false;
     }
-    if ((ref_in[0] != ref_start) && (ref_in[ref_in.size()-1] != ref_end))
+    if ((ref_in[0] != ref_start) || (ref_in[ref_in.size()-1] != ref_end))
     {
         SWSS_LOG_ERROR("malformed reference:%s. Must be surrounded by [ ]\n", ref_in.c_str());
         return false;
@@ -557,7 +557,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
 
 void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
-    if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB)
+    if (db->getDbName() == "CONFIG_DB" || db->getDbName() == "STATE_DB")
     {
         addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
     }

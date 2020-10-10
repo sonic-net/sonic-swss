@@ -28,25 +28,22 @@
 #include "timer.h"
 #include "routeorch.h"
 #include "nexthopgroupkey.h"
+#include "notificationproducer.h"
 #ifdef DEBUG_FRAMEWORK
 #include "debugdumporch.h"
 #endif
 
 #define VALUES                            "Values" // Global Values Key
 #define NAT_HITBIT_N_CNTRS_QUERY_PERIOD   5        // 5 secs
+#define NAT_CONNTRACK_TIMEOUT_PERIOD      86400    // 1 day
 #define NAT_HITBIT_QUERY_MULTIPLE         6        // Hit bits are queried every 30 secs
-#define CONNTRACK                         "/usr/sbin/conntrack"
-#define REDIRECT_TO_DEV_NULL              " &> /dev/null"
-#define FLUSH                             " -F"
-#define UPDATE                            " -U"
-#define DELETE                            " -D"
-#define ADD                               " -I"
 
 struct NatEntryValue
 {
     IpAddress      translated_ip;      // Translated IP address
     string         nat_type;           // Nat Type - SNAT or DNAT
     string         entry_type;         // Entry type - Static or Dynamic 
+    time_t         activeTime;         // Timestamp in secs when the entry was last seen as active
     time_t         ageOutTime;         // Timestamp in secs when the entry expires
     bool           addedToHw;          // Boolean to represent added to hardware
 
@@ -74,6 +71,7 @@ struct NaptEntryValue
     int            translated_l4_port; // Translated port address
     string         nat_type;           // Nat Type - SNAT or DNAT
     string         entry_type;         // Entry type - Static or Dynamic
+    time_t         activeTime;         // Timestamp in secs when the entry was last seen as active
     time_t         ageOutTime;         // Timestamp in secs when the entry expires
     bool           addedToHw;          // Boolean to represent added to hardware
 
@@ -99,6 +97,7 @@ struct TwiceNatEntryValue
     IpAddress      translated_src_ip;
     IpAddress      translated_dst_ip;
     string         entry_type;         // Entry type - Static or Dynamic 
+    time_t         activeTime;         // Timestamp in secs when the entry was last seen as active
     time_t         ageOutTime;         // Timestamp in secs when the entry expires
     bool           addedToHw;          // Boolean to represent added to hardware
 
@@ -129,6 +128,7 @@ struct TwiceNaptEntryValue
     IpAddress      translated_dst_ip;
     int            translated_dst_l4_port;
     string         entry_type;         // Entry type - Static or Dynamic
+    time_t         activeTime;         // Timestamp in secs when the entry was last seen as active
     time_t         ageOutTime;         // Timestamp in secs when the entry expires
     bool           addedToHw;          // Boolean to represent added to hardware
 
@@ -193,21 +193,18 @@ public:
 
 private:
 
-    /* Netfilter socket to delete conntrack entries corresponding to aged out NAT entries */
-    NfNetlink               nfnl;
     NatEntry                m_natEntries;
     NaptEntry               m_naptEntries;
     TwiceNatEntry           m_twiceNatEntries;
     TwiceNaptEntry          m_twiceNaptEntries;
     SelectableTimer        *m_natQueryTimer;
+    SelectableTimer        *m_natTimeoutTimer;
     DBConnector             m_countersDb;
     Table                   m_countersNatTable;
     Table                   m_countersNaptTable;
     Table                   m_countersTwiceNatTable;
     Table                   m_countersTwiceNaptTable;
     Table                   m_countersGlobalNatTable;
-    Table                   m_stateWarmRestartEnableTable;
-    Table                   m_stateWarmRestartTable;
     Table                   m_natQueryTable;
     Table                   m_naptQueryTable;
     Table                   m_twiceNatQueryTable;
@@ -217,6 +214,8 @@ private:
     mutex                   m_natMutex;
     string                  m_dbgCompName;
     IpAddress               nullIpv4Addr;
+
+    std::shared_ptr<NotificationProducer> setTimeoutNotifier;
 
     /* DNAT/DNAPT entry is cached, to delete and re-add it whenever the direct NextHop (connected neighbor)
      * or indirect NextHop (via route) to reach the DNAT IP is changed. */
@@ -283,31 +282,14 @@ private:
     bool removeHwDnatEntry(const IpAddress &dstIp);
     bool removeHwDnaptEntry(const NaptEntryKey &key);
 
-    void addAllStaticConntrackEntries(void);
-    void addConnTrackEntry(const IpAddress &ipAddr);
-    void addConnTrackEntry(const NaptEntryKey &key);
-    void addConnTrackEntry(const TwiceNatEntryKey &key);
-    void addConnTrackEntry(const TwiceNaptEntryKey &key);
-    void updateConnTrackTimeout(string prototype);
-    void updateConnTrackTimeout(const IpAddress &sourceIpAddr);
-    void updateConnTrackTimeout(const NaptEntryKey &entry);
-    void updateConnTrackTimeout(const TwiceNatEntryKey &entry);
-    void updateConnTrackTimeout(const TwiceNaptEntryKey &entry);
-    void deleteConnTrackEntry(const IpAddress &ipAddr);
-    void deleteConnTrackEntry(const NaptEntryKey &key);
-    void deleteConnTrackEntry(const TwiceNatEntryKey &key);
-    void deleteConnTrackEntry(const TwiceNaptEntryKey &key);
-
     bool checkIfNatEntryIsActive(const NatEntry::iterator &iter, time_t now);
     bool checkIfNaptEntryIsActive(const NaptEntry::iterator &iter, time_t now);
     bool checkIfTwiceNatEntryIsActive(const TwiceNatEntry::iterator &iter, time_t now);
     bool checkIfTwiceNaptEntryIsActive(const TwiceNaptEntry::iterator &iter, time_t now);
 
-    bool warmBootingInProgress(void);
     void enableNatFeature(void);
     void disableNatFeature(void);
     void addAllNatEntries(void);
-    void flushAllNatEntries(void);
     void clearAllDnatEntries(void);
     void cleanupAppDbEntries(void);
     void clearCounters(void);
@@ -344,6 +326,8 @@ private:
                                 uint64_t nat_translations_pkts, uint64_t nat_translations_bytes);
     void updateTwiceNaptCounters(const TwiceNaptEntryKey &key,
                                  uint64_t nat_translations_pkts, uint64_t nat_translations_bytes);
+
+    void updateAllConntrackEntries();
 };
 
 #endif /* SWSS_NATORCH_H */

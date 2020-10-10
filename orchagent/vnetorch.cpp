@@ -163,6 +163,55 @@ bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
     return true;
 }
 
+void VNetVrfObject::increaseNextHopRefCount(const nextHop& nh)
+{
+    /* Return when there is no next hop (dropped) */
+    if (nh.ips.getSize() == 0)
+    {
+        return;
+    }
+    else if (nh.ips.getSize() == 1)
+    {
+        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
+        if (nexthop.ip_address.isZero())
+        {
+            gIntfsOrch->increaseRouterIntfsRefCount(nexthop.alias);
+        }
+        else
+        {
+            gNeighOrch->increaseNextHopRefCount(nexthop);
+        }
+    }
+    else
+    {
+        /* Handle ECMP routes */
+    }
+}
+void VNetVrfObject::decreaseNextHopRefCount(const nextHop& nh)
+{
+    /* Return when there is no next hop (dropped) */
+    if (nh.ips.getSize() == 0)
+    {
+        return;
+    }
+    else if (nh.ips.getSize() == 1)
+    {
+        NextHopKey nexthop(nh.ips.to_string(), nh.ifname);
+        if (nexthop.ip_address.isZero())
+        {
+            gIntfsOrch->decreaseRouterIntfsRefCount(nexthop.alias);
+        }
+        else
+        {
+            gNeighOrch->decreaseNextHopRefCount(nexthop);
+        }
+    }
+    else
+    {
+        /* Handle ECMP routes */
+    }
+}
+
 bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
 {
     if (hasRoute(ipPrefix))
@@ -171,6 +220,7 @@ bool VNetVrfObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
         return false;
     }
 
+    increaseNextHopRefCount(nh);
     routes_[ipPrefix] = nh;
     return true;
 }
@@ -194,6 +244,8 @@ bool VNetVrfObject::removeRoute(IpPrefix& ipPrefix)
     }
     else
     {
+        nextHop nh = routes_[ipPrefix];
+        decreaseNextHopRefCount(nh);
         routes_.erase(ipPrefix);
     }
     return true;
@@ -335,11 +387,20 @@ void VNetBitmapObject::recycleBitmapId(const string& vnet)
     }
 }
 
-uint32_t VNetBitmapObject::getFreeTunnelRouteTableOffset()
+uint32_t VNetBitmapObject::getFreeTunnelRouteTableOffset(IpPrefix ipPfx)
 {
     SWSS_LOG_ENTER();
 
-    for (uint32_t i = 0; i < tunnelOffsets_.size(); i++)
+    uint32_t offsetStart = VNET_ROUTE_FULL_MASK_OFFSET_MAX + 1;
+    uint32_t offsetEnd = tunnelOffsets_.size();
+
+    if (ipPfx.isFullMask())
+    {
+        offsetStart = 0;
+        offsetEnd = VNET_ROUTE_FULL_MASK_OFFSET_MAX;
+    }
+
+    for (uint32_t i = offsetStart; i < offsetEnd; i++)
     {
         if (tunnelOffsets_[i] == false)
         {
@@ -427,6 +488,10 @@ VnetBridgeInfo VNetBitmapObject::getBridgeInfoByVni(uint32_t vni, string tunnelN
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_BRIDGE_ID;
     attr.value.oid = info.bridge_id;
+    rif_attrs.push_back(attr);
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_MTU;
+    attr.value.u32 = VNET_BITMAP_RIF_MTU;
     rif_attrs.push_back(attr);
 
     status = sai_router_intfs_api->create_router_interface(
@@ -713,7 +778,7 @@ bool VNetBitmapObject::addIntf(const string& alias, const IpPrefix *prefix)
         intfMap_.emplace(alias, intfInfo);
     }
 
-    if (prefix)
+    if (prefix && gIntfsOrch->updateSyncdIntfPfx(alias, *prefix))
     {
         gIntfsOrch->addIp2MeRoute(gVirtualRouterId, *prefix);
     }
@@ -735,7 +800,7 @@ bool VNetBitmapObject::removeIntf(const string& alias, const IpPrefix *prefix)
 
     auto& intf = intfMap_.at(alias);
 
-    if (prefix)
+    if (prefix && gIntfsOrch->updateSyncdIntfPfx(alias, *prefix, false))
     {
         gIntfsOrch->removeIp2MeRoute(gVirtualRouterId, *prefix);
     }
@@ -790,6 +855,12 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
     TunnelRouteInfo tunnelRouteInfo;
     sai_ip_address_t underlayAddr;
     copy(underlayAddr, endp.ip);
+
+    if (tunnelRouteMap_.find(ipPrefix) != tunnelRouteMap_.end())
+    {
+        SWSS_LOG_WARN("VNET tunnel route %s exists", ipPrefix.to_string().c_str());
+        return true;
+    }
 
     VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
     for (auto peer : peer_list)
@@ -948,7 +1019,7 @@ bool VNetBitmapObject::addTunnelRoute(IpPrefix& ipPrefix, tunnelEndpoint& endp)
     attr.value.s32 = SAI_TABLE_BITMAP_ROUTER_ENTRY_ACTION_TO_NEXTHOP;
     tr_attrs.push_back(attr);
 
-    tunnelRouteInfo.offset = getFreeTunnelRouteTableOffset();
+    tunnelRouteInfo.offset = getFreeTunnelRouteTableOffset(ipPrefix);
     attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_PRIORITY;
     attr.value.u32 = tunnelRouteInfo.offset;
     tr_attrs.push_back(attr);
@@ -1093,6 +1164,12 @@ bool VNetBitmapObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
     Port port;
     RouteInfo routeInfo;
 
+    if (routeMap_.find(ipPrefix) != routeMap_.end())
+    {
+        SWSS_LOG_WARN("VNET route %s exists", ipPrefix.to_string().c_str());
+        return true;
+    }
+
     bool is_subnet = (!nh.ips.getSize() || nh.ips.contains("0.0.0.0")) ? true : false;
 
     if (is_subnet && (!gPortsOrch->getPort(nh.ifname, port) || (port.m_rif_id == SAI_NULL_OBJECT_ID)))
@@ -1159,7 +1236,7 @@ bool VNetBitmapObject::addRoute(IpPrefix& ipPrefix, nextHop& nh)
         return true;
     }
 
-    routeInfo.offset = getFreeTunnelRouteTableOffset();
+    routeInfo.offset = getFreeTunnelRouteTableOffset(ipPrefix);
     attr.id = SAI_TABLE_BITMAP_ROUTER_ENTRY_ATTR_PRIORITY;
     attr.value.u32 = routeInfo.offset;
     attrs.push_back(attr);

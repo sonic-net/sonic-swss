@@ -1,5 +1,4 @@
 from swsscommon import swsscommon
-import redis
 import time
 import os
 import pytest
@@ -26,7 +25,8 @@ class Port():
         self._app_db_ptbl = swsscommon.Table(self._app_db, swsscommon.APP_PORT_TABLE_NAME)
         self._asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
         self._asic_db_ptbl = swsscommon.Table(self._asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        self._counters_db = redis.Redis(unix_socket_path=self._dvs.redis_sock, db=swsscommon.COUNTERS_DB)
+        self._counters_db = dvs.get_counters_db()
+        self._dvs_asic_db = dvs.get_asic_db()
 
     def set_name(self, name):
         self._name = name
@@ -86,7 +86,7 @@ class Port():
         return self._oid
 
     def print_port(self):
-        print "Port: %s Lanes: %s Speed: %d, Index: %d"%(self._name, self._lanes, self._speed, self._index)
+        print("Port: %s Lanes: %s Speed: %d, Index: %d"%(self._name, self._lanes, self._speed, self._index))
 
     def port_merge(self, child_ports):
         child_ports.sort(key=lambda x: x.get_port_num())
@@ -110,7 +110,7 @@ class Port():
         child_port_list = []
         port_num = self.get_port_num()
         num_lanes = len(self._lanes)
-        offset = num_lanes/child_ports;
+        offset = num_lanes//child_ports
         lanes_per_child = offset
         for i in range(child_ports):
             child_port_num = port_num + (i * offset)
@@ -119,7 +119,7 @@ class Port():
             child_port_lanes = []
             for j in range(lanes_per_child):
                 child_port_lanes.append(self._lanes[(i*offset)+j])
-            child_port_speed = self._speed/child_ports
+            child_port_speed = self._speed//child_ports
             child_port_index = self._index
 
             child_port = Port(self._dvs, child_port_name)
@@ -154,7 +154,7 @@ class Port():
                                           ("speed", speed_str),
                                           ("index", index_str)])
         self._cfg_db_ptbl.set(self.get_name(), fvs)
-        time.sleep(1)
+        time.sleep(2)
 
     def get_fvs_dict(self, fvs):
         fvs_dict = {}
@@ -171,14 +171,32 @@ class Port():
         return status
 
     def sync_oid(self):
-        self._oid = self._counters_db.hget("COUNTERS_PORT_NAME_MAP", self.get_name())
+        fvs = dict(self._counters_db.get_entry("COUNTERS_PORT_NAME_MAP", ""))
+        try:
+            self._oid = fvs[self.get_name()]
+        except KeyError:
+            self._oid = None
 
+    """
+        Expectation of the caller is that the port does exist in ASIC DB.
+    """
     def exists_in_asic_db(self):
         self.sync_oid()
         if self._oid is None:
             return False
         (status, _) = self._asic_db_ptbl.get(self._oid)
         return status
+
+    """
+        Expectation of the caller is that the port does NOT exists in ASIC DB.
+    """
+    def not_exists_in_asic_db(self):
+        self.sync_oid()
+        if self._oid is None:
+            return True
+
+        result = self._dvs_asic_db.wait_for_deleted_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", self._oid)
+        return (not bool(result))
 
     def verify_config_db(self):
         (status, fvs) = self._cfg_db_ptbl.get(self.get_name())
@@ -203,7 +221,7 @@ class Port():
         (status, fvs) = self._asic_db_ptbl.get(self.get_oid())
         assert(status == True)
         fvs_dict = self.get_fvs_dict(fvs)
-        if (fvs_dict.has_key("SAI_PORT_ATTR_HW_LANE_LIST")):
+        if "SAI_PORT_ATTR_HW_LANE_LIST" in fvs_dict:
             assert(fvs_dict['SAI_PORT_ATTR_HW_LANE_LIST'] == self.get_lanes_asic_db_str())
         assert(fvs_dict['SAI_PORT_ATTR_SPEED'] == str(self.get_speed()))
 
@@ -221,8 +239,6 @@ class DPB():
             #dvs.runcmd("ip link delete " + cp.get_name())
         #print "Deleted child ports:%s from config DB"%port_names
 
-        time.sleep(6)
-
         for cp in child_ports:
             assert(cp.exists_in_config_db() == False)
         for cp in child_ports:
@@ -235,7 +251,6 @@ class DPB():
         p.port_merge(child_ports)
         p.write_to_config_db()
         #print "Added port:%s to config DB"%p.get_name()
-        time.sleep(2)
 
         p.verify_config_db()
         #print "Config DB verification passed!"
@@ -254,7 +269,6 @@ class DPB():
             cp.write_to_config_db()
             child_port_names.append(cp.get_name())
         #print "Added child ports:%s to config DB"%child_port_names
-        time.sleep(6)
 
         for cp in child_ports:
             assert(cp.exists_in_config_db() == True)
@@ -279,7 +293,7 @@ class DPB():
         # TBD, need vs lib to support hostif removal
         #dvs.runcmd("ip link delete " + p.get_name())
         #print "Deleted port:%s from config DB"%port_name
-        time.sleep(6)
+        time.sleep(2)
 
         # Verify port is deleted from all DBs
         assert(p.exists_in_config_db() == False)

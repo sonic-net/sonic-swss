@@ -1,5 +1,9 @@
 import time
 
+from dvslib.dvs_common import wait_for_result
+from dvslib.dvs_database import DVSDatabase
+
+
 class TestNat(object):
     def setup_db(self, dvs):
         self.app_db = dvs.get_app_db()
@@ -114,7 +118,7 @@ class TestNat(object):
         self.app_db.wait_for_n_keys("NAT_TABLE", 0)
 
         #check the entry is not there in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
+        self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
     def test_AddNaPtStaticEntry(self, dvs, testlog):
         # initialize
@@ -277,3 +281,43 @@ class TestNat(object):
 
         # clear interfaces
         self.clear_interfaces(dvs)
+
+    def test_VerifyConntrackTimeoutForNatEntry(self, dvs, testlog):
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
+
+        # add a static nat entry
+        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
+
+        # check the conntrack timeout for static entry
+        def _check_conntrack_for_static_entry():
+            output = dvs.runcmd("conntrack -j -L -s 18.18.18.2 -p udp -q 67.66.65.1")
+            if len(output) != 2:
+                return (False, None)
+
+            conntrack_list = list(output[1].split(" "))
+
+            src_exists = "src=18.18.18.2" in conntrack_list
+            dst_exists = "dst=67.66.65.1" in conntrack_list
+            proto_exists = "udp" in conntrack_list
+
+            if not src_exists or not dst_exists or not proto_exists:
+                return (False, None)
+
+            proto_index = conntrack_list.index("udp")
+
+            if int(conntrack_list[proto_index + 7]) > 432000 or int(conntrack_list[proto_index + 7]) < 431900:
+                return (False, None)
+
+            return (True, None)
+
+        wait_for_result(_check_conntrack_for_static_entry, DVSDatabase.DEFAULT_POLLING_CONFIG)
+
+        # delete a static nat entry
+        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass
