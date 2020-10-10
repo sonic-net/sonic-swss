@@ -9,6 +9,8 @@
 #include <fstream>
 #include <iostream>
 #include "warm_restart.h"
+#include "netdispatcher.h"
+#include "netlink.h"
 
 using namespace std;
 using namespace swss;
@@ -59,6 +61,9 @@ int main(int argc, char **argv)
 
         IntfMgr intfmgr(&cfgDb, &appDb, &stateDb, cfg_intf_tables);
 
+        NetDispatcher::getInstance().registerMessageHandler(RTM_NEWADDR, &intfmgr);
+        NetDispatcher::getInstance().registerMessageHandler(RTM_DELADDR, &intfmgr);
+
         // TODO: add tables in stateDB which interface depends on to monitor list
         std::vector<Orch *> cfgOrchList = {&intfmgr};
 
@@ -67,6 +72,12 @@ int main(int argc, char **argv)
         {
             s.addSelectables(o->getSelectables());
         }
+
+        NetLink netlink;
+        netlink.registerGroup(RTNLGRP_IPV4_IFADDR);
+        netlink.registerGroup(RTNLGRP_IPV6_IFADDR);
+
+        s.addSelectable(&netlink);
 
         SWSS_LOG_NOTICE("starting main loop");
         while (true)
@@ -78,6 +89,10 @@ int main(int argc, char **argv)
             if (ret == Select::ERROR)
             {
                 SWSS_LOG_NOTICE("Error: %s!", strerror(errno));
+                continue;
+            }
+            if (sel == &netlink)
+            {
                 continue;
             }
             if (ret == Select::TIMEOUT)

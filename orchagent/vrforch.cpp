@@ -12,6 +12,7 @@
 #include "vrforch.h"
 #include "vxlanorch.h"
 #include "directory.h"
+#include "routeorch.h"
 
 using namespace std;
 using namespace swss;
@@ -20,6 +21,7 @@ extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
+extern RouteOrch*       gRouteOrch;
 
 bool VRFOrch::addOperation(const Request& request)
 {
@@ -101,6 +103,12 @@ bool VRFOrch::addOperation(const Request& request)
             }
         }
 
+        /* Add link-local fe80::/10 CPU route for the VRF. */
+        IpPrefix default_link_local_prefix("fe80::/10");
+
+        gRouteOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
+        SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in VRF %s", default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
+
         vrf_table_[vrf_name].vrf_id = router_id;
         vrf_table_[vrf_name].ref_count = 0;
         vrf_id_table_[router_id] = vrf_name;
@@ -164,7 +172,14 @@ bool VRFOrch::delOperation(const Request& request)
     if (vrf_table_[vrf_name].ref_count)
         return false;
 
+    /* Delete link-local fe80::/10 CPU route for the VRF. */
+    IpPrefix default_link_local_prefix("fe80::/10");
+
     sai_object_id_t router_id = vrf_table_[vrf_name].vrf_id;
+
+    gRouteOrch->delLinkLocalRouteToMe(router_id, default_link_local_prefix);
+    SWSS_LOG_NOTICE("Deleted link local ipv6 route %s to cpu in VRF %s", default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
+
     sai_status_t status = sai_virtual_router_api->remove_virtual_router(router_id);
     if (status != SAI_STATUS_SUCCESS)
     {

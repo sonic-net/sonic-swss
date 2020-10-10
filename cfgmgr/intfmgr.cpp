@@ -9,6 +9,11 @@
 #include "shellcmd.h"
 #include "macaddress.h"
 #include "warm_restart.h"
+#include <netlink/route/link.h>
+#include <netlink/route/addr.h>
+#include <netlink/netlink.h>
+#include "netmsg.h"
+#include "linkcache.h"
 
 using namespace std;
 using namespace swss;
@@ -16,11 +21,14 @@ using namespace swss;
 #define VLAN_PREFIX         "Vlan"
 #define LAG_PREFIX          "PortChannel"
 #define LOOPBACK_PREFIX     "Loopback"
+#define LINUX_LOOPBACK      "lo"
 #define VNET_PREFIX         "Vnet"
 #define MTU_INHERITANCE     "0"
 #define VRF_PREFIX          "Vrf"
 #define VRF_MGMT            "mgmt"
+#define ETHERNET_PREFIX     "Ethernet"
 
+#define MAX_ADDR_SIZE       64
 #define LOOPBACK_DEFAULT_MTU_STR "65536"
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
@@ -278,6 +286,45 @@ bool IntfMgr::isIntfChangeVrf(const string &alias, const string &vrfName)
     return false;
 }
 
+bool IntfMgr::ifManualIPv6AddrsConfigured(const string &alias)
+{
+    stringstream addrshow, linkshow;
+    string res;
+    int numOfAddrs, linkUp;
+
+    addrshow << IP_CMD << " -6 address show " << alias << " | grep inet | wc -l";
+    EXEC_WITH_ERROR_THROW(addrshow.str(), res);
+
+    numOfAddrs = std::stoi(res);
+
+    linkshow << IP_CMD << " -6 link show " << alias << " | grep UP | wc -l";
+    EXEC_WITH_ERROR_THROW(linkshow.str(), res);
+
+    linkUp = std::stoi(res);
+
+    /* IPv6 auto link local address is removed by the kernel on link down, but manually
+     * configured IPv6 addresses (gloabl or link-local) are not removed on link down.
+     * So, to check if manual addresses are configured, check if any  addresses
+     * are there when the link is down, or if > 1 addresses are there when the link is up */
+
+    if (((numOfAddrs > 1) && (linkUp)) || ((numOfAddrs) && (! linkUp)))
+    {
+        return true;
+    }
+    return false;
+}
+
+int IntfMgr::getIntfIpv6DisableMode(const string &alias)
+{
+    stringstream cmd;
+    string res;
+
+    cmd << "cat /proc/sys/net/ipv6/conf/" << alias << "/disable_ipv6";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    return std::stoi(res);
+}
+
 void IntfMgr::addHostSubIntf(const string&intf, const string &subIntf, const string &vlan)
 {
     stringstream cmd;
@@ -476,6 +523,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string proxy_arp = "";
     string grat_arp = "";
     string mpls = "";
+    string ipv6_link_local_mode = "";
 
     for (auto idx : data)
     {
@@ -506,10 +554,13 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             mpls = value;
         }
-
-        if (field == "nat_zone")
+        else if (field == "nat_zone")
         {
             nat_zone = value;
+        }
+        else if (field == "ipv6_use_link_local_only")
+        {
+            ipv6_link_local_mode = value;
         }
     }
 
@@ -551,6 +602,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 FieldValueTuple fvTuple("nat_zone", nat_zone);
                 data.push_back(fvTuple);
             }
+
             /* Set mpls */
             if (!setIntfMpls(alias, mpls))
             {
@@ -561,6 +613,21 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             {
                 FieldValueTuple fvTuple("mpls", mpls);
                 data.push_back(fvTuple);
+            }
+
+            /* Set ipv6 mode */
+            if (!ipv6_link_local_mode.empty())
+            {
+                if ((ipv6_link_local_mode.compare("enable") == 0) &&
+                    (getIntfIpv6DisableMode(alias) == 1))
+                {
+                    setIntfIpv6Mode(alias, ipv6_link_local_mode);
+                }
+                else if ((ipv6_link_local_mode.compare("disable") == 0) &&
+                         (ifManualIPv6AddrsConfigured(alias) == false))
+                {
+                    setIntfIpv6Mode(alias, ipv6_link_local_mode);
+                }
             }
         }
 
@@ -684,6 +751,13 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             delLoopbackIntf(alias);
             m_loopbackIntfList.erase(alias);
         }
+        else
+        {
+            if (getIntfIpv6DisableMode(alias) == 0)
+            {
+                setIntfIpv6Mode(alias, "disable");
+            }
+        }
 
         if (!parentAlias.empty())
         {
@@ -726,13 +800,22 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
             return false;
         }
 
+        /* Enable ipv6 on the interface in the kernel first before adding the manually
+         * configured address, if use-link-local-only mode is not already enabled on the interface. */
+        if ((ip_prefix.isV4() == false) &&
+            (isIpv6LinkLocalModeEnabled(alias) == false) &&
+            (getIntfIpv6DisableMode(alias) == 1))
+        {
+            setIntfIpv6Mode(alias, "enable");
+        }
+
         setIntfIp(alias, "add", ip_prefix);
 
         std::vector<FieldValueTuple> fvVector;
         FieldValueTuple f("family", ip_prefix.isV4() ? IPV4_NAME : IPV6_NAME);
 
-        // Don't send link local config to AppDB and Orchagent
-        if (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE)
+        // Don't send ipv4 link local config to AppDB and Orchagent
+        if ((ip_prefix.isV4() == false) or (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
         {
             FieldValueTuple s("scope", "global");
             fvVector.push_back(s);
@@ -745,11 +828,21 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
     {
         setIntfIp(alias, "del", ip_prefix);
 
-        // Don't send link local config to AppDB and Orchagent
-        if (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE)
+        // Don't send ipv4 link local config to AppDB and Orchagent
+        if ((ip_prefix.isV4() == false) or (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE))
         {
             m_appIntfTableProducer.del(appKey);
             m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
+        }
+
+        /* If all manually configured addresses on the interface are removed,
+         * disable ipv6 on the interface to remove the auto link-local ipv6 address,
+         * provided use-link-local-only mode is not enabled on the interface.  */
+        if ((ip_prefix.isV4() == false) &&
+            (isIpv6LinkLocalModeEnabled(alias) == false) &&
+            (ifManualIPv6AddrsConfigured(alias) == false))
+        {
+            setIntfIpv6Mode(alias, "disable");
         }
     }
     else
@@ -824,3 +917,126 @@ void IntfMgr::doTask(Consumer &consumer)
         setWarmReplayDoneState();
     }
 }
+
+bool IntfMgr::isIpv6LinkLocalModeEnabled(const string &alias)
+{
+    vector<FieldValueTuple> fv;
+    Table *cfgTable;
+
+    if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+    {
+        cfgTable = &m_cfgVlanIntfTable;
+    }
+    else if (!alias.compare(0, strlen(LAG_PREFIX), LAG_PREFIX))
+    {
+        cfgTable = &m_cfgLagIntfTable;
+    }
+    else if (!alias.compare(0, strlen(ETHERNET_PREFIX), ETHERNET_PREFIX))
+    {
+        cfgTable = &m_cfgIntfTable;
+    }
+    else
+    {
+        return false;
+    } 
+    if ((*cfgTable).get(alias, fv))
+    {
+        for (auto idx : fv)
+        {
+            if (fvField(idx) == "ipv6_use_link_local_only")
+            {
+                if (fvValue(idx) == "enable")
+                {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+// Set Interface IPv6 mode
+void IntfMgr::setIntfIpv6Mode(const string &port, const string &mode)
+{
+    stringstream cmd;
+    string       res;
+    int          ret;
+
+    SWSS_LOG_INFO("Setting interface ipv6 mode on interface %s to %s", port.c_str(), mode.c_str());
+    if (mode == "enable")
+    {
+        cmd << "sysctl -w net.ipv6.conf." << port << ".disable_ipv6=0";
+    }
+    else
+    {
+        cmd << "sysctl -w net.ipv6.conf." << port << ".disable_ipv6=1";
+    }
+    ret = swss::exec(cmd.str(), res);
+    if (ret)
+    {
+        SWSS_LOG_INFO("Command '%s' failed with rc %d %s", cmd.str().c_str(), ret, res.c_str());
+    }
+}
+
+void IntfMgr::onMsg(int nlmsg_type, struct nl_object *obj)
+{
+    char addrStr[MAX_ADDR_SIZE + 1] = {0};
+    struct rtnl_addr *addr = (struct rtnl_addr *)obj;
+    string intfTableKey;
+    string stateTableKey;
+    string intfName;
+    string scope = "local";
+    string family = IPV6_NAME;
+
+    if ((nlmsg_type != RTM_NEWADDR) &&
+        (nlmsg_type != RTM_DELADDR))
+    {
+        return;
+    }
+
+    /* Sync IPv6 Link local routes only */ 
+    if ((rtnl_addr_get_family(addr) != AF_INET6) ||
+        (rtnl_addr_get_scope(addr) != RT_SCOPE_LINK))
+    {
+        return;
+    }
+
+    intfName = LinkCache::getInstance().ifindexToName(rtnl_addr_get_ifindex(addr));
+    if (0 != intfName.compare(0, strlen(ETHERNET_PREFIX), ETHERNET_PREFIX) &&
+        0 != intfName.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX) &&
+        0 != intfName.compare(0, strlen(LAG_PREFIX), LAG_PREFIX) &&
+        0 != intfName.compare(0, strlen(LINUX_LOOPBACK), LINUX_LOOPBACK))
+    {
+        return;
+    }
+
+    nl_addr2str(rtnl_addr_get_local(addr), addrStr, MAX_ADDR_SIZE);
+
+    intfTableKey = intfName;
+    intfTableKey+= ":";
+    intfTableKey+= addrStr;
+
+    stateTableKey = intfName;
+    stateTableKey+= "|";
+    stateTableKey+= addrStr;
+
+    if (nlmsg_type == RTM_DELADDR)
+    {
+        m_appIntfTableProducer.del(intfTableKey);
+        m_stateIntfTable.del(stateTableKey);
+
+        return;
+    }
+
+    SWSS_LOG_INFO("IPv6 Link local address %s added on interface %s", addrStr, intfName.c_str());
+
+    std::vector<FieldValueTuple> fv;
+    FieldValueTuple f("family", family);
+    FieldValueTuple s("scope", scope);
+
+    fv.push_back(s);
+    fv.push_back(f);
+    m_appIntfTableProducer.set(intfTableKey, fv);
+    m_stateIntfTable.hset(stateTableKey, "state", "ok");
+}
+

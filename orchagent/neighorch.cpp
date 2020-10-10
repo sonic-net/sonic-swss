@@ -671,6 +671,19 @@ void NeighOrch::doTask(Consumer &consumer)
 
         IpAddress ip_address(key.substr(found+1));
 
+        /* Verify Ipv4 LinkLocal and skip neighbor entry added for RFC5549 */
+        if ((ip_address.getAddrScope() == IpAddress::LINK_SCOPE) && (ip_address.isV4()))
+        {
+            /* Check if this prefix is not a configured ip, if so allow */
+            IpPrefix ipll_prefix(ip_address.getV4Addr(), 16);
+            if (!m_intfsOrch->isPrefixSubnet (ipll_prefix, alias))
+            {
+                SWSS_LOG_NOTICE("Skip IPv4LL neighbor %s, Intf:%s op: %s ", ip_address.to_string().c_str(), alias.c_str(), op.c_str());
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+        }
+
         NeighborEntry neighbor_entry = { ip_address, alias };
 
         if (op == SET_COMMAND)

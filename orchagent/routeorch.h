@@ -152,6 +152,9 @@ public:
     bool createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id, vector<sai_attribute_t> &nhg_attrs);
     bool removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id);
 
+    void addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
+    void delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
+
 private:
     SwitchOrch *m_switchOrch;
     NeighOrch *m_neighOrch;
@@ -189,7 +192,6 @@ private:
     bool removeLabelRoutePost(const LabelRouteBulkContext& ctx);
 
     std::string getLinkLocalEui64Addr(void);
-    void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
 
     void doTask(Consumer& consumer);
     void doLabelTask(Consumer& consumer);

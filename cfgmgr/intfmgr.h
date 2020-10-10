@@ -4,6 +4,7 @@
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "orch.h"
+#include "netmsg.h"
 
 #include <map>
 #include <string>
@@ -11,16 +12,18 @@
 
 namespace swss {
 
-class IntfMgr : public Orch
+class IntfMgr : public Orch, public NetMsg
 {
 public:
     IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     using Orch::doTask;
+    virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
 private:
     ProducerStateTable m_appIntfTableProducer;
     Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable, m_cfgLoopbackIntfTable;
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
+    Table m_cfgIntfTable, m_cfgVlanIntfTable, m_cfgLagIntfTable;
 
     std::set<std::string> m_subIntfList;
     std::set<std::string> m_loopbackIntfList;
@@ -55,6 +58,11 @@ private:
 
     bool setIntfProxyArp(const std::string &alias, const std::string &proxy_arp);
     bool setIntfGratArp(const std::string &alias, const std::string &grat_arp);
+
+    int getIntfIpv6DisableMode(const std::string &alias);
+    bool ifManualIPv6AddrsConfigured(const std::string &alias);
+    bool isIpv6LinkLocalModeEnabled(const std::string &alias);
+    void setIntfIpv6Mode(const std::string &port, const std::string &mode);
 
     bool m_replayDone {false};
 };
