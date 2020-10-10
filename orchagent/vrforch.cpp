@@ -11,7 +11,6 @@
 #include "request_parser.h"
 #include "vrforch.h"
 #include "vxlanorch.h"
-#include "routeorch.h"
 #include "directory.h"
 
 using namespace std;
@@ -21,7 +20,6 @@ extern sai_virtual_router_api_t* sai_virtual_router_api;
 extern sai_object_id_t gSwitchId;
 extern Directory<Orch*> gDirectory;
 extern PortsOrch*       gPortsOrch;
-extern RouteOrch*       gRouteOrch;
 
 bool VRFOrch::addOperation(const Request& request)
 {
@@ -178,7 +176,7 @@ bool VRFOrch::updateVrfVNIMap(const std::string& vrf_name, uint32_t vni)
     bool error = true;
 
     old_vni = getVRFmappedVNI(vrf_name);
-    SWSS_LOG_NOTICE("VRF '%s' vni %d old_vni %d", vrf_name.c_str(), vni, old_vni);
+    SWSS_LOG_INFO("VRF '%s' vni %d old_vni %d", vrf_name.c_str(), vni, old_vni);
 
     if (old_vni != vni) {
         if (vni == 0) {
@@ -189,7 +187,6 @@ bool VRFOrch::updateVrfVNIMap(const std::string& vrf_name, uint32_t vni)
             //update l3vni table, if vlan/vni is received later will be able to update L3VniStatus.
             l3vni_table_[vni].vlan_id = 0;
             l3vni_table_[vni].l3_vni = true;
-            vrf_vni_map_table_[vrf_name] = vni;
             auto evpn_vtep_ptr = evpn_orch->getEVPNVtep();
             if(!evpn_vtep_ptr)
             {
@@ -197,17 +194,18 @@ bool VRFOrch::updateVrfVNIMap(const std::string& vrf_name, uint32_t vni)
                 return false;
             }
 
+            vrf_vni_map_table_[vrf_name] = vni;
             vlan_id = tunnel_orch->getVlanMappedToVni(vni);
             l3vni_table_[vni].vlan_id = vlan_id;
-            SWSS_LOG_NOTICE("addL3VniStatus vni %d vlan %d", vni, vlan_id);
+            SWSS_LOG_INFO("addL3VniStatus vni %d vlan %d", vni, vlan_id);
             if (vlan_id != 0)
             {
                 /*call VE UP*/
                 error = gPortsOrch->updateL3VniStatus(vlan_id, true);
-                SWSS_LOG_NOTICE("addL3VniStatus vni %d vlan %d, status %d", vni, vlan_id, error);
+                SWSS_LOG_INFO("addL3VniStatus vni %d vlan %d, status %d", vni, vlan_id, error);
             }
         }
-        SWSS_LOG_NOTICE("VRF '%s' vni %d map update", vrf_name.c_str(), vni);
+        SWSS_LOG_INFO("VRF '%s' vni %d map update", vrf_name.c_str(), vni);
     }
 
     return true;
@@ -219,7 +217,7 @@ bool VRFOrch::delVrfVNIMap(const std::string& vrf_name, uint32_t vni)
     bool status = true;
     uint16_t vlan_id = 0;
 
-    SWSS_LOG_NOTICE("VRF '%s' VNI %d map", vrf_name.c_str(), vni);
+    SWSS_LOG_INFO("VRF '%s' VNI %d map", vrf_name.c_str(), vni);
     if (vni == 0) {
         vni = getVRFmappedVNI(vrf_name);
     }
@@ -227,18 +225,18 @@ bool VRFOrch::delVrfVNIMap(const std::string& vrf_name, uint32_t vni)
     if (vni != 0)
     {
         vlan_id = l3vni_table_[vni].vlan_id;
-        SWSS_LOG_NOTICE("delL3VniStatus vni %d vlan %d", vni, vlan_id);
+        SWSS_LOG_INFO("delL3VniStatus vni %d vlan %d", vni, vlan_id);
         if (vlan_id != 0)
         {
             /*call VE Down*/
             status = gPortsOrch->updateL3VniStatus(vlan_id, false);
-            SWSS_LOG_NOTICE("delL3VniStatus vni %d vlan %d, status %d", vni, vlan_id, status);
+            SWSS_LOG_INFO("delL3VniStatus vni %d vlan %d, status %d", vni, vlan_id, status);
         }
         l3vni_table_.erase(vni);
         vrf_vni_map_table_.erase(vrf_name);
     }
 
-    SWSS_LOG_NOTICE("VRF '%s' VNI %d map removed", vrf_name.c_str(), vni);
+    SWSS_LOG_INFO("VRF '%s' VNI %d map removed", vrf_name.c_str(), vni);
     return true;
 }
 
@@ -247,10 +245,10 @@ int VRFOrch::updateL3VniVlan(uint32_t vni, uint16_t vlan_id)
     bool status = true;
     l3vni_table_[vni].vlan_id = vlan_id;
 
-    SWSS_LOG_NOTICE("updateL3VniStatus vni %d vlan %d", vni, vlan_id);
+    SWSS_LOG_INFO("updateL3VniStatus vni %d vlan %d", vni, vlan_id);
     /*call VE UP*/
     status = gPortsOrch->updateL3VniStatus(vlan_id, true);
-    SWSS_LOG_NOTICE("updateL3VniStatus vni %d vlan %d, status %d", vni, vlan_id, status);
+    SWSS_LOG_INFO("updateL3VniStatus vni %d vlan %d, status %d", vni, vlan_id, status);
 
     return 0;
 }

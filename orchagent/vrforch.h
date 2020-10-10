@@ -11,7 +11,7 @@ struct VrfEntry
     int             ref_count;
 };
 
-struct L3VNIEntry
+struct VNIEntry
 {
     uint16_t vlan_id;
     bool     l3_vni;
@@ -20,7 +20,7 @@ struct L3VNIEntry
 typedef std::unordered_map<std::string, VrfEntry> VRFTable;
 typedef std::unordered_map<sai_object_id_t, std::string> VRFIdNameTable;
 typedef std::unordered_map<std::string, uint32_t> VRFNameVNIMapTable;
-typedef std::unordered_map<uint32_t, L3VNIEntry> L3VNITable;
+typedef std::unordered_map<uint32_t, VNIEntry> L3VNITable;
 
 const request_description_t request_description = {
     { REQ_T_STRING },
@@ -121,9 +121,13 @@ public:
     int getVrfRefCount(const std::string& name)
     {
         if (vrf_table_.find(name) != std::end(vrf_table_))
+        {
             return vrf_table_.at(name).ref_count;
+        }
         else
+        {
             return -1;
+        }
     }
 
     uint32_t getVRFmappedVNI(const std::string& vrf_name) const
@@ -141,9 +145,13 @@ public:
     int getL3VniVlan(const uint32_t vni) const
     {
         if (l3vni_table_.find(vni) != std::end(l3vni_table_))
+        {
             return l3vni_table_.at(vni).vlan_id;
+        }
         else
+        {
             return (-1);
+        }
     }
     int updateL3VniVlan(uint32_t vni, uint16_t vlan_id);
 private:

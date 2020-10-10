@@ -630,7 +630,7 @@ sai_object_id_t NeighOrch::addTunnelNextHop(const NextHopKey& nh)
     {
         SWSS_LOG_ERROR("Failed to create Tunnel next hop %s, %s@%d@%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
             nh.vni, nh.mac_address.to_string().c_str());
-        throw std::runtime_error("NH Tunnel create failed for " + tun_name + " ip " + nh.ip_address.to_string());
+        return nh_id;
     }
 
     SWSS_LOG_NOTICE("Created Tunnel next hop %s, %s@%d@%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),

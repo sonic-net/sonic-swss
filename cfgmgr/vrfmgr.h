@@ -21,13 +21,7 @@ public:
     using Orch::doTask;
     std::string m_evpnVxlanTunnel;
 
-    uint32_t getVRFmappedVNI(const std::string& vrf_name) const
-    {
-        if (vrf_vni_map_table_.find(vrf_name) != std::end(vrf_vni_map_table_))
-            return vrf_vni_map_table_.at(vrf_name);
-        else
-            return 0;
-    }
+    uint32_t getVRFmappedVNI(const std::string& vrf_name);
 
 private:
     bool delLink(const std::string& vrfName);
@@ -46,7 +40,7 @@ private:
 
     std::map<std::string, uint32_t> m_vrfTableMap;
     std::set<uint32_t> m_freeTables;
-    VRFNameVNIMapTable vrf_vni_map_table_;
+    VRFNameVNIMapTable m_vrfVniMapTable;
 
     Table m_stateVrfTable, m_stateVrfObjectTable;
     ProducerStateTable m_appVrfTableProducer, m_appVnetTableProducer, m_appVxlanVrfTableProducer;

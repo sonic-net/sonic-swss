@@ -4274,28 +4274,47 @@ void PortsOrch::getPortSerdesVal(const std::string& val_str,
     }
 }
 
+void PortsOrch::updateVlanOperStatus(const Port &vlan, bool isUp)
+{
+    struct PortOperStateUpdate update;
+    update.port = vlan;
+    update.up = isUp;
+    notify(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, &update);
+
+    if (isUp)
+    {
+        updateDbVlanOperStatus(vlan, "up");
+    }
+    else
+    {
+        updateDbVlanOperStatus(vlan, "down");
+    }
+}
+
+/* Bring up/down Vlan interface associated with L3 VNI*/
 bool PortsOrch::updateL3VniStatus(uint16_t vlan_id, bool isUp)
 {
     Port vlan;
     string vlan_alias;
 
     vlan_alias = VLAN_PREFIX + to_string(vlan_id);
-    SWSS_LOG_NOTICE("update L3Vni Status for Vlan %d with isUp %d vlan %s",
+    SWSS_LOG_INFO("update L3Vni Status for Vlan %d with isUp %d vlan %s",
             vlan_id, isUp, vlan_alias.c_str());
 
     if (!getPort(vlan_alias, vlan))
     {
-        SWSS_LOG_NOTICE("Failed to locate VLAN %d", vlan_id);
+        SWSS_LOG_INFO("Failed to locate VLAN %d", vlan_id);
         return false;
     }
 
-    SWSS_LOG_NOTICE("member count %d, l3vni %d", vlan.m_up_member_count, vlan.m_l3_vni);
+    SWSS_LOG_INFO("member count %d, l3vni %d", vlan.m_up_member_count, vlan.m_l3_vni);
     if (isUp) {
         auto old_count = vlan.m_up_member_count;
         vlan.m_up_member_count++;
         if (old_count == 0)
         {
             updateVlanOperStatus(vlan, true);
+            vlan.m_oper_status = SAI_PORT_OPER_STATUS_UP;
         }
         vlan.m_l3_vni = true;
     } else {
@@ -4303,13 +4322,14 @@ bool PortsOrch::updateL3VniStatus(uint16_t vlan_id, bool isUp)
         if (vlan.m_up_member_count == 0)
         {
             updateVlanOperStatus(vlan, false);
+            vlan.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
         }
         vlan.m_l3_vni = false;
     }
 
     m_portList[vlan_alias] = vlan;
 
-    SWSS_LOG_NOTICE("Updated L3Vni status of VLAN %d member count %d", vlan_id, vlan.m_up_member_count);
+    SWSS_LOG_INFO("Updated L3Vni status of VLAN %d member count %d", vlan_id, vlan.m_up_member_count);
 
     return true;
 }

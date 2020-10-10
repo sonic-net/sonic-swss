@@ -6,7 +6,6 @@
 #include "switchorch.h"
 #include "intfsorch.h"
 #include "neighorch.h"
-#include "vnetorch.h"
 #include "vxlanorch.h"
 
 #include "ipaddress.h"

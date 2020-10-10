@@ -473,7 +473,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
             sai_object_id_t& vrf_id = ctx.vrf_id;
             IpPrefix& ip_prefix = ctx.ip_prefix;
-          
+
             if (!key.compare(0, strlen(VRF_PREFIX), VRF_PREFIX))
             {
                 size_t found = key.find(':');
@@ -492,20 +492,20 @@ void RouteOrch::doTask(Consumer& consumer)
                 vrf_id = gVirtualRouterId;
                 ip_prefix = IpPrefix(key);
             }
-          
+
             if (op == SET_COMMAND)
             {
                 string ips;
                 string aliases;
                 string vni_labels;
                 string remote_macs;
-                bool excp_intfs_flag = false;
+                bool& excp_intfs_flag = ctx.excp_intfs_flag;
                 bool overlay_nh = false;
 
                 for (auto i : kfvFieldsValues(t))
                 {
                     if (fvField(i) == "nexthop")
-                        ips = fvValue(i);              
+                        ips = fvValue(i);
 
                     if (fvField(i) == "ifname")
                         aliases = fvValue(i);
@@ -521,7 +521,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 vector<string>& ipv = ctx.ipv;
                 ipv = tokenize(ips, ',');
-                vector<string> alsv = tokenize(aliases, ',');              
+                vector<string> alsv = tokenize(aliases, ',');
                 vector<string> vni_labelv = tokenize(vni_labels, ',');
                 vector<string> rmacv = tokenize(remote_macs, ',');
 
@@ -578,7 +578,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 string nhg_str = "";
                 NextHopGroupKey& nhg = ctx.nhg;
-              
+
                 if (overlay_nh == false) {
                     nhg_str = ipv[0] + NH_DELIMITER + alsv[0];
 
@@ -597,8 +597,8 @@ void RouteOrch::doTask(Consumer& consumer)
                     }
 
                     nhg = NextHopGroupKey(nhg_str, overlay_nh);
-                }              
-              
+                }
+
                 if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
                 {
                     /* blackhole to be done */
@@ -1425,7 +1425,13 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     /* The route is pointing to a next hop */
     if (nextHops.getSize() == 1)
     {
-        NextHopKey nexthop(nextHops.to_string());
+        NextHopKey nexthop;
+        if(nextHops.is_overlay_nexthop()) {
+            nexthop = NextHopKey(nextHops.to_string(), true);
+        } else {
+            nexthop = NextHopKey(nextHops.to_string());
+        }
+
         if (nexthop.ip_address.isZero())
         {
             next_hop_id = m_intfsOrch->getRouterIntfsId(nexthop.alias);
@@ -1716,10 +1722,8 @@ bool RouteOrch::createRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextH
     EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     bool status = false;
-    int ip_refcnt = -2;
+    int ip_refcnt = 0;
 
-    SWSS_LOG_NOTICE("Routeorch Add Remote VTEP %s, VNI %d, VR_ID %lx",
-            nextHop.ip_address.to_string().c_str(), nextHop.vni, vrf_id);
     status = tunnel_orch->addTunnelUser(nextHop.ip_address.to_string(), nextHop.vni, 0, TNL_SRC_IP, vrf_id);
 
     auto vtep_ptr = evpn_orch->getEVPNVtep();
@@ -1738,10 +1742,8 @@ bool RouteOrch::deleteRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextH
     EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
     bool status = false;
-    int ip_refcnt = -2;
+    int ip_refcnt = 0;
 
-    SWSS_LOG_NOTICE("Routeorch Del Remote VTEP %s, VNI %d, VR_ID %lx",
-            nextHop.ip_address.to_string().c_str(), nextHop.vni, vrf_id);
     status = tunnel_orch->delTunnelUser(nextHop.ip_address.to_string(), nextHop.vni, 0, TNL_SRC_IP, vrf_id);
 
     auto vtep_ptr = evpn_orch->getEVPNVtep();
