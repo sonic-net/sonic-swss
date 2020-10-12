@@ -502,7 +502,7 @@ string Orch::objectReferenceInfo(
     auto &objsDependingSet = (*type_maps[table])[obj_name].m_objsDependingOnMe;
     for (auto &depObjName : objsDependingSet)
     {
-        string hint = table + " " + obj_name + " first object: " + depObjName;
+        string hint = table + " " + obj_name + " one object: " + depObjName;
         hint += " reference count: " + to_string(objsDependingSet.size());
         return hint;
     }
