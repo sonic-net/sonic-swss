@@ -84,10 +84,6 @@ private:
     Table               m_macsec_counters_map;
     FlexCounterManager  m_macsec_flex_counter_manager;
 
-    Table                           m_gearbox_table;
-    bool                            m_gearbox_enabled;
-    map<int, gearbox_phy_t>         m_gearbox_phy_map;
-    map<int, gearbox_interface_t>   m_gearbox_interface_map;
     struct ACLTable
     {
         sai_object_id_t         m_table_id;
@@ -127,10 +123,6 @@ private:
     };
     map<sai_object_id_t, MACsecObject>              m_macsec_objs;
     map<std::string, std::shared_ptr<MACsecPort> >  m_macsec_ports;
-
-    bool initGearbox();
-    bool getGearboxSwitchId(const Port &port, sai_object_id_t &switch_id) const;
-    bool getGearboxSwitchId(const std::string &port_name, sai_object_id_t &switch_id) const;
 
     /* MACsec Object */
     bool initMACsecObject(sai_object_id_t switch_id);

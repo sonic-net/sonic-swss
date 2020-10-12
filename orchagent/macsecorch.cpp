@@ -1,5 +1,4 @@
 #include "macsecorch.h"
-#include "gearboxutils.h"
 
 #include <macaddress.h>
 #include <redisapi.h>
@@ -82,21 +81,6 @@ struct MockSAIAPI
 // static MockSAIAPI *sai_port_api = &mock_api;
 // static MockSAIAPI *sai_switch_api = &mock_api;
 
-extern sai_object_id_t   gSwitchId;
-
-#define MOCK_GEARBOX_SWITCH_ID_AND_RETURN_TRUE  \
-do                                              \
-{                                               \
-    switch_id = gSwitchId;                      \
-    return true;                                \
-}while(0);
-
-#define MOCK_GEARBOX_LINE_PORT_ID(port)     \
-do                                          \
-{                                           \
-    port->m_line_port_id = port->m_port_id; \
-}while(0);
-
 // #undef SWSS_LOG_ENTER
 // #define SWSS_LOG_ENTER()    swss::Logger::ScopeLogger logger ## __LINE__ (__LINE__, __PRETTY_FUNCTION__)
 
@@ -108,6 +92,7 @@ do                                          \
 #define EAPOL_ETHER_TYPE 0x888e
 #define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 1000
 
+extern sai_object_id_t   gSwitchId;
 extern sai_macsec_api_t *sai_macsec_api;
 extern sai_acl_api_t *sai_acl_api;
 extern sai_port_api_t *sai_port_api;
@@ -409,48 +394,31 @@ public:
         m_an.reset(new macsec_an_t(an));
     }
 
-    Port *get_port()
+    sai_object_id_t *get_port_id()
     {
-        if (m_port == nullptr)
-        {
-            if (m_orch == nullptr)
-            {
-                SWSS_LOG_ERROR("MACsec orch wasn't provided");
-                return nullptr;
-            }
-            if (m_port_name == nullptr || m_port_name->empty())
-            {
-                SWSS_LOG_ERROR("Port name wasn't provided.");
-                return nullptr;
-            }
-            auto port = std::make_unique<Port>();
-            if (!m_orch->m_port_orch->getPort(*m_port_name, *port))
-            {
-                SWSS_LOG_INFO("Cannot find the port %s.", m_port_name->c_str());
-                return nullptr;
-            }
-            m_port = std::move(port);
-            MOCK_GEARBOX_LINE_PORT_ID(m_port);
-        }
-        return m_port.get();
-    }
-
-    sai_object_id_t *get_switch_id()
-    {
-        if (m_switch_id == nullptr)
+        if(m_port_id == nullptr)
         {
             auto port = get_port();
             if (port == nullptr)
             {
                 return nullptr;
             }
-            auto switch_id = std::make_unique<sai_object_id_t>();
-            if (!m_orch->getGearboxSwitchId(*port, *switch_id))
+            m_port_id = std::make_unique<sai_object_id_t>(port->m_port_id);
+            // TODO: If the MACsec was enabled at the gearbox, should use line port id as the port id.
+        }
+        return m_port_id.get();
+    }
+
+    sai_object_id_t *get_switch_id()
+    {
+        if (m_switch_id == nullptr)
+        {
+            if (gSwitchId == SAI_NULL_OBJECT_ID)
             {
-                SWSS_LOG_INFO("Cannot find MACsec switch at the port %s.", m_port_name->c_str());
+                SWSS_LOG_ERROR("Switch ID cannot be found");
                 return nullptr;
             }
-            m_switch_id = std::move(switch_id);
+            m_switch_id = std::make_unique<sai_object_id_t>(gSwitchId);
         }
         return m_switch_id.get();
     }
@@ -583,6 +551,7 @@ private:
                                           m_an(nullptr),
                                           m_port(nullptr),
                                           m_macsec_obj(nullptr),
+                                          m_port_id(nullptr),
                                           m_switch_id(nullptr),
                                           m_macsec_port(nullptr),
                                           m_acl_table(nullptr),
@@ -590,6 +559,32 @@ private:
                                           m_macsec_sa(nullptr)
     {
     }
+
+    const Port *get_port()
+    {
+        if (m_port == nullptr)
+        {
+            if (m_orch == nullptr)
+            {
+                SWSS_LOG_ERROR("MACsec orch wasn't provided");
+                return nullptr;
+            }
+            if (m_port_name == nullptr || m_port_name->empty())
+            {
+                SWSS_LOG_ERROR("Port name wasn't provided.");
+                return nullptr;
+            }
+            auto port = std::make_unique<Port>();
+            if (!m_orch->m_port_orch->getPort(*m_port_name, *port))
+            {
+                SWSS_LOG_INFO("Cannot find the port %s.", m_port_name->c_str());
+                return nullptr;
+            }
+            m_port = std::move(port);
+        }
+        return m_port.get();
+    }
+
     MACsecOrch                          *m_orch;
     std::shared_ptr<std::string>        m_port_name;
     sai_macsec_direction_t              m_direction;
@@ -598,6 +593,7 @@ private:
 
     std::unique_ptr<Port>               m_port;
     MACsecOrch::MACsecObject            *m_macsec_obj;
+    std::unique_ptr<sai_object_id_t>    m_port_id;
     std::unique_ptr<sai_object_id_t>    m_switch_id;
 
     MACsecOrch::MACsecPort              *m_macsec_port;
@@ -625,9 +621,7 @@ MACsecOrch::MACsecOrch(
                             m_macsec_flex_counter_manager(
                                 COUNTERS_MACSEC_ATTR_TABLE,
                                 StatsMode::READ,
-                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
-                            m_gearbox_table(app_db, "_GEARBOX_TABLE"),
-                            m_gearbox_enabled(false)
+                                MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
 {
     SWSS_LOG_ENTER();
 }
@@ -645,15 +639,6 @@ MACsecOrch::~MACsecOrch()
 void MACsecOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-
-    if (!m_gearbox_enabled)
-    {
-        if (!initGearbox())
-        {
-            SWSS_LOG_WARN("Gearbox cannot be initialized.");
-            return;
-        }
-    }
 
     using TaskType = std::tuple<const std::string, const std::string>;
     using TaskFunc = task_process_status (MACsecOrch::*)(
@@ -743,7 +728,7 @@ task_process_status MACsecOrch::updateMACsecPort(
     MACsecOrchContext ctx(this, port_name);
     RecoverStack recover;
 
-    if (ctx.get_port() == nullptr || ctx.get_switch_id() == nullptr)
+    if (ctx.get_port_id() == nullptr || ctx.get_switch_id() == nullptr)
     {
         return task_need_retry;
     }
@@ -767,7 +752,7 @@ task_process_status MACsecOrch::updateMACsecPort(
                 port_name,
                 port_attr,
                 *ctx.get_macsec_obj(),
-                ctx.get_port()->m_line_port_id,
+                *ctx.get_port_id(),
                 *ctx.get_switch_id()))
         {
             return task_failed;
@@ -778,7 +763,7 @@ task_process_status MACsecOrch::updateMACsecPort(
                 *macsec_port_itr->second,
                 port_name,
                 *ctx.get_macsec_obj(),
-                ctx.get_port()->m_line_port_id);
+                *ctx.get_port_id());
         });
     }
     if (!updateMACsecPort(*ctx.get_macsec_port(), port_attr))
@@ -803,7 +788,7 @@ task_process_status MACsecOrch::disableMACsecPort(
         SWSS_LOG_WARN("Cannot find MACsec switch at the port %s.", port_name.c_str());
         return task_failed;
     }
-    if (ctx.get_port() == nullptr)
+    if (ctx.get_port_id() == nullptr)
     {
         SWSS_LOG_WARN("Cannot find the port %s.", port_name.c_str());
         return task_failed;
@@ -820,7 +805,7 @@ task_process_status MACsecOrch::disableMACsecPort(
             *ctx.get_macsec_port(),
             port_name,
             *ctx.get_macsec_obj(),
-            ctx.get_port()->m_line_port_id))
+            *ctx.get_port_id()))
     {
         result = task_failed;
     }
@@ -953,62 +938,6 @@ task_process_status MACsecOrch::deleteIngressSA(
 {
     SWSS_LOG_ENTER();
     return deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_INGRESS);
-}
-
-bool MACsecOrch::initGearbox()
-{
-    SWSS_LOG_ENTER();
-
-    GearboxUtils gearbox;
-    m_gearbox_enabled = gearbox.isGearboxEnabled(&m_gearbox_table);
-    if (m_gearbox_enabled)
-    {
-        m_gearbox_phy_map = gearbox.loadPhyMap(&m_gearbox_table);
-        m_gearbox_interface_map = gearbox.loadInterfaceMap(&m_gearbox_table);
-
-        SWSS_LOG_NOTICE("BOX: m_gearbox_phy_map size       = %d.", static_cast<int>(m_gearbox_phy_map.size()));
-        SWSS_LOG_NOTICE("BOX: m_gearbox_interface_map size = %d.", static_cast<int>(m_gearbox_interface_map.size()));
-    }
-    return m_gearbox_enabled;
-}
-
-bool MACsecOrch::getGearboxSwitchId(const std::string &port_name, sai_object_id_t &switch_id) const
-{
-    SWSS_LOG_ENTER();
-
-    Port port;
-    if (!m_port_orch->getPort(port_name, port))
-    {
-        SWSS_LOG_WARN("Port %s cannot be found.", port_name.c_str());
-        return false;
-    }
-    return getGearboxSwitchId(port, switch_id);
-}
-
-bool MACsecOrch::getGearboxSwitchId(const Port &port, sai_object_id_t &switch_id) const
-{
-    MOCK_GEARBOX_SWITCH_ID_AND_RETURN_TRUE;
-    SWSS_LOG_ENTER();
-
-    auto phy_id = m_gearbox_interface_map.find(port.m_index);
-    if (phy_id == m_gearbox_interface_map.end())
-    {
-        SWSS_LOG_INFO("The port %s doesn't bind to any gearbox.", port.m_alias.c_str());
-        return false;
-    }
-    auto phy_oid_str = m_gearbox_phy_map.find(phy_id->second.phy_id);
-    if (phy_oid_str == m_gearbox_phy_map.end())
-    {
-        SWSS_LOG_ERROR("Cannot find phy object (%d).", phy_id->second.phy_id);
-        return false;
-    }
-    if (phy_oid_str->second.phy_oid.size() == 0)
-    {
-        SWSS_LOG_ERROR("BOX: Gearbox PHY phy_id:%d has an invalid phy_oid", phy_id->second.phy_id);
-        return false;
-    }
-    sai_deserialize_object_id(phy_oid_str->second.phy_oid, switch_id);
-    return true;
 }
 
 bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
@@ -1444,7 +1373,7 @@ task_process_status MACsecOrch::updateMACsecSC(
 
     if (ctx.get_switch_id() == nullptr || ctx.get_macsec_obj() == nullptr)
     {
-        SWSS_LOG_ERROR("Cannot find gearbox at the port %s.", port_name.c_str());
+        SWSS_LOG_ERROR("Cannot find switch id at the port %s.", port_name.c_str());
         return task_failed;
     }
 
