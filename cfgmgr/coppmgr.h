@@ -47,7 +47,7 @@ struct CoppTrapConf
 /* TrapName to TrapConf map  */
 typedef std::map<std::string, CoppTrapConf> CoppTrapConfMap;
 
-/* TrapGroupName to GroupConf map  */
+/* TrapID to Trap group name map  */
 typedef std::map<std::string, std::string> CoppTrapIdTrapGroupMap;
 
 /* Key to Field value Tuple map */
