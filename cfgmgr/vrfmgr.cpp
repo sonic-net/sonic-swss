@@ -101,6 +101,11 @@ VrfMgr::VrfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
             << IP_CMD << " -6 rule add pref " << TABLE_LOCAL_PREF << " table local && " << IP_CMD << " -6 rule del pref 0";
         EXEC_WITH_ERROR_THROW(cmd.str(), res);
     }
+
+    if (!WarmStart::isWarmStart())
+    {
+        WarmStart::setWarmStartState("vrfmgrd", WarmStart::WSDISABLED);
+    }
 }
 
 uint32_t VrfMgr::getFreeTable(void)
