@@ -24,6 +24,12 @@ using namespace swss;
 
 IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const vector<string> &tableNames) :
         Orch(cfgDb, tableNames),
+        
+        Orch(cfgDb, tableNames),
+        m_cfgIntfTable(cfgDb, CFG_INTF_TABLE_NAME),
+        m_cfgVlanIntfTable(cfgDb, CFG_VLAN_INTF_TABLE_NAME),
+        m_cfgLagIntfTable(cfgDb, CFG_LAG_INTF_TABLE_NAME),
+        m_cfgLoopbackIntfTable(cfgDb, CFG_LOOPBACK_INTERFACE_TABLE_NAME),
         m_statePortTable(stateDb, STATE_PORT_TABLE_NAME),
         m_stateLagTable(stateDb, STATE_LAG_TABLE_NAME),
         m_stateVlanTable(stateDb, STATE_VLAN_TABLE_NAME),
@@ -34,6 +40,12 @@ IntfMgr::IntfMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     if (!WarmStart::isWarmStart())
     {
         flushLoopbackIntfs();
+        WarmStart::setWarmStartState("intfmgrd", WarmStart::WSDISABLED);
+    }
+    else
+    {
+        //Build the interface list to be replayed to Kernel
+        buildIntfReplayList();
     }
 }
 
@@ -170,6 +182,25 @@ int IntfMgr::getIntfIpCount(const string &alias)
     }
 
     return std::stoi(res);
+}
+
+void IntfMgr::buildIntfReplayList(void)
+{
+    vector<string> intfList;
+
+    m_cfgIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+
+    m_cfgLoopbackIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+        
+    m_cfgVlanIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+        
+    m_cfgLagIntfTable.getKeys(intfList);
+    std::copy( intfList.begin(), intfList.end(), std::inserter( m_pendingReplayIntfList, m_pendingReplayIntfList.end() ) );
+
+    SWSS_LOG_INFO("Found %d Total Intfs to be replayed", (int)m_pendingReplayIntfList.size() );
 }
 
 bool IntfMgr::isIntfCreated(const string &alias)
@@ -626,6 +657,7 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 void IntfMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
+    static bool replayNotDone = true;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -643,6 +675,11 @@ void IntfMgr::doTask(Consumer &consumer)
                 it++;
                 continue;
             }
+            else
+            {
+                //Entry programmed, remove it from pending list if present
+                m_pendingReplayIntfList.erase(keys[0]);
+            }
         }
         else if (keys.size() == 2)
         {
@@ -651,6 +688,11 @@ void IntfMgr::doTask(Consumer &consumer)
                 it++;
                 continue;
             }
+            else
+            {
+                //Entry programmed, remove it from pending list if present
+                m_pendingReplayIntfList.erase(keys[0] + config_db_key_delimiter + keys[1] );
+            }
         }
         else
         {
@@ -658,5 +700,11 @@ void IntfMgr::doTask(Consumer &consumer)
         }
 
         it = consumer.m_toSync.erase(it);
+    }
+    
+    if (replayNotDone  &&   WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
+    {
+        replayNotDone = false;
+        WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
     }
 }
