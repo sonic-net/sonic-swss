@@ -96,9 +96,11 @@ class TestNat(object):
 
         #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
-
         for key in keys:
-            assert "\"dst_ip\":\"67.66.65.1\"" in key or "\"src_ip\":\"18.18.18.2\"" in key
+            if (key.find("dst_ip:67.66.65.1")) or (key.find("src_ip:18.18.18.2")):
+                assert True
+            else:
+                assert False
 
     def test_DelNatStaticEntry(self, dvs, testlog):
         # initialize
@@ -143,9 +145,9 @@ class TestNat(object):
         #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
         for key in keys:
-            if "\"dst_ip\":\"67.66.65.1\"" in key and "\"l4_dst_port\":\"670\"" in key:
+            if (key.find("dst_ip:67.66.65.1")) and (key.find("key.l4_dst_port:670")):
                 assert True
-            elif "\"src_ip\":\"18.18.18.2\"" in key or "\"l4_src_port\":\"180\"" in key:
+            if (key.find("src_ip:18.18.18.2")) or (key.find("key.l4_src_port:180")):
                 assert True
             else:
                 assert False
@@ -199,7 +201,10 @@ class TestNat(object):
         #check the entry in asic db, 4 keys = SNAT, DNAT and 2 DNAT_Pools
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 4)
         for key in keys:
-            assert "\"dst_ip\":\"67.66.65.1\"" in key or "\"src_ip\":\"18.18.18.2\"" in key
+            if (key.find("dst_ip:18.18.18.1")) or (key.find("src_ip:18.18.18.2")):
+                assert True
+            else:
+                assert False
 
     def test_DelTwiceNatStaticEntry(self, dvs, testlog):
         # initialize
@@ -251,9 +256,9 @@ class TestNat(object):
         #check the entry in asic db, 4 keys = SNAT, DNAT and 2 DNAT_Pools
         keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 4)
         for key in keys:
-            if "\"src_ip\":\"18.18.18.2\"" in key or "\"l4_src_port\":\"182\"" in key:
+            if (key.find("src_ip:18.18.18.2")) or (key.find("l4_src_port:182")):
                 assert True
-            elif "\"dst_ip\":\"67.66.65.1\"" in key or "\"l4_dst_port\":\"660\"" in key:
+            if (key.find("dst_ip:18.18.18.1")) or (key.find("l4_dst_port:181")):
                 assert True
             else:
                 assert False
