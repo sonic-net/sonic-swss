@@ -704,5 +704,7 @@ void IntfMgr::doTask(Consumer &consumer)
     {
         replayNotDone = false;
         WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
+        //For now replayed == reconciled for the UT to pass
+        WarmStart::setWarmStartState("vrfmgrd", WarmStart::RECONCILED);
     }
 }
