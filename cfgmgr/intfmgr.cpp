@@ -703,7 +703,7 @@ void IntfMgr::doTask(Consumer &consumer)
     if (replayNotDone  &&   WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
     {
         replayNotDone = false;
-        WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
+        //WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
         //For now replayed == reconciled for the UT to pass
         WarmStart::setWarmStartState("vrfmgrd", WarmStart::RECONCILED);
     }
