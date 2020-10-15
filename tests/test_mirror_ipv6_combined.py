@@ -1,10 +1,7 @@
 # This test suite covers the functionality of mirror feature in SwSS
-import platform
-import pytest
 import time
 
 from swsscommon import swsscommon
-from distutils.version import StrictVersion
 
 DVS_FAKE_PLATFORM = "broadcom"
 
@@ -165,6 +162,7 @@ class TestMirror(object):
         expected_sai_attributes = [
             "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE",
             "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL",
+            "SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER",
             "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP",
             "SAI_ACL_TABLE_ATTR_FIELD_DST_IP",
             "SAI_ACL_TABLE_ATTR_FIELD_ICMP_TYPE",
@@ -554,8 +552,6 @@ class TestMirror(object):
         self.remove_neighbor("Ethernet32", "20.0.0.1")
         self.remove_ip_address("Ethernet32", "20.0.0.0/31")
         self.set_interface_status("Ethernet32", "down")
-
-
 
 
 # Add Dummy always-pass test at end as workaroud

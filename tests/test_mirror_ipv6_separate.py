@@ -1,8 +1,5 @@
 # This test suite covers the functionality of mirror feature in SwSS
-import platform
-import pytest
 import time
-from distutils.version import StrictVersion
 
 from swsscommon import swsscommon
 
@@ -230,7 +227,7 @@ class TestMirror(object):
         # dscp mirror tables.
         expected_sai_attributes = [
             "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE",
-            "SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER",  # NOTE: We use the MLNX2700 VS implementation for this test suite.
+            "SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER",
             "SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6",
             "SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6",
             "SAI_ACL_TABLE_ATTR_FIELD_ICMPV6_TYPE",
