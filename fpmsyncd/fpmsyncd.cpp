@@ -12,8 +12,6 @@
 using namespace std;
 using namespace swss;
 
-RouteSync *g_routesync = NULL;
-
 /*
  * Default warm-restart timer interval for routing-stack app. To be used only if
  * no explicit value has been defined in configuration.
@@ -51,7 +49,6 @@ int main(int argc, char **argv)
     DBConnector db("APPL_DB", 0);
     RedisPipeline pipeline(&db);
     RouteSync sync(&pipeline);
-    g_routesync = &sync;
 
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
@@ -63,7 +60,7 @@ int main(int argc, char **argv)
     {
         try
         {
-            FpmLink fpm;
+            FpmLink fpm(&sync);
             Select s;
             SelectableTimer warmStartTimer(timespec{0, 0});
             // Before eoiu flags detected, check them periodically. It also stop upon detection of reconciliation done.

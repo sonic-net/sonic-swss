@@ -5,12 +5,9 @@
 #include "netmsg.h"
 #include "netdispatcher.h"
 #include "fpmsyncd/fpmlink.h"
-#include "fpmsyncd/routesync.h"
 
 using namespace swss;
 using namespace std;
-
-extern RouteSync *g_routesync;
 
 void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
         int len)
@@ -102,13 +99,14 @@ bool FpmLink::isRawProcessing(struct nlmsghdr *h)
     return false;
 }
 
-FpmLink::FpmLink(unsigned short port) :
+FpmLink::FpmLink(RouteSync *rsync, unsigned short port) :
     MSG_BATCH_SIZE(256),
     m_bufSize(FPM_MAX_MSG_LEN * MSG_BATCH_SIZE),
     m_messageBuffer(NULL),
     m_pos(0),
     m_connected(false),
-    m_server_up(false)
+    m_server_up(false),
+    m_routesync(rsync)
 {
     struct sockaddr_in addr;
     int true_val = 1;
@@ -236,7 +234,7 @@ uint64_t FpmLink::readData()
             if (isRaw)
             {
                 /* EVPN Type5 Add route processing */
-                g_routesync->onMsgRaw(nl_hdr);
+                processRawMsg(nl_hdr);
             }
             else
             {
