@@ -5,9 +5,12 @@
 #include "netmsg.h"
 #include "netdispatcher.h"
 #include "fpmsyncd/fpmlink.h"
+#include "fpmsyncd/routesync.h"
 
 using namespace swss;
 using namespace std;
+
+extern RouteSync *g_routesync;
 
 void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
         int len)
@@ -233,7 +236,7 @@ uint64_t FpmLink::readData()
             if (isRaw)
             {
                 /* EVPN Type5 Add route processing */
-                NetDispatcher::getInstance().onNetlinkMessageRaw(msg);
+				g_routesync->onMsgRaw(nl_hdr);
             }
             else
             {

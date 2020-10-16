@@ -12,6 +12,7 @@
 using namespace std;
 using namespace swss;
 
+RouteSync *g_routesync = NULL;
 
 /*
  * Default warm-restart timer interval for routing-stack app. To be used only if
@@ -50,14 +51,13 @@ int main(int argc, char **argv)
     DBConnector db("APPL_DB", 0);
     RedisPipeline pipeline(&db);
     RouteSync sync(&pipeline);
+    g_routesync = &sync;
 
     DBConnector stateDb("STATE_DB", 0);
     Table bgpStateTable(&stateDb, STATE_BGP_TABLE_NAME);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWROUTE, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELROUTE, &sync);
-    NetDispatcher::getInstance().registerRawMessageHandler(RTM_NEWROUTE, &sync);
-    NetDispatcher::getInstance().registerRawMessageHandler(RTM_DELROUTE, &sync);
 
     while (true)
     {
