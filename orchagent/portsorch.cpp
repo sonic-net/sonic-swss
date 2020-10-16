@@ -25,7 +25,6 @@
 #include "crmorch.h"
 #include "countercheckorch.h"
 #include "notifier.h"
-#include "redisclient.h"
 #include "fdborch.h"
 
 extern sai_switch_api_t *sai_switch_api;

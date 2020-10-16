@@ -596,7 +596,7 @@ void RouteOrch::doTask(Consumer& consumer)
                     else
                     {
                         if (addRoute(ctx, nhg))
-                             it = consumer.m_toSync.erase(it);
+                            it = consumer.m_toSync.erase(it);
                         else
                             it++;
                     }
