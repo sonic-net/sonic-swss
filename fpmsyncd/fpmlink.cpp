@@ -236,7 +236,7 @@ uint64_t FpmLink::readData()
             if (isRaw)
             {
                 /* EVPN Type5 Add route processing */
-				g_routesync->onMsgRaw(nl_hdr);
+                g_routesync->onMsgRaw(nl_hdr);
             }
             else
             {
