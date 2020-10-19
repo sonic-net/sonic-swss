@@ -318,11 +318,21 @@ unordered_set<string> DropCounter::getSupportedDropReasons(sai_debug_counter_att
         if (drop_reason_type == SAI_DEBUG_COUNTER_ATTR_IN_DROP_REASON_LIST)
         {
             drop_reason = sai_serialize_ingress_drop_reason(static_cast<sai_in_drop_reason_t>(drop_reason_list.list[i]));
+            // in case of unsupported counter, enum value is returned as a str
+            if (drop_reason.length() < INGRESS_DROP_REASON_PREFIX_LENGTH)
+            {
+                continue;
+            }
             drop_reason = drop_reason.substr(INGRESS_DROP_REASON_PREFIX_LENGTH);
         }
         else
         {
             drop_reason = sai_serialize_egress_drop_reason(static_cast<sai_out_drop_reason_t>(drop_reason_list.list[i]));
+            // in case of unsupported counter, enum value is returned as a str
+            if (drop_reason.length() < EGRESS_DROP_REASON_PREFIX_LENGTH)
+            {
+                continue;
+            }
             drop_reason = drop_reason.substr(EGRESS_DROP_REASON_PREFIX_LENGTH);
         }
 

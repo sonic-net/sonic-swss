@@ -26,6 +26,7 @@
 #include "countercheckorch.h"
 #include "notifier.h"
 #include "redisclient.h"
+#include "fdborch.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -41,12 +42,14 @@ extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
+extern FdbOrch *gFdbOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
 
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
+#define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
 #define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "10000"
@@ -145,6 +148,12 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS,
 };
 
+const vector<sai_port_stat_t> port_buffer_drop_stat_ids =
+{
+    SAI_PORT_STAT_IN_DROPPED_PKTS,
+    SAI_PORT_STAT_OUT_DROPPED_PKTS
+};
+
 static const vector<sai_queue_stat_t> queue_stat_ids =
 {
     SAI_QUEUE_STAT_PACKETS,
@@ -187,6 +196,7 @@ static char* hostif_vlan_tag[] = {
 PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames) :
         Orch(db, tableNames),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+        port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
 {
     SWSS_LOG_ENTER();
@@ -1845,6 +1855,13 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
                     counter_stats.emplace(sai_serialize_port_stat(it));
                 }
                 port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, counter_stats);
+                std::unordered_set<std::string> port_buffer_drop_stats;
+                for (const auto& it: port_buffer_drop_stat_ids)
+                {
+                    port_buffer_drop_stats.emplace(sai_serialize_port_stat(it));
+                }
+                port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
+
                 PortUpdate update = { p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
@@ -1879,8 +1896,7 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     port_stat_manager.clearCounterIdList(p.m_port_id);
 
     /* remove port name map from counter table */
-    RedisClient redisClient(m_counter_db.get());
-    redisClient.hdel(COUNTERS_PORT_NAME_MAP, alias);
+    m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
 
     m_portList[alias].m_init = false;
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
@@ -2358,17 +2374,46 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         /* reset fec mode upon mode change */
                         if (p.m_fec_mode != fec_mode_map[fec_mode])
                         {
-                            p.m_fec_mode = fec_mode_map[fec_mode];
-                            if (setPortFec(p, p.m_fec_mode))
+                            if (p.m_admin_state_up)
                             {
-                                m_portList[alias] = p;
-                                SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                /* Bring port down before applying fec mode*/
+                                if (!setPortAdminStatus(p, false))
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set fec mode", alias.c_str());
+                                    it++;
+                                    continue;
+                                }
+
+                                p.m_admin_state_up = false;
+                                p.m_fec_mode = fec_mode_map[fec_mode];
+
+                                if (setPortFec(p, p.m_fec_mode))
+                                {
+                                    m_portList[alias] = p;
+                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                    it++;
+                                    continue;
+                                }
                             }
                             else
                             {
-                                SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
-                                it++;
-                                continue;
+                                /* Port is already down, setting fec mode*/
+                                p.m_fec_mode = fec_mode_map[fec_mode];
+                                if (setPortFec(p, p.m_fec_mode))
+                                {
+                                    m_portList[alias] = p;
+                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                    it++;
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -3387,6 +3432,10 @@ bool PortsOrch::removeBridgePort(Port &port)
                 hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], port.m_alias.c_str());
         return false;
     }
+
+    //Flush the FDB entires corresponding to the port
+    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
 
     /* Remove bridge port */
     status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);

@@ -14,6 +14,7 @@
 #include "vnetorch.h"
 #include "vxlanorch.h"
 #include "policerorch.h"
+#include "fgnhgorch.h"
 
 extern int gBatchSize;
 extern bool gSwssRecord;
@@ -33,6 +34,7 @@ extern sai_object_id_t gUnderlayIfId;
 extern SwitchOrch *gSwitchOrch;
 extern CrmOrch *gCrmOrch;
 extern PortsOrch *gPortsOrch;
+extern FgNhgOrch *gFgNhgOrch;
 extern RouteOrch *gRouteOrch;
 extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;

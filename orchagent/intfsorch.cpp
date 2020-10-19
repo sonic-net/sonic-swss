@@ -712,21 +712,24 @@ void IntfsOrch::doTask(Consumer &consumer)
                     continue;
                 }
 
-                /* Set nat zone id */
-                if ((!nat_zone.empty()) and (port.m_nat_zone_id != nat_zone_id))
+                if (gPortsOrch->getPort(alias, port))
                 {
-                    port.m_nat_zone_id = nat_zone_id;
+                    /* Set nat zone id */
+                    if ((!nat_zone.empty()) and (port.m_nat_zone_id != nat_zone_id))
+                    {
+                        port.m_nat_zone_id = nat_zone_id;
 
-                    if (gIsNatSupported)
-                    {
-                        setRouterIntfsNatZoneId(port);
+                        if (gIsNatSupported)
+                        {
+                            setRouterIntfsNatZoneId(port);
+                        }
+                        else
+                        {
+                            SWSS_LOG_NOTICE("Not set router interface %s NAT Zone Id to %u, as NAT is not supported",
+                                            port.m_alias.c_str(), port.m_nat_zone_id);
+                        }
+                        gPortsOrch->setPort(alias, port);
                     }
-                    else
-                    {
-                        SWSS_LOG_NOTICE("Not set router interface %s NAT Zone Id to %u, as NAT is not supported",
-                                        port.m_alias.c_str(), port.m_nat_zone_id);
-                    }
-                    gPortsOrch->setPort(alias, port);
                 }
             }
 

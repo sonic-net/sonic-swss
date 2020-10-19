@@ -44,3 +44,9 @@ class TestSetRo(object):
 
         # make action on appdb so orchagent will get RO value
         # read asic db to see if orchagent behaved correctly
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

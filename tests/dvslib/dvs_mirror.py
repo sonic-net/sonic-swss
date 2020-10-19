@@ -67,13 +67,9 @@ class DVSMirror(object):
 
     def verify_session_db(self, dvs, name, asic_table=None, asic=None, state=None, asic_size=None):
         if asic:
-            fv_pairs = dvs.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION", asic_table)
-            assert all(fv_pairs.get(k) == v for k, v in asic.items())
-            if asic_size:
-                assert asic_size == len(fv_pairs)
+            dvs.asic_db.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_MIRROR_SESSION", asic_table, asic)
         if state:
-            fv_pairs = dvs.state_db.wait_for_entry("MIRROR_SESSION_TABLE", name)
-            assert all(fv_pairs.get(k) == v for k, v in state.items())
+            dvs.state_db.wait_for_field_match("MIRROR_SESSION_TABLE", name, state)
 
     def verify_session_policer(self, dvs, policer_oid, cir):
         if cir:

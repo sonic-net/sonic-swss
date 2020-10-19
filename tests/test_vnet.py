@@ -537,6 +537,14 @@ class VnetVxlanVrfTunnel(object):
 
     def check_vnet_entry(self, dvs, name, peer_list=[]):
         asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        app_db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+
+        #Assert if there are linklocal entries
+        tbl = swsscommon.Table(app_db, "VNET_ROUTE_TUNNEL_TABLE")
+        route_entries = tbl.getKeys()
+        assert "ff00::/8" not in route_entries
+        assert "fe80::/64" not in route_entries
+
         #Check virtual router objects
         assert how_many_entries_exist(asic_db, self.ASIC_VRF_TABLE) == (len(self.vnet_vr_ids) + 1),\
                                      "The VR objects are not created"
@@ -1352,3 +1360,9 @@ class TestVnetOrch(object):
 
         vnet_obj.check_default_vnet_entry(dvs, 'Vnet_5')
         vnet_obj.check_vxlan_tunnel_entry(dvs, tunnel_name, 'Vnet_5', '4789')
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

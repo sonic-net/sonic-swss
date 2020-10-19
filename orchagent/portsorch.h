@@ -18,6 +18,7 @@
 #define VLAN_TAG_LEN 4
 #define PORT_STAT_COUNTER_FLEX_COUNTER_GROUP "PORT_STAT_COUNTER"
 #define PORT_RATE_COUNTER_FLEX_COUNTER_GROUP "PORT_RATE_COUNTER"
+#define PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP "PORT_BUFFER_DROP_STAT"
 #define QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_STAT_COUNTER"
 #define QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "QUEUE_WATERMARK_STAT_COUNTER"
 #define PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "PG_WATERMARK_STAT_COUNTER"
@@ -149,6 +150,7 @@ private:
     shared_ptr<DBConnector> m_flex_db;
 
     FlexCounterManager port_stat_manager;
+    FlexCounterManager port_buffer_drop_stat_manager;
     FlexCounterManager queue_stat_manager;
 
     std::map<sai_object_id_t, PortSupportedSpeeds> m_portSupportedSpeeds;

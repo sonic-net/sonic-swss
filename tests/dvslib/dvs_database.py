@@ -1,4 +1,10 @@
-"""Utilities for interacting with redis when writing VS tests."""
+"""Utilities for interacting with redis when writing VS tests.
+
+FIXME:
+    - Reference DBs by name rather than ID/socket
+    - Move DEFAULT_POLLING_CONFIG to Common
+    - Add support for ProducerStateTable
+"""
 from typing import Dict, List
 from swsscommon import swsscommon
 from dvslib.dvs_common import wait_for_result, PollingConfig

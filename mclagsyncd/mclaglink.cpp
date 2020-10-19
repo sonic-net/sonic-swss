@@ -38,7 +38,7 @@ using namespace std;
 void MclagLink::getOidToPortNameMap(std::unordered_map<std::string, std:: string> & port_map)
 {
     std::unordered_map<std::string, std:: string>::iterator it;
-    auto hash = p_redisClient_to_counters->hgetall("COUNTERS_PORT_NAME_MAP");
+    auto hash = p_counters_db->hgetall("COUNTERS_PORT_NAME_MAP");
 
     for (it = hash.begin(); it != hash.end(); ++it)
         port_map.insert(pair<string, string>(it->second, it->first));
@@ -53,14 +53,14 @@ void MclagLink::getBridgePortIdToAttrPortIdMap(std::map<std::string, std:: strin
 
     std::unordered_map<string, string>::iterator attr_port_id;
 
-    auto keys = p_redisClient_to_asic->keys("ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT:*");
+    auto keys = p_asic_db->keys("ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT:*");
 
     for (auto& key : keys)
     {
         pos1 = key.find("oid:", 0);
         bridge_port_id = key.substr(pos1);
 
-        auto hash = p_redisClient_to_asic->hgetall(key);
+        auto hash = p_asic_db->hgetall(key);
         attr_port_id = hash.find("SAI_BRIDGE_PORT_ATTR_PORT_ID");
         if (attr_port_id == hash.end())
         {
@@ -81,7 +81,7 @@ void MclagLink::getVidByBvid(std::string &bvid, std::string &vlanid)
     std::string pre = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN:";
     std::string key = pre + bvid;
 
-    auto hash = p_redisClient_to_asic->hgetall(key.c_str());
+    auto hash = p_asic_db->hgetall(key.c_str());
 
     attr_vlan_id = hash.find("SAI_VLAN_ATTR_VLAN_ID");
     if (attr_vlan_id == hash.end())
@@ -109,7 +109,7 @@ void MclagLink::getFdbSet(std::set<mclag_fdb> *fdb_set)
     std::map<std::string, std::string>::iterator brPortId_to_attrPortId_it;
     std::unordered_map<std::string, std::string>::iterator oid_to_portName_it;
 
-    auto keys = p_redisClient_to_asic->keys("ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY:*");
+    auto keys = p_asic_db->keys("ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY:*");
 
     for (auto& key : keys)
     {
@@ -136,7 +136,7 @@ void MclagLink::getFdbSet(std::set<mclag_fdb> *fdb_set)
         mac = key.substr(pos1, pos2 - pos1 + 1);
 
         /*get type*/
-        auto hash = p_redisClient_to_asic->hgetall(key);
+        auto hash = p_asic_db->hgetall(key);
         type_it = hash.find("SAI_FDB_ENTRY_ATTR_TYPE");
         if (type_it == hash.end())
         {

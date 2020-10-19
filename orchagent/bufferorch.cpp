@@ -39,8 +39,7 @@ BufferOrch::BufferOrch(DBConnector *db, vector<string> &tableNames) :
     m_flexCounterDb(new DBConnector("FLEX_COUNTER_DB", 0)),
     m_flexCounterTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_TABLE)),
     m_flexCounterGroupTable(new ProducerTable(m_flexCounterDb.get(), FLEX_COUNTER_GROUP_TABLE)),
-    m_countersDb(new DBConnector("COUNTERS_DB", 0)),
-    m_countersDbRedisClient(m_countersDb.get())
+    m_countersDb(new DBConnector("COUNTERS_DB", 0))
 {
     SWSS_LOG_ENTER();
     initTableHandlers();
@@ -270,6 +269,14 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             else if (field == buffer_pool_type_field_name)
             {
                 string type = value;
+
+                if (SAI_NULL_OBJECT_ID != sai_object)
+                {
+                    // We should skip the pool type because it's create only when setting a pool's attribute.
+                    SWSS_LOG_INFO("Skip setting buffer pool type %s for pool %s", type.c_str(), object_name.c_str());
+                    continue;
+                }
+
                 if (type == buffer_value_ingress)
                 {
                     attr.value.u32 = SAI_BUFFER_POOL_TYPE_INGRESS;
@@ -289,6 +296,14 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             else if (field == buffer_pool_mode_field_name)
             {
                 string mode = value;
+
+                if (SAI_NULL_OBJECT_ID != sai_object)
+                {
+                    // We should skip the pool mode because it's create only when setting a pool's attribute.
+                    SWSS_LOG_INFO("Skip setting buffer pool mode %s for pool %s", mode.c_str(), object_name.c_str());
+                    continue;
+                }
+
                 if (mode == buffer_pool_mode_dynamic_value)
                 {
                     attr.value.u32 = SAI_BUFFER_POOL_THRESHOLD_MODE_DYNAMIC;
@@ -319,11 +334,14 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         }
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
-            sai_status = sai_buffer_api->set_buffer_pool_attribute(sai_object, &attribs[0]);
-            if (SAI_STATUS_SUCCESS != sai_status)
+            for (auto &attribute : attribs)
             {
-                SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
-                return task_process_status::task_failed;
+                sai_status = sai_buffer_api->set_buffer_pool_attribute(sai_object, &attribute);
+                if (SAI_STATUS_SUCCESS != sai_status)
+                {
+                    SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
+                    return task_process_status::task_failed;
+                }
             }
             SWSS_LOG_DEBUG("Modified existing pool:%" PRIx64 ", type:%s name:%s ", sai_object, map_type_name.c_str(), object_name.c_str());
         }
@@ -342,7 +360,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
             // Specifically, we push the buffer pool name to oid mapping upon the creation of the oid
             // In pg and queue case, this mapping installment is deferred to FlexCounterOrch at a reception of field
             // "FLEX_COUNTER_STATUS"
-            m_countersDbRedisClient.hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
+            m_countersDb->hset(COUNTERS_BUFFER_POOL_NAME_MAP, object_name, sai_serialize_object_id(sai_object));
         }
     }
     else if (op == DEL_COMMAND)
@@ -356,7 +374,7 @@ task_process_status BufferOrch::processBufferPool(Consumer &consumer)
         SWSS_LOG_NOTICE("Removed buffer pool %s with type %s", object_name.c_str(), map_type_name.c_str());
         auto it_to_delete = (m_buffer_type_maps[map_type_name])->find(object_name);
         (m_buffer_type_maps[map_type_name])->erase(it_to_delete);
-        m_countersDbRedisClient.hdel(COUNTERS_BUFFER_POOL_NAME_MAP, object_name);
+        m_countersDb->hdel(COUNTERS_BUFFER_POOL_NAME_MAP, object_name);
     }
     else
     {
@@ -396,6 +414,13 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             sai_attribute_t attr;
             if (field == buffer_pool_field_name)
             {
+                if (SAI_NULL_OBJECT_ID != sai_object)
+                {
+                    // We should skip the profile's pool name because it's create only when setting a profile's attribute.
+                    SWSS_LOG_INFO("Skip setting buffer profile's pool %s for profile %s", value.c_str(), object_name.c_str());
+                    continue;
+                }
+
                 sai_object_id_t sai_pool;
                 ref_resolve_status resolve_result = resolveFieldRefValue(m_buffer_type_maps, buffer_pool_field_name, tuple, sai_pool);
                 if (ref_resolve_status::success != resolve_result)
@@ -438,9 +463,17 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             }
             else if (field == buffer_dynamic_th_field_name)
             {
-                attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
-                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC;
-                attribs.push_back(attr);
+                if (SAI_NULL_OBJECT_ID != sai_object)
+                {
+                    // We should skip the profile's threshold type because it's create only when setting a profile's attribute.
+                    SWSS_LOG_INFO("Skip setting buffer profile's threshold type for profile %s", object_name.c_str());
+                }
+                else
+                {
+                    attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
+                    attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_DYNAMIC;
+                    attribs.push_back(attr);
+                }
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH;
                 attr.value.s8 = (sai_int8_t)stol(value);
@@ -448,9 +481,17 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             }
             else if (field == buffer_static_th_field_name)
             {
-                attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
-                attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC;
-                attribs.push_back(attr);
+                if (SAI_NULL_OBJECT_ID != sai_object)
+                {
+                    // We should skip the profile's threshold type because it's create only when setting a profile's attribute.
+                    SWSS_LOG_INFO("Skip setting buffer profile's threshold type for profile %s", object_name.c_str());
+                }
+                else
+                {
+                    attr.id = SAI_BUFFER_PROFILE_ATTR_THRESHOLD_MODE;
+                    attr.value.s32 = SAI_BUFFER_PROFILE_THRESHOLD_MODE_STATIC;
+                    attribs.push_back(attr);
+                }
 
                 attr.id = SAI_BUFFER_PROFILE_ATTR_SHARED_STATIC_TH;
                 attr.value.u64 = (uint64_t)stoul(value);
@@ -465,11 +506,14 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
         if (SAI_NULL_OBJECT_ID != sai_object)
         {
             SWSS_LOG_DEBUG("Modifying existing sai object:%" PRIx64, sai_object);
-            sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribs[0]);
-            if (SAI_STATUS_SUCCESS != sai_status)
+            for (auto &attribute : attribs)
             {
-                SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
-                return task_process_status::task_failed;
+                sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
+                if (SAI_STATUS_SUCCESS != sai_status)
+                {
+                    SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
+                    return task_process_status::task_failed;
+                }
             }
         }
         else
