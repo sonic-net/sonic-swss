@@ -31,6 +31,11 @@ class DVSAcl:
         "egress": "SAI_ACL_ENTRY_ATTR_ACTION_MIRROR_EGRESS"
     }
 
+    ADB_PORT_ATTR_LOOKUP = {
+        "ingress": "SAI_PORT_ATTR_INGRESS_ACL",
+        "egress": "SAI_PORT_ATTR_EGRESS_ACL"
+    }
+
     def __init__(self, asic_db, config_db, state_db, counters_db):
         """Create a new DVS ACL Manager."""
         self.asic_db = asic_db
@@ -61,6 +66,25 @@ class DVSAcl:
 
         if stage:
             table_attrs["stage"] = stage
+
+        self.config_db.create_entry(self.CDB_ACL_TABLE_NAME, table_name, table_attrs)
+
+    def create_control_plane_acl_table(
+            self,
+            table_name: str,
+            services: List[str]
+    ) -> None:
+        """Create a new Control Plane ACL table in Config DB.
+
+        Args:
+            table_name: The name for the new ACL table.
+            services: A list of services to bind to the ACL table.
+        """
+        table_attrs = {
+            "policy_desc": table_name,
+            "type": "CTRLPLANE",
+            "services": ",".join(services)
+        }
 
         self.config_db.create_entry(self.CDB_ACL_TABLE_NAME, table_name, table_attrs)
 
@@ -172,13 +196,20 @@ class DVSAcl:
 
         assert set(member_groups) == set(acl_table_group_ids)
 
-    def verify_acl_table_port_binding(self, acl_table_id: str, bind_ports: List[str], num_tables: int) -> None:
+    def verify_acl_table_port_binding(
+            self,
+            acl_table_id: str,
+            bind_ports: List[str],
+            num_tables: int,
+            stage: str = "ingress"
+    ) -> None:
         """Verify that the ACL table has been bound to the given list of ports.
 
         Args:
             acl_table_id: The ACL table that is being checked.
             bind_ports: The ports that should be bound to the given ACL table.
             num_tables: The total number of ACL tables in ASIC DB.
+            stage: The stage of the ACL table that was created.
         """
         acl_table_group_ids = self.asic_db.wait_for_n_keys(self.ADB_ACL_GROUP_TABLE_NAME, len(bind_ports))
 
@@ -187,7 +218,7 @@ class DVSAcl:
             port_oid = self.counters_db.get_entry("COUNTERS_PORT_NAME_MAP", "").get(port)
             fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid)
 
-            acl_table_group_id = fvs.pop("SAI_PORT_ATTR_INGRESS_ACL", None)
+            acl_table_group_id = fvs.pop(self.ADB_PORT_ATTR_LOOKUP[stage], None)
             assert acl_table_group_id in acl_table_group_ids
             port_groups.append(acl_table_group_id)
 

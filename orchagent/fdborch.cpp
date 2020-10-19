@@ -556,14 +556,12 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
 
     string port_name = update.member.m_alias;
     auto fdb_list = std::move(saved_fdb_entries[port_name]);
-    if(!fdb_list.empty())
+    saved_fdb_entries[port_name].clear();
+    for (const auto& fdb: fdb_list)
     {
-        for (const auto& fdb: fdb_list)
-        {
-            // try to insert an FDB entry. If the FDB entry is not ready to be inserted yet,
-            // it would be added back to the saved_fdb_entries structure by addFDBEntry()
-            (void)addFdbEntry(fdb.entry, fdb.type);
-        }
+        // try to insert an FDB entry. If the FDB entry is not ready to be inserted yet,
+        // it would be added back to the saved_fdb_entries structure by addFDBEntry()
+        (void)addFdbEntry(fdb.entry, fdb.type);
     }
 }
 

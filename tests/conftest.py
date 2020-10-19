@@ -1494,6 +1494,8 @@ def dvs_acl(request, dvs) -> DVSAcl:
                   dvs.get_state_db(),
                   dvs.get_counters_db())
 
+# FIXME: The rest of these also need to be reverted back to normal fixtures to
+# appease the linter.
 @pytest.yield_fixture(scope="class")
 def dvs_lag_manager(request, dvs):
     request.cls.dvs_lag = dvs_lag.DVSLag(dvs.get_asic_db(),

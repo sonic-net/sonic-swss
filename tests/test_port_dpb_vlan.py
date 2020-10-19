@@ -5,7 +5,6 @@ from port_dpb import DPB
 
 @pytest.mark.usefixtures('dpb_setup_fixture')
 @pytest.mark.usefixtures('dvs_vlan_manager')
-@pytest.mark.xfail(reason="sonic cfggen bug: buildimage#5263")
 class TestPortDPBVlan(object):
     def check_syslog(self, dvs, marker, log, expected_cnt):
         (exitcode, num) = dvs.runcmd(['sh', '-c', "awk \'/%s/,ENDFILE {print;}\' /var/log/syslog | grep \"%s\" | wc -l" % (marker, log)])

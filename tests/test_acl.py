@@ -11,7 +11,7 @@ L3V6_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8"]
 L3V6_RULE_NAME = "L3V6_TEST_RULE"
 
 
-class TestAcl():
+class TestAcl:
     @pytest.yield_fixture
     def l3_acl_table(self, dvs_acl):
         try:
@@ -57,6 +57,7 @@ class TestAcl():
 
             acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
             acl_table_group_ids = dvs_acl.get_acl_table_group_ids(len(L3_BIND_PORTS))
+
             dvs_acl.verify_acl_table_group_members(acl_table_id, acl_table_group_ids, 1)
             dvs_acl.verify_acl_table_port_binding(acl_table_id, L3_BIND_PORTS, 1)
         finally:
@@ -413,7 +414,7 @@ class TestAcl():
         dvs_acl.verify_no_acl_rules()
 
 
-class TestAclRuleValidation():
+class TestAclRuleValidation:
     """Test class for cases that check if orchagent corectly validates ACL rules input."""
 
     SWITCH_CAPABILITY_TABLE = "SWITCH_CAPABILITY"
