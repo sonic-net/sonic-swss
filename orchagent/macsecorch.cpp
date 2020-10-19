@@ -88,9 +88,9 @@ struct MockSAIAPI
 
 /* Global Variables*/
 
-#define AVAILABLE_ACL_PRIORITIES_LIMITATION 32
-#define EAPOL_ETHER_TYPE 0x888e
-#define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS 1000
+#define AVAILABLE_ACL_PRIORITIES_LIMITATION (32)
+#define EAPOL_ETHER_TYPE (0x888e)
+#define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS (1000)
 
 extern sai_object_id_t   gSwitchId;
 extern sai_macsec_api_t *sai_macsec_api;
