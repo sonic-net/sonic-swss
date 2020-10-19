@@ -58,6 +58,7 @@ private:
     Table m_fdbStateTable;
     NotificationConsumer* m_flushNotificationsConsumer;
     NotificationConsumer* m_fdbNotificationConsumer;
+    int flush_count = 0;
 
     void doTask(Consumer& consumer);
     void doTask(NotificationConsumer& consumer);

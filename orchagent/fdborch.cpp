@@ -266,6 +266,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
                            update.entry.mac.to_string().c_str(),
                            vlanName.c_str(), update.port.m_alias.c_str());
         }
+        if (flush_count)
+            flush_count--;
         break;
     }
 
@@ -350,6 +352,12 @@ void FdbOrch::doTask(Consumer& consumer)
         /* format: <VLAN_name>:<MAC_address> */
         vector<string> keys = tokenize(kfvKey(t), ':', 1);
         string op = kfvOp(t);
+
+        if (flush_count)
+        {
+            it++;
+            continue;
+        }
 
         Port vlan;
         if (!m_portsOrch->getPort(keys[0], vlan))
@@ -442,6 +450,11 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
+            }
+            else
+            {
+                /*flush dynamic and static fdb*/
+                flush_count+=2;
             }
 
             return;
