@@ -70,7 +70,7 @@ private:
     CoppTrapConfMap        m_coppTrapConfMap;
     CoppTrapIdTrapGroupMap m_coppTrapIdTrapGroupMap;
     CoppGroupFvs           m_coppGroupFvs;
-    std::set<std::string>  m_coppDisabledTrapIds;
+    std::set<std::string>  m_coppDisabledTraps;
     CoppCfg                m_coppGroupInitCfg;
     CoppCfg                m_coppTrapInitCfg;
     
@@ -83,7 +83,7 @@ private:
     void getTrapGroupTrapIds(std::string trap_group, std::string &trap_ids);
     void removeTrapIdsFromTrapGroup(std::string trap_group, std::string trap_ids);
     void addTrapIdsToTrapGroup(std::string trap_group, std::string trap_ids);
-    bool isTrapDisabled(std::string trap_id);
+    bool isTrapIdDisabled(std::string trap_id);
     void setFeatureTrapIdsStatus(std::string feature, bool enable);
     bool checkTrapGroupPending(std::string trap_group_name);
 
@@ -93,7 +93,7 @@ private:
     void setCoppTrapStateOk(std::string alias);
     void delCoppTrapStateOk(std::string alias);
     void coppGroupGetModifiedFvs(std::string key, std::vector<FieldValueTuple> &trap_group_fvs,
-                                 std::vector<FieldValueTuple> &modified_fvs, bool del_on_field_remove);
+                                 std::vector<FieldValueTuple> &modified_fvs);
     void parseInitFile(void);
     bool isTrapGroupInstalled(std::string key);
     void mergeConfig(CoppCfg &init_cfg, CoppCfg &m_cfg, std::vector<std::string> &cfg_keys, Table &cfgTable);

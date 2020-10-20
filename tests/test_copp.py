@@ -161,7 +161,7 @@ copp_trap = {
         "ttl_error": copp_group_default
 }
 
-restricted_traps = ["sample_packet"]
+disabled_traps = ["sample_packet"]
 
 policer_meter_map = {
    "packets": "SAI_METER_TYPE_PACKETS",
@@ -198,6 +198,10 @@ class TestCopp(object):
         self.trap_ctbl = swsscommon.Table(self.cdb, "COPP_TRAP")
         self.trap_group_ctbl = swsscommon.Table(self.cdb, "COPP_GROUP")
         self.feature_tbl = swsscommon.Table(self.cdb, "FEATURE")
+        fvs = swsscommon.FieldValuePairs([("status", "disbled")])
+        self.feature_tbl.set("sflow", fvs)
+        time.sleep(2)
+
    
     def validate_policer(self, policer_oid, field, value):
         (status, fvs) = self.policer_atbl.get(policer_oid)
@@ -315,7 +319,7 @@ class TestCopp(object):
                     if trap_found:
                         self.validate_trap_group(key,trap_group)
                         break
-                if trap_id not in restricted_traps:
+                if trap_id not in disabled_traps:
                     assert trap_found == True
 
     def test_restricted_trap_sflow(self, dvs, testlog):
@@ -374,7 +378,7 @@ class TestCopp(object):
                     if trap_found:
                         self.validate_trap_group(key,trap_group)
                         break
-                if trap_id not in restricted_traps:
+                if trap_id not in disabled_traps:
                     assert trap_found == True
 
     def test_trap_group_set(self, dvs, testlog):
@@ -403,7 +407,7 @@ class TestCopp(object):
                 if trap_found:
                     self.validate_trap_group(key,trap_group)
                     break
-            if trap_id not in restricted_traps:
+            if trap_id not in disabled_traps:
                 assert trap_found == True
 
     def test_trap_ids_set(self, dvs, testlog):
@@ -489,7 +493,7 @@ class TestCopp(object):
                     if trap_found:
                         self.validate_trap_group(key,trap_group)
                         break
-                if trap_id not in restricted_traps:
+                if trap_id not in disabled_traps:
                     assert trap_found == True
 
     def test_new_trap_add(self, dvs, testlog):
@@ -518,7 +522,7 @@ class TestCopp(object):
                 if trap_found:
                     self.validate_trap_group(key,trap_group)
                     break
-            if trap_id not in restricted_traps:
+            if trap_id not in disabled_traps:
                 assert trap_found == True
 
     def test_new_trap_del(self, dvs, testlog):
@@ -549,7 +553,7 @@ class TestCopp(object):
                 if trap_found:
                     self.validate_trap_group(key,trap_group)
                     break
-            if trap_id not in restricted_traps:
+            if trap_id not in disabled_traps:
                 assert trap_found == False
 
     def test_new_trap_group_add(self, dvs, testlog):
@@ -583,7 +587,7 @@ class TestCopp(object):
                 if trap_found:
                     self.validate_trap_group(key,trap_group)
                     break
-            if trap_id not in restricted_traps:
+            if trap_id not in disabled_traps:
                 assert trap_found == True
 
     def test_new_trap_group_del(self, dvs, testlog):
@@ -619,7 +623,7 @@ class TestCopp(object):
                 if trap_found:
                     self.validate_trap_group(key,trap_group)
                     break
-            if trap_id not in restricted_traps:
+            if trap_id not in disabled_traps:
                 assert trap_found != True
 
     def test_override_trap_grp_cfg_del (self, dvs, testlog):
@@ -654,7 +658,7 @@ class TestCopp(object):
                     if trap_found:
                         self.validate_trap_group(key,trap_group)
                         break
-                if trap_id not in restricted_traps:
+                if trap_id not in disabled_traps:
                     assert trap_found == True
 
     def test_override_trap_cfg_del(self, dvs, testlog):
@@ -684,7 +688,7 @@ class TestCopp(object):
                 if trap_found:
                     self.validate_trap_group(key,trap_group)
                     break
-            if trap_id not in restricted_traps:
+            if trap_id not in disabled_traps:
                 if trap_id == "ip2me":
                     assert trap_found == True
                 elif trap_id == "ssh":
