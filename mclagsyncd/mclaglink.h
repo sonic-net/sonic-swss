@@ -102,8 +102,8 @@ public:
     ProducerStateTable *p_acl_table_tbl;
     ProducerStateTable *p_acl_rule_tbl;
     DBConnector *p_appl_db;
-    RedisClient *p_redisClient_to_asic;/*redis client access to ASIC_DB*/
-    RedisClient *p_redisClient_to_counters;/*redis client access to COUNTERS_DB*/
+    DBConnector *p_asic_db; /*redis client access to ASIC_DB*/
+    DBConnector *p_counters_db; /*redis client access to COUNTERS_DB*/
     std::set <mclag_fdb> *p_old_fdb;
 
     MclagLink(uint16_t port = MCLAG_DEFAULT_PORT);

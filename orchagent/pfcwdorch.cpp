@@ -364,9 +364,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::disableBigRedSwitchMode()
         }
 
         auto queueId = entry.first;
-        RedisClient redisClient(this->getCountersDb().get());
         string countersKey = this->getCountersTable()->getTableName() + this->getCountersTable()->getTableNameSeparator() + sai_serialize_object_id(queueId);
-        redisClient.hdel(countersKey, "BIG_RED_SWITCH_MODE");
+        this->getCountersDb()->hdel(countersKey, "BIG_RED_SWITCH_MODE");
     }
 
     m_brsEntryMap.clear();
@@ -633,9 +632,8 @@ void PfcWdSwOrch<DropHandler, ForwardHandler>::unregisterFromWdDb(const Port& po
         m_entryMap.erase(queueId);
 
         // Clean up
-        RedisClient redisClient(this->getCountersDb().get());
         string countersKey = this->getCountersTable()->getTableName() + this->getCountersTable()->getTableNameSeparator() + sai_serialize_object_id(queueId);
-        redisClient.hdel(countersKey, {"PFC_WD_DETECTION_TIME", "PFC_WD_RESTORATION_TIME", "PFC_WD_ACTION", "PFC_WD_STATUS"});
+        this->getCountersDb()->hdel(countersKey, {"PFC_WD_DETECTION_TIME", "PFC_WD_RESTORATION_TIME", "PFC_WD_ACTION", "PFC_WD_STATUS"});
     }
 
 }
@@ -657,8 +655,7 @@ PfcWdSwOrch<DropHandler, ForwardHandler>::PfcWdSwOrch(
     c_queueAttrIds(queueAttrIds),
     m_pollInterval(pollInterval),
     m_applDb(make_shared<DBConnector>("APPL_DB", 0)),
-    m_applTable(make_shared<Table>(m_applDb.get(), APP_PFC_WD_TABLE_NAME "_INSTORM")),
-    m_applDbRedisClient(m_applDb.get())
+    m_applTable(make_shared<Table>(m_applDb.get(), APP_PFC_WD_TABLE_NAME "_INSTORM"))
 {
     SWSS_LOG_ENTER();
 
@@ -934,7 +931,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
                 entry->second.handler->initCounters();
                 // Log storm event to APPL_DB for warm-reboot purpose
                 string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                m_applDbRedisClient.hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
             }
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_DROP)
@@ -956,7 +953,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
                 entry->second.handler->initCounters();
                 // Log storm event to APPL_DB for warm-reboot purpose
                 string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                m_applDbRedisClient.hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
             }
         }
         else if (entry->second.action == PfcWdAction::PFC_WD_ACTION_FORWARD)
@@ -978,7 +975,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
                 entry->second.handler->initCounters();
                 // Log storm event to APPL_DB for warm-reboot purpose
                 string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-                m_applDbRedisClient.hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
+                m_applDb->hset(key, to_string(entry->second.index), PFC_WD_IN_STORM);
             }
         }
         else
@@ -1002,7 +999,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::startWdActionOnQueue(const string
             entry->second.handler = nullptr;
             // Remove storm status in APPL_DB for warm-reboot purpose
             string key = m_applTable->getTableName() + m_applTable->getTableNameSeparator() + entry->second.portAlias;
-            m_applDbRedisClient.hdel(key, to_string(entry->second.index));
+            m_applDb->hdel(key, to_string(entry->second.index));
         }
     }
     else
@@ -1019,8 +1016,6 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
 {
     // clean all *_last and *_LEFT fields in COUNTERS_TABLE
     // to allow warm-reboot pfc detect & restore state machine to enter the same init state as cold-reboot
-    RedisClient redisClient(this->getCountersDb().get());
-
     vector<string> cKeys;
     this->getCountersTable()->getKeys(cKeys);
     for (const auto &key : cKeys)
@@ -1037,7 +1032,7 @@ bool PfcWdSwOrch<DropHandler, ForwardHandler>::bake()
         }
         if (!wLasts.empty())
         {
-            redisClient.hdel(
+            this->getCountersDb()->hdel(
                 this->getCountersTable()->getTableName()
                 + this->getCountersTable()->getTableNameSeparator()
                 + key,

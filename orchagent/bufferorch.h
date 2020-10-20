@@ -35,7 +35,7 @@ public:
     bool isPortReady(const std::string& port_name) const;
     static type_map m_buffer_type_maps;
     void generateBufferPoolWatermarkCounterIdList(void);
-    const object_map &getBufferPoolNameOidMap(void);
+    const object_reference_map &getBufferPoolNameOidMap(void);
 
 private:
     typedef task_process_status (BufferOrch::*buffer_table_handler)(Consumer& consumer);
@@ -64,7 +64,6 @@ private:
     unique_ptr<ProducerTable> m_flexCounterTable;
 
     unique_ptr<DBConnector> m_countersDb;
-    RedisClient m_countersDbRedisClient;
 
     bool m_isBufferPoolWatermarkCounterIdListGenerated = false;
 };

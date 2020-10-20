@@ -32,36 +32,28 @@ int main(int argc, char **argv)
     /* Register the signal handler for SIGTERM */
     signal(SIGTERM, sig_handler);
 
-    while (1)
+    try
     {
-        try
+        NetLink netlink;
+        netlink.registerGroup(RTNLGRP_LINK);
+        cout << "Listens to teamd events..." << endl;
+        netlink.dumpRequest(RTM_GETLINK);
+
+        s.addSelectable(&netlink);
+        while (!received_sigterm)
         {
-            NetLink netlink;
-
-            netlink.registerGroup(RTNLGRP_LINK);
-            cout << "Listens to teamd events..." << endl;
-            netlink.dumpRequest(RTM_GETLINK);
-
-            s.addSelectable(&netlink);
-            while (true)
-            {
-                if(received_sigterm)
-                {
-                  sync.cleanTeamSync();
-                  received_sigterm = false;
-                }
-
-                Selectable *temps;
-                s.select(&temps, 1000); // block for a second
-                sync.periodic();
-            }
+            Selectable *temps;
+            s.select(&temps, 1000); // block for a second
+            sync.periodic();
         }
-        catch (const std::exception& e)
-        {
-            cout << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
-            return 0;
-        }
+        sync.cleanTeamSync();
+        SWSS_LOG_NOTICE("Received SIGTERM Exiting");
+    }
+    catch (const std::exception& e)
+    {
+        cout << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
+        return 0;
     }
 
-    return 1;
+    return 0;
 }

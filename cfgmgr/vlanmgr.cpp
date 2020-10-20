@@ -51,15 +51,19 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     // The command should be generated as:
     // /bin/bash -c "/sbin/ip link del Bridge 2>/dev/null ;
     //               /sbin/ip link add Bridge up type bridge &&
+    //               /sbin/ip link set Bridge mtu {{ mtu_size }} &&
+    //               /sbin/ip link set Bridge address {{gMacAddress}} &&
     //               /sbin/bridge vlan del vid 1 dev Bridge self;
     //               /sbin/ip link del dummy 2>/dev/null;
     //               /sbin/ip link add dummy type dummy &&
-    //               sbin/ip link set dummy master Bridge"
+    //               /sbin/ip link set dummy master Bridge"
 
     const std::string cmds = std::string("")
       + BASH_CMD + " -c \""
       + IP_CMD + " link del " + DOT1Q_BRIDGE_NAME + " 2>/dev/null; "
       + IP_CMD + " link add " + DOT1Q_BRIDGE_NAME + " up type bridge && "
+      + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " mtu " + DEFAULT_MTU_STR + " && "
+      + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " address " + gMacAddress.to_string() + " && "
       + BRIDGE_CMD + " vlan del vid " + DEFAULT_VLAN_ID + " dev " + DOT1Q_BRIDGE_NAME + " self; "
       + IP_CMD + " link del dev dummy 2>/dev/null; "
       + IP_CMD + " link add dummy type dummy && "

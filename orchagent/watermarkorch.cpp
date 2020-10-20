@@ -305,7 +305,7 @@ void WatermarkOrch::clearSingleWm(Table *table, string wm_name, vector<sai_objec
     }
 }
 
-void WatermarkOrch::clearSingleWm(Table *table, string wm_name, const object_map &nameOidMap)
+void WatermarkOrch::clearSingleWm(Table *table, string wm_name, const object_reference_map &nameOidMap)
 {
     SWSS_LOG_ENTER();
     SWSS_LOG_DEBUG("clear WM %s, for %zu obj ids", wm_name.c_str(), nameOidMap.size());
@@ -314,6 +314,6 @@ void WatermarkOrch::clearSingleWm(Table *table, string wm_name, const object_map
 
     for (const auto &it : nameOidMap)
     {
-        table->set(sai_serialize_object_id(it.second), fvTuples);
+        table->set(sai_serialize_object_id(it.second.m_saiObjectId), fvTuples);
     }
 }

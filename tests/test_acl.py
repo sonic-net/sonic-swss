@@ -11,7 +11,7 @@ L3V6_BIND_PORTS = ["Ethernet0", "Ethernet4", "Ethernet8"]
 L3V6_RULE_NAME = "L3V6_TEST_RULE"
 
 
-class TestAcl():
+class TestAcl:
     @pytest.yield_fixture
     def l3_acl_table(self, dvs_acl):
         try:
@@ -57,6 +57,7 @@ class TestAcl():
 
             acl_table_id = dvs_acl.get_acl_table_ids(1)[0]
             acl_table_group_ids = dvs_acl.get_acl_table_group_ids(len(L3_BIND_PORTS))
+
             dvs_acl.verify_acl_table_group_members(acl_table_id, acl_table_group_ids, 1)
             dvs_acl.verify_acl_table_port_binding(acl_table_id, L3_BIND_PORTS, 1)
         finally:
@@ -71,6 +72,28 @@ class TestAcl():
 
         dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
         dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_AclRuleIpProtocol(self, dvs_acl, l3_acl_table):
+        config_qualifiers = {"IP_PROTOCOL": "6"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL": dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
+        }
+
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_AclRuleNextHeader(self, dvs_acl, l3_acl_table):
+        config_qualifiers = {"NEXT_HEADER": "6"}
+
+        # Shouldn't allow NEXT_HEADER on vanilla L3 tables.
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_no_acl_rules()
 
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
@@ -153,10 +176,24 @@ class TestAcl():
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
 
+    # This test validates that backwards compatibility works as expected, it should
+    # be converted to a negative test after the 202012 release.
     def test_V6AclRuleIpProtocol(self, dvs_acl, l3v6_acl_table):
         config_qualifiers = {"IP_PROTOCOL": "6"}
         expected_sai_qualifiers = {
-            "SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL": dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
+            "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER": dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
+        }
+
+        dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_V6AclRuleNextHeader(self, dvs_acl, l3v6_acl_table):
+        config_qualifiers = {"NEXT_HEADER": "6"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER": dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
         }
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
@@ -413,7 +450,7 @@ class TestAcl():
         dvs_acl.verify_no_acl_rules()
 
 
-class TestAclRuleValidation():
+class TestAclRuleValidation:
     """Test class for cases that check if orchagent corectly validates ACL rules input."""
 
     SWITCH_CAPABILITY_TABLE = "SWITCH_CAPABILITY"
@@ -492,3 +529,9 @@ class TestAclRuleValidation():
                 dvs.runcmd("supervisorctl restart syncd")
                 dvs.stop_swss()
                 dvs.start_swss()
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

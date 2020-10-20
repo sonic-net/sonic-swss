@@ -63,14 +63,6 @@ NatMgr::NatMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
     /* Set NAT default udp timeout as 300 seconds */
     m_natUdpTimeout = NAT_UDP_TIMEOUT_DEFAULT;
 
-    /* Clean the NAT iptables */
-    std::string res;
-    const std::string cmds = std::string("") + IPTABLES_CMD + " -F -t nat ";
-    if (swss::exec(cmds, res))
-    {
-        SWSS_LOG_ERROR("Command '%s' failed", cmds.c_str());
-    }
-
     /* Start the timer to refresh static conntrack entries for every 1 day (86400) */
     SWSS_LOG_INFO("Start the NAT Refresh Timer ");
     auto refresh_interval      = timespec { .tv_sec = NAT_ENTRY_REFRESH_PERIOD, .tv_nsec = 0 };
@@ -3612,7 +3604,11 @@ void NatMgr::removeStaticNatIptables(const string port)
     for (auto it = m_staticNatEntry.begin(); it != m_staticNatEntry.end(); it++)
     {
         /* Check interface is matching, otherwise continue */
-        if ((*it).second.interface != port)
+        if ((port != NONE_STRING) and (*it).second.interface != port)
+        {
+            continue;
+        }
+        else if ((port == NONE_STRING) and (*it).second.interface == NONE_STRING)
         {
             continue;
         }
@@ -3838,7 +3834,11 @@ void NatMgr::removeStaticNaptIptables(const string port)
     for (auto it = m_staticNaptEntry.begin(); it != m_staticNaptEntry.end(); it++)
     {
         /* Check interface is matching, otherwise continue */
-        if ((*it).second.interface != port)
+        if ((port != NONE_STRING) and (*it).second.interface != port)
+        {
+            continue;
+        }
+        else if ((port == NONE_STRING) and (*it).second.interface == NONE_STRING)
         {
             continue;
         }

@@ -26,6 +26,7 @@
 #include "countercheckorch.h"
 #include "notifier.h"
 #include "redisclient.h"
+#include "fdborch.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -41,12 +42,14 @@ extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
+extern FdbOrch *gFdbOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
 #define MAX_VALID_VLAN_ID   4094
 
 #define PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS     1000
+#define PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS     60000
 #define QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
 #define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "10000"
@@ -145,6 +148,12 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS,
 };
 
+const vector<sai_port_stat_t> port_buffer_drop_stat_ids =
+{
+    SAI_PORT_STAT_IN_DROPPED_PKTS,
+    SAI_PORT_STAT_OUT_DROPPED_PKTS
+};
+
 static const vector<sai_queue_stat_t> queue_stat_ids =
 {
     SAI_QUEUE_STAT_PACKETS,
@@ -187,6 +196,7 @@ static char* hostif_vlan_tag[] = {
 PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames) :
         Orch(db, tableNames),
         port_stat_manager(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true),
+        port_buffer_drop_stat_manager(PORT_BUFFER_DROP_STAT_FLEX_COUNTER_GROUP, StatsMode::READ, PORT_BUFFER_DROP_STAT_POLLING_INTERVAL_MS, true),
         queue_stat_manager(QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP, StatsMode::READ, QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
 {
     SWSS_LOG_ENTER();
@@ -597,46 +607,6 @@ bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port
     }
 
     return false;
-}
-
-// TODO: move this into AclOrch
-bool PortsOrch::getAclBindPortId(string alias, sai_object_id_t &port_id)
-{
-    SWSS_LOG_ENTER();
-
-    Port port;
-    if (getPort(alias, port))
-    {
-        switch (port.m_type)
-        {
-        case Port::PHY:
-            if (port.m_lag_member_id != SAI_NULL_OBJECT_ID)
-            {
-                SWSS_LOG_WARN("Invalid configuration. Bind table to LAG member %s is not allowed", alias.c_str());
-                return false;
-            }
-            else
-            {
-                port_id = port.m_port_id;
-            }
-            break;
-        case Port::LAG:
-            port_id = port.m_lag_id;
-            break;
-        case Port::VLAN:
-            port_id = port.m_vlan_info.vlan_oid;
-            break;
-        default:
-            SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", alias.c_str(), port.m_type);
-            return false;
-        }
-
-        return true;
-    }
-    else
-    {
-        return false;
-    }
 }
 
 bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp, const uint32_t &mtu)
@@ -1845,6 +1815,13 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
                     counter_stats.emplace(sai_serialize_port_stat(it));
                 }
                 port_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, counter_stats);
+                std::unordered_set<std::string> port_buffer_drop_stats;
+                for (const auto& it: port_buffer_drop_stat_ids)
+                {
+                    port_buffer_drop_stats.emplace(sai_serialize_port_stat(it));
+                }
+                port_buffer_drop_stat_manager.setCounterIdList(p.m_port_id, CounterType::PORT, port_buffer_drop_stats);
+
                 PortUpdate update = { p, true };
                 notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
 
@@ -1879,8 +1856,7 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     port_stat_manager.clearCounterIdList(p.m_port_id);
 
     /* remove port name map from counter table */
-    RedisClient redisClient(m_counter_db.get());
-    redisClient.hdel(COUNTERS_PORT_NAME_MAP, alias);
+    m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
 
     m_portList[alias].m_init = false;
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
@@ -2358,17 +2334,46 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         /* reset fec mode upon mode change */
                         if (p.m_fec_mode != fec_mode_map[fec_mode])
                         {
-                            p.m_fec_mode = fec_mode_map[fec_mode];
-                            if (setPortFec(p, p.m_fec_mode))
+                            if (p.m_admin_state_up)
                             {
-                                m_portList[alias] = p;
-                                SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                /* Bring port down before applying fec mode*/
+                                if (!setPortAdminStatus(p, false))
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s admin status DOWN to set fec mode", alias.c_str());
+                                    it++;
+                                    continue;
+                                }
+
+                                p.m_admin_state_up = false;
+                                p.m_fec_mode = fec_mode_map[fec_mode];
+
+                                if (setPortFec(p, p.m_fec_mode))
+                                {
+                                    m_portList[alias] = p;
+                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                    it++;
+                                    continue;
+                                }
                             }
                             else
                             {
-                                SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
-                                it++;
-                                continue;
+                                /* Port is already down, setting fec mode*/
+                                p.m_fec_mode = fec_mode_map[fec_mode];
+                                if (setPortFec(p, p.m_fec_mode))
+                                {
+                                    m_portList[alias] = p;
+                                    SWSS_LOG_NOTICE("Set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                }
+                                else
+                                {
+                                    SWSS_LOG_ERROR("Failed to set port %s fec to %s", alias.c_str(), fec_mode.c_str());
+                                    it++;
+                                    continue;
+                                }
                             }
                         }
                     }
@@ -2949,7 +2954,7 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 /* Assert the port doesn't belong to any LAG already */
                 assert(!port.m_lag_id && !port.m_lag_member_id);
 
-                if (!addLagMember(lag, port))
+                if (!addLagMember(lag, port, (status == "enabled")))
                 {
                     it++;
                     continue;
@@ -3388,6 +3393,10 @@ bool PortsOrch::removeBridgePort(Port &port)
         return false;
     }
 
+    //Flush the FDB entires corresponding to the port
+    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
+
     /* Remove bridge port */
     status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -3715,7 +3724,7 @@ void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
     }
 }
 
-bool PortsOrch::addLagMember(Port &lag, Port &port)
+bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
 {
     SWSS_LOG_ENTER();
 
@@ -3735,6 +3744,17 @@ bool PortsOrch::addLagMember(Port &lag, Port &port)
     attr.id = SAI_LAG_MEMBER_ATTR_PORT_ID;
     attr.value.oid = port.m_port_id;
     attrs.push_back(attr);
+
+    if (!enableForwarding)
+    {
+        attr.id = SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+
+        attr.id = SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
 
     sai_object_id_t lag_member_id;
     sai_status_t status = sai_lag_api->create_lag_member(&lag_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -3827,6 +3847,10 @@ bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
         return false;
     }
 
+    SWSS_LOG_NOTICE("%s collection on LAG member %s",
+        enableCollection ? "Enable" : "Disable",
+        lagMember.m_alias.c_str());
+
     return true;
 }
 
@@ -3849,6 +3873,10 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
             lagMember.m_alias.c_str());
         return false;
     }
+
+    SWSS_LOG_NOTICE("%s distribution on LAG member %s",
+        enableDistribution ? "Enable" : "Disable",
+        lagMember.m_alias.c_str());
 
     return true;
 }
