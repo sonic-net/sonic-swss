@@ -259,7 +259,7 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
 
         for (auto j: feature_fvs)
         {
-            if (fvField(j) == "status" && fvValue(j) == "disabled")
+            if (fvField(j) == "state" && fvValue(j) == "disabled")
             {
                 m_coppDisabledTraps.insert(i);
             }
@@ -706,7 +706,7 @@ void CoppMgr::doFeatureTask(Consumer &consumer)
         {
             for (auto i : kfvFieldsValues(t))
             {
-                if (fvField(i) == "status")
+                if (fvField(i) == "state")
                 {
                     bool status = false;
                     if (fvValue(i) == "enabled")
