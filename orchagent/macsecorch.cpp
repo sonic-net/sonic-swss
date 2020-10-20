@@ -266,21 +266,27 @@ static std::istringstream &operator>>(
     SWSS_LOG_ENTER();
     const std::string &buffer = istream.str();
     bool convert_done = false;
-    if (buffer.length() == sizeof(sak.m_sak))
+    memset(&sak, 0, sizeof(sak));
+    // One hex indicates 4 bits 
+    size_t bit_count = buffer.length() * 4;
+    // 128 bits SAK
+    if (bit_count == 128)
     {
+        // 128-bit SAK uses only Bytes 16..31.
         sak.m_sak_256_enable = false;
         convert_done = hex_to_binary(
             buffer,
-            sak.m_sak,
-            sizeof(sak.m_sak) / 2);
+            &sak.m_sak[16],
+            16);
     }
-    else if (buffer.length() == sizeof(sak.m_sak) * 2)
+    // 256 bits SAK
+    else if (bit_count == 256)
     {
         sak.m_sak_256_enable = true;
         convert_done = hex_to_binary(
             buffer,
             sak.m_sak,
-            sizeof(sak.m_sak));
+            32);
     }
     if (!convert_done)
     {
@@ -300,7 +306,7 @@ static std::istringstream &operator>>(
 {
     SWSS_LOG_ENTER();
     const std::string &buffer = istream.str();
-
+    memset(&salt, 0, sizeof(salt));
     if (
         (buffer.length() != sizeof(salt.m_salt) * 2) || (!hex_to_binary(buffer, salt.m_salt, sizeof(salt.m_salt))))
     {
@@ -320,15 +326,15 @@ static std::istringstream &operator>>(
 {
     SWSS_LOG_ENTER();
     const std::string &buffer = istream.str();
-    // TODO : Implement auth_key
-    // if (
-    //     (buffer.length() != sizeof(auth_key.m_auth_key) * 2) || (!hex_to_binary(
-    //                                                                 buffer,
-    //                                                                 auth_key.m_auth_key,
-    //                                                                 sizeof(auth_key.m_auth_key))))
-    // {
-    //     throw std::invalid_argument("Invalid Auth Key : " + buffer);
-    // }
+    memset(&auth_key, 0, sizeof(auth_key));
+    if (
+        (buffer.length() != sizeof(auth_key.m_auth_key) * 2) || (!hex_to_binary(
+                                                                    buffer,
+                                                                    auth_key.m_auth_key,
+                                                                    sizeof(auth_key.m_auth_key))))
+    {
+        throw std::invalid_argument("Invalid Auth Key : " + buffer);
+    }
     return istream;
 }
 
@@ -2279,7 +2285,6 @@ bool MACsecOrch::setACLEntryMACsecFlowActive(sai_object_id_t entry_id, sai_objec
 {
     sai_attribute_t attr;
 
-    SWSS_LOG_NOTICE("GANZE entry %lu flow %lu active %s", entry_id, flow_id, active ? "TRUE" : "FALSE");
     attr.id = SAI_ACL_ENTRY_ATTR_ACTION_MACSEC_FLOW;
     attr.value.aclaction.parameter.oid = flow_id;
     attr.value.aclaction.enable = active;
