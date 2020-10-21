@@ -198,7 +198,7 @@ class TestCopp(object):
         self.trap_ctbl = swsscommon.Table(self.cdb, "COPP_TRAP")
         self.trap_group_ctbl = swsscommon.Table(self.cdb, "COPP_GROUP")
         self.feature_tbl = swsscommon.Table(self.cdb, "FEATURE")
-        fvs = swsscommon.FieldValuePairs([("status", "disbled")])
+        fvs = swsscommon.FieldValuePairs([("state", "disbled")])
         self.feature_tbl.set("sflow", fvs)
         time.sleep(2)
 
@@ -324,7 +324,7 @@ class TestCopp(object):
 
     def test_restricted_trap_sflow(self, dvs, testlog):
         self.setup_copp(dvs)
-        fvs = swsscommon.FieldValuePairs([("status", "enabled")])
+        fvs = swsscommon.FieldValuePairs([("state", "enabled")])
         self.feature_tbl.set("sflow", fvs)
         time.sleep(2)
         global copp_trap
