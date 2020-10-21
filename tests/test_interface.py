@@ -142,15 +142,42 @@ class TestRouterInterface(object):
         # check application database
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet8")
         intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 1
-        assert intf_entries[0] == "fc00::1/126"
 
-        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        # contains 2 keys, global and link-local
+        assert len(intf_entries) == 2
+
+        local_index = 0
+        global_index = 0
+        link_local_address = ""
+
+        if intf_entries[0].startswith("fe80::") and intf_entries[1] == "fc00::1/126":
+            global_index = 1
+            link_local_address = intf_entries[0]
+            assert True
+        elif intf_entries[1].startswith("fe80::") and intf_entries[0] == "fc00::1/126":
+            local_index = 1
+            link_local_address = intf_entries[1]
+            assert True
+        else:
+            assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[global_index])
         assert status == True
         assert len(fvs) == 2
         for fv in fvs:
             if fv[0] == "scope":
                 assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[local_index])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "local"
             elif fv[0] == "family":
                 assert fv[1] == "IPv6"
             else:
@@ -174,6 +201,11 @@ class TestRouterInterface(object):
                     if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
                         assert fv[1] == "9100"
 
+        link_local_address = link_local_address.split('/')
+        # Stored subnet as 128 in ASIC_DB
+        link_local_address[1] = '128'
+        link_local_address = link_local_address[0] + '/' + link_local_address[1]
+
         # check ASIC route database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
         for key in tbl.getKeys():
@@ -182,8 +214,10 @@ class TestRouterInterface(object):
                 subnet_found = True
             if route["dest"] == "fc00::1/128":
                 ip2me_found = True
+            if route["dest"] == link_local_address:
+                link_local_found = True
 
-        assert subnet_found and ip2me_found
+        assert subnet_found and ip2me_found and link_local_found
 
         # remove IP from interface
         self.remove_ip_address("Ethernet8", "fc00::1/126")
@@ -211,6 +245,8 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::/126":
                 assert False
             if route["dest"] == "fc00::1/128":
+                assert False
+            if route["dest"] == link_local_address:
                 assert False
 
     def test_PortInterfaceAddRemoveIpv4Address(self, dvs, testlog):
@@ -371,6 +407,7 @@ class TestRouterInterface(object):
     def test_PortInterfaceAddRemoveIpv6AddressWithVrf(self, dvs, testlog):
         self.setup_db(dvs)
 
+
         # bring up interface
         self.set_admin_status(dvs, "Ethernet8", "up")
 
@@ -403,15 +440,41 @@ class TestRouterInterface(object):
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Ethernet8")
         intf_entries = tbl.getKeys()
 
-        assert len(intf_entries) == 1
-        assert intf_entries[0] == "fc00::1/126"
+        # contains 2 keys, global and link-local
+        assert len(intf_entries) == 2
 
-        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        local_index = 0
+        global_index = 0
+        link_local_address = ""
+
+        if intf_entries[0].startswith("fe80::") and intf_entries[1] == "fc00::1/126":
+            global_index = 1
+            link_local_address = intf_entries[0]
+            assert True
+        elif intf_entries[1].startswith("fe80::") and intf_entries[0] == "fc00::1/126":
+            local_index = 1
+            link_local_address = intf_entries[1]
+            assert True
+        else:
+            assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[global_index])
         assert status == True
         assert len(fvs) == 2
         for fv in fvs:
             if fv[0] == "scope":
                 assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[local_index])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "local"
             elif fv[0] == "family":
                 assert fv[1] == "IPv6"
             else:
@@ -437,6 +500,11 @@ class TestRouterInterface(object):
                     if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
                         assert fv[1] == vrf_oid
 
+        link_local_address = link_local_address.split('/')
+        # Stored subnet as 128 in ASIC_DB
+        link_local_address[1] = '128'
+        link_local_address = link_local_address[0] + '/' + link_local_address[1]
+
         # check ASIC route database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
         for key in tbl.getKeys():
@@ -447,8 +515,11 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::1/128":
                 ip2me_found = True
                 assert route["vr"] == vrf_oid
+            if route["dest"] == link_local_address:
+                link_local_found = True
+                assert route["vr"] == vrf_oid
 
-        assert subnet_found and ip2me_found
+        assert subnet_found and ip2me_found and link_local_found
 
         # remove IP from interface
         self.remove_ip_address("Ethernet8", "fc00::1/126")
@@ -487,6 +558,8 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::/126":
                 assert False
             if route["dest"] == "fc00::1/128":
+                assert False
+            if route["dest"] == link_local_address:
                 assert False
 
     def test_PortInterfaceAddRemoveIpv4AddressWithVrf(self, dvs, testlog):
@@ -777,15 +850,42 @@ class TestRouterInterface(object):
         # check application database
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel001")
         intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 1
-        assert intf_entries[0] == "fc00::1/126"
 
-        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        # contains 2 keys, global and link-local
+        assert len(intf_entries) == 2
+
+        local_index = 0
+        global_index = 0
+        link_local_address = ""
+
+        if intf_entries[0].startswith("fe80::") and intf_entries[1] == "fc00::1/126":
+            global_index = 1
+            link_local_address = intf_entries[0]
+            assert True
+        elif intf_entries[1].startswith("fe80::") and intf_entries[0] == "fc00::1/126":
+            local_index = 1
+            link_local_address = intf_entries[1]
+            assert True
+        else:
+            assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[global_index])
         assert status == True
         assert len(fvs) == 2
         for fv in fvs:
             if fv[0] == "scope":
                 assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[local_index])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "local"
             elif fv[0] == "family":
                 assert fv[1] == "IPv6"
             else:
@@ -809,6 +909,11 @@ class TestRouterInterface(object):
                     if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_MTU":
                         assert fv[1] == "9100"
 
+        link_local_address = link_local_address.split('/')
+        # Stored subnet as 128 in ASIC_DB
+        link_local_address[1] = '128'
+        link_local_address = link_local_address[0] + '/' + link_local_address[1]
+
         # check ASIC route database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
         for key in tbl.getKeys():
@@ -817,8 +922,10 @@ class TestRouterInterface(object):
                 subnet_found = True
             if route["dest"] == "fc00::1/128":
                 ip2me_found = True
+            if route["dest"] == link_local_address:
+                link_local_found = True
 
-        assert subnet_found and ip2me_found
+        assert subnet_found and ip2me_found and link_local_found
 
         # remove IP from interface
         self.remove_ip_address("PortChannel001", "fc00::1/126")
@@ -843,6 +950,8 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::/126":
                 assert False
             if route["dest"] == "fc00::1/128":
+                assert False
+            if route["dest"] == link_local_address:
                 assert False
 
         # remove port channel
@@ -1033,15 +1142,42 @@ class TestRouterInterface(object):
         # check application database
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE:PortChannel001")
         intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 1
-        assert intf_entries[0] == "fc00::1/126"
 
-        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        # contains 2 keys, global and link-local
+        assert len(intf_entries) == 2
+
+        local_index = 0
+        global_index = 0
+        link_local_address = ""
+
+        if intf_entries[0].startswith("fe80::") and intf_entries[1] == "fc00::1/126":
+            global_index = 1
+            link_local_address = intf_entries[0]
+            assert True
+        elif intf_entries[1].startswith("fe80::") and intf_entries[0] == "fc00::1/126":
+            local_index = 1
+            link_local_address = intf_entries[1]
+            assert True
+        else:
+            assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[global_index])
         assert status == True
         assert len(fvs) == 2
         for fv in fvs:
             if fv[0] == "scope":
                 assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[local_index])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "local"
             elif fv[0] == "family":
                 assert fv[1] == "IPv6"
             else:
@@ -1066,6 +1202,12 @@ class TestRouterInterface(object):
                         assert fv[1] == "9100"
                     if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
                         assert fv[1] == vrf_oid
+
+        link_local_address = link_local_address.split('/')
+        # Stored subnet as 128 in ASIC_DB
+        link_local_address[1] = '128'
+        link_local_address = link_local_address[0] + '/' + link_local_address[1]
+
         # check ASIC route database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
         for key in tbl.getKeys():
@@ -1076,8 +1218,11 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::1/128":
                 ip2me_found = True
                 assert route["vr"] == vrf_oid
+            if route["dest"] == link_local_address:
+                link_local_found = True
+                assert route["vr"] == vrf_oid
 
-        assert subnet_found and ip2me_found
+        assert subnet_found and ip2me_found and link_local_found
 
         # remove IP from interface
         self.remove_ip_address("PortChannel001", "fc00::1/126")
@@ -1110,9 +1255,12 @@ class TestRouterInterface(object):
                 assert False
             if route["dest"] == "fc00::1/128":
                 assert False
+            if route["dest"] == link_local_address:
+                assert False
 
         # remove port channel
         self.remove_port_channel("PortChannel001")
+
 
     def test_LagInterfaceAddRemoveIpv4AddressWithVrf(self, dvs, testlog):
         self.setup_db(dvs)
@@ -1287,15 +1435,42 @@ class TestRouterInterface(object):
         # check application database
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Vlan10")
         intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 1
-        assert intf_entries[0] == "fc00::1/126"
 
-        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        # contains 2 keys, global and link-local
+        assert len(intf_entries) == 2
+
+        local_index = 0
+        global_index = 0
+        link_local_address = ""
+
+        if intf_entries[0].startswith("fe80::") and intf_entries[1] == "fc00::1/126":
+            global_index = 1
+            link_local_address = intf_entries[0]
+            assert True
+        elif intf_entries[1].startswith("fe80::") and intf_entries[0] == "fc00::1/126":
+            local_index = 1
+            link_local_address = intf_entries[1]
+            assert True
+        else:
+            assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[global_index])
         assert status == True
         assert len(fvs) == 2
         for fv in fvs:
             if fv[0] == "scope":
                 assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[local_index])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "local"
             elif fv[0] == "family":
                 assert fv[1] == "IPv6"
             else:
@@ -1317,6 +1492,11 @@ class TestRouterInterface(object):
                     if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VLAN_ID":
                         assert fv[1] == vlan_oid
 
+        link_local_address = link_local_address.split('/')
+        # Stored subnet as 128 in ASIC_DB
+        link_local_address[1] = '128'
+        link_local_address = link_local_address[0] + '/' + link_local_address[1]
+
         # check ASIC route database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
         for key in tbl.getKeys():
@@ -1325,8 +1505,10 @@ class TestRouterInterface(object):
                 subnet_found = True
             if route["dest"] == "fc00::1/128":
                 ip2me_found = True
+            if route["dest"] == link_local_address:
+                link_local_found = True
 
-        assert subnet_found and ip2me_found
+        assert subnet_found and ip2me_found and link_local_found
 
         # remove IP from interface
         self.remove_ip_address("Vlan10", "fc00::1/126")
@@ -1360,6 +1542,8 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::/126":
                 assert False
             if route["dest"] == "fc00::1/128":
+                assert False
+            if route["dest"] == link_local_address:
                 assert False
 
     def test_VLanInterfaceAddRemoveIpv4Address(self, dvs, testlog):
@@ -1512,15 +1696,42 @@ class TestRouterInterface(object):
         # check application database
         tbl = swsscommon.Table(self.pdb, "INTF_TABLE:Vlan10")
         intf_entries = tbl.getKeys()
-        assert len(intf_entries) == 1
-        assert intf_entries[0] == "fc00::1/126"
 
-        (status, fvs) = tbl.get(tbl.getKeys()[0])
+        # contains 2 keys, global and link-local
+        assert len(intf_entries) == 2
+
+        local_index = 0
+        global_index = 0
+        link_local_address = ""
+
+        if intf_entries[0].startswith("fe80::") and intf_entries[1] == "fc00::1/126":
+            global_index = 1
+            link_local_address = intf_entries[0]
+            assert True
+        elif intf_entries[1].startswith("fe80::") and intf_entries[0] == "fc00::1/126":
+            local_index = 1
+            link_local_address = intf_entries[1]
+            assert True
+        else:
+            assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[global_index])
         assert status == True
         assert len(fvs) == 2
         for fv in fvs:
             if fv[0] == "scope":
                 assert fv[1] == "global"
+            elif fv[0] == "family":
+                assert fv[1] == "IPv6"
+            else:
+                assert False
+
+        (status, fvs) = tbl.get(tbl.getKeys()[local_index])
+        assert status == True
+        assert len(fvs) == 2
+        for fv in fvs:
+            if fv[0] == "scope":
+                assert fv[1] == "local"
             elif fv[0] == "family":
                 assert fv[1] == "IPv6"
             else:
@@ -1544,6 +1755,11 @@ class TestRouterInterface(object):
                     if fv[0] == "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID":
                         assert fv[1] == vrf_oid
 
+        link_local_address = link_local_address.split('/')
+        # Stored subnet as 128 in ASIC_DB
+        link_local_address[1] = '128'
+        link_local_address = link_local_address[0] + '/' + link_local_address[1]
+
         # check ASIC route database
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
         for key in tbl.getKeys():
@@ -1554,8 +1770,11 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::1/128":
                 ip2me_found = True
                 assert route["vr"] == vrf_oid
+            if route["dest"] == link_local_address:
+                link_local_found = True
+                assert route["vr"] == vrf_oid
 
-        assert subnet_found and ip2me_found
+        assert subnet_found and ip2me_found and link_local_found
 
         # remove IP from interface
         self.remove_ip_address("Vlan10", "fc00::1/126")
@@ -1596,6 +1815,8 @@ class TestRouterInterface(object):
             if route["dest"] == "fc00::/126":
                 assert False
             if route["dest"] == "fc00::1/128":
+                assert False
+            if route["dest"] == link_local_address:
                 assert False
 
     def test_VLanInterfaceAddRemoveIpv4AddressWithVrf(self, dvs, testlog):
