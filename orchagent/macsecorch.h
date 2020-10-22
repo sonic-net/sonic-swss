@@ -180,6 +180,7 @@ private:
         sai_object_id_t flow_id,
         sai_uint64_t sci,
         sai_uint32_t ssci,
+        bool send_sci,
         bool xpn64_enable);
     task_process_status deleteMACsecSC(
         const std::string &port_sci,

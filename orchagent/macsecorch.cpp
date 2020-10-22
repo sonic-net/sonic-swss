@@ -228,21 +228,32 @@ static bool hex_to_binary(
     std::uint8_t *buffer,
     size_t buffer_length)
 {
+    SWSS_LOG_ENTER();
     size_t buffer_cur = 0;
     size_t hex_cur = 0;
-    while (buffer_cur < buffer_length)
+    if (hex_str.length() %2 != 0)
     {
-        if ((hex_cur + 1) >= hex_str.length())
+        SWSS_LOG_ERROR("Invalid hex string %s", hex_str.c_str());
+        return false;
+    }
+    if (hex_str.length() > (buffer_length * 2))
+    {
+        SWSS_LOG_ERROR("Buffer length isn't sufficient.");
+        return false;
+    }
+    while (hex_cur < hex_str.length())
+    {
+        if (!std::isxdigit(static_cast<std::uint8_t>(hex_str[hex_cur])))
         {
+            SWSS_LOG_ERROR("Invalid hex string %s at %lu(%c)", hex_str.c_str(), hex_cur, hex_str[hex_cur]);
+            return false;
+        }
+        if (!std::isxdigit(static_cast<std::uint8_t>(hex_str[hex_cur + 1])))
+        {
+            SWSS_LOG_ERROR("Invalid hex string %s at %lu(%c)", hex_str.c_str(), hex_cur + 1, hex_str[hex_cur + 1]);
             return false;
         }
         std::stringstream stream;
-        if (
-            !!!std::isxdigit(static_cast<std::uint8_t>(hex_str[hex_cur]))
-            || !!!std::isxdigit(static_cast<std::uint8_t>(hex_str[hex_cur + 1])))
-        {
-            return false;
-        }
         stream << std::hex;
         stream << hex_str[hex_cur++];
         stream << hex_str[hex_cur++];
@@ -250,7 +261,7 @@ static bool hex_to_binary(
         stream >> value;
         buffer[buffer_cur++] = static_cast<std::uint8_t>(value);
     }
-    return hex_cur == hex_str.length();
+    return true;
 }
 
 struct MACsecSAK
@@ -1500,6 +1511,7 @@ bool MACsecOrch::createMACsecSC(
             sc->m_flow_id,
             sci,
             ssci,
+            macsec_port.m_sci_in_sectag,
             sc->m_xpn64_enable))
     {
         SWSS_LOG_WARN("Create MACsec SC %s fail.", port_sci.c_str());
@@ -1558,6 +1570,7 @@ bool MACsecOrch::createMACsecSC(
     sai_object_id_t flow_id,
     sai_uint64_t sci,
     sai_uint32_t ssci,
+    bool send_sci,
     bool xpn64_enable)
 {
     SWSS_LOG_ENTER();
@@ -1582,6 +1595,9 @@ bool MACsecOrch::createMACsecSC(
     }
     attr.id = SAI_MACSEC_SC_ATTR_MACSEC_XPN64_ENABLE;
     attr.value.booldata = xpn64_enable;
+    attrs.push_back(attr);
+    attr.id = SAI_MACSEC_SC_ATTR_MACSEC_EXPLICIT_SCI_ENABLE;
+    attr.value.booldata = send_sci;
     attrs.push_back(attr);
 
     if (sai_macsec_api->create_macsec_sc(
@@ -1916,12 +1932,9 @@ bool MACsecOrch::createMACsecSA(
     attrs.push_back(attr);
 
     // Valid when SAI_MACSEC_SC_ATTR_MACSEC_XPN64_ENABLE == true.
-    // if (xpn64_enable)
-    // {
-        attr.id = SAI_MACSEC_SA_ATTR_SALT;
-        std::copy(salt, salt + sizeof(attr.value.macsecsalt), attr.value.macsecsalt);
-        attrs.push_back(attr);
-    // }
+    attr.id = SAI_MACSEC_SA_ATTR_SALT;
+    std::copy(salt, salt + sizeof(attr.value.macsecsalt), attr.value.macsecsalt);
+    attrs.push_back(attr);
 
     attr.id = SAI_MACSEC_SA_ATTR_AUTH_KEY;
     std::copy(auth_key, auth_key + sizeof(attr.value.macsecauthkey), attr.value.macsecauthkey);
