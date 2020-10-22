@@ -20,8 +20,21 @@ struct NextHopEntry
     uint32_t            nh_flags;       // flags
 };
 
+enum class NeighborState
+{
+    NBR_STATE_ENABLED,
+    NBR_STATE_DISABLED,
+    NBR_STATE_UNKNOWN
+};
+struct NeighborData
+{
+    MacAddress    mac;
+    bool          hw_configured = false; // False means, entry is not written to HW
+    NeighborState state = NeighborState::NBR_STATE_UNKNOWN;
+};
+
 /* NeighborTable: NeighborEntry, neighbor MAC address */
-typedef map<NeighborEntry, MacAddress> NeighborTable;
+typedef map<NeighborEntry, NeighborData> NeighborTable;
 /* NextHopTable: NextHopKey, NextHopEntry */
 typedef map<NextHopKey, NextHopEntry> NextHopTable;
 
@@ -47,6 +60,13 @@ public:
 
     bool getNeighborEntry(const NextHopKey&, NeighborEntry&, MacAddress&);
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
+
+    bool enableNeighbor(const NeighborEntry&);
+    bool disableNeighbor(const NeighborEntry&);
+    bool isHwConfigured(const NeighborEntry&);
+    bool isNeighborLearned(const NeighborEntry&);
+    void setNeighborState(const NeighborEntry&, NeighborState);
+    NeighborState getNeighborState(const NeighborEntry&);
 
     bool ifChangeInformNextHop(const string &, bool);
     bool isNextHopFlagSet(const NextHopKey &, const uint32_t);

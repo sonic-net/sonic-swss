@@ -2,16 +2,20 @@
 #include <inttypes.h>
 #include "tunneldecaporch.h"
 #include "portsorch.h"
+#include "crmorch.h"
 #include "logger.h"
 #include "swssnet.h"
 
 extern sai_tunnel_api_t* sai_tunnel_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
+extern sai_next_hop_api_t* sai_next_hop_api;
 
 extern sai_object_id_t  gVirtualRouterId;
 extern sai_object_id_t  gUnderlayIfId;
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
+extern CrmOrch*         gCrmOrch;
+
 
 TunnelDecapOrch::TunnelDecapOrch(DBConnector *db, string tableName) : Orch(db, tableName)
 {
@@ -41,6 +45,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
         string tunnel_type;
         string dscp_mode;
         string ecn_mode;
+        string encap_ecn_mode;
         string ttl_mode;
         bool valid = true;
 
@@ -125,6 +130,20 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
                         setTunnelAttribute(fvField(i), ecn_mode, tunnelTable.find(key)->second.tunnel_id);
                     }
                 }
+                else if (fvField(i) == "encap_ecn_mode")
+                {
+                    encap_ecn_mode = fvValue(i);
+                    if (encap_ecn_mode != "standard")
+                    {
+                        SWSS_LOG_ERROR("Only standard encap ecn mode is supported currently %s\n", ecn_mode.c_str());
+                        valid = false;
+                        break;
+                    }
+                    if (exists)
+                    {
+                        setTunnelAttribute(fvField(i), encap_ecn_mode, tunnelTable.find(key)->second.tunnel_id);
+                    }
+                }
                 else if (fvField(i) == "ttl_mode")
                 {
                     ttl_mode = fvValue(i);
@@ -144,7 +163,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
             // create new tunnel if it doesn't exists already
             if (valid && !exists)
             {
-                if (addDecapTunnel(key, tunnel_type, ip_addresses, p_src_ip, dscp_mode, ecn_mode, ttl_mode))
+                if (addDecapTunnel(key, tunnel_type, ip_addresses, p_src_ip, dscp_mode, ecn_mode, encap_ecn_mode, ttl_mode))
                 {
                     SWSS_LOG_NOTICE("Tunnel(s) added to ASIC_DB.");
                 }
@@ -186,7 +205,7 @@ void TunnelDecapOrch::doTask(Consumer& consumer)
  * Return Values:
  *    @return true on success and false if there's an error
  */
-bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip, IpAddress* p_src_ip, string dscp, string ecn, string ttl)
+bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip, IpAddress* p_src_ip, string dscp, string ecn, string encap_ecn, string ttl)
 {
 
     SWSS_LOG_ENTER();
@@ -250,6 +269,16 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
     }
     tunnel_attrs.push_back(attr);
 
+    if (!encap_ecn.empty())
+    {
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_ECN_MODE;
+        if (encap_ecn == "standard")
+        {
+            attr.value.s32 = SAI_TUNNEL_ENCAP_ECN_MODE_STANDARD;
+            tunnel_attrs.push_back(attr);
+        }
+    }
+
     // ttl mode (uniform/pipe)
     attr.id = SAI_TUNNEL_ATTR_DECAP_TTL_MODE;
     if (ttl == "uniform")
@@ -284,9 +313,6 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
     }
 
     tunnelTable[key] = { tunnel_id, overlayIfId, {} };
-
-    // TODO:
-    // there should also be "business logic" for netbouncer in the "tunnel application" code, which is a different source file and daemon process
 
     // create a decap tunnel entry for every ip
     if (!addDecapTunnelTermEntries(key, dst_ip, tunnel_id))
@@ -406,6 +432,16 @@ bool TunnelDecapOrch::setTunnelAttribute(string field, string value, sai_object_
         else if (value == "standard")
         {
             attr.value.s32 = SAI_TUNNEL_DECAP_ECN_MODE_STANDARD;
+        }
+    }
+
+    if (field == "encap_ecn_mode")
+    {
+        // encap ecn mode (only standard is supported)
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_ECN_MODE;
+        if (value == "standard")
+        {
+            attr.value.s32 = SAI_TUNNEL_ENCAP_ECN_MODE_STANDARD;
         }
     }
 
@@ -566,5 +602,154 @@ bool TunnelDecapOrch::removeDecapTunnelTermEntry(sai_object_id_t tunnel_term_id,
     // making sure to remove all instances of the ip address
     existingIps.erase(ip);
     SWSS_LOG_NOTICE("Removed decap tunnel term entry with ip address: %s", ip.c_str());
+    return true;
+}
+
+sai_object_id_t TunnelDecapOrch::getNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr)
+{
+    auto nh = tunnelNhs.find(tunnelKey);
+    if (nh == tunnelNhs.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    auto it = nh->second.find(ipAddr);
+    if (it == nh->second.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    return nh->second[ipAddr].nh_id;
+}
+
+int TunnelDecapOrch::incNextHopRef(std::string tunnelKey, IpAddress& ipAddr)
+{
+    return (++ tunnelNhs[tunnelKey][ipAddr].ref_count);
+}
+
+int TunnelDecapOrch::decNextHopRef(std::string tunnelKey, IpAddress& ipAddr)
+{
+    return (-- tunnelNhs[tunnelKey][ipAddr].ref_count);
+}
+
+sai_object_id_t TunnelDecapOrch::createNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr)
+{
+    if (tunnelTable.find(tunnelKey) == tunnelTable.end())
+    {
+        SWSS_LOG_ERROR("Tunnel not found %s", tunnelKey.c_str());
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    sai_object_id_t nhid;
+    if ((nhid = getNextHopTunnel(tunnelKey, ipAddr)) != SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("NH tunnel already exist '%s'", ipAddr.to_string().c_str());
+        incNextHopRef(tunnelKey, ipAddr);
+        return nhid;
+    }
+
+    TunnelEntry *tunnel_info = &tunnelTable.find(tunnelKey)->second;
+
+    std::vector<sai_attribute_t> next_hop_attrs;
+    sai_attribute_t next_hop_attr;
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+    next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    sai_ip_address_t host_ip;
+    swss::copy(host_ip, ipAddr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_IP;
+    next_hop_attr.value.ipaddr = host_ip;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_ID;
+    next_hop_attr.value.oid = tunnel_info->tunnel_id;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    sai_object_id_t next_hop_id = SAI_NULL_OBJECT_ID;
+    sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, gSwitchId,
+                                            static_cast<uint32_t>(next_hop_attrs.size()),
+                                            next_hop_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Tunnel NH create failed %s, ip %s", tunnelKey.c_str(),
+                        ipAddr.to_string().c_str());
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Tunnel NH created %s, ip %s",
+                         tunnelKey.c_str(), ipAddr.to_string().c_str());
+
+        if (ipAddr.isV4())
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+        }
+        else
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+        }
+
+        tunnelNhs[tunnelKey][ipAddr] = { next_hop_id, 1 };
+    }
+
+    return next_hop_id;
+}
+
+bool TunnelDecapOrch::removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr)
+{
+    if (tunnelTable.find(tunnelKey) == tunnelTable.end())
+    {
+        SWSS_LOG_ERROR("Tunnel not found %s", tunnelKey.c_str());
+        return true;
+    }
+
+    sai_object_id_t nhid;
+    if ((nhid = getNextHopTunnel(tunnelKey, ipAddr)) == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("NH tunnel doesn't exist '%s'", ipAddr.to_string().c_str());
+        return true;
+    }
+
+    if (decNextHopRef(tunnelKey, ipAddr))
+    {
+        SWSS_LOG_NOTICE("Tunnel NH referenced, decremented ref count %s, ip %s",
+                         tunnelKey.c_str(), ipAddr.to_string().c_str());
+        return true;
+    }
+
+    sai_status_t status = sai_next_hop_api->remove_next_hop(nhid);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_ERROR("Failed to locate next hop %s on %s, rv:%d",
+                            ipAddr.to_string().c_str(), tunnelKey.c_str(), status);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
+                            ipAddr.to_string().c_str(), tunnelKey.c_str(), status);
+            return false;
+        }
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Tunnel NH removed %s, ip %s",
+                         tunnelKey.c_str(), ipAddr.to_string().c_str());
+
+        if (ipAddr.isV4())
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+        }
+        else
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+        }
+    }
+
+    tunnelNhs[tunnelKey].erase(ipAddr);
+
     return true;
 }

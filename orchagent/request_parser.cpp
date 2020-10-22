@@ -178,6 +178,9 @@ void Request::parseAttrs(const KeyOpFieldsValuesTuple& request)
             case REQ_T_IP:
                 attr_item_ip_[fvField(*i)] = parseIpAddress(fvValue(*i));
                 break;
+            case REQ_T_IP_PREFIX:
+                attr_item_ip_prefix_[fvField(*i)] = parseIpPrefix(fvValue(*i));
+                break;
             case REQ_T_UINT:
                 attr_item_uint_[fvField(*i)] = parseUint(fvValue(*i));
                 break;

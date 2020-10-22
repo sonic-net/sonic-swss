@@ -117,6 +117,12 @@ public:
         return attr_item_ip_.at(attr_name);
     }
 
+    swss::IpPrefix getAttrIpPrefix(const std::string& attr_name) const
+    {
+        assert(is_parsed_);
+        return attr_item_ip_prefix_.at(attr_name);
+    }
+
     const uint64_t& getAttrUint(const std::string& attr_name) const
     {
         assert(is_parsed_);
@@ -185,6 +191,7 @@ private:
     std::unordered_map<std::string, sai_packet_action_t> attr_item_packet_actions_;
     std::unordered_map<std::string, uint16_t> attr_item_vlan_;
     std::unordered_map<std::string, swss::IpAddress> attr_item_ip_;
+    std::unordered_map<std::string, swss::IpPrefix> attr_item_ip_prefix_;
     std::unordered_map<std::string, uint64_t> attr_item_uint_;
     std::unordered_map<std::string, std::set<std::string>> attr_item_set_;
 };
