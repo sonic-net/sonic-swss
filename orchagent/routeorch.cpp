@@ -119,6 +119,8 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
     SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
 
+    /* Add fe80::/10 subnet route to forward all link-local packets
+     * destined to us, to CPU */
     IpPrefix default_link_local_prefix("fe80::/10");
 
     addLinkLocalRouteToMe(gVirtualRouterId, default_link_local_prefix);

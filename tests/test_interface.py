@@ -36,7 +36,7 @@ class TestRouterInterface(object):
         tbl = swsscommon.Table(self.cdb, "VRF")
         fvs = swsscommon.FieldValuePairs([('empty', 'empty')])
         tbl.set(vrf_name, fvs)
-        time.sleep(1)
+        time.sleep(2)
 
         tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VIRTUAL_ROUTER")
         current_entries = set(tbl.getKeys())
@@ -46,7 +46,7 @@ class TestRouterInterface(object):
     def remove_vrf(self, vrf_name):
         tbl = swsscommon.Table(self.cdb, "VRF")
         tbl._del(vrf_name)
-        time.sleep(1)
+        time.sleep(2)
 
     def create_l3_intf(self, interface, vrf_name):
         if interface.startswith("PortChannel"):
@@ -63,7 +63,7 @@ class TestRouterInterface(object):
             fvs = swsscommon.FieldValuePairs([("vrf_name", vrf_name)])
         tbl = swsscommon.Table(self.cdb, tbl_name)
         tbl.set(interface, fvs)
-        time.sleep(1)
+        time.sleep(2)
 
     def remove_l3_intf(self, interface):
         if interface.startswith("PortChannel"):
@@ -76,7 +76,7 @@ class TestRouterInterface(object):
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         tbl._del(interface)
-        time.sleep(1)
+        time.sleep(2)
 
     def add_ip_address(self, interface, ip):
         if interface.startswith("PortChannel"):
@@ -90,7 +90,7 @@ class TestRouterInterface(object):
         tbl = swsscommon.Table(self.cdb, tbl_name)
         fvs = swsscommon.FieldValuePairs([("NULL", "NULL")])
         tbl.set(interface + "|" + ip, fvs)
-        time.sleep(1)
+        time.sleep(2)
 
     def remove_ip_address(self, interface, ip):
         if interface.startswith("PortChannel"):
@@ -103,7 +103,7 @@ class TestRouterInterface(object):
             tbl_name = "INTERFACE"
         tbl = swsscommon.Table(self.cdb, tbl_name)
         tbl._del(interface + "|" + ip)
-        time.sleep(1)
+        time.sleep(2)
 
     def set_mtu(self, interface, mtu):
         if interface.startswith("PortChannel"):
