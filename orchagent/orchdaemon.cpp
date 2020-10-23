@@ -471,6 +471,12 @@ void OrchDaemon::start()
 
         if (ret == Select::TIMEOUT)
         {
+            /* Let sairedis to flush all SAI function call to ASIC DB.
+             * Normally the redis pipeline will flush when enough request
+             * accumulated. Still it is possible that small amount of
+             * requests live in it. When the daemon has nothing to do, it
+             * is a good chance to flush the pipeline  */
+            flush();
             continue;
         }
 
@@ -483,14 +489,6 @@ void OrchDaemon::start()
         /* TODO: Abstract Orch class to have a specific todo list */
         for (Orch *o : m_orchList)
             o->doTask();
-
-        /* Let sairedis to flush all SAI function call to ASIC DB.
-         * Normally the redis pipeline will flush when enough request
-         * accumulated. Still it is possible that small amount of
-         * requests live in it. When the daemon has finished events/tasks, it
-         * is a good chance to flush the pipeline before next select happened.
-         */
-        flush();
 
         /*
          * Asked to check warm restart readiness.
