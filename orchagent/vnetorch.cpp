@@ -1384,17 +1384,21 @@ bool VNetOrch::addOperation(const Request& request)
                 VNetInfo vnet_info = { tunnel, vni, peer_list, scope };
                 obj = createObject<VNetVrfObject>(vnet_name, vnet_info, attrs);
                 create = true;
-            }
 
-            VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(obj.get());
-            if (!vxlan_orch->createVxlanTunnelMap(tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
-                                                  vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId(), VXLAN_ENCAP_TTL))
+                VNetVrfObject *vrf_obj = dynamic_cast<VNetVrfObject*>(obj.get());
+                if (!vxlan_orch->createVxlanTunnelMap(tunnel, TUNNEL_MAP_T_VIRTUAL_ROUTER, vni,
+                                                      vrf_obj->getEncapMapId(), vrf_obj->getDecapMapId(), VXLAN_ENCAP_TTL))
+                {
+                    SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
+                                    vnet_name.c_str(), tunnel.c_str());
+                }
+
+                SWSS_LOG_NOTICE("VNET '%s' was added ", vnet_name.c_str());
+            }
+            else
             {
-                SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
-                                vnet_name.c_str(), tunnel.c_str());
+                SWSS_LOG_NOTICE("VNET '%s' already exists ", vnet_name.c_str());
             }
-
-            SWSS_LOG_NOTICE("VNET '%s' was added ", vnet_name.c_str());
         }
         else
         {
