@@ -267,7 +267,9 @@ void FdbOrch::update(sai_fdb_event_t        type,
                            vlanName.c_str(), update.port.m_alias.c_str());
         }
         if (flush_count)
+        {
             flush_count--;
+        }
         break;
     }
 
@@ -541,6 +543,11 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
     if (SAI_STATUS_SUCCESS != rv)
     {
         SWSS_LOG_ERROR("Flushing FDB failed. rv:%d", rv);
+    }
+    else
+    {
+        /*flush dynamic and static fdb*/
+        flush_count+=2;
     }
 }
 
