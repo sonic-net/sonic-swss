@@ -377,7 +377,7 @@ void NeighOrch::doTask(Consumer &consumer)
             if (it_rem != consumer.m_toSync.end() && kfvOp(it_rem->second) == DEL_COMMAND)
             {
                 it = consumer.m_toSync.erase(it_rem);
-                SWSS_LOG_NOTICE("Removed unfinished DEL operation for %s after SET operation", key.c_str());
+                SWSS_LOG_NOTICE("Removed unfinished neighbor DEL operation for %s after SET operation", key.c_str());
             }
         }
         else if (op == DEL_COMMAND)
