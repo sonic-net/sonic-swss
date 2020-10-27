@@ -562,6 +562,17 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     }
 
     /*
+     * MIRROR ACL rules depend on mirror sessions, which won't be up after warm
+     * reboot until after the postBake step has finished. So, we need to give
+     * AclOrch one more round to resolve any rules that are waiting for mirror
+     * sessions.
+     *
+     * TODO: Implement a more generic mechanism for handling these types of
+     * hard dependencies.
+     */
+    gAclOrch->Orch::doTask();
+
+    /*
      * At this point, all the pre-existing data should have been processed properly, and
      * orchagent should be in exact same state of pre-shutdown.
      * Perform restore validation as needed.
