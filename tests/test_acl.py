@@ -531,6 +531,55 @@ class TestAclRuleValidation:
                 dvs.start_swss()
 
 
+class TestAclCrmUtilization:
+    @pytest.fixture(scope="class", autouse=True)
+    def configure_crm_polling_interval_for_test(self, dvs):
+        dvs.runcmd("crm config polling interval 1")
+
+        yield
+
+        dvs.runcmd("crm config polling interval 300")
+
+    def test_ValidateAclTableBindingCrmUtilization(self, dvs, dvs_acl):
+        counter_db = dvs.get_counters_db()
+
+        crm_port_stats = counter_db.get_entry("CRM", "ACL_STATS:INGRESS:PORT")
+        initial_acl_table_port_bindings_used = int(crm_port_stats.get("crm_stats_acl_table_used", 0))
+
+        crm_lag_stats = counter_db.get_entry("CRM", "ACL_STATS:INGRESS:LAG")
+        initial_acl_table_lag_bindings_used = int(crm_lag_stats.get("crm_stats_acl_table_used", 0))
+
+        dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS)
+        dvs_acl.verify_acl_table_count(1)
+
+        counter_db.wait_for_field_match(
+            "CRM",
+            "ACL_STATS:INGRESS:PORT",
+            {"crm_stats_acl_table_used": str(initial_acl_table_port_bindings_used + 1)}
+        )
+
+        counter_db.wait_for_field_match(
+            "CRM",
+            "ACL_STATS:INGRESS:LAG",
+            {"crm_stats_acl_table_used": str(initial_acl_table_lag_bindings_used + 1)}
+        )
+
+        dvs_acl.remove_acl_table(L3_TABLE_NAME)
+        dvs_acl.verify_acl_table_count(0)
+
+        counter_db.wait_for_field_match(
+            "CRM",
+            "ACL_STATS:INGRESS:PORT",
+            {"crm_stats_acl_table_used": str(initial_acl_table_port_bindings_used)}
+        )
+
+        counter_db.wait_for_field_match(
+            "CRM",
+            "ACL_STATS:INGRESS:LAG",
+            {"crm_stats_acl_table_used": str(initial_acl_table_lag_bindings_used)}
+        )
+
+
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
 def test_nonflaky_dummy():
