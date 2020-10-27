@@ -370,7 +370,7 @@ void NeighOrch::doTask(Consumer &consumer)
             }
 
             /* Remove remaining DEL operation in m_toSync for the same neighbor.
-             * Since DEL operation is supposed to be executed before SET for the same neighbor [ref: https://github.com/Azure/sonic-swss/pull/1184]
+             * Since DEL operation is supposed to be executed before SET for the same neighbor
              * A remaining DEL after the SET operation means the DEL operation failed previously and should not be executed anymore
              */
             auto it_rem = consumer.m_toSync.find(key);
