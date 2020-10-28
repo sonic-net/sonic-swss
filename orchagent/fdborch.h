@@ -61,13 +61,6 @@ struct SavedFdbEntry
     MacAddress mac;
     unsigned short vlanId;
     FdbData fdbData;
-    /*
-    string type;
-    FdbOrigin origin;
-    string remote_ip;
-    string    esi;
-    unsigned int vni;
-    */
     bool operator==(const SavedFdbEntry& other) const
     {
         return tie(mac, vlanId) == tie(other.mac, other.vlanId);
