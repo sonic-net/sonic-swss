@@ -60,11 +60,14 @@ struct SavedFdbEntry
 {
     MacAddress mac;
     unsigned short vlanId;
+    FdbData fdbData;
+    /*
     string type;
     FdbOrigin origin;
     string remote_ip;
     string    esi;
     unsigned int vni;
+    */
     bool operator==(const SavedFdbEntry& other) const
     {
         return tie(mac, vlanId) == tie(other.mac, other.vlanId);
@@ -110,7 +113,7 @@ private:
 
     void updateVlanMember(const VlanMemberUpdate&);
     void updatePortOperState(const PortOperStateUpdate&);
-    bool addFdbEntry(const FdbEntry&, const string&, const string&, FdbOrigin origin, const string& remote_ip="", unsigned int vni=0, const string& esi="");
+    bool addFdbEntry(const FdbEntry&, const string&, FdbData fdbData);
     void deleteFdbEntryFromSavedFDB(const MacAddress &mac, const unsigned short &vlanId, FdbOrigin origin, const string portName="");
 
     bool storeFdbEntryState(const FdbUpdate& update);

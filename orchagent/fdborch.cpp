@@ -188,12 +188,6 @@ void FdbOrch::update(sai_fdb_event_t        type,
             return;
         }
 
-        if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
-        {
-            SWSS_LOG_ERROR("FdbOrch LEARN notification: Failed to get port by bridge port ID 0x%" PRIx64, bridge_port_id);
-            return;
-        }
-
         // we already have such entries
         auto existing_entry = m_entries.find(update.entry);
         if (existing_entry != m_entries.end())
@@ -234,11 +228,6 @@ void FdbOrch::update(sai_fdb_event_t        type,
              break;
         }
 
-        if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
-        {
-            SWSS_LOG_NOTICE("FdbOrch AGE notification: Failed to get port by bridge port ID 0x%lx", bridge_port_id);
-        }
-
         if (existing_entry->second.bridge_port_id != bridge_port_id)
         {
             SWSS_LOG_NOTICE("FdbOrch AGE notification: Stale aging event received for mac-bv_id %s-0x%lx with bp=0x%lx existing bp=0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id, existing_entry->second.bridge_port_id);
@@ -257,12 +246,15 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
             if (vlan.m_members.find(update.port.m_alias) == vlan.m_members.end())
             {
-        	    saved_fdb_entries[update.port.m_alias].push_back({existing_entry->first.mac,
-                        vlan.m_vlan_info.vlan_id, update.type,
-                        existing_entry->second.origin,
-                        existing_entry->second.remote_ip,
-                        existing_entry->second.esi,
-                        existing_entry->second.vni});
+                FdbData fdbData;
+                fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+                fdbData.type = update.type;
+                fdbData.origin = existing_entry->second.origin;
+                fdbData.remote_ip = existing_entry->second.remote_ip;
+                fdbData.esi = existing_entry->second.esi;
+                fdbData.vni = existing_entry->second.vni;
+        	    saved_fdb_entries[update.port.m_alias].push_back(
+                        {existing_entry->first.mac, vlan.m_vlan_info.vlan_id, fdbData});
             }
             else
             {
@@ -318,12 +310,6 @@ void FdbOrch::update(sai_fdb_event_t        type,
         if (!m_portsOrch->getPort(entry->bv_id, vlan))
         {
             SWSS_LOG_ERROR("FdbOrch MOVE notification: Failed to locate vlan port from bv_id 0x%lx", entry->bv_id);
-            return;
-        }
-
-        if (!m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
-        {
-            SWSS_LOG_ERROR("FdbOrch MOVE notification: Failed to get port by bridge port ID 0x%lx", bridge_port_id);
             return;
         }
 
@@ -605,7 +591,14 @@ void FdbOrch::doTask(Consumer& consumer)
             }
 
 
-            if (addFdbEntry(entry, port, type, origin, remote_ip, vni, esi))
+            FdbData fdbData;
+            fdbData.bridge_port_id = SAI_NULL_OBJECT_ID;
+            fdbData.type = type;
+            fdbData.origin = origin;
+            fdbData.remote_ip = remote_ip;
+            fdbData.esi = esi;
+            fdbData.vni = vni;
+            if (addFdbEntry(entry, port, fdbData))
                 it = consumer.m_toSync.erase(it);
             else
                 it++;
@@ -738,8 +731,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
                 FdbEntry entry;
                 entry.mac = fdb.mac;
                 entry.bv_id = update.vlan.m_vlan_info.vlan_oid;
-                (void)addFdbEntry(entry, port_name, fdb.type, fdb.origin,
-                        fdb.remote_ip, fdb.vni, fdb.esi);
+                (void)addFdbEntry(entry, port_name, fdb.fdbData);
             }
             else
             {
@@ -749,13 +741,16 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     }
 }
 
-bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const string& type, FdbOrigin origin, const string& remote_ip, unsigned int vni, const string& esi)
+bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
+        FdbData fdbData)
 {
     Port vlan;
     Port port;
 
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("mac=%s bv_id=0x%lx port_name=%s type=%s origin=%d", entry.mac.to_string().c_str(), entry.bv_id, port_name.c_str(), type.c_str(), origin);
+    SWSS_LOG_NOTICE("mac=%s bv_id=0x%lx port_name=%s type=%s origin=%d",
+            entry.mac.to_string().c_str(), entry.bv_id, port_name.c_str(),
+            fdbData.type.c_str(), fdbData.origin);
 
     if (!m_portsOrch->getPort(entry.bv_id, vlan))
     {
@@ -768,7 +763,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     {
         SWSS_LOG_INFO("Saving a fdb entry until port %s becomes active", port_name.c_str());
         saved_fdb_entries[port_name].push_back({entry.mac,
-                vlan.m_vlan_info.vlan_id, type, origin, remote_ip, esi, vni});
+                vlan.m_vlan_info.vlan_id, fdbData});
         return true;
     }
 
@@ -777,7 +772,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     {
         SWSS_LOG_INFO("Saving a fdb entry until port %s becomes vlan %s member", port_name.c_str(), vlan.m_alias.c_str());
         saved_fdb_entries[port_name].push_back({entry.mac,
-                vlan.m_vlan_info.vlan_id, type, origin, remote_ip, esi, vni});
+                vlan.m_vlan_info.vlan_id, fdbData});
         return true;
     }
 
@@ -804,13 +799,15 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
             return false;
         }
 
-        if((oldOrigin == origin) && (oldType == type) && (port.m_bridge_port_id == it->second.bridge_port_id))
+        if((oldOrigin == fdbData.origin) && (oldType == fdbData.type) && (port.m_bridge_port_id == it->second.bridge_port_id))
         {
             /* Duplicate Mac */
-            SWSS_LOG_NOTICE("FdbOrch: mac=%s %s port=%s type=%s origin=%d is duplicate", entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str(), type.c_str(), origin);
+            SWSS_LOG_NOTICE("FdbOrch: mac=%s %s port=%s type=%s origin=%d is duplicate", entry.mac.to_string().c_str(),
+                    vlan.m_alias.c_str(), port_name.c_str(),
+                    fdbData.type.c_str(), fdbData.origin);
             return true;
         }
-        else if(origin != oldOrigin)
+        else if(fdbData.origin != oldOrigin)
         {
             /* Mac origin has changed */
             if((oldType == "static") && (oldOrigin == FDB_ORIGIN_PROVISIONED))
@@ -820,11 +817,12 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
                         "Received same MAC from peer:%s; "
                         "Peer mac ignored",
                         entry.mac.to_string().c_str(), vlan.m_vlan_info.vlan_id,
-                        remote_ip.c_str());
+                        fdbData.remote_ip.c_str());
 
                 return true;
             }
-            else if((oldType == "static") && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED) && (type == "dynamic"))
+            else if((oldType == "static") && (oldOrigin ==
+                        FDB_ORIGIN_VXLAN_ADVERTIZED) && (fdbData.type == "dynamic"))
             {
                 /* old mac was static and received from remote, it can not be changed by dynamic locally provisioned Mac */
                 SWSS_LOG_NOTICE("Already existing static MAC:%s in Vlan:%d "
@@ -836,7 +834,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
             }
             else if(oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)
             {
-                if((oldType == "static") && (type == "static"))
+                if((oldType == "static") && (fdbData.type == "static"))
                 {
                     SWSS_LOG_WARN("You have just overwritten existing static MAC:%s "
                             "in Vlan:%d from Peer:%s, "
@@ -847,7 +845,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
                 }
             }
         }
-        else /* (origin == oldOrigin) */
+        else /* (fdbData.origin == oldOrigin) */
         {
             /* Mac origin is same, all changes are allowed */
             /* Allowed
@@ -864,17 +862,17 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     vector<sai_attribute_t> attrs;
 
     attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
-    if (origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
+    if (fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
     {
         attr.value.s32 = SAI_FDB_ENTRY_TYPE_STATIC;
     }
     else
     {
-        attr.value.s32 = (type == "dynamic") ? SAI_FDB_ENTRY_TYPE_DYNAMIC : SAI_FDB_ENTRY_TYPE_STATIC;
+        attr.value.s32 = (fdbData.type == "dynamic") ? SAI_FDB_ENTRY_TYPE_DYNAMIC : SAI_FDB_ENTRY_TYPE_STATIC;
     }
     attrs.push_back(attr);
 
-    if ((origin == FDB_ORIGIN_VXLAN_ADVERTIZED) && (type == "dynamic"))
+    if ((fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED) && (fdbData.type == "dynamic"))
     {
         attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
         attr.value.booldata = true;
@@ -885,9 +883,9 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     attr.value.oid = port.m_bridge_port_id;
     attrs.push_back(attr);
 
-    if(origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
+    if(fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
     {
-        IpAddress remote = IpAddress(remote_ip);
+        IpAddress remote = IpAddress(fdbData.remote_ip);
         sai_ip_address_t ipaddr;
         if(remote.isV4())
         {
@@ -905,7 +903,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     }
     else if(macUpdate 
             && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED) 
-            && (origin != oldOrigin))
+            && (fdbData.origin != oldOrigin))
     {
         /* origin is changed from Remote-advertized to Local-provisioned
          * Remove the end-point ip attribute from fdb entry
@@ -920,8 +918,8 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
 
     if(macUpdate && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)) 
     {
-        if((origin != oldOrigin)
-           || ((oldType == "dynamic") && (oldType != type)))
+        if((fdbData.origin != oldOrigin)
+           || ((oldType == "dynamic") && (oldType != fdbData.type)))
         {
             attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
             attr.value.booldata = false;
@@ -934,7 +932,8 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     {
         SWSS_LOG_NOTICE("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
                 entry.mac.to_string().c_str(), vlan.m_alias.c_str(), oldPort.m_alias.c_str(),
-                port_name.c_str(), oldType.c_str(), type.c_str(), oldOrigin, origin);
+                port_name.c_str(), oldType.c_str(), fdbData.type.c_str(),
+                oldOrigin, fdbData.origin);
         for(auto itr : attrs)
         {
             status = sai_fdb_api->set_fdb_entry_attribute(&fdb_entry, &itr);
@@ -955,13 +954,13 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     }
     else
     {
-        SWSS_LOG_NOTICE("MAC-Create %s FDB %s in %s on %s", type.c_str(), entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
+        SWSS_LOG_NOTICE("MAC-Create %s FDB %s in %s on %s", fdbData.type.c_str(), entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
 
         status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
-                    type.c_str(), entry.mac.to_string().c_str(),
+                    fdbData.type.c_str(), entry.mac.to_string().c_str(),
                     vlan.m_alias.c_str(), port_name.c_str(), status);
             return false; //FIXME: it should be based on status. Some could be retried, some not
         }
@@ -971,28 +970,23 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
         m_portsOrch->setPort(vlan.m_alias, vlan);
     }
 
-    FdbData fdbData;
-    fdbData.bridge_port_id = port.m_bridge_port_id;
-    fdbData.type = type;
-    fdbData.origin = origin;
-    fdbData.remote_ip = remote_ip;
-    fdbData.esi = esi;
-    fdbData.vni = vni;
+    FdbData storeFdbData = fdbData;
+    storeFdbData.bridge_port_id = port.m_bridge_port_id;
 
-    m_entries[entry] = fdbData;
+    m_entries[entry] = storeFdbData;
 
     string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
 
-    if (origin != FDB_ORIGIN_VXLAN_ADVERTIZED)
+    if (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED)
     {
         /* State-DB is updated only for Local Mac addresses */
         // Write to StateDb
         std::vector<FieldValueTuple> fvs;
         fvs.push_back(FieldValueTuple("port", port_name));
-        if (type == "dynamic_local")
+        if (fdbData.type == "dynamic_local")
             fvs.push_back(FieldValueTuple("type", "dynamic"));
         else
-            fvs.push_back(FieldValueTuple("type", type));
+            fvs.push_back(FieldValueTuple("type", fdbData.type));
         m_fdbStateTable.set(key, fvs);
     }
     else if (macUpdate && (oldOrigin != FDB_ORIGIN_VXLAN_ADVERTIZED))
@@ -1012,7 +1006,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     FdbUpdate update;
     update.entry = entry;
     update.port = port;
-    update.type = type;
+    update.type = fdbData.type;
     update.add = true;
 
     notify(SUBJECT_TYPE_FDB_CHANGE, &update);
@@ -1144,6 +1138,7 @@ bool FdbOrch::flushFdbByPort(const string &alias, bool flush_static)
     sai_status_t status;
     Port port;
     sai_attribute_t port_attr[2];
+    int port_attr_count=0;
 
     if (!m_portsOrch->getPort(alias, port))
     {
@@ -1161,16 +1156,16 @@ bool FdbOrch::flushFdbByPort(const string &alias, bool flush_static)
 
     port_attr[0].id = SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID;
     port_attr[0].value.oid = port.m_bridge_port_id;
+    port_attr_count++;
+
     if (!flush_static)
     {
         port_attr[1].id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
         port_attr[1].value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
-        status = sai_fdb_api->flush_fdb_entries(gSwitchId, 2, port_attr);
+        port_attr_count++;
     }
-    else
-    {
-    	status = sai_fdb_api->flush_fdb_entries(gSwitchId, 1, port_attr);
-    }
+
+    status = sai_fdb_api->flush_fdb_entries(gSwitchId, port_attr_count, port_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
@@ -1184,6 +1179,7 @@ bool FdbOrch::flushFdbByVlan(const string &alias, bool flush_static)
     sai_status_t status;
     Port vlan;
     sai_attribute_t vlan_attr[2];
+    int vlan_attr_count=0;
 
     if (!m_portsOrch->getPort(alias, vlan))
     {
@@ -1194,16 +1190,16 @@ bool FdbOrch::flushFdbByVlan(const string &alias, bool flush_static)
 
     vlan_attr[0].id = SAI_FDB_FLUSH_ATTR_BV_ID;
     vlan_attr[0].value.oid = vlan.m_vlan_info.vlan_oid;
+    vlan_attr_count++;
+
     if (!flush_static)
     {
         vlan_attr[1].id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
         vlan_attr[1].value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
-        status = sai_fdb_api->flush_fdb_entries(gSwitchId, 2, vlan_attr);
+        vlan_attr_count++;
     }
-    else
-    {
-    	status = sai_fdb_api->flush_fdb_entries(gSwitchId, 1, vlan_attr);
-    }
+
+    status = sai_fdb_api->flush_fdb_entries(gSwitchId, vlan_attr_count, vlan_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
@@ -1220,6 +1216,7 @@ bool FdbOrch::flushFdbByPortVlan(const string &port_alias, const string &vlan_al
     Port vlan;
     Port port;
     sai_attribute_t port_vlan_attr[3];
+    int port_vlan_attr_count=0;
 
     SWSS_LOG_NOTICE("port %s vlan %s", port_alias.c_str(), vlan_alias.c_str());
 
@@ -1244,18 +1241,20 @@ bool FdbOrch::flushFdbByPortVlan(const string &port_alias, const string &vlan_al
 
     port_vlan_attr[0].id = SAI_FDB_FLUSH_ATTR_BV_ID;
     port_vlan_attr[0].value.oid = vlan.m_vlan_info.vlan_oid;
+    port_vlan_attr_count++;
+
     port_vlan_attr[1].id = SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID;
     port_vlan_attr[1].value.oid = port.m_bridge_port_id;
+    port_vlan_attr_count++;
+
     if (!flush_static)
     {
         port_vlan_attr[2].id = SAI_FDB_FLUSH_ATTR_ENTRY_TYPE;
         port_vlan_attr[2].value.s32 = SAI_FDB_FLUSH_ENTRY_TYPE_DYNAMIC;
-        status = sai_fdb_api->flush_fdb_entries(gSwitchId, 3, port_vlan_attr);
+        port_vlan_attr_count++;
     }
-    else
-    {
-    	status = sai_fdb_api->flush_fdb_entries(gSwitchId, 2, port_vlan_attr);
-    }
+
+    status = sai_fdb_api->flush_fdb_entries(gSwitchId, port_vlan_attr_count, port_vlan_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Flush fdb failed, return code %x", status);
@@ -1272,9 +1271,9 @@ void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
     SavedFdbEntry entry;
     entry.mac = mac;
     entry.vlanId = vlanId;
-    entry.type = "static";
+    entry.fdbData.type = "static";
     /* Below members are unused during delete compare */
-    entry.origin = origin;
+    entry.fdbData.origin = origin;
 
     for (auto& itr: saved_fdb_entries)
     {
@@ -1285,7 +1284,7 @@ void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
             {
                 if (*iter == entry)
                 {
-                    if(iter->origin == origin)
+                    if(iter->fdbData.origin == origin)
                     {
                         SWSS_LOG_NOTICE("FDB entry found in saved fdb. deleting..."
                                 "mac=%s vlan_id=0x%x origin:%d port:%s", 
@@ -1302,7 +1301,7 @@ void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
                                 "different mac=%s vlan_id=0x%x reqOrigin:%d "
                                 "foundOrigin:%d port:%s, IGNORED", 
                                 mac.to_string().c_str(), vlanId, origin,
-                                iter->origin, itr.first.c_str());
+                                iter->fdbData.origin, itr.first.c_str());
                     }
                 }
                 iter++;
