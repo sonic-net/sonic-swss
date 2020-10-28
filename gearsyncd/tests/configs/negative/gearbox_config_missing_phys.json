@@ -1,0 +1,23 @@
+{
+  "interfaces": [
+    {
+      "index": 1,
+      "phy_id" : 0,
+      "system_lanes": [38,39],
+      "line_lanes": [30,31,32,33]
+    },
+    {
+      "index": 1,
+      "phy_id" : 0,
+      "system_lanes": [40,41],
+      "line_lanes": [34,35,36,37]
+    },
+    {
+      "index": 1,
+      "phy_id" : 1,
+      "system_lanes": [4,5],
+      "line_lanes": [0,1,2,3]
+    }
+  ]
+}
+

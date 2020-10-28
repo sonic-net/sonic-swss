@@ -155,6 +155,7 @@ void PortMgr::doTask(Consumer &consumer)
         {
             SWSS_LOG_NOTICE("Delete Port: %s", alias.c_str());
             m_appPortTable.del(alias);
+            m_portList.erase(alias);
         }
 
         it = consumer.m_toSync.erase(it);

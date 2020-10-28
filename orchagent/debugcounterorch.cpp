@@ -322,9 +322,9 @@ task_process_status DebugCounterOrch::addDropReason(const string& counter_name, 
         // are received before the create counter update, we keep track of reasons
         // we've seen in the free_drop_reasons table.
         addFreeDropReason(counter_name, drop_reason);
-        reconcileFreeDropCounters(counter_name);
+        SWSS_LOG_NOTICE("Added drop reason %s to drop counter %s", drop_reason.c_str(), counter_name.c_str());
 
-        SWSS_LOG_NOTICE("Succesfully created drop counter %s", counter_name.c_str());
+        reconcileFreeDropCounters(counter_name);
         return task_process_status::task_success;
     }
 
@@ -451,7 +451,7 @@ void DebugCounterOrch::reconcileFreeDropCounters(const string& counter_name)
         createDropCounter(counter_name, counter_it->second, reasons_it->second);
         free_drop_counters.erase(counter_it);
         free_drop_reasons.erase(reasons_it);
-        SWSS_LOG_NOTICE("Succesfully created new drop counter %s", counter_name.c_str());
+        SWSS_LOG_NOTICE("Succesfully matched drop reasons to counter %s", counter_name.c_str());
     }
 }
 

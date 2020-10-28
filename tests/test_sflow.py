@@ -1,304 +1,144 @@
-import time
-import os
-import pytest
-
-from swsscommon import swsscommon
-
-
-class TestSflow(object):
+class TestSflow:
     speed_rate_table = {
-        "400000":"40000",
-        "100000":"10000",
-        "50000":"5000",
-        "40000":"4000",
-        "25000":"2500",
-        "10000":"1000",
-        "1000":"100"
+        "400000": "40000",
+        "100000": "10000",
+        "50000": "5000",
+        "40000": "4000",
+        "25000": "2500",
+        "10000": "1000",
+        "1000": "100"
     }
+
     def setup_sflow(self, dvs):
-        self.adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-        self.cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        ctbl = swsscommon.Table(self.cdb, "SFLOW")
+        self.adb = dvs.get_asic_db()
+        self.cdb = dvs.get_config_db()
 
-        fvs = swsscommon.FieldValuePairs([("admin_state", "up")])
-        ctbl.set("global", fvs)
-
-        time.sleep(1)
+        self.cdb.create_entry("SFLOW", "global", {"admin_state": "up"})
 
     def test_defaultGlobal(self, dvs, testlog):
         self.setup_sflow(dvs)
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
 
-        assert status == True
+        # Verify that the session is up
+        port_oid = self.adb.port_name_map["Ethernet0"]
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        fvs = self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
-        sample_session = ""
-        speed = ""
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE":
-                sample_session = fv[1]
-            elif fv[0] == "SAI_PORT_ATTR_SPEED":
-                speed = fv[1]
+        sample_session = fvs["SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE"]
+        speed = fvs["SAI_PORT_ATTR_SPEED"]
 
-        assert sample_session != ""
-        assert speed != ""
+        rate = self.speed_rate_table.get(speed, None)
+        assert rate
 
-        rate = ""
+        expected_fields = {"SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE": rate}
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", sample_session, expected_fields)
 
-        if speed in self.speed_rate_table:
-            rate = self.speed_rate_table[speed]
-
-        assert rate != ""
-
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET")
-        (status, fvs) = atbl.get(sample_session)
-
-        assert status == True
-
-        for fv in fvs:
-            if fv[0] == "SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE":
-                assert fv[1] == rate
-
-        ctbl = swsscommon.Table(self.cdb, "SFLOW")
-        fvs = swsscommon.FieldValuePairs([("admin_state", "down")])
-        ctbl.set("global", fvs)
-
-        time.sleep(1)
-
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
-
-        assert status == True
-
-        sample_session = ""
-        speed = ""
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE":
-                sample_session = fv[1]
-
-        assert sample_session == "oid:0x0"
+        self.cdb.update_entry("SFLOW", "global", {"admin_state": "down"})
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
     def test_globalAll(self, dvs, testlog):
         self.setup_sflow(dvs)
 
-        ctbl = swsscommon.Table(self.cdb, "SFLOW_SESSION")
-        fvs = swsscommon.FieldValuePairs([("admin_state", "down")])
-        ctbl.set("all", fvs)
+        # Verify that the session is up first
+        port_oid = self.adb.port_name_map["Ethernet0"]
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
-        time.sleep(1)
+        # Then shut down the session
+        self.cdb.update_entry("SFLOW_SESSION", "all", {"admin_state": "down"})
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        self.cdb.update_entry("SFLOW_SESSION", "all", {"admin_state": "up"})
+        self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
-        assert status == True
-
-        sample_session = ""
-        speed = ""
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE":
-                sample_session = fv[1]
-
-        assert sample_session == "oid:0x0"
-
-        fvs = swsscommon.FieldValuePairs([("admin_state", "up")])
-        ctbl.set("all", fvs)
-
-        time.sleep(1)
-
-        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
-
-        assert status == True
-
-        sample_session = ""
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE":
-                sample_session = fv[1]
-
-        assert sample_session != ""
-        assert sample_session != "oid:0x0"
-
-        ctbl._del("all")
-
-        time.sleep(1)
-
-        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
-
-        assert status == True
-
-        sample_session = ""
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE":
-                sample_session = fv[1]
-
-        assert sample_session != ""
-        assert sample_session != "oid:0x0"
-
+        self.cdb.delete_entry("SFLOW_SESSION", "all")
+        self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
     def test_InterfaceSet(self, dvs, testlog):
         self.setup_sflow(dvs)
-        ctbl = swsscommon.Table(self.cdb, "SFLOW_SESSION")
-        gtbl = swsscommon.Table(self.cdb, "SFLOW")
-        fvs = swsscommon.FieldValuePairs([("admin_state", "up"),("sample_rate","1000")])
-        ctbl.set("Ethernet0", fvs)
 
-        time.sleep(1)
+        # Get the global session info as a baseline
+        port_oid = self.adb.port_name_map["Ethernet0"]
+        expected_fields = ["SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE"]
+        fvs = self.adb.wait_for_fields("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+        global_session = fvs["SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE"]
 
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        # Then create the interface session
+        session_params = {"admin_state": "up", "sample_rate": "1000"}
+        self.cdb.create_entry("SFLOW_SESSION", "Ethernet0", session_params)
 
-        assert status == True
+        # Verify that the new interface session has been created and is different from the global one
+        port_oid = self.adb.port_name_map["Ethernet0"]
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": global_session}
+        fvs = self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
-        sample_session = ""
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE":
-                sample_session = fv[1]
+        sample_session = fvs["SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE"]
 
-        assert sample_session != ""
+        expected_fields = {"SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE": "1000"}
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", sample_session, expected_fields)
 
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET")
-        (status, fvs) = atbl.get(sample_session)
+        self.cdb.create_entry("SFLOW_SESSION", "all", {"admin_state": "down"})
 
-        assert status == True
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
-        for fv in fvs:
-            if fv[0] == "SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE":
-                assert fv[1] == "1000"
+        self.cdb.create_entry("SFLOW", "global", {"admin_state": "down"})
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
-        fvs = swsscommon.FieldValuePairs([("admin_state", "down")])
-        ctbl.set("all", fvs)
-
-        time.sleep(1)
-
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
-
-        assert status == True
-
-        sample_session = ""
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE":
-                sample_session = fv[1]
-        assert sample_session != ""
-        assert sample_session != "oid:0x0"
-
-        fvs = swsscommon.FieldValuePairs([("admin_state", "down")])
-        gtbl.set("global", fvs)
-
-        time.sleep(1)
-
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
-
-        assert status == True
-
-        sample_session = ""
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE":
-                sample_session = fv[1]
-
-        assert sample_session == "oid:0x0"
-        ctbl._del("all")
-        ctbl._del("Ethernet0")
+        self.cdb.delete_entry("SFLOW_SESSION", "all")
+        self.cdb.delete_entry("SFLOW_SESSION", "Ethernet0")
 
     def test_defaultRate(self, dvs, testlog):
         self.setup_sflow(dvs)
-        ctbl = swsscommon.Table(self.cdb, "SFLOW_SESSION")
-        fvs = swsscommon.FieldValuePairs([("admin_state", "up")])
-        ctbl.set("Ethernet4", fvs)
 
-        time.sleep(1)
+        session_params = {"admin_state": "up"}
+        self.cdb.create_entry("SFLOW_SESSION", "Ethernet4", session_params)
 
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet4"])
+        port_oid = self.adb.port_name_map["Ethernet4"]
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        fvs = self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
-        assert status == True
+        sample_session = fvs["SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE"]
+        speed = fvs["SAI_PORT_ATTR_SPEED"]
 
-        sample_session = ""
-        speed = ""
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE":
-                sample_session = fv[1]
-            elif fv[0] == "SAI_PORT_ATTR_SPEED":
-                speed = fv[1]
+        rate = self.speed_rate_table.get(speed, None)
+        assert rate
 
-        assert sample_session != ""
-        assert speed != ""
+        expected_fields = {"SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE": rate}
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", sample_session, expected_fields)
 
-        rate = ""
-
-        if speed in self.speed_rate_table:
-            rate = self.speed_rate_table[speed]
-
-        assert rate != ""
-
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET")
-        (status, fvs) = atbl.get(sample_session)
-
-        assert status == True
-
-        for fv in fvs:
-            if fv[0] == "SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE":
-                assert fv[1] == rate
-
-        ctbl._del("Ethernet4")
+        self.cdb.delete_entry("SFLOW_SESSION", "Ethernet4")
 
     def test_ConfigDel(self, dvs, testlog):
         self.setup_sflow(dvs)
-        ctbl = swsscommon.Table(self.cdb, "SFLOW_SESSION_TABLE")
-        fvs = swsscommon.FieldValuePairs([("admin_state", "up"),("sample_rate","1000")])
-        ctbl.set("Ethernet0", fvs)
 
-        time.sleep(1)
+        session_params = {"admin_state": "up", "sample_rate": "1000"}
+        self.cdb.create_entry("SFLOW_SESSION_TABLE", "Ethernet0", session_params)
 
-        ctbl._del("Ethernet0")
+        self.cdb.delete_entry("SFLOW_SESSION_TABLE", "Ethernet0")
 
-        time.sleep(1)
+        port_oid = self.adb.port_name_map["Ethernet0"]
+        expected_fields = {"SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE": "oid:0x0"}
+        fvs = self.adb.wait_for_field_negative_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
 
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        (status, fvs) = atbl.get(dvs.asicdb.portnamemap["Ethernet0"])
+        sample_session = fvs["SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE"]
+        speed = fvs["SAI_PORT_ATTR_SPEED"]
 
-        assert status == True
+        rate = self.speed_rate_table.get(speed, None)
+        assert rate
 
-        sample_session = ""
-        speed = ""
-
-        for fv in fvs:
-            if fv[0] == "SAI_PORT_ATTR_INGRESS_SAMPLEPACKET_ENABLE":
-                sample_session = fv[1]
-            elif fv[0] == "SAI_PORT_ATTR_SPEED":
-                speed = fv[1]
-
-        assert speed != ""
-        assert sample_session != ""
-        assert sample_session != "oid:0x0"
-
-        rate = ""
-
-        if speed in self.speed_rate_table:
-            rate = self.speed_rate_table[speed]
-
-        assert rate != ""
-
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET")
-        (status, fvs) = atbl.get(sample_session)
-
-        assert status == True
-
-        rf = False
-        for fv in fvs:
-            if fv[0] == "SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE":
-                assert fv[1] == rate
-                rf = True
-
-        assert rf == True
+        expected_fields = {"SAI_SAMPLEPACKET_ATTR_SAMPLE_RATE": rate}
+        self.adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", sample_session, expected_fields)
 
     def test_Teardown(self, dvs, testlog):
         self.setup_sflow(dvs)
-        ctbl = swsscommon.Table(self.cdb, "SFLOW")
-        ctbl._del("global")
 
-        time.sleep(1)
+        self.cdb.delete_entry("SFLOW", "global")
+        self.adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET", 0)
 
 
-        atbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SAMPLEPACKET")
-        assert len(atbl.getKeys()) == 0
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

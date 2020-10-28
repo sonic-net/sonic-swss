@@ -1,84 +1,80 @@
-"""
-    test_speed.py implements list of tests to check speed set on
-    interfaces and correct buffer manager behavior on speed change
-"""
-import time
-import re
-import json
-import os
-import pytest
-
-from swsscommon import swsscommon
+"""test_speed.py verifies that speed is set on interfaces and buffer manager behavies correctly on speed change."""
 
 
-class TestSpeedSet(object):
-    num_ports = 32
+class TestSpeedSet:
+    # FIXME: This value should probably not be hardcoded since the persistent container can
+    # specify a dynamic number of ports now.
+    NUM_PORTS = 32
+
     def test_SpeedAndBufferSet(self, dvs, testlog):
-        configured_speed_list = ['40000']
-        speed_list = ['10000', '25000', '40000', '50000', '100000']
+        configured_speed_list = []
+        speed_list = ["10000", "25000", "40000", "50000", "100000"]
 
-        cdb = swsscommon.DBConnector(4, dvs.redis_sock, 0)
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-        cfg_port_table = swsscommon.Table(cdb, "PORT")
-        cfg_buffer_profile_table = swsscommon.Table(cdb, "BUFFER_PROFILE")
-        cfg_buffer_pg_table = swsscommon.Table(cdb, "BUFFER_PG")
-        asic_port_table = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_PORT")
-        asic_profile_table = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE")
-
-        buffer_profiles = cfg_buffer_profile_table.getKeys()
-        expected_buffer_profiles_num = len(buffer_profiles)
-        # buffers_config.j2 used for the test defines 3 static profiles and 1 dynamic profiles:
+        # buffers_config.j2 is used for the test and defines 3 static profiles and 1 dynamic profile:
         #    "ingress_lossy_profile"
         #    "egress_lossless_profile"
         #    "egress_lossy_profile"
         #    "pg_lossless_40000_300m_profile"
-        # check if they get the DB
-        assert expected_buffer_profiles_num == 4
-        # and if they were successfully created on ASIC
-        assert len(asic_profile_table.getKeys()) == expected_buffer_profiles_num
+        num_buffer_profiles = 4
+
+        cdb = dvs.get_config_db()
+        adb = dvs.get_asic_db()
+
+        # Get speed from the first port we hit in ASIC DB port walk, and
+        # assume that its the initial configured speed for all ports, and
+        # as new port configuration file i.e. 'platform.json' guarantees
+        # 100G as initial port speed for all ports and the dynamic buffer
+        # profile has already been created for it.
+        asic_port_records = adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT")
+        for k in asic_port_records:
+            fvs = adb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_PORT", k)
+            if "SAI_PORT_ATTR_SPEED" in fvs.keys():
+                configured_speed_list.append(fvs["SAI_PORT_ATTR_SPEED"])
+                break
+
+            if configured_speed_list:
+                break
+
+        # Check if the buffer profiles make it to Config DB
+        cdb.wait_for_n_keys("BUFFER_PROFILE", num_buffer_profiles)
+
+        # Check if they make it to the ASIC
+        adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", num_buffer_profiles)
 
         for speed in speed_list:
-            fvs = swsscommon.FieldValuePairs([("speed", speed)])
-            # set same speed on all ports
-            for i in range(0, self.num_ports):
-                cfg_port_table.set("Ethernet%d" % (i*4), fvs)
+            # Set same speed on all ports
+            for i in range(0, self.NUM_PORTS):
+                cdb.update_entry("PORT", "Ethernet{}".format(i * 4), {"speed": speed})
 
-            time.sleep(1) # let configuration settle down
+            # Check that the speed was set for all "NUM_PORTS" ports
+            asic_port_records = adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", self.NUM_PORTS + 1)  # +1 CPU Port
+            for port in [port for port in asic_port_records if port in adb.port_name_map.values()]:
+                adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port, {"SAI_PORT_ATTR_SPEED": speed})
 
-            # check the speed was set
-            asic_port_records = asic_port_table.getKeys()
-            assert len(asic_port_records) == (self.num_ports + 1) # +CPU port
-            num_set = 0
-            for k in asic_port_records:
-                (status, fvs) = asic_port_table.get(k)
-                assert status == True
-                for fv in fvs:
-                    if fv[0] == "SAI_PORT_ATTR_SPEED":
-                        assert fv[1] == speed
-                        num_set += 1
-            # make sure speed is set for all "num_ports" ports
-            assert num_set == self.num_ports
-
-            # check number of created profiles
+            # Check number of created profiles
             if speed not in configured_speed_list:
-                expected_buffer_profiles_num += 1  # new speed should add new PG profile
+                num_buffer_profiles += 1  # New speed should add new PG profile
                 configured_speed_list.append(speed)
 
-            current_buffer_profiles = cfg_buffer_profile_table.getKeys()
-            assert len(current_buffer_profiles) == expected_buffer_profiles_num
-            # make sure the same number of profiles are created on ASIC
-            assert len(asic_profile_table.getKeys()) == expected_buffer_profiles_num
+            current_buffer_profiles = cdb.wait_for_n_keys("BUFFER_PROFILE", num_buffer_profiles)
+            # Make sure the same number of profiles are created on the ASIC
+            adb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE", num_buffer_profiles)
 
-            # check new profile name
-            expected_new_profile_name = "pg_lossless_%s_300m_profile" % speed
-            assert current_buffer_profiles.index(expected_new_profile_name) > -1
+            # Check new profile name
+            expected_new_profile_name = "pg_lossless_{}_300m_profile".format(speed)
+            assert expected_new_profile_name in current_buffer_profiles
 
-            # check correct profile is set for all ports
-            pg_tables = cfg_buffer_pg_table.getKeys()
-            for i in range(0, self.num_ports):
-                expected_pg_table = "Ethernet%d|3-4" % (i*4)
-                assert pg_tables.index(expected_pg_table) > -1
-                (status, fvs) = cfg_buffer_pg_table.get(expected_pg_table)
-                for fv in fvs:
-                    if fv[0] == "profile":
-                        assert fv[1] == "[BUFFER_PROFILE|%s]" % expected_new_profile_name
+            # Check correct profile is set for all ports
+            pg_tables = cdb.get_keys("BUFFER_PG")
+            for i in range(0, self.NUM_PORTS):
+                expected_pg_table = "Ethernet{}|3-4".format(i * 4)
+                assert expected_pg_table in pg_tables
+
+                expected_fields = {"profile": "[BUFFER_PROFILE|{}]".format(expected_new_profile_name)}
+                cdb.wait_for_field_match("BUFFER_PG", expected_pg_table, expected_fields)
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

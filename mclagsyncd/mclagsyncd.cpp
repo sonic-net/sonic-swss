@@ -31,9 +31,9 @@ using namespace swss;
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("mclagsyncd");
-    DBConnector appl_db(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector asic_db(ASIC_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    DBConnector counters_db(COUNTERS_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector appl_db("APPL_DB", 0);
+    DBConnector asic_db("ASIC_DB", 0);
+    DBConnector counters_db("COUNTERS_DB", 0);
     ProducerStateTable port_tbl(&appl_db, APP_PORT_TABLE_NAME);
     ProducerStateTable lag_tbl(&appl_db, APP_LAG_TABLE_NAME);
     ProducerStateTable tnl_tbl(&appl_db, APP_VXLAN_TUNNEL_TABLE_NAME);
@@ -41,8 +41,6 @@ int main(int argc, char **argv)
     ProducerStateTable fdb_tbl(&appl_db, APP_FDB_TABLE_NAME);
     ProducerStateTable acl_table_tbl(&appl_db, APP_ACL_TABLE_TABLE_NAME);
     ProducerStateTable acl_rule_tbl(&appl_db, APP_ACL_RULE_TABLE_NAME);
-    RedisClient redisClient_to_asicDb(&asic_db);
-    RedisClient redisClient_to_countersDb(&counters_db);
     map <string, string> isolate;
     RedisPipeline pipeline(&appl_db);
     set <mclag_fdb> old_fdb;
@@ -62,8 +60,8 @@ int main(int argc, char **argv)
             mclag.p_acl_table_tbl = &acl_table_tbl;
             mclag.p_acl_rule_tbl = &acl_rule_tbl;
             mclag.p_appl_db = &appl_db;
-            mclag.p_redisClient_to_asic = &redisClient_to_asicDb;
-            mclag.p_redisClient_to_counters = &redisClient_to_countersDb;
+            mclag.p_asic_db = &asic_db;
+            mclag.p_counters_db = &counters_db;
             mclag.p_old_fdb = &old_fdb;
 
             cout << "Waiting for connection..." << endl;

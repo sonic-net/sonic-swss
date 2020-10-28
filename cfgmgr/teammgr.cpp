@@ -10,7 +10,6 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include <fstream>
 #include <thread>
 
 #include <net/if.h>
@@ -18,7 +17,6 @@
 #include <sys/stat.h>
 #include <signal.h>
 
-#define PID_FILE_PATH "/var/run/teamd/"
 
 using namespace std;
 using namespace swss;
@@ -115,75 +113,14 @@ void TeamMgr::doTask(Consumer &consumer)
 }
 
 
-pid_t TeamMgr::getTeamPid(const string &alias)
+void TeamMgr::cleanTeamProcesses()
 {
-    SWSS_LOG_ENTER();
-    pid_t pid = 0;
-
-    string file = string(PID_FILE_PATH) + alias + string(".pid");
-    ifstream infile(file);
-    if (!infile.is_open())
-    {
-        SWSS_LOG_WARN("The LAG PID file: %s is not readable", file.c_str());
-        return 0;
-    }
-
-    string line;
-    getline(infile, line);
-    if (line.empty())
-    {
-        SWSS_LOG_WARN("The LAG PID file: %s is empty", file.c_str());
-    }
-    else 
-    {
-        /*Store the PID value */
-        pid = stoi(line, nullptr, 10);
-    }
-
-    /* Close the file and return */
-    infile.close();
-
-    return pid;
-}
-
-
-void TeamMgr::addLagPid(const string &alias)
-{
-    SWSS_LOG_ENTER();
-    m_lagPIDList[alias] = getTeamPid(alias);
-}
-
-void TeamMgr::removeLagPid(const string &alias)
-{
-    SWSS_LOG_ENTER();
-    m_lagPIDList.erase(alias);
-}
-
-void TeamMgr::cleanTeamProcesses(int signo)
-{
-    pid_t pid = 0;
-
     SWSS_LOG_ENTER();
     SWSS_LOG_NOTICE("Cleaning up LAGs during shutdown...");
     for (const auto& it: m_lagList)
     {
-        pid = m_lagPIDList[it];
-        if(!pid) {
-            SWSS_LOG_WARN("Invalid PID found for LaG %s ", it.c_str());
-
-            /* Try to get the PID again */
-            pid = getTeamPid(it);
-        }
-
-        if(pid > 0)
-        {
-            SWSS_LOG_INFO("Sending TERM Signal to (PID: %d) for LaG %s ", pid, it.c_str());
-            kill(pid, signo);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Can't send TERM signal to LAG %s. PID wasn't found", it.c_str());
-        }
+        //This will call team -k kill -t <teamdevicename> which internally send SIGTERM 
+        removeLag(it);
     }
 
     return;
@@ -252,7 +189,6 @@ void TeamMgr::doLagTask(Consumer &consumer)
                 }
 
                 m_lagList.insert(alias);
-                addLagPid(alias);
             }
 
             setLagAdminStatus(alias, admin_status);
@@ -269,7 +205,6 @@ void TeamMgr::doLagTask(Consumer &consumer)
             {
                 removeLag(alias);
                 m_lagList.erase(alias);
-                removeLagPid(alias);
             }
         }
 

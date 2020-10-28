@@ -131,6 +131,11 @@ public:
         return nhs_str;
     }
 
+    void clear()
+    {
+        m_nexthops.clear();
+    }
+
 private:
     std::set<NextHopKey> m_nexthops;
 };

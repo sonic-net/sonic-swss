@@ -1,5 +1,5 @@
 # This test suite covers the functionality of mirror feature in SwSS
-import platform
+import distro
 import pytest
 import time
 
@@ -235,7 +235,7 @@ class TestMirror(object):
 
     # Ignore testcase in Debian Jessie
     # TODO: Remove this skip if Jessie support is no longer needed
-    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
+    @pytest.mark.skipif(StrictVersion(distro.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     def test_MirrorToVlanAddRemove(self, dvs, testlog):
         """
         This test covers basic mirror session creation and removal operation
@@ -442,7 +442,7 @@ class TestMirror(object):
 
     # Ignore testcase in Debian Jessie
     # TODO: Remove this skip if Jessie support is no longer needed
-    @pytest.mark.skipif(StrictVersion(platform.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
+    @pytest.mark.skipif(StrictVersion(distro.linux_distribution()[1]) <= StrictVersion('8.9'), reason="Debian 8.9 or before has no support")
     def test_MirrorDestMoveVlan(self, dvs, testlog):
         """
         This test tests mirror session destination move from non-VLAN to VLAN
@@ -872,3 +872,9 @@ class TestMirror(object):
         self.remove_neighbor("Ethernet32", "20.0.0.1")
         self.remove_ip_address("Ethernet32", "20.0.0.0/31")
         self.set_interface_status(dvs, "Ethernet32", "down")
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

@@ -152,7 +152,7 @@ FpmLink::FpmLink(RouteSync *rsync, unsigned short port) :
 
 FpmLink::~FpmLink()
 {
-    delete m_messageBuffer;
+    delete[] m_messageBuffer;
     if (m_connected)
         close(m_connection_socket);
     if (m_server_up)

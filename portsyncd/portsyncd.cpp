@@ -20,6 +20,8 @@
 using namespace std;
 using namespace swss;
 
+#define DEFAULT_SELECT_TIMEOUT 1000 /* ms */
+
 /*
  * This g_portSet contains all the front panel ports that the corresponding
  * host interfaces needed to be created. When this LinkSync class is
@@ -103,16 +105,26 @@ int main(int argc, char **argv)
         {
             Selectable *temps;
             int ret;
-            ret = s.select(&temps, 1);
+            ret = s.select(&temps, DEFAULT_SELECT_TIMEOUT);
 
             if (ret == Select::ERROR)
             {
                 cerr << "Error had been returned in select" << endl;
                 continue;
             }
-
-            if (ret == Select::TIMEOUT)
+            else if (ret == Select::TIMEOUT)
             {
+                continue;
+            }
+            else if (ret != Select::OBJECT)
+            {
+                SWSS_LOG_ERROR("Unknown return value from Select %d", ret);
+                continue;
+            }
+
+            if (temps == static_cast<Selectable*>(&netlink))
+            {
+                /* on netlink message, check if PortInitDone should be sent out */
                 if (!g_init && g_portSet.empty())
                 {
                     /*
@@ -134,8 +146,7 @@ int main(int argc, char **argv)
                     handlePortConfig(p, port_cfg_map);
                 }
             }
-
-            if (temps == (Selectable *)&portCfg)
+            else if (temps == (Selectable *)&portCfg)
             {
                 std::deque<KeyOpFieldsValuesTuple> entries;
                 portCfg.pops(entries);
@@ -152,6 +163,11 @@ int main(int argc, char **argv)
                     port_cfg_map[key] = entry;
                 }
                 handlePortConfig(p, port_cfg_map);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Unknown object returned by select");
+                continue;
             }
         }
     }
@@ -179,7 +195,9 @@ static void notifyPortConfigDone(ProducerStateTable &p)
 
 bool handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, bool warm)
 {
-    cout << "Get port configuration from ConfigDB..." << endl;
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_NOTICE("Getting port configuration from ConfigDB...");
 
     Table table(&cfgDb, CFG_PORT_TABLE_NAME);
     std::vector<FieldValueTuple> ovalues;
