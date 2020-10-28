@@ -720,7 +720,8 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     }
 
     auto fdb_list = std::move(saved_fdb_entries[port_name]);
-    if(!fdb_list.empty())
+    saved_fdb_entries[port_name].clear();
+    for (const auto& fdb: fdb_list)
     {
         for (const auto& fdb: fdb_list)
         {

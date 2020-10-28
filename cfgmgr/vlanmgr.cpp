@@ -56,6 +56,7 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     // /bin/bash -c "/sbin/ip link del Bridge 2>/dev/null ;
     //               /sbin/ip link add Bridge up type bridge &&
     //               /sbin/ip link set Bridge mtu {{ mtu_size }} &&
+    //               /sbin/ip link set Bridge address {{gMacAddress}} &&
     //               /sbin/bridge vlan del vid 1 dev Bridge self;
     //               /sbin/ip link del dummy 2>/dev/null;
     //               /sbin/ip link add dummy type dummy &&
@@ -66,6 +67,7 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
       + IP_CMD + " link del " + DOT1Q_BRIDGE_NAME + " 2>/dev/null; "
       + IP_CMD + " link add " + DOT1Q_BRIDGE_NAME + " up type bridge && "
       + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " mtu " + DEFAULT_MTU_STR + " && "
+      + IP_CMD + " link set " + DOT1Q_BRIDGE_NAME + " address " + gMacAddress.to_string() + " && "
       + BRIDGE_CMD + " vlan del vid " + DEFAULT_VLAN_ID + " dev " + DOT1Q_BRIDGE_NAME + " self; "
       + IP_CMD + " link del dev dummy 2>/dev/null; "
       + IP_CMD + " link add dummy type dummy && "
@@ -171,6 +173,21 @@ bool VlanMgr::setHostVlanMtu(int vlan_id, uint32_t mtu)
 
     /* VLAN mtu should not be larger than member mtu */
     return false;
+}
+
+bool VlanMgr::setHostVlanMac(int vlan_id, const string &mac)
+{
+    SWSS_LOG_ENTER();
+
+    // The command should be generated as:
+    // /sbin/ip link set Vlan{{vlan_id}} address {{mac}}
+    ostringstream cmds;
+    cmds << IP_CMD " link set " VLAN_PREFIX + std::to_string(vlan_id) + " address " << shellquote(mac);
+
+    std::string res;
+    EXEC_WITH_ERROR_THROW(cmds.str(), res);
+
+    return true;
 }
 
 bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const string& tagging_mode)
@@ -420,6 +437,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
         {
             string admin_status;
             string mtu = DEFAULT_MTU_STR;
+            string mac = gMacAddress.to_string();
             vector<FieldValueTuple> fvVector;
             string members;
 
@@ -469,6 +487,11 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 else if (fvField(i) == "members@") {
                     members = fvValue(i);
                 }
+                else if (fvField(i) == "mac")
+                {
+                    mac = fvValue(i);
+                    setHostVlanMac(vlan_id, mac);
+                }
             }
             /* fvVector should not be empty */
             if (fvVector.empty())
@@ -479,6 +502,9 @@ void VlanMgr::doVlanTask(Consumer &consumer)
 
             FieldValueTuple m("mtu", mtu);
             fvVector.push_back(m);
+
+            FieldValueTuple mc("mac", mac);
+            fvVector.push_back(mc);
 
             m_appVlanTableProducer.set(key, fvVector);
             m_vlans.insert(key);

@@ -92,7 +92,7 @@ bool TeamdCtlMgr::try_add_lag(const std::string & lag_name)
 
     teamdctl_set_log_fn(tdc, &teamdctl_log_function);
 
-    int err = teamdctl_connect(tdc, lag_name.c_str(), nullptr, nullptr);
+    int err = teamdctl_connect(tdc, lag_name.c_str(), nullptr, "usock");
     if (err)
     {
         if (attempt != 0)

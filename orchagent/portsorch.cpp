@@ -26,7 +26,7 @@
 #include "countercheckorch.h"
 #include "notifier.h"
 #include "fdborch.h"
-#include "redisclient.h"
+
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -598,46 +598,6 @@ bool PortsOrch::getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port
     }
 
     return false;
-}
-
-// TODO: move this into AclOrch
-bool PortsOrch::getAclBindPortId(string alias, sai_object_id_t &port_id)
-{
-    SWSS_LOG_ENTER();
-
-    Port port;
-    if (getPort(alias, port))
-    {
-        switch (port.m_type)
-        {
-        case Port::PHY:
-            if (port.m_lag_member_id != SAI_NULL_OBJECT_ID)
-            {
-                SWSS_LOG_WARN("Invalid configuration. Bind table to LAG member %s is not allowed", alias.c_str());
-                return false;
-            }
-            else
-            {
-                port_id = port.m_port_id;
-            }
-            break;
-        case Port::LAG:
-            port_id = port.m_lag_id;
-            break;
-        case Port::VLAN:
-            port_id = port.m_vlan_info.vlan_oid;
-            break;
-        default:
-            SWSS_LOG_ERROR("Failed to process port. Incorrect port %s type %d", alias.c_str(), port.m_type);
-            return false;
-        }
-
-        return true;
-    }
-    else
-    {
-        return false;
-    }
 }
 
 bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp, const uint32_t &mtu)
@@ -2625,11 +2585,16 @@ void PortsOrch::doVlanTask(Consumer &consumer)
         {
             // Retrieve attributes
             uint32_t mtu = 0;
+            MacAddress mac;
             for (auto i : kfvFieldsValues(t))
             {
                 if (fvField(i) == "mtu")
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
+                }
+                if (fvField(i) == "mac")
+                {
+                    mac = MacAddress(fvValue(i));
                 }
             }
 
@@ -2662,6 +2627,15 @@ void PortsOrch::doVlanTask(Consumer &consumer)
                     if (vl.m_rif_id)
                     {
                         gIntfsOrch->setRouterIntfsMtu(vl);
+                    }
+                }
+                if (mac)
+                {
+                    vl.m_mac = mac;
+                    m_portList[vlan_alias] = vl;
+                    if (vl.m_rif_id)
+                    {
+                        gIntfsOrch->setRouterIntfsMac(vl);
                     }
                 }
             }
@@ -3002,7 +2976,7 @@ void PortsOrch::doLagMemberTask(Consumer &consumer)
                 /* Assert the port doesn't belong to any LAG already */
                 assert(!port.m_lag_id && !port.m_lag_member_id);
 
-                if (!addLagMember(lag, port))
+                if (!addLagMember(lag, port, (status == "enabled")))
                 {
                     it++;
                     continue;
@@ -3496,6 +3470,10 @@ bool PortsOrch::removeBridgePort(Port &port)
         return false;
     }
 
+    //Flush the FDB entires corresponding to the port
+    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
+
     /* Remove bridge port */
     sai_status_t status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);
     if (status != SAI_STATUS_SUCCESS)
@@ -3883,7 +3861,7 @@ void PortsOrch::getLagMember(Port &lag, vector<Port> &portv)
     }
 }
 
-bool PortsOrch::addLagMember(Port &lag, Port &port)
+bool PortsOrch::addLagMember(Port &lag, Port &port, bool enableForwarding)
 {
     SWSS_LOG_ENTER();
 
@@ -3903,6 +3881,17 @@ bool PortsOrch::addLagMember(Port &lag, Port &port)
     attr.id = SAI_LAG_MEMBER_ATTR_PORT_ID;
     attr.value.oid = port.m_port_id;
     attrs.push_back(attr);
+
+    if (!enableForwarding)
+    {
+        attr.id = SAI_LAG_MEMBER_ATTR_EGRESS_DISABLE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+
+        attr.id = SAI_LAG_MEMBER_ATTR_INGRESS_DISABLE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
 
     sai_object_id_t lag_member_id;
     sai_status_t status = sai_lag_api->create_lag_member(&lag_member_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
@@ -3995,6 +3984,10 @@ bool PortsOrch::setCollectionOnLagMember(Port &lagMember, bool enableCollection)
         return false;
     }
 
+    SWSS_LOG_NOTICE("%s collection on LAG member %s",
+        enableCollection ? "Enable" : "Disable",
+        lagMember.m_alias.c_str());
+
     return true;
 }
 
@@ -4017,6 +4010,10 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
             lagMember.m_alias.c_str());
         return false;
     }
+
+    SWSS_LOG_NOTICE("%s distribution on LAG member %s",
+        enableDistribution ? "Enable" : "Disable",
+        lagMember.m_alias.c_str());
 
     return true;
 }

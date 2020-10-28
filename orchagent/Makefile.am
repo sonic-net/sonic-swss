@@ -35,6 +35,7 @@ orchagent_SOURCES = \
             neighorch.cpp \
             intfsorch.cpp \
             portsorch.cpp \
+            fgnhgorch.cpp \
             copporch.cpp \
             tunneldecaporch.cpp \
             qosorch.cpp \
