@@ -373,15 +373,11 @@ void NeighOrch::doTask(Consumer &consumer)
              * Since DEL operation is supposed to be executed before SET for the same neighbor
              * A remaining DEL after the SET operation means the DEL operation failed previously and should not be executed anymore
              */
-            if (it != consumer.m_toSync.begin())
+            auto rit = make_reverse_iterator(it);
+            while (rit != consumer.m_toSync.rend() && rit->first == key && kfvOp(rit->second) == DEL_COMMAND)
             {
-                auto it_rem = it;
-                it_rem--;
-                if (it_rem->first == key && kfvOp(it_rem->second) == DEL_COMMAND)
-                {
-                    consumer.m_toSync.erase(it_rem);
-                    SWSS_LOG_NOTICE("Removed pending neighbor DEL operation for %s after SET operation", key.c_str());
-                }
+                consumer.m_toSync.erase(next(rit).base());
+                SWSS_LOG_NOTICE("Removed pending neighbor DEL operation for %s after SET operation", key.c_str());
             }
         }
         else if (op == DEL_COMMAND)
