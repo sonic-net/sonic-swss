@@ -17,10 +17,12 @@
 #ifndef __NATMGR__
 #define __NATMGR__
 
+#include "selectabletimer.h"
 #include "dbconnector.h"
 #include "producerstatetable.h"
 #include "orch.h"
 #include "notificationproducer.h"
+#include "timer.h"
 #include <unistd.h>
 #include <set>
 #include <map>
@@ -60,6 +62,7 @@ namespace swss {
 #define NAT_TIMEOUT_MIN            300
 #define NAT_TIMEOUT_MAX            432000
 #define NAT_TIMEOUT_DEFAULT        600
+#define NAT_TIMEOUT_LOW            0
 #define NAT_TCP_TIMEOUT            "nat_tcp_timeout"
 #define NAT_TCP_TIMEOUT_MIN        300
 #define NAT_TCP_TIMEOUT_MAX        432000
@@ -119,6 +122,9 @@ namespace swss {
 #define IS_RESERVED_ADDR(ipaddr)   (ipaddr >= 0xF0000000)
 #define IS_ZERO_ADDR(ipaddr)       (ipaddr == 0)
 #define IS_BROADCAST_ADDR(ipaddr)  (ipaddr == 0xFFFFFFFF)
+#define NAT_ENTRY_REFRESH_PERIOD   86400    // 1 day
+#define REDIRECT_TO_DEV_NULL       " &> /dev/null"
+#define FLUSH                      " -F"
 
 const char ip_address_delimiter = '/';
 
@@ -234,13 +240,18 @@ public:
     void cleanupPoolIpTable();
     void cleanupMangleIpTables();
     bool isPortInitDone(DBConnector *app_db);
-   
+    void timeoutNotifications(std::string op, std::string data);
+    void flushNotifications(std::string op, std::string data);
+    void removeStaticNatIptables(const std::string port = NONE_STRING);
+    void removeStaticNaptIptables(const std::string port = NONE_STRING);
+    void removeDynamicNatRules(const std::string port = NONE_STRING, const std::string ipPrefix = NONE_STRING);
+
 private:
     /* Declare APPL_DB, CFG_DB and STATE_DB tables */
     ProducerStateTable m_appNatTableProducer, m_appNaptTableProducer, m_appNatGlobalTableProducer;
     ProducerStateTable m_appTwiceNatTableProducer, m_appTwiceNaptTableProducer;
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateInterfaceTable, m_appNaptPoolIpTable;
-    std::shared_ptr<swss::NotificationProducer> flushNotifier;
+    Table m_stateWarmRestartEnableTable, m_stateWarmRestartTable;
 
     /* Declare containers to store NAT Info */
     int          m_natTimeout;
@@ -256,9 +267,12 @@ private:
     natZoneInterface_map_t   m_natZoneInterfaceInfo;
     natAclTable_map_t        m_natAclTableInfo;
     natAclRule_map_t         m_natAclRuleInfo;
+    SelectableTimer          *m_natRefreshTimer;
 
     /* Declare doTask related fucntions */
     void doTask(Consumer &consumer);
+    void doTask(SelectableTimer &timer);
+    void doNatRefreshTimerTask();
     void doStaticNatTask(Consumer &consumer);
     void doStaticNaptTask(Consumer &consumer);
     void doNatPoolTask(Consumer &consumer);
@@ -271,15 +285,26 @@ private:
     /* Declare all NAT functionality member functions*/
     void enableNatFeature(void);
     void disableNatFeature(void);
-    void addConntrackSingleNatEntry(const std::string &key);
-    void addConntrackSingleNaptEntry(const std::string &key);
-    void deleteConntrackSingleNatEntry(const std::string &key);
-    void deleteConntrackSingleNaptEntry(const std::string &key);
-    void addConntrackTwiceNatEntry(const std::string &snatKey, const std::string &dnatKey);
-    void addConntrackTwiceNaptEntry(const std::string &snatKey, const std::string &dnatKey);
-    void deleteConntrackTwiceNatEntry(const std::string &snatKey, const std::string &dnatKey);
-    void deleteConntrackTwiceNaptEntry(const std::string &snatKey, const std::string &dnatKey);
+    bool warmBootingInProgress(void);
+    void flushAllNatEntries(void);
+    void addAllStaticConntrackEntries(void);
+    void addConntrackStaticSingleNatEntry(const std::string &key);
+    void addConntrackStaticSingleNaptEntry(const std::string &key);
+    void updateConntrackStaticSingleNatEntry(const std::string &key);
+    void updateConntrackStaticSingleNaptEntry(const std::string &key);
+    void deleteConntrackStaticSingleNatEntry(const std::string &key);
+    void deleteConntrackStaticSingleNaptEntry(const std::string &key);
+    void addConntrackStaticTwiceNatEntry(const std::string &snatKey, const std::string &dnatKey);
+    void addConntrackStaticTwiceNaptEntry(const std::string &snatKey, const std::string &dnatKey);
+    void updateConntrackStaticTwiceNatEntry(const std::string &snatKey, const std::string &dnatKey);
+    void updateConntrackStaticTwiceNaptEntry(const std::string &snatKey, const std::string &dnatKey);
+    void deleteConntrackStaticTwiceNatEntry(const std::string &snatKey, const std::string &dnatKey);
+    void deleteConntrackStaticTwiceNaptEntry(const std::string &snatKey, const std::string &dnatKey);
     void deleteConntrackDynamicEntries(const std::string &ip_range);
+    void updateDynamicSingleNatConnTrackTimeout(std::string key, int timeout);
+    void updateDynamicSingleNaptConnTrackTimeout(std::string key, int timeout);
+    void updateDynamicTwiceNatConnTrackTimeout(std::string key, int timeout);
+    void updateDynamicTwiceNaptConnTrackTimeout(std::string key, int timeout);
     void addStaticNatEntry(const std::string &key);
     void addStaticNaptEntry(const std::string &key);
     void addStaticSingleNatEntry(const std::string &key);
@@ -306,14 +331,17 @@ private:
     void removeStaticNaptEntries(const std::string port= NONE_STRING, const std::string ipPrefix = NONE_STRING);
     void addStaticNatIptables(const std::string port);
     void addStaticNaptIptables(const std::string port);
-    void removeStaticNatIptables(const std::string port);
-    void removeStaticNaptIptables(const std::string port);
+    void setStaticNatConntrackEntries(std::string mode);
+    void setStaticSingleNatConntrackEntry(const std::string &key, std::string &mode);
+    void setStaticTwiceNatConntrackEntry(const std::string &key, std::string &mode);
+    void setStaticNaptConntrackEntries(std::string mode);
+    void setStaticSingleNaptConntrackEntry(const std::string &key, std::string &mode);
+    void setStaticTwiceNaptConntrackEntry(const std::string &key, std::string &mode);
     void addDynamicNatRule(const std::string &key);
     void removeDynamicNatRule(const std::string &key);
     void addDynamicNatRuleByAcl(const std::string &key, bool isRuleId = false);
     void removeDynamicNatRuleByAcl(const std::string &key, bool isRuleId = false);
     void addDynamicNatRules(const std::string port = NONE_STRING, const std::string ipPrefix = NONE_STRING);
-    void removeDynamicNatRules(const std::string port = NONE_STRING, const std::string ipPrefix = NONE_STRING);
     void addDynamicTwiceNatRule(const std::string &key);
     void deleteDynamicTwiceNatRule(const std::string &key);
     void setDynamicAllForwardOrAclbasedRules(const std::string &opCmd, const std::string &pool_interface, const std::string &ip_range,

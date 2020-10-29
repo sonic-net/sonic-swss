@@ -1,0 +1,146 @@
+{
+  "name": "example-1",
+  "address": "0x1000",
+  "mode": "gearbox",
+  "port_ref_clk": "600Mhz",
+  "lanes": [
+    {
+      "id": 30,
+      "system_side": false,
+      "local_lane_id": 0,
+      "line_tx_lanemap": 3,
+      "tx_polarity": 0,
+      "line_rx_lanemap": 3,
+      "rx_polarity": 0,
+      "line_to_system_lanemap": 38,
+      "mdio_addr": "0x1001"
+    },
+    {
+      "id": 31,
+      "system_side": false,
+      "local_lane_id": 1,
+      "line_tx_lanemap": 2,
+      "tx_polarity": 0,
+      "line_rx_lanemap": 2,
+      "rx_polarity": 0,
+      "line_to_system_lanemap": 38,
+      "mdio_addr": "0x1002"
+    },
+    {
+      "id": 32,
+      "system_side": false,
+      "local_lane_id": 2,
+      "line_tx_lanemap": 1,
+      "tx_polarity": 1,
+      "line_rx_lanemap": 1,
+      "rx_polarity": 0,
+      "line_to_system_lanemap": 39,
+      "mdio_addr": "0x1003"
+    },
+    {
+      "id": 33,
+      "system_side": false,
+      "local_lane_id": 3,
+      "line_tx_lanemap": 0,
+      "tx_polarity": 1,
+      "line_rx_lanemap": 0,
+      "rx_polarity": 0,
+      "line_to_system_lanemap": 39,
+      "mdio_addr": "0x1004"
+    },
+    {
+      "id": 34,
+      "system_side": false,
+      "local_lane_id": 4,
+      "line_tx_lanemap": 0,
+      "tx_polarity": 0,
+      "line_rx_lanemap": 0,
+      "rx_polarity": 1,
+      "line_to_system_lanemap": 40,
+      "mdio_addr": "0x1005"
+    },  
+    {
+      "id": 35,
+      "system_side": false,
+      "local_lane_id": 5,
+      "line_tx_lanemap": 1,
+      "tx_polarity": 0,
+      "line_rx_lanemap": 1,
+      "rx_polarity": 1,
+      "line_to_system_lanemap": 40,
+      "mdio_addr": "0x1006"
+    },
+    {
+      "id": 36,
+      "system_side": false,
+      "local_lane_id": 6,
+      "line_tx_lanemap": 2,
+      "tx_polarity": 0,
+      "line_rx_lanemap": 2,
+      "rx_polarity": 1,
+      "line_to_system_lanemap": 41,
+      "mdio_addr": "0x1007"
+    },
+    {
+      "id": 37,
+      "system_side": false,
+      "local_lane_id": 7,
+      "line_tx_lanemap": 3,
+      "tx_polarity": 0,
+      "line_rx_lanemap": 3,
+      "rx_polarity": 1,
+      "line_to_system_lanemap": 41,
+      "mdio_addr": "0x1008"
+    },
+    {
+      "id": 38,
+      "system_side": true,
+      "local_lane_id": 0,
+      "tx_polarity": 0,
+      "mdio_addr": "0x1009"
+    },
+    {
+      "id": 39,
+      "system_side": true,
+      "local_lane_id": 1,
+      "tx_polarity": 1,
+      "mdio_addr": "0x1010"
+    },
+              {
+      "id": 40,
+      "system_side": true,
+      "local_lane_id": 2,
+      "tx_polarity": 1,
+      "mdio_addr": "0x1011"
+    },
+    {
+      "id": 41,
+      "system_side": true,
+      "local_lane_id": 3,
+      "tx_polarity": 1,
+      "mdio_addr": "0x1012"
+    }
+  ],
+  "ports": [
+    {
+      "id": 0,
+      "system_lanes": 12345,
+      "system_lane_speed": "50G",
+      "line_lanes": [30,31,32,33],
+      "line_lane_speed": "25G",
+      "line_adver_speed": [],
+      "line_adver_fec": [],
+      "mdio_addr": "0x2000"
+    },
+    {
+      "id": 1,
+      "system_lanes": [40,41],
+      "system_lane_speed": "50G",
+      "line_lanes": [34,35,36,37],
+      "line_lane_speed": "25G",
+      "line_adver_speed": [],
+      "line_adver_fec": [],
+      "mdio_addr": "0x3000"
+    }
+  ]
+}

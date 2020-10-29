@@ -32,6 +32,7 @@ Table of Contents
          * [Port](#port)   
          * [Port Channel](#port-channel)  
          * [Portchannel member](#portchannel-member)  
+         * [Scheduler](#scheduler)  
          * [Port QoS Map](#port-qos-map)  
          * [Queue](#queue)  
          * [Tacplus Server](#tacplus-server)    
@@ -924,6 +925,30 @@ name as object key and member list as attribute.
     "PortChannel0004|Ethernet56": {}
   }
 }
+
+```
+### Scheduler
+
+```
+{
+"SCHEDULER": {
+    "scheduler.0": {
+        "type": "STRICT"
+    },
+    "scheduler.1": {
+        "type": "WRR"
+        "weight": "1",
+        "meter_type": "bytes",
+        "pir": "1250000000",
+        "pbs": "8192"
+    },
+    "scheduler.port": {
+        "meter_type": "bytes",
+        "pir": "1000000000",
+        "pbs": "8192"
+    }
+  }
+}
 ```
 
 ### Port QoS Map
@@ -936,7 +961,8 @@ name as object key and member list as attribute.
         "tc_to_queue_map": "[TC_TO_QUEUE_MAP|AZURE]", 
         "pfc_enable": "3,4", 
         "pfc_to_queue_map": "[MAP_PFC_PRIORITY_TO_QUEUE|AZURE]", 
-        "dscp_to_tc_map": "[DSCP_TO_TC_MAP|AZURE]"
+        "dscp_to_tc_map": "[DSCP_TO_TC_MAP|AZURE]",
+        "scheduler": "[SCHEDULER|scheduler.port]"
     }
   }
 }  
@@ -1146,6 +1172,39 @@ The packet action could be:
         "red_drop_probability": "5"
     }
   }
+}
+```
+
+### BREAKOUT_CFG
+
+This table is introduced as part of Dynamic Port Breakout(DPB) feature.
+It shows the current breakout mode of all ports(root ports).
+The list of root ports, all possible breakout modes, and default breakout modes
+ are obtained/derived from platform.json and hwsku.json files.
+
+```
+"BREAKOUT_CFG": {
+    "Ethernet0": {
+        "brkout_mode": "4x25G[10G]"
+    },
+    "Ethernet4": {
+        "brkout_mode": "4x25G[10G]"
+    },
+    "Ethernet8": {
+        "brkout_mode": "4x25G[10G]"
+    },
+
+        ......
+
+    "Ethernet116": {
+        "brkout_mode": "2x50G"
+    },
+    "Ethernet120": {
+        "brkout_mode": "2x50G"
+    },
+    "Ethernet124": {
+        "brkout_mode": "2x50G"
+    }
 }
 ```
 

@@ -20,7 +20,8 @@ class TestSetRo(object):
 
         swVid = keys[0]
 
-        r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB)
+        r = redis.Redis(unix_socket_path=dvs.redis_sock, db=swsscommon.ASIC_DB,
+                        encoding="utf-8", decode_responses=True)
 
         swRid = r.hget("VIDTORID", swVid)
 
@@ -36,9 +37,16 @@ class TestSetRo(object):
 
         key = "SAI_OBJECT_TYPE_SWITCH:" + swRid
 
-        print key
+        print(key)
 
-        ntf.send("set_ro", key, fvp)
+        # explicit convert unicode string to str for python2
+        ntf.send("set_ro", str(key), fvp)
 
         # make action on appdb so orchagent will get RO value
         # read asic db to see if orchagent behaved correctly
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

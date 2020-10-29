@@ -20,6 +20,8 @@ AC_CHECK_LIB([team], [team_alloc],
    [AC_MSG_WARN([libteam is not installed.])
     AM_CONDITIONAL(HAVE_LIBTEAM, false)])
 
+PKG_CHECK_MODULES([JANSSON], [jansson])
+
 AC_CHECK_LIB([sai], [sai_object_type_query],
     AM_CONDITIONAL(HAVE_SAI, true),
    [AC_MSG_WARN([libsai is not installed.])
@@ -89,9 +91,11 @@ AC_CONFIG_FILES([
     orchagent/Makefile
     fpmsyncd/Makefile
     neighsyncd/Makefile
+    gearsyncd/Makefile
     natsyncd/Makefile
     portsyncd/Makefile
     teamsyncd/Makefile
+    tlm_teamd/Makefile
     mclagsyncd/Makefile
     swssconfig/Makefile
     cfgmgr/Makefile

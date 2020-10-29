@@ -2,7 +2,6 @@
 #include "portsorch.h"
 #include "select.h"
 #include "notifier.h"
-#include "redisclient.h"
 #include "sai_serialize.h"
 #include <inttypes.h>
 
@@ -193,13 +192,12 @@ QueueMcCounters CounterCheckOrch::getQueueMcCounters(
 
     vector<FieldValueTuple> fieldValues;
     QueueMcCounters counters;
-    RedisClient redisClient(m_countersDb.get());
 
     for (uint8_t prio = 0; prio < port.m_queue_ids.size(); prio++)
     {
         sai_object_id_t queueId = port.m_queue_ids[prio];
         auto queueIdStr = sai_serialize_object_id(queueId);
-        auto queueType = redisClient.hget(COUNTERS_QUEUE_TYPE_MAP, queueIdStr);
+        auto queueType = m_countersDb->hget(COUNTERS_QUEUE_TYPE_MAP, queueIdStr);
 
         if (queueType.get() == nullptr || *queueType != "SAI_QUEUE_TYPE_MULTICAST" || !m_countersTable->get(queueIdStr, fieldValues))
         {

@@ -9,6 +9,7 @@ struct FdbEntry
 {
     MacAddress mac;
     sai_object_id_t bv_id;
+    std::string port_name;
 
     bool operator<(const FdbEntry& other) const
     {
@@ -67,6 +68,8 @@ public:
     bool flushFdbByPort(const string &, bool flush_static);
     bool flushFdbAll(bool flush_static);
     bool removeFdbEntry(const FdbEntry&);
+    void flushFDBEntries(sai_object_id_t bridge_port_oid,
+                         sai_object_id_t vlan_oid);
 
 private:
     PortsOrch *m_portsOrch;
@@ -84,6 +87,8 @@ private:
     bool addFdbEntry(const FdbEntry&, const string&, const string&);
     void deleteFdbEntryFromSavedFDB(const MacAddress &mac, const unsigned short &vlanId, const string portName="");
 
+    void updatePortOperState(const PortOperStateUpdate&);
+    bool removeFdbEntry(const FdbEntry&);
     bool storeFdbEntryState(const FdbUpdate& update);
 };
 

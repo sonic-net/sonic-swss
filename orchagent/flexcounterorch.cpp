@@ -3,7 +3,6 @@
 #include "portsorch.h"
 #include "select.h"
 #include "notifier.h"
-#include "redisclient.h"
 #include "sai_serialize.h"
 #include "pfcwdorch.h"
 #include "bufferorch.h"
@@ -21,12 +20,15 @@ extern BufferOrch *gBufferOrch;
 unordered_map<string, string> flexCounterGroupMap =
 {
     {"PORT", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"PORT_RATES", PORT_RATE_COUNTER_FLEX_COUNTER_GROUP},
+    {"PORT_BUFFER_DROP", PORT_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"QUEUE", QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PFCWD", PFC_WD_FLEX_COUNTER_GROUP},
     {"QUEUE_WATERMARK", QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"PG_WATERMARK", PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {BUFFER_POOL_WATERMARK_KEY, BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP},
     {"RIF", RIF_STAT_COUNTER_FLEX_COUNTER_GROUP},
+    {"RIF_RATES", RIF_RATE_COUNTER_FLEX_COUNTER_GROUP},
     {"DEBUG_COUNTER", DEBUG_COUNTER_FLEX_COUNTER_GROUP},
 };
 

@@ -3,6 +3,7 @@
 
 #include "orch.h"
 #include "observer.h"
+#include "switchorch.h"
 #include "intfsorch.h"
 #include "neighorch.h"
 
@@ -10,7 +11,8 @@
 #include "ipaddresses.h"
 #include "ipprefix.h"
 #include "nexthopgroupkey.h"
-
+#include "bulker.h"
+#include "fgnhgorch.h"
 #include <map>
 
 /* Maximum next hop group number */
@@ -54,10 +56,40 @@ struct NextHopObserverEntry
     list<Observer *> observers;
 };
 
+struct RouteBulkContext
+{
+    std::deque<sai_status_t>            object_statuses;    // Bulk statuses
+    NextHopGroupKey                     tmp_next_hop;       // Temporary next hop
+    NextHopGroupKey                     nhg;
+    sai_object_id_t                     vrf_id;
+    IpPrefix                            ip_prefix;
+    bool                                excp_intfs_flag;
+    std::vector<string>                 ipv;
+
+    RouteBulkContext()
+        : excp_intfs_flag(false)
+    {
+    }
+
+    // Disable any copy constructors
+    RouteBulkContext(const RouteBulkContext&) = delete;
+    RouteBulkContext(RouteBulkContext&&) = delete;
+
+    void clear()
+    {
+        object_statuses.clear();
+        tmp_next_hop.clear();
+        nhg.clear();
+        ipv.clear();
+        excp_intfs_flag = false;
+        vrf_id = SAI_NULL_OBJECT_ID;
+    }
+};
+
 class RouteOrch : public Orch, public Subject
 {
 public:
-    RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch);
+    RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch);
 
     bool hasNextHopGroup(const NextHopGroupKey&) const;
     sai_object_id_t getNextHopGroupId(const NextHopGroupKey&);
@@ -76,10 +108,16 @@ public:
     bool invalidnexthopinNextHopGroup(const NextHopKey&);
 
     void notifyNextHopChangeObservers(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&, bool);
+    const NextHopGroupKey getSyncdRouteNhgKey(sai_object_id_t vrf_id, const IpPrefix& ipPrefix);
+    bool createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id, vector<sai_attribute_t> &nhg_attrs);
+    bool removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id);
+
 private:
+    SwitchOrch *m_switchOrch;
     NeighOrch *m_neighOrch;
     IntfsOrch *m_intfsOrch;
     VRFOrch *m_vrfOrch;
+    FgNhgOrch *m_fgNhgOrch;
 
     int m_nextHopGroupCount;
     int m_maxNextHopGroupCount;
@@ -90,9 +128,14 @@ private:
 
     NextHopObserverTable m_nextHopObservers;
 
-    void addTempRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool removeRoute(sai_object_id_t, const IpPrefix&);
+    EntityBulker<sai_route_api_t>           gRouteBulker;
+    ObjectBulker<sai_next_hop_group_api_t>  gNextHopGroupMemberBulker;
+
+    void addTempRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
+    bool addRoute(RouteBulkContext& ctx, const NextHopGroupKey&);
+    bool removeRoute(RouteBulkContext& ctx);
+    bool addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey &nextHops);
+    bool removeRoutePost(const RouteBulkContext& ctx);
 
     std::string getLinkLocalEui64Addr(void);
     void        addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);

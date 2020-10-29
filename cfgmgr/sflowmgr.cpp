@@ -328,7 +328,10 @@ void SflowMgr::doTask(Consumer &consumer)
                     }
                     sflowCheckAndFillValues(key,values);
                     m_sflowPortConfMap[key].local_conf = true;
-                    m_appSflowSessionTable.set(key, values);
+                    if (m_gEnable)
+                    {
+                        m_appSflowSessionTable.set(key, values);
+                    }
                 }
             }
         }
@@ -340,6 +343,7 @@ void SflowMgr::doTask(Consumer &consumer)
                 {
                     sflowHandleService(false);
                     sflowHandleSessionAll(false);
+                    sflowHandleSessionLocal(false);
                 }
                 m_gEnable = false;
                 m_appSflowTable.del(key);
@@ -350,7 +354,10 @@ void SflowMgr::doTask(Consumer &consumer)
                 {
                     if (!m_intfAllConf)
                     {
-                        sflowHandleSessionAll(true);
+                        if (m_gEnable)
+                        {
+                            sflowHandleSessionAll(true);
+                        }
                     }
                     m_intfAllConf = true;
                 }
