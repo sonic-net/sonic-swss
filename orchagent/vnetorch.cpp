@@ -1391,6 +1391,7 @@ bool VNetOrch::addOperation(const Request& request)
                 {
                     SWSS_LOG_ERROR("VNET '%s', tunnel '%s', map create failed",
                                     vnet_name.c_str(), tunnel.c_str());
+                    return false;
                 }
 
                 SWSS_LOG_NOTICE("VNET '%s' was added ", vnet_name.c_str());
