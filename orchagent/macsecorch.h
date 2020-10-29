@@ -1,32 +1,13 @@
 #ifndef SWSS_MACSECSORCH_H
 #define SWSS_MACSECSORCH_H
 
-// The following definitions should be moved to schema.h
-
-#define APP_MACSEC_PORT_TABLE_NAME          "MACSEC_PORT_TABLE"
-#define APP_MACSEC_EGRESS_SC_TABLE_NAME     "MACSEC_EGRESS_SC_TABLE"
-#define APP_MACSEC_INGRESS_SC_TABLE_NAME    "MACSEC_INGRESS_SC_TABLE"
-#define APP_MACSEC_EGRESS_SA_TABLE_NAME     "MACSEC_EGRESS_SA_TABLE"
-#define APP_MACSEC_INGRESS_SA_TABLE_NAME    "MACSEC_INGRESS_SA_TABLE"
-
-#define STATE_MACSEC_PORT_TABLE_NAME        "MACSEC_PORT_TABLE"
-#define STATE_MACSEC_EGRESS_SC_TABLE_NAME   "MACSEC_EGRESS_SC_TABLE"
-#define STATE_MACSEC_INGRESS_SC_TABLE_NAME  "MACSEC_INGRESS_SC_TABLE"
-#define STATE_MACSEC_EGRESS_SA_TABLE_NAME   "MACSEC_EGRESS_SA_TABLE"
-#define STATE_MACSEC_INGRESS_SA_TABLE_NAME  "MACSEC_INGRESS_SA_TABLE"
-
-#define COUNTERS_MACSEC_NAME_MAP            "COUNTERS_MACSEC_NAME_MAP"
-#define COUNTERS_MACSEC_ATTR_TABLE          "COUNTERS_MACSEC_ATTR"
-#define MACSEC_SA_ATTR_ID_LIST              "MACSEC_SA_ATTR_ID_LIST"
-
-// End define
-
 #include "orch.h"
 
 #include "portsorch.h"
 #include "flex_counter_manager.h"
 
 #include <dbconnector.h>
+#include <swss/schema.h>
 
 #include <map>
 #include <string>

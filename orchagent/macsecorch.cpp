@@ -12,85 +12,12 @@
 #include <stack>
 #include <memory>
 
-/* Only for Debug */
-
-#define MockSAIFunc(FUNC_NAME)     \
-    sai_status_t FUNC_NAME(...)    \
-    {                              \
-        return SAI_STATUS_SUCCESS; \
-    }
-
-struct MockSAIAPI
-{
-    sai_status_t get_switch_attribute(
-        sai_object_id_t switch_id,
-        uint32_t attr_count,
-        sai_attribute_t *attr_list)
-    {
-        if (attr_count != 1)
-        {
-            return SAI_STATUS_FAILURE;
-        }
-        if (attr_list[0].id == SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY)
-        {
-            attr_list[0].value.u32 = 5;
-        }
-        else if (attr_list[0].id == SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY)
-        {
-            attr_list[0].value.u32 = 0;
-        }
-        return SAI_STATUS_SUCCESS;
-    }
-    MockSAIFunc(set_port_attribute);
-    MockSAIFunc(create_macsec);
-    MockSAIFunc(remove_macsec);
-    MockSAIFunc(create_macsec_port);
-    MockSAIFunc(remove_macsec_port);
-    sai_status_t get_macsec_attribute(
-        sai_object_id_t switch_id,
-        uint32_t attr_count,
-        sai_attribute_t *attr_list)
-    {
-        if (attr_count != 1)
-        {
-            return SAI_STATUS_FAILURE;
-        }
-        if (attr_list[0].id == SAI_MACSEC_ATTR_SCI_IN_INGRESS_MACSEC_ACL)
-        {
-            attr_list[0].value.booldata = true;
-        }
-        return SAI_STATUS_SUCCESS;
-    }
-    MockSAIFunc(create_macsec_flow);
-    MockSAIFunc(remove_macsec_flow);
-    MockSAIFunc(create_macsec_sc);
-    MockSAIFunc(remove_macsec_sc);
-    MockSAIFunc(create_macsec_sa);
-    MockSAIFunc(remove_macsec_sa);
-    MockSAIFunc(create_acl_table);
-    MockSAIFunc(remove_acl_table);
-    MockSAIFunc(create_acl_entry);
-    MockSAIFunc(remove_acl_entry);
-    MockSAIFunc(set_acl_entry_attribute);
-};
-
-// static MockSAIAPI mock_api;
-
-// static MockSAIAPI *sai_macsec_api = &mock_api;
-// static MockSAIAPI *sai_acl_api = &mock_api;
-// static MockSAIAPI *sai_port_api = &mock_api;
-// static MockSAIAPI *sai_switch_api = &mock_api;
-
-// #undef SWSS_LOG_ENTER
-// #define SWSS_LOG_ENTER()    swss::Logger::ScopeLogger logger ## __LINE__ (__LINE__, __PRETTY_FUNCTION__)
-
-/* Finish Debug */
-
 /* Global Variables*/
 
-#define AVAILABLE_ACL_PRIORITIES_LIMITATION (32)
-#define EAPOL_ETHER_TYPE (0x888e)
-#define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS (1000)
+#define AVAILABLE_ACL_PRIORITIES_LIMITATION             (32)
+#define EAPOL_ETHER_TYPE                                (0x888e)
+#define MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS    (1000)
+#define COUNTERS_MACSEC_ATTR_GROUP                      "COUNTERS_MACSEC_ATTR"
 
 extern sai_object_id_t   gSwitchId;
 extern sai_macsec_api_t *sai_macsec_api;
@@ -636,7 +563,7 @@ MACsecOrch::MACsecOrch(
                             m_counter_db("COUNTERS_DB", 0),
                             m_macsec_counters_map(&m_counter_db, COUNTERS_MACSEC_NAME_MAP),
                             m_macsec_flex_counter_manager(
-                                COUNTERS_MACSEC_ATTR_TABLE,
+                                COUNTERS_MACSEC_ATTR_GROUP,
                                 StatsMode::READ,
                                 MACSEC_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS, true)
 {
