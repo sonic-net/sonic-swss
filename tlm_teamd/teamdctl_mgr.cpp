@@ -145,8 +145,8 @@ bool TeamdCtlMgr::remove_lag(const std::string & lag_name)
 void TeamdCtlMgr::process_add_queue()
 {
     std::vector<std::string> lag_names_to_add;
-    std::transform(m_lags_to_add.begin(), m_lags_to_add.end(), lag_names_to_add.begin(), [](auto pair) { return pair.first; });
-    for (const auto lag_name: lag_names_to_add)
+    std::transform(m_lags_to_add.begin(), m_lags_to_add.end(), std::back_inserter(lag_names_to_add), [](const auto & pair) { return pair.first; });
+    for (const auto & lag_name: lag_names_to_add)
     {
         bool result = try_add_lag(lag_name);
         if (!result)
