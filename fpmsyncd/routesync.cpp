@@ -599,14 +599,14 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
 
     dip = rtnl_route_get_dst(route_obj);
     nl_addr2str(dip, destipprefix + strlen(destipprefix), MAX_ADDR_SIZE);
-    
+#if 0    
 	/* Full mask route append prefix length, or else resync cannot match. */
     if (nl_addr_get_prefixlen(dip) == (8 * nl_addr_get_len(dip)))
     {
         snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "/%u", nl_addr_get_prefixlen(dip));
     }
     SWSS_LOG_DEBUG("Receive new route message dest ip prefix: %s", destipprefix);
-
+#endif
     /*
      * Upon arrival of a delete msg we could either push the change right away,
      * or we could opt to defer it if we are going through a warm-reboot cycle.
