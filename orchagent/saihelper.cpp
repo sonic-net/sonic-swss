@@ -5,6 +5,7 @@ extern "C" {
 #include "saiextensions.h"
 }
 
+#include <inttypes.h>
 #include <string.h>
 #include <fstream>
 #include <map>
@@ -259,7 +260,7 @@ void initSaiRedis(const string &record_location)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW, rv:%d gSwitchId %lx", status, gSwitchId);
+        SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW, rv:%d gSwitchId %" PRIx64, status, gSwitchId);
         exit(EXIT_FAILURE);
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
@@ -323,7 +324,7 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
         SWSS_LOG_ERROR("BOX: Failed to create PHY:%d rtn:%d", phy->phy_id, status);
         return status;
     }
-    SWSS_LOG_NOTICE("BOX: Created PHY:%d Oid:0x%lx", phy->phy_id, phyOid);
+    SWSS_LOG_NOTICE("BOX: Created PHY:%d Oid:0x%" PRIx64, phy->phy_id, phyOid);
 
     phy->phy_oid = sai_serialize_object_id(phyOid);
 

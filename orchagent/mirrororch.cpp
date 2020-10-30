@@ -748,7 +748,7 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
     if (set)
     {
         port_attr.value.objlist.count = 1;
-        port_attr.value.objlist.list = (long unsigned int *)calloc(port_attr.value.objlist.count, sizeof(sai_object_id_t));
+        port_attr.value.objlist.list = reinterpret_cast<sai_object_id_t *>((void *)calloc(port_attr.value.objlist.count, sizeof(sai_object_id_t)));
         port_attr.value.objlist.list[0] = sessionId;
     }
     else
