@@ -709,7 +709,7 @@ class TestWarmReboot(object):
         check_syslog_for_neighbor_entry(dvs, marker, 2, 0, "ipv4")
         check_syslog_for_neighbor_entry(dvs, marker, 2, 0, "ipv6")
         (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
-        assert nadd == 4
+        assert nadd == 4 * 2
         assert ndel == 0
 
         # check restore Count
@@ -798,7 +798,7 @@ class TestWarmReboot(object):
         check_syslog_for_neighbor_entry(dvs, marker, 2, 2, "ipv4")
         check_syslog_for_neighbor_entry(dvs, marker, 2, 2, "ipv6")
         (nadd, ndel) = dvs.CountSubscribedObjects(pubsub)
-        assert nadd == 4
+        assert nadd == 4 * 2
         assert ndel == 4
 
         # check restore Count
@@ -1228,7 +1228,7 @@ class TestWarmReboot(object):
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
-        assert len(addobjs) == 1 and len(delobjs) == 0
+        assert len(addobjs) == 1 * 2 and len(delobjs) == 0
         rt_key = json.loads(addobjs[0]['key'])
         assert rt_key['dest'] == "192.168.100.0/24"
 
@@ -1300,7 +1300,7 @@ class TestWarmReboot(object):
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
-        assert len(addobjs) == 1 and len(delobjs) == 0
+        assert len(addobjs) == 1 * 2 and len(delobjs) == 0
         rt_key = json.loads(addobjs[0]['key'])
         assert rt_key['dest'] == "192.168.200.0/24"
 
@@ -1373,7 +1373,7 @@ class TestWarmReboot(object):
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
-        assert len(addobjs) == 1 and len(delobjs) == 0
+        assert len(addobjs) == 1 * 2 and len(delobjs) == 0
         rt_key = json.loads(addobjs[0]['key'])
         assert rt_key['dest'] == "192.168.1.3/32"
 
@@ -1411,7 +1411,7 @@ class TestWarmReboot(object):
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
-        assert len(addobjs) == 1 and len(delobjs) == 0
+        assert len(addobjs) == 1 * 2 and len(delobjs) == 0
         rt_key = json.loads(addobjs[0]['key'])
         assert rt_key['dest'] == "192.168.1.3/32"
 
@@ -1448,7 +1448,7 @@ class TestWarmReboot(object):
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
-        assert len(addobjs) == 1 and len(delobjs) == 0
+        assert len(addobjs) == 1 * 2 and len(delobjs) == 0
         rt_key = json.loads(addobjs[0]['key'])
         assert rt_key['dest'] == "fc00:4:4::1/128"
 
@@ -1546,7 +1546,7 @@ class TestWarmReboot(object):
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
-        assert len(addobjs) == 1 and len(delobjs) == 0
+        assert len(addobjs) == 1 * 2 and len(delobjs) == 0
         rt_key = json.loads(addobjs[0]['key'])
         assert rt_key['dest'] == "192.168.100.0/24"
 
@@ -1658,7 +1658,7 @@ class TestWarmReboot(object):
 
         # Verify the changed prefix is seen in sairedis
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
-        assert len(addobjs) == 1 and len(delobjs) == 0
+        assert len(addobjs) == 1 * 2 and len(delobjs) == 0
         rt_key = json.loads(addobjs[0]['key'])
         assert rt_key['dest'] == "192.168.100.0/24"
 
