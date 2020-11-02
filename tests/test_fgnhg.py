@@ -430,7 +430,6 @@ class TestFineGrainedNextHopGroup(object):
         # Remove route
         asic_rt_key = get_asic_route_key(asic_db, fg_nhg_prefix)
         ps._del(fg_nhg_prefix)
-        asic_db.wait_for_deleted_entry(ASIC_ROUTE_TB, asic_rt_key)
 
         # validate routes and nhg member in asic db, route entry in state db are removed
         asic_db.wait_for_deleted_entry(ASIC_ROUTE_TB, asic_rt_key)
