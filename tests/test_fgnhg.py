@@ -74,6 +74,37 @@ def validate_asic_nhg(asic_db, nhgid, size):
     assert len(keys) == size
 
 
+def validate_asic_nhg_regular_ecmp(asic_db, ipprefix):
+    def _access_function():
+        false_ret = (False, '')
+        keys = asic_db.get_keys(ASIC_ROUTE_TB)
+        key = ''
+        route_exists = False
+        for k in keys:
+            rt_key = json.loads(k)
+            if rt_key['dest'] == ipprefix:
+                route_exists = True
+                key = k
+        if not route_exists:
+            return false_ret
+        fvs = asic_db.get_entry(ASIC_ROUTE_TB, key)
+        if not fvs:
+            return false_ret
+        nhgid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+        fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhgid)
+        if not fvs:
+            return false_ret
+        nhg_type = fvs.get("SAI_NEXT_HOP_GROUP_ATTR_TYPE")
+        if nhg_type != "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP":
+            return false_ret
+        return (True, nhgid)
+    status, result = wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
+    if not status:
+        assert not polling_config.strict, \
+                f"SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP not found"
+    return result
+
+
 def get_nh_oid_map(asic_db):
     nh_oid_map = {}
     keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
@@ -399,6 +430,7 @@ class TestFineGrainedNextHopGroup(object):
         # Remove route
         asic_rt_key = get_asic_route_key(asic_db, fg_nhg_prefix)
         ps._del(fg_nhg_prefix)
+        asic_db.wait_for_deleted_entry(ASIC_ROUTE_TB, asic_rt_key)
 
         # validate routes and nhg member in asic db, route entry in state db are removed
         asic_db.wait_for_deleted_entry(ASIC_ROUTE_TB, asic_rt_key)
@@ -429,7 +461,7 @@ class TestFineGrainedNextHopGroup(object):
 
         # Validate the transistion to Fine Grained ECMP
         asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket_size)
-        keys = asic_db.get_keys(ASIC_ROUTE_TB)
+        keys = asic_db.wait_for_n_keys(ASIC_ROUTE_TB, asic_routes_count + 1)
         nhgid = asic_route_exists_and_is_nhg(asic_db, keys, fg_nhg_prefix)
         validate_asic_nhg(asic_db, nhgid, bucket_size)
 
@@ -444,8 +476,9 @@ class TestFineGrainedNextHopGroup(object):
         remove_entry(config_db, "FG_NHG_PREFIX", fg_nhg_prefix)
 
         # Validate regular ECMP
+        validate_asic_nhg_regular_ecmp(asic_db, fg_nhg_prefix)
         asic_db.wait_for_n_keys(ASIC_NHG_MEMB, 3)
-        asic_route_exists_and_is_nhg(asic_db, keys, fg_nhg_prefix)
+        state_db.wait_for_n_keys("FG_ROUTE_TABLE", 0)
 
         # remove prefix entry
         asic_rt_key = get_asic_route_key(asic_db, fg_nhg_prefix)
