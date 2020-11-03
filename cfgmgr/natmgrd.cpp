@@ -64,17 +64,11 @@ void sigterm_handler(int signo)
 {
     int ret = 0;
     std::string res;
-    const std::string iptablesFlushNat          = "iptables -t nat -F";
     const std::string conntrackFlush            = "conntrack -F";
 
     SWSS_LOG_NOTICE("Got SIGTERM");
 
-    /*If there are any iptables and conntrack entries, clean them */
-    ret = swss::exec(iptablesFlushNat, res);
-    if (ret)
-    {
-        SWSS_LOG_ERROR("Command '%s' failed with rc %d", iptablesFlushNat.c_str(), ret);
-    }
+    /*If there are any conntrack entries, clean them */
     ret = swss::exec(conntrackFlush, res);
     if (ret)
     {
@@ -93,6 +87,10 @@ void sigterm_handler(int signo)
     
     if (natmgr)
     {
+        natmgr->removeStaticNatIptables();
+        natmgr->removeStaticNaptIptables();
+        natmgr->removeDynamicNatRules();
+
         natmgr->cleanupMangleIpTables();
         natmgr->cleanupPoolIpTable();
     }

@@ -400,7 +400,6 @@ namespace aclorch_test
 
             fields.push_back({ "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true" });
-            fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL", "true" });
 
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true" });
@@ -413,11 +412,13 @@ namespace aclorch_test
                     fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" });
                     fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP", "true" });
                     fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_DST_IP", "true" });
+                    fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL", "true" });
                     break;
 
                 case ACL_TABLE_L3V6:
                     fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_SRC_IPV6", "true" });
                     fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_DST_IPV6", "true" });
+                    fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_IPV6_NEXT_HEADER", "true" });
                     break;
 
                 default:

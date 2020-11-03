@@ -242,6 +242,9 @@ public:
     bool isPortInitDone(DBConnector *app_db);
     void timeoutNotifications(std::string op, std::string data);
     void flushNotifications(std::string op, std::string data);
+    void removeStaticNatIptables(const std::string port = NONE_STRING);
+    void removeStaticNaptIptables(const std::string port = NONE_STRING);
+    void removeDynamicNatRules(const std::string port = NONE_STRING, const std::string ipPrefix = NONE_STRING);
 
 private:
     /* Declare APPL_DB, CFG_DB and STATE_DB tables */
@@ -328,8 +331,6 @@ private:
     void removeStaticNaptEntries(const std::string port= NONE_STRING, const std::string ipPrefix = NONE_STRING);
     void addStaticNatIptables(const std::string port);
     void addStaticNaptIptables(const std::string port);
-    void removeStaticNatIptables(const std::string port);
-    void removeStaticNaptIptables(const std::string port);
     void setStaticNatConntrackEntries(std::string mode);
     void setStaticSingleNatConntrackEntry(const std::string &key, std::string &mode);
     void setStaticTwiceNatConntrackEntry(const std::string &key, std::string &mode);
@@ -341,7 +342,6 @@ private:
     void addDynamicNatRuleByAcl(const std::string &key, bool isRuleId = false);
     void removeDynamicNatRuleByAcl(const std::string &key, bool isRuleId = false);
     void addDynamicNatRules(const std::string port = NONE_STRING, const std::string ipPrefix = NONE_STRING);
-    void removeDynamicNatRules(const std::string port = NONE_STRING, const std::string ipPrefix = NONE_STRING);
     void addDynamicTwiceNatRule(const std::string &key);
     void deleteDynamicTwiceNatRule(const std::string &key);
     void setDynamicAllForwardOrAclbasedRules(const std::string &opCmd, const std::string &pool_interface, const std::string &ip_range,
