@@ -1,11 +1,8 @@
 #ifndef __MACSECMGR__
 #define __MACSECMGR__
 
-// The following definitions should be moved to schema.h
-
-#define CFG_MACSEC_PROFILE_TABLE_NAME           "MACSEC_PROFILE"
-
-// End define
+#include <orch.h>
+#include <swss/schema.h>
 
 #include <cinttypes>
 #include <map>
@@ -13,22 +10,6 @@
 #include <sstream>
 
 #include <sys/types.h>
-
-#include <orch.h>
-
-#undef SWSS_LOG_ERROR
-#undef SWSS_LOG_WARN
-#undef SWSS_LOG_NOTICE
-#undef SWSS_LOG_INFO
-#undef SWSS_LOG_DEBUG
-#undef SWSS_LOG_ENTER
-
-#define SWSS_LOG_ERROR(MSG, ...)       printf("ERROR :- %s: " MSG"\n", __FUNCTION__, ##__VA_ARGS__)
-#define SWSS_LOG_WARN(MSG, ...)        printf("WARN :- %s: " MSG"\n", __FUNCTION__, ##__VA_ARGS__)
-#define SWSS_LOG_NOTICE(MSG, ...)      printf("NOTICE :- %s: " MSG"\n", __FUNCTION__, ##__VA_ARGS__)
-#define SWSS_LOG_INFO(MSG, ...)        printf("INFO :- %s: " MSG"\n", __FUNCTION__, ##__VA_ARGS__)
-#define SWSS_LOG_DEBUG(MSG, ...)       printf("DEBUG :- %s: " MSG"\n", __FUNCTION__, ##__VA_ARGS__)
-#define SWSS_LOG_ENTER()               printf("ENTER %s : %d\n", __FUNCTION__, __LINE__)
 
 namespace swss {
 
@@ -53,7 +34,6 @@ public:
         std::string   fallback_ckn;
         enum Policy
         {
-            BYPASS,
             INTEGRITY_ONLY,
             SECURITY,
         }             policy;

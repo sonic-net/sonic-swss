@@ -29,6 +29,7 @@ using namespace swss;
 #define SOCK_DIR           "./"
 
 constexpr std::uint64_t RETRY_TIME = 30;
+
 /* retry interval, in millisecond */
 constexpr std::uint64_t RETRY_INTERVAL = 100;
 
@@ -44,11 +45,7 @@ static std::istringstream& operator>>(
         policy_str.end(),
         policy_str.begin(),
         ::tolower);
-    if (policy_str == "bypass")
-    {
-        policy = MACsecMgr::MACsecProfile::Policy::BYPASS;
-    }
-    else if (policy_str == "integrity_only")
+    if (policy_str == "integrity_only")
     {
         policy = MACsecMgr::MACsecProfile::Policy::INTEGRITY_ONLY;
     }
