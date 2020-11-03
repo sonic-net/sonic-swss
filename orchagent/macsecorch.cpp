@@ -1925,8 +1925,7 @@ void MACsecOrch::uninstallCounter(const std::string &obj_name, sai_object_id_t o
 {
     m_macsec_flex_counter_manager.clearCounterIdList(obj_id);
 
-    RedisClient redisClient(&m_counter_db);
-    redisClient.hdel(COUNTERS_MACSEC_NAME_MAP, obj_name);
+    m_counter_db.hdel(COUNTERS_MACSEC_NAME_MAP, obj_name);
 }
 
 bool MACsecOrch::initACLTable(
