@@ -76,7 +76,7 @@ class AsicDbValidator(DVSDatabase):
             if len(self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN")) != 1:
                 return (False, None)
 
-            if len(self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")) != NUM_PORTS:
+            if len(self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF")) < NUM_PORTS:
                 return (False, None)
 
             if len(self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")) != 0:
