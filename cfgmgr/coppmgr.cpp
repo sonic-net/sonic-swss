@@ -238,7 +238,6 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     std::vector<string> group_keys;
     std::vector<string> trap_keys;
     std::vector<string> feature_keys;
-    std::vector<string> app_keys;
 
     std::vector<string> group_cfg_keys;
     std::vector<string> trap_cfg_keys;
@@ -249,7 +248,6 @@ CoppMgr::CoppMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
     m_cfgCoppGroupTable.getKeys(group_cfg_keys);
     m_cfgCoppTrapTable.getKeys(trap_cfg_keys);
     m_cfgFeatureTable.getKeys(feature_keys);
-    m_coppTable.getKeys(app_keys);
 
 
     for (auto i: feature_keys)
@@ -418,20 +416,20 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
         string key = kfvKey(t);
         string op = kfvOp(t);
         vector<FieldValueTuple> fvs;
-        string trap_ids;
-        string trap_group;
+        string trap_ids = "";
+        string trap_group = "";
         bool   conf_present = false;
+
+        if (m_coppTrapConfMap.find(key) != m_coppTrapConfMap.end())
+        {
+            trap_ids = m_coppTrapConfMap[key].trap_ids;
+            trap_group = m_coppTrapConfMap[key].trap_group;
+            conf_present = true;
+        }
 
         if (op == SET_COMMAND)
         {
             /*Create case*/
-            if (m_coppTrapConfMap.find(key) != m_coppTrapConfMap.end())
-            {
-                trap_ids = m_coppTrapConfMap[key].trap_ids;
-                trap_group = m_coppTrapConfMap[key].trap_group;
-                conf_present = true;
-            }
-
             bool null_cfg = false;
             for (auto i: kfvFieldsValues(t))
             {
@@ -450,7 +448,7 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
             }
             if (null_cfg)
             {
-                if (!m_coppTrapConfMap[key].trap_group.empty())
+                if (conf_present)
                 {
                     SWSS_LOG_DEBUG("Deleting trap key %s", key.c_str());
                     removeTrapIdsFromTrapGroup(m_coppTrapConfMap[key].trap_group,
@@ -464,10 +462,9 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                     if (!checkTrapGroupPending(m_coppTrapConfMap[key].trap_group))
                     {
                         m_appCoppTable.set(m_coppTrapConfMap[key].trap_group, fvs);
+                        setCoppGroupStateOk(m_coppTrapConfMap[key].trap_group);
                     }
-                    setCoppGroupStateOk(m_coppTrapConfMap[key].trap_group);
-                    m_coppTrapConfMap[key].trap_group = "";
-                    m_coppTrapConfMap[key].trap_ids = "";
+                    m_coppTrapConfMap.erase(key);
                 }
                 it = consumer.m_toSync.erase(it);
                 continue;
@@ -480,8 +477,22 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
-            removeTrapIdsFromTrapGroup(m_coppTrapConfMap[key].trap_group,
-                                       m_coppTrapConfMap[key].trap_ids);
+            /* Incomplete configuration. Do not process until both trap group
+             * and trap_ids are available
+             */
+            if (trap_group.empty() || trap_ids.empty())
+            {
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            /* Remove the current trap IDs and add the new trap IDS to recompute the
+             * trap IDs for the trap group 
+             */
+            if (conf_present)
+            {
+                removeTrapIdsFromTrapGroup(m_coppTrapConfMap[key].trap_group,
+                                           m_coppTrapConfMap[key].trap_ids);
+            }
             fvs.clear();
             string trap_group_trap_ids;
             addTrapIdsToTrapGroup(trap_group, trap_ids);
@@ -498,8 +509,7 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
              * should also be reprogrammed as some of its associated traps got
              * removed
              */
-            if ((!m_coppTrapConfMap[key].trap_group.empty()) &&
-                (trap_group != m_coppTrapConfMap[key].trap_group))
+            if (conf_present && (trap_group != m_coppTrapConfMap[key].trap_group))
             {
                 trap_group_trap_ids.clear();
                 fvs.clear();
@@ -518,11 +528,14 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
         }
         else if (op == DEL_COMMAND)
         {
-            removeTrapIdsFromTrapGroup(m_coppTrapConfMap[key].trap_group,
-                                       m_coppTrapConfMap[key].trap_ids);
+            if (conf_present)
+            {
+                removeTrapIdsFromTrapGroup(m_coppTrapConfMap[key].trap_group,
+                                           m_coppTrapConfMap[key].trap_ids);
+            }
             fvs.clear();
             trap_ids.clear();
-            if (!m_coppTrapConfMap[key].trap_group.empty())
+            if (conf_present && !m_coppTrapConfMap[key].trap_group.empty())
             {
                 getTrapGroupTrapIds(m_coppTrapConfMap[key].trap_group, trap_ids);
                 FieldValueTuple fv(COPP_TRAP_ID_LIST_FIELD, trap_ids);
@@ -533,7 +546,10 @@ void CoppMgr::doCoppTrapTask(Consumer &consumer)
                     setCoppGroupStateOk(m_coppTrapConfMap[key].trap_group);
                 }
             }
-            m_coppTrapConfMap.erase(key);
+            if (conf_present) 
+            {
+                m_coppTrapConfMap.erase(key);
+            }
             delCoppTrapStateOk(key);
 
             /* If the COPP trap was part of init config, it needs to be recreated

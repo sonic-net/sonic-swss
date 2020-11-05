@@ -20,8 +20,6 @@ extern sai_object_id_t      gSwitchId;
 extern PortsOrch*           gPortsOrch;
 extern bool                 gIsNatSupported;
 
-static string               old_nat_group_name = "trap.group.nat";
-
 static map<string, sai_meter_type_t> policer_meter_map = {
     {"packets", SAI_METER_TYPE_PACKETS},
     {"bytes", SAI_METER_TYPE_BYTES}
@@ -101,7 +99,6 @@ CoppOrch::CoppOrch(DBConnector* db, string tableName) :
 {
     SWSS_LOG_ENTER();
 
-    m_coppTable = unique_ptr<Table>(new Table(db, APP_COPP_TABLE_NAME));
     initDefaultHostIntfTable();
     initDefaultTrapGroup();
     initDefaultTrapIds();
@@ -465,10 +462,6 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
 
     if (op == SET_COMMAND)
     {
-        if(checkDupCoppGrpNameAndUpdate(trap_group_name, fv_tuple))
-        {
-            return task_process_status::task_success;
-        }
         for (auto i = fv_tuple.begin(); i != fv_tuple.end(); i++)
         {
             if (fvField(*i) == copp_trap_id_list)
@@ -654,153 +647,12 @@ void CoppOrch::doTask(Consumer &consumer)
     }
 }
 
-/* Check if the Copp Group name is different while all trap ids remain the same
- * This is going to be warm boot scenario from an old image which has different naming scheme 
- */
-bool CoppOrch::checkDupCoppGrpNameAndUpdate(string new_copp_grp_name,
-                                            vector<FieldValueTuple> &fv_tuple)
-{
-    vector<string> trap_id_list;
-    sai_object_id_t trap_group_obj = SAI_NULL_OBJECT_ID;
-    vector<FieldValueTuple> mod_fv_tuple;
-    vector<sai_hostif_trap_type_t> trap_ids;
-    bool ret = false;
-
-    if (m_trap_group_map.find(new_copp_grp_name) != m_trap_group_map.end())
-    {
-        return false;
-    }
-
-    for (auto i = fv_tuple.begin(); i != fv_tuple.end(); i++)
-    {
-        if (fvField(*i) == copp_trap_id_list)
-        {
-            trap_id_list = tokenize(fvValue(*i), list_item_delimiter);
-            getTrapIdList(trap_id_list, trap_ids);
-        }
-    }
-
-    /* In the case where NAT is not supported, there will be no trap IDs associated with
-     * the nat trap group and hence group ID cannot be figured out by iterating through traps.
-     * Using the hardcoded name for this specific case
-     */
-    if (trap_ids.size() == 0)
-    {
-        if (!gIsNatSupported)
-        {
-            auto src_nat = std::find(trap_id_list.begin(), trap_id_list.end(), "src_nat_miss");
-            auto dst_nat = std::find(trap_id_list.begin(), trap_id_list.end(), "dest_nat_miss");
-            if ((src_nat != trap_id_list.end()) && (dst_nat != trap_id_list.end()))
-            {
-                if(m_trap_group_map.find(old_nat_group_name) != m_trap_group_map.end())
-                {
-                    trap_group_obj = m_trap_group_map[old_nat_group_name];
-                }
-                else
-                {
-                    return false;
-                }
-            }
-            else
-            {
-                return false;
-            }
-        }
-        else
-        {
-            return false;
-        }
-    }
-	else
-	{
-        for(auto it = trap_ids.begin(); it != trap_ids.end(); it++)
-        {
-            if (m_syncdTrapIds.find(*it) == m_syncdTrapIds.end())
-            {
-                return false;
-            }
-            sai_object_id_t  trap_id_group = m_syncdTrapIds[*it].trap_group_obj;
-            if (trap_id_group == SAI_NULL_OBJECT_ID)
-            {
-                return false;
-            }
-            if (trap_group_obj == SAI_NULL_OBJECT_ID)
-            {
-                trap_group_obj = trap_id_group;
-            }
-            else if (trap_group_obj != trap_id_group)
-            {
-                return false;
-            }
-        }
-    }
-    
-    for (auto it : m_trap_group_map)    
-    {
-        if (it.second ==  trap_group_obj)
-        {
-            vector<FieldValueTuple> old_tuples;
-            vector<FieldValueTuple> new_tuples;
-            m_coppTable->get(it.first, old_tuples);
-            m_coppTable->get(new_copp_grp_name, new_tuples);
-            vector<FieldValueTuple> tmp_tuples = new_tuples;
-            for (auto o: old_tuples)
-            {
-                if (fvField(o) == copp_trap_id_list)
-                {
-                    continue;
-                }
-                bool not_found = true;
-                for (auto n : new_tuples)
-                {
-                    if (fvField(o) == fvField(n))
-                    {
-                        if (fvValue(o) != fvValue(n))
-                        {
-                            mod_fv_tuple.push_back(n);
-                        }
-                        auto vec_idx = std::find(tmp_tuples.begin(), tmp_tuples.end(), n);
-                        tmp_tuples.erase(vec_idx);
-                        not_found = false;
-                    }
-                }
-                /* Old table has a field which is not present in new table
-                 * Delete the entry and return false so it is recreated
-                 */
-                if (not_found)
-                {
-                    processTrapGroupDel(it.first);
-                    m_coppTable->del(it.first);
-                    return false;
-                }
-            }
-            if (!tmp_tuples.empty())
-            {
-                mod_fv_tuple.insert(mod_fv_tuple.end(), tmp_tuples.begin(), tmp_tuples.end());
-            }
-            if (!mod_fv_tuple.empty())
-            {
-                fv_tuple = mod_fv_tuple;
-            }
-            else
-            {
-                ret = true;
-            }
-            m_trap_group_map[new_copp_grp_name] = it.second;
-            m_trap_group_map.erase(m_trap_group_map.find(it.first));
-            m_coppTable->del(it.first);
-            break;
-        }
-    }
-    return ret;
-}
-
 void CoppOrch::getTrapAddandRemoveList(string trap_group_name,
                                        vector<sai_hostif_trap_type_t> &trap_ids,
                                        vector<sai_hostif_trap_type_t> &add_trap_ids,
                                        vector<sai_hostif_trap_type_t> &rem_trap_ids)
 {
-    
+
     vector<sai_hostif_trap_type_t> tmp_trap_ids = trap_ids;
     if(m_trap_group_map.find(trap_group_name) == m_trap_group_map.end())
     {
@@ -810,28 +662,28 @@ void CoppOrch::getTrapAddandRemoveList(string trap_group_name,
     }
 
 
-	for (auto it : m_syncdTrapIds)
-	{
-		if (it.second.trap_group_obj == m_trap_group_map[trap_group_name])
-		{
+    for (auto it : m_syncdTrapIds)
+    {
+        if (it.second.trap_group_obj == m_trap_group_map[trap_group_name])
+        {
             /* If new trap list contains already mapped ID remove it */
             auto i = std::find(std::begin(tmp_trap_ids), std::end(tmp_trap_ids), it.first);
 
             if (i != std::end(tmp_trap_ids))
             {
-			    tmp_trap_ids.erase(i);
+                tmp_trap_ids.erase(i);
             }
             /* The mapped Trap ID is not found on newly set list and to be removed*/
             else
             {
                 if ((trap_group_name != default_trap_group) ||
-                    ((trap_group_name == default_trap_group) &&
-                    (it.first != SAI_HOSTIF_TRAP_TYPE_TTL_ERROR)))
+                        ((trap_group_name == default_trap_group) &&
+                         (it.first != SAI_HOSTIF_TRAP_TYPE_TTL_ERROR)))
                 {
                     rem_trap_ids.push_back(it.first);
                 }
             }
-		}
+        }
     }
 
     add_trap_ids = tmp_trap_ids;

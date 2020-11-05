@@ -52,7 +52,6 @@ public:
     CoppOrch(swss::DBConnector* db, std::string tableName);
 protected:
     object_map m_trap_group_map;
-    std::unique_ptr<swss::Table> m_coppTable;
 
     TrapGroupPolicerTable m_trap_group_policer_map;
     TrapIdTrapObjectsTable m_syncdTrapIds;
@@ -79,8 +78,6 @@ protected:
     bool removeGenetlinkHostIf(std::string trap_group_name);
     bool createGenetlinkHostIfTable(std::vector<sai_hostif_trap_type_t> &trap_id_list);
     bool removeGenetlinkHostIfTable(std::vector<sai_hostif_trap_type_t> &trap_id_list);
-    bool checkDupCoppGrpNameAndUpdate(std::string new_copp_grp_name, 
-                                      std::vector<swss::FieldValueTuple> &fv_tuple);
     void getTrapAddandRemoveList(std::string trap_group_name, std::vector<sai_hostif_trap_type_t> &trap_ids,
                                  std::vector<sai_hostif_trap_type_t> &add_trap_ids,
                                  std::vector<sai_hostif_trap_type_t> &rem_trap_ids);
