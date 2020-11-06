@@ -1019,14 +1019,23 @@ class DockerVirtualSwitch:
         tbl._del(interface + ":" + ip)
         time.sleep(1)
 
-    # deps: mirror_port_erspan
+    # deps: mirror_port_erspan, warm_reboot
     def add_route(self, prefix, nexthop):
         self.runcmd("ip route add " + prefix + " via " + nexthop)
         time.sleep(1)
 
-    # deps: mirror_port_erspan
+    # deps: mirror_port_erspan, warm_reboot
     def change_route(self, prefix, nexthop):
         self.runcmd("ip route change " + prefix + " via " + nexthop)
+        time.sleep(1)
+
+    # deps: warm_reboot
+    def change_route_ecmp(self, prefix, nexthops):
+        cmd = ""
+        for nexthop in nexthops:
+            cmd += " nexthop via " + nexthop
+
+        self.runcmd("ip route change " + prefix + cmd)
         time.sleep(1)
 
     # deps: acl, mirror_port_erspan

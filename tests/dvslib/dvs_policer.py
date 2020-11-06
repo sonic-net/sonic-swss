@@ -3,7 +3,7 @@ class DVSPolicer(object):
         self.asic_db = adb
         self.config_db = cdb
 
-    def create_policer(self, name, type="packets", cir="600", cbs="600", mode="sr_tcm", red_action="drop" ):
+    def create_policer(self, name, type="packets", cir="600", cbs="600", mode="sr_tcm", red_action="drop"):
         policer_entry = {"meter_type": type, "mode": mode,
                          "cir": cir, "cbs": cbs, "red_packet_action": red_action}
         self.config_db.create_entry("POLICER", name, policer_entry)
