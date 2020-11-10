@@ -272,8 +272,18 @@ void FabricPortsOrch::updateFabricPortState()
 {
     if (!m_getFabricPortListDone) return;
 
+    SWSS_LOG_ENTER();
+
     sai_status_t status;
     sai_attribute_t attr;
+
+    time_t now;
+    struct timespec time_now;
+    if (clock_gettime(CLOCK_MONOTONIC, &time_now) < 0)
+    {
+        return;
+    }
+    now = time_now.tv_sec;
 
     for (auto p : m_fabricLanePortMap)
     {
@@ -282,6 +292,8 @@ void FabricPortsOrch::updateFabricPortState()
 
         string key = "PORT" + to_string(lane);
         std::vector<FieldValueTuple> values;
+        uint32_t remote_peer;
+        uint32_t remote_port;
 
         attr.id = SAI_PORT_ATTR_FABRIC_ATTACHED;
         status = sai_port_api->get_port_attribute(port, 1, &attr);
@@ -289,10 +301,16 @@ void FabricPortsOrch::updateFabricPortState()
         {
             throw runtime_error("FabricPortsOrch get port status failure");
         }
-        FieldValueTuple s("STATUS", attr.value.booldata ? "up" : "down");
-        values.push_back(s);
 
-        if (attr.value.booldata)
+        if (m_portStatus.find(lane) != m_portStatus.end() &&
+            m_portStatus[lane] != attr.value.booldata)
+        {
+            m_portFlappingCount[lane] ++;
+            m_portFlappingSeenLastTime[lane] = now;
+        }
+        m_portStatus[lane] = attr.value.booldata;
+
+        if (m_portStatus[lane])
         {
             attr.id = SAI_PORT_ATTR_FABRIC_ATTACHED_SWITCH_ID;
             status = sai_port_api->get_port_attribute(port, 1, &attr);
@@ -300,8 +318,7 @@ void FabricPortsOrch::updateFabricPortState()
             {
                 throw runtime_error("FabricPortsOrch get remote id failure");
             }
-            FieldValueTuple rm("REMOTE_MOD", to_string(attr.value.u32));
-            values.push_back(rm);
+            remote_peer = attr.value.u32;
 
             attr.id = SAI_PORT_ATTR_FABRIC_ATTACHED_PORT_INDEX;
             status = sai_port_api->get_port_attribute(port, 1, &attr);
@@ -309,8 +326,20 @@ void FabricPortsOrch::updateFabricPortState()
             {
                 throw runtime_error("FabricPortsOrch get remote port index failure");
             }
-            FieldValueTuple rp("REMOTE_PORT", to_string(attr.value.u32));
-            values.push_back(rp);
+            remote_port = attr.value.u32;
+        }
+
+        values.emplace_back("STATUS", m_portStatus[lane] ? "up" : "down");
+        if (m_portStatus[lane])
+        {
+            values.emplace_back("REMOTE_MOD", to_string(remote_peer));
+            values.emplace_back("REMOTE_PORT", to_string(remote_port));
+        }
+        if (m_portFlappingCount[lane] > 0)
+        {
+            values.emplace_back("PORT_FLAPPING_COUNT", to_string(m_portFlappingCount[lane]));
+            values.emplace_back("PORT_FLAPPING_SEEN_LAST_TIME",
+                                to_string(m_portFlappingSeenLastTime[lane]));
         }
         m_stateTable->set(key, values);
     }

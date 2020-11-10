@@ -36,6 +36,9 @@ private:
 
     sai_uint32_t m_fabricPortCount;
     map<int, sai_object_id_t> m_fabricLanePortMap;
+    unordered_map<int, bool> m_portStatus;
+    unordered_map<int, size_t> m_portFlappingCount;
+    unordered_map<int, time_t> m_portFlappingSeenLastTime;
 
     bool m_getFabricPortListDone = false;
     bool m_isQueueStatsGenerated = false;
