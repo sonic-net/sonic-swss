@@ -22,6 +22,8 @@ extern CrmOrch *gCrmOrch;
 
 const int routeorch_pri = 5;
 
+std::set<NextHopGroupKey> bulkNhgReducedRefCnt;
+
 RouteOrch::RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch) :
         gRouteBulker(sai_route_api),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId),
@@ -640,7 +642,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
         // Go through the bulker results
         auto it_prev = consumer.m_toSync.begin();
-        std::set<NextHopGroupKey> bulkNhgReducedRefCnt;
+        bulkNhgReducedRefCnt.clear();
         while (it_prev != it)
         {
             KeyOpFieldsValuesTuple t = it_prev->second;
@@ -682,15 +684,6 @@ void RouteOrch::doTask(Consumer& consumer)
                 }
 
                 const NextHopGroupKey& nhg = ctx.nhg;
-                if (m_syncdRoutes.find(vrf_id) != m_syncdRoutes.end() &&
-                    m_syncdRoutes.at(vrf_id).find(ip_prefix) != m_syncdRoutes.at(vrf_id).end())
-                {
-                    auto nhg_prev = m_syncdRoutes.at(vrf_id).at(ip_prefix);
-                    if (nhg_prev != nhg && nhg_prev.getSize() > 1)
-                    {
-                        bulkNhgReducedRefCnt.emplace(nhg_prev);
-                    }
-                }
 
                 if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
                 {
@@ -1411,6 +1404,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         increaseNextHopRefCount(nextHops);
 
         decreaseNextHopRefCount(it_route->second);
+        bulkNhgReducedRefCnt.emplace(it_route->second);
         SWSS_LOG_INFO("Post set route %s with next hop(s) %s",
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
@@ -1549,6 +1543,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
      * Decrease the reference count only when the route is pointing to a next hop.
      */
     decreaseNextHopRefCount(it_route->second);
+    bulkNhgReducedRefCnt.emplace(it_route->second);
 
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.to_string().c_str());
