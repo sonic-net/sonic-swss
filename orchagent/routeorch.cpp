@@ -640,6 +640,7 @@ void RouteOrch::doTask(Consumer& consumer)
 
         // Go through the bulker results
         auto it_prev = consumer.m_toSync.begin();
+        std::set<NextHopGroupKey> bulkNhgReducedRefCnt;
         while (it_prev != it)
         {
             KeyOpFieldsValuesTuple t = it_prev->second;
@@ -681,6 +682,15 @@ void RouteOrch::doTask(Consumer& consumer)
                 }
 
                 const NextHopGroupKey& nhg = ctx.nhg;
+                if (m_syncdRoutes.find(vrf_id) != m_syncdRoutes.end() &&
+                    m_syncdRoutes.at(vrf_id).find(ip_prefix) != m_syncdRoutes.at(vrf_id).end())
+                {
+                    auto nhg_prev = m_syncdRoutes.at(vrf_id).at(ip_prefix);
+                    if (nhg_prev != nhg && nhg_prev.getSize() > 1)
+                    {
+                        bulkNhgReducedRefCnt.emplace(nhg_prev);
+                    }
+                }
 
                 if (ipv.size() == 1 && IpAddress(ipv[0]).isZero())
                 {
@@ -706,6 +716,15 @@ void RouteOrch::doTask(Consumer& consumer)
                     it_prev = consumer.m_toSync.erase(it_prev);
                 else
                     it_prev++;
+            }
+        }
+
+        /* Remove next hop group if the reference count decreases to zero */
+        for (auto it_nhg = bulkNhgReducedRefCnt.begin(); it_nhg != bulkNhgReducedRefCnt.end(); it_nhg++)
+        {
+            if (m_syncdNextHopGroups[*it_nhg].ref_count == 0)
+            {
+                removeNextHopGroup(*it_nhg);
             }
         }
     }
@@ -1392,11 +1411,6 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         increaseNextHopRefCount(nextHops);
 
         decreaseNextHopRefCount(it_route->second);
-        if (it_route->second.getSize() > 1
-            && m_syncdNextHopGroups[it_route->second].ref_count == 0)
-        {
-            removeNextHopGroup(it_route->second);
-        }
         SWSS_LOG_INFO("Post set route %s with next hop(s) %s",
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
@@ -1533,16 +1547,8 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
 
     /*
      * Decrease the reference count only when the route is pointing to a next hop.
-     * Decrease the reference count when the route is pointing to a next hop group,
-     * and check whether the reference count decreases to zero. If yes, then we need
-     * to remove the next hop group.
      */
     decreaseNextHopRefCount(it_route->second);
-    if (it_route->second.getSize() > 1
-        && m_syncdNextHopGroups[it_route->second].ref_count == 0)
-    {
-        removeNextHopGroup(it_route->second);
-    }
 
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.to_string().c_str());
