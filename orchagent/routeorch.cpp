@@ -1404,7 +1404,10 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         increaseNextHopRefCount(nextHops);
 
         decreaseNextHopRefCount(it_route->second);
-        bulkNhgReducedRefCnt.emplace(it_route->second);
+        if (it_route->second.getSize() > 1)
+        {
+            bulkNhgReducedRefCnt.emplace(it_route->second);
+        }
         SWSS_LOG_INFO("Post set route %s with next hop(s) %s",
                 ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
     }
@@ -1543,7 +1546,10 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
      * Decrease the reference count only when the route is pointing to a next hop.
      */
     decreaseNextHopRefCount(it_route->second);
-    bulkNhgReducedRefCnt.emplace(it_route->second);
+    if (it_route->second.getSize() > 1)
+    {
+        bulkNhgReducedRefCnt.emplace(it_route->second);
+    }
 
     SWSS_LOG_INFO("Remove route %s with next hop(s) %s",
             ipPrefix.to_string().c_str(), it_route->second.to_string().c_str());
