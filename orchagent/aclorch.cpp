@@ -124,7 +124,8 @@ static const acl_capabilities_t defaultAclActionsSupported =
         ACL_STAGE_INGRESS,
         {
             SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-            SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
+            SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
+            SAI_ACL_ACTION_TYPE_NO_NAT
         }
     },
     {
