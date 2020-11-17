@@ -38,6 +38,7 @@
 #include <iostream>
 #include <sstream>
 #include "table.h"
+#include "orch.h"
 
 using namespace swss;
 using namespace std;
@@ -245,7 +246,8 @@ void MclagLink::mclagsyncd_fetch_vlan_mbr_table_from_statedb()
 
 void MclagLink::setPortIsolate(char *msg)
 {
-    if (true)
+    char *platform = getenv("platform");
+    if ((NULL != platform) && (strstr(platform, BRCM_PLATFORM_SUBSTRING)))
     {
         mclag_sub_option_hdr_t *op_hdr = NULL;
         string isolate_src_port;
