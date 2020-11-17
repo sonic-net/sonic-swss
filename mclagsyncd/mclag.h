@@ -88,7 +88,8 @@ typedef enum mclag_syncd_msg_type_e_ {
     MCLAG_SYNCD_MSG_TYPE_FDB_OPERATION = 1,
     MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_DOMAIN = 2,
     MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_IFACE  = 3,
-    MCLAG_SYNCD_MSG_TYPE_VLAN_MBR_UPDATES  = 4
+    MCLAG_SYNCD_MSG_TYPE_VLAN_MBR_UPDATES  = 4,
+    MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_UNIQUE_IP  = 5
 }mclag_syncd_msg_type_e;
 
 /*iccpd send msg type to syncd*/

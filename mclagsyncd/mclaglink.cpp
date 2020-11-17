@@ -660,7 +660,7 @@ void MclagLink::mclagsyncd_send_fdb_entries(std::deque<KeyOpFieldsValuesTuple> &
 
             SWSS_LOG_DEBUG("mclagsycnd buffer full send msg to iccpd, msg_len =%d, msg_type =%d count : %d",
                 msg_head->msg_len, msg_head->msg_type, count);
-            write = ::write(m_connection_socket, infor_start, msg_head->msg_len)
+            write = ::write(m_connection_socket, infor_start, msg_head->msg_len);
 
             if (write <= 0)
             {
@@ -1099,6 +1099,101 @@ void MclagLink::mclagsyncd_send_mclag_iface_cfg(std::deque<KeyOpFieldsValuesTupl
         SWSS_LOG_ERROR("mclagsycnd to ICCPD, mclag iface cfg send; write to m_connection_socket failed");
     }
     mclagsyncd_fetch_and_send_lag_info(po_names);
+    return;
+}
+
+void MclagLink::mclagsyncd_send_mclag_unique_ip_cfg(std::deque<KeyOpFieldsValuesTuple> &entries)
+{
+    struct mclag_unique_ip_cfg_info cfg_info;
+    mclag_msg_hdr_t *cfg_msg_hdr = NULL;
+    size_t infor_len = sizeof(mclag_msg_hdr_t);
+    int count = 0;
+
+    ssize_t write = 0;
+    char *infor_start = getSendMsgBuffer();
+
+    /* Nothing popped */
+    if (entries.empty())
+    {
+        return;
+    }
+
+    for (auto entry: entries)
+    {
+        std::string key = kfvKey(entry);
+        std::string op = kfvOp(entry);
+
+        std::size_t delimiter_pos = key.find_first_of("|");
+        auto domain_id_str = key.substr(0, delimiter_pos);
+        std::string unique_ip_ifnames;
+
+        memset(&cfg_info, 0, sizeof(mclag_unique_ip_cfg_info));
+
+        count++;
+        SWSS_LOG_NOTICE("mclag unique ip interface Key %s passed", key.c_str());
+
+        unique_ip_ifnames = key.substr(delimiter_pos+1);
+        if (unique_ip_ifnames.empty())
+        {
+            SWSS_LOG_ERROR("Invalid Key %s Format. No unique ip ifname specified", key.c_str());
+            continue;
+        }
+
+        if(op == "SET")
+        {
+            cfg_info.op_type = MCLAG_CFG_OPER_ADD;
+        }
+        else
+        {
+            cfg_info.op_type = MCLAG_CFG_OPER_DEL;
+        }
+
+        memcpy(cfg_info.mclag_unique_ip_ifname, unique_ip_ifnames.c_str(), unique_ip_ifnames.size());
+
+        SWSS_LOG_NOTICE("optype:%d mclag_unique_ip_ifname:%s", cfg_info.op_type, cfg_info.mclag_unique_ip_ifname);
+
+        if (MCLAG_MAX_SEND_MSG_LEN - infor_len < (sizeof(struct mclag_unique_ip_cfg_info)) )
+        {
+            cfg_msg_hdr = (mclag_msg_hdr_t *)infor_start;
+            cfg_msg_hdr->version = 1;
+            cfg_msg_hdr->msg_len = (unsigned short)infor_len;
+            cfg_msg_hdr->msg_type = MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_UNIQUE_IP;
+
+            SWSS_LOG_NOTICE("mclagsycnd send msg to iccpd, msg_len =%d, msg_type =%d count : %d",
+                    cfg_msg_hdr->msg_len, cfg_msg_hdr->msg_type, count);
+
+            write = ::write(getConnSocket(), infor_start, cfg_msg_hdr->msg_len);
+
+            if (write <= 0)
+            {
+                SWSS_LOG_ERROR("mclagsycnd to ICCPD, mclag unique ip cfg send, buffer full; write to m_connection_socket failed");
+            }
+
+            infor_len = sizeof(mclag_msg_hdr_t);
+        }
+        memcpy((char*)(infor_start + infor_len), (char*)&cfg_info, sizeof(struct mclag_unique_ip_cfg_info));
+        infor_len +=  sizeof(struct mclag_unique_ip_cfg_info);
+    }
+
+    /*no config info notification reqd */
+    if (infor_len <= sizeof(mclag_msg_hdr_t))
+        return;
+
+    cfg_msg_hdr = (mclag_msg_hdr_t *)infor_start;
+    cfg_msg_hdr->version = 1;
+    cfg_msg_hdr->msg_len = (unsigned short)infor_len;
+    cfg_msg_hdr->msg_type = MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_UNIQUE_IP;
+
+    SWSS_LOG_NOTICE("mclagsycnd send msg to iccpd, msg_len =%d, msg_type =%d count : %d ver:%d ",
+            cfg_msg_hdr->msg_len, cfg_msg_hdr->msg_type, cfg_msg_hdr->version, count);
+
+    write = ::write(getConnSocket(), infor_start, cfg_msg_hdr->msg_len);
+
+    if (write <= 0)
+    {
+        SWSS_LOG_ERROR("mclagsycnd to ICCPD, mclag unique ip cfg send; write to m_connection_socket failed");
+    }
+
     return;
 }
 

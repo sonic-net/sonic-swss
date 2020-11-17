@@ -56,6 +56,7 @@ int main(int argc, char **argv)
     Table device_metadata_tbl(&config_db, CFG_DEVICE_METADATA_TABLE_NAME);
     SubscriberStateTable mclag_cfg_tbl(&config_db, CFG_MCLAG_TABLE_NAME);
     SubscriberStateTable mclag_intf_cfg_tbl(&config_db, CFG_MCLAG_INTF_TABLE_NAME);
+    SubscriberStateTable mclag_unique_ip_cfg_tbl(&config_db, CFG_MCLAG_UNIQUE_IP_TABLE_NAME);
 
     Table state_vlan_mbr_table(&state_db, STATE_VLAN_MEMBER_TABLE_NAME);
     SubscriberStateTable state_vlan_mbr_subscriber_table(&state_db, STATE_VLAN_MEMBER_TABLE_NAME);
@@ -125,6 +126,10 @@ int main(int argc, char **argv)
             s.addSelectable(&state_vlan_mbr_subscriber_table);
             SWSS_LOG_NOTICE(" MCLAGSYNCD Add state_vlan_mbr_table  to selectable");
 
+            //add mclag unique ip table to selectable
+            s.addSelectable(&mclag_unique_ip_cfg_tbl);
+            SWSS_LOG_NOTICE("MCLagSYNCD Adding mclag_unique_ip_cfg_tbl to selectable");
+
             while (true)
             {
                 Selectable *temps;
@@ -153,6 +158,13 @@ int main(int argc, char **argv)
                     std::deque<KeyOpFieldsValuesTuple> entries;
                     mclag_intf_cfg_tbl.pops(entries);
                     mclag.mclagsyncd_send_mclag_iface_cfg(entries);
+                }
+                else if (temps == (Selectable *)&mclag_unique_ip_cfg_tbl)  //Reading MCLAG Unique IP Config Table
+                {
+                    SWSS_LOG_DEBUG("MCLAGSYNCD processing mclag_unique_ip_cfg_tbl notifications");
+                    std::deque<KeyOpFieldsValuesTuple> entries;
+                    mclag_unique_ip_cfg_tbl.pops(entries);
+                    mclag.mclagsyncd_send_mclag_unique_ip_cfg(entries);
                 }
                 else if (temps == (Selectable *)&state_vlan_mbr_subscriber_table) //Reading stateDB vlan member table
                 {

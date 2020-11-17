@@ -81,6 +81,12 @@ struct mclag_iface_cfg_info
     char mclag_iface[MAX_L_PORT_NAME];
 };
 
+struct mclag_unique_ip_cfg_info
+{
+    int op_type;/*add/del mclag unique ip iface */
+    char mclag_unique_ip_ifname[MAX_L_PORT_NAME];
+};
+
 struct mclag_vlan_mbr_info
 {
     int op_type;/*add/del vlan_member */
@@ -233,6 +239,7 @@ public:
 
     void mclagsyncd_send_fdb_entries(std::deque<KeyOpFieldsValuesTuple> &entries);
     void mclagsyncd_send_mclag_iface_cfg(std::deque<KeyOpFieldsValuesTuple> &entries);
+    void mclagsyncd_send_mclag_unique_ip_cfg(std::deque<KeyOpFieldsValuesTuple> &entries);
 
     void processMclagDomainCfg(std::deque<KeyOpFieldsValuesTuple> &entries);
     void processVlanMemberTableUpdates(std::deque<KeyOpFieldsValuesTuple> &entries);
