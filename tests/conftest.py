@@ -9,6 +9,8 @@ import random
 import string
 import subprocess
 import sys
+import tarfile
+import io
 
 from typing import Dict, Tuple
 from datetime import datetime
@@ -531,6 +533,17 @@ class DockerVirtualSwitch:
             print("-----")
 
         return (exitcode, out)
+
+    # used in buildimage tests, do not delete
+    def copy_file(self, path: str, filename: str) -> None:
+        tarstr = io.BytesIO()
+        tar = tarfile.open(fileobj=tarstr, mode="w")
+        tar.add(filename, os.path.basename(filename))
+        tar.close()
+
+        self.ctn.exec_run(f"mkdir -p {path}")
+        self.ctn.put_archive(path, tarstr.getvalue())
+        tarstr.close()
 
     def get_logs(self) -> None:
         log_dir = os.path.join("log", self.log_path) if self.log_path else "log"
