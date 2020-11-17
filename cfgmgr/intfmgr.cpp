@@ -519,7 +519,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
             if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
             {
-                FieldValueTuple fvTuple("arp_accept", grat_arp);
+                FieldValueTuple fvTuple("grat_arp", grat_arp);
                 data.push_back(fvTuple);
             }
         }
