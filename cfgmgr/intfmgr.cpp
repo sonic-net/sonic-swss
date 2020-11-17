@@ -295,11 +295,7 @@ bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
     cmd << ECHO_CMD << " " << proxy_arp_pvlan << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp_pvlan";
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
-    cmd.str(string());
-    cmd << ECHO_CMD << " " << proxy_arp_pvlan << " > /proc/sys/net/ipv4/conf/" << alias << "/arp_accept";
-    EXEC_WITH_ERROR_THROW(cmd.str(), res);
-
-    SWSS_LOG_INFO("Proxy ARP and ARP accept set to \"%s\" on interface \"%s\"", proxy_arp.c_str(), alias.c_str());
+    SWSS_LOG_INFO("Proxy ARP set to \"%s\" on interface \"%s\"", proxy_arp.c_str(), alias.c_str());
     return true;
 }
 
