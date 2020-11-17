@@ -5,15 +5,23 @@ extern "C" {
 #include "saiextensions.h"
 }
 
+#include <inttypes.h>
+#include <string.h>
 #include <fstream>
 #include <map>
 #include <logger.h>
 #include <sairedis.h>
+#include <set>
+#include <tuple>
+#include <vector>
 #include "timestamp.h"
+#include "sai_serialize.h"
 #include "saihelper.h"
 
 using namespace std;
 using namespace swss;
+
+#define CONTEXT_CFG_FILE "/usr/share/sonic/hwsku/context_config.json"
 
 /* Initialize all global api pointers */
 sai_switch_api_t*           sai_switch_api;
@@ -40,7 +48,6 @@ sai_acl_api_t*              sai_acl_api;
 sai_mirror_api_t*           sai_mirror_api;
 sai_fdb_api_t*              sai_fdb_api;
 sai_dtel_api_t*             sai_dtel_api;
-sai_bmtor_api_t*            sai_bmtor_api;
 sai_samplepacket_api_t*     sai_samplepacket_api;
 sai_debug_counter_api_t*    sai_debug_counter_api;
 sai_nat_api_t*              sai_nat_api;
@@ -51,7 +58,28 @@ extern bool gSwssRecord;
 extern ofstream gRecordOfs;
 extern string gRecordFile;
 
+static map<string, sai_switch_hardware_access_bus_t> hardware_access_map =
+{
+    { "mdio",  SAI_SWITCH_HARDWARE_ACCESS_BUS_MDIO },
+    { "i2c", SAI_SWITCH_HARDWARE_ACCESS_BUS_I2C },
+    { "cpld", SAI_SWITCH_HARDWARE_ACCESS_BUS_CPLD }
+};
+
 map<string, string> gProfileMap;
+
+sai_status_t mdio_read(uint64_t platform_context, 
+  uint32_t mdio_addr, uint32_t reg_addr, 
+  uint32_t number_of_registers, uint32_t *data)
+{
+    return SAI_STATUS_NOT_IMPLEMENTED;
+}
+
+sai_status_t mdio_write(uint64_t platform_context, 
+  uint32_t mdio_addr, uint32_t reg_addr, 
+  uint32_t number_of_registers, uint32_t *data)
+{
+    return SAI_STATUS_NOT_IMPLEMENTED;
+}
 
 const char *test_profile_get_value (
     _In_ sai_switch_profile_id_t profile_id,
@@ -106,6 +134,12 @@ void initSaiApi()
 {
     SWSS_LOG_ENTER();
 
+    if (ifstream(CONTEXT_CFG_FILE))
+    {
+        SWSS_LOG_NOTICE("Context config file %s exists", CONTEXT_CFG_FILE);
+        gProfileMap[SAI_REDIS_KEY_CONTEXT_CONFIG] = CONTEXT_CFG_FILE;
+    }
+
     sai_api_initialize(0, (const sai_service_method_table_t *)&test_services);
 
     sai_api_query(SAI_API_SWITCH,               (void **)&sai_switch_api);
@@ -132,7 +166,6 @@ void initSaiApi()
     sai_api_query(SAI_API_SCHEDULER_GROUP,      (void **)&sai_scheduler_group_api);
     sai_api_query(SAI_API_ACL,                  (void **)&sai_acl_api);
     sai_api_query(SAI_API_DTEL,                 (void **)&sai_dtel_api);
-    sai_api_query((sai_api_t)SAI_API_BMTOR,     (void **)&sai_bmtor_api);
     sai_api_query(SAI_API_SAMPLEPACKET,         (void **)&sai_samplepacket_api);
     sai_api_query(SAI_API_DEBUG_COUNTER,        (void **)&sai_debug_counter_api);
     sai_api_query(SAI_API_NAT,                  (void **)&sai_nat_api);
@@ -161,7 +194,6 @@ void initSaiApi()
     sai_log_set(SAI_API_SCHEDULER_GROUP,        SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_ACL,                    SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DTEL,                   SAI_LOG_LEVEL_NOTICE);
-    sai_log_set((sai_api_t)SAI_API_BMTOR,       SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SAMPLEPACKET,           SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DEBUG_COUNTER,          SAI_LOG_LEVEL_NOTICE);
     sai_log_set((sai_api_t)SAI_API_NAT,         SAI_LOG_LEVEL_NOTICE);
@@ -225,8 +257,85 @@ void initSaiRedis(const string &record_location)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW, rv:%d", status);
+        SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW, rv:%d gSwitchId %" PRIx64, status, gSwitchId);
         exit(EXIT_FAILURE);
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
+}
+
+sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
+{
+    sai_object_id_t phyOid;
+    sai_attribute_t attr;
+    vector<sai_attribute_t> attrs;
+    sai_status_t status;
+
+    SWSS_LOG_ENTER();
+
+    attr.id = SAI_SWITCH_ATTR_INIT_SWITCH;
+    attr.value.booldata = true;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_TYPE;
+    attr.value.u32 = SAI_SWITCH_TYPE_PHY;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_SWITCH_PROFILE_ID;
+    attr.value.u32 = 0;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
+    attr.value.s8list.count = 0;
+    attr.value.s8list.list = 0;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_METHOD;
+    attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_METHOD_NONE;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_REGISTER_READ;
+    attr.value.ptr = (void *) mdio_read;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_REGISTER_WRITE;
+    attr.value.ptr = (void *) mdio_write;
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_HARDWARE_ACCESS_BUS;
+    attr.value.u32 = hardware_access_map[phy->access];
+    attrs.push_back(attr);
+
+    attr.id = SAI_SWITCH_ATTR_PLATFROM_CONTEXT;
+    attr.value.u64 = phy->address;
+    attrs.push_back(attr);
+
+    /* Must be last Attribute */
+    attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
+    attr.value.u64 = phy->phy_id;
+    attrs.push_back(attr);
+
+    status = sai_switch_api->create_switch(&phyOid, (uint32_t)attrs.size(), attrs.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("BOX: Failed to create PHY:%d rtn:%d", phy->phy_id, status);
+        return status;
+    }
+    SWSS_LOG_NOTICE("BOX: Created PHY:%d Oid:0x%" PRIx64, phy->phy_id, phyOid);
+
+    phy->phy_oid = sai_serialize_object_id(phyOid);
+
+    attr.id = SAI_SWITCH_ATTR_FIRMWARE_MAJOR_VERSION;
+    status = sai_switch_api->get_switch_attribute(phyOid, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("BOX: Failed to get firmware major version:%d rtn:%d", phy->phy_id, status);
+        return status;
+    } 
+    else 
+    {
+        phy->firmware_major_version = string(attr.value.chardata);
+    }
+
+    return status;
 }

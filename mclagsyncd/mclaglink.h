@@ -38,7 +38,6 @@
 #include "subscriberstatetable.h"
 #include "select.h"
 #include "selectable.h"
-#include "redisclient.h"
 #include "mclagsyncd/mclag.h"
 #include "notificationconsumer.h"
 #include "notificationproducer.h"
@@ -204,6 +203,7 @@ public:
     Table *p_state_vlan_mbr_table;
     Table *p_state_fdb_table;
     DBConnector *p_appl_db;
+
     RedisClient *p_redisClient_to_asic;/*redis client access to ASIC_DB*/
     RedisClient *p_redisClient_to_counters;/*redis client access to COUNTERS_DB*/
     ProducerStateTable *p_iso_grp_tbl;
@@ -215,6 +215,7 @@ public:
     std::map<mclagDomainEntry, mclagDomainData> m_mclag_domains;
 
     MclagLink(Select* select, int port = MCLAG_DEFAULT_PORT);
+
     virtual ~MclagLink();
 
     /* Wait for connection (blocking) */

@@ -1298,3 +1298,296 @@ TEST(request_parser, wrong_key_ip_prefix)
         FAIL() << "Expected std::logic_error, not other exception";
     }
 }
+
+const request_description_t request_description_ipv6_addr = {
+    { REQ_T_STRING, REQ_T_IP },
+    { },
+    { }  // no mandatory attributes
+};
+
+class TestRequestIpv6Addr : public Request
+{
+public:
+    TestRequestIpv6Addr() : Request(request_description_ipv6_addr, ':') { }
+};
+
+const request_description_t request_description_ipv6_prefix = {
+    { REQ_T_STRING, REQ_T_IP_PREFIX },
+    { },
+    { }  // no mandatory attributes
+};
+
+class TestRequestIpv6Prefix : public Request
+{
+public:
+    TestRequestIpv6Prefix() : Request(request_description_ipv6_prefix, ':') { }
+};
+
+const request_description_t request_desc_ipv6_addr_only = {
+    { REQ_T_IP },
+    { },
+    { }
+};
+
+class TestRequestIpv6AddrOnly: public Request
+{
+public:
+    TestRequestIpv6AddrOnly() : Request(request_desc_ipv6_addr_only, ':') { }
+};
+
+const request_description_t request_desc_ipv6_prefix_only = {
+    { REQ_T_IP_PREFIX },
+    { },
+    { }
+};
+
+class TestRequestIpv6PrefixOnly: public Request
+{
+public:
+    TestRequestIpv6PrefixOnly() : Request(request_desc_ipv6_prefix_only, ':') { }
+};
+
+std::vector<std::string> ipv6_addresses = {"2001:db8:3c4d:0015:0000:0000:1a2f:1a2b", "2001:db8:3c4d:0015::1a2f:1a2b", "::2001:db8:3c4d:0015:1a2f:1a2b", "2001:db8:3c4d:0015:1a2f:1a2b::", "::"};
+std::vector<std::string> ipv6_addresses_invalid = {"2001:db8:0015:0000:1a2f:1a2b", "5552001:db8:3c4d:0015::1a2f:1a2b", "::2001:zdb8:3c4d:0015:1a2f:1a2b", "2001:db8:3c4d:0015::::1a2f:1aeer2b::"};
+std::vector<std::string> ipv6_prefixes = {"2001:db8:3c4d:0015:0000:0000:1a2f:1a2b/16", "2001:db8:3c4d:0015::1a2f:1a2b/32", "::2001:db8:3c4d:0015:1a2f:1a2b/24", "2001:db8:3c4d:0015:1a2f:1a2b::/8", "::/16"};
+std::vector<std::string> ipv6_prefixes_invalid = {"2001:db8:0015:0000:1a2f:1a2b/16", "5552001:db8:3c4d:0015::1a2f:1a2b/32", "::2001:zdb8:3c4d:0015:1a2f:1a2b/24", "2001:db8:3c4d:0015::::1a2f:1aeer2b::/8"};
+
+TEST(request_parser, ipv6_addr_key_item)
+{
+    for (const std::string &ipv6_addr : ipv6_addresses)
+    {
+        std::string key_string = "key1:" + ipv6_addr;
+        KeyOpFieldsValuesTuple t {key_string, "SET",
+                                    { }
+                                };
+
+        try
+        {
+            TestRequestIpv6Addr request;
+
+            EXPECT_NO_THROW(request.parse(t));
+
+            EXPECT_STREQ(request.getOperation().c_str(), "SET");
+            EXPECT_STREQ(request.getFullKey().c_str(), key_string.c_str());
+            EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+            EXPECT_EQ(request.getKeyIpAddress(1), IpAddress(ipv6_addr));
+            EXPECT_FALSE(request.getKeyIpAddress(1).isV4());
+        }
+        catch (const std::exception& e)
+        {
+            FAIL() << "Got unexpected exception " << e.what();
+        }
+        catch (...)
+        {
+            FAIL() << "Got unexpected exception";
+        }
+    }
+}
+
+TEST(request_parser, ipv6_addr_key_item_empty_str)
+{
+    for (const std::string &ipv6_addr : ipv6_addresses)
+    {
+        std::string key_string = ":" + ipv6_addr;
+        KeyOpFieldsValuesTuple t {key_string, "SET",
+                                    { }
+                                };
+
+        try
+        {
+            TestRequestIpv6Addr request;
+
+            EXPECT_NO_THROW(request.parse(t));
+
+            EXPECT_STREQ(request.getOperation().c_str(), "SET");
+            EXPECT_STREQ(request.getFullKey().c_str(), key_string.c_str());
+            EXPECT_STREQ(request.getKeyString(0).c_str(), "");
+            EXPECT_EQ(request.getKeyIpAddress(1), IpAddress(ipv6_addr));
+            EXPECT_FALSE(request.getKeyIpAddress(1).isV4());
+        }
+        catch (const std::exception& e)
+        {
+            FAIL() << "Got unexpected exception " << e.what();
+        }
+        catch (...)
+        {
+            FAIL() << "Got unexpected exception";
+        }
+    }
+}
+
+TEST(request_parser, ipv6_addr_key_item_only)
+{
+    for (const std::string &ipv6_addr : ipv6_addresses)
+    {
+        KeyOpFieldsValuesTuple t {ipv6_addr, "SET",
+                                    { }
+                                };
+
+        try
+        {
+            TestRequestIpv6AddrOnly request;
+
+            EXPECT_NO_THROW(request.parse(t));
+
+            EXPECT_STREQ(request.getOperation().c_str(), "SET");
+            EXPECT_STREQ(request.getFullKey().c_str(), ipv6_addr.c_str());
+            EXPECT_EQ(request.getKeyIpAddress(0), IpAddress(ipv6_addr));
+            EXPECT_FALSE(request.getKeyIpAddress(0).isV4());
+        }
+        catch (const std::exception& e)
+        {
+            FAIL() << "Got unexpected exception " << e.what();
+        }
+        catch (...)
+        {
+            FAIL() << "Got unexpected exception";
+        }
+    }
+}
+
+TEST(request_parser, ipv6_prefix_key_item)
+{
+    for (const std::string &ipv6_prefix : ipv6_prefixes)
+    {
+        std::string key_string = "key1:" + ipv6_prefix;
+        KeyOpFieldsValuesTuple t {key_string, "SET",
+                                    { }
+                                };
+
+        try
+        {
+            TestRequestIpv6Prefix request;
+
+            EXPECT_NO_THROW(request.parse(t));
+
+            EXPECT_STREQ(request.getOperation().c_str(), "SET");
+            EXPECT_STREQ(request.getFullKey().c_str(), key_string.c_str());
+            EXPECT_STREQ(request.getKeyString(0).c_str(), "key1");
+            EXPECT_EQ(request.getKeyIpPrefix(1), IpPrefix(ipv6_prefix));
+            EXPECT_FALSE(request.getKeyIpPrefix(1).isV4());
+        }
+        catch (const std::exception& e)
+        {
+            FAIL() << "Got unexpected exception " << e.what();
+        }
+        catch (...)
+        {
+            FAIL() << "Got unexpected exception";
+        }
+    }
+}
+
+TEST(request_parser, ipv6_prefix_key_item_empty_str)
+{
+    for (const std::string &ipv6_prefix: ipv6_prefixes)
+    {
+        std::string key_string = ":" + ipv6_prefix;
+        KeyOpFieldsValuesTuple t {key_string, "SET",
+                                    { }
+                                };
+
+        try
+        {
+            TestRequestIpv6Prefix request;
+
+            EXPECT_NO_THROW(request.parse(t));
+
+            EXPECT_STREQ(request.getOperation().c_str(), "SET");
+            EXPECT_STREQ(request.getFullKey().c_str(), key_string.c_str());
+            EXPECT_STREQ(request.getKeyString(0).c_str(), "");
+            EXPECT_EQ(request.getKeyIpPrefix(1), IpPrefix(ipv6_prefix));
+            EXPECT_FALSE(request.getKeyIpPrefix(1).isV4());
+        }
+        catch (const std::exception& e)
+        {
+            FAIL() << "Got unexpected exception " << e.what();
+        }
+        catch (...)
+        {
+            FAIL() << "Got unexpected exception";
+        }
+    }
+}
+
+TEST(request_parser, ipv6_prefix_key_item_only)
+{
+    for (const std::string &ipv6_prefix : ipv6_prefixes)
+    {
+        KeyOpFieldsValuesTuple t {ipv6_prefix, "SET",
+                                    { }
+                                };
+
+        try
+        {
+            TestRequestIpv6PrefixOnly request;
+
+            EXPECT_NO_THROW(request.parse(t));
+
+            EXPECT_STREQ(request.getOperation().c_str(), "SET");
+            EXPECT_STREQ(request.getFullKey().c_str(), ipv6_prefix.c_str());
+            EXPECT_EQ(request.getKeyIpPrefix(0), IpPrefix(ipv6_prefix));
+            EXPECT_FALSE(request.getKeyIpPrefix(0).isV4());
+        }
+        catch (const std::exception& e)
+        {
+            FAIL() << "Got unexpected exception " << e.what();
+        }
+        catch (...)
+        {
+            FAIL() << "Got unexpected exception";
+        }
+    }
+}
+
+TEST(request_parser, invalid_ipv6_prefix_key_item)
+{
+    for (const std::string &ipv6_prefix : ipv6_prefixes_invalid)
+    {
+        std::string key_string = "key1:" + ipv6_prefix;
+        KeyOpFieldsValuesTuple t {key_string, "SET",
+                                    { }
+                                };
+
+        try
+        {
+            TestRequestIpv6Prefix request;
+
+            EXPECT_THROW(request.parse(t), std::invalid_argument);
+        }
+        catch (const std::exception& e)
+        {
+            FAIL() << "Got unexpected exception " << e.what();
+        }
+        catch (...)
+        {
+            FAIL() << "Got unexpected exception";
+        }
+    }
+}
+
+TEST(request_parser, invalid_ipv6_addr_key_item)
+{
+    for (const std::string &ipv6_addr : ipv6_addresses_invalid)
+    {
+        std::string key_string = "key1:" + ipv6_addr;
+        KeyOpFieldsValuesTuple t {key_string, "SET",
+                                    { }
+                                };
+
+        try
+        {
+            TestRequestIpv6Addr request;
+
+            EXPECT_THROW(request.parse(t), std::invalid_argument);
+        }
+        catch (const std::exception& e)
+        {
+            FAIL() << "Got unexpected exception " << e.what();
+        }
+        catch (...)
+        {
+            FAIL() << "Got unexpected exception";
+        }
+    }
+}

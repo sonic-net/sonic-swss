@@ -45,6 +45,7 @@ int main(int argc, char **argv)
     ProducerStateTable fdb_tbl(&appl_db, APP_MCLAG_FDB_TABLE_NAME);
     ProducerStateTable acl_table_tbl(&appl_db, APP_ACL_TABLE_NAME);
     ProducerStateTable acl_rule_tbl(&appl_db, APP_ACL_RULE_TABLE_NAME);
+
     SubscriberStateTable state_fdb_tbl(&state_db, STATE_FDB_TABLE_NAME);
     Table mclag_tbl(&state_db, STATE_MCLAG_TABLE_NAME);
     Table mclag_local_intf_tbl(&state_db, STATE_MCLAG_LOCAL_INTF_TABLE_NAME);
@@ -61,6 +62,7 @@ int main(int argc, char **argv)
 
     RedisClient redisClient_to_asicDb(&asic_db);
     RedisClient redisClient_to_countersDb(&counters_db);
+
     map <string, string> isolate;
     map <string, string> learn_mode;
     RedisPipeline pipeline(&appl_db);
@@ -88,6 +90,7 @@ int main(int argc, char **argv)
             mclag.p_mclag_remote_intf_tbl = &mclag_remote_intf_tbl;
             mclag.p_device_metadata_tbl = &device_metadata_tbl;
             mclag.p_appl_db = &appl_db;
+
             mclag.p_redisClient_to_asic = &redisClient_to_asicDb;
             mclag.p_redisClient_to_counters = &redisClient_to_countersDb;
             mclag.p_iso_grp_tbl = &iso_grp_tbl;
@@ -99,6 +102,7 @@ int main(int argc, char **argv)
             mclag.p_state_vlan_mbr_table = &state_vlan_mbr_table;
             mclag.p_state_vlan_mbr_subscriber_table = &state_vlan_mbr_subscriber_table;
             mclag.p_state_lag_table = &state_lag_table;
+
 
             mclag.mclagsyncd_fetch_system_mac_from_configdb();
             

@@ -68,7 +68,7 @@ void MclagLink::delVlanMbr(std::string vlan, std::string mbr_port)
 void MclagLink::getOidToPortNameMap(std::unordered_map<std::string, std:: string> & port_map)
 {
     std::unordered_map<std::string, std:: string>::iterator it;
-    auto hash = p_redisClient_to_counters->hgetall("COUNTERS_PORT_NAME_MAP");
+    auto hash = p_counters_db->hgetall("COUNTERS_PORT_NAME_MAP");
 
     for (it = hash.begin(); it != hash.end(); ++it)
         port_map.insert(pair<string, string>(it->second, it->first));
@@ -83,14 +83,14 @@ void MclagLink::getBridgePortIdToAttrPortIdMap(std::map<std::string, std:: strin
 
     std::unordered_map<string, string>::iterator attr_port_id;
 
-    auto keys = p_redisClient_to_asic->keys("ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT:*");
+    auto keys = p_asic_db->keys("ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT:*");
 
     for (auto& key : keys)
     {
         pos1 = key.find("oid:", 0);
         bridge_port_id = key.substr(pos1);
 
-        auto hash = p_redisClient_to_asic->hgetall(key);
+        auto hash = p_asic_db->hgetall(key);
         attr_port_id = hash.find("SAI_BRIDGE_PORT_ATTR_PORT_ID");
         if (attr_port_id == hash.end())
         {
@@ -111,7 +111,7 @@ void MclagLink::getVidByBvid(std::string &bvid, std::string &vlanid)
     std::string pre = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN:";
     std::string key = pre + bvid;
 
-    auto hash = p_redisClient_to_asic->hgetall(key.c_str());
+    auto hash = p_asic_db->hgetall(key.c_str());
 
     attr_vlan_id = hash.find("SAI_VLAN_ATTR_VLAN_ID");
     if (attr_vlan_id == hash.end())
@@ -123,11 +123,13 @@ void MclagLink::getVidByBvid(std::string &bvid, std::string &vlanid)
 
 void MclagLink::mclagsyncd_fetch_system_mac_from_configdb()
 {
+
     vector<FieldValueTuple> fvs; 
     p_device_metadata_tbl->get("localhost",fvs);
     auto it = find_if(fvs.begin(), fvs.end(), [](const FieldValueTuple &fv) {
             return fv.first == "mac";
             });
+
 
     if (it == fvs.end())
     {
@@ -139,6 +141,7 @@ void MclagLink::mclagsyncd_fetch_system_mac_from_configdb()
     SWSS_LOG_NOTICE("mclagysncd: system_mac:%s ",m_system_mac.c_str());
     return;
 }
+
 
 void MclagLink::mclagsyncd_fetch_mclag_config_from_configdb()
 {
@@ -160,6 +163,7 @@ void MclagLink::mclagsyncd_fetch_mclag_config_from_configdb()
             fvField(value) = val.first;
             fvValue(value) = val.second;
             kfvFieldsValues(cfgentry).push_back(value);
+
         }
         entries.push_back(cfgentry);
         processMclagDomainCfg(entries);
@@ -257,10 +261,11 @@ void MclagLink::setPortIsolate(char *msg)
 
         cur = msg;
 
-        /*get isolate src port infor*/
-        op_hdr = (mclag_sub_option_hdr_t *)cur;
-        cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
-        isolate_src_port.insert(0, (const char*)cur, op_hdr->op_len);
+
+    /*get isolate src port infor*/
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
+    cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
+    isolate_src_port.insert(0, (const char*)cur, op_hdr->op_len);
 
         cur = cur + op_hdr->op_len;
 
@@ -435,7 +440,7 @@ void MclagLink::setPortMacLearnMode(char *msg)
     cur = msg;
 
     /*get port learning mode info*/
-    op_hdr = (mclag_sub_option_hdr_t *)cur;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
     if (op_hdr->op_type == MCLAG_SUB_OPTION_TYPE_MAC_LEARN_ENABLE)
     {
         learn_mode = "hardware";
@@ -489,7 +494,7 @@ void MclagLink::setFdbFlushByPort(char *msg)
 
     cur = msg;
     /*get port infor*/
-    op_hdr = (mclag_sub_option_hdr_t *)cur;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
     cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
     port.insert(0, (const char*)cur, op_hdr->op_len);
 
@@ -510,14 +515,14 @@ void MclagLink::setIntfMac(char *msg)
     cur = msg;
 
     /*get intf key name*/
-    op_hdr = (mclag_sub_option_hdr_t *)cur;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
     cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
     intf_key.insert(0, (const char*)cur, op_hdr->op_len);
 
     cur = cur + op_hdr->op_len;
 
     /*get mac*/
-    op_hdr = (mclag_sub_option_hdr_t *)cur;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
     cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
     mac_value.insert(0, (const char*)cur, op_hdr->op_len);
 
@@ -546,8 +551,8 @@ void MclagLink::setFdbEntry(char *msg, int msg_len)
     for (index =0; index < count; index ++)
     {
         memset(key, 0, 64);
-        
-        fdb_info = (struct mclag_fdb_info *)(cur + index * sizeof(struct mclag_fdb_info));
+
+        fdb_info = reinterpret_cast<struct mclag_fdb_info *>(static_cast<void *>(cur + index * sizeof(struct mclag_fdb_info)));
 
         fdb.mac  = MacAddress::to_string(fdb_info->mac);
         fdb.port_name = fdb_info->port_name;
@@ -648,14 +653,14 @@ void MclagLink::mclagsyncd_send_fdb_entries(std::deque<KeyOpFieldsValuesTuple> &
 
         if (MCLAG_MAX_SEND_MSG_LEN - infor_len < sizeof(struct mclag_fdb_info))
         {
-            msg_head = (mclag_msg_hdr_t *)infor_start;
+            msg_head = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
             msg_head->version = 1;
             msg_head->msg_len = (unsigned short)infor_len;
             msg_head ->msg_type = MCLAG_SYNCD_MSG_TYPE_FDB_OPERATION;
 
             SWSS_LOG_DEBUG("mclagsycnd buffer full send msg to iccpd, msg_len =%d, msg_type =%d count : %d",
                 msg_head->msg_len, msg_head->msg_type, count);
-            write = ::write(m_connection_socket, infor_start, msg_head->msg_len);
+            write = ::write(m_connection_socket, infor_start, msg_head->msg_len)
 
             if (write <= 0)
             {
@@ -669,7 +674,12 @@ void MclagLink::mclagsyncd_send_fdb_entries(std::deque<KeyOpFieldsValuesTuple> &
         infor_len = infor_len +  sizeof(struct mclag_fdb_info);
     }
 
-    msg_head = (mclag_msg_hdr_t *)infor_start;
+
+    if (infor_len <= sizeof(mclag_msg_hdr_t)) /*no fdb entry need notifying iccpd*/
+        return 1;
+
+    msg_head = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
+
     msg_head->version = 1;
     msg_head->msg_len = (unsigned short)infor_len;
     msg_head ->msg_type = MCLAG_SYNCD_MSG_TYPE_FDB_OPERATION;
@@ -685,6 +695,7 @@ void MclagLink::mclagsyncd_send_fdb_entries(std::deque<KeyOpFieldsValuesTuple> &
 
     return;
 }
+
 
 void MclagLink::processMclagDomainCfg(std::deque<KeyOpFieldsValuesTuple> &entries)
 {
@@ -720,6 +731,7 @@ void MclagLink::processMclagDomainCfg(std::deque<KeyOpFieldsValuesTuple> &entrie
         memset(&cfg_info, 0, sizeof(mclag_domain_cfg_info));
         cfg_info.domain_id  = stoi(domain_id_str);
         memcpy(cfg_info.system_mac, system_mac, ETHER_ADDR_LEN);
+
 
         SWSS_LOG_INFO("Key(mclag domain_id):%s;  op:%s ", domain_id_str.c_str(), op.c_str()); 
 
@@ -1741,7 +1753,7 @@ uint64_t MclagLink::readData()
 
     while (true)
     {
-        hdr = (mclag_msg_hdr_t *)(m_messageBuffer + start);
+        hdr = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(m_messageBuffer + start));
         left = m_pos - start;
         if (left < MCLAG_MSG_HDR_LEN)
             break;

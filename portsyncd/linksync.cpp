@@ -256,4 +256,8 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
         m_statePortTable.set(key, vector);
         SWSS_LOG_NOTICE("Publish %s(ok) to state db", key.c_str());
     }
+    else
+    {
+        SWSS_LOG_NOTICE("Cannot find %s in port table", key.c_str());
+    }
 }

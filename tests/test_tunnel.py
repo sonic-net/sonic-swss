@@ -5,7 +5,7 @@ from swsscommon import swsscommon
 
 
 def create_fvs(**kwargs):
-    return swsscommon.FieldValuePairs(kwargs.items())
+    return swsscommon.FieldValuePairs(list(kwargs.items()))
 
 
 class TestTunnelBase(object):
@@ -134,7 +134,7 @@ class TestTunnelBase(object):
         status, fvs = tunnel_table.get(tunnel_sai_obj)
 
         # get overlay loopback interface oid to check if it is deleted with the tunnel
-        overlay_infs_id = {f:v for f,v in fvs}["SAI_TUNNEL_ATTR_OVERLAY_INTERFACE"] 
+        overlay_infs_id = {f:v for f,v in fvs}["SAI_TUNNEL_ATTR_OVERLAY_INTERFACE"]
 
         ps = swsscommon.ProducerStateTable(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
         ps.set(tunnel_name, create_fvs(), 'DEL')
@@ -229,3 +229,9 @@ class TestSymmetricTunnel(TestTunnelBase):
                                     ecn_mode="standard", ttl_mode="pipe")
         self.remove_and_test_tunnel(db, asicdb, "IPINIPv6Symmetric")
 
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

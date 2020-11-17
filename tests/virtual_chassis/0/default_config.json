@@ -1,0 +1,11 @@
+{
+    "DEVICE_METADATA": {
+        "localhost": {
+            "hostname": "supervisor",
+            "chassis_db_address" : "10.8.1.200",
+            "inband_address" : "10.8.1.200/24",
+            "start_chassis_db" : "1",
+            "comment" : "default_config for a vs that runs chassis_db"
+        }
+    }
+}

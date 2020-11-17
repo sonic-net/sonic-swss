@@ -9,13 +9,104 @@
 using namespace swss;
 using namespace std;
 
-FpmLink::FpmLink(unsigned short port) :
+void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
+        int len)
+{
+    while (RTA_OK(rta, len)) 
+    {
+        if (rta->rta_type <= max)
+        {
+            tb[rta->rta_type] = rta;
+        }
+        rta = RTA_NEXT(rta, len);
+    }
+}
+
+bool FpmLink::isRawProcessing(struct nlmsghdr *h)
+{
+    int len;
+    short encap_type = 0;
+    struct rtmsg *rtm;
+    struct rtattr *tb[RTA_MAX + 1];
+
+    rtm = (struct rtmsg *)NLMSG_DATA(h);
+
+    if (h->nlmsg_type != RTM_NEWROUTE && h->nlmsg_type != RTM_DELROUTE)
+    {
+        return false;
+    }
+
+    len = (int)(h->nlmsg_len - NLMSG_LENGTH(sizeof(struct rtmsg)));
+    if (len < 0) 
+    {
+        return false;
+    }
+
+    memset(tb, 0, sizeof(tb));
+    netlink_parse_rtattr(tb, RTA_MAX, RTM_RTA(rtm), len);
+
+    if (!tb[RTA_MULTIPATH])
+    {
+        if (tb[RTA_ENCAP_TYPE])
+        {
+            encap_type = *(short *)RTA_DATA(tb[RTA_ENCAP_TYPE]);
+        }
+    }
+    else
+    {
+        /* This is a multipath route */
+        int len;            
+        struct rtnexthop *rtnh = (struct rtnexthop *)RTA_DATA(tb[RTA_MULTIPATH]);
+        len = (int)RTA_PAYLOAD(tb[RTA_MULTIPATH]);
+        struct rtattr *subtb[RTA_MAX + 1];
+        
+        for (;;) 
+        {
+            if (len < (int)sizeof(*rtnh) || rtnh->rtnh_len > len)
+            {
+                break;
+            }
+
+            if (rtnh->rtnh_len > sizeof(*rtnh)) 
+            {
+                memset(subtb, 0, sizeof(subtb));
+                netlink_parse_rtattr(subtb, RTA_MAX, RTNH_DATA(rtnh),
+                                      (int)(rtnh->rtnh_len - sizeof(*rtnh)));
+                if (subtb[RTA_ENCAP_TYPE])
+                {
+                    encap_type = *(uint16_t *)RTA_DATA(subtb[RTA_ENCAP_TYPE]);
+                    break;
+                }
+            }
+
+            if (rtnh->rtnh_len == 0)
+            {
+                break;
+            }
+
+            len -= NLMSG_ALIGN(rtnh->rtnh_len);
+            rtnh = RTNH_NEXT(rtnh);                
+        }
+    }
+
+    SWSS_LOG_INFO("Rx MsgType:%d Encap:%d", h->nlmsg_type, encap_type);
+
+    if (encap_type > 0)
+    {
+        return true;
+    }
+
+    return false;
+}
+
+FpmLink::FpmLink(RouteSync *rsync, unsigned short port) :
     MSG_BATCH_SIZE(256),
     m_bufSize(FPM_MAX_MSG_LEN * MSG_BATCH_SIZE),
     m_messageBuffer(NULL),
     m_pos(0),
     m_connected(false),
-    m_server_up(false)
+    m_server_up(false),
+    m_routesync(rsync)
 {
     struct sockaddr_in addr;
     int true_val = 1;
@@ -61,7 +152,7 @@ FpmLink::FpmLink(unsigned short port) :
 
 FpmLink::~FpmLink()
 {
-    delete m_messageBuffer;
+    delete[] m_messageBuffer;
     if (m_connected)
         close(m_connection_socket);
     if (m_server_up)
@@ -120,12 +211,35 @@ uint64_t FpmLink::readData()
 
         if (hdr->msg_type == FPM_MSG_TYPE_NETLINK)
         {
-            nl_msg *msg = nlmsg_convert((nlmsghdr *)fpm_msg_data(hdr));
+            bool isRaw = false;
+
+            nlmsghdr *nl_hdr = (nlmsghdr *)fpm_msg_data(hdr);
+
+            /*
+             * EVPN Type5 Add Routes need to be process in Raw mode as they contain 
+             * RMAC, VLAN and L3VNI information.
+             * Where as all other route will be using rtnl api to extract information 
+             * from the netlink msg.
+           * */
+            isRaw = isRawProcessing(nl_hdr);
+
+            nl_msg *msg = nlmsg_convert(nl_hdr);
             if (msg == NULL)
+            {
                 throw system_error(make_error_code(errc::bad_message), "Unable to convert nlmsg");
+            }
 
             nlmsg_set_proto(msg, NETLINK_ROUTE);
-            NetDispatcher::getInstance().onNetlinkMessage(msg);
+
+            if (isRaw)
+            {
+                /* EVPN Type5 Add route processing */
+                processRawMsg(nl_hdr);
+            }
+            else
+            {
+                NetDispatcher::getInstance().onNetlinkMessage(msg);
+            }
             nlmsg_free(msg);
         }
         start += msg_len;
