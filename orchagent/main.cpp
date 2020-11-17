@@ -55,6 +55,7 @@ bool gSwssRecord = true;
 bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
 bool gSyncMode = false;
+bool gZmqSyncMode = false;
 char *gAsicInstance = NULL;
 
 extern bool gIsNatSupported;
@@ -64,7 +65,7 @@ string gRecordFile;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-i INST_ID] [-s]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -76,6 +77,7 @@ void usage()
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
     cout << "    -s: enable synchronous mode" << endl;
+    cout << "    -z: enable zmq synchronous mode" << endl;
 }
 
 void sighup_handler(int signo)
@@ -160,7 +162,7 @@ int main(int argc, char **argv)
 
     string record_location = ".";
 
-    while ((opt = getopt(argc, argv, "b:m:r:d:i:hs")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:d:i:hsz")) != -1)
     {
         switch (opt)
         {
@@ -212,6 +214,10 @@ int main(int argc, char **argv)
         case 's':
             gSyncMode = true;
             SWSS_LOG_NOTICE("Enabling synchronous mode");
+            break;
+        case 'z':
+            gZmqSyncMode = true;
+            SWSS_LOG_NOTICE("Enabling zmq synchronous mode");
             break;
 
         default: /* '?' */
@@ -273,6 +279,14 @@ int main(int argc, char **argv)
     if (gSyncMode)
     {
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_MODE;
+        attr.value.booldata = true;
+
+        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+    }
+
+    if (gZmqSyncMode)
+    {
+        attr.id = SAI_REDIS_SWITCH_ATTR_ZMQ_SYNC_MODE;
         attr.value.booldata = true;
 
         sai_switch_api->set_switch_attribute(gSwitchId, &attr);
