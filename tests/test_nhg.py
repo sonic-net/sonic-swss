@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import time
 import json
 import pytest
@@ -10,15 +11,14 @@ from swsscommon import swsscommon
 
 class TestNextHopGroup(object):
     def test_route_nhg(self, dvs, testlog):
-        config_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-        intf_tbl = swsscommon.Table(config_db, "INTERFACE")
-        fvs = swsscommon.FieldValuePairs([("NULL","NULL")])
-        intf_tbl.set("Ethernet0", fvs)
-        intf_tbl.set("Ethernet4", fvs)
-        intf_tbl.set("Ethernet8", fvs)
-        intf_tbl.set("Ethernet0|10.0.0.0/31", fvs)
-        intf_tbl.set("Ethernet4|10.0.0.2/31", fvs)
-        intf_tbl.set("Ethernet8|10.0.0.4/31", fvs)
+        config_db = dvs.get_config_db()
+        fvs = {"NULL": "NULL"}
+        config_db.create_entry("INTERFACE", "Ethernet0", fvs)
+        config_db.create_entry("INTERFACE", "Ethernet4", fvs)
+        config_db.create_entry("INTERFACE", "Ethernet8", fvs)
+        config_db.create_entry("INTERFACE", "Ethernet0|10.0.0.0/31", fvs)
+        config_db.create_entry("INTERFACE", "Ethernet4|10.0.0.2/31", fvs)
+        config_db.create_entry("INTERFACE", "Ethernet8|10.0.0.4/31", fvs)
         dvs.runcmd("config interface startup Ethernet0")
         dvs.runcmd("config interface startup Ethernet4")
         dvs.runcmd("config interface startup Ethernet8")
@@ -35,23 +35,19 @@ class TestNextHopGroup(object):
         assert dvs.servers[1].runcmd("ip link set up dev eth0") == 0
         assert dvs.servers[2].runcmd("ip link set up dev eth0") == 0
 
-        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
-        ps = swsscommon.ProducerStateTable(db, "ROUTE_TABLE")
+        app_db = dvs.get_app_db()
+        ps = swsscommon.ProducerStateTable(app_db.db_connection, "ROUTE_TABLE")
+
+        asic_db = dvs.get_asic_db()
+        asic_routes_count = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"))
+
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5"), ("ifname", "Ethernet0,Ethernet4,Ethernet8")])
-
         ps.set("2.2.2.0/24", fvs)
-
-        time.sleep(1)
 
         # check if route was propagated to ASIC DB
 
-        adb = swsscommon.DBConnector(1, dvs.redis_sock, 0)
-
-        rtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
-        nhgtbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP")
-        nhg_member_tbl = swsscommon.Table(adb, "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
-
-        keys = rtbl.getKeys()
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", asic_routes_count + 1)
+        keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
 
         found_route = False
         for k in keys:
@@ -64,26 +60,22 @@ class TestNextHopGroup(object):
         assert found_route
 
         # assert the route points to next hop group
-        (status, fvs) = rtbl.get(k)
+        fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", k)
 
-        for v in fvs:
-            if v[0] == "SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID":
-                nhgid = v[1]
+        nhgid = fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
 
-        (status, fvs) = nhgtbl.get(nhgid)
+        fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhgid)
 
-        assert status
+        assert bool(fvs)
 
-        keys = nhg_member_tbl.getKeys()
+        keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
 
         assert len(keys) == 3
 
         for k in keys:
-            (status, fvs) = nhg_member_tbl.get(k)
+            fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", k)
 
-            for v in fvs:
-                if v[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID":
-                    assert v[1] == nhgid
+            assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
 
         # bring links down one-by-one
         for i in [0, 1, 2]:
@@ -91,21 +83,12 @@ class TestNextHopGroup(object):
 
             time.sleep(1)
 
-            tbl = swsscommon.Table(db, "PORT_TABLE")
-            (status, fvs) = tbl.get("Ethernet%d" % (i * 4))
+            fvs = app_db.get_entry("PORT_TABLE", "Ethernet%d" % (i * 4))
 
-            assert status == True
+            assert bool(fvs)
+            assert fvs["oper_status"] == "down"
 
-            oper_status = "unknown"
-
-            for v in fvs:
-                if v[0] == "oper_status":
-                    oper_status = v[1]
-                    break
-
-            assert oper_status == "down"
-
-            keys = nhg_member_tbl.getKeys()
+            keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
 
             assert len(keys) == 2 - i
 
@@ -115,30 +98,24 @@ class TestNextHopGroup(object):
 
             time.sleep(1)
 
-            tbl = swsscommon.Table(db, "PORT_TABLE")
-            (status, fvs) = tbl.get("Ethernet%d" % (i * 4))
+            fvs = app_db.get_entry("PORT_TABLE", "Ethernet%d" % (i * 4))
 
-            assert status == True
+            assert bool(fvs)
+            assert fvs["oper_status"] == "up"
 
-            oper_status = "unknown"
-
-            for v in fvs:
-                if v[0] == "oper_status":
-                    oper_status = v[1]
-                    break
-
-            assert oper_status == "up"
-
-            keys = nhg_member_tbl.getKeys()
+            keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
 
             assert len(keys) == i + 1
 
             for k in keys:
-                (status, fvs) = nhg_member_tbl.get(k)
+                fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", k)
+                assert fvs["SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID"] == nhgid
 
-                for v in fvs:
-                    if v[0] == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID":
-                        assert v[1] == nhgid
+        # Remove route 2.2.2.0/24
+        ps._del("2.2.2.0/24")
+
+        # Wait for route 2.2.2.0/24 to be removed
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", asic_routes_count)
 
     def test_route_nhg_exhaust(self, dvs, testlog):
         """
@@ -206,7 +183,7 @@ class TestNextHopGroup(object):
             if not fvs:
                 return None
 
-            print fvs
+            print(fvs)
             nhgid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
             if nhgid is None:
                 return None
@@ -216,7 +193,10 @@ class TestNextHopGroup(object):
 
         MAX_ECMP_COUNT = 512
         MAX_PORT_COUNT = 10
-        IP_INTEGER_BASE = int(ipaddress.IPv4Address(unicode("2.2.2.0")))
+        if sys.version_info < (3, 0):
+            IP_INTEGER_BASE = int(ipaddress.IPv4Address(unicode("2.2.2.0")))
+        else:
+            IP_INTEGER_BASE = int(ipaddress.IPv4Address(str("2.2.2.0")))
 
         config_db = dvs.get_config_db()
         fvs = {"NULL": "NULL"}
@@ -230,11 +210,13 @@ class TestNextHopGroup(object):
             assert dvs.servers[i].runcmd("ip link set up dev eth0") == 0
 
         app_db = dvs.get_app_db()
+        asic_db = dvs.get_asic_db()
         ps = swsscommon.ProducerStateTable(app_db.db_connection, "ROUTE_TABLE")
 
         # Add first batch of routes with unique nexthop groups in AppDB
         route_count = 0
         r = 0
+        asic_routes_count = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"))
         while route_count < MAX_ECMP_COUNT:
             r += 1
             fmt = '{{0:0{}b}}'.format(MAX_PORT_COUNT)
@@ -247,11 +229,12 @@ class TestNextHopGroup(object):
             ps.set(route_ipprefix, fvs)
             route_count += 1
 
-        asic_db = dvs.get_asic_db()
-
         # Wait and check ASIC DB the count of nexthop groups used
         asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", MAX_ECMP_COUNT)
-        asic_routes_count = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"))
+
+        # Wait and check ASIC DB the count of routes
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", asic_routes_count + MAX_ECMP_COUNT)
+        asic_routes_count += MAX_ECMP_COUNT
 
         # Add second batch of routes with unique nexthop groups in AppDB
         # Add more routes with new nexthop group in AppDBdd
@@ -315,3 +298,9 @@ class TestNextHopGroup(object):
         assert k is not None
         fvs = asic_route_nhg_fvs(k)
         assert fvs is not None
+
+
+# Add Dummy always-pass test at end as workaroud
+# for issue when Flaky fail on final test it invokes module tear-down before retrying
+def test_nonflaky_dummy():
+    pass

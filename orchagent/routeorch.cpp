@@ -22,13 +22,15 @@ extern CrmOrch *gCrmOrch;
 
 const int routeorch_pri = 5;
 
-RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch) :
+RouteOrch::RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch, FgNhgOrch *fgNhgOrch) :
         gRouteBulker(sai_route_api),
         gNextHopGroupMemberBulker(sai_next_hop_group_api, gSwitchId),
         Orch(db, tableName, routeorch_pri),
+        m_switchOrch(switchOrch),
         m_neighOrch(neighOrch),
         m_intfsOrch(intfsOrch),
         m_vrfOrch(vrfOrch),
+        m_fgNhgOrch(fgNhgOrch),
         m_nextHopGroupCount(0),
         m_resync(false)
 {
@@ -63,6 +65,10 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, NeighOrch *neighOrch, In
             m_maxNextHopGroupCount /= DEFAULT_MAX_ECMP_GROUP_SIZE;
         }
     }
+    vector<FieldValueTuple> fvTuple;
+    fvTuple.emplace_back("MAX_NEXTHOP_GROUP_COUNT", to_string(m_maxNextHopGroupCount));
+    m_switchOrch->set_switch_capability(fvTuple);
+
     SWSS_LOG_NOTICE("Maximum number of ECMP groups supported is %d", m_maxNextHopGroupCount);
 
     IpPrefix default_ip_prefix("0.0.0.0/0");
@@ -329,6 +335,11 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop)
         nhopgroup->second.nhopgroup_members[nexthop] = nexthop_id;
     }
 
+    if (!m_fgNhgOrch->validNextHopInNextHopGroup(nexthop))
+    {
+        return false;
+    }
+
     return true;
 }
 
@@ -359,6 +370,11 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop)
         }
 
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
+    }
+
+    if (!m_fgNhgOrch->invalidNextHopInNextHopGroup(nexthop))
+    {
+        return false;
     }
 
     return true;
@@ -580,7 +596,7 @@ void RouteOrch::doTask(Consumer& consumer)
                     else
                     {
                         if (addRoute(ctx, nhg))
-                             it = consumer.m_toSync.erase(it);
+                            it = consumer.m_toSync.erase(it);
                         else
                             it++;
                     }
@@ -827,6 +843,66 @@ bool RouteOrch::isRefCounterZero(const NextHopGroupKey &nexthops) const
     return m_syncdNextHopGroups.at(nexthops).ref_count == 0;
 }
 
+const NextHopGroupKey RouteOrch::getSyncdRouteNhgKey(sai_object_id_t vrf_id, const IpPrefix& ipPrefix)
+{
+    NextHopGroupKey nhg;
+    auto route_table = m_syncdRoutes.find(vrf_id);
+    if (route_table != m_syncdRoutes.end())
+    {
+        auto route_entry = route_table->second.find(ipPrefix);
+        if (route_entry != route_table->second.end())
+        {
+            nhg = route_entry->second;
+        }
+    }
+    return nhg;
+}
+
+bool RouteOrch::createFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id, vector<sai_attribute_t> &nhg_attrs)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_nextHopGroupCount >= m_maxNextHopGroupCount)
+    {
+        SWSS_LOG_DEBUG("Failed to create new next hop group. \
+                Reaching maximum number of next hop groups.");
+        return false;
+    }
+
+    sai_status_t status = sai_next_hop_group_api->create_next_hop_group(&next_hop_group_id,
+                                                      gSwitchId,
+                                                      (uint32_t)nhg_attrs.size(),
+                                                      nhg_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create next hop group rv:%d", status);
+        return false;
+    }
+
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+    m_nextHopGroupCount++;
+
+    return true;
+}
+
+bool RouteOrch::removeFineGrainedNextHopGroup(sai_object_id_t &next_hop_group_id)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t status = sai_next_hop_group_api->remove_next_hop_group(next_hop_group_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to remove next hop group %" PRIx64 ", rv:%d",
+                next_hop_group_id, status);
+        return false;
+    }
+
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP);
+    m_nextHopGroupCount--;
+
+    return true;
+}
+
 bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 {
     SWSS_LOG_ENTER();
@@ -1067,6 +1143,15 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
+
+    if (m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
+            && vrf_id == gVirtualRouterId)
+    {
+        /* Only support the default vrf for Fine Grained ECMP */
+        SWSS_LOG_INFO("Reroute %s:%s to fgNhgOrch", ipPrefix.to_string().c_str(), 
+                nextHops.to_string().c_str());
+        return m_fgNhgOrch->addRoute(vrf_id, ipPrefix, nextHops);
+    }
 
     /* next_hop_id indicates the next hop id or next hop group id of this route */
     sai_object_id_t next_hop_id;
@@ -1328,6 +1413,14 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
 
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
+
+    if (m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
+            && vrf_id == gVirtualRouterId)
+    {
+        /* Only support the default vrf for Fine Grained ECMP */
+        SWSS_LOG_INFO("Reroute %s to fgNhgOrch", ipPrefix.to_string().c_str());
+        return m_fgNhgOrch->removeRoute(vrf_id, ipPrefix);
+    }
 
     auto it_route_table = m_syncdRoutes.find(vrf_id);
     if (it_route_table == m_syncdRoutes.end())

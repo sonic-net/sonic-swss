@@ -272,6 +272,33 @@ void IntfMgr::removeSubIntfState(const string &alias)
     }
 }
 
+bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
+{
+    stringstream cmd;
+    string res;
+    string proxy_arp_pvlan;
+
+    if (proxy_arp == "enabled")
+    {
+        proxy_arp_pvlan = "1";
+    }
+    else if (proxy_arp == "disabled")
+    {
+        proxy_arp_pvlan = "0";
+    }
+    else
+    {
+        SWSS_LOG_ERROR("Proxy ARP state is invalid: \"%s\"", proxy_arp.c_str());
+        return false;
+    }
+
+    cmd << ECHO_CMD << " " << proxy_arp_pvlan << " > /proc/sys/net/ipv4/conf/" << alias << "/proxy_arp_pvlan";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    SWSS_LOG_INFO("Proxy ARP set to \"%s\" on interface \"%s\"", proxy_arp.c_str(), alias.c_str());
+    return true;
+}
+
 bool IntfMgr::isIntfStateOk(const string &alias)
 {
     vector<FieldValueTuple> temp;
@@ -346,6 +373,8 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string mtu = "";
     string adminStatus = "";
     string nat_zone = "";
+    string proxy_arp = "";
+
     for (auto idx : data)
     {
         const auto &field = fvField(idx);
@@ -362,6 +391,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         else if (field == "admin_status")
         {
             adminStatus = value;
+        }
+        else if (field == "proxy_arp")
+        {
+            proxy_arp = value;
         }
 
         if (field == "nat_zone")
@@ -393,7 +426,12 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
 
         if (is_lo)
         {
-            addLoopbackIntf(alias);
+            if (m_loopbackIntfList.find(alias) == m_loopbackIntfList.end())
+            {
+                addLoopbackIntf(alias);
+                m_loopbackIntfList.insert(alias);
+                SWSS_LOG_INFO("Added %s loopback interface", alias.c_str());
+            }
         }
         else
         {
@@ -420,7 +458,22 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             FieldValueTuple fvTuple("mac_addr", MacAddress().to_string());
             data.push_back(fvTuple);
         }
-        
+
+        if (!proxy_arp.empty())
+        {
+            if (!setIntfProxyArp(alias, proxy_arp))
+            {
+                SWSS_LOG_ERROR("Failed to set proxy ARP to \"%s\" state for the \"%s\" interface", proxy_arp.c_str(), alias.c_str());
+                return false;
+            }
+
+            if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+            {
+                FieldValueTuple fvTuple("proxy_arp", proxy_arp);
+                data.push_back(fvTuple);
+            }
+        }
+
         if (!subIntfAlias.empty())
         {
             if (m_subIntfList.find(subIntfAlias) == m_subIntfList.end())
@@ -492,6 +545,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         if (is_lo)
         {
             delLoopbackIntf(alias);
+            m_loopbackIntfList.erase(alias);
         }
 
         if (!subIntfAlias.empty())
@@ -539,19 +593,27 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 
         std::vector<FieldValueTuple> fvVector;
         FieldValueTuple f("family", ip_prefix.isV4() ? IPV4_NAME : IPV6_NAME);
-        FieldValueTuple s("scope", "global");
-        fvVector.push_back(s);
-        fvVector.push_back(f);
 
-        m_appIntfTableProducer.set(appKey, fvVector);
-        m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");
+        // Don't send link local config to AppDB and Orchagent
+        if (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE)
+        {
+            FieldValueTuple s("scope", "global");
+            fvVector.push_back(s);
+            fvVector.push_back(f);
+            m_appIntfTableProducer.set(appKey, fvVector);
+            m_stateIntfTable.hset(keys[0] + state_db_key_delimiter + keys[1], "state", "ok");
+        }
     }
     else if (op == DEL_COMMAND)
     {
         setIntfIp(alias, "del", ip_prefix);
 
-        m_appIntfTableProducer.del(appKey);
-        m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
+        // Don't send link local config to AppDB and Orchagent
+        if (ip_prefix.getIp().getAddrScope() != IpAddress::AddrScope::LINK_SCOPE)
+        {
+            m_appIntfTableProducer.del(appKey);
+            m_stateIntfTable.del(keys[0] + state_db_key_delimiter + keys[1]);
+        }
     }
     else
     {

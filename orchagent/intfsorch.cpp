@@ -24,6 +24,7 @@ extern sai_router_interface_api_t*  sai_router_intfs_api;
 extern sai_route_api_t*             sai_route_api;
 extern sai_neighbor_api_t*          sai_neighbor_api;
 extern sai_switch_api_t*            sai_switch_api;
+extern sai_vlan_api_t*              sai_vlan_api;
 
 extern sai_object_id_t gSwitchId;
 extern PortsOrch *gPortsOrch;
@@ -77,6 +78,24 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
     fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
     fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
     m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+
+    string rifRatePluginName = "rif_rates.lua";
+
+    try
+    {
+        string rifRateLuaScript = swss::loadLuaScript(rifRatePluginName);
+        string rifRateSha = swss::loadRedisScript(m_counter_db.get(), rifRateLuaScript);
+
+        vector<FieldValueTuple> fieldValues;
+        fieldValues.emplace_back(RIF_PLUGIN_FIELD, rifRateSha);
+        fieldValues.emplace_back(POLL_INTERVAL_FIELD, RIF_FLEX_STAT_COUNTER_POLL_MSECS);
+        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
+        m_flexCounterGroupTable->set(RIF_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+    }
+    catch (const runtime_error &e)
+    {
+        SWSS_LOG_WARN("RIF flex counter group plugins was not set successfully: %s", e.what());
+    }
 }
 
 sai_object_id_t IntfsOrch::getRouterIntfsId(const string &alias)
@@ -167,6 +186,28 @@ bool IntfsOrch::setRouterIntfsMtu(const Port &port)
     return true;
 }
 
+bool IntfsOrch::setRouterIntfsMac(const Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+
+    attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
+    memcpy(attr.value.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
+
+    sai_status_t status = sai_router_intfs_api->
+            set_router_interface_attribute(port.m_rif_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set router interface %s MAC to %s, rv:%d",
+                port.m_alias.c_str(), port.m_mac.to_string().c_str(), status);
+        return false;
+    }
+    SWSS_LOG_NOTICE("Set router interface %s MAC to %s",
+            port.m_alias.c_str(), port.m_mac.to_string().c_str());
+    return true;
+}
+
 bool IntfsOrch::setRouterIntfsNatZoneId(Port &port)
 {
     SWSS_LOG_ENTER();
@@ -226,6 +267,75 @@ bool IntfsOrch::setRouterIntfsAdminStatus(const Port &port)
     return true;
 }
 
+bool IntfsOrch::setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_type_t vlan_flood_type)
+{
+    SWSS_LOG_ENTER();
+
+    if (port.m_type != Port::VLAN)
+    {
+        SWSS_LOG_ERROR("VLAN flood type cannot be set for non VLAN interface \"%s\"", port.m_alias.c_str());
+        return false;
+    }
+
+    sai_attribute_t attr;
+    attr.id = SAI_VLAN_ATTR_BROADCAST_FLOOD_CONTROL_TYPE;
+    attr.value.s32 = vlan_flood_type;
+
+    sai_status_t status = sai_vlan_api->set_vlan_attribute(port.m_vlan_info.vlan_oid, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set flood type for VLAN %u, rv:%d", port.m_vlan_info.vlan_id, status);
+        return false;
+    }
+
+    return true;
+}
+
+bool IntfsOrch::setIntfProxyArp(const string &alias, const string &proxy_arp)
+{
+    SWSS_LOG_ENTER();
+
+    if (m_syncdIntfses.find(alias) == m_syncdIntfses.end())
+    {
+        SWSS_LOG_ERROR("Interface \"%s\" doesn't exist", alias.c_str());
+        return false;
+    }
+
+    if (m_syncdIntfses[alias].proxy_arp == (proxy_arp == "enabled" ? true : false))
+    {
+        SWSS_LOG_INFO("Proxy ARP is already set to \"%s\" on interface \"%s\"", proxy_arp.c_str(), alias.c_str());
+        return true;
+    }
+
+    Port port;
+    if (!gPortsOrch->getPort(alias, port))
+    {
+        SWSS_LOG_ERROR("Failed to get port info for the interface \"%s\"", alias.c_str());
+        return false;
+    }
+
+    if (port.m_type == Port::VLAN)
+    {
+        sai_vlan_flood_control_type_t vlan_flood_type;
+        if (proxy_arp == "enabled")
+        {
+            vlan_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_NONE;
+        }
+        else
+        {
+            vlan_flood_type = SAI_VLAN_FLOOD_CONTROL_TYPE_ALL;
+        }
+
+        if (!setIntfVlanFloodType(port, vlan_flood_type))
+        {
+            return false;
+        }
+    }
+
+    m_syncdIntfses[alias].proxy_arp = (proxy_arp == "enabled") ? true : false;
+    return true;
+}
+
 set<IpPrefix> IntfsOrch:: getSubnetRoutes()
 {
     SWSS_LOG_ENTER();
@@ -258,6 +368,7 @@ bool IntfsOrch::setIntf(const string& alias, sai_object_id_t vrf_id, const IpPre
             gPortsOrch->increasePortRefCount(alias);
             IntfsEntry intfs_entry;
             intfs_entry.ref_count = 0;
+            intfs_entry.proxy_arp = false;
             intfs_entry.vrf_id = vrf_id;
             m_syncdIntfses[alias] = intfs_entry;
             m_vrfOrch->increaseVrfRefCount(vrf_id);
@@ -440,6 +551,7 @@ void IntfsOrch::doTask(Consumer &consumer)
         uint32_t mtu;
         bool adminUp;
         uint32_t nat_zone_id = 0;
+        string proxy_arp = "";
 
         for (auto idx : data)
         {
@@ -514,6 +626,10 @@ void IntfsOrch::doTask(Consumer &consumer)
             else if (field == "nat_zone")
             {
                 nat_zone = value;
+            }
+            else if (field == "proxy_arp")
+            {
+                proxy_arp = value;
             }
         }
 
@@ -619,21 +735,24 @@ void IntfsOrch::doTask(Consumer &consumer)
                     continue;
                 }
 
-                /* Set nat zone id */
-                if ((!nat_zone.empty()) and (port.m_nat_zone_id != nat_zone_id))
+                if (gPortsOrch->getPort(alias, port))
                 {
-                    port.m_nat_zone_id = nat_zone_id;
+                    /* Set nat zone id */
+                    if ((!nat_zone.empty()) and (port.m_nat_zone_id != nat_zone_id))
+                    {
+                        port.m_nat_zone_id = nat_zone_id;
 
-                    if (gIsNatSupported)
-                    {
-                        setRouterIntfsNatZoneId(port);
+                        if (gIsNatSupported)
+                        {
+                            setRouterIntfsNatZoneId(port);
+                        }
+                        else
+                        {
+                            SWSS_LOG_NOTICE("Not set router interface %s NAT Zone Id to %u, as NAT is not supported",
+                                            port.m_alias.c_str(), port.m_nat_zone_id);
+                        }
+                        gPortsOrch->setPort(alias, port);
                     }
-                    else
-                    {
-                        SWSS_LOG_NOTICE("Not set router interface %s NAT Zone Id to %u, as NAT is not supported",
-                                        port.m_alias.c_str(), port.m_nat_zone_id);
-                    }
-                    gPortsOrch->setPort(alias, port);
                 }
             }
 
@@ -664,6 +783,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                     SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, getPort fail",
                                                      mac.to_string().c_str(), alias.c_str());
                 }
+            }
+
+            if (!proxy_arp.empty())
+            {
+                setIntfProxyArp(alias, proxy_arp);
             }
 
             it = consumer.m_toSync.erase(it);
@@ -724,6 +848,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                 vnet_name = m_vnetInfses.at(alias);
             }
 
+            if (m_syncdIntfses[alias].proxy_arp)
+            {
+                setIntfProxyArp(alias, "disabled");
+            }
+
             if (!vnet_name.empty())
             {
                 VNetOrch* vnet_orch = gDirectory.get<VNetOrch*>();
@@ -781,7 +910,15 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     attrs.push_back(attr);
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_SRC_MAC_ADDRESS;
-    memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+    if (port.m_mac)
+    {
+        memcpy(attr.value.mac, port.m_mac.getMac(), sizeof(sai_mac_t));
+    }
+    else
+    {
+        memcpy(attr.value.mac, gMacAddress.getMac(), sizeof(sai_mac_t));
+
+    }
     attrs.push_back(attr);
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
@@ -1055,7 +1192,6 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
     /* update RIF in FLEX_COUNTER_DB */
     string key = getRifFlexCounterTableKey(id);
 
-
     std::ostringstream counters_stream;
     for (const auto& it: rifStatIds)
     {
@@ -1065,7 +1201,6 @@ void IntfsOrch::addRifToFlexCounter(const string &id, const string &name, const 
     /* check the state of intf, if registering the intf to FC will result in runtime error */
     vector<FieldValueTuple> fieldValues;
     fieldValues.emplace_back(RIF_COUNTER_ID_LIST, counters_stream.str());
-
     m_flexCounterTable->set(key, fieldValues);
     SWSS_LOG_DEBUG("Registered interface %s to Flex counter", name.c_str());
 }
@@ -1092,6 +1227,23 @@ string IntfsOrch::getRifFlexCounterTableKey(string key)
 void IntfsOrch::generateInterfaceMap()
 {
     m_updateMapsTimer->start();
+}
+
+bool IntfsOrch::updateSyncdIntfPfx(const string &alias, const IpPrefix &ip_prefix, bool add)
+{
+    if (add && m_syncdIntfses[alias].ip_addresses.count(ip_prefix) == 0)
+    {
+        m_syncdIntfses[alias].ip_addresses.insert(ip_prefix);
+        return true;
+    }
+
+    if (!add && m_syncdIntfses[alias].ip_addresses.count(ip_prefix) > 0)
+    {
+        m_syncdIntfses[alias].ip_addresses.erase(ip_prefix);
+        return true;
+    }
+
+    return false;
 }
 
 void IntfsOrch::doTask(SelectableTimer &timer)
