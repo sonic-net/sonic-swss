@@ -38,7 +38,6 @@
 #include "subscriberstatetable.h"
 #include "select.h"
 #include "selectable.h"
-#include "redisclient.h"
 #include "mclagsyncd/mclag.h"
 #include "notificationconsumer.h"
 #include "notificationproducer.h"

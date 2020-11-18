@@ -61,15 +61,11 @@ int main(int argc, char **argv)
     Table state_vlan_mbr_table(&state_db, STATE_VLAN_MEMBER_TABLE_NAME);
     SubscriberStateTable state_vlan_mbr_subscriber_table(&state_db, STATE_VLAN_MEMBER_TABLE_NAME);
 
-    RedisClient redisClient_to_asicDb(&asic_db);
-    RedisClient redisClient_to_countersDb(&counters_db);
 
     map <string, string> isolate;
     map <string, string> learn_mode;
     RedisPipeline pipeline(&appl_db);
     ProducerStateTable iso_grp_tbl(&appl_db, APP_ISOLATION_GROUP_TABLE_NAME);
-    DBConnector *notificationsDb = new DBConnector(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
-    Table state_lag_table(&state_db, STATE_LAG_TABLE_NAME);
 
     while (1)
     {
@@ -94,8 +90,6 @@ int main(int argc, char **argv)
             mclag.p_asic_db = &asic_db;
             mclag.p_counters_db = &counters_db;
 
-            mclag.p_redisClient_to_asic = &redisClient_to_asicDb;
-            mclag.p_redisClient_to_counters = &redisClient_to_countersDb;
             mclag.p_iso_grp_tbl = &iso_grp_tbl;
             mclag.p_mclag_cfg_table = &mclag_cfg_table;
             mclag.p_state_fdb_tbl = &state_fdb_tbl;
@@ -104,7 +98,6 @@ int main(int argc, char **argv)
             mclag.p_state_fdb_table = &state_fdb_table;
             mclag.p_state_vlan_mbr_table = &state_vlan_mbr_table;
             mclag.p_state_vlan_mbr_subscriber_table = &state_vlan_mbr_subscriber_table;
-            mclag.p_state_lag_table = &state_lag_table;
 
 
             mclag.mclagsyncd_fetch_system_mac_from_configdb();
