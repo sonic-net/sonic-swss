@@ -90,9 +90,17 @@ bool OrchDaemon::init()
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
     gPortsOrch = new PortsOrch(m_applDb, ports_tables);
-    TableConnector applDbFdb(m_applDb, APP_FDB_TABLE_NAME);
+
+    const int fdborch_pri = 20;
+
+    vector<table_name_with_pri_t> app_fdb_tables = {
+        { APP_FDB_TABLE_NAME,        fdborch_pri},
+        { APP_MCLAG_FDB_TABLE_NAME,  fdborch_pri}
+    };
+
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
-    gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
+    TableConnector stateMclagDbFdb(m_stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME);
+    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, stateMclagDbFdb, gPortsOrch);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,

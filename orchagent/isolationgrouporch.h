@@ -21,8 +21,6 @@
 #include "orch.h"
 #include "port.h"
 #include "observer.h"
-#include "debugshcmd.h"
-
 
 #define ISOLATION_GRP_DESCRIPTION       "DESCRIPTION"
 #define ISOLATION_GRP_TYPE              "TYPE"
@@ -96,9 +94,6 @@ public:
         this->notify(type, cntx);
     }
 
-    void
-    debugShow(DebugShCmd *cmd);
-
 protected:
     string m_name;
     isolation_group_type_t m_type;
@@ -126,12 +121,6 @@ public:
     delIsolationGroup(string name);
 
     void update(SubjectType, void *);
-
-    void
-    installDebugClis();
-
-    void
-    debugShowGroup(DebugShCmd *cmd, string name="");
 
 private:
     void

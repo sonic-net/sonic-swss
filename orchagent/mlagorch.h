@@ -23,7 +23,6 @@
 #include "orch.h"
 #include "port.h"
 #include "isolationgrouporch.h"
-#include "debugshcmd.h"
 
 struct MlagIfUpdate
 {
@@ -43,8 +42,6 @@ public:
     MlagOrch(DBConnector *db, vector<string> &tableNames);
     ~MlagOrch();
     void update(SubjectType type, void *cntx);
-    void installDebugClis();
-    void showDebugInfo(DebugShCmd *cmd);
     bool isMlagInterface(string if_name);
     bool isIslInterface(string if_name);
 

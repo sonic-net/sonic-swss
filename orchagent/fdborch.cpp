@@ -19,17 +19,18 @@ extern sai_fdb_api_t    *sai_fdb_api;
 
 extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
-extern NeighOrch*       gNeighOrch;
 extern CrmOrch *        gCrmOrch;
 extern MlagOrch*        gMlagOrch;
 extern Directory<Orch*> gDirectory;
 
 const int fdborch_pri = 20;
 
-FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables, TableConnector stateDbFdbConnector, PortsOrch *port) :
+FdbOrch::FdbOrch(DBConnector* applDbConnector, vector<table_name_with_pri_t> appFdbTables,
+    TableConnector stateDbFdbConnector, TableConnector stateDbMclagFdbConnector, PortsOrch *port) :
     Orch(applDbConnector, appFdbTables),
     m_portsOrch(port),
-    m_fdbStateTable(stateDbFdbConnector.first, stateDbFdbConnector.second)
+    m_fdbStateTable(stateDbFdbConnector.first, stateDbFdbConnector.second),
+    m_mclagFdbStateTable(stateDbMclagFdbConnector.first, stateDbMclagFdbConnector.second)
 {
 
     for(auto it: appFdbTables)
@@ -66,21 +67,6 @@ bool FdbOrch::bake()
     return true;
 }
 
-//used for ICCPd FDB entries only for now.
-void FdbOrch::neighborOrchFdbUnregister(const MacAddress &mac, unsigned int vlan_id)
-{
-    fdb_mac_cache fdbmac;
-    memset(&fdbmac, 0, sizeof(fdb_mac_cache));
-    fdbmac.mac = mac;
-    fdbmac.fdid = vlan_id;
-
-    if (gNeighOrch->delFdbNeighCache(fdbmac, FDB_SYNCD_MAC))
-        SWSS_LOG_NOTICE(" MAC Un-Register with NeighOrch Success: "
-             "Mac: %s Vlan: %d ", fdbmac.mac.to_string().c_str(), fdbmac.fdid);
-    else
-        SWSS_LOG_NOTICE(" MAC Un-Register with NeighOrch Failed: "
-            "Mac: %s Vlan: %d ", fdbmac.mac.to_string().c_str(), fdbmac.fdid);
-}
 
 bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
 {
@@ -132,7 +118,6 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
         fdbdata.bridge_port_id = update.port.m_bridge_port_id;
         fdbdata.type = update.type;
         fdbdata.origin = FDB_ORIGIN_LEARN;
-        fdbdata.origin_sources = FDB_ORIGIN_LEARN;
 
         m_entries[entry] = fdbdata;
         SWSS_LOG_NOTICE("FdbOrch notification: mac %s was inserted into bv_id 0x%" PRIx64,
@@ -142,8 +127,11 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
 
         if (mac_move && (oldFdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED))
         {
-            // un-register with NeighborOrch.
-            neighborOrchFdbUnregister(entry.mac, vlan.m_vlan_info.vlan_id);
+            SWSS_LOG_NOTICE("fdbEvent: FdbOrch MCLAG remote to local move delete mac from state MCLAG remote fdb %s table:"
+                    "bv_id 0x%" PRIx64, entry.mac.to_string().c_str(), entry.bv_id);
+
+            m_mclagFdbStateTable.del(key);
+
         }
 
         // Write to StateDb
@@ -179,8 +167,9 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
 
         if (oldFdbData.origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
         {
-            // un-register with NeighborOrch.
-            neighborOrchFdbUnregister(entry.mac, vlan.m_vlan_info.vlan_id);
+            SWSS_LOG_NOTICE("fdbEvent: FdbOrch MCLAG remote mac %s deleted, remove from state mclag remote fdb table:"
+                            "bv_id 0x%" PRIx64, entry.mac.to_string().c_str(), entry.bv_id);
+            m_mclagFdbStateTable.del(key);
         }
 
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
@@ -217,7 +206,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
     {
     case SAI_FDB_EVENT_LEARNED:
     {
-        SWSS_LOG_INFO"Received LEARN event for bvid=%lx mac=%s port=%lx", entry->bv_id, update.entry.mac.to_string().c_str(), bridge_port_id);
+        SWSS_LOG_INFO("Received LEARN event for bvid=%lx mac=%s port=%lx",
+                entry->bv_id, update.entry.mac.to_string().c_str(), bridge_port_id);
 
         if (!m_portsOrch->getPort(entry->bv_id, vlan))
         {
@@ -367,7 +357,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
             if (vlan.m_members.find(update.port.m_alias) == vlan.m_members.end())
             {
         	    update.type = "static";
-        	    saved_fdb_entries[update.port.m_alias].push_back({existing_entry->first.mac, vlan.m_vlan_info.vlan_id, "static"});
+        	    //tbd_to_build
+        	    //saved_fdb_entries[update.port.m_alias].push_back({existing_entry->first.mac, vlan.m_vlan_info.vlan_id, "static"});
             }
             else
             {
@@ -704,6 +695,7 @@ void FdbOrch::doTask(Consumer& consumer)
         FdbEntry entry;
         entry.mac = MacAddress(keys[1]);
         entry.bv_id = vlan.m_vlan_info.vlan_oid;
+        string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
 
         if (op == SET_COMMAND)
         {
@@ -739,10 +731,9 @@ void FdbOrch::doTask(Consumer& consumer)
                 {
                     if (type == "dynamic_local")
                     {
-                        //Un-Register with NeighborOrch.
-                        neighborOrchFdbUnregister(entry.mac, vlan.m_vlan_info.vlan_id);
+                        m_mclagFdbStateTable.del(key);
 
-                        SWSS_LOG_NOTICE("do Task Add: Delete ICCP FDB found in cache: "
+                        SWSS_LOG_NOTICE("do Task Add: Delete ICCP FDB from kernel: "
                             "Mac: %s Vlan: %d port:%s type:%s",entry.mac.to_string().c_str(),
                             vlan.m_vlan_info.vlan_id, it->second.port.c_str(), it->second.type.c_str());
                     }
@@ -759,8 +750,9 @@ void FdbOrch::doTask(Consumer& consumer)
             {
                 if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
                 {
-                    //Un-Register with NeighborOrch.
-                    neighborOrchFdbUnregister(entry.mac, vlan.m_vlan_info.vlan_id);
+                    m_mclagFdbStateTable.del(key);
+                    SWSS_LOG_NOTICE("fdbEvent: do Task Delete MCLAG FDB from state mclag remote fdb table: "
+                            "Mac: %s Vlan: %d ",entry.mac.to_string().c_str(), vlan.m_vlan_info.vlan_id );
                 }
 
                 it = consumer.m_toSync.erase(it);
@@ -782,6 +774,7 @@ extern std::string joinFieldValues(_In_ const std::vector<swss::FieldValueTuple>
 void FdbOrch::doTask(NotificationConsumer& consumer)
 {
     SWSS_LOG_ENTER();
+    sai_status_t status;
 
     if (!gPortsOrch->allPortsReady())
     {
@@ -945,7 +938,8 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
 
     if (!update.add)
     {
-        flushFdbByPortVlan(port_name, vlan_name, 1);
+        //tbd_to_build
+        //flushFdbByPortVlan(port_name, vlan_name, 1);
         return;
     }
   
@@ -1043,10 +1037,9 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
             {
                 /* old mac was static and provisioned, it can not be changed by Remote Mac */
                 SWSS_LOG_NOTICE("Already existing static MAC:%s in Vlan:%d. "
-                        "Received same MAC from peer:%s; "
+                        "Received same MAC from peer "
                         "Peer mac ignored",
-                        entry.mac.to_string().c_str(), vlan.m_vlan_info.vlan_id,
-                        remote_ip.c_str());
+                        entry.mac.to_string().c_str(), vlan.m_vlan_info.vlan_id);
 
                 return true;
             }
@@ -1141,7 +1134,6 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     fdbData.bridge_port_id = port.m_bridge_port_id;
     fdbData.type = type;
     fdbData.origin = origin;
-    fdbData.origin_sources = origin;
 
     // overwrite the type and origin
     if ((origin == FDB_ORIGIN_MCLAG_ADVERTIZED) && (type == "dynamic_local"))
@@ -1183,29 +1175,22 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
     //register with NeighborOrch for ICCP learned MAC addresses
     if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED && (type != "dynamic_local"))
     {
-        //Register with NeighborOrch.
-        fdb_mac_cache fdbmac;
-        memset(&fdbmac, 0, sizeof(fdb_mac_cache));
-        fdbmac.mac = entry.mac;
-        fdbmac.fdid = vlan.m_vlan_info.vlan_id;
-        fdbmac.alias = port_name;
-        fdbmac.type = type;
-        fdbmac.origin = origin;
+        std::vector<FieldValueTuple> fvs;
+        fvs.push_back(FieldValueTuple("port", port_name));
+        fvs.push_back(FieldValueTuple("type", type));
+        m_mclagFdbStateTable.set(key, fvs);
 
-        if (gNeighOrch->addFdbNeighCache(fdbmac, FDB_SYNCD_MAC))
-            SWSS_LOG_NOTICE("AddFdbEntry: Register ICCP MAC with NeighOrch Success: "
-                "Mac: %s Vlan: %d port:%s type:%s", entry.mac.to_string().c_str(),
-                fdbmac.fdid, port_name.c_str(), type.c_str());
-        else
-            SWSS_LOG_NOTICE("AddFdbEntry: Register ICCP MAC with NeighOrch Failed: "
-                "Mac: %s Vlan: %d port:%s type:%s", entry.mac.to_string().c_str(),
-                fdbmac.fdid, port_name.c_str(), type.c_str());
+        SWSS_LOG_NOTICE("fdbEvent: AddFdbEntry: Add MCLAG MAC with state mclag remote fdb table "
+              "Mac: %s Vlan: %d port:%s type:%s", entry.mac.to_string().c_str(),
+              vlan.m_vlan_info.vlan_id, port_name.c_str(), type.c_str());
     }
     else if (macUpdate && (oldOrigin == FDB_ORIGIN_MCLAG_ADVERTIZED) &&
             (origin != FDB_ORIGIN_MCLAG_ADVERTIZED))
     {
-        //UnRegister with NeighborOrch as MAC moved from iccp to non-iccp
-        neighborOrchFdbUnregister(entry.mac, vlan.m_vlan_info.vlan_id);
+        SWSS_LOG_NOTICE("fdbEvent: AddFdbEntry: del MCLAG MAC from state MCLAG remote fdb table "
+                    "Mac: %s Vlan: %d port:%s type:%s", entry.mac.to_string().c_str(),
+                    vlan.m_vlan_info.vlan_id, port_name.c_str(), type.c_str());
+        m_mclagFdbStateTable.del(key);
     }
 
     if(!macUpdate)
@@ -1275,8 +1260,6 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
         }
         else
         {
-            // delete origin from learn sources.
-            fdbData.origin_sources &= ~origin;
             m_entries[entry] = fdbData;
             SWSS_LOG_NOTICE("FdbOrch RemoveFDBEntry: mac=%s fdb origin is different; found_origin:%d delete_origin:%d",
                     entry.mac.to_string().c_str(), fdbData.origin, origin);
@@ -1289,9 +1272,6 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
             return true;
         }
     }
-
-    //unset the current origin flag.
-    fdbData.origin_sources &= ~origin;
 
     string key = "Vlan" + to_string(vlan.m_vlan_info.vlan_id) + ":" + entry.mac.to_string();
 

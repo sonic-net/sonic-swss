@@ -3622,7 +3622,7 @@ bool PortsOrch::addVlanMember(Port &vlan, Port &port, string &tagging_mode)
     }
 
     /* a physical port may join multiple vlans */
-    VlanMemberEntry vme = {vlan_member_id, sai_tagging_mode};
+    VlanMemberEntry vme = {vlan.m_alias, vlan_member_id, sai_tagging_mode};
     port.m_vlan_members[vlan.m_vlan_info.vlan_id] = vme;
     m_portList[port.m_alias] = port;
     vlan.m_members.insert(port.m_alias);

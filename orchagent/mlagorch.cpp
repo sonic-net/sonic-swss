@@ -63,23 +63,6 @@ void MlagOrch::update(SubjectType type, void *cntx)
     }
 }
 
-DEBUGSH_CLI(MlagOrchShowDebug,
-            "show system internal orchagent mlag global",
-            SHOW_COMMAND,
-            SYSTEM_DEBUG_COMMAND,
-            INTERNAL_COMMAND,
-            "Orchagent related commands",
-            "Mlag orch related commands",
-            "Mlag global info")
-{
-    gMlagOrch->showDebugInfo(this);
-}
-
-void MlagOrch::installDebugClis()
-{
-    DebugShCmd::install(new MlagOrchShowDebug());
-}
-
 //------------------------------------------------------------------
 //Private API section
 //------------------------------------------------------------------
@@ -538,42 +521,3 @@ bool MlagOrch::addAllMlagInterfacesToIsolationGroup()
     }
 }
 
-void MlagOrch::showDebugInfo(DebugShCmd *cmd)
-{
-    Port mlag_port, isl_port;
-
-    //Show Mlag interface info
-    DEBUGSH_OUT(cmd, "Isolation group name: %s(%s)\n",
-        MLAG_ISL_ISOLATION_GROUP_NAME,
-        gIsoGrpOrch->getIsolationGroup(MLAG_ISL_ISOLATION_GROUP_NAME) ?
-        "created" : "not created");
-    DEBUGSH_OUT(cmd, "ICCP controls isolation group: %s\n",
-        m_iccp_control_isolation_grp ? "yes" : "no");
-    DEBUGSH_OUT(cmd, "MlagOrch attaches to isolation group: %s\n",
-        m_attach_isolation_grp ? "yes" : "no");
-    DEBUGSH_OUT(cmd, "Isolation group attach count: %u\n", m_num_isolation_grp_attach);
-    DEBUGSH_OUT(cmd, "Isolation group detach count: %u\n", m_num_isolation_grp_detach);
-    DEBUGSH_OUT(cmd, "Isolation group add error count: %u\n", m_num_isolation_grp_add_error);
-    DEBUGSH_OUT(cmd, "Isolation group delete error count: %u\n", m_num_isolation_grp_del_error);
-    DEBUGSH_OUT(cmd, "Isolation group update error count: %u\n\n", m_num_isolation_grp_update_error);
-
-    DEBUGSH_OUT(cmd, "MLAG ISL interface: %s\n", m_isl_name.c_str());
-    DEBUGSH_OUT(cmd, "MLAG interfaces: %lu\n", m_mlagIntfs.size());
-    for (auto &name: m_mlagIntfs)
-    {
-        //MLAG interface is configured before the interface is configured
-        if (!gPortsOrch->getPort(name, mlag_port))
-        {
-            DEBUGSH_OUT(cmd, "    %s\n", name.c_str());
-        }
-        else
-        {
-            DEBUGSH_OUT(cmd,
-                "    %s: oper %s, traffic_disable %d, hw_pending_lag_mbrs %lu\n",
-                mlag_port.m_alias.c_str(), 
-                oper_status_strings.at(mlag_port.m_oper_status).c_str(),
-                mlag_port.m_lag_traffic_disable,
-                mlag_port.m_hw_pending_lag_members.size());
-        }
-    }
-}
