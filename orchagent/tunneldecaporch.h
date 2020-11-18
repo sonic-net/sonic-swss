@@ -19,6 +19,7 @@ struct TunnelEntry
 {
     sai_object_id_t                 tunnel_id;              // tunnel id
     sai_object_id_t                 overlay_intf_id;        // overlay interface id
+    swss::IpAddresses               dst_ip_addrs;           // destination ip addresses
     std::vector<TunnelTermEntry>    tunnel_term_info;       // tunnel_entry ids related to the tunnel abd ips related to the tunnel (all ips for tunnel entries that refer to this tunnel)
 };
 
@@ -47,6 +48,7 @@ public:
 
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr);
+    swss::IpAddresses getDstIpAddresses(std::string tunnelKey);
 
 private:
     TunnelTable tunnelTable;

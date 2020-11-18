@@ -418,8 +418,10 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
     memcpy(neighbor_attr.value.mac, macAddress.getMac(), 6);
     neighbor_attrs.push_back(neighbor_attr);
 
-    auto state = getNeighborState(neighborEntry);
-    if (!isHwConfigured(neighborEntry) && (state != NeighborState::NBR_STATE_DISABLED))
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    bool hw_config = isHwConfigured(neighborEntry);
+
+    if (!hw_config && mux_orch->isNeighborActive(ip_address, alias))
     {
         status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry,
                                    (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
@@ -474,10 +476,9 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
 
             return false;
         }
-
-        m_syncdNeighbors[neighborEntry] = { macAddress, true, state };
+        hw_config = true;
     }
-    else if (isHwConfigured(neighborEntry) && (state != NeighborState::NBR_STATE_DISABLED))
+    else if (isHwConfigured(neighborEntry))
     {
         status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
         if (status != SAI_STATUS_SUCCESS)
@@ -489,7 +490,7 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
     }
 
-    m_syncdNeighbors[neighborEntry].mac = macAddress;
+    m_syncdNeighbors[neighborEntry] = { macAddress, hw_config };
 
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
@@ -497,7 +498,7 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
     return true;
 }
 
-bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry)
+bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
 {
     SWSS_LOG_ENTER();
 
@@ -518,98 +519,92 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry)
         return false;
     }
 
-    auto state = getNeighborState(neighborEntry);
-    if (state == NeighborState::NBR_STATE_DISABLED)
+    if (isHwConfigured(neighborEntry))
     {
-        SWSS_LOG_INFO("Neighbor is disabled for %s", neighborEntry.ip_address.to_string().c_str());
-        return true;
-    }
+        sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
 
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
+        sai_neighbor_entry_t neighbor_entry;
+        neighbor_entry.rif_id = rif_id;
+        neighbor_entry.switch_id = gSwitchId;
+        copy(neighbor_entry.ip_address, ip_address);
 
-    sai_neighbor_entry_t neighbor_entry;
-    neighbor_entry.rif_id = rif_id;
-    neighbor_entry.switch_id = gSwitchId;
-    copy(neighbor_entry.ip_address, ip_address);
-
-    sai_object_id_t next_hop_id = m_syncdNextHops[nexthop].next_hop_id;
-    status = sai_next_hop_api->remove_next_hop(next_hop_id);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        /* When next hop is not found, we continue to remove neighbor entry. */
-        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        sai_object_id_t next_hop_id = m_syncdNextHops[nexthop].next_hop_id;
+        status = sai_next_hop_api->remove_next_hop(next_hop_id);
+        if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to locate next hop %s on %s, rv:%d",
-                           ip_address.to_string().c_str(), alias.c_str(), status);
+            /* When next hop is not found, we continue to remove neighbor entry. */
+            if (status == SAI_STATUS_ITEM_NOT_FOUND)
+            {
+                SWSS_LOG_ERROR("Failed to locate next hop %s on %s, rv:%d",
+                               ip_address.to_string().c_str(), alias.c_str(), status);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
+                               ip_address.to_string().c_str(), alias.c_str(), status);
+                return false;
+            }
         }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
-                           ip_address.to_string().c_str(), alias.c_str(), status);
-            return false;
-        }
-    }
 
-    if (status != SAI_STATUS_ITEM_NOT_FOUND)
-    {
+        if (status != SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+            }
+            else
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+            }
+        }
+
+        SWSS_LOG_NOTICE("Removed next hop %s on %s",
+                        ip_address.to_string().c_str(), alias.c_str());
+
+        status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            if (status == SAI_STATUS_ITEM_NOT_FOUND)
+            {
+                SWSS_LOG_ERROR("Failed to locate neigbor %s on %s, rv:%d",
+                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
+                return true;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
+                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
+                return false;
+            }
+        }
+
         if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
         {
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
         }
         else
         {
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
         }
-    }
 
-    SWSS_LOG_NOTICE("Removed next hop %s on %s",
-                    ip_address.to_string().c_str(), alias.c_str());
-
-    status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        if (status == SAI_STATUS_ITEM_NOT_FOUND)
-        {
-            SWSS_LOG_ERROR("Failed to locate neigbor %s on %s, rv:%d",
-                    m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
-            return true;
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
-                    m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
-            return false;
-        }
-    }
-
-    if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-    {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-    }
-    else
-    {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+        removeNextHop(ip_address, alias);
+        m_intfsOrch->decreaseRouterIntfsRefCount(alias);
     }
 
     SWSS_LOG_NOTICE("Removed neighbor %s on %s",
             m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
 
-    if (state == NeighborState::NBR_STATE_UNKNOWN)
-    {
-        m_syncdNeighbors.erase(neighborEntry);
-        SWSS_LOG_INFO("Erased neighbor %s ", neighborEntry.ip_address.to_string().c_str());
-    }
-    else
+    /* Do not delete entry from cache if its disable request */
+    if (disable)
     {
         m_syncdNeighbors[neighborEntry].hw_configured = false;
+        return true;
     }
 
-    m_intfsOrch->decreaseRouterIntfsRefCount(alias);
+    m_syncdNeighbors.erase(neighborEntry);
 
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
-
-    removeNextHop(ip_address, alias);
 
     return true;
 }
@@ -624,41 +619,15 @@ bool NeighOrch::isHwConfigured(const NeighborEntry& neighborEntry)
     return (m_syncdNeighbors[neighborEntry].hw_configured);
 }
 
-bool NeighOrch::isNeighborLearned(const NeighborEntry& neighborEntry)
-{
-    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
-    {
-        return false;
-    }
-
-    return (!!m_syncdNeighbors[neighborEntry].mac);
-}
-
-void NeighOrch::setNeighborState(const NeighborEntry& neighborEntry, NeighborState state)
-{
-    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
-    {
-        m_syncdNeighbors[neighborEntry] = { MacAddress(), false, state };
-    }
-
-    m_syncdNeighbors[neighborEntry].state = state;
-}
-
-NeighborState NeighOrch::getNeighborState(const NeighborEntry& neighborEntry)
-{
-    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
-    {
-       return NeighborState::NBR_STATE_UNKNOWN;
-    }
-
-    return m_syncdNeighbors[neighborEntry].state;
-}
-
 bool NeighOrch::enableNeighbor(const NeighborEntry& neighborEntry)
 {
-    SWSS_LOG_INFO("Neighbor enable request for %s ", neighborEntry.ip_address.to_string().c_str());
+    SWSS_LOG_NOTICE("Neighbor enable request for %s ", neighborEntry.ip_address.to_string().c_str());
 
-    setNeighborState(neighborEntry, NeighborState::NBR_STATE_ENABLED);
+    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+    {
+        SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
+        return true;
+    }
 
     if (isHwConfigured(neighborEntry))
     {
@@ -666,26 +635,24 @@ bool NeighOrch::enableNeighbor(const NeighborEntry& neighborEntry)
         return true;
     }
 
-    if (isNeighborLearned(neighborEntry))
-    {
-         return addNeighbor(neighborEntry, m_syncdNeighbors[neighborEntry].mac);
-    }
-
-    SWSS_LOG_NOTICE("Neighbor enabled for %s", neighborEntry.ip_address.to_string().c_str());
-    return true;
+    return addNeighbor(neighborEntry, m_syncdNeighbors[neighborEntry].mac);
 }
 
 bool NeighOrch::disableNeighbor(const NeighborEntry& neighborEntry)
 {
-    SWSS_LOG_INFO("Neighbor disable request for %s ", neighborEntry.ip_address.to_string().c_str());
+    SWSS_LOG_NOTICE("Neighbor disable request for %s ", neighborEntry.ip_address.to_string().c_str());
 
-    if (isHwConfigured(neighborEntry) && !removeNeighbor(neighborEntry))
+    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
     {
-        return false;
+        SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
+        return true;
     }
 
-    setNeighborState(neighborEntry, NeighborState::NBR_STATE_DISABLED);
+    if (!isHwConfigured(neighborEntry))
+    {
+        SWSS_LOG_INFO("Neighbor %s is not programmed to HW", neighborEntry.ip_address.to_string().c_str());
+        return true;
+    }
 
-    SWSS_LOG_NOTICE("Neighbor Disabled for %s", neighborEntry.ip_address.to_string().c_str());
-    return true;
+    return removeNeighbor(neighborEntry, true);
 }

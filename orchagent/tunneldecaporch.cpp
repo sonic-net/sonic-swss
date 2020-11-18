@@ -16,7 +16,6 @@ extern sai_object_id_t  gSwitchId;
 extern PortsOrch*       gPortsOrch;
 extern CrmOrch*         gCrmOrch;
 
-
 TunnelDecapOrch::TunnelDecapOrch(DBConnector *db, string tableName) : Orch(db, tableName)
 {
     SWSS_LOG_ENTER();
@@ -312,7 +311,7 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
         return false;
     }
 
-    tunnelTable[key] = { tunnel_id, overlayIfId, {} };
+    tunnelTable[key] = { tunnel_id, overlayIfId, dst_ip, {} };
 
     // create a decap tunnel entry for every ip
     if (!addDecapTunnelTermEntries(key, dst_ip, tunnel_id))
@@ -503,6 +502,7 @@ bool TunnelDecapOrch::setIpAttribute(string key, IpAddresses new_ip_addresses, s
     vector<TunnelTermEntry> tunnel_term_info_copy(tunnel_info->tunnel_term_info);
 
     tunnel_info->tunnel_term_info.clear();
+    tunnel_info->dst_ip_addrs = new_ip_addresses;
 
     // loop through original ips and remove ips not in the new ip_addresses
     for (auto it = tunnel_term_info_copy.begin(); it != tunnel_term_info_copy.end(); ++it)
@@ -752,4 +752,15 @@ bool TunnelDecapOrch::removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAd
     tunnelNhs[tunnelKey].erase(ipAddr);
 
     return true;
+}
+
+IpAddresses TunnelDecapOrch::getDstIpAddresses(std::string tunnelKey)
+{
+    if (tunnelTable.find(tunnelKey) == tunnelTable.end())
+    {
+        SWSS_LOG_ERROR("Tunnel not found %s", tunnelKey.c_str());
+        return IpAddresses();
+    }
+
+    return tunnelTable[tunnelKey].dst_ip_addrs;
 }

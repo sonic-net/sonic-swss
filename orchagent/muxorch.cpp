@@ -8,6 +8,7 @@
 
 #include "sai.h"
 #include "ipaddress.h"
+#include "ipaddresses.h"
 #include "orch.h"
 #include "request_parser.h"
 #include "muxorch.h"
@@ -26,14 +27,19 @@ extern AclOrch *gAclOrch;
 extern PortsOrch *gPortsOrch;
 
 extern sai_object_id_t gVirtualRouterId;
+extern sai_object_id_t  gUnderlayIfId;
 extern sai_object_id_t gSwitchId;
 extern sai_route_api_t* sai_route_api;
+extern sai_tunnel_api_t* sai_tunnel_api;
+extern sai_next_hop_api_t* sai_next_hop_api;
+extern sai_router_interface_api_t* sai_router_intfs_api;
 
 /* Constants */
-#define MUX_TUNNEL "MUX_TUNNEL"
+#define MUX_TUNNEL "MUX_TUNNEL0"
 #define MUX_ACL_TABLE_NAME "mux_acl_table";
 #define MUX_ACL_RULE_NAME "mux_acl_rule";
 #define MUX_HW_STATE_FAILED "failed"
+#define MUX_HW_STATE_PENDING "pending"
 
 const map<std::pair<MuxState, MuxState>, MuxStateChange> muxStateTransition =
 {
@@ -56,6 +62,7 @@ const map <MuxState, string> muxStateValToString =
     { MuxState::MUX_STATE_STANDBY, "standby" },
     { MuxState::MUX_STATE_INIT, "init" },
     { MuxState::MUX_STATE_FAILED, "failed" },
+    { MuxState::MUX_STATE_PENDING, "pending" },
 };
 
 const map <string, MuxState> muxStateStringToVal =
@@ -64,6 +71,7 @@ const map <string, MuxState> muxStateStringToVal =
     { "standby", MuxState::MUX_STATE_STANDBY },
     { "init", MuxState::MUX_STATE_INIT },
     { "failed", MuxState::MUX_STATE_FAILED },
+    { "pending", MuxState::MUX_STATE_PENDING },
 };
 
 static inline MuxStateChange mux_state_change (MuxState prev, MuxState curr)
@@ -146,12 +154,157 @@ static sai_status_t remove_route(IpPrefix &pfx)
     return status;
 }
 
+static sai_object_id_t create_tunnel(const IpAddress* p_dst_ip, const IpAddress* p_src_ip)
+{
+    sai_status_t status;
+
+    sai_attribute_t attr;
+    sai_object_id_t overlay_if;
+    vector<sai_attribute_t> tunnel_attrs;
+    vector<sai_attribute_t> overlay_intf_attrs;
+
+    sai_attribute_t overlay_intf_attr;
+    overlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID;
+    overlay_intf_attr.value.oid = gVirtualRouterId;
+    overlay_intf_attrs.push_back(overlay_intf_attr);
+
+    overlay_intf_attr.id = SAI_ROUTER_INTERFACE_ATTR_TYPE;
+    overlay_intf_attr.value.s32 = SAI_ROUTER_INTERFACE_TYPE_LOOPBACK;
+    overlay_intf_attrs.push_back(overlay_intf_attr);
+
+    status = sai_router_intfs_api->create_router_interface(&overlay_if, gSwitchId, (uint32_t)overlay_intf_attrs.size(), overlay_intf_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't create overlay interface");
+    }
+
+    attr.id = SAI_TUNNEL_ATTR_TYPE;
+    attr.value.s32 = SAI_TUNNEL_TYPE_IPINIP;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_ATTR_OVERLAY_INTERFACE;
+    attr.value.oid = overlay_if;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE;
+    attr.value.oid = gUnderlayIfId;
+    tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_ATTR_PEER_MODE;
+    attr.value.s32 = SAI_TUNNEL_PEER_MODE_P2P;
+    tunnel_attrs.push_back(attr);
+
+    if (p_src_ip != nullptr)
+    {
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
+        copy(attr.value.ipaddr, p_src_ip->to_string());
+        tunnel_attrs.push_back(attr);
+    }
+
+    if (p_dst_ip != nullptr)
+    {
+        attr.id = SAI_TUNNEL_ATTR_ENCAP_DST_IP;
+        copy(attr.value.ipaddr, p_dst_ip->to_string());
+        tunnel_attrs.push_back(attr);
+    }
+
+    sai_object_id_t tunnel_id;
+    status = sai_tunnel_api->create_tunnel(&tunnel_id, gSwitchId, (uint32_t)tunnel_attrs.size(), tunnel_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        throw std::runtime_error("Can't create a tunnel object");
+    }
+
+    return tunnel_id;
+}
+
+static sai_object_id_t create_nh_tunnel(sai_object_id_t tunnel_id, IpAddress& ipAddr)
+{
+    std::vector<sai_attribute_t> next_hop_attrs;
+    sai_attribute_t next_hop_attr;
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TYPE;
+    next_hop_attr.value.s32 = SAI_NEXT_HOP_TYPE_TUNNEL_ENCAP;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    sai_ip_address_t host_ip;
+    swss::copy(host_ip, ipAddr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_IP;
+    next_hop_attr.value.ipaddr = host_ip;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    next_hop_attr.id = SAI_NEXT_HOP_ATTR_TUNNEL_ID;
+    next_hop_attr.value.oid = tunnel_id;
+    next_hop_attrs.push_back(next_hop_attr);
+
+    sai_object_id_t next_hop_id = SAI_NULL_OBJECT_ID;
+    sai_status_t status = sai_next_hop_api->create_next_hop(&next_hop_id, gSwitchId,
+                                            static_cast<uint32_t>(next_hop_attrs.size()),
+                                            next_hop_attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Tunnel NH create failed for ip %s", ipAddr.to_string().c_str());
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Tunnel NH created for ip %s", ipAddr.to_string().c_str());
+
+        if (ipAddr.isV4())
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+        }
+        else
+        {
+            gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+        }
+    }
+
+    return next_hop_id;
+}
+
+static bool remove_nh_tunnel(sai_object_id_t nh_id, IpAddress& ipAddr)
+{
+    sai_status_t status = sai_next_hop_api->remove_next_hop(nh_id);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        if (status == SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            SWSS_LOG_ERROR("Failed to locate next hop %s rv:%d",
+                            ipAddr.to_string().c_str(), status);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove next hop %s  rv:%d",
+                            ipAddr.to_string().c_str(), status);
+            return false;
+        }
+    }
+    else
+    {
+        SWSS_LOG_NOTICE("Tunnel NH removed for ip %s",ipAddr.to_string().c_str());
+
+        if (ipAddr.isV4())
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+        }
+        else
+        {
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+        }
+    }
+
+    return true;
+}
+
 MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress peer_ip)
          :mux_name_(name), srv_ip4_(srv_ip4), srv_ip6_(srv_ip6), peer_ip4_(peer_ip)
 {
-    mux_cfg_orch_ = gDirectory.get<MuxCfgOrch*>();
     mux_orch_ = gDirectory.get<MuxOrch*>();
+    mux_cb_orch_ = gDirectory.get<MuxCableOrch*>();
     mux_state_orch_ = gDirectory.get<MuxStateOrch*>();
+
+    nbr_handler_ = unique_ptr<MuxNbrHandler> (new MuxNbrHandler());
 
     state_machine_handlers_.insert(handler_pair(MUX_STATE_INIT_ACTIVE, &MuxCable::stateInitActive));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_STANDBY_ACTIVE, &MuxCable::stateActive));
@@ -163,15 +316,13 @@ bool MuxCable::stateInitActive()
 {
     SWSS_LOG_INFO("Set state to Active from %s", muxStateValToString.at(state_).c_str());
 
-    NeighborEntry neigh = NeighborEntry(srv_ip4_.getIp().to_string());
-    if (!gNeighOrch->enableNeighbor(neigh))
+    if (!nbrHandler())
     {
         return false;
     }
 
     return true;
 }
-
 
 bool MuxCable::stateActive()
 {
@@ -190,8 +341,7 @@ bool MuxCable::stateActive()
         return false;
     }
 
-    NeighborEntry neigh = NeighborEntry(srv_ip4_.getIp().to_string());
-    if (!gNeighOrch->enableNeighbor(neigh))
+    if (!nbrHandler())
     {
         return false;
     }
@@ -201,7 +351,12 @@ bool MuxCable::stateActive()
         return false;
     }
 
-    mux_cfg_orch_->removeNextHopTunnel(MUX_TUNNEL, peer_ip4_);
+    if (remove_route(srv_ip6_) != SAI_STATUS_SUCCESS)
+    {
+        return false;
+    }
+
+    mux_orch_->removeNextHopTunnel(MUX_TUNNEL, peer_ip4_);
 
     return true;
 }
@@ -217,7 +372,7 @@ bool MuxCable::stateStandby()
         return false;
     }
 
-    sai_object_id_t nh = mux_cfg_orch_->createNextHopTunnel(MUX_TUNNEL, peer_ip4_);
+    sai_object_id_t nh = mux_orch_->createNextHopTunnel(MUX_TUNNEL, peer_ip4_);
 
     if (nh == SAI_NULL_OBJECT_ID)
     {
@@ -230,11 +385,16 @@ bool MuxCable::stateStandby()
         return false;
     }
 
-    NeighborEntry neigh = NeighborEntry(srv_ip4_.getIp().to_string());
-
-    if (!gNeighOrch->disableNeighbor(neigh))
+    if (create_route(srv_ip6_, nh) != SAI_STATUS_SUCCESS)
     {
         remove_route(srv_ip4_);
+        return false;
+    }
+
+    if (!nbrHandler(false))
+    {
+        remove_route(srv_ip4_);
+        remove_route(srv_ip6_);
         return false;
     }
 
@@ -263,15 +423,22 @@ void MuxCable::setState(string new_state)
         return;
     }
 
-    mux_orch_->updateMuxState(mux_name_, new_state);
+    mux_cb_orch_->updateMuxState(mux_name_, new_state);
+
+    MuxState state = state_;
+    state_ = ns;
+
+    st_chg_in_progress_ = true;
 
     if (!(this->*(state_machine_handlers_[it->second]))())
     {
+        //Reset back to original state
+        state_ = state;
+        st_chg_in_progress_ = false;
         throw std::runtime_error("Failed to handle state transition");
     }
 
-    state_ = ns;
-
+    st_chg_in_progress_ = false;
     SWSS_LOG_INFO("Changed state to %s", new_state.c_str());
 
     return;
@@ -294,6 +461,82 @@ bool MuxCable::aclHandler(sai_object_id_t port, bool add)
     else
     {
         acl_handler_.reset();
+    }
+
+    return true;
+}
+
+bool MuxCable::isIpInSubnet(IpAddress ip)
+{
+    if (ip.isV4())
+    {
+        return (srv_ip4_.isAddressInSubnet(ip));
+    }
+    else
+    {
+        return (srv_ip6_.isAddressInSubnet(ip));
+    }
+}
+
+bool MuxCable::nbrHandler(bool enable)
+{
+    if (enable)
+    {
+        return nbr_handler_->enable();
+    }
+    else
+    {
+        return nbr_handler_->disable();
+    }
+}
+
+void MuxNbrHandler::update(IpAddress ip, string alias, bool add)
+{
+    if (add)
+    {
+        neighbors_.add(ip);
+        if (!alias.empty() && alias != alias_)
+        {
+            alias_ = alias;
+        }
+    }
+    else
+    {
+        neighbors_.remove(ip);
+    }
+}
+
+bool MuxNbrHandler::enable()
+{
+    NeighborEntry neigh;
+
+    auto it = neighbors_.getIpAddresses().begin();
+    while (it != neighbors_.getIpAddresses().end())
+    {
+        neigh = NeighborEntry(*it, alias_);
+        if (!gNeighOrch->enableNeighbor(neigh))
+        {
+            return false;
+        }
+        it++;
+    }
+
+    return true;
+}
+
+bool MuxNbrHandler::disable()
+{
+    NeighborEntry neigh;
+
+    auto it = neighbors_.getIpAddresses().begin();
+    while (it != neighbors_.getIpAddresses().end())
+    {
+        neigh = NeighborEntry(*it, alias_);
+        if (!gNeighOrch->disableNeighbor(neigh))
+        {
+            return false;
+        }
+        it++;
     }
 
     return true;
@@ -376,7 +619,7 @@ void MuxAclHandler::createMuxAclRule(shared_ptr<AclRuleMux> rule, string strTabl
     gAclOrch->addAclRule(rule, strTable);
 }
 
-sai_object_id_t MuxCfgOrch::createNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr)
+sai_object_id_t MuxOrch::createNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr)
 {
     auto it = mux_tunnel_nh_.find(ipAddr);
     if (it != mux_tunnel_nh_.end())
@@ -385,7 +628,7 @@ sai_object_id_t MuxCfgOrch::createNextHopTunnel(std::string tunnelKey, swss::IpA
         return it->second.nh_id;
     }
 
-    sai_object_id_t nh = decap_orch_->createNextHopTunnel(tunnelKey, ipAddr);
+    sai_object_id_t nh = create_nh_tunnel(mux_tunnel_id_, ipAddr);
 
     if (SAI_NULL_OBJECT_ID != nh)
     {
@@ -395,7 +638,7 @@ sai_object_id_t MuxCfgOrch::createNextHopTunnel(std::string tunnelKey, swss::IpA
     return nh;
 }
 
-bool MuxCfgOrch::removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr)
+bool MuxOrch::removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipAddr)
 {
     auto it = mux_tunnel_nh_.find(ipAddr);
     if (it == mux_tunnel_nh_.end())
@@ -408,14 +651,12 @@ bool MuxCfgOrch::removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipA
 
     if (it->second.ref_count == 0)
     {
-        mux_tunnel_nh_.erase(ipAddr);
-
-        if (!decap_orch_-> removeNextHopTunnel(tunnelKey, ipAddr))
+        if (!remove_nh_tunnel(it->second.nh_id, ipAddr))
         {
-            SWSS_LOG_ERROR("NH tunnel remove failed %s, ip %s",
-                            tunnelKey.c_str(), ipAddr.to_string().c_str());
-            return false;
+            SWSS_LOG_INFO("NH tunnel remove failed %s, ip %s",
+                           tunnelKey.c_str(), ipAddr.to_string().c_str());
         }
+        mux_tunnel_nh_.erase(ipAddr);
     }
 
     SWSS_LOG_INFO("NH tunnel removed  %s, ip %s or decremented to ref count %d",
@@ -423,15 +664,76 @@ bool MuxCfgOrch::removeNextHopTunnel(std::string tunnelKey, swss::IpAddress& ipA
     return true;
 }
 
-
-MuxCfgOrch::MuxCfgOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch* decapOrch)
-          : Orch2(db, tables, request_), decap_orch_(decapOrch)
+MuxCable* MuxOrch::findMuxCableInSubnet(IpAddress ip)
 {
-    handler_map_.insert(handler_pair(CFG_MUX_CABLE_TABLE_NAME, &MuxCfgOrch::handleMuxCfg));
-    handler_map_.insert(handler_pair(CFG_PEER_SWITCH_TABLE_NAME, &MuxCfgOrch::handlePeerSwitch));
+    for (auto it = mux_cable_tb_.begin(); it != mux_cable_tb_.end(); it++)
+    {
+       MuxCable* ptr = it->second.get();
+       if (ptr->isIpInSubnet(ip))
+       {
+           return ptr;
+       }
+    }
+
+    return nullptr;
 }
 
-bool MuxCfgOrch::handleMuxCfg(const Request& request)
+bool MuxOrch::isNeighborActive(IpAddress nbr, string alias)
+{
+    MuxCable* ptr = findMuxCableInSubnet(nbr);
+
+    if (ptr)
+    {
+        return ptr->isActive();
+    }
+
+    return true;
+}
+
+void MuxOrch::updateNeighbor(const NeighborUpdate& update)
+{
+    for (auto it = mux_cable_tb_.begin(); it != mux_cable_tb_.end(); it++)
+    {
+        MuxCable* ptr = it->second.get();
+        if (ptr->isIpInSubnet(update.entry.ip_address))
+        {
+            ptr->updateNeighbor(update.entry.ip_address, update.entry.alias, update.add);
+        }
+    }
+}
+
+void MuxOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    assert(cntx);
+
+    switch(type)
+    {
+        case SUBJECT_TYPE_NEIGH_CHANGE:
+        {
+            NeighborUpdate *update = static_cast<NeighborUpdate *>(cntx);
+            updateNeighbor(*update);
+            break;
+        }
+        default:
+            /* Received update in which we are not interested
+             * Ignore it
+             */
+            return;
+    }
+}
+
+MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch* decapOrch, NeighOrch* neighOrch)
+          : Orch2(db, tables, request_), decap_orch_(decapOrch), neigh_orch_(neighOrch)
+{
+    handler_map_.insert(handler_pair(CFG_MUX_CABLE_TABLE_NAME, &MuxOrch::handleMuxCfg));
+    handler_map_.insert(handler_pair(CFG_PEER_SWITCH_TABLE_NAME, &MuxOrch::handlePeerSwitch));
+
+    neigh_orch_->attach(this);
+}
+
+bool MuxOrch::handleMuxCfg(const Request& request)
 {
     SWSS_LOG_ENTER();
 
@@ -445,13 +747,13 @@ bool MuxCfgOrch::handleMuxCfg(const Request& request)
     {
         if(isMuxExists(port_name))
         {
-            SWSS_LOG_ERROR("Mux for port '%s' is already exists", port_name.c_str());
+            SWSS_LOG_ERROR("Mux for port '%s' already exists", port_name.c_str());
             return true;
         }
 
         if (mux_peer_switch_.isZero())
         {
-            SWSS_LOG_ERROR("Peer switch address '%s' not yet configured", port_name.c_str());
+            SWSS_LOG_ERROR("Peer switch addr not yet configured, port '%s'", port_name.c_str());
             return false;
         }
 
@@ -476,7 +778,7 @@ bool MuxCfgOrch::handleMuxCfg(const Request& request)
     return true;
 }
 
-bool MuxCfgOrch::handlePeerSwitch(const Request& request)
+bool MuxOrch::handlePeerSwitch(const Request& request)
 {
     SWSS_LOG_ENTER();
 
@@ -487,6 +789,18 @@ bool MuxCfgOrch::handlePeerSwitch(const Request& request)
 
     if (op == SET_COMMAND)
     {
+        // Create P2P tunnel when peer_ip is available.
+        IpAddresses dst_ips = decap_orch_->getDstIpAddresses(MUX_TUNNEL);
+        if (!dst_ips.getSize())
+        {
+            SWSS_LOG_NOTICE("Mux tunnel not yet created for '%s' peer ip '%s'",
+                            MUX_TUNNEL, peer_ip.to_string().c_str());
+            return false;
+        }
+
+        auto it =  dst_ips.getIpAddresses().begin();
+        const IpAddress& dst_ip = *it;
+        mux_tunnel_id_ = create_tunnel(&peer_ip, &dst_ip);
         mux_peer_switch_ = peer_ip;
         SWSS_LOG_NOTICE("Mux peer ip '%s' was added, peer name '%s'",
                          peer_ip.to_string().c_str(), peer_name.c_str());
@@ -500,7 +814,7 @@ bool MuxCfgOrch::handlePeerSwitch(const Request& request)
     return true;
 }
 
-bool MuxCfgOrch::addOperation(const Request& request)
+bool MuxOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
@@ -524,7 +838,7 @@ bool MuxCfgOrch::addOperation(const Request& request)
     return true;
 }
 
-bool MuxCfgOrch::delOperation(const Request& request)
+bool MuxOrch::delOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
@@ -548,12 +862,12 @@ bool MuxCfgOrch::delOperation(const Request& request)
     return true;
 }
 
-MuxOrch::MuxOrch(DBConnector *db, const std::string& tableName): Orch2(db, tableName, request_)
+MuxCableOrch::MuxCableOrch(DBConnector *db, const std::string& tableName): Orch2(db, tableName, request_)
 {
     mux_table_ = unique_ptr<Table>(new Table(db, APP_HW_MUX_CABLE_TABLE_NAME));
 }
 
-void MuxOrch::updateMuxState(string portName, string muxState)
+void MuxCableOrch::updateMuxState(string portName, string muxState)
 {
     vector<FieldValueTuple> tuples;
     FieldValueTuple tuple("state", muxState);
@@ -561,21 +875,21 @@ void MuxOrch::updateMuxState(string portName, string muxState)
     mux_table_->set(portName, tuples);
 }
 
-bool MuxOrch::addOperation(const Request& request)
+bool MuxCableOrch::addOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
     auto port_name = request.getKeyString(0);
 
-    MuxCfgOrch* mux_cfg_orch = gDirectory.get<MuxCfgOrch*>();
-    if (!mux_cfg_orch->isMuxExists(port_name))
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    if (!mux_orch->isMuxExists(port_name))
     {
         SWSS_LOG_WARN("Mux entry for port '%s' doesn't exist", port_name.c_str());
         return false;
     }
 
     auto state = request.getAttrString("state");
-    auto mux_obj = mux_cfg_orch->getMuxCable(port_name);
+    auto mux_obj = mux_orch->getMuxCable(port_name);
 
     try
     {
@@ -593,7 +907,7 @@ bool MuxOrch::addOperation(const Request& request)
     return true;
 }
 
-bool MuxOrch::delOperation(const Request& request)
+bool MuxCableOrch::delOperation(const Request& request)
 {
     SWSS_LOG_ENTER();
 
@@ -625,15 +939,15 @@ bool MuxStateOrch::addOperation(const Request& request)
 
     auto port_name = request.getKeyString(0);
 
-    MuxCfgOrch* mux_cfg_orch = gDirectory.get<MuxCfgOrch*>();
-    if (!mux_cfg_orch->isMuxExists(port_name))
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    if (!mux_orch->isMuxExists(port_name))
     {
         SWSS_LOG_WARN("Mux entry for port '%s' doesn't exist", port_name.c_str());
         return false;
     }
 
     auto hw_state = request.getAttrString("state");
-    auto mux_obj = mux_cfg_orch->getMuxCable(port_name);
+    auto mux_obj = mux_orch->getMuxCable(port_name);
     string mux_state;
 
     try
@@ -643,6 +957,12 @@ bool MuxStateOrch::addOperation(const Request& request)
     catch(const std::runtime_error& error)
     {
         SWSS_LOG_ERROR("Error getting state for port %s Error: %s", port_name.c_str(), error.what());
+        return false;
+    }
+
+    if (mux_obj->isStateChangeInProgress())
+    {
+        SWSS_LOG_NOTICE("Mux state change for port '%s' is in-progress", port_name.c_str());
         return false;
     }
 
