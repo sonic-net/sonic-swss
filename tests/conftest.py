@@ -199,6 +199,10 @@ class VirtualServer:
 
         return 0
 
+    # used in buildimage tests, do not delete
+    def runcmd_async(self, cmd: str) -> subprocess.Popen:
+        return subprocess.Popen(f"ip netns exec {self.nsname} {cmd}", shell=True)
+
     def runcmd_output(self, cmd: str) -> str:
         return subprocess.check_output(f"ip netns exec {self.nsname} {cmd}", shell=True).decode("utf-8")
 
