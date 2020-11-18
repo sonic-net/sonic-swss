@@ -38,7 +38,6 @@
 #include <iostream>
 #include <sstream>
 #include "table.h"
-#include "orch.h"
 
 using namespace swss;
 using namespace std;
@@ -147,7 +146,7 @@ void MclagLink::mclagsyncd_fetch_mclag_config_from_configdb()
 {
     TableDump mclag_cfg_dump;
     SWSS_LOG_NOTICE("mclag cfg dump....");
-    p_mclag_cfg_table->dump_state(mclag_cfg_dump);
+    p_mclag_cfg_table->dump(mclag_cfg_dump);
 
     std::deque<KeyOpFieldsValuesTuple> entries;
     for (const auto&key: mclag_cfg_dump)
@@ -174,7 +173,7 @@ void MclagLink::mclagsyncd_fetch_mclag_interface_config_from_configdb()
 {
     TableDump mclag_intf_cfg_dump;
     SWSS_LOG_NOTICE("mclag cfg dump....");
-    p_mclag_intf_cfg_table->dump_state(mclag_intf_cfg_dump);
+    p_mclag_intf_cfg_table->dump(mclag_intf_cfg_dump);
 
     std::deque<KeyOpFieldsValuesTuple> entries;
     for (const auto&key: mclag_intf_cfg_dump)
@@ -200,7 +199,7 @@ void MclagLink::mclagsyncd_fetch_fdb_entries_from_statedb()
 {
     TableDump fdb_dump;
     SWSS_LOG_NOTICE("FDB state db dump....");
-    p_state_fdb_table->dump_state(fdb_dump);
+    p_state_fdb_table->dump(fdb_dump);
 
     std::deque<KeyOpFieldsValuesTuple> entries;
     for (const auto&key: fdb_dump)
@@ -226,7 +225,7 @@ void MclagLink::mclagsyncd_fetch_vlan_mbr_table_from_statedb()
 {
     TableDump vlan_mbr_table_dump;
     SWSS_LOG_NOTICE("%s", __FUNCTION__);
-    p_state_vlan_mbr_table->dump_state(vlan_mbr_table_dump);
+    p_state_vlan_mbr_table->dump(vlan_mbr_table_dump);
 
     std::deque<KeyOpFieldsValuesTuple> entries;
     for (const auto&key: vlan_mbr_table_dump)
@@ -342,7 +341,7 @@ void MclagLink::setPortIsolate(char *msg)
         string acl_rule_name = "mclag:mclag";
         vector<FieldValueTuple> acl_attrs;
         vector<FieldValueTuple> acl_rule_attrs;
-        std::string acl_key = std::string("") + APP_ACL_TABLE_NAME + ":" + acl_name;
+        std::string acl_key = std::string("") + APP_ACL_TABLE_TABLE_NAME + ":" + acl_name;
         std::string acl_rule_key = std::string("") + APP_ACL_RULE_TABLE_NAME + ":" + acl_rule_name;
         static int acl_table_is_added = 0;
 
@@ -676,7 +675,7 @@ void MclagLink::mclagsyncd_send_fdb_entries(std::deque<KeyOpFieldsValuesTuple> &
 
 
     if (infor_len <= sizeof(mclag_msg_hdr_t)) /*no fdb entry need notifying iccpd*/
-        return 1;
+        return;
 
     msg_head = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
 
@@ -1098,7 +1097,6 @@ void MclagLink::mclagsyncd_send_mclag_iface_cfg(std::deque<KeyOpFieldsValuesTupl
     {
         SWSS_LOG_ERROR("mclagsycnd to ICCPD, mclag iface cfg send; write to m_connection_socket failed");
     }
-    mclagsyncd_fetch_and_send_lag_info(po_names);
     return;
 }
 

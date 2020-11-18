@@ -91,6 +91,8 @@ int main(int argc, char **argv)
             mclag.p_mclag_remote_intf_tbl = &mclag_remote_intf_tbl;
             mclag.p_device_metadata_tbl = &device_metadata_tbl;
             mclag.p_appl_db = &appl_db;
+            mclag.p_asic_db = &asic_db;
+            mclag.p_counters_db = &counters_db;
 
             mclag.p_redisClient_to_asic = &redisClient_to_asicDb;
             mclag.p_redisClient_to_counters = &redisClient_to_countersDb;

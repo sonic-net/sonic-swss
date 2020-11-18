@@ -38,6 +38,7 @@
 #include "subscriberstatetable.h"
 #include "select.h"
 #include "selectable.h"
+#include "redisclient.h"
 #include "mclagsyncd/mclag.h"
 #include "notificationconsumer.h"
 #include "notificationproducer.h"
@@ -49,6 +50,7 @@
 #endif /* INET_ADDRSTRLEN */
 
 #define MAX_L_PORT_NAME 20
+#define BRCM_PLATFORM_SUBSTRING "broadcom"
 
 namespace swss {
 
@@ -209,9 +211,9 @@ public:
     Table *p_state_vlan_mbr_table;
     Table *p_state_fdb_table;
     DBConnector *p_appl_db;
+    DBConnector *p_asic_db; /*redis client access to ASIC_DB*/
+    DBConnector *p_counters_db; /*redis client access to COUNTERS_DB*/
 
-    RedisClient *p_redisClient_to_asic;/*redis client access to ASIC_DB*/
-    RedisClient *p_redisClient_to_counters;/*redis client access to COUNTERS_DB*/
     ProducerStateTable *p_iso_grp_tbl;
 
     SubscriberStateTable *p_mclag_intf_cfg_tbl;
