@@ -37,7 +37,10 @@ const map<CrmResourceType, string> crmResTypeNameMap =
     { CrmResourceType::CRM_ACL_GROUP, "ACL_GROUP" },
     { CrmResourceType::CRM_ACL_ENTRY, "ACL_ENTRY" },
     { CrmResourceType::CRM_ACL_COUNTER, "ACL_COUNTER" },
-    { CrmResourceType::CRM_FDB_ENTRY, "FDB_ENTRY" }
+    { CrmResourceType::CRM_FDB_ENTRY, "FDB_ENTRY" },
+    { CrmResourceType::CRM_IPMC_ENTRY, "IPMC_ENTRY" },
+    { CrmResourceType::CRM_SNAT_ENTRY, "SNAT_ENTRY" },
+    { CrmResourceType::CRM_DNAT_ENTRY, "DNAT_ENTRY" }
 };
 
 const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
@@ -54,7 +57,10 @@ const map<CrmResourceType, uint32_t> crmResSaiAvailAttrMap =
     { CrmResourceType::CRM_ACL_GROUP, SAI_SWITCH_ATTR_AVAILABLE_ACL_TABLE_GROUP },
     { CrmResourceType::CRM_ACL_ENTRY, SAI_ACL_TABLE_ATTR_AVAILABLE_ACL_ENTRY },
     { CrmResourceType::CRM_ACL_COUNTER, SAI_ACL_TABLE_ATTR_AVAILABLE_ACL_COUNTER },
-    { CrmResourceType::CRM_FDB_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY }
+    { CrmResourceType::CRM_FDB_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY },
+    { CrmResourceType::CRM_IPMC_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_IPMC_ENTRY},
+    { CrmResourceType::CRM_SNAT_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY },
+    { CrmResourceType::CRM_DNAT_ENTRY, SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY }
 };
 
 const map<string, CrmResourceType> crmThreshTypeResMap =
@@ -71,7 +77,10 @@ const map<string, CrmResourceType> crmThreshTypeResMap =
     { "acl_group_threshold_type", CrmResourceType::CRM_ACL_GROUP },
     { "acl_entry_threshold_type", CrmResourceType::CRM_ACL_ENTRY },
     { "acl_counter_threshold_type", CrmResourceType::CRM_ACL_COUNTER },
-    { "fdb_entry_threshold_type", CrmResourceType::CRM_FDB_ENTRY }
+    { "fdb_entry_threshold_type", CrmResourceType::CRM_FDB_ENTRY },
+    { "ipmc_entry_threshold_type", CrmResourceType::CRM_IPMC_ENTRY },
+    { "snat_entry_threshold_type", CrmResourceType::CRM_SNAT_ENTRY },
+    { "dnat_entry_threshold_type", CrmResourceType::CRM_DNAT_ENTRY }
 };
 
 const map<string, CrmResourceType> crmThreshLowResMap =
@@ -89,6 +98,9 @@ const map<string, CrmResourceType> crmThreshLowResMap =
     {"acl_entry_low_threshold", CrmResourceType::CRM_ACL_ENTRY },
     {"acl_counter_low_threshold", CrmResourceType::CRM_ACL_COUNTER },
     {"fdb_entry_low_threshold", CrmResourceType::CRM_FDB_ENTRY },
+    {"ipmc_entry_low_threshold", CrmResourceType::CRM_IPMC_ENTRY },
+    {"snat_entry_low_threshold", CrmResourceType::CRM_SNAT_ENTRY },
+    {"dnat_entry_low_threshold", CrmResourceType::CRM_DNAT_ENTRY }
 };
 
 const map<string, CrmResourceType> crmThreshHighResMap =
@@ -105,7 +117,10 @@ const map<string, CrmResourceType> crmThreshHighResMap =
     {"acl_group_high_threshold", CrmResourceType::CRM_ACL_GROUP },
     {"acl_entry_high_threshold", CrmResourceType::CRM_ACL_ENTRY },
     {"acl_counter_high_threshold", CrmResourceType::CRM_ACL_COUNTER },
-    {"fdb_entry_high_threshold", CrmResourceType::CRM_FDB_ENTRY }
+    {"fdb_entry_high_threshold", CrmResourceType::CRM_FDB_ENTRY },
+    {"ipmc_entry_high_threshold", CrmResourceType::CRM_IPMC_ENTRY },
+    {"snat_entry_high_threshold", CrmResourceType::CRM_SNAT_ENTRY },
+    {"dnat_entry_high_threshold", CrmResourceType::CRM_DNAT_ENTRY }
 };
 
 const map<string, CrmThresholdType> crmThreshTypeMap =
@@ -129,7 +144,10 @@ const map<string, CrmResourceType> crmAvailCntsTableMap =
     { "crm_stats_acl_group_available", CrmResourceType::CRM_ACL_GROUP },
     { "crm_stats_acl_entry_available", CrmResourceType::CRM_ACL_ENTRY },
     { "crm_stats_acl_counter_available", CrmResourceType::CRM_ACL_COUNTER },
-    { "crm_stats_fdb_entry_available", CrmResourceType::CRM_FDB_ENTRY }
+    { "crm_stats_fdb_entry_available", CrmResourceType::CRM_FDB_ENTRY },
+    { "crm_stats_ipmc_entry_available", CrmResourceType::CRM_IPMC_ENTRY },
+    { "crm_stats_snat_entry_available", CrmResourceType::CRM_SNAT_ENTRY },
+    { "crm_stats_dnat_entry_available", CrmResourceType::CRM_DNAT_ENTRY }
 };
 
 const map<string, CrmResourceType> crmUsedCntsTableMap =
@@ -146,7 +164,10 @@ const map<string, CrmResourceType> crmUsedCntsTableMap =
     { "crm_stats_acl_group_used", CrmResourceType::CRM_ACL_GROUP },
     { "crm_stats_acl_entry_used", CrmResourceType::CRM_ACL_ENTRY },
     { "crm_stats_acl_counter_used", CrmResourceType::CRM_ACL_COUNTER },
-    { "crm_stats_fdb_entry_used", CrmResourceType::CRM_FDB_ENTRY }
+    { "crm_stats_fdb_entry_used", CrmResourceType::CRM_FDB_ENTRY },
+    { "crm_stats_ipmc_entry_used", CrmResourceType::CRM_IPMC_ENTRY },
+    { "crm_stats_snat_entry_used", CrmResourceType::CRM_SNAT_ENTRY },
+    { "crm_stats_dnat_entry_used", CrmResourceType::CRM_DNAT_ENTRY }
 };
 
 CrmOrch::CrmOrch(DBConnector *db, string tableName):
@@ -429,10 +450,18 @@ void CrmOrch::getResAvailableCounters()
             case SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_MEMBER_ENTRY:
             case SAI_SWITCH_ATTR_AVAILABLE_NEXT_HOP_GROUP_ENTRY:
             case SAI_SWITCH_ATTR_AVAILABLE_FDB_ENTRY:
+            case SAI_SWITCH_ATTR_AVAILABLE_IPMC_ENTRY:
+            case SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY:
+            case SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY:
             {
                 sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
+                    if(status == SAI_STATUS_NOT_SUPPORTED)
+                    {
+                        // remove unsupported resources from map
+                        m_resourcesMap.erase(res.first);
+                    }
                     SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
                     break;
                 }
@@ -504,22 +533,36 @@ void CrmOrch::updateCrmCountersTable()
     // Update CRM used counters in COUNTERS_DB
     for (const auto &i : crmUsedCntsTableMap)
     {
-        for (const auto &cnt : m_resourcesMap.at(i.second).countersMap)
+        try
         {
-            FieldValueTuple attr(i.first, to_string(cnt.second.usedCounter));
-            vector<FieldValueTuple> attrs = { attr };
-            m_countersCrmTable->set(cnt.first, attrs);
+            for (const auto &cnt : m_resourcesMap.at(i.second).countersMap)
+            {
+                FieldValueTuple attr(i.first, to_string(cnt.second.usedCounter));
+                vector<FieldValueTuple> attrs = { attr };
+                m_countersCrmTable->set(cnt.first, attrs);
+            }
+        }
+        catch(const out_of_range &e)
+        {
+            // expected when a resource is unavailable
         }
     }
 
     // Update CRM available counters in COUNTERS_DB
     for (const auto &i : crmAvailCntsTableMap)
     {
-        for (const auto &cnt : m_resourcesMap.at(i.second).countersMap)
+        try
         {
-            FieldValueTuple attr(i.first, to_string(cnt.second.availableCounter));
-            vector<FieldValueTuple> attrs = { attr };
-            m_countersCrmTable->set(cnt.first, attrs);
+            for (const auto &cnt : m_resourcesMap.at(i.second).countersMap)
+            {
+                FieldValueTuple attr(i.first, to_string(cnt.second.availableCounter));
+                vector<FieldValueTuple> attrs = { attr };
+                m_countersCrmTable->set(cnt.first, attrs);
+            }
+        }
+        catch(const out_of_range &e)
+        {
+            // expected when a resource is unavailable
         }
     }
 }
