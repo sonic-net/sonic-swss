@@ -399,6 +399,8 @@ public:
             RouteOrch               *routeOrch,
             DTelOrch                *m_dTelOrch = NULL);
     ~AclOrch();
+    bool bake() override;
+    bool postBake() override;
     void update(SubjectType, void *);
 
     sai_object_id_t getTableById(string table_id);
@@ -481,6 +483,8 @@ private:
     static bool m_bCollectCounters;
     static DBConnector m_db;
     static Table m_countersTable;
+
+    bool m_freezeRuleInstallation = false;
 
     map<acl_stage_type_t, string> m_mirrorTableId;
     map<acl_stage_type_t, string> m_mirrorV6TableId;

@@ -2564,6 +2564,32 @@ void AclOrch::update(SubjectType type, void *cntx)
     }
 }
 
+bool AclOrch::bake()
+{
+    SWSS_LOG_ENTER();
+
+    // Wait to install rules until after the orchagent restoration so that
+    // all mirror sessions are available
+    m_freezeRuleInstallation = true;
+
+    return Orch::bake();
+}
+
+bool AclOrch::postBake()
+{
+    SWSS_LOG_ENTER();
+
+    SWSS_LOG_NOTICE("Running AclOrch post-baking steps");
+
+    // Wait to install rules until after the orchagent restoration so that
+    // all mirror sessions are available
+    m_freezeRuleInstallation = false;
+
+    Orch::doTask();
+
+    return Orch::postBake();
+}
+
 void AclOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -2582,6 +2608,11 @@ void AclOrch::doTask(Consumer &consumer)
     }
     else if (table_name == CFG_ACL_RULE_TABLE_NAME || table_name == APP_ACL_RULE_TABLE_NAME)
     {
+        if (m_freezeRuleInstallation)
+        {
+            return;
+        }
+
         unique_lock<mutex> lock(m_countersMutex);
         doAclRuleTask(consumer);
     }

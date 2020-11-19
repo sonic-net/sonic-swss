@@ -548,7 +548,7 @@ bool OrchDaemon::warmRestoreAndSyncUp()
 
     for (auto it = 0; it < 3; it++)
     {
-        SWSS_LOG_DEBUG("The current iteration is %d", it);
+        SWSS_LOG_DEBUG("The current doTask iteration is %d", it);
 
         for (Orch *o : m_orchList)
         {
@@ -556,21 +556,22 @@ bool OrchDaemon::warmRestoreAndSyncUp()
         }
     }
 
-    for (Orch *o : m_orchList)
-    {
-        o->postBake();
-    }
-
     /*
-     * MIRROR ACL rules depend on mirror sessions, which won't be up after warm
-     * reboot until after the postBake step has finished. So, we need to give
-     * AclOrch one more round to resolve any rules that are waiting for mirror
-     * sessions.
+     * Two iterations are needed.
      *
-     * TODO: Implement a more generic mechanism for handling these types of
-     * hard dependencies.
+     * First iteration: most orchs that depend on some action during doTask (e.g. MirrorOrch)
+     *
+     * Second iteration: AclOrch, which depends on MirrorOrch in iteration 1
      */
-    gAclOrch->Orch::doTask();
+    for (auto it = 0; it < 2; it++)
+    {
+        SWSS_LOG_DEBUG("The current postBake iteration is %d", it);
+
+        for (Orch *o : m_orchList)
+        {
+            o->postBake();
+        }
+    }
 
     /*
      * At this point, all the pre-existing data should have been processed properly, and

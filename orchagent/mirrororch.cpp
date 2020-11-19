@@ -138,7 +138,7 @@ bool MirrorOrch::postBake()
 {
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("Start MirrorOrch post-baking");
+    SWSS_LOG_NOTICE("Running MirrorOrch post-baking steps");
 
     // Unfreeze the route update
     m_freeze = false;
