@@ -702,6 +702,27 @@ class TestCrm(object):
         #table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_group_used')
         #assert table_used_counter == 0
 
+    def test_CrmSnatEntry(self, dvs, testlog):
+
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_available')
+        assert avail_counter !=0
+
+    def test_CrmDnatEntry(self, dvs, testlog):
+
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_available')
+        assert avail_counter !=0
+
+    def test_CrmIpmcEntry(self, dvs, testlog):
+
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_available')
+        assert avail_counter !=0
+
     def test_Configure(self, dvs, testlog):
 
         #polling interval
@@ -905,6 +926,7 @@ class TestCrm(object):
         threshold_type = getCrmConfigStr(dvs, 'Config', 'fdb_entry_threshold_type')
         assert threshold_type == 'percentage'
 
+''' commented snat, dnat and ipmc CLI tests till Azure/sonic-utilities/pull/1258 becomes available
     def test_Configure_snat(self, dvs, testlog):
 
         #thresholds snat low/high threshold/type
@@ -949,7 +971,7 @@ class TestCrm(object):
         assert threshold_high == 90
         threshold_type = getCrmConfigStr(dvs, 'Config', 'snat_entry_threshold_type')
         assert threshold_type == 'percentage'
-
+'''
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
