@@ -103,14 +103,8 @@ bool OrchDaemon::init()
     };
 
     VNetOrch *vnet_orch;
-    if (platform == MLNX_PLATFORM_SUBSTRING)
-    {
-        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME, VNET_EXEC::VNET_EXEC_BRIDGE);
-    }
-    else
-    {
-        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
-    }
+    vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+
     gDirectory.set(vnet_orch);
     VNetCfgRouteOrch *cfg_vnet_rt_orch = new VNetCfgRouteOrch(m_configDb, m_applDb, cfg_vnet_tables);
     gDirectory.set(cfg_vnet_rt_orch);
@@ -138,14 +132,7 @@ bool OrchDaemon::init()
     gDirectory.set(gFgNhgOrch);
     gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
 
-    TableConnector confDbSflowTable(m_configDb, CFG_SFLOW_TABLE_NAME);
-    TableConnector appCoppTable(m_applDb, APP_COPP_TABLE_NAME);
-
-    vector<TableConnector> copp_table_connectors = {
-        confDbSflowTable,
-        appCoppTable
-    };
-    CoppOrch  *copp_orch  = new CoppOrch(copp_table_connectors);
+    CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
     VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
@@ -229,11 +216,12 @@ bool OrchDaemon::init()
     const int natorch_base_pri = 50;
 
     vector<table_name_with_pri_t> nat_tables = {
-        { APP_NAT_TABLE_NAME,        natorch_base_pri + 4 },
-        { APP_NAPT_TABLE_NAME,       natorch_base_pri + 3 },
-        { APP_NAT_TWICE_TABLE_NAME,  natorch_base_pri + 2 },
-        { APP_NAPT_TWICE_TABLE_NAME, natorch_base_pri + 1 },
-        { APP_NAT_GLOBAL_TABLE_NAME, natorch_base_pri     }
+        { APP_NAT_DNAT_POOL_TABLE_NAME,  natorch_base_pri + 5 },
+        { APP_NAT_TABLE_NAME,            natorch_base_pri + 4 },
+        { APP_NAPT_TABLE_NAME,           natorch_base_pri + 3 },
+        { APP_NAT_TWICE_TABLE_NAME,      natorch_base_pri + 2 },
+        { APP_NAPT_TWICE_TABLE_NAME,     natorch_base_pri + 1 },
+        { APP_NAT_GLOBAL_TABLE_NAME,     natorch_base_pri     }
     };
 
     gNatOrch = new NatOrch(m_applDb, m_stateDb, nat_tables, gRouteOrch, gNeighOrch);
@@ -471,6 +459,12 @@ void OrchDaemon::start()
 
         if (ret == Select::TIMEOUT)
         {
+            /* Let sairedis to flush all SAI function call to ASIC DB.
+             * Normally the redis pipeline will flush when enough request
+             * accumulated. Still it is possible that small amount of
+             * requests live in it. When the daemon has nothing to do, it
+             * is a good chance to flush the pipeline  */
+            flush();
             continue;
         }
 
@@ -483,14 +477,6 @@ void OrchDaemon::start()
         /* TODO: Abstract Orch class to have a specific todo list */
         for (Orch *o : m_orchList)
             o->doTask();
-
-        /* Let sairedis to flush all SAI function call to ASIC DB.
-         * Normally the redis pipeline will flush when enough request
-         * accumulated. Still it is possible that small amount of
-         * requests live in it. When the daemon has finished events/tasks, it
-         * is a good chance to flush the pipeline before next select happened.
-         */
-        flush();
 
         /*
          * Asked to check warm restart readiness.

@@ -354,13 +354,31 @@ void NeighOrch::doTask(Consumer &consumer)
             if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end() || m_syncdNeighbors[neighbor_entry] != mac_address)
             {
                 if (addNeighbor(neighbor_entry, mac_address))
+                {
                     it = consumer.m_toSync.erase(it);
+                }
                 else
+                {
                     it++;
+                    continue;
+                }
             }
             else
+            {
                 /* Duplicate entry */
                 it = consumer.m_toSync.erase(it);
+            }
+
+            /* Remove remaining DEL operation in m_toSync for the same neighbor.
+             * Since DEL operation is supposed to be executed before SET for the same neighbor
+             * A remaining DEL after the SET operation means the DEL operation failed previously and should not be executed anymore
+             */
+            auto rit = make_reverse_iterator(it);
+            while (rit != consumer.m_toSync.rend() && rit->first == key && kfvOp(rit->second) == DEL_COMMAND)
+            {
+                consumer.m_toSync.erase(next(rit).base());
+                SWSS_LOG_NOTICE("Removed pending neighbor DEL operation for %s after SET operation", key.c_str());
+            }
         }
         else if (op == DEL_COMMAND)
         {
