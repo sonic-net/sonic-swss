@@ -1775,6 +1775,16 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
+    /* Make sure to bring down admin state.
+     * SET would have replaced with DEL
+    */
+    Port   port;
+    if (getPort(port_id, port))
+    {
+        setPortAdminStatus(port, false);
+    }
+    /* else : port is in default state or not yet created */
+
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
     {
