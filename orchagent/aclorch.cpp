@@ -2581,8 +2581,7 @@ bool AclOrch::postBake()
 
     SWSS_LOG_NOTICE("Running AclOrch post-baking steps");
 
-    // Wait to install rules until after the orchagent restoration so that
-    // all mirror sessions are available
+    // Unfreeze the ACL rule updates
     m_freezeRuleInstallation = false;
 
     Orch::doTask();
@@ -2610,6 +2609,7 @@ void AclOrch::doTask(Consumer &consumer)
     {
         if (m_freezeRuleInstallation)
         {
+            // Defer ACL rule updates until after the freeze is over
             return;
         }
 
