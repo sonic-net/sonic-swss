@@ -11,8 +11,6 @@
 using namespace std;
 using namespace swss;
 
-class FdbSync *g_fdbsync;
-
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("fdbsyncd");
@@ -21,9 +19,9 @@ int main(int argc, char **argv)
     RedisPipeline pipelineAppDB(&appDb);
     DBConnector stateDb(STATE_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
     DBConnector log_db(LOGLEVEL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    DBConnector config_db(CONFIG_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
 
-    FdbSync sync(&pipelineAppDB, &stateDb);
-    g_fdbsync = &sync;
+    FdbSync sync(&pipelineAppDB, &stateDb, &config_db);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &sync);
@@ -34,6 +32,8 @@ int main(int argc, char **argv)
         try
         {
             NetLink netlink;
+            Selectable *temps;
+            int ret;
             Select s;
 
             using namespace std::chrono;
@@ -44,7 +44,7 @@ int main(int argc, char **argv)
              */
             if (sync.getRestartAssist()->isWarmStartInProgress())
             {
-                sync.getRestartAssist()->readTablesToMap();                
+                sync.getRestartAssist()->readTablesToMap();
                 SWSS_LOG_NOTICE("Starting ReconcileTimer");
             }
 
@@ -52,18 +52,28 @@ int main(int argc, char **argv)
             netlink.registerGroup(RTNLGRP_NEIGH);
             SWSS_LOG_NOTICE("Listens to link and neigh messages...");
             netlink.dumpRequest(RTM_GETLINK);
+            s.addSelectable(&netlink);
+            ret = s.select(&temps, 1);
+            if (ret == Select::ERROR)
+            {
+                SWSS_LOG_ERROR("Error in RTM_GETLINK dump");
+            }
+
             netlink.dumpRequest(RTM_GETNEIGH);
 
-            s.addSelectable(&netlink);
             s.addSelectable(sync.getFdbStateTable());
+            s.addSelectable(sync.getCfgEvpnNvoTable());
             while (true)
             {
-                Selectable *temps;
                 s.select(&temps);
 
-				if(temps == (Selectable *)sync.getFdbStateTable())
+                if(temps == (Selectable *)sync.getFdbStateTable())
                 {
                     sync.processStateFdb();
+                }
+                else if (temps == (Selectable *)sync.getCfgEvpnNvoTable())
+                {
+                    sync.processCfgEvpnNvo();
                 }
                 else
                 {
@@ -71,17 +81,17 @@ int main(int argc, char **argv)
                      * If warmstart is in progress, we check the reconcile timer,
                      * if timer expired, we stop the timer and start the reconcile process
                      */
-					if (sync.getRestartAssist()->isWarmStartInProgress())
-					{
-						if (sync.getRestartAssist()->checkReconcileTimer(temps))
-						{
-							sync.m_reconcileDone = true;
-							sync.getRestartAssist()->stopReconcileTimer(s);
-							sync.getRestartAssist()->reconcile();
-							SWSS_LOG_NOTICE("VXLAN FDB VNI Reconcillation Complete (Timer)");
-						}
-					}
-                }                
+                    if (sync.getRestartAssist()->isWarmStartInProgress())
+                    {
+                        if (sync.getRestartAssist()->checkReconcileTimer(temps))
+                        {
+                            sync.m_reconcileDone = true;
+                            sync.getRestartAssist()->stopReconcileTimer(s);
+                            sync.getRestartAssist()->reconcile();
+                            SWSS_LOG_NOTICE("VXLAN FDB VNI Reconcillation Complete (Timer)");
+                        }
+                    }
+                }
             }
         }
         catch (const std::exception& e)
