@@ -1092,6 +1092,8 @@ bool MACsecOrch::createMACsecPort(
             SAI_MACSEC_DIRECTION_INGRESS);
     });
 
+    SWSS_LOG_NOTICE("MACsec port %s is created.", port_name.c_str());
+
     std::vector<FieldValueTuple> fvVector;
     fvVector.emplace_back("state", "ok");
     m_state_macsec_port.set(port_name, fvVector);
@@ -1137,9 +1139,11 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
 
     get_value(port_attr, "enable_encrypt", macsec_port.m_enable_encrypt);
     get_value(port_attr, "send_sci", macsec_port.m_sci_in_sectag);
-    if (get_value(port_attr, "enable", macsec_port.m_enable))
+    bool enable = false;
+    if (get_value(port_attr, "enable", enable) && enable != macsec_port.m_enable)
     {
         std::vector<MACsecOrch::MACsecSC *> macsec_scs;
+        macsec_port.m_enable = enable;
         for (auto &sc : macsec_port.m_egress_scs)
         {
             macsec_scs.push_back(&sc.second);
