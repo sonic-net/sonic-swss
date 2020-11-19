@@ -1575,7 +1575,7 @@ bool PortsOrch::initPort(const string &alias, const set<int> &lane_set)
                 }
 
                 fields.clear();
-                fields.emplace_back(PORT_COUNTER_ID_LIST, counters_stream.str());
+                fields.emplace_back(PORT_COUNTER_ID_LIST, port_buffer_drop_stream.str());
                 m_flexCounterTable->set(port_drop_key, fields);
 
                 PortUpdate update = {p, true };
