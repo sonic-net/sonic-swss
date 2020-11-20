@@ -44,12 +44,6 @@ struct FdbData
     FdbOrigin origin;
 };
 
-struct MclagFdbData
-{
-    string port;
-    string type;
-};
-
 struct SavedFdbEntry
 {
     MacAddress mac;

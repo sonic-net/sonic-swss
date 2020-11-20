@@ -33,7 +33,6 @@ MlagOrch::MlagOrch(DBConnector *db, vector<string> &tableNames):
     Orch(db, tableNames)
 {
     SWSS_LOG_ENTER();
-    this->installDebugClis();
 }
 
 MlagOrch::~MlagOrch()

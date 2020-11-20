@@ -30,7 +30,6 @@ extern IsoGrpOrch *gIsoGrpOrch;
 IsoGrpOrch::IsoGrpOrch(vector<TableConnector> &connectors) : Orch(connectors)
 {
     SWSS_LOG_ENTER();
-    this->installDebugClis();
     gPortsOrch->attach(this);
 }
 
