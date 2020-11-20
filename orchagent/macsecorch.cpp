@@ -1974,12 +1974,12 @@ bool MACsecOrch::initMACsecACLTable(
     recover.add_action([this, port_id, direction]() { this->unbindMACsecACLTable(port_id, direction); });
 
     sai_uint32_t minimum_priority = 0;
-    if (!getAclMinimumPriority(switch_id, minimum_priority))
+    if (!getAclPriority(switch_id, SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY, minimum_priority))
     {
         return false;
     }
     sai_uint32_t maximum_priority = 0;
-    if (!getAclMaximumPriority(switch_id, maximum_priority))
+    if (!getAclPriority(switch_id, SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY, maximum_priority))
     {
         return false;
     }
@@ -2150,7 +2150,7 @@ bool MACsecOrch::createMACsecACLEAPOLEntry(
     attr.value.oid = table_id;
     attrs.push_back(attr);
     attr.id = SAI_ACL_ENTRY_ATTR_PRIORITY;
-    if (!getAclMaximumPriority(switch_id, attr.value.u32))
+    if (!getAclPriority(switch_id, SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY, attr.value.u32))
     {
         return false;
     }
@@ -2262,39 +2262,19 @@ bool MACsecOrch::deleteMACsecACLEntry(sai_object_id_t entry_id)
     return true;
 }
 
-bool MACsecOrch::getAclMaximumPriority(sai_object_id_t switch_id, sai_uint32_t &priority) const
+bool MACsecOrch::getAclPriority(sai_object_id_t switch_id, sai_attr_id_t priority_id, sai_uint32_t &priority) const
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> attrs;
 
-    attr.id = SAI_SWITCH_ATTR_ACL_ENTRY_MAXIMUM_PRIORITY;
+    attr.id = priority_id;
     attrs.push_back(attr);
     if (sai_switch_api->get_switch_attribute(
             switch_id,
             static_cast<std::uint32_t>(attrs.size()),
             attrs.data()) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Cannot fetch ACL maximum Priority from switch");
-        return false;
-    }
-    priority = attrs.front().value.u32;
-
-    return true;
-}
-
-bool MACsecOrch::getAclMinimumPriority(sai_object_id_t switch_id, sai_uint32_t &priority) const
-{
-    sai_attribute_t attr;
-    std::vector<sai_attribute_t> attrs;
-
-    attr.id = SAI_SWITCH_ATTR_ACL_ENTRY_MINIMUM_PRIORITY;
-    attrs.push_back(attr);
-    if (sai_switch_api->get_switch_attribute(
-            switch_id,
-            static_cast<std::uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Cannot fetch ACL maximum Priority from switch");
+        SWSS_LOG_ERROR("Cannot fetch ACL Priority from switch");
         return false;
     }
     priority = attrs.front().value.u32;

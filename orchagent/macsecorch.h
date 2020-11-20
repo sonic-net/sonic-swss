@@ -234,11 +234,9 @@ private:
         sai_object_id_t flow_id,
         bool active);
     bool deleteMACsecACLEntry(sai_object_id_t entry_id);
-    bool getAclMaximumPriority(
+    bool getAclPriority(
         sai_object_id_t switch_id,
-        sai_uint32_t &priority) const;
-    bool getAclMinimumPriority(
-        sai_object_id_t switch_id,
+        sai_attr_id_t priority_id,
         sai_uint32_t &priority) const;
 };
 
