@@ -385,6 +385,48 @@ void FdbOrch::update(sai_fdb_event_t        type,
             }
         }
 
+        // If MAC is MCLAG remote do not delete for age event, Add the MAC back..
+        if (existing_entry->second.origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
+        {
+            sai_status_t status;
+            sai_fdb_entry_t fdb_entry;
+
+            fdb_entry.switch_id = gSwitchId;
+            memcpy(fdb_entry.mac_address, entry->mac_address, sizeof(sai_mac_t));
+            fdb_entry.bv_id = entry->bv_id;
+
+            sai_attribute_t attr;
+            vector<sai_attribute_t> attrs;
+
+            attr.id = SAI_FDB_ENTRY_ATTR_TYPE;
+            attr.value.s32 = SAI_FDB_ENTRY_TYPE_STATIC;
+            attrs.push_back(attr);
+
+            attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
+            attr.value.booldata = true;
+            attrs.push_back(attr);
+
+            attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
+            attr.value.oid = existing_entry->second.bridge_port_id;
+            attrs.push_back(attr);
+
+            SWSS_LOG_NOTICE("fdbEvent: MAC age event received, MAC is MCLAG origin, added back"
+                "to HW type %s FDB %s in %s on %s",
+                existing_entry->second.type.c_str(),
+                update.entry.mac.to_string().c_str(), vlan.m_alias.c_str(),
+                update.port.m_alias.c_str());
+
+            status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
+                        existing_entry->second.type.c_str(), update.entry.mac.to_string().c_str(),
+                        vlan.m_alias.c_str(), update.port.m_alias.c_str(), status);
+                fdb_dbg_cnt.common.fail_fdb_entry_create++;
+            }
+            return;
+        }
+
         update.add = false;
         storeFdbEntryState(update);
         if (!update.port.m_alias.empty())
@@ -1070,13 +1112,23 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name, const 
         if (type == "dynamic_local")
             attr.value.s32 = SAI_FDB_ENTRY_TYPE_DYNAMIC;
         else
-            attr.value.s32 = (type == "dynamic") ? SAI_FDB_ENTRY_TYPE_STATIC_MACMOVE : SAI_FDB_ENTRY_TYPE_STATIC;
+            attr.value.s32 =  SAI_FDB_ENTRY_TYPE_STATIC;
     }
     else
     {
         attr.value.s32 = (type == "dynamic") ? SAI_FDB_ENTRY_TYPE_DYNAMIC : SAI_FDB_ENTRY_TYPE_STATIC;
     }
     attrs.push_back(attr);
+
+    if (origin == FDB_ORIGIN_MCLAG_ADVERTIZED)
+    {
+        if (type != "dynamic_local")
+        {
+            attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
+            attr.value.booldata = true;
+            attrs.push_back(attr);
+        }
+    }
 
     attr.id = SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID;
     attr.value.oid = port.m_bridge_port_id;
