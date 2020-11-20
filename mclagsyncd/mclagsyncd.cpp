@@ -43,7 +43,7 @@ int main(int argc, char **argv)
     ProducerStateTable tnl_tbl(&appl_db, APP_VXLAN_TUNNEL_TABLE_NAME);
     ProducerStateTable intf_tbl(&appl_db, APP_INTF_TABLE_NAME);
     ProducerStateTable fdb_tbl(&appl_db, APP_MCLAG_FDB_TABLE_NAME);
-    ProducerStateTable acl_table_tbl(&appl_db, APP_ACL_TABLE_NAME);
+    ProducerStateTable acl_table_tbl(&appl_db, APP_ACL_TABLE_TABLE_NAME);
     ProducerStateTable acl_rule_tbl(&appl_db, APP_ACL_RULE_TABLE_NAME);
 
     SubscriberStateTable state_fdb_tbl(&state_db, STATE_FDB_TABLE_NAME);
