@@ -19,15 +19,13 @@ class DVSDatabase:
 
     DEFAULT_POLLING_CONFIG = PollingConfig(polling_interval=0.01, timeout=5, strict=True)
 
-    def __init__(self, db_id: int, connector: str):
+    def __init__(self, db_name: str):
         """Initialize a DVSDatabase instance.
 
         Args:
-            db_id: The integer ID used to identify the given database instance in redis.
-            connector: The I/O connection used to communicate with
-                redis (e.g. UNIX socket, TCP socket, etc.).
+            db_name: The name of the database to connect to.
         """
-        self.db_connection = swsscommon.DBConnector(db_id, connector, 0)
+        self.db_connection = swsscommon.DBConnector(db_name, 0)
 
     def create_entry(self, table_name: str, key: str, entry: Dict[str, str]) -> None:
         """Add the mapping {`key` -> `entry`} to the specified table.
