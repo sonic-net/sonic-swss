@@ -114,8 +114,6 @@ public:
 
     std::unordered_set<sai_object_id_t> m_ingress_acl_tables_uset;
     std::unordered_set<sai_object_id_t> m_egress_acl_tables_uset;
-
-    sai_object_id_t     m_line_port_id = 0;
 };
 
 }

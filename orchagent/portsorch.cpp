@@ -4448,7 +4448,6 @@ bool PortsOrch::initGearboxPort(Port &port)
                    port.m_alias.c_str(), port.m_port_id, port.m_index, status);
                 return false;
             }
-            port.m_line_port_id = linePort;
             SWSS_LOG_NOTICE("BOX: Created Gearbox line-side port 0x%lx for alias:%s index:%d",
                 linePort, port.m_alias.c_str(), port.m_index);
 
