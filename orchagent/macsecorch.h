@@ -65,7 +65,7 @@ private:
     Table               m_macsec_counters_map;
     FlexCounterManager  m_macsec_flex_counter_manager;
 
-    struct ACLTable
+    struct MACsecACLTable
     {
         sai_object_id_t         m_table_id;
         sai_object_id_t         m_eapol_packet_forward_entry_id;
@@ -89,8 +89,8 @@ private:
         sai_object_id_t                     m_ingress_flow_id;
         std::map<sai_uint64_t, MACsecSC>    m_egress_scs;
         std::map<sai_uint64_t, MACsecSC>    m_ingress_scs;
-        ACLTable                            m_egress_acl_table;
-        ACLTable                            m_ingress_acl_table;
+        MACsecACLTable                      m_egress_acl_table;
+        MACsecACLTable                      m_ingress_acl_table;
         bool                                m_enable_encrypt;
         bool                                m_sci_in_sectag;
         bool                                m_enable;
@@ -199,45 +199,45 @@ private:
         const std::vector<std::string> &stats);
     void uninstallCounter(const std::string &obj_name, sai_object_id_t obj_id);
 
-    /* ACL */
-    bool initACLTable(
-        ACLTable &acl_table,
+    /* MACsec ACL */
+    bool initMACsecACLTable(
+        MACsecACLTable &acl_table,
         sai_object_id_t port_id,
         sai_object_id_t switch_id,
         sai_macsec_direction_t direction,
         bool sci_in_sectag);
-    bool deinitACLTable(
-        const ACLTable &acl_table,
+    bool deinitMACsecACLTable(
+        const MACsecACLTable &acl_table,
         sai_object_id_t port_id,
         sai_macsec_direction_t direction);
-    bool createACLTable(
+    bool createMACsecACLTable(
         sai_object_id_t &table_id,
         sai_object_id_t switch_id,
         sai_macsec_direction_t direction,
         bool sci_in_sectag);
-    bool deleteACLTable(sai_object_id_t table_id);
-    bool bindACLTabletoPort(sai_object_id_t table_id, sai_object_id_t port_id, sai_macsec_direction_t direction);
-    bool unbindACLTable(sai_object_id_t port_id, sai_macsec_direction_t direction);
-    bool createACLEAPOLEntry(
+    bool deleteMACsecACLTable(sai_object_id_t table_id);
+    bool bindMACsecACLTabletoPort(sai_object_id_t table_id, sai_object_id_t port_id, sai_macsec_direction_t direction);
+    bool unbindMACsecACLTable(sai_object_id_t port_id, sai_macsec_direction_t direction);
+    bool createMACsecACLEAPOLEntry(
         sai_object_id_t &entry_id,
         sai_object_id_t table_id,
         sai_object_id_t switch_id);
-    bool createACLDataEntry(
+    bool createMACsecACLDataEntry(
         sai_object_id_t &entry_id,
         sai_object_id_t table_id,
         sai_object_id_t switch_id,
         bool sci_in_sectag,
         sai_uint64_t sci,
         sai_uint32_t priority);
-    bool setACLEntryMACsecFlowActive(
+    bool setMACsecFlowActive(
         sai_object_id_t entry_id,
         sai_object_id_t flow_id,
         bool active);
-    bool deleteACLEntry(sai_object_id_t entry_id);
-    bool get_acl_maximum_priority(
+    bool deleteMACsecACLEntry(sai_object_id_t entry_id);
+    bool getAclMaximumPriority(
         sai_object_id_t switch_id,
         sai_uint32_t &priority) const;
-    bool get_acl_minimum_priority(
+    bool getAclMinimumPriority(
         sai_object_id_t switch_id,
         sai_uint32_t &priority) const;
 };

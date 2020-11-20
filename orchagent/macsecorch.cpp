@@ -412,7 +412,7 @@ public:
         return m_macsec_port;
     }
 
-    MACsecOrch::ACLTable *get_acl_table()
+    MACsecOrch::MACsecACLTable *get_acl_table()
     {
         if (m_acl_table == nullptr)
         {
@@ -541,7 +541,7 @@ private:
     std::unique_ptr<sai_object_id_t>    m_switch_id;
 
     MACsecOrch::MACsecPort              *m_macsec_port;
-    MACsecOrch::ACLTable                *m_acl_table;
+    MACsecOrch::MACsecACLTable          *m_acl_table;
 
     MACsecOrch::MACsecSC                *m_macsec_sc;
     sai_object_id_t                     *m_macsec_sa;
@@ -1058,7 +1058,7 @@ bool MACsecOrch::createMACsecPort(
         });
     }
 
-    if (!initACLTable(
+    if (!initMACsecACLTable(
             macsec_port.m_egress_acl_table,
             line_port_id,
             switch_id,
@@ -1069,13 +1069,13 @@ bool MACsecOrch::createMACsecPort(
         return false;
     }
     recover.add_action([this, &macsec_port, line_port_id]() {
-        this->deinitACLTable(
+        this->deinitMACsecACLTable(
             macsec_port.m_egress_acl_table,
             line_port_id,
             SAI_MACSEC_DIRECTION_EGRESS);
     });
 
-    if (!initACLTable(
+    if (!initMACsecACLTable(
             macsec_port.m_ingress_acl_table,
             line_port_id,
             switch_id,
@@ -1086,7 +1086,7 @@ bool MACsecOrch::createMACsecPort(
         return false;
     }
     recover.add_action([this, &macsec_port, line_port_id]() {
-        this->deinitACLTable(
+        this->deinitMACsecACLTable(
             macsec_port.m_ingress_acl_table,
             line_port_id,
             SAI_MACSEC_DIRECTION_INGRESS);
@@ -1157,18 +1157,18 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
             // Change the ACL entry action from packet action to MACsec flow
             if (macsec_port.m_enable)
             {
-                if (!setACLEntryMACsecFlowActive(macsec_sc->m_entry_id, macsec_sc->m_flow_id, true))
+                if (!setMACsecFlowActive(macsec_sc->m_entry_id, macsec_sc->m_flow_id, true))
                 {
                     SWSS_LOG_WARN("Cannot change the ACL entry action from packet action to MACsec flow");
                     return false;
                 }
                 auto an = macsec_sc->m_encoding_an;
                 auto flow_id = macsec_sc->m_flow_id;
-                recover.add_action([this, an, flow_id]() { this->setACLEntryMACsecFlowActive(an, flow_id, false); });
+                recover.add_action([this, an, flow_id]() { this->setMACsecFlowActive(an, flow_id, false); });
             }
             else
             {
-                setACLEntryMACsecFlowActive(macsec_sc->m_encoding_an, macsec_sc->m_flow_id, false);
+                setMACsecFlowActive(macsec_sc->m_encoding_an, macsec_sc->m_flow_id, false);
             }
         }
     }
@@ -1219,13 +1219,13 @@ bool MACsecOrch::deleteMACsecPort(
         }
     }
 
-    if (!deinitACLTable(macsec_port.m_ingress_acl_table, line_port_id, SAI_MACSEC_DIRECTION_INGRESS))
+    if (!deinitMACsecACLTable(macsec_port.m_ingress_acl_table, line_port_id, SAI_MACSEC_DIRECTION_INGRESS))
     {
         SWSS_LOG_WARN("Cannot deinit ingress ACL table at the port %s.", port_name.c_str());
         result &= false;
     }
 
-    if (!deinitACLTable(macsec_port.m_egress_acl_table, line_port_id, SAI_MACSEC_DIRECTION_EGRESS))
+    if (!deinitMACsecACLTable(macsec_port.m_egress_acl_table, line_port_id, SAI_MACSEC_DIRECTION_EGRESS))
     {
         SWSS_LOG_WARN("Cannot deinit egress ACL table at the port %s.", port_name.c_str());
         result &= false;
@@ -1461,7 +1461,7 @@ bool MACsecOrch::createMACsecSC(
     }
     sc->m_acl_priority = *(table->m_available_acl_priorities.begin());
     table->m_available_acl_priorities.erase(table->m_available_acl_priorities.begin());
-    if (!createACLDataEntry(
+    if (!createMACsecACLDataEntry(
             sc->m_entry_id,
             table->m_table_id,
             switch_id,
@@ -1473,7 +1473,7 @@ bool MACsecOrch::createMACsecSC(
         return false;
     }
     recover.add_action([this, sc, table]() {
-        deleteACLEntry(sc->m_entry_id);
+        deleteMACsecACLEntry(sc->m_entry_id);
         table->m_available_acl_priorities.insert(sc->m_acl_priority);
     });
 
@@ -1573,7 +1573,7 @@ task_process_status MACsecOrch::deleteMACsecSC(
         deleteMACsecSA(port_sci_an, direction);
     }
 
-    deleteACLEntry(ctx.get_macsec_sc()->m_entry_id);
+    deleteMACsecACLEntry(ctx.get_macsec_sc()->m_entry_id);
     ctx.get_acl_table()->m_available_acl_priorities.insert(ctx.get_macsec_sc()->m_acl_priority);
 
     if (!deleteMACsecSC(ctx.get_macsec_sc()->m_sc_id))
@@ -1707,13 +1707,13 @@ task_process_status MACsecOrch::createMACsecSA(
     // change the ACL entry action from packet action to MACsec flow
     if (ctx.get_macsec_port()->m_enable && sc->m_sa_ids.empty())
     {
-        if (!setACLEntryMACsecFlowActive(sc->m_entry_id, sc->m_flow_id, true))
+        if (!setMACsecFlowActive(sc->m_entry_id, sc->m_flow_id, true))
         {
             SWSS_LOG_WARN("Cannot change the ACL entry action from packet action to MACsec flow");
             return task_failed;
         }
         recover.add_action([this, sc]() {
-            this->setACLEntryMACsecFlowActive(
+            this->setMACsecFlowActive(
                 sc->m_encoding_an,
                 sc->m_flow_id,
                 false);
@@ -1798,7 +1798,7 @@ task_process_status MACsecOrch::deleteMACsecSA(
     // change the ACL entry action from MACsec flow to packet action
     if (ctx.get_macsec_sc()->m_sa_ids.empty())
     {
-        if (!setACLEntryMACsecFlowActive(ctx.get_macsec_sc()->m_entry_id, ctx.get_macsec_sc()->m_flow_id, false))
+        if (!setMACsecFlowActive(ctx.get_macsec_sc()->m_entry_id, ctx.get_macsec_sc()->m_flow_id, false))
         {
             SWSS_LOG_WARN("Cannot change the ACL entry action from MACsec flow to packet action");
             result = task_failed;
@@ -1932,8 +1932,8 @@ void MACsecOrch::uninstallCounter(const std::string &obj_name, sai_object_id_t o
     m_counter_db.hdel(COUNTERS_MACSEC_NAME_MAP, obj_name);
 }
 
-bool MACsecOrch::initACLTable(
-    ACLTable &acl_table,
+bool MACsecOrch::initMACsecACLTable(
+    MACsecACLTable &acl_table,
     sai_object_id_t port_id,
     sai_object_id_t switch_id,
     sai_macsec_direction_t direction,
@@ -1943,17 +1943,17 @@ bool MACsecOrch::initACLTable(
 
     RecoverStack recover;
 
-    if (!createACLTable(acl_table.m_table_id, switch_id, direction, sci_in_sectag))
+    if (!createMACsecACLTable(acl_table.m_table_id, switch_id, direction, sci_in_sectag))
     {
         SWSS_LOG_WARN("Cannot create ACL table");
         return false;
     }
     recover.add_action([this, &acl_table]() {
-        this->deleteACLTable(acl_table.m_table_id);
+        this->deleteMACsecACLTable(acl_table.m_table_id);
         acl_table.m_table_id = SAI_NULL_OBJECT_ID;
     });
 
-    if (!createACLEAPOLEntry(
+    if (!createMACsecACLEAPOLEntry(
             acl_table.m_eapol_packet_forward_entry_id,
             acl_table.m_table_id,
             switch_id))
@@ -1962,24 +1962,24 @@ bool MACsecOrch::initACLTable(
         return false;
     }
     recover.add_action([this, &acl_table]() {
-        this->deleteACLEntry(acl_table.m_eapol_packet_forward_entry_id);
+        this->deleteMACsecACLEntry(acl_table.m_eapol_packet_forward_entry_id);
         acl_table.m_eapol_packet_forward_entry_id = SAI_NULL_OBJECT_ID;
     });
 
-    if (!bindACLTabletoPort(acl_table.m_table_id, port_id, direction))
+    if (!bindMACsecACLTabletoPort(acl_table.m_table_id, port_id, direction))
     {
         SWSS_LOG_WARN("Cannot bind ACL table");
         return false;
     }
-    recover.add_action([this, port_id, direction]() { this->unbindACLTable(port_id, direction); });
+    recover.add_action([this, port_id, direction]() { this->unbindMACsecACLTable(port_id, direction); });
 
     sai_uint32_t minimum_priority = 0;
-    if (!get_acl_minimum_priority(switch_id, minimum_priority))
+    if (!getAclMinimumPriority(switch_id, minimum_priority))
     {
         return false;
     }
     sai_uint32_t maximum_priority = 0;
-    if (!get_acl_maximum_priority(switch_id, maximum_priority))
+    if (!getAclMaximumPriority(switch_id, maximum_priority))
     {
         return false;
     }
@@ -1999,24 +1999,24 @@ bool MACsecOrch::initACLTable(
     return true;
 }
 
-bool MACsecOrch::deinitACLTable(
-    const ACLTable &acl_table,
+bool MACsecOrch::deinitMACsecACLTable(
+    const MACsecACLTable &acl_table,
     sai_object_id_t port_id,
     sai_macsec_direction_t direction)
 {
     bool result = true;
 
-    if (!unbindACLTable(port_id, direction))
+    if (!unbindMACsecACLTable(port_id, direction))
     {
         SWSS_LOG_WARN("Cannot unbind ACL table");
         result &= false;
     }
-    if (!deleteACLEntry(acl_table.m_eapol_packet_forward_entry_id))
+    if (!deleteMACsecACLEntry(acl_table.m_eapol_packet_forward_entry_id))
     {
         SWSS_LOG_WARN("Cannot delete ACL entry");
         result &= false;
     }
-    if (!deleteACLTable(acl_table.m_table_id))
+    if (!deleteMACsecACLTable(acl_table.m_table_id))
     {
         SWSS_LOG_WARN("Cannot delete ACL table");
         result &= false;
@@ -2025,7 +2025,7 @@ bool MACsecOrch::deinitACLTable(
     return result;
 }
 
-bool MACsecOrch::createACLTable(
+bool MACsecOrch::createMACsecACLTable(
     sai_object_id_t &table_id,
     sai_object_id_t switch_id,
     sai_macsec_direction_t direction,
@@ -2075,7 +2075,7 @@ bool MACsecOrch::createACLTable(
     return true;
 }
 
-bool MACsecOrch::deleteACLTable(sai_object_id_t table_id)
+bool MACsecOrch::deleteMACsecACLTable(sai_object_id_t table_id)
 {
     if (sai_acl_api->remove_acl_table(table_id) != SAI_STATUS_SUCCESS)
     {
@@ -2084,7 +2084,7 @@ bool MACsecOrch::deleteACLTable(sai_object_id_t table_id)
     return true;
 }
 
-bool MACsecOrch::bindACLTabletoPort(
+bool MACsecOrch::bindMACsecACLTabletoPort(
     sai_object_id_t table_id,
     sai_object_id_t port_id,
     sai_macsec_direction_t direction)
@@ -2110,7 +2110,7 @@ bool MACsecOrch::bindACLTabletoPort(
     return true;
 }
 
-bool MACsecOrch::unbindACLTable(
+bool MACsecOrch::unbindMACsecACLTable(
     sai_object_id_t port_id,
     sai_macsec_direction_t direction)
 {
@@ -2135,7 +2135,7 @@ bool MACsecOrch::unbindACLTable(
     return true;
 }
 
-bool MACsecOrch::createACLEAPOLEntry(
+bool MACsecOrch::createMACsecACLEAPOLEntry(
     sai_object_id_t &entry_id,
     sai_object_id_t table_id,
     sai_object_id_t switch_id)
@@ -2150,7 +2150,7 @@ bool MACsecOrch::createACLEAPOLEntry(
     attr.value.oid = table_id;
     attrs.push_back(attr);
     attr.id = SAI_ACL_ENTRY_ATTR_PRIORITY;
-    if (!get_acl_maximum_priority(switch_id, attr.value.u32))
+    if (!getAclMaximumPriority(switch_id, attr.value.u32))
     {
         return false;
     }
@@ -2183,7 +2183,7 @@ bool MACsecOrch::createACLEAPOLEntry(
     return true;
 }
 
-bool MACsecOrch::createACLDataEntry(
+bool MACsecOrch::createMACsecACLDataEntry(
     sai_object_id_t &entry_id,
     sai_object_id_t table_id,
     sai_object_id_t switch_id,
@@ -2224,7 +2224,7 @@ bool MACsecOrch::createACLDataEntry(
     return true;
 }
 
-bool MACsecOrch::setACLEntryMACsecFlowActive(sai_object_id_t entry_id, sai_object_id_t flow_id, bool active)
+bool MACsecOrch::setMACsecFlowActive(sai_object_id_t entry_id, sai_object_id_t flow_id, bool active)
 {
     sai_attribute_t attr;
 
@@ -2252,7 +2252,7 @@ bool MACsecOrch::setACLEntryMACsecFlowActive(sai_object_id_t entry_id, sai_objec
     return true;
 }
 
-bool MACsecOrch::deleteACLEntry(sai_object_id_t entry_id)
+bool MACsecOrch::deleteMACsecACLEntry(sai_object_id_t entry_id)
 {
     if (sai_acl_api->remove_acl_entry(
             entry_id) != SAI_STATUS_SUCCESS)
@@ -2262,7 +2262,7 @@ bool MACsecOrch::deleteACLEntry(sai_object_id_t entry_id)
     return true;
 }
 
-bool MACsecOrch::get_acl_maximum_priority(sai_object_id_t switch_id, sai_uint32_t &priority) const
+bool MACsecOrch::getAclMaximumPriority(sai_object_id_t switch_id, sai_uint32_t &priority) const
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> attrs;
@@ -2282,7 +2282,7 @@ bool MACsecOrch::get_acl_maximum_priority(sai_object_id_t switch_id, sai_uint32_
     return true;
 }
 
-bool MACsecOrch::get_acl_minimum_priority(sai_object_id_t switch_id, sai_uint32_t &priority) const
+bool MACsecOrch::getAclMinimumPriority(sai_object_id_t switch_id, sai_uint32_t &priority) const
 {
     sai_attribute_t attr;
     std::vector<sai_attribute_t> attrs;
