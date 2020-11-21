@@ -23,6 +23,7 @@
 #include "crmorch.h"
 #include "countercheckorch.h"
 #include "notifier.h"
+#include "fdborch.h"
 
 extern sai_switch_api_t *sai_switch_api;
 extern sai_bridge_api_t *sai_bridge_api;
@@ -37,6 +38,7 @@ extern IntfsOrch *gIntfsOrch;
 extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
+extern FdbOrch *gFdbOrch;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -3019,6 +3021,8 @@ bool PortsOrch::removeBridgePort(Port &port)
     /* Flush FDB entries pointing to this bridge port */
     // TODO: Remove all FDB entries associated with this bridge port before
     //       removing the bridge port itself
+    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+    SWSS_LOG_INFO("Flush FDB entries for port %s", port.m_alias.c_str());
 
     /* Remove bridge port */
     status = sai_bridge_api->remove_bridge_port(port.m_bridge_port_id);

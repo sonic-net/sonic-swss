@@ -416,6 +416,46 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     }
 }
 
+void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
+                              sai_object_id_t vlan_oid)
+{
+    vector<sai_attribute_t>    attrs;
+    sai_attribute_t            attr;
+    sai_status_t               rv = SAI_STATUS_SUCCESS;
+
+    SWSS_LOG_ENTER();
+
+    if (SAI_NULL_OBJECT_ID == bridge_port_oid &&
+        SAI_NULL_OBJECT_ID == vlan_oid)
+    {
+        SWSS_LOG_WARN("Couldn't flush FDB. Bridge port OID: 0x%" PRIx64 " bvid:%" PRIx64 ",",
+                      bridge_port_oid, vlan_oid);
+        return;
+    }
+
+    if (SAI_NULL_OBJECT_ID != bridge_port_oid)
+    {
+        attr.id = SAI_FDB_FLUSH_ATTR_BRIDGE_PORT_ID;
+        attr.value.oid = bridge_port_oid;
+        attrs.push_back(attr);
+    }
+
+    if (SAI_NULL_OBJECT_ID != vlan_oid)
+    {
+        attr.id = SAI_FDB_FLUSH_ATTR_BV_ID;
+        attr.value.oid = vlan_oid;
+        attrs.push_back(attr);
+    }
+
+    SWSS_LOG_INFO("Flushing FDB bridge_port_oid: 0x%" PRIx64 ", and bvid_oid:0x%" PRIx64 ".", bridge_port_oid, vlan_oid);
+
+    rv = sai_fdb_api->flush_fdb_entries(gSwitchId, (uint32_t)attrs.size(), attrs.data());
+    if (SAI_STATUS_SUCCESS != rv)
+    {
+        SWSS_LOG_ERROR("Flushing FDB failed. rv:%d", rv);
+    }
+}
+
 void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
 {
     SWSS_LOG_ENTER();
