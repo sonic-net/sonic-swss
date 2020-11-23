@@ -73,8 +73,15 @@ bool OrchDaemon::init()
 
     string platform = getenv("platform") ? getenv("platform") : "";
     TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
+    TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
+    TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
 
-    gSwitchOrch = new SwitchOrch(m_applDb, APP_SWITCH_TABLE_NAME, stateDbSwitchTable);
+    vector<TableConnector> switch_tables = {
+        conf_asic_sensors,
+        app_switch_table
+    };
+
+    gSwitchOrch = new SwitchOrch(m_applDb, switch_tables, stateDbSwitchTable);
 
     const int portsorch_base_pri = 40;
 
