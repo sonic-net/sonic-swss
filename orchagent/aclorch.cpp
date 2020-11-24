@@ -127,7 +127,7 @@ static const acl_capabilities_t defaultAclActionsSupported =
         }
     },
     {
-        ACL_STAGE_EGRESS, 
+        ACL_STAGE_EGRESS,
         {
             SAI_ACL_ACTION_TYPE_PACKET_ACTION
         }
@@ -2114,6 +2114,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     if (platform == BRCM_PLATFORM_SUBSTRING ||
             platform == MLNX_PLATFORM_SUBSTRING ||
             platform == BFN_PLATFORM_SUBSTRING  ||
+            platform == INVM_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
@@ -2140,7 +2141,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     // In Broadcom platform, V4 and V6 rules are stored in the same table
     if (platform == BRCM_PLATFORM_SUBSTRING ||
         platform == NPS_PLATFORM_SUBSTRING  ||
-        platform == BFN_PLATFORM_SUBSTRING) {
+        platform == BFN_PLATFORM_SUBSTRING  ||
+        platform == INVM_PLATFORM_SUBSTRING) {
         m_isCombinedMirrorV6Table = true;
     }
 
