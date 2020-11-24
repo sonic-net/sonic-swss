@@ -128,7 +128,7 @@ static const acl_capabilities_t defaultAclActionsSupported =
         }
     },
     {
-        ACL_STAGE_EGRESS, 
+        ACL_STAGE_EGRESS,
         {
             SAI_ACL_ACTION_TYPE_PACKET_ACTION
         }
@@ -880,7 +880,7 @@ bool AclRuleL3::validateAddAction(string attr_name, string _attr_value)
 // This method should return sai attribute id of the redirect destination
 sai_object_id_t AclRuleL3::getRedirectObjectId(const string& redirect_value)
 {
-   
+
     string target = redirect_value;
 
     // Try to parse physical port and LAG first
@@ -2187,6 +2187,7 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
             platform == MLNX_PLATFORM_SUBSTRING ||
             platform == BFN_PLATFORM_SUBSTRING  ||
             platform == MRVL_PLATFORM_SUBSTRING ||
+            platform == INVM_PLATFORM_SUBSTRING ||
             platform == NPS_PLATFORM_SUBSTRING)
     {
         m_mirrorTableCapabilities =
@@ -2213,7 +2214,8 @@ void AclOrch::init(vector<TableConnector>& connectors, PortsOrch *portOrch, Mirr
     // In Broadcom platform, V4 and V6 rules are stored in the same table
     if (platform == BRCM_PLATFORM_SUBSTRING ||
         platform == NPS_PLATFORM_SUBSTRING  ||
-        platform == BFN_PLATFORM_SUBSTRING) {
+        platform == BFN_PLATFORM_SUBSTRING  ||
+        platform == INVM_PLATFORM_SUBSTRING) {
         m_isCombinedMirrorV6Table = true;
     }
 
