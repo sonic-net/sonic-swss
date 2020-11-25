@@ -69,7 +69,6 @@ public:
     bool m_isEvpnNvoExist = false;
 
 private:
-    Table m_stateFdbRestoreTable;
     ProducerStateTable m_fdbTable;
     ProducerStateTable m_imetTable;
     SubscriberStateTable m_fdbStateTable;

@@ -24,7 +24,6 @@ using namespace swss;
 FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector *config_db) :
     m_fdbTable(pipelineAppDB, APP_VXLAN_FDB_TABLE_NAME),
     m_imetTable(pipelineAppDB, APP_VXLAN_REMOTE_VNI_TABLE_NAME),
-    m_stateFdbRestoreTable(stateDb, STATE_EVPN_FDB_RESTORE_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
     m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME)
 {
@@ -42,20 +41,6 @@ FdbSync::~FdbSync()
     {
         delete m_AppRestartAssist;
     }
-}
-
-// Check if neighbor table is restored in kernel
-bool FdbSync::isFdbRestoreDone()
-{
-    string value;
-
-    m_stateFdbRestoreTable.hget("Flags", "restored", value);
-    if (value == "true")
-    {
-        SWSS_LOG_INFO("neighbor table restore to kernel is done");
-        return true;
-    }
-    return true;
 }
 
 void FdbSync::processCfgEvpnNvo()
