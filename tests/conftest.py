@@ -129,6 +129,8 @@ class AsicDbValidator(DVSDatabase):
         self.default_acl_tables = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         self.default_acl_entries = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
 
+        self.default_copp_policers = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
+
 
 class ApplDbValidator(DVSDatabase):
     NEIGH_TABLE = "NEIGH_TABLE"
@@ -1102,6 +1104,7 @@ class DockerVirtualSwitch:
             db = DVSDatabase(self.ASIC_DB_ID, self.redis_sock)
             db.default_acl_tables = self.asicdb.default_acl_tables
             db.default_acl_entries = self.asicdb.default_acl_entries
+            db.default_copp_policers = self.asicdb.default_copp_policers
             db.port_name_map = self.asicdb.portnamemap
             db.default_vlan_id = self.asicdb.default_vlan_id
             db.port_to_id_map = self.asicdb.portoidmap
