@@ -7,7 +7,6 @@
 #include "orch.h"
 #include "portsorch.h"
 #include "redisapi.h"
-#include "redisclient.h"
 
 #define BUFFER_POOL_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP "BUFFER_POOL_WATERMARK_STAT_COUNTER"
 

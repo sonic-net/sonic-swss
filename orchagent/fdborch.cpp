@@ -113,8 +113,8 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
     }
 }
 
-void FdbOrch::update(sai_fdb_event_t        type, 
-                     const sai_fdb_entry_t* entry, 
+void FdbOrch::update(sai_fdb_event_t        type,
+                     const sai_fdb_entry_t* entry,
                      sai_object_id_t        bridge_port_id)
 {
     SWSS_LOG_ENTER();
@@ -124,11 +124,11 @@ void FdbOrch::update(sai_fdb_event_t        type,
     update.entry.bv_id = entry->bv_id;
 
     SWSS_LOG_INFO("FDB event:%d, MAC: %s , BVID: 0x%" PRIx64 " , \
-                   bridge port ID: 0x%" PRIx64 ".", 
-                   type, update.entry.mac.to_string().c_str(), 
+                   bridge port ID: 0x%" PRIx64 ".",
+                   type, update.entry.mac.to_string().c_str(),
                    entry->bv_id, bridge_port_id);
 
-    if (bridge_port_id && 
+    if (bridge_port_id &&
         !m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
     {
         SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 ".",
@@ -199,7 +199,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
         }
 
 
-        if (bridge_port_id == SAI_NULL_OBJECT_ID && 
+        if (bridge_port_id == SAI_NULL_OBJECT_ID &&
             entry->bv_id == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_INFO("FDB Flush: [ %s , %s ] = { port: - }",
@@ -491,6 +491,18 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     }
 }
 
+/*
+ * Name: flushFDBEntries
+ * Params:
+ *     bridge_port_oid - SAI object ID of bridge port associated with the port
+ *     vlan_oid - SAI object ID of the VLAN
+ * Description:
+ *     Flushes FDB entries based on bridge_port_oid, or vlan_oid or both.
+ *     This function is called in three cases.
+ *     1. Port is reoved from VLAN (via SUBJECT_TYPE_VLAN_MEMBER_CHANGE)
+ *     2. Bridge port OID is removed (Direct call)
+ *     3. Port is shut down (via SUBJECT_TYPE_
+ */
 void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
                               sai_object_id_t vlan_oid)
 {
@@ -531,6 +543,34 @@ void FdbOrch::flushFDBEntries(sai_object_id_t bridge_port_oid,
     }
 }
 
+void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
+{
+    FdbFlushUpdate flushUpdate;
+    flushUpdate.port = port;
+
+    for (auto itr = m_entries.begin(); itr != m_entries.end(); ++itr)
+    {
+        if ((itr->port_name == port.m_alias) &&
+            (itr->bv_id == bvid))
+        {
+            SWSS_LOG_INFO("Adding MAC learnt on [ port:%s , bvid:0x%" PRIx64 "]\
+                           to ARP flush", port.m_alias.c_str(), bvid);
+            FdbEntry entry;
+            entry.mac = itr->mac;
+            entry.bv_id = itr->bv_id;
+            flushUpdate.entries.push_back(entry);
+        }
+    }
+
+    if (!flushUpdate.entries.empty())
+    {
+        for (auto observer: m_observers)
+        {
+            observer->update(SUBJECT_TYPE_FDB_FLUSH_CHANGE, &flushUpdate);
+        }
+    }
+}
+
 void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
 {
     SWSS_LOG_ENTER();
@@ -538,6 +578,21 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
     {
         swss::Port p = update.port;
         flushFDBEntries(p.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+
+        // Get BVID of each VLAN that this port is a member of
+        // and call notifyObserversFDBFlush
+        for (const auto& vlan_member: p.m_vlan_members)
+        {
+            swss::Port vlan;
+            string vlan_alias = VLAN_PREFIX + to_string(vlan_member.first);
+            if (!m_portsOrch->getPort(vlan_alias, vlan))
+            {
+                SWSS_LOG_INFO("Failed to locate VLAN %s", vlan_alias.c_str());
+                continue;
+            }
+            notifyObserversFDBFlush(p, vlan.m_vlan_info.vlan_oid);
+        }
+
     }
     return;
 }
@@ -551,6 +606,7 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
         swss::Port vlan = update.vlan;
         swss::Port port = update.member;
         flushFDBEntries(port.m_bridge_port_id, vlan.m_vlan_info.vlan_oid);
+        notifyObserversFDBFlush(port, vlan.m_vlan_info.vlan_oid);
         return;
     }
 
@@ -580,7 +636,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& type)
     if (!m_portsOrch->getPort(entry.port_name, port))
     {
         SWSS_LOG_DEBUG("Saving a fdb entry until port %s becomes active",
-                        entry. port_name.c_str());
+                        entry.port_name.c_str());
         saved_fdb_entries[entry.port_name].push_back({entry, type});
 
         return true;
@@ -589,7 +645,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& type)
     /* Retry until port is added to the VLAN */
     if (!port.m_bridge_port_id)
     {
-        SWSS_LOG_DEBUG("Saving a fdb entry until port %s has got a bridge port ID", 
+        SWSS_LOG_DEBUG("Saving a fdb entry until port %s has got a bridge port ID",
                         entry.port_name.c_str());
         saved_fdb_entries[entry.port_name].push_back({entry, type});
 

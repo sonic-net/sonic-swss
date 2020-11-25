@@ -2,7 +2,6 @@
 #include "portsorch.h"
 #include "select.h"
 #include "notifier.h"
-#include "redisclient.h"
 #include "sai_serialize.h"
 #include <inttypes.h>
 

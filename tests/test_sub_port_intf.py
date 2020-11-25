@@ -3,6 +3,8 @@ import json
 from dvslib.dvs_common import wait_for_result
 from dvslib.dvs_database import DVSDatabase
 
+DEFAULT_MTU = "9100"
+
 CFG_VLAN_SUB_INTF_TABLE_NAME = "VLAN_SUB_INTERFACE"
 CFG_PORT_TABLE_NAME = "PORT"
 CFG_LAG_TABLE_NAME = "PORTCHANNEL"
@@ -41,6 +43,7 @@ class TestSubPortIntf(object):
         self.asic_db = dvs.get_asic_db()
         self.config_db = dvs.get_config_db()
         self.state_db = dvs.get_state_db()
+        dvs.setup_db()
 
     def set_parent_port_admin_status(self, dvs, port_name, status):
         fvs = {ADMIN_STATUS: status}
@@ -52,7 +55,7 @@ class TestSubPortIntf(object):
             tbl_name = CFG_LAG_TABLE_NAME
         self.config_db.create_entry(tbl_name, port_name, fvs)
 
-        # follow the treatment in TestSubPortIntf::set_admin_status
+        # follow the treatment in TestRouterInterface::set_admin_status
         if tbl_name == CFG_LAG_TABLE_NAME:
             dvs.runcmd("bash -c 'echo " + ("1" if status == "up" else "0") + \
                     " > /sys/class/net/" + port_name + "/carrier'")
@@ -76,14 +79,14 @@ class TestSubPortIntf(object):
     def remove_sub_port_intf_profile(self, sub_port_intf_name):
         self.config_db.delete_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, sub_port_intf_name)
 
-    def verify_sub_port_intf_removal(self, rif_oid):
+    def check_sub_port_intf_profile_removal(self, rif_oid):
         self.asic_db.wait_for_deleted_keys(ASIC_RIF_TABLE, [rif_oid])
 
     def remove_sub_port_intf_ip_addr(self, sub_port_intf_name, ip_addr):
         key = "{}|{}".format(sub_port_intf_name, ip_addr)
         self.config_db.delete_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, key)
 
-    def verify_sub_port_intf_ip_addr_removal(self, sub_port_intf_name, ip_addrs):
+    def check_sub_port_intf_ip_addr_removal(self, sub_port_intf_name, ip_addrs):
         interfaces = ["{}:{}".format(sub_port_intf_name, addr) for addr in ip_addrs]
         self.app_db.wait_for_deleted_keys(APP_INTF_TABLE_NAME, interfaces)
 
@@ -161,14 +164,14 @@ class TestSubPortIntf(object):
             "SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID": "{}".format(vlan_id),
             "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "true",
             "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "true",
-            "SAI_ROUTER_INTERFACE_ATTR_MTU": "9100",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
         }
         rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
         self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
-        self.verify_sub_port_intf_removal(rif_oid)
+        self.check_sub_port_intf_profile_removal(rif_oid)
 
     def test_sub_port_intf_creation(self, dvs):
         self.connect_dbs(dvs)
@@ -219,13 +222,13 @@ class TestSubPortIntf(object):
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
-        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name,
-                                                  [self.IPV4_ADDR_UNDER_TEST,
-                                                   self.IPV6_ADDR_UNDER_TEST])
+        self.check_sub_port_intf_ip_addr_removal(sub_port_intf_name,
+                                                 [self.IPV4_ADDR_UNDER_TEST,
+                                                  self.IPV6_ADDR_UNDER_TEST])
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
-        self.verify_sub_port_intf_removal(rif_oid)
+        self.check_sub_port_intf_profile_removal(rif_oid)
 
     def test_sub_port_intf_add_ip_addrs(self, dvs):
         self.connect_dbs(dvs)
@@ -253,7 +256,7 @@ class TestSubPortIntf(object):
         fv_dict = {
             "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "true",
             "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "true",
-            "SAI_ROUTER_INTERFACE_ATTR_MTU": "9100",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
         }
         rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
         self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
@@ -271,7 +274,7 @@ class TestSubPortIntf(object):
         fv_dict = {
             "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "false",
             "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "false",
-            "SAI_ROUTER_INTERFACE_ATTR_MTU": "9100",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
         }
         rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
         self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
@@ -289,7 +292,7 @@ class TestSubPortIntf(object):
         fv_dict = {
             "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "true",
             "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "true",
-            "SAI_ROUTER_INTERFACE_ATTR_MTU": "9100",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
         }
         rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
         self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
@@ -297,13 +300,13 @@ class TestSubPortIntf(object):
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
-        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name,
-                                                  [self.IPV4_ADDR_UNDER_TEST,
-                                                   self.IPV6_ADDR_UNDER_TEST])
+        self.check_sub_port_intf_ip_addr_removal(sub_port_intf_name,
+                                                 [self.IPV4_ADDR_UNDER_TEST,
+                                                  self.IPV6_ADDR_UNDER_TEST])
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
-        self.verify_sub_port_intf_removal(rif_oid)
+        self.check_sub_port_intf_profile_removal(rif_oid)
 
     def test_sub_port_intf_admin_status_change(self, dvs):
         self.connect_dbs(dvs)
@@ -362,7 +365,7 @@ class TestSubPortIntf(object):
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
-        self.verify_sub_port_intf_removal(rif_oid)
+        self.check_sub_port_intf_profile_removal(rif_oid)
 
     def test_sub_port_intf_remove_ip_addrs(self, dvs):
         self.connect_dbs(dvs)
@@ -402,13 +405,13 @@ class TestSubPortIntf(object):
         # Remove IP addresses
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
         self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
-        self.verify_sub_port_intf_ip_addr_removal(sub_port_intf_name,
-                                                  [self.IPV4_ADDR_UNDER_TEST,
-                                                   self.IPV6_ADDR_UNDER_TEST])
+        self.check_sub_port_intf_ip_addr_removal(sub_port_intf_name,
+                                                 [self.IPV4_ADDR_UNDER_TEST,
+                                                  self.IPV6_ADDR_UNDER_TEST])
 
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
-        self.verify_sub_port_intf_removal(rif_oid)
+        self.check_sub_port_intf_profile_removal(rif_oid)
 
         # Verify that sub port interface state ok is removed from STATE_DB by Intfmgrd
         self.check_sub_port_intf_key_removal(self.state_db, state_tbl_name, sub_port_intf_name)
@@ -424,6 +427,46 @@ class TestSubPortIntf(object):
 
         self._test_sub_port_intf_removal(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST)
         self._test_sub_port_intf_removal(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST)
+
+    def _test_sub_port_intf_mtu(self, dvs, sub_port_intf_name):
+        substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = substrs[0]
+
+        old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
+
+        self.set_parent_port_admin_status(dvs, parent_port, "up")
+        self.create_sub_port_intf_profile(sub_port_intf_name)
+
+        rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
+
+        # Change parent port mtu
+        mtu = "8888"
+        dvs.set_mtu(parent_port, mtu)
+
+        # Verify that sub port router interface entry in ASIC_DB has the updated mtu
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": mtu,
+        }
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Restore parent port mtu
+        dvs.set_mtu(parent_port, DEFAULT_MTU)
+
+        # Verify that sub port router interface entry in ASIC_DB has the default mtu
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
+        }
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Remove a sub port interface
+        self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.check_sub_port_intf_profile_removal(rif_oid)
+
+    def test_sub_port_intf_mtu(self, dvs):
+        self.connect_dbs(dvs)
+
+        self._test_sub_port_intf_mtu(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST)
+        self._test_sub_port_intf_mtu(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST)
 
 
 # Add Dummy always-pass test at end as workaroud
