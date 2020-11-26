@@ -31,7 +31,7 @@ logit(delta)
 
 local n = table.getn(KEYS)
 for i = 1, n do
-    local state_table = rates_table_name .. ':' .. 'PORT' .. ":" .. KEYS[i]
+    local state_table = rates_table_name .. ':' .. KEYS[i] .. ':' .. 'PORT'
     local initialized = redis.call('HGET', state_table, 'INIT_DONE')
     logit(initialized)
 
