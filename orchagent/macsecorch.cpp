@@ -1686,7 +1686,7 @@ task_process_status MACsecOrch::createMACsecSA(
     sai_uint64_t pn = 1;
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        if (!get_value(sa_attr, "init_pn", pn))
+        if (!get_value(sa_attr, "next_pn", pn))
         {
             SWSS_LOG_WARN("The init pn isn't existed at SA %s", port_sci_an.c_str());
             return task_failed;
