@@ -76,8 +76,8 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
-    cout << "    -s: enable synchronous mode" << endl;
-    cout << "    -z: redis communication mode (redis_async|redys_sync|zmq_sync), default: redis_async" << endl;
+    cout << "    -s: enable synchronous mode (depreacated, use -z)" << endl;
+    cout << "    -z: redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
 }
 
 void sighup_handler(int signo)
