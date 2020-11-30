@@ -64,7 +64,6 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             FieldValueTuple fvt = kfvFieldsValues(t)[0];
-
             SWSS_LOG_NOTICE("ASIC sensors : set %s(%s) to %s", table_attr.c_str(), fvField(fvt).c_str(), fvValue(fvt).c_str());
 
             if (table_attr == ASIC_SENSORS_POLLER_STATUS)
