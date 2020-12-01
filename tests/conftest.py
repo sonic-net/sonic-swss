@@ -9,6 +9,8 @@ import random
 import string
 import subprocess
 import sys
+import tarfile
+import io
 
 from typing import Dict, Tuple
 from datetime import datetime
@@ -127,6 +129,8 @@ class AsicDbValidator(DVSDatabase):
         self.default_acl_tables = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE")
         self.default_acl_entries = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY")
 
+        self.default_copp_policers = self.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
+
 
 class ApplDbValidator(DVSDatabase):
     NEIGH_TABLE = "NEIGH_TABLE"
@@ -196,6 +200,10 @@ class VirtualServer:
             return e.returncode
 
         return 0
+
+    # used in buildimage tests, do not delete
+    def runcmd_async(self, cmd: str) -> subprocess.Popen:
+        return subprocess.Popen(f"ip netns exec {self.nsname} {cmd}", shell=True)
 
     def runcmd_output(self, cmd: str) -> str:
         return subprocess.check_output(f"ip netns exec {self.nsname} {cmd}", shell=True).decode("utf-8")
@@ -531,6 +539,17 @@ class DockerVirtualSwitch:
             print("-----")
 
         return (exitcode, out)
+
+    # used in buildimage tests, do not delete
+    def copy_file(self, path: str, filename: str) -> None:
+        tarstr = io.BytesIO()
+        tar = tarfile.open(fileobj=tarstr, mode="w")
+        tar.add(filename, os.path.basename(filename))
+        tar.close()
+
+        self.ctn.exec_run(f"mkdir -p {path}")
+        self.ctn.put_archive(path, tarstr.getvalue())
+        tarstr.close()
 
     def get_logs(self) -> None:
         log_dir = os.path.join("log", self.log_path) if self.log_path else "log"
@@ -1085,6 +1104,7 @@ class DockerVirtualSwitch:
             db = DVSDatabase(self.ASIC_DB_ID, self.redis_sock)
             db.default_acl_tables = self.asicdb.default_acl_tables
             db.default_acl_entries = self.asicdb.default_acl_entries
+            db.default_copp_policers = self.asicdb.default_copp_policers
             db.port_name_map = self.asicdb.portnamemap
             db.default_vlan_id = self.asicdb.default_vlan_id
             db.port_to_id_map = self.asicdb.portoidmap

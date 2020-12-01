@@ -37,10 +37,10 @@ static const map<sai_port_oper_status_t, string> oper_status_strings =
 
 static const unordered_map<string, sai_port_oper_status_t> string_oper_status =
 {
-    { "unknown", SAI_PORT_OPER_STATUS_UNKNOWN },
-    { "up", SAI_PORT_OPER_STATUS_UP },
-    { "down", SAI_PORT_OPER_STATUS_DOWN },
-    { "testing", SAI_PORT_OPER_STATUS_TESTING },
+    { "unknown",     SAI_PORT_OPER_STATUS_UNKNOWN },
+    { "up",          SAI_PORT_OPER_STATUS_UP },
+    { "down",        SAI_PORT_OPER_STATUS_DOWN },
+    { "testing",     SAI_PORT_OPER_STATUS_TESTING },
     { "not present", SAI_PORT_OPER_STATUS_NOT_PRESENT }
 };
 
