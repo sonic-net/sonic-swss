@@ -187,16 +187,16 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
         else if (bridge_port_id && entry->bv_id == SAI_NULL_OBJECT_ID)
         {
             /*this is a placeholder for flush port fdb case, not supported yet.*/
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush port fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
+            SWSS_LOG_WARN("FdbOrch notification: not supported flush port fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
         }
         else if (bridge_port_id == SAI_NULL_OBJECT_ID && entry->bv_id != SAI_NULL_OBJECT_ID)
         {
             /*this is a placeholder for flush vlan fdb case, not supported yet.*/
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush vlan fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
+            SWSS_LOG_WARN("FdbOrch notification: not supported flush vlan fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
         }
         else
         {
-            SWSS_LOG_ERROR("FdbOrch notification: not supported flush fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
+            SWSS_LOG_WARN("FdbOrch notification: not supported flush fdb action, port_id = 0x%" PRIx64 ", bv_id = 0x%" PRIx64 ".", bridge_port_id, entry->bv_id);
         }
         break;
     }
