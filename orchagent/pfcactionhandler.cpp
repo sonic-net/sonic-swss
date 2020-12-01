@@ -532,14 +532,14 @@ PfcWdZeroBufferHandler::~PfcWdZeroBufferHandler(void)
     if (pending_profile_id != SAI_NULL_OBJECT_ID)
     {
         attr.value.oid = pending_profile_id;
-        SWSS_LOG_NOTICE("Priority group %zd on port %s has been resotred to pending profile 0x%" PRIx64,
+        SWSS_LOG_NOTICE("Priority group %zd on port %s has been restored to pending profile 0x%" PRIx64,
                         idx, portInstance.m_alias.c_str(), pending_profile_id);
         portInstance.m_priority_group_pending_profile[idx] = SAI_NULL_OBJECT_ID;
     }
     else
     {
         attr.value.oid = m_originalPgBufferProfile;
-        SWSS_LOG_NOTICE("Priority group %zd on port %s has been resotred to original profile 0x%" PRIx64,
+        SWSS_LOG_NOTICE("Priority group %zd on port %s has been restored to original profile 0x%" PRIx64,
                         idx, portInstance.m_alias.c_str(), m_originalPgBufferProfile);
     }
 
