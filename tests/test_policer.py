@@ -22,7 +22,7 @@ class TestPolicer(object):
 
         # check asic database
         tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
-        policer_entries = tbl.getKeys()
+        policer_entries = [p for p in tbl.getKeys() if p not in dvs.asicdb.default_copp_policers]
         assert len(policer_entries) == 1
 
         (status, fvs) = tbl.get(policer_entries[0])
@@ -70,7 +70,7 @@ class TestPolicer(object):
 
         # check asic database
         tbl = swsscommon.Table(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_POLICER")
-        policer_entries = tbl.getKeys()
+        policer_entries = [p for p in tbl.getKeys() if p not in dvs.asicdb.default_copp_policers]
         assert len(policer_entries) == 0
 
 

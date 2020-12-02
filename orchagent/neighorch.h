@@ -5,9 +5,12 @@
 #include "observer.h"
 #include "portsorch.h"
 #include "intfsorch.h"
+#include "fdborch.h"
 
 #include "ipaddress.h"
 #include "nexthopkey.h"
+#include "producerstatetable.h"
+#include "schema.h"
 
 #define NHFLAGS_IFDOWN                  0x1 // nexthop's outbound i/f is down
 
@@ -32,10 +35,11 @@ struct NeighborUpdate
     bool add;
 };
 
-class NeighOrch : public Orch, public Subject
+class NeighOrch : public Orch, public Subject, public Observer
 {
 public:
-    NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch);
+    NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch);
+    ~NeighOrch();
 
     bool hasNextHop(const NextHopKey&);
 
@@ -53,10 +57,14 @@ public:
 
     bool ifChangeInformNextHop(const string &, bool);
     bool isNextHopFlagSet(const NextHopKey &, const uint32_t);
-
     bool removeOverlayNextHop(const NextHopKey &);
+    void update(SubjectType, void *);
+
 private:
+    PortsOrch *m_portsOrch;
     IntfsOrch *m_intfsOrch;
+    FdbOrch *m_fdbOrch;
+    ProducerStateTable m_appNeighResolveProducer;
 
     NeighborTable m_syncdNeighbors;
     NextHopTable m_syncdNextHops;
@@ -69,6 +77,9 @@ private:
 
     bool setNextHopFlag(const NextHopKey &, const uint32_t);
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
+
+    void processFDBFlushUpdate(const FdbFlushUpdate &);
+    bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
 
     void doTask(Consumer &consumer);
 };

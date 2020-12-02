@@ -76,6 +76,28 @@ class TestAcl:
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
 
+    def test_AclRuleIpProtocol(self, dvs_acl, l3_acl_table):
+        config_qualifiers = {"IP_PROTOCOL": "6"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL": dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
+        }
+
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_AclRuleNextHeader(self, dvs_acl, l3_acl_table):
+        config_qualifiers = {"NEXT_HEADER": "6"}
+
+        # Shouldn't allow NEXT_HEADER on vanilla L3 tables.
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_no_acl_rules()
+
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
     def test_AclRuleInOutPorts(self, dvs_acl, l3_acl_table):
         config_qualifiers = {
             "IN_PORTS": "Ethernet0,Ethernet4",
@@ -154,10 +176,24 @@ class TestAcl:
         dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
         dvs_acl.verify_no_acl_rules()
 
+    # This test validates that backwards compatibility works as expected, it should
+    # be converted to a negative test after the 202012 release.
     def test_V6AclRuleIpProtocol(self, dvs_acl, l3v6_acl_table):
         config_qualifiers = {"IP_PROTOCOL": "6"}
         expected_sai_qualifiers = {
-            "SAI_ACL_ENTRY_ATTR_FIELD_IP_PROTOCOL": dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
+            "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER": dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
+        }
+
+        dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_V6AclRuleNextHeader(self, dvs_acl, l3v6_acl_table):
+        config_qualifiers = {"NEXT_HEADER": "6"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_IPV6_NEXT_HEADER": dvs_acl.get_simple_qualifier_comparator("6&mask:0xff")
         }
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
@@ -414,6 +450,57 @@ class TestAcl:
         dvs_acl.verify_no_acl_rules()
 
 
+class TestAclCrmUtilization:
+    @pytest.fixture(scope="class", autouse=True)
+    def configure_crm_polling_interval_for_test(self, dvs):
+        dvs.runcmd("crm config polling interval 1")
+
+        yield
+
+        dvs.runcmd("crm config polling interval 300")
+
+    def test_ValidateAclTableBindingCrmUtilization(self, dvs, dvs_acl):
+        counter_db = dvs.get_counters_db()
+
+        crm_port_stats = counter_db.get_entry("CRM", "ACL_STATS:INGRESS:PORT")
+        initial_acl_table_port_bindings_used = int(crm_port_stats.get("crm_stats_acl_table_used", 0))
+
+        crm_lag_stats = counter_db.get_entry("CRM", "ACL_STATS:INGRESS:LAG")
+        initial_acl_table_lag_bindings_used = int(crm_lag_stats.get("crm_stats_acl_table_used", 0))
+
+        dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS)
+        dvs_acl.verify_acl_table_count(1)
+
+        counter_db.wait_for_field_match(
+            "CRM",
+            "ACL_STATS:INGRESS:PORT",
+            {"crm_stats_acl_table_used": str(initial_acl_table_port_bindings_used + 1)}
+        )
+
+        counter_db.wait_for_field_match(
+            "CRM",
+            "ACL_STATS:INGRESS:LAG",
+            {"crm_stats_acl_table_used": str(initial_acl_table_lag_bindings_used + 1)}
+        )
+
+        dvs_acl.remove_acl_table(L3_TABLE_NAME)
+        dvs_acl.verify_acl_table_count(0)
+
+        counter_db.wait_for_field_match(
+            "CRM",
+            "ACL_STATS:INGRESS:PORT",
+            {"crm_stats_acl_table_used": str(initial_acl_table_port_bindings_used)}
+        )
+
+        counter_db.wait_for_field_match(
+            "CRM",
+            "ACL_STATS:INGRESS:LAG",
+            {"crm_stats_acl_table_used": str(initial_acl_table_lag_bindings_used)}
+        )
+
+
+# TODO: Need to improve the clean-up/post-checks for these tests as currently we can't run anything
+# afterwards.
 class TestAclRuleValidation:
     """Test class for cases that check if orchagent corectly validates ACL rules input."""
 
@@ -466,7 +553,7 @@ class TestAclRuleValidation:
             dvs.stop_swss()
             dvs.start_swss()
             # reinit ASIC DB validator object
-            dvs.init_asicdb_validator()
+            dvs.init_asic_db_validator()
 
             action_values = self.get_acl_actions_supported(dvs_acl, stage)
             # Now, PACKET_ACTION is not supported and REDIRECT_ACTION is supported
