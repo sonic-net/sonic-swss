@@ -86,7 +86,7 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("ASIC sensors : unsupported field");
+                    SWSS_LOG_ERROR("ASIC sensors : unsupported field in attribute %s", ASIC_SENSORS_POLLER_STATUS);
                 }
             }
             else if (table_attr == ASIC_SENSORS_POLLER_INTERVAL)
@@ -109,17 +109,17 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("ASIC sensors : unsupported field");
+                    SWSS_LOG_ERROR("ASIC sensors : unsupported field in attribute %s", ASIC_SENSORS_POLLER_INTERVAL);
                 }
             }
             else
             {
-                SWSS_LOG_ERROR("ASIC sensors : unsupported attribute");
+                SWSS_LOG_ERROR("ASIC sensors : unsupported attribute %s", table_attr.c_str());
             }
         }
         else
         {
-            SWSS_LOG_ERROR("ASIC sensors : unsupported op %s",op.c_str());
+            SWSS_LOG_ERROR("ASIC sensors : unsupported operation %s",op.c_str());
         }
 
         it = consumer.m_toSync.erase(it);
@@ -231,14 +231,13 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
 void SwitchOrch::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-    const string & db_name = consumer.getDbName();
     const string & table_name = consumer.getTableName();
 
-    if ((db_name == "APPL_DB") && (table_name == APP_SWITCH_TABLE_NAME ))
+    if (table_name == APP_SWITCH_TABLE_NAME)
     {
         doAppSwitchTableTask(consumer);
     }
-    else if ((db_name == "CONFIG_DB") && (table_name == CFG_ASIC_SENSORS_TABLE_NAME))
+    else if (table_name == CFG_ASIC_SENSORS_TABLE_NAME)
     {
         doCfgSensorsTableTask(consumer);
     }
@@ -465,8 +464,6 @@ void SwitchOrch::initSensorsTable()
 
     if (m_sensorsMaxTempSupported)
     {
-        memset(&attr, 0, sizeof(attr));
-
         const std::string &fieldName = "maximum_temperature";
         values.emplace_back(fieldName, std::to_string(0));
         m_asicSensorsTable->set("",values);
@@ -474,8 +471,6 @@ void SwitchOrch::initSensorsTable()
 
     if (m_sensorsAvgTempSupported)
     {
-        memset(&attr, 0, sizeof(attr));
-
         const std::string &fieldName = "average_temperature";
         values.emplace_back(fieldName, std::to_string(0));
         m_asicSensorsTable->set("",values);
