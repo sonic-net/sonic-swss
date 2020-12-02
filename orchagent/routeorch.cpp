@@ -1730,7 +1730,7 @@ bool RouteOrch::createRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextH
     bool status = false;
     int ip_refcnt = 0;
 
-    status = tunnel_orch->addTunnelUser(nextHop.ip_address.to_string(), nextHop.vni, 0, TNL_SRC_IP, vrf_id);
+    status = tunnel_orch->addTunnelUser(nextHop.ip_address.to_string(), nextHop.vni, 0, TUNNEL_USER_IP, vrf_id);
 
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (vtep_ptr)
@@ -1750,7 +1750,7 @@ bool RouteOrch::deleteRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextH
     bool status = false;
     int ip_refcnt = 0;
 
-    status = tunnel_orch->delTunnelUser(nextHop.ip_address.to_string(), nextHop.vni, 0, TNL_SRC_IP, vrf_id);
+    status = tunnel_orch->delTunnelUser(nextHop.ip_address.to_string(), nextHop.vni, 0, TUNNEL_USER_IP, vrf_id);
 
     auto vtep_ptr = evpn_orch->getEVPNVtep();
     if (vtep_ptr)

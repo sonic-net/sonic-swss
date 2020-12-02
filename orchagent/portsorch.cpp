@@ -4387,6 +4387,7 @@ void PortsOrch::getPortSerdesVal(const std::string& val_str,
 
 void PortsOrch::updateVlanOperStatus(const Port &vlan, bool isUp)
 {
+#if 0 /* Dependent on PR 1275 */
     struct PortOperStateUpdate update;
     update.port = vlan;
     update.up = isUp;
@@ -4400,6 +4401,7 @@ void PortsOrch::updateVlanOperStatus(const Port &vlan, bool isUp)
     {
         updateDbVlanOperStatus(vlan, "down");
     }
+#endif
 }
 
 /* Bring up/down Vlan interface associated with L3 VNI*/

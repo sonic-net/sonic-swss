@@ -283,6 +283,7 @@ private:
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
+    void updateVlanOperStatus(const Port &vlan, bool isUp);
     
 };
 #endif /* SWSS_PORTSORCH_H */
