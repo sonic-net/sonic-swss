@@ -92,9 +92,9 @@ void NeighOrch::processFDBFlushUpdate(const FdbFlushUpdate& update)
         for (const auto &neighborEntry : m_syncdNeighbors)
         {
             if (neighborEntry.first.alias == vlan.m_alias &&
-                neighborEntry.second == entry.mac)
+                neighborEntry.second.mac == entry.mac)
             {
-                resolveNeighborEntry(neighborEntry.first, neighborEntry.second);
+                resolveNeighborEntry(neighborEntry.first, neighborEntry.second.mac);
             }
         }
     }
