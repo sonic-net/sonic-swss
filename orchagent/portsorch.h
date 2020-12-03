@@ -128,6 +128,15 @@ public:
     void getLagMember(Port &lag, vector<Port> &portv);
     void updateChildPortsMtu(const Port &p, const uint32_t mtu);
 
+    bool addTunnel(string tunnel,sai_object_id_t, bool learning=true);
+    bool removeTunnel(Port tunnel);
+    bool addBridgePort(Port &port);
+    bool removeBridgePort(Port &port);
+    bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
+    bool removeVlanMember(Port &vlan, Port &port);
+    bool isVlanMember(Port &vlan, Port &port);
+
+    
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
@@ -216,14 +225,10 @@ private:
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
-    bool addBridgePort(Port &port);
-    bool removeBridgePort(Port &port);
     bool setBridgePortLearnMode(Port &port, string learn_mode);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
-    bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
-    bool removeVlanMember(Port &vlan, Port &port);
 
     bool addLag(string lag);
     bool removeLag(Port lag);
@@ -278,6 +283,7 @@ private:
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
+    
 };
 #endif /* SWSS_PORTSORCH_H */
 

@@ -3,6 +3,8 @@
 #include "bufferorch.h"
 #include "neighorch.h"
 #include "gearboxutils.h"
+#include "vxlanorch.h"
+#include "directory.h"
 
 #include <inttypes.h>
 #include <cassert>
@@ -42,6 +44,7 @@ extern NeighOrch *gNeighOrch;
 extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
+extern Directory<Orch*> gDirectory;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -1284,6 +1287,12 @@ bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
 {
     SWSS_LOG_ENTER();
 
+    if(port.m_type == Port::TUNNEL)
+    {
+        SWSS_LOG_ERROR("pvid setting for tunnel %s is not allowed", port.m_alias.c_str());
+        return true;
+    }
+
     if (port.m_rif_id)
     {
         SWSS_LOG_ERROR("pvid setting for router interface %s is not allowed", port.m_alias.c_str());
@@ -1347,6 +1356,11 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
 {
     SWSS_LOG_ENTER();
     vector<Port> portv;
+
+    if(port.m_type == Port::TUNNEL)
+    {
+        return true;
+    }
 
     /*
      * Before SAI_HOSTIF_VLAN_TAG_ORIGINAL is supported by libsai from all asic vendors,
@@ -1717,6 +1731,13 @@ void PortsOrch::updateDbPortOperStatus(const Port& port, sai_port_oper_status_t 
 {
     SWSS_LOG_ENTER();
 
+    if(port.m_type == Port::TUNNEL)
+    {
+        VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
+        tunnel_orch->updateDbTunnelOperStatus(port.m_alias, status);
+        return;
+    }
+
     vector<FieldValueTuple> tuples;
     FieldValueTuple tuple("oper_status", oper_status_strings.at(status));
     tuples.push_back(tuple);
@@ -1809,7 +1830,7 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
         /* Determine if the port has already been initialized before */
         if (m_portList.find(alias) != m_portList.end() && m_portList[alias].m_port_id == id)
         {
-            SWSS_LOG_DEBUG("Port has already been initialized before alias:%s", alias.c_str());
+            SWSS_LOG_INFO("Port has already been initialized before alias:%s", alias.c_str());
         }
         else
         {
@@ -1853,7 +1874,7 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
 
                 m_portList[alias].m_init = true;
 
-                SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
+                SWSS_LOG_ERROR("Initialized port %s", alias.c_str());
             }
             else
             {
@@ -3171,6 +3192,7 @@ void PortsOrch::initializePriorityGroups(Port &port)
 
     port.m_priority_group_ids.resize(attr.value.u32);
     port.m_priority_group_lock.resize(attr.value.u32);
+    port.m_priority_group_pending_profile.resize(attr.value.u32);
 
     if (attr.value.u32 == 0)
     {
@@ -3333,26 +3355,46 @@ bool PortsOrch::addBridgePort(Port &port)
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
-    attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
-    attr.value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
-    attrs.push_back(attr);
-
-    attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
     if (port.m_type == Port::PHY)
     {
+        attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+        attr.value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
+        attrs.push_back(attr);
+
+        attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
         attr.value.oid = port.m_port_id;
+        attrs.push_back(attr);
     }
     else if  (port.m_type == Port::LAG)
     {
+        attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+        attr.value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
+        attrs.push_back(attr);
+
+        attr.id = SAI_BRIDGE_PORT_ATTR_PORT_ID;
         attr.value.oid = port.m_lag_id;
+        attrs.push_back(attr);
+    }
+    else if  (port.m_type == Port::TUNNEL)
+    {
+        attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
+        attr.value.s32 = SAI_BRIDGE_PORT_TYPE_TUNNEL;
+        attrs.push_back(attr);
+
+        attr.id = SAI_BRIDGE_PORT_ATTR_TUNNEL_ID;
+        attr.value.oid = port.m_tunnel_id;
+        attrs.push_back(attr);
+
+        attr.id = SAI_BRIDGE_PORT_ATTR_BRIDGE_ID;
+        attr.value.oid = m_default1QBridge;
+        attrs.push_back(attr);
     }
     else
     {
-        SWSS_LOG_ERROR("Failed to add bridge port %s to default 1Q bridge, invalid porty type %d",
+        SWSS_LOG_ERROR("Failed to add bridge port %s to default 1Q bridge, invalid port type %d",
             port.m_alias.c_str(), port.m_type);
         return false;
     }
-    attrs.push_back(attr);
 
     /* Create a bridge port with admin status set to UP */
     attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
@@ -3522,6 +3564,14 @@ bool PortsOrch::removeVlan(Port vlan)
         return false;
     }
 
+    // Fail VLAN removal if there is a vnid associated
+    if (vlan.m_vnid != VNID_NONE)
+    {
+       SWSS_LOG_ERROR("VLAN-VNI mapping not yet removed. VLAN %s VNI %d",
+                      vlan.m_alias.c_str(), vlan.m_vnid);
+       return false;
+    }
+
     sai_status_t status = sai_vlan_api->remove_vlan(vlan.m_vlan_info.vlan_oid);
     if (status != SAI_STATUS_SUCCESS)
     {
@@ -3656,6 +3706,14 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
 
     VlanMemberUpdate update = { vlan, port, false };
     notify(SUBJECT_TYPE_VLAN_MEMBER_CHANGE, static_cast<void *>(&update));
+
+    return true;
+}
+
+bool PortsOrch::isVlanMember(Port &vlan, Port &port)
+{
+    if (vlan.m_members.find(port.m_alias) == vlan.m_members.end())
+       return false;
 
     return true;
 }
@@ -3908,6 +3966,36 @@ bool PortsOrch::setDistributionOnLagMember(Port &lagMember, bool enableDistribut
     return true;
 }
 
+bool PortsOrch::addTunnel(string tunnel_alias, sai_object_id_t tunnel_id, bool hwlearning)
+{
+    SWSS_LOG_ENTER();
+
+    Port tunnel(tunnel_alias, Port::TUNNEL);
+    tunnel.m_tunnel_id = tunnel_id;
+    if (hwlearning)
+    {
+        tunnel.m_learn_mode = "hardware";
+    }
+    else
+    {
+        tunnel.m_learn_mode = "disable";
+    }
+    m_portList[tunnel_alias] = tunnel;
+
+    SWSS_LOG_INFO("addTunnel:: %" PRIx64, tunnel_id);
+
+    return true;
+}
+
+bool PortsOrch::removeTunnel(Port tunnel)
+{
+    SWSS_LOG_ENTER();
+
+    m_portList.erase(tunnel.m_alias);
+
+    return true;
+}
+
 void PortsOrch::generateQueueMap()
 {
     if (m_isQueueMapGenerated)
@@ -4115,6 +4203,11 @@ void PortsOrch::updatePortOperStatus(Port &port, sai_port_oper_status_t status)
         updateDbPortOperStatus(port, status);
     }
     port.m_oper_status = status;
+
+    if(port.m_type == Port::TUNNEL)
+    {
+        return;
+    }
 
     bool isUp = status == SAI_PORT_OPER_STATUS_UP;
     if (port.m_type == Port::PHY)

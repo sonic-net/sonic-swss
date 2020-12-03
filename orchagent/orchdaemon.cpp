@@ -145,12 +145,19 @@ bool OrchDaemon::init()
     CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
-    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
+    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_stateDb, m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_orch);
     VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_applDb, APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_map_orch);
     VxlanVrfMapOrch *vxlan_vrf_orch = new VxlanVrfMapOrch(m_applDb, APP_VXLAN_VRF_TABLE_NAME);
     gDirectory.set(vxlan_vrf_orch);
+
+    EvpnRemoteVniOrch* evpn_remote_vni_orch = new EvpnRemoteVniOrch(m_applDb, APP_VXLAN_REMOTE_VNI_TABLE_NAME);
+    gDirectory.set(evpn_remote_vni_orch);
+
+    EvpnNvoOrch* evpn_nvo_orch = new EvpnNvoOrch(m_applDb, APP_VXLAN_EVPN_NVO_TABLE_NAME);
+    gDirectory.set(evpn_nvo_orch);
+
 
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
@@ -297,7 +304,9 @@ bool OrchDaemon::init()
     m_orchList.push_back(chassis_frontend_orch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
+    m_orchList.push_back(evpn_nvo_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
+    m_orchList.push_back(evpn_remote_vni_orch);
     m_orchList.push_back(vxlan_vrf_orch);
     m_orchList.push_back(cfg_vnet_rt_orch);
     m_orchList.push_back(vnet_orch);
