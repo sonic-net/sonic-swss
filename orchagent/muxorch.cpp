@@ -38,7 +38,7 @@ extern sai_router_interface_api_t* sai_router_intfs_api;
 #define MUX_TUNNEL "MUX_TUNNEL0"
 #define MUX_ACL_TABLE_NAME "mux_acl_table";
 #define MUX_ACL_RULE_NAME "mux_acl_rule";
-#define MUX_HW_STATE_FAILED "failed"
+#define MUX_HW_STATE_UNKNOWN "unknown"
 #define MUX_HW_STATE_PENDING "pending"
 
 const map<std::pair<MuxState, MuxState>, MuxStateChange> muxStateTransition =
@@ -409,8 +409,8 @@ bool MuxCable::stateStandby()
 
 void MuxCable::setState(string new_state)
 {
-    SWSS_LOG_NOTICE("Set state to %s from %s",
-                     new_state.c_str(), muxStateValToString.at(state_).c_str());
+    SWSS_LOG_NOTICE("[%s] Set MUX state from %s to %s", mux_name_.c_str(),
+                     muxStateValToString.at(state_).c_str(), new_state.c_str());
 
     MuxState ns = muxStateStringToVal.at(new_state);
 
@@ -902,7 +902,7 @@ bool MuxCableOrch::addOperation(const Request& request)
         return false;
     }
 
-    SWSS_LOG_NOTICE("State set to %s for port %s", state.c_str(), port_name.c_str());
+    SWSS_LOG_NOTICE("Mux State set to %s for port %s", state.c_str(), port_name.c_str());
 
     return true;
 }
@@ -913,7 +913,7 @@ bool MuxCableOrch::delOperation(const Request& request)
 
     auto port_name = request.getKeyString(0);
 
-    SWSS_LOG_NOTICE("Deleting state entry for port %s not implemented", port_name.c_str());
+    SWSS_LOG_NOTICE("Deleting Mux state entry for port %s not implemented", port_name.c_str());
 
     return true;
 }
@@ -968,7 +968,7 @@ bool MuxStateOrch::addOperation(const Request& request)
 
     if (mux_state != hw_state)
     {
-        mux_state = MUX_HW_STATE_FAILED;
+        mux_state = MUX_HW_STATE_UNKNOWN;
     }
 
     SWSS_LOG_NOTICE("Setting State DB entry (hw state %s, mux state %s) for port %s",
