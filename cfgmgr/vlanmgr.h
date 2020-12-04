@@ -11,7 +11,6 @@
 #include <string>
 
 namespace swss {
-
 class VlanMgr : public Orch
 {
 public:

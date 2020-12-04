@@ -277,7 +277,7 @@ def test_negativeFDB(dvs, testlog):
         ]
     )
 
-    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+    ntf = swsscommon.NotificationProducer(dvs.adb, "FDB_NOTIFICATIONS")
     fvp = swsscommon.FieldValuePairs()
     ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid_4+"\\\",\\\"mac\\\":\\\"52:54:00:25:06:E9\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_LEARNED\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+bp_eth8+"\"}]}]"
     ntf.send("fdb_event", ntf_data, fvp)
@@ -320,7 +320,7 @@ def test_negativeFDB(dvs, testlog):
         ]
     )
 
-    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+    ntf = swsscommon.NotificationProducer(dvs.adb, "FDB_NOTIFICATIONS")
     fvp = swsscommon.FieldValuePairs()
     ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid_10+"\\\",\\\"mac\\\":\\\"52:54:00:25:06:E9\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_LEARNED\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+bp_eth12+"\"}]}]"
     ntf.send("fdb_event", ntf_data, fvp)
@@ -354,7 +354,7 @@ def test_negativeFDB(dvs, testlog):
     print("ACTION: Deleting FDB Vlan10:52-54-00-25-06-E9:Ethernet12 from ASIC-DB")
     remove_entry_tbl(dvs.adb, "ASIC_STATE", "SAI_OBJECT_TYPE_FDB_ENTRY:{\"bvid\":\""+vlan_oid_10+"\",\"mac\":\"52:54:00:25:06:E9\",\"switch_id\":\""+switch_id+"\"}")
 
-    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+    ntf = swsscommon.NotificationProducer(dvs.adb, "FDB_NOTIFICATIONS")
     fvp = swsscommon.FieldValuePairs()
     ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid_10+"\\\",\\\"mac\\\":\\\"52:54:00:25:06:E9\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_AGED\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+bp_eth12+"\"}]}]"
     ntf.send("fdb_event", ntf_data, fvp)
@@ -387,7 +387,7 @@ def test_negativeFDB(dvs, testlog):
     print("ACTION: Deleting FDB Vlan4:52-54-00-25-06-E9:Ethernet8 from ASIC-DB")
     remove_entry_tbl(dvs.adb, "ASIC_STATE", "SAI_OBJECT_TYPE_FDB_ENTRY:{\"bvid\":\""+vlan_oid_4+"\",\"mac\":\"52:54:00:25:06:E9\",\"switch_id\":\""+switch_id+"\"}")
 
-    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+    ntf = swsscommon.NotificationProducer(dvs.adb, "FDB_NOTIFICATIONS")
     fvp = swsscommon.FieldValuePairs()
     ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid_4+"\\\",\\\"mac\\\":\\\"52:54:00:25:06:E9\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_AGED\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+bp_eth8+"\"}]}]"
     ntf.send("fdb_event", ntf_data, fvp)
@@ -422,7 +422,7 @@ def test_negativeFDB(dvs, testlog):
     print("ACTION: Deleting FDB Vlan2:52-54-00-25-06-E9:Ethernet0 from ASIC-DB")
     remove_entry_tbl(dvs.adb, "ASIC_STATE", "SAI_OBJECT_TYPE_FDB_ENTRY:{\"bvid\":\""+vlan_oid_2+"\",\"mac\":\"52:54:00:25:06:E9\",\"switch_id\":\""+switch_id+"\"}")
 
-    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+    ntf = swsscommon.NotificationProducer(dvs.adb, "FDB_NOTIFICATIONS")
     fvp = swsscommon.FieldValuePairs()
     ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid_2+"\\\",\\\"mac\\\":\\\"52:54:00:25:06:E9\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_AGED\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+bp_eth0+"\"}]}]"
     ntf.send("fdb_event", ntf_data, fvp)
@@ -589,7 +589,7 @@ def test_negativeFDB(dvs, testlog):
             ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet0"])]
     )   
 
-    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+    ntf = swsscommon.NotificationProducer(dvs.adb, "FDB_NOTIFICATIONS")
     fvp = swsscommon.FieldValuePairs()
     ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid_2+"\\\",\\\"mac\\\":\\\"52:54:00:25:06:EB\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_LEARNED\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+iface_2_bridge_port_id["Ethernet0"]+"\"}]}]"
     ntf.send("fdb_event", ntf_data, fvp)
@@ -597,7 +597,7 @@ def test_negativeFDB(dvs, testlog):
     time.sleep(2)
 
     print("Action: Moving FDB Vlan2:52-54-00-25-06-EB:Ethernet0 to non-existing bridge-port Ethernet12")
-    ntf = swsscommon.NotificationProducer(dvs.adb, "NOTIFICATIONS")
+    ntf = swsscommon.NotificationProducer(dvs.adb, "FDB_NOTIFICATIONS")
     fvp = swsscommon.FieldValuePairs()
     ntf_data = "[{\"fdb_entry\":\"{\\\"bvid\\\":\\\""+vlan_oid_2+"\\\",\\\"mac\\\":\\\"52:54:00:25:06:EB\\\",\\\"switch_id\\\":\\\""+switch_id+"\\\"}\",\"fdb_event\":\"SAI_FDB_EVENT_MOVE\",\"list\":[{\"id\":\"SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID\",\"value\":\""+bp_eth12+"\"}]}]"
     ntf.send("fdb_event", ntf_data, fvp)

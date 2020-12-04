@@ -25,20 +25,21 @@ struct FdbUpdate
 {
     FdbEntry entry;
     Port port;
+    uint16_t vlan_id;
     string type;
     bool add;
-};
-
-struct FdbData
-{
-    sai_object_id_t bridge_port_id;
-    string type;
 };
 
 struct FdbFlushUpdate
 {
     vector<FdbEntry> entries;
     Port port;
+};
+
+struct FdbData
+{
+    sai_object_id_t bridge_port_id;
+    string type;
 };
 
 struct SavedFdbEntry
@@ -95,7 +96,6 @@ private:
     void deleteFdbEntryFromSavedFDB(const MacAddress &mac, const unsigned short &vlanId, const string portName="");
 
     void updatePortOperState(const PortOperStateUpdate&);
-    bool removeFdbEntry(const FdbEntry&);
     bool storeFdbEntryState(const FdbUpdate& update);
 };
 

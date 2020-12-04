@@ -1073,7 +1073,7 @@ class DockerVirtualSwitch:
                     vlan_oid = str(k)
                     break
         return vlan_oid
-        
+
     # deps: acl_portchannel, fdb
     def getCrmCounterValue(self, key, counter):
         counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, self.redis_sock, 0)

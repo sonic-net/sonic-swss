@@ -204,6 +204,7 @@ private:
     map<set<int>, sai_object_id_t> m_portListLaneMap;
     map<set<int>, tuple<string, uint32_t, int, string, int>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
+    map<string, vlan_members_t> m_portVlanMember;
 
     /* mapping from SAI object ID to Name for faster 
        retrieval of Port/VLAN from object ID for events
