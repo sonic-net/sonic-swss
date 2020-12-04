@@ -17,11 +17,27 @@ using namespace swss;
 #define SELECT_TIMEOUT 1000
 #define PFC_WD_POLL_MSECS 100
 
+/* Switch table key */
+#define SWITCH_TABLE_KEY    "switch"
+
 extern sai_switch_api_t*           sai_switch_api;
 extern sai_object_id_t             gSwitchId;
 extern bool                        gSaiRedisLogRotate;
 
 extern void syncd_apply_view();
+
+/*
+ * Global supported objects variables
+ */
+int32_t  gSupportedObjectTypeList[SAI_OBJECT_TYPE_MAX];
+uint32_t gSupportedObjectTypeListCount;
+
+/* Global Snapshot support flag */
+bool gIsSnapshotSupported = false;
+
+/* Global Threshold support flag */
+bool gIsThresholdSupported = false;
+
 /*
  * Global orch daemon variables
  */
@@ -46,6 +62,94 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
         m_stateDb(stateDb)
 {
     SWSS_LOG_ENTER();
+
+    SWSS_LOG_DEBUG("gSupportedObjectTypeListCount %d object types\n", gSupportedObjectTypeListCount);
+    if (gSupportedObjectTypeListCount)
+    {
+        bool isTamCollectorSupported = false;
+        bool isTamReportSupported = false;
+        bool isTamTransportSupported = false;
+        bool isTamSupported = false;
+        bool isTamTelemetrySupported = false;
+        bool isTamEventThresholdSupported = false;
+
+        /* Run through supported objects and check if all objects needed for IFA feature are supported or not */
+        for (uint32_t iter = 0; iter < gSupportedObjectTypeListCount; iter++)
+        {
+            switch (gSupportedObjectTypeList[iter])
+            {
+                case SAI_OBJECT_TYPE_TAM_COLLECTOR:
+                {
+                    isTamCollectorSupported = true;
+                    break;
+                }
+                case SAI_OBJECT_TYPE_TAM_REPORT:
+                {
+                    isTamReportSupported = true;
+                    break;
+                }
+                case SAI_OBJECT_TYPE_TAM_TRANSPORT:
+                {
+                    isTamTransportSupported = true;
+                    break;
+                }
+                case SAI_OBJECT_TYPE_TAM:
+                {
+                    isTamSupported = true;
+                    break;
+                }
+                case SAI_OBJECT_TYPE_TAM_TELEMETRY:
+                {
+                    isTamTelemetrySupported = true;
+                    break;
+                }
+                case SAI_OBJECT_TYPE_TAM_EVENT_THRESHOLD:
+                {
+                    isTamEventThresholdSupported = true;
+                    break;
+                }
+            }
+        }
+
+        /* Snapshot support */
+        if (isTamCollectorSupported && isTamSupported && isTamTelemetrySupported &&
+            isTamReportSupported && isTamTransportSupported)
+        {
+            if (isTamSupported && isTamTelemetrySupported)
+                SWSS_LOG_DEBUG("TAM and telemetry objects supported.");
+
+            /* Added snapshot supported field in APP DB's switch table */
+            Table m_appSwitchTable(m_applDb, APP_SWITCH_TABLE_NAME);
+            string key = SWITCH_TABLE_KEY;
+            vector<FieldValueTuple> fvVector;
+            FieldValueTuple snapshot_supported(SNAPSHOT_SUPPORTED_FIELD, "True");
+            fvVector.push_back(snapshot_supported);
+
+            m_appSwitchTable.set(key, fvVector);
+
+            SWSS_LOG_DEBUG("APP Switch Table updated with snapshot supported entry\n");
+
+            gIsSnapshotSupported = true;
+        }
+
+        /* Threshold support */
+        if (isTamCollectorSupported && isTamSupported && isTamTelemetrySupported &&
+            isTamReportSupported && isTamTransportSupported && isTamEventThresholdSupported)
+        {
+            /* Added threshold_supported field in APP DB's switch table */
+            Table m_appSwitchTable(m_applDb, APP_SWITCH_TABLE_NAME);
+            string key = SWITCH_TABLE_KEY;
+            vector<FieldValueTuple> fvVector;
+            FieldValueTuple threshold_supported(THRESHOLD_SUPPORTED_FIELD, "True");
+            fvVector.push_back(threshold_supported);
+
+            m_appSwitchTable.set(key, fvVector);
+
+            SWSS_LOG_DEBUG("APP Switch Table updated with threshold_supported entry\n");
+
+            gIsThresholdSupported = true;
+        }
+    }
 }
 
 OrchDaemon::~OrchDaemon()
