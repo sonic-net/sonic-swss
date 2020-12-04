@@ -754,6 +754,7 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
     for (string port_name : port_names)
     {
         Port port;
+        bool portUpdated = false;
         SWSS_LOG_DEBUG("processing port:%s", port_name.c_str());
         if (!gPortsOrch->getPort(port_name, port))
         {
@@ -771,17 +772,25 @@ task_process_status BufferOrch::processPriorityGroup(Consumer &consumer)
             }
             if (port.m_priority_group_lock[ind])
             {
-                SWSS_LOG_WARN("Priority group %zd on port %s is locked, will retry", ind, port_name.c_str());
-                return task_process_status::task_need_retry;
+                SWSS_LOG_WARN("Priority group %zd on port %s is locked, pending profile 0x%" PRIx64 " until unlocked", ind, port_name.c_str(), sai_buffer_profile);
+                portUpdated = true;
+                port.m_priority_group_pending_profile[ind] = sai_buffer_profile;
             }
-            pg_id = port.m_priority_group_ids[ind];
-            SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to port:%s pg index:%zd, pg sai_id:0x%" PRIx64, sai_buffer_profile, port_name.c_str(), ind, pg_id);
-            sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attribute(pg_id, &attr);
-            if (sai_status != SAI_STATUS_SUCCESS)
+            else
             {
-                SWSS_LOG_ERROR("Failed to set port:%s pg:%zd buffer profile attribute, status:%d", port_name.c_str(), ind, sai_status);
-                return task_process_status::task_failed;
+                pg_id = port.m_priority_group_ids[ind];
+                SWSS_LOG_DEBUG("Applying buffer profile:0x%" PRIx64 " to port:%s pg index:%zd, pg sai_id:0x%" PRIx64, sai_buffer_profile, port_name.c_str(), ind, pg_id);
+                sai_status_t sai_status = sai_buffer_api->set_ingress_priority_group_attribute(pg_id, &attr);
+                if (sai_status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to set port:%s pg:%zd buffer profile attribute, status:%d", port_name.c_str(), ind, sai_status);
+                    return task_process_status::task_failed;
+                }
             }
+        }
+        if (portUpdated)
+        {
+            gPortsOrch->setPort(port_name, port);
         }
     }
 

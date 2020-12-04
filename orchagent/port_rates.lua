@@ -29,12 +29,12 @@ logit(alpha)
 logit(one_minus_alpha)
 logit(delta)
 
-local initialized = redis.call('HGET', rates_table_name .. ':' .. 'PORT', 'INIT_DONE')
-
-logit(initialized)
-
 local n = table.getn(KEYS)
 for i = 1, n do
+    local state_table = rates_table_name .. ':' .. KEYS[i] .. ':' .. 'PORT'
+    local initialized = redis.call('HGET', state_table, 'INIT_DONE')
+    logit(initialized)
+
     -- Get new COUNTERS values
     local in_ucast_pkts = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_UCAST_PKTS')
     local in_non_ucast_pkts = redis.call('HGET', counters_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_NON_UCAST_PKTS')
@@ -76,7 +76,7 @@ for i = 1, n do
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'RX_PPS', rx_pps_new)
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_BPS', tx_bps_new)
             redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'TX_PPS', tx_pps_new)
-            redis.call('HSET', rates_table_name .. ':' .. 'PORT', 'INIT_DONE', 'DONE')
+            redis.call('HSET', state_table, 'INIT_DONE', 'DONE')
         end        
     else
         -- Set old COUNTERS values
@@ -86,7 +86,7 @@ for i = 1, n do
         redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_OUT_NON_UCAST_PKTS_last', out_non_ucast_pkts)
         redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_IN_OCTETS_last', in_octets)
         redis.call('HSET', rates_table_name .. ':' .. KEYS[i], 'SAI_PORT_STAT_IF_OUT_OCTETS_last', out_octets)        
-        redis.call('HSET', rates_table_name .. ':' .. 'PORT', 'INIT_DONE', 'COUNTERS_LAST')
+        redis.call('HSET', state_table, 'INIT_DONE', 'COUNTERS_LAST')
     end
 end
 

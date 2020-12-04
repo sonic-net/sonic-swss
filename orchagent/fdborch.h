@@ -35,6 +35,12 @@ struct FdbData
     string type;
 };
 
+struct FdbFlushUpdate
+{
+    vector<FdbEntry> entries;
+    Port port;
+};
+
 struct SavedFdbEntry
 {
     MacAddress mac;
@@ -70,6 +76,7 @@ public:
     bool removeFdbEntry(const FdbEntry&);
     void flushFDBEntries(sai_object_id_t bridge_port_oid,
                          sai_object_id_t vlan_oid);
+    void notifyObserversFDBFlush(Port &p, sai_object_id_t&);
 
 private:
     PortsOrch *m_portsOrch;
