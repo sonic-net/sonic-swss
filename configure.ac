@@ -97,6 +97,7 @@ AC_CONFIG_FILES([
     teamsyncd/Makefile
     tlm_teamd/Makefile
     mclagsyncd/Makefile
+    fdbsyncd/Makefile
     swssconfig/Makefile
     cfgmgr/Makefile
     tests/Makefile

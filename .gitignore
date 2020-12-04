@@ -54,6 +54,7 @@ cfgmgr/sflowmgrd
 fpmsyncd/fpmsyncd
 gearsyncd/gearsyncd
 mclagsyncd/mclagsyncd
+fdbsyncd/fdbsyncd
 natsyncd/natsyncd
 neighsyncd/neighsyncd
 orchagent/orchagent

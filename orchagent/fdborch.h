@@ -33,16 +33,17 @@ struct FdbUpdate
 {
     FdbEntry entry;
     Port port;
+    uint16_t vlan_id;
     string type;
     bool add;
 };
-
 
 struct FdbData
 {
     sai_object_id_t bridge_port_id;
     string type;
     FdbOrigin origin;
+};
 
 struct FdbFlushUpdate
 {
@@ -80,6 +81,10 @@ public:
     void update(sai_fdb_event_t, const sai_fdb_entry_t *, sai_object_id_t);
     void update(SubjectType type, void *cntx);
     bool getPort(const MacAddress&, uint16_t, Port&);
+    bool flushFdbByPortVlan(const string &, const string &, bool flush_static);
+    bool flushFdbByVlan(const string &, bool flush_static);
+    bool flushFdbByPort(const string &, bool flush_static);
+    bool flushFdbAll(bool flush_static);
     bool removeFdbEntry(const FdbEntry& entry, FdbOrigin origin=FDB_ORIGIN_PROVISIONED);
     void flushFDBEntries(sai_object_id_t bridge_port_oid,
                          sai_object_id_t vlan_oid);
@@ -100,11 +105,10 @@ private:
 
     void updateVlanMember(const VlanMemberUpdate&);
     bool addFdbEntry(const FdbEntry&, const string&, const string&, FdbOrigin origin);
-    void deleteFdbEntryFromSavedFDB(const MacAddress &mac, const unsigned short
-            &vlanId, FdbOrigin origin=FDB_ORIGIN_PROVISIONED, const string portName="");
+    void deleteFdbEntryFromSavedFDB(const MacAddress &mac, const unsigned short &vlanId,
+            FdbOrigin origin=FDB_ORIGIN_PROVISIONED, const string portName="");
     void updatePortOperState(const PortOperStateUpdate&);
     bool storeFdbEntryState(const FdbUpdate& update);
-
 };
 
 #endif /* SWSS_FDBORCH_H */
