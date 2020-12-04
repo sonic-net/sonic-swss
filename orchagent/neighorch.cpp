@@ -16,12 +16,107 @@ extern FgNhgOrch *gFgNhgOrch;
 
 const int neighorch_pri = 30;
 
-NeighOrch::NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch) :
-        Orch(db, tableName, neighorch_pri), m_intfsOrch(intfsOrch)
+NeighOrch::NeighOrch(DBConnector *appDb, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch) :
+        Orch(appDb, tableName, neighorch_pri),
+        m_intfsOrch(intfsOrch),
+        m_fdbOrch(fdbOrch),
+        m_portsOrch(portsOrch),
+        m_appNeighResolveProducer(appDb, APP_NEIGH_RESOLVE_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
+
+    m_fdbOrch->attach(this);
 }
 
+NeighOrch::~NeighOrch()
+{
+    if (m_fdbOrch)
+    {
+        m_fdbOrch->detach(this);
+    }
+}
+
+bool NeighOrch::resolveNeighborEntry(const NeighborEntry &entry, const MacAddress &mac)
+{
+    vector<FieldValueTuple>    data;
+    IpAddress                  ip = entry.ip_address;
+    string                     key, alias = entry.alias;
+
+    key = alias + ":" + entry.ip_address.to_string();
+    // We do NOT need to populate mac field as its NOT
+    // even used in nbrmgr during ARP resolve. But just keeping here.
+    FieldValueTuple fvTuple("mac", mac.to_string().c_str());
+    data.push_back(fvTuple);
+
+    SWSS_LOG_INFO("Flushing ARP entry '%s:%s --> %s'",
+                  alias.c_str(), ip.to_string().c_str(), mac.to_string().c_str());
+    m_appNeighResolveProducer.set(key, data);
+    return true;
+}
+
+/*
+ * Function Name: processFDBFlushUpdate
+ * Description:
+ *     Goal of this function is to delete neighbor/ARP entries
+ * when a port belonging to a VLAN gets removed.
+ * This function is called whenever neighbor orchagent receives
+ * SUBJECT_TYPE_FDB_FLUSH_CHANGE notification. Currently we only care for
+ * deleted FDB entries. We flush neighbor entry that matches its
+ * in-coming interface and MAC with FDB entry's VLAN name and MAC
+ * respectively.
+ */
+void NeighOrch::processFDBFlushUpdate(const FdbFlushUpdate& update)
+{
+    SWSS_LOG_INFO("processFDBFlushUpdate port: %s",
+                    update.port.m_alias.c_str());
+
+    for (auto entry : update.entries)
+    {
+        // Get Vlan object
+        Port vlan;
+        if (!m_portsOrch->getPort(entry.bv_id, vlan))
+        {
+            SWSS_LOG_NOTICE("FdbOrch notification: Failed to locate vlan port \
+                             from bv_id 0x%" PRIx64 ".", entry.bv_id);
+            continue;
+        }
+        SWSS_LOG_INFO("Flushing ARP for port: %s, VLAN: %s",
+                      vlan.m_alias.c_str(), update.port.m_alias.c_str());
+
+        // If the FDB entry MAC matches with neighbor/ARP entry MAC,
+        // and ARP entry incoming interface matches with VLAN name,
+        // flush neighbor/arp entry.
+        for (const auto &neighborEntry : m_syncdNeighbors)
+        {
+            if (neighborEntry.first.alias == vlan.m_alias &&
+                neighborEntry.second == entry.mac)
+            {
+                resolveNeighborEntry(neighborEntry.first, neighborEntry.second);
+            }
+        }
+    }
+    return;
+}
+
+void NeighOrch::update(SubjectType type, void *cntx)
+{
+    SWSS_LOG_ENTER();
+
+    assert(cntx);
+
+    switch(type) {
+        case SUBJECT_TYPE_FDB_FLUSH_CHANGE:
+        {
+            FdbFlushUpdate *update = reinterpret_cast<FdbFlushUpdate *>(cntx);
+            processFDBFlushUpdate(*update);
+            break;
+        }
+        default:
+            break;
+    }
+
+    return;
+}
 bool NeighOrch::hasNextHop(const NextHopKey &nexthop)
 {
     return m_syncdNextHops.find(nexthop) != m_syncdNextHops.end();
@@ -37,6 +132,15 @@ bool NeighOrch::addNextHop(const IpAddress &ipAddress, const string &alias)
         SWSS_LOG_ERROR("Neighbor %s seen on port %s which doesn't exist",
                         ipAddress.to_string().c_str(), alias.c_str());
         return false;
+    }
+    if (p.m_type == Port::SUBPORT)
+    {
+        if (!gPortsOrch->getPort(p.m_parent_port_id, p))
+        {
+            SWSS_LOG_ERROR("Neighbor %s seen on sub interface %s whose parent port doesn't exist",
+                            ipAddress.to_string().c_str(), alias.c_str());
+            return false;
+        }
     }
 
     NextHopKey nexthop = { ipAddress, alias };
@@ -90,7 +194,7 @@ bool NeighOrch::addNextHop(const IpAddress &ipAddress, const string &alias)
     gFgNhgOrch->validNextHopInNextHopGroup(nexthop);
 
     // For nexthop with incoming port which has down oper status, NHFLAGS_IFDOWN
-    // flag Should be set on it.
+    // flag should be set on it.
     // This scenario may happen under race condition where buffered neighbor event
     // is processed after incoming port is down.
     if (p.m_oper_status == SAI_PORT_OPER_STATUS_DOWN)
@@ -354,13 +458,31 @@ void NeighOrch::doTask(Consumer &consumer)
             if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end() || m_syncdNeighbors[neighbor_entry] != mac_address)
             {
                 if (addNeighbor(neighbor_entry, mac_address))
+                {
                     it = consumer.m_toSync.erase(it);
+                }
                 else
+                {
                     it++;
+                    continue;
+                }
             }
             else
+            {
                 /* Duplicate entry */
                 it = consumer.m_toSync.erase(it);
+            }
+
+            /* Remove remaining DEL operation in m_toSync for the same neighbor.
+             * Since DEL operation is supposed to be executed before SET for the same neighbor
+             * A remaining DEL after the SET operation means the DEL operation failed previously and should not be executed anymore
+             */
+            auto rit = make_reverse_iterator(it);
+            while (rit != consumer.m_toSync.rend() && rit->first == key && kfvOp(rit->second) == DEL_COMMAND)
+            {
+                consumer.m_toSync.erase(next(rit).base());
+                SWSS_LOG_NOTICE("Removed pending neighbor DEL operation for %s after SET operation", key.c_str());
+            }
         }
         else if (op == DEL_COMMAND)
         {

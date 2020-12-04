@@ -79,7 +79,10 @@ void AppRestartAssist::registerAppTable(const std::string &tableName, ProducerSt
     m_psTables[tableName]  = psTable;
 
     // Clear the producerstate table to make sure no pending data for the AppTable
-    psTable->clear();
+    if (m_warmStartInProgress)
+    {
+        psTable->clear();
+    }
     m_appTables[tableName] = new Table(m_pipeLine, tableName, false);
 }
 
@@ -150,7 +153,7 @@ void AppRestartAssist::readTablesToMap()
     }
     return;
 }
- 
+
 /*
  * Check and insert to CacheMap Logic:
  * if delete_key:

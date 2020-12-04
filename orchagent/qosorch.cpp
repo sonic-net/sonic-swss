@@ -59,16 +59,16 @@ map<string, sai_meter_type_t> scheduler_meter_map = {
 };
 
 type_map QosOrch::m_qos_maps = {
-    {CFG_DSCP_TO_TC_MAP_TABLE_NAME, new object_map()},
-    {CFG_DOT1P_TO_TC_MAP_TABLE_NAME, new object_map()},
-    {CFG_TC_TO_QUEUE_MAP_TABLE_NAME, new object_map()},
-    {CFG_SCHEDULER_TABLE_NAME, new object_map()},
-    {CFG_WRED_PROFILE_TABLE_NAME, new object_map()},
-    {CFG_PORT_QOS_MAP_TABLE_NAME, new object_map()},
-    {CFG_QUEUE_TABLE_NAME, new object_map()},
-    {CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_map()},
-    {CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_map()},
-    {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, new object_map()}
+    {CFG_DSCP_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_DOT1P_TO_TC_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_TC_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_SCHEDULER_TABLE_NAME, new object_reference_map()},
+    {CFG_WRED_PROFILE_TABLE_NAME, new object_reference_map()},
+    {CFG_PORT_QOS_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_QUEUE_TABLE_NAME, new object_reference_map()},
+    {CFG_TC_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_PFC_PRIORITY_TO_PRIORITY_GROUP_MAP_TABLE_NAME, new object_reference_map()},
+    {CFG_PFC_PRIORITY_TO_QUEUE_MAP_TABLE_NAME, new object_reference_map()}
 };
 
 task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
@@ -84,7 +84,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
 
     if (QosOrch::getTypeMap()[qos_map_type_name]->find(qos_object_name) != QosOrch::getTypeMap()[qos_map_type_name]->end())
     {
-        sai_object = (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name];
+        sai_object = (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_saiObjectId;
     }
     if (op == SET_COMMAND)
     {
@@ -112,7 +112,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
                 freeAttribResources(attributes);
                 return task_process_status::task_failed;
             }
-            (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name] = sai_object;
+            (*(QosOrch::getTypeMap()[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
         }
         freeAttribResources(attributes);
@@ -774,7 +774,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
 
     if (m_qos_maps[qos_map_type_name]->find(qos_object_name) != m_qos_maps[qos_map_type_name]->end())
     {
-        sai_object = (*(m_qos_maps[qos_map_type_name]))[qos_object_name];
+        sai_object = (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_saiObjectId;
         if (sai_object == SAI_NULL_OBJECT_ID)
         {
             SWSS_LOG_ERROR("Error sai_object must exist for key %s", qos_object_name.c_str());
@@ -878,7 +878,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
                 return task_process_status::task_failed;
             }
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
-            (*(m_qos_maps[qos_map_type_name]))[qos_object_name] = sai_object;
+            (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
         }
     }
     else if (op == DEL_COMMAND)
@@ -1101,7 +1101,8 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
             queue_ind = ind;
             SWSS_LOG_DEBUG("processing queue:%zd", queue_ind);
             sai_object_id_t sai_scheduler_profile;
-            resolve_result = resolveFieldRefValue(m_qos_maps, scheduler_field_name, tuple, sai_scheduler_profile);
+            string scheduler_profile_name;
+            resolve_result = resolveFieldRefValue(m_qos_maps, scheduler_field_name, tuple, sai_scheduler_profile, scheduler_profile_name);
             if (ref_resolve_status::success == resolve_result)
             {
                 if (op == SET_COMMAND)
@@ -1137,7 +1138,8 @@ task_process_status QosOrch::handleQueueTable(Consumer& consumer)
             }
 
             sai_object_id_t sai_wred_profile;
-            resolve_result = resolveFieldRefValue(m_qos_maps, wred_profile_field_name, tuple, sai_wred_profile);
+            string wred_profile_name;
+            resolve_result = resolveFieldRefValue(m_qos_maps, wred_profile_field_name, tuple, sai_wred_profile, wred_profile_name);
             if (ref_resolve_status::success == resolve_result)
             {
                 if (op == SET_COMMAND)
@@ -1219,8 +1221,9 @@ task_process_status QosOrch::ResolveMapAndApplyToPort(
     SWSS_LOG_ENTER();
 
     sai_object_id_t sai_object = SAI_NULL_OBJECT_ID;
+    string object_name;
     bool result;
-    ref_resolve_status resolve_result = resolveFieldRefValue(m_qos_maps, field_name, tuple, sai_object);
+    ref_resolve_status resolve_result = resolveFieldRefValue(m_qos_maps, field_name, tuple, sai_object, object_name);
     if (ref_resolve_status::success == resolve_result)
     {
         if (op == SET_COMMAND)
@@ -1274,8 +1277,9 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
         if (qos_to_attr_map.find(fvField(*it)) != qos_to_attr_map.end())
         {
             sai_object_id_t id;
+            string object_name;
             string map_type_name = fvField(*it), map_name = fvValue(*it);
-            ref_resolve_status status = resolveFieldRefValue(m_qos_maps, map_type_name, tuple, id);
+            ref_resolve_status status = resolveFieldRefValue(m_qos_maps, map_type_name, tuple, id, object_name);
 
             if (status != ref_resolve_status::success)
             {

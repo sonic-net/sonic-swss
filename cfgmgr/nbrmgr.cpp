@@ -59,6 +59,11 @@ NbrMgr::NbrMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, con
     {
         SWSS_LOG_ERROR("Netlink socket connect failed, error '%s'", nl_geterror(err));
     }
+
+    auto consumerStateTable = new swss::ConsumerStateTable(appDb, APP_NEIGH_RESOLVE_TABLE_NAME,
+                              TableConsumable::DEFAULT_POP_BATCH_SIZE, default_orch_pri);
+    auto consumer = new Consumer(consumerStateTable, this, APP_NEIGH_RESOLVE_TABLE_NAME);
+    Orch::addExecutor(consumer);
 }
 
 bool NbrMgr::isIntfStateOk(const string &alias)
@@ -185,7 +190,28 @@ bool NbrMgr::setNeighbor(const string& alias, const IpAddress& ip, const MacAddr
     return send_message(m_nl_sock, msg);
 }
 
-void NbrMgr::doTask(Consumer &consumer)
+void NbrMgr::doResolveNeighTask(Consumer &consumer)
+{
+    SWSS_LOG_ENTER();
+
+    auto it = consumer.m_toSync.begin();
+    while (it != consumer.m_toSync.end())
+    {
+        KeyOpFieldsValuesTuple    t = it->second;
+        vector<string>            keys = tokenize(kfvKey(t),delimiter);
+        MacAddress                mac;
+        IpAddress                 ip(keys[1]);
+        string                    alias(keys[0]);
+
+        if (!setNeighbor(alias, ip, mac))
+        {
+            SWSS_LOG_ERROR("Neigh entry resolve failed for '%s'", kfvKey(t).c_str());
+        }
+        it = consumer.m_toSync.erase(it);
+    }
+}
+
+void NbrMgr::doSetNeighTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
 
@@ -255,5 +281,21 @@ void NbrMgr::doTask(Consumer &consumer)
         }
 
         it = consumer.m_toSync.erase(it);
+    }
+}
+
+void NbrMgr::doTask(Consumer &consumer)
+{
+    string table_name = consumer.getTableName();
+
+    if (table_name == CFG_NEIGH_TABLE_NAME)
+    {
+        doSetNeighTask(consumer);
+    } else if (table_name == APP_NEIGH_RESOLVE_TABLE_NAME)
+    {
+        doResolveNeighTask(consumer);
+    } else
+    {
+        SWSS_LOG_ERROR("Unknown REDIS table %s ", table_name.c_str());
     }
 }

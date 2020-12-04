@@ -37,10 +37,10 @@ static const map<sai_port_oper_status_t, string> oper_status_strings =
 
 static const unordered_map<string, sai_port_oper_status_t> string_oper_status =
 {
-    { "unknown", SAI_PORT_OPER_STATUS_UNKNOWN },
-    { "up", SAI_PORT_OPER_STATUS_UP },
-    { "down", SAI_PORT_OPER_STATUS_DOWN },
-    { "testing", SAI_PORT_OPER_STATUS_TESTING },
+    { "unknown",     SAI_PORT_OPER_STATUS_UNKNOWN },
+    { "up",          SAI_PORT_OPER_STATUS_UP },
+    { "down",        SAI_PORT_OPER_STATUS_DOWN },
+    { "testing",     SAI_PORT_OPER_STATUS_TESTING },
     { "not present", SAI_PORT_OPER_STATUS_NOT_PRESENT }
 };
 
@@ -93,7 +93,6 @@ public:
     void setPort(string alias, Port port);
     void getCpuPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
-    bool getAclBindPortId(string alias, sai_object_id_t &port_id);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
@@ -114,7 +113,7 @@ public:
                         acl_stage_type_t acl_stage);
     bool bindUnbindAclTableGroup(Port &port,
                                  bool ingress,
-     bool bind);
+                                 bool bind);
     bool getPortPfc(sai_object_id_t portId, uint8_t *pfc_bitmask);
     bool setPortPfc(sai_object_id_t portId, uint8_t pfc_bitmask);
 
@@ -127,6 +126,17 @@ public:
     bool addSubPort(Port &port, const string &alias, const bool &adminUp = true, const uint32_t &mtu = 0);
     bool removeSubPort(const string &alias);
     void getLagMember(Port &lag, vector<Port> &portv);
+    void updateChildPortsMtu(const Port &p, const uint32_t mtu);
+
+    bool addTunnel(string tunnel,sai_object_id_t, bool learning=true);
+    bool removeTunnel(Port tunnel);
+    bool addBridgePort(Port &port);
+    bool removeBridgePort(Port &port);
+    bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
+    bool removeVlanMember(Port &vlan, Port &port);
+    bool isVlanMember(Port &vlan, Port &port);
+
+    
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
@@ -215,18 +225,14 @@ private:
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
     bool setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip);
 
-    bool addBridgePort(Port &port);
-    bool removeBridgePort(Port &port);
     bool setBridgePortLearnMode(Port &port, string learn_mode);
 
     bool addVlan(string vlan);
     bool removeVlan(Port vlan);
-    bool addVlanMember(Port &vlan, Port &port, string& tagging_mode);
-    bool removeVlanMember(Port &vlan, Port &port);
 
     bool addLag(string lag);
     bool removeLag(Port lag);
-    bool addLagMember(Port &lag, Port &port);
+    bool addLagMember(Port &lag, Port &port, bool enableForwarding);
     bool removeLagMember(Port &lag, Port &port);
     bool setCollectionOnLagMember(Port &lagMember, bool enableCollection);
     bool setDistributionOnLagMember(Port &lagMember, bool enableDistribution);
@@ -277,6 +283,7 @@ private:
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
+    
 };
 #endif /* SWSS_PORTSORCH_H */
 
