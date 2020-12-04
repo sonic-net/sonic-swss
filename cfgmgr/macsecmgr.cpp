@@ -331,13 +331,19 @@ bool MACsecMgr::MACsecProfile::update(const TaskArgs & ta)
     {
         rekey_period = 0;
     }
+    if (!GetValue(ta, priority))
+    {
+        priority = 255;
+    }
+    if (!GetValue(ta, policy))
+    {
+        policy = Policy::SECURITY;
+    }
 
     // The following fields are necessary
-    return GetValue(ta, priority)
-        && GetValue(ta, cipher_suite)
+    return GetValue(ta, cipher_suite)
         && GetValue(ta, primary_cak)
-        && GetValue(ta, primary_ckn)
-        && GetValue(ta, policy);
+        && GetValue(ta, primary_ckn);
 }
 
 task_process_status MACsecMgr::loadProfile(
