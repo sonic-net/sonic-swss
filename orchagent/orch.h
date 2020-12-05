@@ -204,8 +204,6 @@ public:
     // Prepare for warm start if Redis contains valid input data
     // otherwise fallback to cold start
     virtual bool bake();
-    // Clean up the state set in bake()
-    virtual bool postBake();
 
     /* Iterate all consumers in m_consumerMap and run doTask(Consumer) */
     virtual void doTask();

@@ -32,6 +32,7 @@ NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
 FgNhgOrch *gFgNhgOrch;
 AclOrch *gAclOrch;
+MirrorOrch *gMirrorOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
@@ -177,7 +178,7 @@ bool OrchDaemon::init()
 
     TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
-    MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
+    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
@@ -273,10 +274,10 @@ bool OrchDaemon::init()
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
     }
-    gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
+    gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
 
     m_orchList.push_back(gFdbOrch);
-    m_orchList.push_back(mirror_orch);
+    m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
     m_orchList.push_back(chassis_frontend_orch);
     m_orchList.push_back(vrf_orch);
@@ -556,22 +557,11 @@ bool OrchDaemon::warmRestoreAndSyncUp()
         }
     }
 
-    /*
-     * Two iterations are needed.
-     *
-     * First iteration: most orchs that depend on some action during doTask (e.g. MirrorOrch)
-     *
-     * Second iteration: AclOrch, which depends on MirrorOrch in iteration 1
-     */
-    for (auto it = 0; it < 2; it++)
-    {
-        SWSS_LOG_DEBUG("The current postBake iteration is %d", it);
-
-        for (Orch *o : m_orchList)
-        {
-            o->postBake();
-        }
-    }
+    // MirrorOrch depends on everything else being settled before it can run,
+    // and AclOrch depends on MirrorOrch, so we handle these two after the rest
+    // of the data has been processed.
+    gMirrorOrch->Orch::doTask();
+    gAclOrch->Orch::doTask();
 
     /*
      * At this point, all the pre-existing data should have been processed properly, and

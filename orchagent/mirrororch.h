@@ -80,7 +80,6 @@ public:
                PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch);
 
     bool bake() override;
-    bool postBake() override;
     void update(SubjectType, void *);
     bool sessionExists(const string&);
     bool getSessionStatus(const string&, bool&);
@@ -100,8 +99,6 @@ private:
     MirrorTable m_syncdMirrors;
     // session_name -> VLAN | monitor_port_alias | next_hop_ip
     map<string, string> m_recoverySessionMap;
-
-    bool m_freeze = false;
 
     task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);

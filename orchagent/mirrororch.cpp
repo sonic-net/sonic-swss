@@ -87,9 +87,6 @@ bool MirrorOrch::bake()
 {
     SWSS_LOG_ENTER();
 
-    // Freeze the route update during orchagent restoration
-    m_freeze = true;
-
     deque<KeyOpFieldsValuesTuple> entries;
     vector<string> keys;
     m_mirrorTable.getKeys(keys);
@@ -132,23 +129,6 @@ bool MirrorOrch::bake()
     }
 
     return Orch::bake();
-}
-
-bool MirrorOrch::postBake()
-{
-    SWSS_LOG_ENTER();
-
-    SWSS_LOG_NOTICE("Running MirrorOrch post-baking steps");
-
-    // Unfreeze the route update
-    m_freeze = false;
-
-    Orch::doTask();
-
-    // Clean up the recovery cache
-    m_recoverySessionMap.clear();
-
-    return Orch::postBake();
 }
 
 void MirrorOrch::update(SubjectType type, void *cntx)
@@ -1414,11 +1394,6 @@ void MirrorOrch::doTask(Consumer& consumer)
 {
     SWSS_LOG_ENTER();
 
-    if (m_freeze)
-    {
-        return;
-    }
-
     if (!gPortsOrch->allPortsReady())
     {
         return;
@@ -1455,4 +1430,7 @@ void MirrorOrch::doTask(Consumer& consumer)
 
         consumer.m_toSync.erase(it++);
     }
+
+    // Clear any recovery state that might be leftover from warm reboot
+    m_recoverySessionMap.clear();
 }
