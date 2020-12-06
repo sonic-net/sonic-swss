@@ -64,8 +64,9 @@ MirrorEntry::MirrorEntry(const string& platform) :
         greType = 0x88be;
     }
 
+    string alias = "";
     nexthopInfo.prefix = IpPrefix("0.0.0.0/0");
-    nexthopInfo.nexthop = NextHopKey("0.0.0.0", "");
+    nexthopInfo.nexthop = NextHopKey("0.0.0.0", alias);
 }
 
 MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbConnector,
@@ -1203,7 +1204,8 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         }
         else
         {
-            session.nexthopInfo.nexthop = NextHopKey("0.0.0.0", "");
+            string alias = "";
+            session.nexthopInfo.nexthop = NextHopKey("0.0.0.0", alias);
         }
 
         // Update State DB Nexthop
