@@ -62,6 +62,8 @@ extern bool gIsNatSupported;
 ofstream gRecordOfs;
 string gRecordFile;
 
+string gMySwitchType = "";
+
 void usage()
 {
     cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-i INST_ID] [-s]" << endl;

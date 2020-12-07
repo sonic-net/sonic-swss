@@ -1286,3 +1286,10 @@ void IntfsOrch::doTask(SelectableTimer &timer)
         }
     }
 }
+
+bool IntfsOrch::addRouterIntfForRecircPort(Port &port)
+{
+    SWSS_LOG_ENTER();
+
+    return addRouterIntfs(gVirtualRouterId, port);
+}

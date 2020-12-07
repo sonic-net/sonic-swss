@@ -136,7 +136,8 @@ public:
     bool removeVlanMember(Port &vlan, Port &port);
     bool isVlanMember(Port &vlan, Port &port);
 
-    
+    bool getRecircPort(Port &p);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
@@ -283,7 +284,10 @@ private:
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
-    
+
+    map<string, Port> m_recircPortList;
+    map<string, Port>::iterator m_recircPortIter = m_recircPortList.end();
+    void doProcessRecircPort(string alias, set<int> laneSet, string op);
 };
 #endif /* SWSS_PORTSORCH_H */
 

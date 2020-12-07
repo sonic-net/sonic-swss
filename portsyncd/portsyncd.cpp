@@ -185,10 +185,10 @@ int main(int argc, char **argv)
     return 1;
 }
 
-static void notifyPortConfigDone(ProducerStateTable &p)
+static void notifyPortConfigDone(ProducerStateTable &p, int portCount)
 {
     /* Notify that all ports added */
-    FieldValueTuple finish_notice("count", to_string(g_portSet.size()));
+    FieldValueTuple finish_notice("count", to_string(portCount));
     vector<FieldValueTuple> attrs = { finish_notice };
     p.set("PortConfigDone", attrs);
 }
@@ -214,20 +214,31 @@ bool handlePortConfigFromConfigDB(ProducerStateTable &p, DBConnector &cfgDb, boo
     {
         table.get(k, ovalues);
         vector<FieldValueTuple> attrs;
+        string role;
         for ( auto &v : ovalues )
         {
             FieldValueTuple attr(v.first, v.second);
             attrs.push_back(attr);
+
+            if (v.first == "role")
+            {
+                role = v.second;
+            }
         }
         if (!warm)
         {
             p.set(k, attrs);
         }
-        g_portSet.insert(k);
+
+        /* Don't add recirc port to g_portSet because no hostIf is created for recirc port. */
+        if (role != "Rec")
+        {
+            g_portSet.insert(k);
+        }
     }
     if (!warm)
     {
-        notifyPortConfigDone(p);
+        notifyPortConfigDone(p, (int)keys.size());
     }
 
     return true;

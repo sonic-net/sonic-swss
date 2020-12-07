@@ -65,6 +65,8 @@ public:
 
     bool updateSyncdIntfPfx(const string &alias, const IpPrefix &ip_prefix, bool add = true);
 
+    bool addRouterIntfForRecircPort(Port &port);
+
 private:
 
     SelectableTimer* m_updateMapsTimer = nullptr;
