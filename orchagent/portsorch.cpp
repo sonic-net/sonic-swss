@@ -1775,10 +1775,12 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
 {
     SWSS_LOG_ENTER();
 
-    /* Make sure to bring down admin state.
+    Port port;
+
+    /* 
+     * Make sure to bring down admin state.
      * SET would have replaced with DEL
-    */
-    Port   port;
+     */
     if (getPort(port_id, port))
     {
         setPortAdminStatus(port, false);
