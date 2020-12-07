@@ -553,8 +553,8 @@ bool OrchDaemon::warmRestoreAndSyncUp()
 
         for (Orch *o : m_orchList)
         {
-            if (o == gAclOrch || o == gMirrorOrch) {
-                SWSS_LOG_ERROR("skipping ACL/mirror processing until the end");
+            if (o == gMirrorOrch) {
+                SWSS_LOG_DEBUG("Skipping mirror processing until the end");
                 continue;
             }
 
@@ -563,8 +563,8 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     }
 
     // MirrorOrch depends on everything else being settled before it can run,
-    // and AclOrch depends on MirrorOrch, so we handle these two after the rest
-    // of the data has been processed.
+    // and mirror ACL rules depend on MirrorOrch, so run these two at the end
+    // after the rest of the data has been processed.
     gMirrorOrch->Orch::doTask();
     gAclOrch->Orch::doTask();
 
