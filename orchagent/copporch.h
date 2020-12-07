@@ -28,6 +28,7 @@ const std::string copp_policer_action_yellow_field = "yellow_action";
 const std::string copp_genetlink_name              = "genetlink_name";
 const std::string copp_genetlink_mcgrp_name        = "genetlink_mcgrp_name";
 
+typedef std::map<sai_attr_id_t, sai_attribute_value_t> TrapIdAttribs;
 struct copp_trap_objects
 {
     sai_object_id_t trap_obj;
@@ -42,20 +43,22 @@ typedef std::map<sai_hostif_trap_type_t, copp_trap_objects> TrapIdTrapObjectsTab
 typedef std::map<sai_object_id_t, sai_object_id_t> TrapGroupHostIfMap;
 /* TrapIdHostIfTableMap: trap type, host table entry ID*/
 typedef std::map<sai_hostif_trap_type_t, sai_object_id_t> TrapIdHostIfTableMap;
+/* Trap group to trap ID attributes */
+typedef std::map<std::string, TrapIdAttribs> TrapGroupTrapIdAttribs;
 
 class CoppOrch : public Orch
 {
 public:
-    CoppOrch(std::vector<TableConnector> &tableConnectors);
+    CoppOrch(swss::DBConnector* db, std::string tableName);
 protected:
     object_map m_trap_group_map;
-    bool       enable_sflow_trap;
 
     TrapGroupPolicerTable m_trap_group_policer_map;
     TrapIdTrapObjectsTable m_syncdTrapIds;
 
     TrapGroupHostIfMap m_trap_group_hostif_map;
     TrapIdHostIfTableMap m_trapid_hostif_table_map;
+    TrapGroupTrapIdAttribs m_trap_group_trap_id_attrs;
 
     void initDefaultHostIntfTable();
     void initDefaultTrapGroup();
@@ -64,7 +67,6 @@ protected:
     task_process_status processCoppRule(Consumer& consumer);
     bool isValidList(std::vector<std::string> &trap_id_list, std::vector<std::string> &all_items) const;
     void getTrapIdList(std::vector<std::string> &trap_id_name_list, std::vector<sai_hostif_trap_type_t> &trap_id_list) const;
-    bool applyTrapIds(sai_object_id_t trap_group, std::vector<std::string> &trap_id_name_list, std::vector<sai_attribute_t> &trap_id_attribs);
     bool applyAttributesToTrapIds(sai_object_id_t trap_group_id, const std::vector<sai_hostif_trap_type_t> &trap_id_list, std::vector<sai_attribute_t> &trap_id_attribs);
 
     bool createPolicer(std::string trap_group, std::vector<sai_attribute_t> &policer_attribs);
@@ -74,8 +76,28 @@ protected:
 
     bool createGenetlinkHostIf(std::string trap_group_name, std::vector<sai_attribute_t> &hostif_attribs);
     bool removeGenetlinkHostIf(std::string trap_group_name);
-    bool createGenetlinkHostIfTable(std::vector<std::string> &trap_id_name_list);
-    void coppProcessSflow(Consumer& consumer);
+    bool createGenetlinkHostIfTable(std::vector<sai_hostif_trap_type_t> &trap_id_list);
+    bool removeGenetlinkHostIfTable(std::vector<sai_hostif_trap_type_t> &trap_id_list);
+    void getTrapAddandRemoveList(std::string trap_group_name, std::vector<sai_hostif_trap_type_t> &trap_ids,
+                                 std::vector<sai_hostif_trap_type_t> &add_trap_ids,
+                                 std::vector<sai_hostif_trap_type_t> &rem_trap_ids);
+
+    void getTrapIdsFromTrapGroup (sai_object_id_t trap_group_obj, 
+                                  std::vector<sai_hostif_trap_type_t> &trap_ids);
+
+    bool trapGroupProcessTrapIdChange (std::string trap_group_name,
+                                       std::vector<sai_hostif_trap_type_t> &add_trap_ids,
+                                       std::vector<sai_hostif_trap_type_t> &rem_trap_ids);
+
+    bool processTrapGroupDel (std::string trap_group_name);
+
+    bool getAttribsFromTrapGroup (std::vector<swss::FieldValueTuple> &fv_tuple,
+                                  std::vector<sai_attribute_t> &trap_gr_attribs,
+                                  std::vector<sai_attribute_t> &trap_id_attribs,
+                                  std::vector<sai_attribute_t> &policer_attribs,
+                                  std::vector<sai_attribute_t> &genetlink_attribs);
+
+    bool trapGroupUpdatePolicer (std::string trap_group_name, std::vector<sai_attribute_t> &policer_attribs);
 
     virtual void doTask(Consumer& consumer);
 };

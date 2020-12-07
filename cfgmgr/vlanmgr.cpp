@@ -187,6 +187,21 @@ bool VlanMgr::setHostVlanMtu(int vlan_id, uint32_t mtu)
     return false;
 }
 
+bool VlanMgr::setHostVlanMac(int vlan_id, const string &mac)
+{
+    SWSS_LOG_ENTER();
+
+    // The command should be generated as:
+    // /sbin/ip link set Vlan{{vlan_id}} address {{mac}}
+    ostringstream cmds;
+    cmds << IP_CMD " link set " VLAN_PREFIX + std::to_string(vlan_id) + " address " << shellquote(mac);
+
+    std::string res;
+    EXEC_WITH_ERROR_THROW(cmds.str(), res);
+
+    return true;
+}
+
 bool VlanMgr::addHostVlanMember(int vlan_id, const string &port_alias, const string& tagging_mode)
 {
     SWSS_LOG_ENTER();
@@ -288,6 +303,7 @@ void VlanMgr::doVlanTask(Consumer &consumer)
         {
             string admin_status;
             string mtu = DEFAULT_MTU_STR;
+            string mac = gMacAddress.to_string();
             vector<FieldValueTuple> fvVector;
             string members;
 
@@ -339,6 +355,11 @@ void VlanMgr::doVlanTask(Consumer &consumer)
                 else if (fvField(i) == "members@") {
                     members = fvValue(i);
                 }
+                else if (fvField(i) == "mac")
+                {
+                    mac = fvValue(i);
+                    setHostVlanMac(vlan_id, mac);
+                }
             }
             /* fvVector should not be empty */
             if (fvVector.empty())
@@ -349,6 +370,9 @@ void VlanMgr::doVlanTask(Consumer &consumer)
 
             FieldValueTuple m("mtu", mtu);
             fvVector.push_back(m);
+
+            FieldValueTuple mc("mac", mac);
+            fvVector.push_back(mc);
 
             m_appVlanTableProducer.set(key, fvVector);
             m_vlans.insert(key);

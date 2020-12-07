@@ -26,6 +26,8 @@ private:
     bool isIntfStateOk(const std::string &alias);
     bool setNeighbor(const std::string& alias, const IpAddress& ip, const MacAddress& mac);
 
+    void doResolveNeighTask(Consumer &consumer);
+    void doSetNeighTask(Consumer &consumer);
     void doTask(Consumer &consumer);
 
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateIntfTable, m_stateNeighRestoreTable;

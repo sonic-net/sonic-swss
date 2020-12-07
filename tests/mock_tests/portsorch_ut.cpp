@@ -416,13 +416,27 @@ namespace portsorch_test
         // process pool, profile and PGs
         static_cast<Orch *>(gBufferOrch)->doTask();
 
+        // Port should have been updated by BufferOrch->doTask
+        gPortsOrch->getPort("Ethernet0", port);
+        auto profile_id = (*BufferOrch::m_buffer_type_maps["BUFFER_PROFILE"])[string("test_profile")].m_saiObjectId;
+        ASSERT_TRUE(profile_id != SAI_NULL_OBJECT_ID);
+        ASSERT_TRUE(port.m_priority_group_pending_profile[3] == profile_id);
+        ASSERT_TRUE(port.m_priority_group_pending_profile[4] == SAI_NULL_OBJECT_ID);
+
         auto pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(CFG_BUFFER_PG_TABLE_NAME));
         pgConsumer->dumpPendingTasks(ts);
-        ASSERT_FALSE(ts.empty()); // PG is skipped
+        ASSERT_TRUE(ts.empty()); // PG is stored in m_priority_group_pending_profile
         ts.clear();
 
         // release zero buffer drop handler
         dropHandler.reset();
+
+        // re-fetch the port
+        gPortsOrch->getPort("Ethernet0", port);
+
+        // pending profile should be cleared
+        ASSERT_TRUE(port.m_priority_group_pending_profile[3] == SAI_NULL_OBJECT_ID);
+        ASSERT_TRUE(port.m_priority_group_pending_profile[4] == SAI_NULL_OBJECT_ID);
 
         // process PGs
         static_cast<Orch *>(gBufferOrch)->doTask();

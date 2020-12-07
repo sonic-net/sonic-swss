@@ -8,7 +8,6 @@
 #include "redisapi.h"
 #include "select.h"
 #include "notifier.h"
-#include "redisclient.h"
 #include "schema.h"
 #include "subscriberstatetable.h"
 

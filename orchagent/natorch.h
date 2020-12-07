@@ -160,6 +160,9 @@ typedef std::set<NaptEntryKey> DnaptCache;
 typedef std::set<TwiceNatEntryKey> TwiceNatCache;
 typedef std::set<TwiceNaptEntryKey> TwiceNaptCache;
 
+// Cache of DNAT Pool destIp 
+typedef std::set<IpAddress> DnatPoolEntry;
+
 struct DnatEntries
 {
     IpAddress        dnatIp;       /* NAT entry cache */
@@ -214,6 +217,7 @@ private:
     mutex                   m_natMutex;
     string                  m_dbgCompName;
     IpAddress               nullIpv4Addr;
+    DnatPoolEntry           m_dnatPoolEntries;
 
     std::shared_ptr<NotificationProducer> setTimeoutNotifier;
 
@@ -246,6 +250,7 @@ private:
     void doTwiceNatTableTask(Consumer& consumer);
     void doTwiceNaptTableTask(Consumer& consumer);
     void doNatGlobalTableTask(Consumer& consumer);
+    void doDnatPoolTableTask(Consumer& consumer);
 
     bool addNatEntry(const IpAddress &ip_address, const NatEntryValue &entry);
     bool removeNatEntry(const IpAddress &ip_address);
@@ -281,6 +286,8 @@ private:
     bool addHwDnaptEntry(const NaptEntryKey &key);
     bool removeHwDnatEntry(const IpAddress &dstIp);
     bool removeHwDnaptEntry(const NaptEntryKey &key);
+    bool addHwDnatPoolEntry(const IpAddress &dstIp);
+    bool removeHwDnatPoolEntry(const IpAddress &dstIp);
 
     bool checkIfNatEntryIsActive(const NatEntry::iterator &iter, time_t now);
     bool checkIfNaptEntryIsActive(const NaptEntry::iterator &iter, time_t now);
@@ -290,6 +297,7 @@ private:
     void enableNatFeature(void);
     void disableNatFeature(void);
     void addAllNatEntries(void);
+    void addAllDnatPoolEntries(void);
     void clearAllDnatEntries(void);
     void cleanupAppDbEntries(void);
     void clearCounters(void);

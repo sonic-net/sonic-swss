@@ -36,7 +36,6 @@
 
 #include "producerstatetable.h"
 #include "selectable.h"
-#include "redisclient.h"
 #include "mclagsyncd/mclag.h"
 
 namespace swss {

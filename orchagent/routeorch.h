@@ -126,6 +126,8 @@ private:
     RouteTables m_syncdRoutes;
     NextHopGroupTable m_syncdNextHopGroups;
 
+    std::set<NextHopGroupKey> m_bulkNhgReducedRefCnt;
+
     NextHopObserverTable m_nextHopObservers;
 
     EntityBulker<sai_route_api_t>           gRouteBulker;
