@@ -553,6 +553,11 @@ bool OrchDaemon::warmRestoreAndSyncUp()
 
         for (Orch *o : m_orchList)
         {
+            if (o == gAclOrch || o == gMirrorOrch) {
+                SWSS_LOG_ERROR("skipping ACL/mirror processing until the end");
+                continue;
+            }
+
             o->doTask();
         }
     }
