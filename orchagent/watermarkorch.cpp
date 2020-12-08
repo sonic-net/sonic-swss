@@ -183,38 +183,32 @@ void WatermarkOrch::doTask(NotificationConsumer &consumer)
     if (data == CLEAR_PG_HEADROOM_REQUEST)
     {
         clearSingleWm(table,
-        "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES",
-        m_pg_ids);
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_XOFF_ROOM_WATERMARK_BYTES", m_pg_ids);
     }
     else if (data == CLEAR_PG_SHARED_REQUEST)
     {
         clearSingleWm(table,
-        "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES",
-        m_pg_ids);
+            "SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES", m_pg_ids);
     }
     else if (data == CLEAR_QUEUE_SHARED_UNI_REQUEST)
     {
         clearSingleWm(table,
-        "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-        m_unicast_queue_ids);
+            "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_unicast_queue_ids);
     }
     else if (data == CLEAR_QUEUE_SHARED_MULTI_REQUEST)
     {
         clearSingleWm(table,
-        "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES",
-        m_multicast_queue_ids);
+            "SAI_QUEUE_STAT_SHARED_WATERMARK_BYTES", m_multicast_queue_ids);
     }
     else if (data == CLEAR_BUFFER_POOL_REQUEST)
     {
         clearSingleWm(table,
-        "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES",
-        gBufferOrch->getBufferPoolNameOidMap());
+            "SAI_BUFFER_POOL_STAT_WATERMARK_BYTES", gBufferOrch->getBufferPoolNameOidMap());
     }
     else if (data == CLEAR_HEADROOM_POOL_REQUEST)
     {
         clearSingleWm(table,
-        "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES",
-        gBufferOrch->getBufferPoolNameOidMap());
+            "SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES", gBufferOrch->getBufferPoolNameOidMap());
     }
     else
     {
