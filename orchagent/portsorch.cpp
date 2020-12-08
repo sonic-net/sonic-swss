@@ -1874,7 +1874,7 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
 
                 m_portList[alias].m_init = true;
 
-                SWSS_LOG_ERROR("Initialized port %s", alias.c_str());
+                SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
             else
             {
