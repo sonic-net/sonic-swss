@@ -207,7 +207,6 @@ void SflowMgr::sflowCheckAndFillValues(string alias, vector<FieldValueTuple> &va
         {
             rate_present = true;
             m_sflowPortConfMap[alias].rate = fvValue(i);
-            m_sflowPortConfMap[alias].local_rate_cfg = true;
             FieldValueTuple fv(fvField(i), fvValue(i));
             fvs.push_back(fv);
         }
@@ -215,7 +214,6 @@ void SflowMgr::sflowCheckAndFillValues(string alias, vector<FieldValueTuple> &va
         {
             admin_present = true;
             m_sflowPortConfMap[alias].admin = fvValue(i);
-            m_sflowPortConfMap[alias].local_admin_cfg = true;
             FieldValueTuple fv(fvField(i), fvValue(i));
             fvs.push_back(fv);
         }
