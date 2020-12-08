@@ -8,6 +8,10 @@ from dvslib.dvs_common import wait_for_result
 from swsscommon import swsscommon
 
 IF_TB = 'INTERFACE'
+VLAN_TB = 'VLAN'
+VLAN_MEMB_TB = 'VLAN_MEMBER'
+VLAN_IF_TB = 'VLAN_INTERFACE'
+VLAN_IF = 'VLAN_INTERFACE'
 FG_NHG = 'FG_NHG'
 FG_NHG_PREFIX = 'FG_NHG_PREFIX'
 FG_NHG_MEMBER = 'FG_NHG_MEMBER'
@@ -86,13 +90,16 @@ def validate_asic_nhg_regular_ecmp(asic_db, ipprefix):
                 key = k
         if not route_exists:
             return false_ret
+
         fvs = asic_db.get_entry(ASIC_ROUTE_TB, key)
         if not fvs:
             return false_ret
+
         nhgid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
         fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhgid)
         if not fvs:
             return false_ret
+
         nhg_type = fvs.get("SAI_NEXT_HOP_GROUP_ATTR_TYPE")
         if nhg_type != "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP":
             return false_ret
@@ -236,26 +243,31 @@ class TestFineGrainedNextHopGroup(object):
 
         for i in range(0,NUM_NHs):
             if_name_key = "Ethernet" + str(i*4)
-            ip_pref_key = "Ethernet" + str(i*4) + "|10.0.0." + str(i*2) + "/31"
-            create_entry(config_db, IF_TB, if_name_key, fvs_nul)
-            create_entry(config_db, IF_TB, ip_pref_key, fvs_nul)
+            vlan_name_key = "Vlan" + str((i+1)*4)
+            ip_pref_key = vlan_name_key + "|10.0.0." + str(i*2) + "/31"
+            fvs = {"vlanid": str((i+1)*4)}
+            create_entry(config_db, VLAN_TB, vlan_name_key, fvs)
+            fvs = {"tagging_mode": "untagged"}
+            create_entry(config_db, VLAN_MEMB_TB, vlan_name_key + "|" + if_name_key, fvs)
+            create_entry(config_db, VLAN_IF_TB, vlan_name_key, fvs_nul)
+            create_entry(config_db, VLAN_IF_TB, ip_pref_key, fvs_nul)
             dvs.runcmd("config interface startup " + if_name_key)
             dvs.servers[i].runcmd("ip link set down dev eth0") == 0
             dvs.servers[i].runcmd("ip link set up dev eth0") == 0
             bank = 0
             if i >= NUM_NHs/2:
                 bank = 1
-            fvs = {"FG_NHG": fg_nhg_name, "bank": str(bank)}
+            fvs = {"FG_NHG": fg_nhg_name, "bank": str(bank), "link": if_name_key}
             create_entry(config_db, FG_NHG_MEMBER, "10.0.0." + str(1 + i*2), fvs)
-            ip_to_if_map["10.0.0." + str(1 + i*2)] = if_name_key
+            ip_to_if_map["10.0.0." + str(1 + i*2)] = vlan_name_key
+
         # Wait for the software to receive the entries
         time.sleep(1)
 
         asic_routes_count = len(asic_db.get_keys(ASIC_ROUTE_TB))
         ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"),
-            ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
-
+            ("ifname", "Vlan16,Vlan20,Vlan24")])
         ps.set(fg_nhg_prefix, fvs)
         # No ASIC_DB entry we can wait for since ARP is not resolved yet,
         # We just use sleep so that the sw receives this entry
@@ -289,7 +301,7 @@ class TestFineGrainedNextHopGroup(object):
 
         nh_oid_map = get_nh_oid_map(asic_db)
 
-        ### Test scenarios with bank 0 having 0 members up
+        ### Test scenarios with bank 0 having 0 members up and only bank 1 having members
         # ARP is not resolved for 10.0.0.7, so fg nhg should be created without 10.0.0.7
         nh_memb_exp_count = {"10.0.0.9":30,"10.0.0.11":30}
         validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
@@ -300,6 +312,7 @@ class TestFineGrainedNextHopGroup(object):
         dvs.runcmd("arp -s 10.0.0.7 00:00:00:00:00:04")
         asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", asic_nh_count + 1)
         nh_oid_map = get_nh_oid_map(asic_db)
+
         # Now that ARP was resolved, 10.0.0.7 should be added as a valid fg nhg member
         nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
         validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
@@ -307,6 +320,11 @@ class TestFineGrainedNextHopGroup(object):
 
         # Bring down 1 next hop in bank 1
         nh_memb_exp_count = {"10.0.0.7":30,"10.0.0.11":30}
+        program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
+                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+
+        # Bring down 2 next hop and bring up 1 next hop in bank 1
+        nh_memb_exp_count = {"10.0.0.9":60}
         program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
                             fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
 
@@ -367,6 +385,7 @@ class TestFineGrainedNextHopGroup(object):
 
         # bring all links down one by one
         shutdown_link(dvs, app_db, 0)
+        shutdown_link(dvs, app_db, 1)
         nh_memb_exp_count = {"10.0.0.5":30,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
         validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                                 nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
@@ -394,7 +413,19 @@ class TestFineGrainedNextHopGroup(object):
         # bring all links up one by one
         startup_link(dvs, app_db, 3)
         startup_link(dvs, app_db, 4)
+        nh_memb_exp_count = {"10.0.0.7":30,"10.0.0.9":30}
+        validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                                nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+
         startup_link(dvs, app_db, 5)
+        # Perform a route table update, Update the route to contain 10.0.0.3 as well, since Ethernet4 associated with it
+        # is link down, it should make no difference
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.7,10.0.0.9,10.0.0.11"),
+            ("ifname","Vlan4,Vlan8,Vlan12,Vlan16,Vlan20,Vlan24")])
+        ps.set(fg_nhg_prefix, fvs)
+
+        # 10.0.0.11 associated with newly brought up link 5 should be updated in FG ecmp
+        # 10.0.0.3 addition per above route table change should have no effect
         nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
         validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                                 nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
@@ -440,7 +471,7 @@ class TestFineGrainedNextHopGroup(object):
         # standard(non-Fine grained) ECMP behavior
         asic_routes_count = len(asic_db.get_keys(ASIC_ROUTE_TB))
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"),
-            ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
+            ("ifname", "Vlan16,Vlan20,Vlan24")])
         ps.set(fg_nhg_prefix, fvs)
 
         keys = asic_db.wait_for_n_keys(ASIC_ROUTE_TB, asic_routes_count + 1)
@@ -485,9 +516,12 @@ class TestFineGrainedNextHopGroup(object):
 
         for i in range(0,NUM_NHs):
             if_name_key = "Ethernet" + str(i*4)
-            ip_pref_key = "Ethernet" + str(i*4) + "|10.0.0." + str(i*2) + "/31"
-            remove_entry(config_db, IF_TB, if_name_key)
-            remove_entry(config_db, IF_TB, ip_pref_key)
+            vlan_name_key = "Vlan" + str((i+1)*4)
+            ip_pref_key = vlan_name_key + "|10.0.0." + str(i*2) + "/31"
+            remove_entry(config_db, VLAN_IF_TB, ip_pref_key)
+            remove_entry(config_db, VLAN_IF_TB, vlan_name_key)
+            remove_entry(config_db, VLAN_MEMB_TB, vlan_name_key + "|" + if_name_key)
+            remove_entry(config_db, VLAN_TB, vlan_name_key)
             dvs.runcmd("config interface shutdown " + if_name_key)
             dvs.servers[i].runcmd("ip link set down dev eth0") == 0
             remove_entry(config_db, "FG_NHG_MEMBER", "10.0.0." + str(1 + i*2))
@@ -495,7 +529,7 @@ class TestFineGrainedNextHopGroup(object):
 
         ### Create new set of entries with a greater number of FG members and
         ### bigger bucket size such that the # of nhs are not divisible by
-        ### bucket size.
+        ### bucket size. Different physical interface type for dynamicitiy.
         fg_nhg_name = "new_fgnhg_v4"
         fg_nhg_prefix = "3.3.3.0/24"
         # Test with non-divisible bucket size

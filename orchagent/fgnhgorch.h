@@ -32,16 +32,25 @@ struct FGNextHopGroupEntry
     InactiveBankMapsToBank  inactive_to_active_map; // Maps an inactive bank to an active one in terms of hash bkts
 };
 
+struct FGNextHopInfo
+{
+    Bank bank;                                      // Bank associated with nh IP
+    string link;                                    // Link name associated with nh IP(optional)
+    bool link_oper_state;                           // Current link oper state(optional)
+};
+
 /*TODO: can we make an optimization here when we get multiple routes pointing to a fgnhg */
 typedef std::map<IpPrefix, FGNextHopGroupEntry> FGRouteTable;
 /* RouteTables: vrf_id, FGRouteTable */
 typedef std::map<sai_object_id_t, FGRouteTable> FGRouteTables;
 /* Name of the FG NHG group */
 typedef std::string FgNhg;
-/* Map from IP to Bank */
-typedef std::map<IpAddress, Bank> NextHops;
+/* FG_NHG member info: map nh IP to FG NHG member info */
+typedef std::map<IpAddress, FGNextHopInfo> NextHops;
 /* Cache currently ongoing FG_NHG PREFIX additions/deletions */
 typedef std::map<IpPrefix, NextHopGroupKey> FgPrefixOpCache;
+/* Map from link name to next-hop IP */
+typedef std::unordered_map<string, std::vector<IpAddress>> Links;
 
 /* Store the indices occupied by a bank */
 typedef struct
@@ -52,11 +61,12 @@ typedef struct
 
 typedef struct FgNhgEntry
 {
-    string fg_nhg_name;                                  // Name of FG NHG group configured by user
-    uint32_t configured_bucket_size;                    // Bucket size configured by user
-    uint32_t real_bucket_size;                          // Real bucket size as queried from SAI
-    NextHops next_hops;                                  // The IP to Bank mapping configured by user
-    std::vector<IpPrefix> prefixes;                     // Prefix which desires FG behavior
+    string fg_nhg_name;                               // Name of FG NHG group configured by user
+    uint32_t configured_bucket_size;                  // Bucket size configured by user
+    uint32_t real_bucket_size;                        // Real bucket size as queried from SAI
+    NextHops next_hops;                               // The IP to Bank mapping configured by user
+    Links links;                                      // Link to IP map for oper changes
+    std::vector<IpPrefix> prefixes;                   // Prefix which desires FG behavior
     std::vector<BankIndexRange> hash_bucket_indices;  // The hash bucket indices for a bank
 } FgNhgEntry;
 
@@ -73,12 +83,13 @@ typedef struct
     std::vector<NextHopKey> active_nhs;
 } BankMemberChanges;
 
-class FgNhgOrch : public Orch
+class FgNhgOrch : public Orch, public Observer
 {
 public:
     FgNhgPrefixes fgNhgPrefixes;
     FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<string> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch);
 
+    void update(SubjectType type, void *cntx);
     bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
     bool removeRoute(sai_object_id_t, const IpPrefix&);
     bool validNextHopInNextHopGroup(const NextHopKey&);
@@ -121,6 +132,8 @@ private:
                     sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
 
     vector<FieldValueTuple> generateRouteTableFromNhgKey(NextHopGroupKey nhg);
+    void cleanupIpInLinkToIpMap(const string &link, const IpAddress &ip, FgNhgEntry &fgNhg_entry);
+
     bool doTaskFgNhg(const KeyOpFieldsValuesTuple&);
     bool doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple&);
     bool doTaskFgNhgMember(const KeyOpFieldsValuesTuple&);
