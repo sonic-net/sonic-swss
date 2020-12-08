@@ -925,15 +925,11 @@ MuxStateOrch::MuxStateOrch(DBConnector *db, const std::string& tableName) :
      SWSS_LOG_ENTER();
 }
 
-void MuxStateOrch::updateMuxState(string portName, string muxState, string rs, string as)
+void MuxStateOrch::updateMuxState(string portName, string muxState)
 {
     vector<FieldValueTuple> tuples;
-    FieldValueTuple s("state", muxState);
-    tuples.push_back(s);
-    FieldValueTuple r("read_side", rs);
-    tuples.push_back(r);
-    FieldValueTuple a("active_side", as);
-    tuples.push_back(a);
+    FieldValueTuple tuple("state", muxState);
+    tuples.push_back(tuple);
     mux_state_table_.set(portName, tuples);
 }
 
@@ -951,8 +947,6 @@ bool MuxStateOrch::addOperation(const Request& request)
     }
 
     auto hw_state = request.getAttrString("state");
-    auto rs = request.getAttrString("read_side");
-    auto as = request.getAttrString("active_side");
     auto mux_obj = mux_orch->getMuxCable(port_name);
     string mux_state;
 
@@ -980,7 +974,7 @@ bool MuxStateOrch::addOperation(const Request& request)
     SWSS_LOG_NOTICE("Setting State DB entry (hw state %s, mux state %s) for port %s",
                      hw_state.c_str(), mux_state.c_str(), port_name.c_str());
 
-    updateMuxState(port_name, mux_state, rs, as);
+    updateMuxState(port_name, mux_state);
 
     return true;
 }

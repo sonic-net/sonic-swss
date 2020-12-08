@@ -238,7 +238,7 @@ class MuxStateOrch : public Orch2
 public:
     MuxStateOrch(DBConnector *db, const std::string& tableName);
 
-    void updateMuxState(string portName, string muxState, string rs, string as);
+    void updateMuxState(string portName, string muxState);
 
 private:
     virtual bool addOperation(const Request& request);
