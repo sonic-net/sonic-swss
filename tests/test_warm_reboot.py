@@ -437,6 +437,7 @@ class TestWarmReboot(object):
         (status, fvs) = tbl.get("Vlan20:11.0.0.11")
         assert status == True
 
+        swss_check_RestoreCount(dvs, state_db, restore_count)
         swss_app_check_warmstart_state(state_db, "vlanmgrd", "replayed")
 
         intf_tbl._del("Vlan16|11.0.0.1/29")
