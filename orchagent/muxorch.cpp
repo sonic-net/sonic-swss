@@ -35,7 +35,7 @@ extern sai_next_hop_api_t* sai_next_hop_api;
 extern sai_router_interface_api_t* sai_router_intfs_api;
 
 /* Constants */
-#define MUX_TUNNEL "MUX_TUNNEL0"
+#define MUX_TUNNEL "MuxTunnel0"
 #define MUX_ACL_TABLE_NAME "mux_acl_table";
 #define MUX_ACL_RULE_NAME "mux_acl_rule";
 #define MUX_HW_STATE_UNKNOWN "unknown"
@@ -107,8 +107,8 @@ static sai_status_t create_route(IpPrefix &pfx, sai_object_id_t nh)
     sai_status_t status = sai_route_api->create_route_entry(&route_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create tunnel route %s, rv:%d",
-                pfx.getIp().to_string().c_str(), status);
+        SWSS_LOG_ERROR("Failed to create tunnel route %s,nh %lx rv:%d",
+                pfx.getIp().to_string().c_str(), nh, status);
         return status;
     }
 
@@ -925,11 +925,15 @@ MuxStateOrch::MuxStateOrch(DBConnector *db, const std::string& tableName) :
      SWSS_LOG_ENTER();
 }
 
-void MuxStateOrch::updateMuxState(string portName, string muxState)
+void MuxStateOrch::updateMuxState(string portName, string muxState, string rs, string as)
 {
     vector<FieldValueTuple> tuples;
-    FieldValueTuple tuple("state", muxState);
-    tuples.push_back(tuple);
+    FieldValueTuple s("state", muxState);
+    tuples.push_back(s);
+    FieldValueTuple r("read_side", rs);
+    tuples.push_back(r);
+    FieldValueTuple a("active_side", as);
+    tuples.push_back(a);
     mux_state_table_.set(portName, tuples);
 }
 
@@ -947,6 +951,8 @@ bool MuxStateOrch::addOperation(const Request& request)
     }
 
     auto hw_state = request.getAttrString("state");
+    auto rs = request.getAttrString("read_side");
+    auto as = request.getAttrString("active_side");
     auto mux_obj = mux_orch->getMuxCable(port_name);
     string mux_state;
 
@@ -974,7 +980,7 @@ bool MuxStateOrch::addOperation(const Request& request)
     SWSS_LOG_NOTICE("Setting State DB entry (hw state %s, mux state %s) for port %s",
                      hw_state.c_str(), mux_state.c_str(), port_name.c_str());
 
-    updateMuxState(port_name, mux_state);
+    updateMuxState(port_name, mux_state, rs, as);
 
     return true;
 }

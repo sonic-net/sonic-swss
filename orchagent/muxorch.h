@@ -116,6 +116,7 @@ private:
 const request_description_t mux_cfg_request_description = {
             { REQ_T_STRING },
             {
+                { "state", REQ_T_STRING },
                 { "server_ipv4", REQ_T_IP_PREFIX },
                 { "server_ipv6", REQ_T_IP_PREFIX },
                 { "address_ipv4", REQ_T_IP },
@@ -220,6 +221,8 @@ const request_description_t mux_state_request_description = {
             { REQ_T_STRING },
             {
                 { "state",  REQ_T_STRING },
+                { "read_side", REQ_T_STRING },
+                { "active_side", REQ_T_STRING },
             },
             { "state" }
 };
@@ -235,7 +238,7 @@ class MuxStateOrch : public Orch2
 public:
     MuxStateOrch(DBConnector *db, const std::string& tableName);
 
-    void updateMuxState(string portName, string muxState);
+    void updateMuxState(string portName, string muxState, string rs, string as);
 
 private:
     virtual bool addOperation(const Request& request);

@@ -10,8 +10,8 @@
 using namespace std;
 using namespace swss;
 
-TunnelMgr::TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, const vector<std::string> &tables) :
-        Orch(cfgDb, tables),
+TunnelMgr::TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, std::string tableName) :
+        Orch(cfgDb, tableName),
         m_appIpInIpTunnelTable(appDb, APP_TUNNEL_DECAP_TABLE_NAME)
 {
 }

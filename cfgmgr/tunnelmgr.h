@@ -9,7 +9,7 @@ namespace swss {
 class TunnelMgr : public Orch
 {
 public:
-    TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<std::string> &tableNames);
+    TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, std::string tableName);
     using Orch::doTask;
 
 private:

@@ -46,11 +46,7 @@ int main(int argc, char **argv)
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
 
-        vector<std::string> cfg_tunnel_tables = {
-            CFG_TUNNEL_TABLE_NAME,
-        };
-
-        TunnelMgr tunnelmgr(&cfgDb, &appDb, cfg_tunnel_tables);
+        TunnelMgr tunnelmgr(&cfgDb, &appDb, CFG_TUNNEL_TABLE_NAME);
 
         std::vector<Orch *> cfgOrchList = {&tunnelmgr};
 
