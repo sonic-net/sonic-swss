@@ -59,7 +59,7 @@ private:
     void sflowUpdatePortInfo(Consumer &consumer);
     void sflowHandleSessionAll(bool enable);
     void sflowHandleSessionLocal(bool enable);
-    void sflowCheckAndFillValues(std::string alias, std::vector<FieldValueTuple> &fvs);
+    void sflowCheckAndFillValues(std::string alias, std::vector<FieldValueTuple> &values, std::vector<FieldValueTuple> &fvs);
     void sflowGetPortInfo(std::vector<FieldValueTuple> &fvs, SflowPortInfo &local_info);
     void sflowGetGlobalInfo(std::vector<FieldValueTuple> &fvs, std::string speed);
 };
