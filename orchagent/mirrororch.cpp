@@ -1425,10 +1425,11 @@ void MirrorOrch::doTask(Consumer& consumer)
         if (task_status == task_process_status::task_need_retry)
         {
             it++;
-            continue;
         }
-
-        consumer.m_toSync.erase(it++);
+        else
+        {
+            consumer.m_toSync.erase(it++);
+        }
     }
 
     // Clear any recovery state that might be leftover from warm reboot

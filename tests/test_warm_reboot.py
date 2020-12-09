@@ -2246,7 +2246,6 @@ class TestWarmReboot(object):
         dvs.stop_swss()
         dvs.start_swss()
 
-        dvs.check_services_ready()
         dvs.check_swss_ready()
 
         # Monitor port should not change b/c destination is frozen
@@ -2290,7 +2289,6 @@ class TestWarmReboot(object):
         dvs.start_swss()
 
         # Make sure the system is stable
-        dvs.check_services_ready()
         dvs.check_swss_ready()
 
         # Verify that the ASIC DB is intact
