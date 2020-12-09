@@ -434,6 +434,8 @@ public:
     // Get the OID for the ACL bind point for a given port
     static bool getAclBindPortId(Port& port, sai_object_id_t& port_id);
 
+    using Orch::doTask;  // Allow access to the basic doTask
+
 private:
     SwitchOrch *m_switchOrch;
     void doTask(Consumer &consumer);

@@ -565,8 +565,8 @@ bool OrchDaemon::warmRestoreAndSyncUp()
     // MirrorOrch depends on everything else being settled before it can run,
     // and mirror ACL rules depend on MirrorOrch, so run these two at the end
     // after the rest of the data has been processed.
-    gMirrorOrch->Orch::doTask();
-    gAclOrch->Orch::doTask();
+    gMirrorOrch->doTask();
+    gAclOrch->doTask();
 
     /*
      * At this point, all the pre-existing data should have been processed properly, and

@@ -87,6 +87,8 @@ public:
     bool increaseRefCount(const string&);
     bool decreaseRefCount(const string&);
 
+    using Orch::doTask;  // Allow access to the basic doTask
+
 private:
     PortsOrch *m_portsOrch;
     RouteOrch *m_routeOrch;
