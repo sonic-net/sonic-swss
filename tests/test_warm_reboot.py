@@ -1783,6 +1783,24 @@ class TestWarmReboot(object):
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
         assert len(addobjs) == 0 and len(delobjs) == 0
 
+        #
+        # Remove route entries so they don't interfere with later tests
+        #
+        dvs.runcmd("ip route del 192.168.1.100/32")
+        dvs.runcmd("ip route del 192.168.1.200/32")
+        dvs.runcmd("ip route del 192.168.1.230/32")
+        dvs.runcmd("ip route del 192.168.1.1/32")
+        dvs.runcmd("ip route del 192.168.1.2/32")
+        dvs.runcmd("ip route del 192.168.1.3/32")
+        dvs.runcmd("ip route del 192.168.100.0/24")
+        dvs.runcmd("ip -6 route del fc00:11:11::1/128")
+        dvs.runcmd("ip -6 route del fc00:12:12::1/128")
+        dvs.runcmd("ip -6 route del fc00:13:13::1/128")
+        dvs.runcmd("ip -6 route del fc00:1:1::1/128")
+        dvs.runcmd("ip -6 route del fc00:2:2::1/128")
+        dvs.runcmd("ip -6 route del fc00:3:3::1/128")
+        time.sleep(5)
+
         intf_tbl._del("{}|111.0.0.1/24".format(intfs[0]))
         intf_tbl._del("{}|1110::1/64".format(intfs[0]))
         intf_tbl._del("{}|122.0.0.1/24".format(intfs[1]))
@@ -2256,6 +2274,11 @@ class TestWarmReboot(object):
         # Revert the route back to the fixture-defined route
         dvs.change_route("2.2.2.2", "10.0.0.1")
 
+        # Reset for test cases after this one
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.check_swss_ready()
+
     @pytest.mark.usefixtures("dvs_mirror_manager", "dvs_policer_manager", "setup_erspan_neighbors")
     def test_EverflowWarmReboot(self, dvs, dvs_acl):
         # Setup the policer
@@ -2311,6 +2334,11 @@ class TestWarmReboot(object):
 
         self.dvs_policer.remove_policer("test_policer")
         self.dvs_policer.verify_no_policer()
+
+        # Reset for test cases after this one
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.check_swss_ready()
 
 
 # Add Dummy always-pass test at end as workaroud
