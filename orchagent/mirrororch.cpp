@@ -329,7 +329,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
     {
         SWSS_LOG_NOTICE("Failed to create session, session %s already exists",
                 key.c_str());
-        return task_process_status::task_invalid_entry;
+        return task_process_status::task_duplicated;
     }
 
     string platform = getenv("platform") ? getenv("platform") : "";
@@ -344,7 +344,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
                 if (!entry.srcIp.isV4())
                 {
                     SWSS_LOG_ERROR("Unsupported version of sessions %s source IP address", key.c_str());
-                    return task_process_status::task_failed;
+                    return task_process_status::task_invalid_entry;
                 }
             }
             else if (fvField(i) == MIRROR_SESSION_DST_IP)
@@ -353,7 +353,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
                 if (!entry.dstIp.isV4())
                 {
                     SWSS_LOG_ERROR("Unsupported version of sessions %s destination IP address", key.c_str());
-                    return task_process_status::task_failed;
+                    return task_process_status::task_invalid_entry;
                 }
             }
             else if (fvField(i) == MIRROR_SESSION_GRE_TYPE)
@@ -389,7 +389,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
                 if (!validateSrcPortList(fvValue(i)))
                 {
                     SWSS_LOG_ERROR("Failed to get valid source port list %s", fvValue(i).c_str());
-                    return task_process_status::task_failed;
+                    return task_process_status::task_invalid_entry;
                 }
                 entry.src_port = fvValue(i);
             }
@@ -398,7 +398,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
                 if (!validateDstPort(fvValue(i)))
                 {
                     SWSS_LOG_ERROR("Failed to get valid destination port %s", fvValue(i).c_str());
-                    return task_process_status::task_failed;
+                    return task_process_status::task_invalid_entry;
                 }
                 entry.dst_port = fvValue(i);
             }
@@ -408,7 +408,7 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
                         || fvValue(i) == MIRROR_BOTH_DIRECTION))
                 {
                     SWSS_LOG_ERROR("Failed to get valid direction %s", fvValue(i).c_str());
-                    return task_process_status::task_failed;
+                    return task_process_status::task_invalid_entry;
                 }
                 entry.direction = fvValue(i);
             }
@@ -419,13 +419,13 @@ task_process_status MirrorOrch::createEntry(const string& key, const vector<Fiel
             else
             {
                 SWSS_LOG_ERROR("Failed to parse session %s configuration. Unknown attribute %s", key.c_str(), fvField(i).c_str());
-                return task_process_status::task_failed;
+                return task_process_status::task_invalid_entry;
             }
         }
         catch (const exception& e)
         {
             SWSS_LOG_ERROR("Failed to parse session %s attribute %s error: %s.", key.c_str(), fvField(i).c_str(), e.what());
-            return task_process_status::task_failed;
+            return task_process_status::task_invalid_entry;
         }
         catch (...)
         {

@@ -50,7 +50,8 @@ typedef enum
     task_invalid_entry,
     task_failed,
     task_need_retry,
-    task_ignore
+    task_ignore,
+    task_duplicated
 } task_process_status;
 
 typedef struct
