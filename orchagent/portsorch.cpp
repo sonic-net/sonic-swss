@@ -2185,6 +2185,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
              * 1. Remove ports which don't exist anymore
              * 2. Create new ports
              * 3. Initialize all ports
+             *
+             * In order to make sure all ports are received, check the size of m_lanesAliasSpeedMap. If the size is
+             * equal to the port count sent by portsyncd, then all ports are received.
              */
             if ((m_portConfigState == PORT_CONFIG_RECEIVED || m_portConfigState == PORT_CONFIG_DONE) &&
                 m_portCount == (sai_uint32_t)m_lanesAliasSpeedMap.size())
@@ -2215,6 +2218,10 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
                     }
 
+                    /* Skip initializing recirc port for now because the current SAI implementation of some vendors
+                     * have limiited support for recirc port. This check can be removed once SAI implementation
+                     * is enhanced/changed in the future.
+                     */
                     if (m_recircPortList.find(get<0>(it->second)) == m_recircPortList.end() &&
                         !initPort(get<0>(it->second), get<4>(it->second), it->first))
                     {
