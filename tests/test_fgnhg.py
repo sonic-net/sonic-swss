@@ -5,7 +5,6 @@ import json
 import pytest
 
 from dvslib.dvs_common import wait_for_result
-from dvslib.dvs_database import DVSDatabase
 from swsscommon import swsscommon
 
 IF_TB = 'INTERFACE'
@@ -98,10 +97,7 @@ def validate_asic_nhg_regular_ecmp(asic_db, ipprefix):
         if nhg_type != "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP":
             return false_ret
         return (True, nhgid)
-    status, result = wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
-    if not status:
-        assert not polling_config.strict, \
-                f"SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP not found"
+    _, result = wait_for_result(_access_function, failure_message="SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP not found")
     return result
 
 
@@ -159,10 +155,9 @@ def verify_programmed_fg_asic_db_entry(asic_db,nh_memb_exp_count,nh_oid_map,nhgi
             ret = ret and (idx == 1)
         return (ret, nh_memb_count)
 
-    status, result = wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
-    if not status:
-        assert not polling_config.strict, \
-                f"Exact match not found: expected={nh_memb_exp_count}, received={result}"
+    status, result = wait_for_result(_access_function)
+    assert status, f"Exact match not found: expected={nh_memb_exp_count}, received={result}"
+
     return result
 
 

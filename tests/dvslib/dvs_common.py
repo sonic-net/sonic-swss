@@ -1,26 +1,34 @@
 """Common infrastructure for writing VS tests."""
 
-import collections
 import time
 
+from dataclasses import dataclass
 from typing import Any, Callable, Tuple
 
-_PollingConfig = collections.namedtuple('PollingConfig', 'polling_interval timeout strict')
 
-
-class PollingConfig(_PollingConfig):
-    """PollingConfig provides parameters that are used to control polling behavior.
+@dataclass
+class PollingConfig:
+    """Class containing parameters that are used to control polling behavior.
 
     Attributes:
-        polling_interval (int): How often to poll, in seconds.
-        timeout (int): The maximum amount of time to wait, in seconds.
-        strict (bool): If the strict flag is set, reaching the timeout will cause tests to fail.
+        polling_interval: How often to poll, in seconds.
+        timeout: The maximum amount of time to wait, in seconds.
+        strict: If the strict flag is set, reaching the timeout will cause tests to fail.
     """
+
+    polling_interval: float = 0.01
+    timeout: float = 5.00
+    strict: bool = True
+
+    def iterations(self) -> int:
+        """Return the number of iterations needed to poll with the given interval and timeout."""
+        return 1 if self.polling_interval == 0 else int(self.timeout // self.polling_interval) + 1
 
 
 def wait_for_result(
     polling_function: Callable[[], Tuple[bool, Any]],
-    polling_config: PollingConfig,
+    polling_config: PollingConfig = PollingConfig(),
+    failure_message: str = None,
 ) -> Tuple[bool, Any]:
     """Run `polling_function` periodically using the specified `polling_config`.
 
@@ -29,6 +37,8 @@ def wait_for_result(
             must return a status which indicates if the function was succesful or not, as well as
             some return value.
         polling_config: The parameters to use to poll the polling function.
+        failure_message: The message to print if the call times out. This will only take effect
+            if the PollingConfig is set to strict.
 
     Returns:
         If the polling function succeeds, then this method will return True and the output of the
@@ -37,12 +47,7 @@ def wait_for_result(
         If it does not succeed within the provided timeout, it will return False and whatever the
         output of the polling function was on the final attempt.
     """
-    if polling_config.polling_interval == 0:
-        iterations = 1
-    else:
-        iterations = int(polling_config.timeout // polling_config.polling_interval) + 1
-
-    for _ in range(iterations):
+    for _ in range(polling_config.iterations()):
         status, result = polling_function()
 
         if status:
@@ -51,6 +56,7 @@ def wait_for_result(
         time.sleep(polling_config.polling_interval)
 
     if polling_config.strict:
-        assert False, f"Operation timed out after {polling_config.timeout} seconds"
+        message = failure_message or f"Operation timed out after {polling_config.timeout} seconds"
+        assert False, message
 
     return (False, result)
