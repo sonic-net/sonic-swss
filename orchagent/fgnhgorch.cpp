@@ -86,7 +86,6 @@ void FgNhgOrch::update(SubjectType type, void *cntx)
 
                             if (!m_neighOrch->getNeighborEntry(ip, nhk, macAddress))
                             {
-                                SWSS_LOG_INFO("Came into 2");
                                 continue;
                             }
 
@@ -399,8 +398,6 @@ bool FgNhgOrch::validNextHopInNextHopGroup(const NextHopKey& nexthop)
 bool FgNhgOrch::invalidNextHopInNextHopGroup(const NextHopKey& nexthop)
 {
     SWSS_LOG_ENTER();
-
-    SWSS_LOG_INFO("Came into fn for %s", nexthop.to_string().c_str());
 
     for (auto &route_tables : m_syncdFGRouteTables)
     {
@@ -1184,8 +1181,8 @@ bool FgNhgOrch::removeRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
     it_route_table->second.erase(it_route);
     if (it_route_table->second.size() == 0)
     {
-	    m_syncdFGRouteTables.erase(vrf_id);
-	    m_vrfOrch->decreaseVrfRefCount(vrf_id);
+        m_syncdFGRouteTables.erase(vrf_id);
+        m_vrfOrch->decreaseVrfRefCount(vrf_id);
     }
     return true;
 }
@@ -1525,41 +1522,40 @@ bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
             if (!link.empty())
             {
                 /* Identify link oper state for initialization */
-                link_oper = LINK_DOWN; /* Default operational state is down */
                 Port p;
                 if (!gPortsOrch->getPort(link, p))
                 {
-                    fgNhg_entry->second.next_hops[next_hop] = fg_nh_info;
                     SWSS_LOG_WARN("FG_NHG member %s added to %s with non-existent link %s, link mapping skipped",
                             next_hop.to_string().c_str(), fg_nhg_name.c_str(), link.c_str());
-                    return true;
-                }
-
-                fg_nh_info.link = link;
-                if (p.m_oper_status == SAI_PORT_OPER_STATUS_UP)
-                {
-                    link_oper = LINK_UP;
-                }
-                auto link_info = fgNhg_entry->second.links.find(link);
-                fg_nh_info.link_oper_state = link_oper;
-
-                if (link_info != fgNhg_entry->second.links.end())
-                {
-                    link_info->second.push_back(next_hop);
                 }
                 else
                 {
-                    std::vector<IpAddress> ips;
-                    ips.push_back(next_hop);
-                    fgNhg_entry->second.links[link] = ips;
+                    link_oper = LINK_DOWN; /* Default operational state is down */
+                    fg_nh_info.link = link;
+                    if (p.m_oper_status == SAI_PORT_OPER_STATUS_UP)
+                    {
+                        link_oper = LINK_UP;
+                    }
+                    auto link_info = fgNhg_entry->second.links.find(link);
+                    fg_nh_info.link_oper_state = link_oper;
+
+                    if (link_info != fgNhg_entry->second.links.end())
+                    {
+                        link_info->second.push_back(next_hop);
+                    }
+                    else
+                    {
+                        std::vector<IpAddress> ips;
+                        ips.push_back(next_hop);
+                        fgNhg_entry->second.links[link] = ips;
+                    }
+                    SWSS_LOG_INFO("Added link %s to ip %s map", link.c_str(), key.c_str());
                 }
-                SWSS_LOG_INFO("Added link %s to ip %s map", link.c_str(), key.c_str());
             }
 
             /* query and check the next hop is valid in neighOrcch */
             if (!m_neighOrch->hasNextHop(nhk))
             {
-                fgNhg_entry->second.next_hops[next_hop] = fg_nh_info;
                 SWSS_LOG_INFO("Nexthop %s is not resolved yet", nhk.to_string().c_str());
             }
             else if (link_oper)
