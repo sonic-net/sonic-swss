@@ -355,7 +355,7 @@ void FdbOrch::doTask(Consumer& consumer)
                 }
             }
 
-	    entry.port_name = port;
+            entry.port_name = port;
             /* FDB type is either dynamic or static */
             assert(type == "dynamic" || type == "static");
 
