@@ -2,7 +2,6 @@ import time
 
 from dvslib.dvs_common import wait_for_result
 from dvslib.dvs_database import DVSDatabase
-from dvslib import dvs_acl
 
 L3_TABLE_TYPE = "L3"
 L3_TABLE_NAME = "L3_TEST"
@@ -342,11 +341,10 @@ class TestNat(object):
         dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers, action="DO_NOT_NAT", priority="97")
 
         expected_sai_qualifiers = {
-            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("14.1.0.1&mask:255.255.255.255"),
-            "SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT": dvs_acl.get_simple_qualifier_comparator("true") 
+            "SAI_ACL_ENTRY_ATTR_FIELD_SRC_IP": dvs_acl.get_simple_qualifier_comparator("14.1.0.1&mask:255.255.255.255")
         }
 
-        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+        dvs_acl.verify_nat_acl_rule(expected_sai_qualifiers, priority="97")
 
         # Deleting the ACL Rule
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
