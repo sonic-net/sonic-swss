@@ -235,7 +235,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
     m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
 
-    notifications = new swss::NotificationProducer(db, "VLANSTATE");
+    notifications = unique_ptr<swss::NotificationProducer>(new swss::NotificationProducer(db, "VLANSTATE"));
     initGearbox();
 
     string queueWmSha, pgWmSha;
