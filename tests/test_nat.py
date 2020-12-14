@@ -2,6 +2,7 @@ import time
 
 from dvslib.dvs_common import wait_for_result
 from dvslib.dvs_database import DVSDatabase
+from dvslib import dvs_acl
 
 L3_TABLE_TYPE = "L3"
 L3_TABLE_NAME = "L3_TEST"
@@ -325,9 +326,7 @@ class TestNat(object):
         # delete a static nat entry
         dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
 
-    def test_DoNotNatAclAction(self, dvs, testlog):
-        # initialize
-        self.setup_db(dvs)
+    def test_DoNotNatAclAction(self, dvs_acl, testlog):
 
         # Creating the ACL Table
         dvs_acl.create_acl_table(L3_TABLE_NAME, L3_TABLE_TYPE, L3_BIND_PORTS, stage="ingress")
