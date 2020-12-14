@@ -403,7 +403,6 @@ class DVSAcl:
 
         fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
         self._check_acl_entry_base(fvs, sai_qualifiers, "DO_NOT_NAT", priority)
-        self._check_acl_entry_nat_action(fvs)
 
     def verify_mirror_acl_rule(
             self,
@@ -545,6 +544,7 @@ class DVSAcl:
                 assert action == "MIRROR"
             elif "SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT" in k:
                 assert action == "DO_NOT_NAT"
+                assert v == "true"
             elif k in qualifiers:
                 assert qualifiers[k](v)
             else:
@@ -560,6 +560,3 @@ class DVSAcl:
     def _check_acl_entry_mirror_action(self, entry: Dict[str, str], session_oid: str, stage: str) -> None:
         assert stage in self.ADB_MIRROR_ACTION_LOOKUP
         assert entry.get(self.ADB_MIRROR_ACTION_LOOKUP[stage]) == session_oid
-
-    def _check_acl_entry_nat_action(self, entry: Dict[str, str]) -> None:
-        assert entry.get("SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT", None) == entry["true"]
