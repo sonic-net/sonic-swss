@@ -77,10 +77,9 @@ def validate_asic_nhg_fine_grained_ecmp(asic_db, ipprefix, size):
         if int(nhg_cfg_size) != size:
             return false_ret
         return (True, nhgid)
-    status, result = wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
-    if not status:
-        assert not polling_config.strict, \
-                f"Route not found"
+
+    _, result = wait_for_result(_access_function,
+        failure_message="Fine Grained ECMP route not found")
     return result
 
 
@@ -280,7 +279,6 @@ class TestFineGrainedNextHopGroup(object):
         # Wait for the software to receive the entries
         time.sleep(1)
 
-        asic_routes_count = len(asic_db.get_keys(ASIC_ROUTE_TB))
         ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"),
             ("ifname", "Vlan16,Vlan20,Vlan24")])
@@ -484,11 +482,10 @@ class TestFineGrainedNextHopGroup(object):
 
         # Add an ECMP route, since we deleted the FG_NHG_PREFIX it should see
         # standard(non-Fine grained) ECMP behavior
-        asic_routes_count = len(asic_db.get_keys(ASIC_ROUTE_TB))
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"),
             ("ifname", "Vlan16,Vlan20,Vlan24")])
         ps.set(fg_nhg_prefix, fvs)
-        nhgid = validate_asic_nhg_regular_ecmp(asic_db, fg_nhg_prefix)
+        validate_asic_nhg_regular_ecmp(asic_db, fg_nhg_prefix)
         asic_db.wait_for_n_keys(ASIC_NHG_MEMB, 3)
 
         # add fgnhg prefix: The regular route should transition to fine grained ECMP
@@ -575,7 +572,6 @@ class TestFineGrainedNextHopGroup(object):
         asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs)
 
         # Program the route
-        #asic_routes_count = len(asic_db.get_keys(ASIC_ROUTE_TB))
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.11"),
             ("ifname", "Ethernet0,Ethernet20")])
         ps.set(fg_nhg_prefix, fvs)

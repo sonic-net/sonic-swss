@@ -7,8 +7,8 @@
 #include "crmorch.h"
 #include <array>
 
-#define LINK_DOWN    false
-#define LINK_UP      true
+#define LINK_DOWN    0
+#define LINK_UP      1
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t gSwitchId;
