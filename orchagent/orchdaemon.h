@@ -33,6 +33,7 @@
 #include "natorch.h"
 #include "muxorch.h"
 #include "macsecorch.h"
+#include "thresholdorch.h"
 
 using namespace swss;
 
