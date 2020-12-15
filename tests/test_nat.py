@@ -1,7 +1,6 @@
 import time
 
 from dvslib.dvs_common import wait_for_result
-from dvslib.dvs_database import DVSDatabase
 
 
 class TestNat(object):
@@ -316,7 +315,7 @@ class TestNat(object):
 
             return (True, None)
 
-        wait_for_result(_check_conntrack_for_static_entry, DVSDatabase.DEFAULT_POLLING_CONFIG)
+        wait_for_result(_check_conntrack_for_static_entry)
 
         # delete a static nat entry
         dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")

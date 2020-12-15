@@ -473,7 +473,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                     }
                     else if (bank_fgnhg_map->at(round_robin_nh).size() > exp_bucket_size)
                     {
-                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %lu, exp_size %d",
+                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d",
                                 round_robin_nh.to_string().c_str(), bank_fgnhg_map->at(round_robin_nh).size(),
                                 exp_bucket_size);
                     }
@@ -492,7 +492,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                     }
                     else if (bank_fgnhg_map->at(round_robin_nh).size() > exp_bucket_size +1)
                     {
-                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %lu, exp_size %d",
+                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d",
                                 round_robin_nh.to_string().c_str(), bank_fgnhg_map->at(round_robin_nh).size(),
                                 exp_bucket_size + 1);
                     }
@@ -573,7 +573,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                     }
                     else if (map_entry->size() < exp_bucket_size)
                     {
-                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %lu, exp_size %d",
+                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d",
                                 it->to_string().c_str(), map_entry->size(), exp_bucket_size);
                         it++;
                     }
@@ -593,7 +593,7 @@ bool FgNhgOrch::setActiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_rou
                     }
                     else if (map_entry->size() < exp_bucket_size)
                     {
-                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %lu, exp_size %d",
+                        SWSS_LOG_WARN("Unexpected bucket size for nh %s, size %zu, exp_size %d",
                                 it->to_string().c_str(), map_entry->size(), exp_bucket_size + 1);
                         it++;
                     }

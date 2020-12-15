@@ -32,6 +32,7 @@ NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
 FgNhgOrch *gFgNhgOrch;
 AclOrch *gAclOrch;
+MirrorOrch *gMirrorOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
@@ -164,20 +165,20 @@ bool OrchDaemon::init()
     QosOrch *qos_orch = new QosOrch(m_configDb, qos_tables);
 
     vector<string> buffer_tables = {
-        CFG_BUFFER_POOL_TABLE_NAME,
-        CFG_BUFFER_PROFILE_TABLE_NAME,
-        CFG_BUFFER_QUEUE_TABLE_NAME,
-        CFG_BUFFER_PG_TABLE_NAME,
-        CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
-        CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
+        APP_BUFFER_POOL_TABLE_NAME,
+        APP_BUFFER_PROFILE_TABLE_NAME,
+        APP_BUFFER_QUEUE_TABLE_NAME,
+        APP_BUFFER_PG_TABLE_NAME,
+        APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
+        APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
     };
-    gBufferOrch = new BufferOrch(m_configDb, buffer_tables);
+    gBufferOrch = new BufferOrch(m_applDb, m_configDb, m_stateDb, buffer_tables);
 
     PolicerOrch *policer_orch = new PolicerOrch(m_configDb, "POLICER");
 
     TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
-    MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
+    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
@@ -273,10 +274,10 @@ bool OrchDaemon::init()
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
     }
-    gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
+    gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
 
     m_orchList.push_back(gFdbOrch);
-    m_orchList.push_back(mirror_orch);
+    m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
     m_orchList.push_back(chassis_frontend_orch);
     m_orchList.push_back(vrf_orch);
@@ -548,18 +549,24 @@ bool OrchDaemon::warmRestoreAndSyncUp()
 
     for (auto it = 0; it < 3; it++)
     {
-        SWSS_LOG_DEBUG("The current iteration is %d", it);
+        SWSS_LOG_DEBUG("The current doTask iteration is %d", it);
 
         for (Orch *o : m_orchList)
         {
+            if (o == gMirrorOrch) {
+                SWSS_LOG_DEBUG("Skipping mirror processing until the end");
+                continue;
+            }
+
             o->doTask();
         }
     }
 
-    for (Orch *o : m_orchList)
-    {
-        o->postBake();
-    }
+    // MirrorOrch depends on everything else being settled before it can run,
+    // and mirror ACL rules depend on MirrorOrch, so run these two at the end
+    // after the rest of the data has been processed.
+    gMirrorOrch->doTask();
+    gAclOrch->doTask();
 
     /*
      * At this point, all the pre-existing data should have been processed properly, and
