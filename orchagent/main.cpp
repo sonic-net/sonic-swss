@@ -166,7 +166,7 @@ int main(int argc, char **argv)
     string swss_rec_filename = "swss.rec";
     string sairedis_rec_filename = "sairedis.rec";
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:")) != -1)
     {
         switch (opt)
         {
