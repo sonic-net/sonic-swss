@@ -4385,25 +4385,6 @@ void PortsOrch::getPortSerdesVal(const std::string& val_str,
     }
 }
 
-void PortsOrch::updateVlanOperStatus(const Port &vlan, bool isUp)
-{
-#if 0 /* Dependent on PR 1275 */
-    struct PortOperStateUpdate update;
-    update.port = vlan;
-    update.up = isUp;
-    notify(SUBJECT_TYPE_PORT_OPER_STATE_CHANGE, &update);
-
-    if (isUp)
-    {
-        updateDbVlanOperStatus(vlan, "up");
-    }
-    else
-    {
-        updateDbVlanOperStatus(vlan, "down");
-    }
-#endif
-}
-
 /* Bring up/down Vlan interface associated with L3 VNI*/
 bool PortsOrch::updateL3VniStatus(uint16_t vlan_id, bool isUp)
 {
@@ -4426,7 +4407,7 @@ bool PortsOrch::updateL3VniStatus(uint16_t vlan_id, bool isUp)
         vlan.m_up_member_count++;
         if (old_count == 0)
         {
-            updateVlanOperStatus(vlan, true);
+            /* updateVlanOperStatus(vlan, true); */ /* TBD */
             vlan.m_oper_status = SAI_PORT_OPER_STATUS_UP;
         }
         vlan.m_l3_vni = true;
@@ -4434,7 +4415,7 @@ bool PortsOrch::updateL3VniStatus(uint16_t vlan_id, bool isUp)
         vlan.m_up_member_count--;
         if (vlan.m_up_member_count == 0)
         {
-            updateVlanOperStatus(vlan, false);
+            /* updateVlanOperStatus(vlan, false); */ /* TBD */
             vlan.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
         }
         vlan.m_l3_vni = false;

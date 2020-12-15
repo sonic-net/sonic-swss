@@ -96,7 +96,7 @@ bool VRFOrch::addOperation(const Request& request)
         vrf_table_[vrf_name].ref_count = 0;
         vrf_id_table_[router_id] = vrf_name;
         if (vni != 0) {
-            SWSS_LOG_NOTICE("VRF '%s' vni %d add", vrf_name.c_str(), vni);
+            SWSS_LOG_INFO("VRF '%s' vni %d add", vrf_name.c_str(), vni);
             error = updateVrfVNIMap(vrf_name, vni);
             if (error == false)
                 return false;
@@ -120,7 +120,7 @@ bool VRFOrch::addOperation(const Request& request)
             }
         }
 
-        SWSS_LOG_NOTICE("VRF '%s' vni %d modify", vrf_name.c_str(), vni);
+        SWSS_LOG_INFO("VRF '%s' vni %d modify", vrf_name.c_str(), vni);
         error = updateVrfVNIMap(vrf_name, vni);
         if (error == false)
             return false;
