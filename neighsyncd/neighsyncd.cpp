@@ -7,9 +7,125 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "neighsyncd/neighsync.h"
+#include "subscriberstatetable.h"
+#include "consumerstatetable.h"
+#include <pthread.h>
 
 using namespace std;
 using namespace swss;
+
+#define NETLINK_BUFFSIZE        134217728   //128MB
+
+class NeighSync *g_neighsync;
+void netlinkDumpErrorCb(void *cbData);
+
+void* NeighSync::arpRefreshThread(void *arg)
+{
+    DBConnector cfgDb("CONFIG_DB", 0);
+    DBConnector log_db("LOGLEVEL_DB", 0);
+    DBConnector stateDb("STATE_DB", 0);
+
+
+    SubscriberStateTable cfg_intf_table(&cfgDb, CFG_INTF_TABLE_NAME);
+    SubscriberStateTable cfg_lag_intf_table(&cfgDb, CFG_LAG_INTF_TABLE_NAME);
+    SubscriberStateTable cfg_loopbk_intf_table(&cfgDb, CFG_LOOPBACK_INTERFACE_TABLE_NAME);
+    SubscriberStateTable cfg_vlan_intf_table(&cfgDb, CFG_VLAN_INTF_TABLE_NAME);
+    SubscriberStateTable cfg_device_metadat_table(&cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    SubscriberStateTable cfg_switch_table(&cfgDb, CFG_SWITCH_TABLE_NAME);
+    SubscriberStateTable cfg_neigh_global_table(&cfgDb, CFG_NEIGH_GLOBAL_TABLE);
+    SubscriberStateTable state_fdb_table(&stateDb, STATE_FDB_TABLE_NAME);
+    SelectableTimer neighRefreshTimer(timespec{.tv_sec = NEIGH_REFRESH_TIMER_TICK, .tv_nsec = 0});
+
+    SWSS_LOG_NOTICE("NeighSync::arpRefreshThread called");
+    while (1)
+    {
+        Select s;
+
+        s.addSelectable(&cfg_vlan_intf_table);
+        s.addSelectable(&cfg_intf_table);
+        s.addSelectable(&cfg_lag_intf_table);
+        s.addSelectable(&cfg_loopbk_intf_table);
+        s.addSelectable(&cfg_device_metadat_table);
+        s.addSelectable(&cfg_switch_table);
+        s.addSelectable(&cfg_neigh_global_table);
+        s.addSelectable(&state_fdb_table);
+        s.addSelectable(&neighRefreshTimer);
+
+        neighRefreshTimer.start();
+
+        while (true)
+        {
+            Selectable *temps;
+            s.select(&temps);
+
+            //Refresh Neighbor entries
+            if (temps == &neighRefreshTimer)
+            {
+                g_neighsync->refreshTimer();
+                neighRefreshTimer.reset();
+                continue;
+            }
+            else if ( temps == (Selectable *)&cfg_vlan_intf_table)
+            {
+                std::deque<KeyOpFieldsValuesTuple> entries;
+                cfg_vlan_intf_table.pops(entries);
+                g_neighsync->processIpInterfaceTask(entries);
+            }
+            else if ( temps == (Selectable *)&cfg_intf_table)
+            {
+                std::deque<KeyOpFieldsValuesTuple> entries;
+                cfg_intf_table.pops(entries);
+                g_neighsync->processIpInterfaceTask(entries);
+            }
+            else if ( temps == (Selectable *)&cfg_lag_intf_table)
+            {
+                std::deque<KeyOpFieldsValuesTuple> entries;
+                cfg_lag_intf_table.pops(entries);
+                g_neighsync->processIpInterfaceTask(entries);
+            }
+            else if ( temps == (Selectable *)&cfg_loopbk_intf_table)
+            {
+                std::deque<KeyOpFieldsValuesTuple> entries;
+                cfg_loopbk_intf_table.pops(entries);
+                g_neighsync->processIpInterfaceTask(entries);
+            }
+            else if ( temps == (Selectable *)&cfg_device_metadat_table)
+            {
+                std::deque<KeyOpFieldsValuesTuple> entries;
+                cfg_device_metadat_table.pops(entries);
+                g_neighsync->doSystemMacTask(entries);
+            }
+            else if ( temps == (Selectable *)&cfg_switch_table)
+            {
+                std::deque<KeyOpFieldsValuesTuple> entries;
+                cfg_switch_table.pops(entries);
+                g_neighsync->doSwitchTask(entries);
+            }
+            else if ( temps == (Selectable *)&cfg_neigh_global_table)
+            {
+                std::deque<KeyOpFieldsValuesTuple> entries;
+                cfg_neigh_global_table.pops(entries);
+                g_neighsync->doNeighGlobalTask(entries);
+            }
+        }
+    }
+}
+
+typedef void * (*THREADFUNCPTR)(void *);
+
+void NeighSync::startArpRefreshThread()
+{
+    int ret;
+    pthread_t thread_id;
+    pthread_attr_t attr;
+
+    ret = pthread_attr_init(&attr);
+    ret = pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    ret = pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+    ret = pthread_create(&thread_id, &attr, (THREADFUNCPTR)&arpRefreshThread, NULL);
+
+    SWSS_LOG_NOTICE("ARP refresh thread created: ret(%d) thread-id(%ld)", ret, thread_id);
+}
 
 int main(int argc, char **argv)
 {
@@ -18,11 +134,15 @@ int main(int argc, char **argv)
     DBConnector appDb("APPL_DB", 0);
     RedisPipeline pipelineAppDB(&appDb);
     DBConnector stateDb("STATE_DB", 0);
-
+    SelectableTimer neighRefreshTimer(timespec{.tv_sec = NEIGH_REFRESH_INTERVAL, .tv_nsec = 0});
     NeighSync sync(&pipelineAppDB, &stateDb);
 
     NetDispatcher::getInstance().registerMessageHandler(RTM_NEWNEIGH, &sync);
     NetDispatcher::getInstance().registerMessageHandler(RTM_DELNEIGH, &sync);
+
+    g_neighsync = &sync;
+
+    sync.startArpRefreshThread();
 
     while (1)
     {
