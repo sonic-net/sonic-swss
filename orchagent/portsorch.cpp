@@ -288,6 +288,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
 
     m_cpuPort = Port("CPU", Port::CPU);
     m_cpuPort.m_port_id = attr.value.oid;
+    initCpuPort(m_cpuPort);
     m_portList[m_cpuPort.m_alias] = m_cpuPort;
     m_port_ref_count[m_cpuPort.m_alias] = 0;
 
@@ -1787,6 +1788,11 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     return status;
 }
 
+string PortsOrch::getPortFlexCounterTableKey(string key)
+{
+    return string(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
+}
+
 string PortsOrch::getQueueWatermarkFlexCounterTableKey(string key)
 {
     return string(QUEUE_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
@@ -1869,6 +1875,35 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
     }
 
     return true;
+}
+
+void PortsOrch::initCpuPort(Port &cpu_port)
+{
+    SWSS_LOG_ENTER();
+
+    initializeQueues(cpu_port);
+
+    /* Add port name map to counter table */
+    FieldValueTuple tuple(cpu_port.m_alias, sai_serialize_object_id(cpu_port.m_port_id));
+    vector<FieldValueTuple> fields;
+    fields.push_back(tuple);
+    m_counterTable->set("", fields);
+
+    /* Add port to flex_counter for updating stat counters  */
+    string key = getPortFlexCounterTableKey(sai_serialize_object_id(cpu_port.m_port_id));
+    std::string delimiter = "";
+    std::ostringstream counters_stream;
+    for (const auto &id: port_stat_ids)
+    {
+        counters_stream << delimiter << sai_serialize_port_stat(id);
+        delimiter = comma;
+    }
+
+    fields.clear();
+    fields.emplace_back(PORT_COUNTER_ID_LIST, counters_stream.str());
+
+    m_flexCounterTable->set(key, fields);
+    return;
 }
 
 void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
@@ -3934,7 +3969,7 @@ void PortsOrch::generateQueueMap()
 
     for (const auto& it: m_portList)
     {
-        if (it.second.m_type == Port::PHY)
+        if ((it.second.m_type == Port::PHY) || (it.second.m_type == Port::CPU))
         {
             generateQueueMapPerPort(it.second);
         }
