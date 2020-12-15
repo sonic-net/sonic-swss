@@ -2,7 +2,6 @@
 
 FIXME:
     - Reference DBs by name rather than ID/socket
-    - Move DEFAULT_POLLING_CONFIG to Common
     - Add support for ProducerStateTable
 """
 from typing import Dict, List
@@ -11,13 +10,7 @@ from dvslib.dvs_common import wait_for_result, PollingConfig
 
 
 class DVSDatabase:
-    """DVSDatabase provides access to redis databases on the virtual switch.
-
-    By default, database operations are configured to use `DEFAULT_POLLING_CONFIG`. Users can
-    specify their own PollingConfig, but this shouldn't typically be necessary.
-    """
-
-    DEFAULT_POLLING_CONFIG = PollingConfig(polling_interval=0.01, timeout=5, strict=True)
+    """DVSDatabase provides access to redis databases on the virtual switch."""
 
     def __init__(self, db_id: int, connector: str):
         """Initialize a DVSDatabase instance.
@@ -99,7 +92,8 @@ class DVSDatabase:
         self,
         table_name: str,
         key: str,
-        polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
+        polling_config: PollingConfig = PollingConfig(),
+        failure_message: str = None,
     ) -> Dict[str, str]:
         """Wait for the entry stored at `key` in the specified table to exist and retrieve it.
 
@@ -107,21 +101,19 @@ class DVSDatabase:
             table_name: The name of the table where the entry is stored.
             key: The key that maps to the entry being retrieved.
             polling_config: The parameters to use to poll the db.
+            failure_message: The message to print if the call times out. This will only take effect
+                if the PollingConfig is set to strict.
 
         Returns:
             The entry stored at `key`. If no entry is found, then an empty Dict is returned.
         """
-        def __access_function():
+
+        def access_function():
             fv_pairs = self.get_entry(table_name, key)
             return (bool(fv_pairs), fv_pairs)
 
-        status, result = wait_for_result(
-            __access_function,
-            self._disable_strict_polling(polling_config))
-
-        if not status:
-            assert not polling_config.strict, \
-                f"Entry not found: key=\"{key}\", table=\"{table_name}\""
+        message = failure_message or f'Entry not found: key="{key}", table="{table_name}"'
+        _, result = wait_for_result(access_function, polling_config, message)
 
         return result
 
@@ -130,7 +122,8 @@ class DVSDatabase:
         table_name: str,
         key: str,
         expected_fields: List[str],
-        polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
+        polling_config: PollingConfig = PollingConfig(),
+        failure_message: str = None,
     ) -> Dict[str, str]:
         """Wait for the entry stored at `key` to have the specified fields and retrieve it.
 
@@ -142,22 +135,27 @@ class DVSDatabase:
             key: The key that maps to the entry being checked.
             expected_fields: The fields that we expect to see in the entry.
             polling_config: The parameters to use to poll the db.
+            failure_message: The message to print if the call times out. This will only take effect
+                if the PollingConfig is set to strict.
 
         Returns:
             The entry stored at `key`. If no entry is found, then an empty Dict is returned.
         """
-        def __access_function():
+
+        def access_function():
             fv_pairs = self.get_entry(table_name, key)
             return (all(field in fv_pairs for field in expected_fields), fv_pairs)
 
         status, result = wait_for_result(
-            __access_function,
-            self._disable_strict_polling(polling_config))
+            access_function, self._disable_strict_polling(polling_config)
+        )
 
         if not status:
-            assert not polling_config.strict, \
-                f"Expected fields not found: expected={expected_fields}, \
-                received={result}, key=\"{key}\", table=\"{table_name}\""
+            message = failure_message or (
+                f"Expected fields not found: expected={expected_fields}, received={result}, "
+                f'key="{key}", table="{table_name}"'
+            )
+            assert not polling_config.strict, message
 
         return result
 
@@ -166,34 +164,43 @@ class DVSDatabase:
         table_name: str,
         key: str,
         expected_fields: Dict[str, str],
-        polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
+        polling_config: PollingConfig = PollingConfig(),
+        failure_message: str = None,
     ) -> Dict[str, str]:
-        """Wait for the entry stored at `key` to have the specified field/value pairs and retrieve it.
+        """Wait for the entry stored at `key` to have the specified field/values and retrieve it.
 
-        This method is useful if you only care about the contents of a subset of the fields stored in the
-        specified entry.
+        This method is useful if you only care about the contents of a subset of the fields stored
+        in the specified entry.
 
         Args:
             table_name: The name of the table where the entry is stored.
             key: The key that maps to the entry being checked.
             expected_fields: The fields and their values we expect to see in the entry.
             polling_config: The parameters to use to poll the db.
+            failure_message: The message to print if the call times out. This will only take effect
+                if the PollingConfig is set to strict.
 
         Returns:
             The entry stored at `key`. If no entry is found, then an empty Dict is returned.
         """
-        def __access_function():
+
+        def access_function():
             fv_pairs = self.get_entry(table_name, key)
-            return (all(fv_pairs.get(k) == v for k, v in expected_fields.items()), fv_pairs)
+            return (
+                all(fv_pairs.get(k) == v for k, v in expected_fields.items()),
+                fv_pairs,
+            )
 
         status, result = wait_for_result(
-            __access_function,
-            self._disable_strict_polling(polling_config))
+            access_function, self._disable_strict_polling(polling_config)
+        )
 
         if not status:
-            assert not polling_config.strict, \
-                f"Expected field/value pairs not found: expected={expected_fields}, \
-                received={result}, key=\"{key}\", table=\"{table_name}\""
+            message = failure_message or (
+                f"Expected field/value pairs not found: expected={expected_fields}, "
+                f'received={result}, key="{key}", table="{table_name}"'
+            )
+            assert not polling_config.strict, message
 
         return result
 
@@ -202,33 +209,43 @@ class DVSDatabase:
         table_name: str,
         key: str,
         old_fields: Dict[str, str],
-        polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
+        polling_config: PollingConfig = PollingConfig(),
+        failure_message: str = None,
     ) -> Dict[str, str]:
-        """Wait for the entry stored at `key` to have different field/value pairs than the ones specified.
+        """Wait for the entry stored at `key` to have different field/values than `old_fields`.
 
-        This method is useful if you expect some field to change, but you don't know their exact values.
+        This method is useful if you expect some field to change, but you don't know their exact
+        values.
 
         Args:
             table_name: The name of the table where the entry is stored.
             key: The key that maps to the entry being checked.
             old_fields: The original field/value pairs we expect to change.
             polling_config: The parameters to use to poll the db.
+            failure_message: The message to print if the call times out. This will only take effect
+                if the PollingConfig is set to strict.
 
         Returns:
             The entry stored at `key`. If no entry is found, then an empty Dict is returned.
         """
-        def __access_function():
+
+        def access_function():
             fv_pairs = self.get_entry(table_name, key)
-            return (all(k in fv_pairs and fv_pairs[k] != v for k, v in old_fields.items()), fv_pairs)
+            return (
+                all(k in fv_pairs and fv_pairs[k] != v for k, v in old_fields.items()),
+                fv_pairs,
+            )
 
         status, result = wait_for_result(
-            __access_function,
-            self._disable_strict_polling(polling_config))
+            access_function, self._disable_strict_polling(polling_config)
+        )
 
         if not status:
-            assert not polling_config.strict, \
-                f"Did not expect field/values to match, but they did: provided={old_fields}, \
-                received={result}, key=\"{key}\", table=\"{table_name}\""
+            message = failure_message or (
+                f"Did not expect field/values to match, but they did: provided={old_fields}, "
+                f'received={result}, key="{key}", table="{table_name}"'
+            )
+            assert not polling_config.strict, message
 
         return result
 
@@ -237,7 +254,8 @@ class DVSDatabase:
         table_name: str,
         key: str,
         expected_entry: Dict[str, str],
-        polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
+        polling_config: PollingConfig = PollingConfig(),
+        failure_message: str = None,
     ) -> Dict[str, str]:
         """Wait for the entry stored at `key` to match `expected_entry` and retrieve it.
 
@@ -248,23 +266,27 @@ class DVSDatabase:
             key: The key that maps to the entry being checked.
             expected_entry: The entry we expect to see.
             polling_config: The parameters to use to poll the db.
+            failure_message: The message to print if the call times out. This will only take effect
+                if the PollingConfig is set to strict.
 
         Returns:
             The entry stored at `key`. If no entry is found, then an empty Dict is returned.
         """
 
-        def __access_function():
+        def access_function():
             fv_pairs = self.get_entry(table_name, key)
             return (fv_pairs == expected_entry, fv_pairs)
 
         status, result = wait_for_result(
-            __access_function,
-            self._disable_strict_polling(polling_config))
+            access_function, self._disable_strict_polling(polling_config)
+        )
 
         if not status:
-            assert not polling_config.strict, \
-                f"Exact match not found: expected={expected_entry}, received={result}, \
-                key=\"{key}\", table=\"{table_name}\""
+            message = failure_message or (
+                f"Exact match not found: expected={expected_entry}, received={result}, "
+                f'key="{key}", table="{table_name}"'
+            )
+            assert not polling_config.strict, message
 
         return result
 
@@ -272,7 +294,8 @@ class DVSDatabase:
         self,
         table_name: str,
         key: str,
-        polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
+        polling_config: PollingConfig = PollingConfig(),
+        failure_message: str = None,
     ) -> Dict[str, str]:
         """Wait for no entry to exist at `key` in the specified table.
 
@@ -280,21 +303,26 @@ class DVSDatabase:
             table_name: The name of the table being checked.
             key: The key to be checked.
             polling_config: The parameters to use to poll the db.
+            failure_message: The message to print if the call times out. This will only take effect
+                if the PollingConfig is set to strict.
 
         Returns:
             The entry stored at `key`. If no entry is found, then an empty Dict is returned.
         """
-        def __access_function():
+
+        def access_function():
             fv_pairs = self.get_entry(table_name, key)
             return (not bool(fv_pairs), fv_pairs)
 
         status, result = wait_for_result(
-            __access_function,
-            self._disable_strict_polling(polling_config))
+            access_function, self._disable_strict_polling(polling_config)
+        )
 
         if not status:
-            assert not polling_config.strict, \
-                f"Entry still exists: entry={result}, key=\"{key}\", table=\"{table_name}\""
+            message = failure_message or (
+                f'Entry still exists: entry={result}, key="{key}", table="{table_name}"'
+            )
+            assert not polling_config.strict, message
 
         return result
 
@@ -302,7 +330,8 @@ class DVSDatabase:
         self,
         table_name: str,
         num_keys: int,
-        polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
+        polling_config: PollingConfig = PollingConfig(),
+        failure_message: str = None,
     ) -> List[str]:
         """Wait for the specified number of keys to exist in the table.
 
@@ -310,22 +339,27 @@ class DVSDatabase:
             table_name: The name of the table from which to fetch the keys.
             num_keys: The expected number of keys to retrieve from the table.
             polling_config: The parameters to use to poll the db.
+            failure_message: The message to print if the call times out. This will only take effect
+                if the PollingConfig is set to strict.
 
         Returns:
             The keys stored in the table. If no keys are found, then an empty List is returned.
         """
-        def __access_function():
+
+        def access_function():
             keys = self.get_keys(table_name)
             return (len(keys) == num_keys, keys)
 
         status, result = wait_for_result(
-            __access_function,
-            self._disable_strict_polling(polling_config))
+            access_function, self._disable_strict_polling(polling_config)
+        )
 
         if not status:
-            assert not polling_config.strict, \
-                f"Unexpected number of keys: expected={num_keys}, \
-                received={len(result)} ({result}), table=\"{table_name}\""
+            message = failure_message or (
+                f"Unexpected number of keys: expected={num_keys}, received={len(result)} "
+                f'({result}), table="{table_name}"'
+            )
+            assert not polling_config.strict, message
 
         return result
 
@@ -333,7 +367,8 @@ class DVSDatabase:
         self,
         table_name: str,
         expected_keys: List[str],
-        polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
+        polling_config: PollingConfig = PollingConfig(),
+        failure_message: str = None,
     ) -> List[str]:
         """Wait for the specified keys to exist in the table.
 
@@ -341,22 +376,27 @@ class DVSDatabase:
             table_name: The name of the table from which to fetch the keys.
             expected_keys: The keys we expect to see in the table.
             polling_config: The parameters to use to poll the db.
+            failure_message: The message to print if the call times out. This will only take effect
+                if the PollingConfig is set to strict.
 
         Returns:
             The keys stored in the table. If no keys are found, then an empty List is returned.
         """
-        def __access_function():
+
+        def access_function():
             keys = self.get_keys(table_name)
             return (all(key in keys for key in expected_keys), keys)
 
         status, result = wait_for_result(
-            __access_function,
-            self._disable_strict_polling(polling_config))
+            access_function, self._disable_strict_polling(polling_config)
+        )
 
         if not status:
-            assert not polling_config.strict, \
-                f"Expected keys not found: expected={expected_keys}, received={result}, \
-                table=\"{table_name}\""
+            message = failure_message or (
+                f"Expected keys not found: expected={expected_keys}, received={result}, "
+                f'table="{table_name}"'
+            )
+            assert not polling_config.strict, message
 
         return result
 
@@ -364,7 +404,8 @@ class DVSDatabase:
         self,
         table_name: str,
         deleted_keys: List[str],
-        polling_config: PollingConfig = DEFAULT_POLLING_CONFIG
+        polling_config: PollingConfig = PollingConfig(),
+        failure_message: str = None,
     ) -> List[str]:
         """Wait for the specfied keys to no longer exist in the table.
 
@@ -372,29 +413,34 @@ class DVSDatabase:
             table_name: The name of the table from which to fetch the keys.
             deleted_keys: The keys we expect to be removed from the table.
             polling_config: The parameters to use to poll the db.
+            failure_message: The message to print if the call times out. This will only take effect
+                if the PollingConfig is set to strict.
 
         Returns:
             The keys stored in the table. If no keys are found, then an empty List is returned.
         """
-        def __access_function():
+
+        def access_function():
             keys = self.get_keys(table_name)
             return (all(key not in keys for key in deleted_keys), keys)
 
         status, result = wait_for_result(
-            __access_function,
-            self._disable_strict_polling(polling_config))
+            access_function, self._disable_strict_polling(polling_config)
+        )
 
         if not status:
             expected = [key for key in result if key not in deleted_keys]
-            assert not polling_config.strict, \
-                f"Unexpected keys found: expected={expected}, received={result}, \
-                table=\"{table_name}\""
+            message = failure_message or (
+                f"Unexpected keys found: expected={expected}, received={result}, "
+                f'table="{table_name}"'
+            )
+            assert not polling_config.strict, message
 
         return result
 
     @staticmethod
     def _disable_strict_polling(polling_config: PollingConfig) -> PollingConfig:
-        disabled_config = PollingConfig(polling_interval=polling_config.polling_interval,
-                                        timeout=polling_config.timeout,
-                                        strict=False)
+        disabled_config = PollingConfig(
+            polling_config.polling_interval, polling_config.timeout, False
+        )
         return disabled_config

@@ -331,6 +331,11 @@ class DVSAcl:
         """
         self.config_db.delete_entry("ACL_RULE", "{}|{}".format(table_name, rule_name))
 
+    def verify_acl_rule_count(self, expected: int) -> None:
+        """Verify that there are N rules in the ASIC DB."""
+        num_keys = len(self.asic_db.default_acl_entries)
+        self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", num_keys + expected)
+
     def verify_no_acl_rules(self) -> None:
         """Verify that there are no ACL rules in the ASIC DB."""
         num_keys = len(self.asic_db.default_acl_entries)

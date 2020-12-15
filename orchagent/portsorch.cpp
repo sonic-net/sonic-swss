@@ -127,6 +127,26 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_IF_OUT_BROADCAST_PKTS,
     SAI_PORT_STAT_ETHER_RX_OVERSIZE_PKTS,
     SAI_PORT_STAT_ETHER_TX_OVERSIZE_PKTS,
+    SAI_PORT_STAT_ETHER_IN_PKTS_64_OCTETS,
+    SAI_PORT_STAT_ETHER_IN_PKTS_65_TO_127_OCTETS,
+    SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS,
+    SAI_PORT_STAT_ETHER_IN_PKTS_256_TO_511_OCTETS,
+    SAI_PORT_STAT_ETHER_IN_PKTS_512_TO_1023_OCTETS,
+    SAI_PORT_STAT_ETHER_IN_PKTS_1024_TO_1518_OCTETS,
+    SAI_PORT_STAT_ETHER_IN_PKTS_1519_TO_2047_OCTETS,
+    SAI_PORT_STAT_ETHER_IN_PKTS_2048_TO_4095_OCTETS,
+    SAI_PORT_STAT_ETHER_IN_PKTS_4096_TO_9216_OCTETS,
+    SAI_PORT_STAT_ETHER_IN_PKTS_9217_TO_16383_OCTETS,
+    SAI_PORT_STAT_ETHER_OUT_PKTS_64_OCTETS,
+    SAI_PORT_STAT_ETHER_OUT_PKTS_65_TO_127_OCTETS,
+    SAI_PORT_STAT_ETHER_OUT_PKTS_128_TO_255_OCTETS,
+    SAI_PORT_STAT_ETHER_OUT_PKTS_256_TO_511_OCTETS,
+    SAI_PORT_STAT_ETHER_OUT_PKTS_512_TO_1023_OCTETS,
+    SAI_PORT_STAT_ETHER_OUT_PKTS_1024_TO_1518_OCTETS,
+    SAI_PORT_STAT_ETHER_OUT_PKTS_1519_TO_2047_OCTETS,
+    SAI_PORT_STAT_ETHER_OUT_PKTS_2048_TO_4095_OCTETS,
+    SAI_PORT_STAT_ETHER_OUT_PKTS_4096_TO_9216_OCTETS,
+    SAI_PORT_STAT_ETHER_OUT_PKTS_9217_TO_16383_OCTETS,
     SAI_PORT_STAT_PFC_0_TX_PKTS,
     SAI_PORT_STAT_PFC_1_TX_PKTS,
     SAI_PORT_STAT_PFC_2_TX_PKTS,
@@ -147,7 +167,10 @@ const vector<sai_port_stat_t> port_stat_ids =
     SAI_PORT_STAT_PAUSE_TX_PKTS,
     SAI_PORT_STAT_ETHER_STATS_TX_NO_ERRORS,
     SAI_PORT_STAT_IP_IN_UCAST_PKTS,
-    SAI_PORT_STAT_ETHER_IN_PKTS_128_TO_255_OCTETS,
+    SAI_PORT_STAT_ETHER_STATS_JABBERS,
+    SAI_PORT_STAT_ETHER_STATS_FRAGMENTS,
+    SAI_PORT_STAT_ETHER_STATS_UNDERSIZE_PKTS,
+    SAI_PORT_STAT_IP_IN_RECEIVES
 };
 
 const vector<sai_port_stat_t> port_buffer_drop_stat_ids =
@@ -1830,7 +1853,7 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
         /* Determine if the port has already been initialized before */
         if (m_portList.find(alias) != m_portList.end() && m_portList[alias].m_port_id == id)
         {
-            SWSS_LOG_INFO("Port has already been initialized before alias:%s", alias.c_str());
+            SWSS_LOG_DEBUG("Port has already been initialized before alias:%s", alias.c_str());
         }
         else
         {
@@ -1874,7 +1897,7 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
 
                 m_portList[alias].m_init = true;
 
-                SWSS_LOG_ERROR("Initialized port %s", alias.c_str());
+                SWSS_LOG_NOTICE("Initialized port %s", alias.c_str());
             }
             else
             {

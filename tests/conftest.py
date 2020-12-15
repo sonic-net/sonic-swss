@@ -162,9 +162,11 @@ class VirtualServer:
             ensure_system(f"ip netns add {self.nsname}")
 
             # create vpeer link
-            ensure_system(f"ip link add {self.nsname[0:12]} type veth peer name {self.pifname}")
-            ensure_system(f"ip link set {self.nsname[0:12]} netns {self.nsname}")
-            ensure_system(f"ip link set {self.pifname} netns {pid}")
+            ensure_system(
+                f"ip netns exec {self.nsname} ip link add {self.nsname[0:12]}"
+                f" type veth peer name {self.pifname}"
+            )
+            ensure_system(f"ip netns exec {self.nsname} ip link set {self.pifname} netns {pid}")
 
             # bring up link in the virtual server
             ensure_system(f"ip netns exec {self.nsname} ip link set dev {self.nsname[0:12]} name eth0")
@@ -1019,14 +1021,23 @@ class DockerVirtualSwitch:
         tbl._del(interface + ":" + ip)
         time.sleep(1)
 
-    # deps: mirror_port_erspan
+    # deps: mirror_port_erspan, warm_reboot
     def add_route(self, prefix, nexthop):
         self.runcmd("ip route add " + prefix + " via " + nexthop)
         time.sleep(1)
 
-    # deps: mirror_port_erspan
+    # deps: mirror_port_erspan, warm_reboot
     def change_route(self, prefix, nexthop):
         self.runcmd("ip route change " + prefix + " via " + nexthop)
+        time.sleep(1)
+
+    # deps: warm_reboot
+    def change_route_ecmp(self, prefix, nexthops):
+        cmd = ""
+        for nexthop in nexthops:
+            cmd += " nexthop via " + nexthop
+
+        self.runcmd("ip route change " + prefix + cmd)
         time.sleep(1)
 
     # deps: acl, mirror_port_erspan

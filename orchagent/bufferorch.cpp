@@ -23,6 +23,7 @@ extern sai_object_id_t gSwitchId;
 static const vector<sai_buffer_pool_stat_t> bufferPoolWatermarkStatIds =
 {
     SAI_BUFFER_POOL_STAT_WATERMARK_BYTES,
+    SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES
 };
 
 type_map BufferOrch::m_buffer_type_maps = {

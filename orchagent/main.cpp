@@ -56,7 +56,7 @@ bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
-char *gAsicInstance = NULL;
+string gAsicInstance;
 
 extern bool gIsNatSupported;
 
@@ -174,8 +174,17 @@ int main(int argc, char **argv)
             gBatchSize = atoi(optarg);
             break;
         case 'i':
-            gAsicInstance = (char *)calloc(strlen(optarg)+1, sizeof(char));
-            memcpy(gAsicInstance, optarg, strlen(optarg));
+            {
+                // Limit asic instance string max length
+                size_t len = strnlen(optarg, SAI_MAX_HARDWARE_ID_LEN);
+                // Check if input is longer and warn
+                if (len == SAI_MAX_HARDWARE_ID_LEN && optarg[len+1] != '\0')
+                {
+                    SWSS_LOG_WARN("ASIC instance_id length > SAI_MAX_HARDWARE_ID_LEN, LIMITING !!");
+                }
+                // If longer, trancate into a string
+                gAsicInstance.assign(optarg, len);
+            }
             break;
         case 'm':
             gMacAddress = MacAddress(optarg);
@@ -304,11 +313,12 @@ int main(int argc, char **argv)
 
     sai_switch_api->set_switch_attribute(gSwitchId, &attr);
 
-    if (gAsicInstance)
+    if (!gAsicInstance.empty())
     {
         attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
-        attr.value.s8list.count = (uint32_t)(strlen(gAsicInstance)+1);
-        attr.value.s8list.list = (int8_t*)gAsicInstance;
+        attr.value.s8list.count = (uint32_t)gAsicInstance.size();
+        // TODO: change SAI definition of `list` to `const char *`
+        attr.value.s8list.list = (int8_t *)const_cast<char *>(gAsicInstance.c_str());
         attrs.push_back(attr);
     }
 
