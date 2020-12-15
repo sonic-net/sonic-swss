@@ -65,7 +65,7 @@ string gRecordFile;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -166,7 +166,7 @@ int main(int argc, char **argv)
     string swss_rec_filename = "swss.rec";
     string sairedis_rec_filename = "sairedis.rec";
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hs")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz")) != -1)
     {
         switch (opt)
         {
