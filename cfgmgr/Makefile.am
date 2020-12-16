@@ -3,7 +3,17 @@ CFLAGS_SAI = -I /usr/include/sai
 LIBNL_CFLAGS = -I/usr/include/libnl3
 LIBNL_LIBS = -lnl-genl-3 -lnl-route-3 -lnl-3
 
-bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd
+bin_PROGRAMS = vlanmgrd teammgrd portmgrd intfmgrd buffermgrd vrfmgrd nbrmgrd vxlanmgrd sflowmgrd natmgrd coppmgrd
+
+cfgmgrdir = $(datadir)/swss
+
+dist_cfgmgr_DATA = \
+		buffer_check_headroom_mellanox.lua \
+		buffer_headroom_mellanox.lua \
+		buffer_pool_mellanox.lua \
+		buffer_check_headroom_vs.lua \
+		buffer_headroom_vs.lua \
+		buffer_pool_vs.lua
 
 if DEBUG
 DBGFLAGS = -ggdb -DDEBUG
@@ -31,7 +41,7 @@ intfmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 intfmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 intfmgrd_LDADD = -lswsscommon
 
-buffermgrd_SOURCES = buffermgrd.cpp buffermgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp shellcmd.h
+buffermgrd_SOURCES = buffermgrd.cpp buffermgr.cpp buffermgrdyn.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp shellcmd.h
 buffermgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 buffermgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 buffermgrd_LDADD = -lswsscommon
@@ -60,3 +70,9 @@ natmgrd_SOURCES = natmgrd.cpp natmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_
 natmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 natmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 natmgrd_LDADD = -lswsscommon
+
+coppmgrd_SOURCES = coppmgrd.cpp coppmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp shellcmd.h
+coppmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+coppmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
+coppmgrd_LDADD = -lswsscommon
+

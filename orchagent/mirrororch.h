@@ -80,13 +80,14 @@ public:
                PortsOrch *portOrch, RouteOrch *routeOrch, NeighOrch *neighOrch, FdbOrch *fdbOrch, PolicerOrch *policerOrch);
 
     bool bake() override;
-    bool postBake() override;
     void update(SubjectType, void *);
     bool sessionExists(const string&);
     bool getSessionStatus(const string&, bool&);
     bool getSessionOid(const string&, sai_object_id_t&);
     bool increaseRefCount(const string&);
     bool decreaseRefCount(const string&);
+
+    using Orch::doTask;  // Allow access to the basic doTask
 
 private:
     PortsOrch *m_portsOrch;
@@ -101,9 +102,7 @@ private:
     // session_name -> VLAN | monitor_port_alias | next_hop_ip
     map<string, string> m_recoverySessionMap;
 
-    bool m_freeze = false;
-
-    void createEntry(const string&, const vector<FieldValueTuple>&);
+    task_process_status createEntry(const string&, const vector<FieldValueTuple>&);
     task_process_status deleteEntry(const string&);
 
     bool activateSession(const string&, MirrorEntry&);

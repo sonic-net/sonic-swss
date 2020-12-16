@@ -36,6 +36,12 @@ struct FdbUpdate
     bool add;
 };
 
+struct FdbFlushUpdate
+{
+    vector<FdbEntry> entries;
+    Port port;
+};
+
 struct FdbData
 {
     sai_object_id_t bridge_port_id;
@@ -92,6 +98,9 @@ public:
     bool removeFdbEntry(const FdbEntry& entry, FdbOrigin origin=FDB_ORIGIN_PROVISIONED);
 
     static const int fdborch_pri;
+    void flushFDBEntries(sai_object_id_t bridge_port_oid,
+                         sai_object_id_t vlan_oid);
+    void notifyObserversFDBFlush(Port &p, sai_object_id_t&);
 
 private:
     PortsOrch *m_portsOrch;

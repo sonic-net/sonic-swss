@@ -5,6 +5,7 @@ extern "C" {
 #include "saiextensions.h"
 }
 
+#include <inttypes.h>
 #include <string.h>
 #include <fstream>
 #include <map>
@@ -13,6 +14,7 @@ extern "C" {
 #include <set>
 #include <tuple>
 #include <vector>
+#include <linux/limits.h>
 #include "timestamp.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
@@ -47,7 +49,6 @@ sai_acl_api_t*              sai_acl_api;
 sai_mirror_api_t*           sai_mirror_api;
 sai_fdb_api_t*              sai_fdb_api;
 sai_dtel_api_t*             sai_dtel_api;
-sai_bmtor_api_t*            sai_bmtor_api;
 sai_samplepacket_api_t*     sai_samplepacket_api;
 sai_debug_counter_api_t*    sai_debug_counter_api;
 sai_nat_api_t*              sai_nat_api;
@@ -166,7 +167,6 @@ void initSaiApi()
     sai_api_query(SAI_API_SCHEDULER_GROUP,      (void **)&sai_scheduler_group_api);
     sai_api_query(SAI_API_ACL,                  (void **)&sai_acl_api);
     sai_api_query(SAI_API_DTEL,                 (void **)&sai_dtel_api);
-    sai_api_query((sai_api_t)SAI_API_BMTOR,     (void **)&sai_bmtor_api);
     sai_api_query(SAI_API_SAMPLEPACKET,         (void **)&sai_samplepacket_api);
     sai_api_query(SAI_API_DEBUG_COUNTER,        (void **)&sai_debug_counter_api);
     sai_api_query(SAI_API_NAT,                  (void **)&sai_nat_api);
@@ -195,7 +195,6 @@ void initSaiApi()
     sai_log_set(SAI_API_SCHEDULER_GROUP,        SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_ACL,                    SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DTEL,                   SAI_LOG_LEVEL_NOTICE);
-    sai_log_set((sai_api_t)SAI_API_BMTOR,       SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_SAMPLEPACKET,           SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DEBUG_COUNTER,          SAI_LOG_LEVEL_NOTICE);
     sai_log_set((sai_api_t)SAI_API_NAT,         SAI_LOG_LEVEL_NOTICE);
@@ -259,7 +258,7 @@ void initSaiRedis(const string &record_location)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW, rv:%d gSwitchId %lx", status, gSwitchId);
+        SWSS_LOG_ERROR("Failed to notify syncd INIT_VIEW, rv:%d gSwitchId %" PRIx64, status, gSwitchId);
         exit(EXIT_FAILURE);
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
@@ -271,6 +270,7 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
     sai_status_t status;
+    char fwPath[PATH_MAX];
 
     SWSS_LOG_ENTER();
 
@@ -291,9 +291,29 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     attr.value.s8list.list = 0;
     attrs.push_back(attr);
 
-    attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_METHOD;
-    attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_METHOD_NONE;
-    attrs.push_back(attr);
+    if (phy->firmware.length() == 0)
+    {
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_METHOD;
+        attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_METHOD_NONE;
+        attrs.push_back(attr);
+    }
+    else
+    {
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_METHOD;
+        attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_METHOD_INTERNAL;
+        attrs.push_back(attr);
+
+        strncpy(fwPath, phy->firmware.c_str(), PATH_MAX - 1);
+
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_PATH_NAME;
+        attr.value.s8list.list = (int8_t *) fwPath;
+        attr.value.s8list.count = (uint32_t) strlen(fwPath) + 1;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_TYPE;
+        attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_TYPE_AUTO;
+        attrs.push_back(attr);
+    }
 
     attr.id = SAI_SWITCH_ATTR_REGISTER_READ;
     attr.value.ptr = (void *) mdio_read;
@@ -323,7 +343,7 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
         SWSS_LOG_ERROR("BOX: Failed to create PHY:%d rtn:%d", phy->phy_id, status);
         return status;
     }
-    SWSS_LOG_NOTICE("BOX: Created PHY:%d Oid:0x%lx", phy->phy_id, phyOid);
+    SWSS_LOG_NOTICE("BOX: Created PHY:%d Oid:0x%" PRIx64, phy->phy_id, phyOid);
 
     phy->phy_oid = sai_serialize_object_id(phyOid);
 

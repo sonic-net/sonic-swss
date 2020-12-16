@@ -55,7 +55,8 @@ bool gSwssRecord = true;
 bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
 bool gSyncMode = false;
-char *gAsicInstance = NULL;
+sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
+string gAsicInstance;
 
 extern bool gIsNatSupported;
 
@@ -64,7 +65,7 @@ string gRecordFile;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-i INST_ID] [-s]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -75,7 +76,8 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
-    cout << "    -s: enable synchronous mode" << endl;
+    cout << "    -s: enable synchronous mode (depreacated, use -z)" << endl;
+    cout << "    -z: redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
 }
 
 void sighup_handler(int signo)
@@ -160,7 +162,7 @@ int main(int argc, char **argv)
 
     string record_location = ".";
 
-    while ((opt = getopt(argc, argv, "b:m:r:d:i:hs")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:d:i:hsz:")) != -1)
     {
         switch (opt)
         {
@@ -168,8 +170,17 @@ int main(int argc, char **argv)
             gBatchSize = atoi(optarg);
             break;
         case 'i':
-            gAsicInstance = (char *)calloc(strlen(optarg)+1, sizeof(char));
-            memcpy(gAsicInstance, optarg, strlen(optarg));
+            {
+                // Limit asic instance string max length
+                size_t len = strnlen(optarg, SAI_MAX_HARDWARE_ID_LEN);
+                // Check if input is longer and warn
+                if (len == SAI_MAX_HARDWARE_ID_LEN && optarg[len+1] != '\0')
+                {
+                    SWSS_LOG_WARN("ASIC instance_id length > SAI_MAX_HARDWARE_ID_LEN, LIMITING !!");
+                }
+                // If longer, trancate into a string
+                gAsicInstance.assign(optarg, len);
+            }
             break;
         case 'm':
             gMacAddress = MacAddress(optarg);
@@ -212,6 +223,9 @@ int main(int argc, char **argv)
         case 's':
             gSyncMode = true;
             SWSS_LOG_NOTICE("Enabling synchronous mode");
+            break;
+        case 'z':
+            sai_deserialize_redis_communication_mode(optarg, gRedisCommunicationMode);
             break;
 
         default: /* '?' */
@@ -272,17 +286,22 @@ int main(int argc, char **argv)
     // when g_syncMode is set to true here, create_switch will wait the response from syncd
     if (gSyncMode)
     {
-        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_MODE;
-        attr.value.booldata = true;
+        SWSS_LOG_WARN("sync mode is depreacated, use -z param");
 
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
     }
 
-    if (gAsicInstance)
+    attr.id = SAI_REDIS_SWITCH_ATTR_REDIS_COMMUNICATION_MODE;
+    attr.value.s32 = gRedisCommunicationMode;
+
+    sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+    if (!gAsicInstance.empty())
     {
         attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
-        attr.value.s8list.count = (uint32_t)(strlen(gAsicInstance)+1);
-        attr.value.s8list.list = (int8_t*)gAsicInstance;
+        attr.value.s8list.count = (uint32_t)gAsicInstance.size();
+        // TODO: change SAI definition of `list` to `const char *`
+        attr.value.s8list.list = (int8_t *)const_cast<char *>(gAsicInstance.c_str());
         attrs.push_back(attr);
     }
 

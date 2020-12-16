@@ -32,6 +32,7 @@ NeighOrch *gNeighOrch;
 RouteOrch *gRouteOrch;
 FgNhgOrch *gFgNhgOrch;
 AclOrch *gAclOrch;
+MirrorOrch *gMirrorOrch;
 CrmOrch *gCrmOrch;
 BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
@@ -107,14 +108,8 @@ bool OrchDaemon::init()
     };
 
     VNetOrch *vnet_orch;
-    if (platform == MLNX_PLATFORM_SUBSTRING)
-    {
-        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME, VNET_EXEC::VNET_EXEC_BRIDGE);
-    }
-    else
-    {
-        vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
-    }
+    vnet_orch = new VNetOrch(m_applDb, APP_VNET_TABLE_NAME);
+
     gDirectory.set(vnet_orch);
     VNetCfgRouteOrch *cfg_vnet_rt_orch = new VNetCfgRouteOrch(m_configDb, m_applDb, cfg_vnet_tables);
     gDirectory.set(cfg_vnet_rt_orch);
@@ -130,7 +125,7 @@ bool OrchDaemon::init()
     gDirectory.set(chassis_frontend_orch);
 
     gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch);
-    gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch);
+    gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch);
 
     vector<string> fgnhg_tables = {
         CFG_FG_NHG,
@@ -142,22 +137,22 @@ bool OrchDaemon::init()
     gDirectory.set(gFgNhgOrch);
     gRouteOrch = new RouteOrch(m_applDb, APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, vrf_orch, gFgNhgOrch);
 
-    TableConnector confDbSflowTable(m_configDb, CFG_SFLOW_TABLE_NAME);
-    TableConnector appCoppTable(m_applDb, APP_COPP_TABLE_NAME);
-
-    vector<TableConnector> copp_table_connectors = {
-        confDbSflowTable,
-        appCoppTable
-    };
-    CoppOrch  *copp_orch  = new CoppOrch(copp_table_connectors);
+    CoppOrch  *copp_orch  = new CoppOrch(m_applDb, APP_COPP_TABLE_NAME);
     TunnelDecapOrch *tunnel_decap_orch = new TunnelDecapOrch(m_applDb, APP_TUNNEL_DECAP_TABLE_NAME);
 
-    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
+    VxlanTunnelOrch *vxlan_tunnel_orch = new VxlanTunnelOrch(m_stateDb, m_applDb, APP_VXLAN_TUNNEL_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_orch);
     VxlanTunnelMapOrch *vxlan_tunnel_map_orch = new VxlanTunnelMapOrch(m_applDb, APP_VXLAN_TUNNEL_MAP_TABLE_NAME);
     gDirectory.set(vxlan_tunnel_map_orch);
     VxlanVrfMapOrch *vxlan_vrf_orch = new VxlanVrfMapOrch(m_applDb, APP_VXLAN_VRF_TABLE_NAME);
     gDirectory.set(vxlan_vrf_orch);
+
+    EvpnRemoteVniOrch* evpn_remote_vni_orch = new EvpnRemoteVniOrch(m_applDb, APP_VXLAN_REMOTE_VNI_TABLE_NAME);
+    gDirectory.set(evpn_remote_vni_orch);
+
+    EvpnNvoOrch* evpn_nvo_orch = new EvpnNvoOrch(m_applDb, APP_VXLAN_EVPN_NVO_TABLE_NAME);
+    gDirectory.set(evpn_nvo_orch);
+
 
     vector<string> qos_tables = {
         CFG_TC_TO_QUEUE_MAP_TABLE_NAME,
@@ -174,20 +169,20 @@ bool OrchDaemon::init()
     QosOrch *qos_orch = new QosOrch(m_configDb, qos_tables);
 
     vector<string> buffer_tables = {
-        CFG_BUFFER_POOL_TABLE_NAME,
-        CFG_BUFFER_PROFILE_TABLE_NAME,
-        CFG_BUFFER_QUEUE_TABLE_NAME,
-        CFG_BUFFER_PG_TABLE_NAME,
-        CFG_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
-        CFG_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
+        APP_BUFFER_POOL_TABLE_NAME,
+        APP_BUFFER_PROFILE_TABLE_NAME,
+        APP_BUFFER_QUEUE_TABLE_NAME,
+        APP_BUFFER_PG_TABLE_NAME,
+        APP_BUFFER_PORT_INGRESS_PROFILE_LIST_NAME,
+        APP_BUFFER_PORT_EGRESS_PROFILE_LIST_NAME
     };
-    gBufferOrch = new BufferOrch(m_configDb, buffer_tables);
+    gBufferOrch = new BufferOrch(m_applDb, m_configDb, m_stateDb, buffer_tables);
 
     PolicerOrch *policer_orch = new PolicerOrch(m_configDb, "POLICER");
 
     TableConnector stateDbMirrorSession(m_stateDb, STATE_MIRROR_SESSION_TABLE_NAME);
     TableConnector confDbMirrorSession(m_configDb, CFG_MIRROR_SESSION_TABLE_NAME);
-    MirrorOrch *mirror_orch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
+    gMirrorOrch = new MirrorOrch(stateDbMirrorSession, confDbMirrorSession, gPortsOrch, gRouteOrch, gNeighOrch, gFdbOrch, policer_orch);
 
     TableConnector confDbAclTable(m_configDb, CFG_ACL_TABLE_TABLE_NAME);
     TableConnector confDbAclRuleTable(m_configDb, CFG_ACL_RULE_TABLE_NAME);
@@ -233,11 +228,12 @@ bool OrchDaemon::init()
     const int natorch_base_pri = 50;
 
     vector<table_name_with_pri_t> nat_tables = {
-        { APP_NAT_TABLE_NAME,        natorch_base_pri + 4 },
-        { APP_NAPT_TABLE_NAME,       natorch_base_pri + 3 },
-        { APP_NAT_TWICE_TABLE_NAME,  natorch_base_pri + 2 },
-        { APP_NAPT_TWICE_TABLE_NAME, natorch_base_pri + 1 },
-        { APP_NAT_GLOBAL_TABLE_NAME, natorch_base_pri     }
+        { APP_NAT_DNAT_POOL_TABLE_NAME,  natorch_base_pri + 5 },
+        { APP_NAT_TABLE_NAME,            natorch_base_pri + 4 },
+        { APP_NAPT_TABLE_NAME,           natorch_base_pri + 3 },
+        { APP_NAT_TWICE_TABLE_NAME,      natorch_base_pri + 2 },
+        { APP_NAPT_TWICE_TABLE_NAME,     natorch_base_pri + 1 },
+        { APP_NAT_GLOBAL_TABLE_NAME,     natorch_base_pri     }
     };
 
     gNatOrch = new NatOrch(m_applDb, m_stateDb, nat_tables, gRouteOrch, gNeighOrch);
@@ -282,15 +278,17 @@ bool OrchDaemon::init()
         dtel_orch = new DTelOrch(m_configDb, dtel_tables, gPortsOrch);
         m_orchList.push_back(dtel_orch);
     }
-    gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, mirror_orch, gNeighOrch, gRouteOrch, dtel_orch);
+    gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
 
     m_orchList.push_back(gFdbOrch);
-    m_orchList.push_back(mirror_orch);
+    m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
     m_orchList.push_back(chassis_frontend_orch);
     m_orchList.push_back(vrf_orch);
     m_orchList.push_back(vxlan_tunnel_orch);
+    m_orchList.push_back(evpn_nvo_orch);
     m_orchList.push_back(vxlan_tunnel_map_orch);
+    m_orchList.push_back(evpn_remote_vni_orch);
     m_orchList.push_back(vxlan_vrf_orch);
     m_orchList.push_back(cfg_vnet_rt_orch);
     m_orchList.push_back(vnet_orch);
@@ -475,6 +473,12 @@ void OrchDaemon::start()
 
         if (ret == Select::TIMEOUT)
         {
+            /* Let sairedis to flush all SAI function call to ASIC DB.
+             * Normally the redis pipeline will flush when enough request
+             * accumulated. Still it is possible that small amount of
+             * requests live in it. When the daemon has nothing to do, it
+             * is a good chance to flush the pipeline  */
+            flush();
             continue;
         }
 
@@ -487,14 +491,6 @@ void OrchDaemon::start()
         /* TODO: Abstract Orch class to have a specific todo list */
         for (Orch *o : m_orchList)
             o->doTask();
-
-        /* Let sairedis to flush all SAI function call to ASIC DB.
-         * Normally the redis pipeline will flush when enough request
-         * accumulated. Still it is possible that small amount of
-         * requests live in it. When the daemon has finished events/tasks, it
-         * is a good chance to flush the pipeline before next select happened.
-         */
-        flush();
 
         /*
          * Asked to check warm restart readiness.
@@ -557,18 +553,24 @@ bool OrchDaemon::warmRestoreAndSyncUp()
 
     for (auto it = 0; it < 3; it++)
     {
-        SWSS_LOG_DEBUG("The current iteration is %d", it);
+        SWSS_LOG_DEBUG("The current doTask iteration is %d", it);
 
         for (Orch *o : m_orchList)
         {
+            if (o == gMirrorOrch) {
+                SWSS_LOG_DEBUG("Skipping mirror processing until the end");
+                continue;
+            }
+
             o->doTask();
         }
     }
 
-    for (Orch *o : m_orchList)
-    {
-        o->postBake();
-    }
+    // MirrorOrch depends on everything else being settled before it can run,
+    // and mirror ACL rules depend on MirrorOrch, so run these two at the end
+    // after the rest of the data has been processed.
+    gMirrorOrch->doTask();
+    gAclOrch->doTask();
 
     /*
      * At this point, all the pre-existing data should have been processed properly, and

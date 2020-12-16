@@ -1,7 +1,6 @@
 import time
 
 from dvslib.dvs_common import wait_for_result
-from dvslib.dvs_database import DVSDatabase
 
 
 class TestNat(object):
@@ -98,11 +97,13 @@ class TestNat(object):
             "entry_type": "static"
         }
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
-
+        #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
         for key in keys:
-            assert "\"dst_ip\":\"67.66.65.1\"" in key or "\"src_ip\":\"18.18.18.2\"" in key
+            if (key.find("dst_ip:67.66.65.1")) or (key.find("src_ip:18.18.18.2")):
+                assert True
+            else:
+                assert False
 
     def test_DelNatStaticEntry(self, dvs, testlog):
         # initialize
@@ -144,12 +145,12 @@ class TestNat(object):
 
         assert fvs == {"translated_ip": "18.18.18.2", "translated_l4_port": "180", "nat_type": "dnat", "entry_type": "static"}
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
         for key in keys:
-            if "\"dst_ip\":\"67.66.65.1\"" in key and "\"l4_dst_port\":\"670\"" in key:
+            if (key.find("dst_ip:67.66.65.1")) and (key.find("key.l4_dst_port:670")):
                 assert True
-            elif "\"src_ip\":\"18.18.18.2\"" in key or "\"l4_src_port\":\"180\"" in key:
+            if (key.find("src_ip:18.18.18.2")) or (key.find("key.l4_src_port:180")):
                 assert True
             else:
                 assert False
@@ -200,10 +201,13 @@ class TestNat(object):
         fvs = self.app_db.wait_for_entry("NAT_TWICE_TABLE", "18.18.18.2:18.18.18.1")
         assert fvs == {"translated_src_ip": "67.66.65.1", "translated_dst_ip": "67.66.65.2", "entry_type": "static"}
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        #check the entry in asic db, 4 keys = SNAT, DNAT and 2 DNAT_Pools
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 4)
         for key in keys:
-            assert "\"dst_ip\":\"67.66.65.1\"" in key or "\"src_ip\":\"18.18.18.2\"" in key
+            if (key.find("dst_ip:18.18.18.1")) or (key.find("src_ip:18.18.18.2")):
+                assert True
+            else:
+                assert False
 
     def test_DelTwiceNatStaticEntry(self, dvs, testlog):
         # initialize
@@ -252,12 +256,12 @@ class TestNat(object):
         fvs = self.app_db.wait_for_entry("NAPT_TWICE_TABLE", "UDP:18.18.18.2:182:18.18.18.1:181")
         assert fvs == {"translated_src_ip": "67.66.65.1", "translated_src_l4_port": "660", "translated_dst_ip": "67.66.65.2", "translated_dst_l4_port": "670", "entry_type": "static"}
 
-        #check the entry in asic db
-        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 2)
+        #check the entry in asic db, 4 keys = SNAT, DNAT and 2 DNAT_Pools
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 4)
         for key in keys:
-            if "\"src_ip\":\"18.18.18.2\"" in key or "\"l4_src_port\":\"182\"" in key:
+            if (key.find("src_ip:18.18.18.2")) or (key.find("l4_src_port:182")):
                 assert True
-            elif "\"dst_ip\":\"67.66.65.1\"" in key or "\"l4_dst_port\":\"660\"" in key:
+            if (key.find("dst_ip:18.18.18.1")) or (key.find("l4_dst_port:181")):
                 assert True
             else:
                 assert False
@@ -311,7 +315,7 @@ class TestNat(object):
 
             return (True, None)
 
-        wait_for_result(_check_conntrack_for_static_entry, DVSDatabase.DEFAULT_POLLING_CONFIG)
+        wait_for_result(_check_conntrack_for_static_entry)
 
         # delete a static nat entry
         dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
