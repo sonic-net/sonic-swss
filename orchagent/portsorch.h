@@ -248,6 +248,7 @@ private:
     bool setPortPvid (Port &port, sai_uint32_t pvid);
     bool getPortPvid(Port &port, sai_uint32_t &pvid);
     bool setPortFec(Port &port, sai_port_fec_mode_t mode);
+    bool setPortFlowControl(sai_object_id_t id, sai_port_flow_control_mode_t mode);
     bool setPortPfcAsym(Port &port, string pfc_asym);
     bool getDestPortId(sai_object_id_t src_port_id, dest_port_type_t port_type, sai_object_id_t &des_port_id);
 
