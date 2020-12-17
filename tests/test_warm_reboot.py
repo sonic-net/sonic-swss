@@ -46,7 +46,7 @@ def swss_check_RestoreCount(dvs, state_db, restore_count):
             if fv[0] == "restore_count":
                 assert int(fv[1]) == restore_count[key] + 1
             elif fv[0] == "state":
-                assert fv[1] == "reconciled"
+                assert fv[1] == "reconciled" or fv[1] == "replayed"
 
 def check_port_oper_status(appl_db, port_name, state):
     portTbl = swsscommon.Table(appl_db, swsscommon.APP_PORT_TABLE_NAME)
@@ -76,7 +76,7 @@ def swss_app_check_RestoreCount_single(state_db, restore_count, name):
             if fv[0] == "restore_count":
                 assert int(fv[1]) == restore_count[key] + 1
             elif fv[0] == "state":
-                assert fv[1] == "reconciled"
+                assert fv[1] == "reconciled" or fv[1] == "replayed"
 
 def swss_app_check_warmstart_state(state_db, name, state):
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
@@ -437,8 +437,7 @@ class TestWarmReboot(object):
         (status, fvs) = tbl.get("Vlan20:11.0.0.11")
         assert status == True
 
-        swss_check_RestoreCount(dvs, state_db, restore_count)
-        swss_app_check_warmstart_state(state_db, "vlanmgrd", "replayed")
+        swss_app_check_RestoreCount_single(state_db, restore_count, "vlanmgrd")
 
         intf_tbl._del("Vlan16|11.0.0.1/29")
         intf_tbl._del("Vlan20|11.0.0.9/29")
