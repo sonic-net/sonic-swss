@@ -79,6 +79,8 @@ public:
     void stopReconcileTimer(Select &s);
     bool checkReconcileTimer(Selectable *s);
     void readTablesToMap(void);
+    void appDataReplayed(void);
+    void warmStartDisabled(void);
     void insertToMap(std::string tableName, std::string key, std::vector<FieldValueTuple> fvVector, bool delete_key);
     void reconcile(void);
     bool isWarmStartInProgress(void)

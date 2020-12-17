@@ -16,7 +16,9 @@ using namespace swss;
  * Default warm-restart timer interval for routing-stack app. To be used only if
  * no explicit value has been defined in configuration.
  */
-const uint32_t DEFAULT_ROUTING_RESTART_INTERVAL = 120;
+const uint32_t DEFAULT_ROUTING_RESTART_INTERVAL = 600;
+
+const uint32_t DEFAULT_ROUTING_RECON_CHECK_INTERVAL = 120;
 
 // Wait 3 seconds after detecting EOIU reached state
 // TODO: support eoiu hold interval config
@@ -67,6 +69,10 @@ int main(int argc, char **argv)
             SelectableTimer eoiuCheckTimer(timespec{0, 0});
             // After eoiu flags are detected, start a hold timer before starting reconciliation.
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
+           
+            // Timers to wait for dependent reconcillation
+            SelectableTimer reconcileCheckTimer(timespec{0, 0});
+            SelectableTimer reconcileHoldTimer(timespec{0, 0});
             /*
              * Pipeline should be flushed right away to deal with state pending
              * from previous try/catch iterations.
@@ -85,13 +91,14 @@ int main(int argc, char **argv)
             {
                 /* Obtain warm-restart timer defined for routing application */
                 time_t warmRestartIval = sync.m_warmStartHelper.getRestartTimer();
+                warmStartTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
                 if (!warmRestartIval)
                 {
-                    warmStartTimer.setInterval(timespec{DEFAULT_ROUTING_RESTART_INTERVAL, 0});
+                    reconcileCheckTimer.setInterval(timespec{DEFAULT_ROUTING_RECON_CHECK_INTERVAL, 0});
                 }
                 else
                 {
-                    warmStartTimer.setInterval(timespec{warmRestartIval, 0});
+                    reconcileCheckTimer.setInterval(timespec{warmRestartIval, 0});
                 }
 
                 /* Execute restoration instruction and kick off warm-restart timer */
@@ -100,6 +107,9 @@ int main(int argc, char **argv)
                     warmStartTimer.start();
                     s.addSelectable(&warmStartTimer);
                     SWSS_LOG_NOTICE("Warm-Restart timer started.");
+                    reconcileCheckTimer.start();
+                    s.addSelectable(&reconcileCheckTimer);
+                    SWSS_LOG_NOTICE("reconcileCheckTimer timer started ");
                 }
 
                 // Also start periodic eoiu check timer, first wait 5 seconds, then check every 1 second
@@ -107,6 +117,10 @@ int main(int argc, char **argv)
                 eoiuCheckTimer.start();
                 s.addSelectable(&eoiuCheckTimer);
                 SWSS_LOG_NOTICE("Warm-Restart eoiuCheckTimer timer started.");
+            }
+            else
+            {
+                sync.m_warmStartHelper.setState(WarmStart::WSDISABLED);
             }
 
             while (true)
@@ -122,17 +136,26 @@ int main(int argc, char **argv)
                  * select() loop.
                  * Note:  route reconciliation always succeeds, it will not be done twice.
                  */
-                if (temps == &warmStartTimer || temps == &eoiuHoldTimer)
+                if (temps == &warmStartTimer || temps == &eoiuHoldTimer || temps == &reconcileHoldTimer)
                 {
+					bool readyToReconcile = false;                    
                     if (temps == &warmStartTimer)
                     {
+						readyToReconcile = true;
                         SWSS_LOG_NOTICE("Warm-Restart timer expired.");
+                    }
+                    else if (temps == &reconcileHoldTimer)
+                    {
+                        readyToReconcile = true;
+                        SWSS_LOG_NOTICE("Warm-Restart reconcile hold timer expired.");
                     }
                     else
                     {
+						readyToReconcile = sync.isReadyToReconcile();
                         SWSS_LOG_NOTICE("Warm-Restart EOIU hold timer expired.");
                     }
-                    if (sync.m_warmStartHelper.inProgress())
+
+                    if (sync.m_warmStartHelper.inProgress() && readyToReconcile)
                     {
                         sync.m_warmStartHelper.reconcile();
                         SWSS_LOG_NOTICE("Warm-Restart reconciliation processed.");
@@ -173,6 +196,30 @@ int main(int argc, char **argv)
                     else
                     {
                         s.removeSelectable(&eoiuCheckTimer);
+                    }
+                }          
+                else if (temps == &reconcileCheckTimer)
+                {
+                    SWSS_LOG_NOTICE("reconcile Check timer Expired ");
+                    if (sync.m_warmStartHelper.inProgress())
+                    {
+                        if (sync.isReadyToReconcile())
+                        {
+                            reconcileHoldTimer.setInterval(timespec{2, 0});
+                            reconcileHoldTimer.start();
+                            s.addSelectable(&reconcileHoldTimer);
+                            SWSS_LOG_NOTICE("Warm-Restart started reconcile hold timer ");
+                            s.removeSelectable(&reconcileCheckTimer);
+                            continue;
+                        }
+                        // re-start check timer for every 2 seconds now on
+                        reconcileCheckTimer.setInterval(timespec{2, 0});
+                        reconcileCheckTimer.start();
+                        SWSS_LOG_NOTICE("Warm-Restart reconcileCheckTimer restarted");
+                    }
+                    else
+                    {
+                        s.removeSelectable(&reconcileCheckTimer);
                     }
                 }
                 else if (!warmStartEnabled || sync.m_warmStartHelper.isReconciled())

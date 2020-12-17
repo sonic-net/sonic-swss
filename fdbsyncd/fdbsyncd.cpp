@@ -35,6 +35,8 @@ int main(int argc, char **argv)
             Selectable *temps;
             int ret;
             Select s;
+            SelectableTimer replayCheckTimer(timespec{0, 0});
+            SelectableTimer reconCheckTimer(timespec{0, 0});
 
             using namespace std::chrono;
 
@@ -44,8 +46,29 @@ int main(int argc, char **argv)
              */
             if (sync.getRestartAssist()->isWarmStartInProgress())
             {
+                int pasttime = 0;                
                 sync.getRestartAssist()->readTablesToMap();
+                
+                while (!sync.isIntfRestoreDone())
+                {
+                    if (pasttime++ > WARM_RESTORE_WAIT_TIME_OUT_MAX)
+                    {
+                        SWSS_LOG_INFO("timed-out before all interface data was replayed to kernel!!!");
+                        break;
+                    }
+                    sleep(1);
+                }
                 SWSS_LOG_NOTICE("Starting ReconcileTimer");
+                sync.getRestartAssist()->startReconcileTimer(s);
+                replayCheckTimer.setInterval(timespec{1, 0});
+                replayCheckTimer.start();
+                s.addSelectable(&replayCheckTimer);
+
+            }
+            else
+            {
+                sync.getRestartAssist()->warmStartDisabled();
+                sync.m_reconcileDone = true;
             }
 
             netlink.registerGroup(RTNLGRP_LINK);
@@ -67,13 +90,50 @@ int main(int argc, char **argv)
             {
                 s.select(&temps);
 
-                if(temps == (Selectable *)sync.getFdbStateTable())
+                if (temps == (Selectable *)sync.getFdbStateTable())
                 {
                     sync.processStateFdb();
                 }
                 else if (temps == (Selectable *)sync.getCfgEvpnNvoTable())
                 {
                     sync.processCfgEvpnNvo();
+                }
+                else if (temps == &replayCheckTimer)
+                {
+                    if (sync.getFdbStateTable()->empty() && sync.getCfgEvpnNvoTable()->empty())
+                    {
+                        sync.getRestartAssist()->appDataReplayed();
+                        SWSS_LOG_NOTICE("FDB Replay Complete,  Start Reconcile Check");
+                        reconCheckTimer.setInterval(timespec{FDBSYNC_RECON_TIMER, 0});
+                        reconCheckTimer.start();
+                        s.addSelectable(&reconCheckTimer);
+                    }
+                    else
+                    {
+                        replayCheckTimer.setInterval(timespec{1, 0});
+                        // re-start replay check timer
+                        replayCheckTimer.start();
+                    }
+
+                }
+                else if (temps == &reconCheckTimer)
+                {
+                    if (sync.isReadyToReconcile())
+                    {
+                        if (sync.getRestartAssist()->isWarmStartInProgress())
+                        {
+                            sync.m_reconcileDone = true;
+                            sync.getRestartAssist()->stopReconcileTimer(s);
+                            sync.getRestartAssist()->reconcile();
+                            SWSS_LOG_NOTICE("VXLAN FDB VNI Reconcillation Complete (Event)");
+                        }
+                    }
+                    else
+                    {
+                        reconCheckTimer.setInterval(timespec{1, 0});
+                        // Restart and check again in 1 sec
+                        reconCheckTimer.start();
+                    }
                 }
                 else
                 {

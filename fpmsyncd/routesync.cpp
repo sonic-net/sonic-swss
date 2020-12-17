@@ -912,3 +912,31 @@ string RouteSync::getNextHopIf(struct rtnl_route *route_obj)
 
     return result;
 }
+
+// Check if ependent entries are re-conciled 
+bool RouteSync::isReadyToReconcile()
+{
+    vector<string> required_modules = {
+            "orchagent",
+        };
+
+    for(string& module : required_modules)
+    {
+        WarmStart::WarmStartState state;
+        
+        WarmStart::getWarmStartState(module, state);
+        if(state == WarmStart::RECONCILED || state == WarmStart::WSDISABLED)
+        {
+            SWSS_LOG_INFO("Module %s Reconciled %d",module.c_str(), (int) state);            
+        }
+        else
+        {
+            SWSS_LOG_INFO("Module %s NOT Reconciled %d",module.c_str(), (int) state);            
+            //return false;
+            //Return true untill dependent module code is commited
+            return true;
+        }
+    }
+    
+    return true;
+}
