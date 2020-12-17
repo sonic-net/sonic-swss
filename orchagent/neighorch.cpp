@@ -428,6 +428,35 @@ void NeighOrch::doTask(Consumer &consumer)
 
         IpAddress ip_address(key.substr(found+1));
 
+        /* The following change is based on the following PR:
+         * https://github.com/Azure/sonic-swss/pull/1431
+         * 
+         * For inband Vlan, a kernel neigh is added for every remote neighbor
+         * and the interface that the neigh is attached is inband Vlan.
+         * neighsyncd adds the kernel neigh to neigh table in APPL_DB again.
+         * The following change is to skip adding these remote neighbor attached
+         * to inband Vlan.
+         *
+         * The collection m_remoteNeigh is added to track remote neighbor. It's
+         * updated in the following method introduced in the above PR:
+         *  
+         * doVoqSystemNeighTask()
+         */
+        if (gPortsOrch->isInbandPort(alias))
+        {
+            Port ibport;
+            gPortsOrch->getInbandPort(ibport);
+            if(ibport.m_type == Port::VLAN)
+            {
+                 /* Only create neighbor attached to inband Vlan */
+                if (m_remoteNeigh.find(ip_address) != m_remoteNeigh.end())
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+            }
+        }
+        
         NeighborEntry neighbor_entry = { ip_address, alias };
 
         if (op == SET_COMMAND)

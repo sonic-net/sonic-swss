@@ -283,7 +283,14 @@ private:
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
-    
+
+    /* 
+     * This is actually added by the following PR:
+     * https://github.com/Azure/sonic-swss/pull/1431
+     */
+    string m_inbandPortName;
+
+    bool addInbandVlan(const string &alias, const string &type);
 };
 #endif /* SWSS_PORTSORCH_H */
 

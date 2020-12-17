@@ -79,6 +79,8 @@ private:
     bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
 
     void doTask(Consumer &consumer);
+
+    std::map<IpAddress, string> m_remoteNeigh; 
 };
 
 #endif /* SWSS_NEIGHORCH_H */

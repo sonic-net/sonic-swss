@@ -95,6 +95,10 @@ private:
 
     bool setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_type_t vlan_flood_type);
     bool setIntfProxyArp(const string &alias, const string &proxy_arp);
+
+    SelectableTimer* m_inbandVlanTimer = nullptr;
+    IpPrefix m_inbandAddress;
+    void processInbandVlanReady();
 };
 
 #endif /* SWSS_INTFSORCH_H */

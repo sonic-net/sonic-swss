@@ -3326,7 +3326,14 @@ bool PortsOrch::addHostIntfs(Port &port, string alias, sai_object_id_t &host_int
     attrs.push_back(attr);
 
     attr.id = SAI_HOSTIF_ATTR_OBJ_ID;
-    attr.value.oid = port.m_port_id;
+    if (port.m_type == Port::VLAN)
+    {
+        attr.value.oid = port.m_vlan_info.vlan_oid;
+    }
+    else
+    {
+        attr.value.oid = port.m_port_id;
+    }
     attrs.push_back(attr);
 
     attr.id = SAI_HOSTIF_ATTR_NAME;
@@ -3378,7 +3385,13 @@ bool PortsOrch::addBridgePort(Port &port)
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
 
-    if (port.m_type == Port::PHY)
+    /*
+     * Local and remote CPU ports need to be added to inband Vlan.
+     * Port type and oid setting for these CPU ports are similar to PHY ports.
+     */ 
+    if (port.m_type == Port::PHY ||
+        port.m_type == Port::CPU ||
+        port.m_type == Port::SYSTEM)
     {
         attr.id = SAI_BRIDGE_PORT_ATTR_TYPE;
         attr.value.s32 = SAI_BRIDGE_PORT_TYPE_PORT;
@@ -3420,22 +3433,28 @@ bool PortsOrch::addBridgePort(Port &port)
     }
 
     /* Create a bridge port with admin status set to UP */
-    attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
-    attr.value.booldata = true;
-    attrs.push_back(attr);
+    if (port.m_type != Port::SYSTEM)
+    {
+        attr.id = SAI_BRIDGE_PORT_ATTR_ADMIN_STATE;
+        attr.value.booldata = true;
+        attrs.push_back(attr);
+    }
 
     /* And with hardware FDB learning mode set to HW (explicit default value) */
-    attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
-    auto found = learn_mode_map.find(port.m_learn_mode);
-    if (found == learn_mode_map.end())
+    if (port.m_type != Port::SYSTEM)
     {
-        attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+        attr.id = SAI_BRIDGE_PORT_ATTR_FDB_LEARNING_MODE;
+        auto found = learn_mode_map.find(port.m_learn_mode);
+        if (found == learn_mode_map.end())
+        {
+            attr.value.s32 = SAI_BRIDGE_PORT_FDB_LEARNING_MODE_HW;
+        }
+        else
+        {
+            attr.value.s32 = found->second;
+        }
+        attrs.push_back(attr);
     }
-    else
-    {
-        attr.value.s32 = found->second;
-    }
-    attrs.push_back(attr);
 
     sai_status_t status = sai_bridge_api->create_bridge_port(&port.m_bridge_port_id, gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -3445,7 +3464,8 @@ bool PortsOrch::addBridgePort(Port &port)
         return false;
     }
 
-    if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
+    if (port.m_type != Port::SYSTEM &&
+        !setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_KEEP))
     {
         SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
                 hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], port.m_alias.c_str());
@@ -4631,3 +4651,97 @@ bool PortsOrch::initGearboxPort(Port &port)
     return true;
 }
 
+/*
+ * The following method is called from setVoqInbandIntf() introduced in the following PR:
+ * https://github.com/Azure/sonic-swss/pull/1431
+ */
+bool PortsOrch::addInbandVlan(const string &alias, const string &type)
+{
+    if (m_inbandPortName == alias)
+    {
+        /* Inband vlan already exists with this name */
+        SWSS_LOG_WARN("Interface %s is already configured as inband!", alias.c_str());
+        return true;
+    }
+
+    if (type != "vlan")
+    {
+        SWSS_LOG_WARN("Inband type %s is not vlan.", type.c_str());
+        return false;
+    }
+    
+    /* Create inband Vlan and also local and remote CPU ports to inband Vlan */
+
+    Port cpuPort;
+    Port inbandVlan;
+    string tagged_mode("tagged");
+
+    if (!addVlan(alias))
+    {
+        SWSS_LOG_ERROR("Failed to add inband VLAN %s", alias.c_str());
+        return false;
+    }
+
+    if (!getPort(alias, inbandVlan))
+    {
+        SWSS_LOG_ERROR("Failed to get port object of inband VLAN %s", alias.c_str());
+        return false;
+    }
+
+    getCpuPort(cpuPort);
+
+    if (!addBridgePort(cpuPort))
+    {
+        SWSS_LOG_ERROR("Failed to add CPU port %s as bridge port", cpuPort.m_alias.c_str());
+        return false;
+    }
+
+    if (!addVlanMember(inbandVlan, cpuPort, tagged_mode))
+    {
+        SWSS_LOG_ERROR("Failed to add CPU port %s in inband VLAN", cpuPort.m_alias.c_str());
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("add port %s to inbandVlan %s", cpuPort.m_alias.c_str(), inbandVlan.m_alias.c_str());
+
+    if (!addHostIntfs(inbandVlan, inbandVlan.m_alias, inbandVlan.m_hif_id))
+    {
+        SWSS_LOG_ERROR("Failed to add host intf for inband VLAN");
+        return false;
+    }
+
+    if (!setHostIntfsOperStatus(inbandVlan, true))
+    {
+        SWSS_LOG_ERROR("Failed to set host intf oper status for inband VLAN");
+        return false;
+    }
+
+    for (auto &it: m_portList)
+    {
+        Port port = it.second;
+        if (port.m_type != Port::SYSTEM ||
+            port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_LOCAL ||
+            port.m_alias.find("Cpu") == string::npos)
+        {
+            continue;
+        }
+
+        if (!addBridgePort(port))
+        {
+            SWSS_LOG_ERROR("Failed to add port %s as bridge port", port.m_alias.c_str());
+            continue;
+        }
+
+        if (!addVlanMember(inbandVlan, port, tagged_mode))
+        {
+            SWSS_LOG_ERROR("Failed to add port %s in inband VLAN", port.m_alias.c_str());
+            continue;
+        }
+
+        SWSS_LOG_NOTICE("add sysport %s to inbandVlan %s", port.m_alias.c_str(), inbandVlan.m_alias.c_str());
+    }
+
+    m_inbandPortName = alias;
+
+    return true;
+}

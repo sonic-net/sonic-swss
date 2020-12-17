@@ -16,6 +16,7 @@
 #include "bufferorch.h"
 #include "directory.h"
 #include "vnetorch.h"
+#include "exec.h"
 
 extern sai_object_id_t gVirtualRouterId;
 extern Directory<Orch*> gDirectory;
@@ -37,6 +38,8 @@ const int intfsorch_pri = 35;
 
 #define RIF_FLEX_STAT_COUNTER_POLL_MSECS "1000"
 #define UPDATE_MAPS_SEC 1
+
+#define INBAND_INTF_TIMER_SEC 1
 
 #define LOOPBACK_PREFIX     "Loopback"
 
@@ -95,6 +98,15 @@ IntfsOrch::IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch) :
     catch (const runtime_error &e)
     {
         SWSS_LOG_WARN("RIF flex counter group plugins was not set successfully: %s", e.what());
+    }
+
+    if (gMySwitchType == "voq")
+    {
+        auto intervT = timespec { .tv_sec = INBAND_INTF_TIMER_SEC , .tv_nsec = 0 };
+        m_inbandVlanTimer = new SelectableTimer(intervT);
+        auto executorInbandVlan = new ExecutableTimer(m_inbandVlanTimer, this,
+                                                      "INBAND_VLAN_TIMER");
+        Orch::addExecutor(executorInbandVlan);
     }
 }
 
@@ -1250,6 +1262,11 @@ void IntfsOrch::doTask(SelectableTimer &timer)
 {
     SWSS_LOG_ENTER();
 
+    if (m_inbandVlanTimer == &timer)
+    {
+        return processInbandVlanReady();
+    }
+
     SWSS_LOG_DEBUG("Registering %" PRId64 " new intfs", m_rifsToAdd.size());
     string value;
     for (auto it = m_rifsToAdd.begin(); it != m_rifsToAdd.end(); )
@@ -1285,4 +1302,37 @@ void IntfsOrch::doTask(SelectableTimer &timer)
             ++it;
         }
     }
+}
+
+void IntfsOrch::processInbandVlanReady()
+{
+     SWSS_LOG_ENTER();
+
+     Port inbandVlan;
+     if (!gPortsOrch->getInbandPort(inbandVlan))
+     {
+         return;
+     }
+
+     string value;
+     const auto id = sai_serialize_object_id(inbandVlan.m_rif_id);
+     if (m_vidToRidTable->hget("", id, value))
+     {
+         stringstream cmd;
+         cmd << "ifconfig " << inbandVlan.m_alias << " " << m_inbandAddress.to_string() << " up";
+
+         std::string res;
+         int ret = swss::exec(cmd.str(), res);
+         if (ret)
+         {
+             SWSS_LOG_ERROR("Command '%s' failed with rc %d", cmd.str().c_str(), ret);
+         }
+         else
+         {
+             SWSS_LOG_NOTICE("Configured Ip on the inband vlan");
+
+         }
+
+         m_inbandVlanTimer->stop();
+     }
 }
