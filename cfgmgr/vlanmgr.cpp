@@ -54,6 +54,8 @@ VlanMgr::VlanMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, c
             replayDone = true;
             WarmStart::setWarmStartState("vlanmgrd", WarmStart::REPLAYED);
             SWSS_LOG_NOTICE("vlanmgr warmstart state set to REPLAYED");
+            WarmStart::setWarmStartState("vlanmgrd", WarmStart::RECONCILED);
+            SWSS_LOG_NOTICE("vlanmgr warmstart state set to RECONCILED");
         }
         const std::string cmds = std::string("")
           + IP_CMD + " link show " + DOT1Q_BRIDGE_NAME + " 2>/dev/null";
@@ -423,6 +425,8 @@ void VlanMgr::doVlanTask(Consumer &consumer)
         replayDone = true;
         WarmStart::setWarmStartState("vlanmgrd", WarmStart::REPLAYED);
         SWSS_LOG_NOTICE("vlanmgr warmstart state set to REPLAYED");
+        WarmStart::setWarmStartState("vlanmgrd", WarmStart::RECONCILED);
+        SWSS_LOG_NOTICE("vlanmgr warmstart state set to RECONCILED");
     }
 }
 
@@ -642,6 +646,9 @@ void VlanMgr::doVlanMemberTask(Consumer &consumer)
         replayDone = true;
         WarmStart::setWarmStartState("vlanmgrd", WarmStart::REPLAYED);
         SWSS_LOG_NOTICE("vlanmgr warmstart state set to REPLAYED");
+        WarmStart::setWarmStartState("vlanmgrd", WarmStart::RECONCILED);
+        SWSS_LOG_NOTICE("vlanmgr warmstart state set to RECONCILED");
+
     }
 }
 
