@@ -377,8 +377,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
                    no member to indicate the fdb entry type,
                    if there is static mac added, here will have issue.
                 */
-                update.entry.mac = itr->mac;
-                update.entry.bv_id = itr->bv_id;
+                update.entry.mac = itr->first.mac;
+                update.entry.bv_id = itr->first.bv_id;
                 update.add = false;
                 itr++;
 
@@ -402,8 +402,8 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 auto next_item = std::next(itr);
                 if (itr->port_name == update.port.m_alias)
                 {
-                    update.entry.mac = itr->mac;
-                    update.entry.bv_id = itr->bv_id;
+                    update.entry.mac = itr->first.mac;
+                    update.entry.bv_id = itr->first.bv_id;
                     update.add = false;
 
                     storeFdbEntryState(update);
@@ -778,13 +778,13 @@ void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
     for (auto itr = m_entries.begin(); itr != m_entries.end(); ++itr)
     {
         if ((itr->port_name == port.m_alias) &&
-            (itr->bv_id == bvid))
+            (itr->first.bv_id == bvid))
         {
             SWSS_LOG_INFO("Adding MAC learnt on [ port:%s , bvid:0x%" PRIx64 "]\
                            to ARP flush", port.m_alias.c_str(), bvid);
             FdbEntry entry;
-            entry.mac = itr->mac;
-            entry.bv_id = itr->bv_id;
+            entry.mac = itr->first.mac;
+            entry.bv_id = itr->first.bv_id;
             flushUpdate.entries.push_back(entry);
         }
     }
@@ -856,21 +856,18 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     saved_fdb_entries[port_name].clear();
     for (const auto& fdb: fdb_list)
     {
-        for (const auto& fdb: fdb_list)
+        // try to insert an FDB entry. If the FDB entry is not ready to be inserted yet,
+        // it would be added back to the saved_fdb_entries structure by addFDBEntry()
+        if(fdb.vlanId == update.vlan.m_vlan_info.vlan_id)
         {
-            // try to insert an FDB entry. If the FDB entry is not ready to be inserted yet,
-            // it would be added back to the saved_fdb_entries structure by addFDBEntry()
-            if(fdb.vlanId == update.vlan.m_vlan_info.vlan_id)
-            {
-                FdbEntry entry;
-                entry.mac = fdb.mac;
-                entry.bv_id = update.vlan.m_vlan_info.vlan_oid;
-                (void)addFdbEntry(entry, port_name, fdb.fdbData);
-            }
-            else
-            {
-                saved_fdb_entries[port_name].push_back(fdb);
-            }
+            FdbEntry entry;
+            entry.mac = fdb.mac;
+            entry.bv_id = update.vlan.m_vlan_info.vlan_oid;
+            (void)addFdbEntry(entry, port_name, fdb.fdbData);
+        }
+        else
+        {
+            saved_fdb_entries[port_name].push_back(fdb);
         }
     }
 }

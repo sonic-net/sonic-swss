@@ -17,6 +17,7 @@ struct FdbEntry
 {
     MacAddress mac;
     sai_object_id_t bv_id;
+    std::string port_name;
 
     bool operator<(const FdbEntry& other) const
     {
