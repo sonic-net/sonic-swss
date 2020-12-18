@@ -95,11 +95,14 @@ bool VRFOrch::addOperation(const Request& request)
         vrf_table_[vrf_name].vrf_id = router_id;
         vrf_table_[vrf_name].ref_count = 0;
         vrf_id_table_[router_id] = vrf_name;
-        if (vni != 0) {
+        if (vni != 0)
+        {
             SWSS_LOG_INFO("VRF '%s' vni %d add", vrf_name.c_str(), vni);
             error = updateVrfVNIMap(vrf_name, vni);
             if (error == false)
+            {
                 return false;
+            }
         }
         m_stateVrfObjectTable.hset(vrf_name, "state", "ok");
         SWSS_LOG_NOTICE("VRF '%s' was added", vrf_name.c_str());
@@ -123,7 +126,9 @@ bool VRFOrch::addOperation(const Request& request)
         SWSS_LOG_INFO("VRF '%s' vni %d modify", vrf_name.c_str(), vni);
         error = updateVrfVNIMap(vrf_name, vni);
         if (error == false)
+        {
             return false;
+        }
 
         SWSS_LOG_NOTICE("VRF '%s' was updated", vrf_name.c_str());
     }
@@ -158,7 +163,9 @@ bool VRFOrch::delOperation(const Request& request)
     vrf_id_table_.erase(router_id);
     error = delVrfVNIMap(vrf_name, 0);
     if (error == false)
+    {
         return false;
+    }
     m_stateVrfObjectTable.del(vrf_name);
 
     SWSS_LOG_NOTICE("VRF '%s' was removed", vrf_name.c_str());
@@ -178,11 +185,15 @@ bool VRFOrch::updateVrfVNIMap(const std::string& vrf_name, uint32_t vni)
     old_vni = getVRFmappedVNI(vrf_name);
     SWSS_LOG_INFO("VRF '%s' vni %d old_vni %d", vrf_name.c_str(), vni, old_vni);
 
-    if (old_vni != vni) {
-        if (vni == 0) {
+    if (old_vni != vni)
+    {
+        if (vni == 0)
+        {
             error = delVrfVNIMap(vrf_name, old_vni);
             if (error == false)
+            {
                 return false;
+            }
         } else {
             //update l3vni table, if vlan/vni is received later will be able to update L3VniStatus.
             l3vni_table_[vni].vlan_id = 0;

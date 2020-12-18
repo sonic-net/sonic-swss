@@ -50,7 +50,7 @@ struct NextHopKey
         }
     }
     NextHopKey(const std::string &str, bool overlay_nh)
-	{
+    {
         if (str.find(NHG_DELIMITER) != string::npos)
         {
             std::string err = "Error converting " + str + " to NextHop";
@@ -74,7 +74,7 @@ struct NextHopKey
     }
 
     const std::string to_string(bool overlay_nh) const
-	{
+    {
         std::string s_vni = std::to_string(vni);
         return ip_address.to_string() + NH_DELIMITER + alias + NH_DELIMITER + s_vni + NH_DELIMITER + mac_address.to_string();
     }

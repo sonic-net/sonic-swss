@@ -579,7 +579,8 @@ void RouteOrch::doTask(Consumer& consumer)
                 string nhg_str = "";
                 NextHopGroupKey& nhg = ctx.nhg;
 
-                if (overlay_nh == false) {
+                if (overlay_nh == false)
+                {
                     nhg_str = ipv[0] + NH_DELIMITER + alsv[0];
 
                     for (uint32_t i = 1; i < ipv.size(); i++)
@@ -589,7 +590,9 @@ void RouteOrch::doTask(Consumer& consumer)
 
                     nhg = NextHopGroupKey(nhg_str);
 
-                } else {
+                }
+                else
+                {
                     nhg_str = ipv[0] + NH_DELIMITER + "vni" + alsv[0] + NH_DELIMITER + vni_labelv[0] + NH_DELIMITER + rmacv[0];
                     for (uint32_t i = 1; i < ipv.size(); i++)
                     {
@@ -843,9 +846,12 @@ void RouteOrch::increaseNextHopRefCount(const NextHopGroupKey &nexthops)
     {
         NextHopKey nexthop;
         bool overlay_nh = nexthops.is_overlay_nexthop();
-        if (overlay_nh) {
+        if (overlay_nh)
+        {
             nexthop = NextHopKey (nexthops.to_string(), overlay_nh);
-        } else {
+        }
+        else
+        {
             nexthop = NextHopKey (nexthops.to_string());
         }
 
@@ -871,9 +877,12 @@ void RouteOrch::decreaseNextHopRefCount(const NextHopGroupKey &nexthops)
     {
         NextHopKey nexthop;
         bool overlay_nh = nexthops.is_overlay_nexthop();
-        if (overlay_nh) {
+        if (overlay_nh)
+        {
             nexthop = NextHopKey (nexthops.to_string(), overlay_nh);
-        } else {
+        }
+        else
+        {
             nexthop = NextHopKey (nexthops.to_string());
         }
 
@@ -1238,7 +1247,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         m_vrfOrch->increaseVrfRefCount(vrf_id);
     }
 
-    if(nextHops.is_overlay_nexthop())
+    if (nextHops.is_overlay_nexthop())
     {
         overlay_nh = true;
     }
@@ -1249,9 +1258,12 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     if (nextHops.getSize() == 1)
     {
         NextHopKey nexthop;
-        if (overlay_nh) {
+        if (overlay_nh)
+        {
             nexthop = NextHopKey(nextHops.to_string(), overlay_nh);
-        } else {
+        }
+        else
+        {
             nexthop = NextHopKey(nextHops.to_string());
         }
 
@@ -1313,9 +1325,12 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 for(auto it = nhops.begin(); it != nhops.end(); ++it)
                 {
                     NextHopKey nextHop;
-                    if (overlay_nh) {
+                    if (overlay_nh)
+                    {
                         nextHop = NextHopKey(*it, overlay_nh);
-                    } else {
+                    }
+                    else
+                    {
                         nextHop = NextHopKey(*it);
                     }
 
