@@ -107,7 +107,7 @@ static sai_status_t create_route(IpPrefix &pfx, sai_object_id_t nh)
     sai_status_t status = sai_route_api->create_route_entry(&route_entry, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create tunnel route %s,nh %lx rv:%d",
+        SWSS_LOG_ERROR("Failed to create tunnel route %s,nh %" PRIx64 " rv:%d",
                 pfx.getIp().to_string().c_str(), nh, status);
         return status;
     }
@@ -326,7 +326,7 @@ bool MuxCable::stateInitActive()
 
 bool MuxCable::stateActive()
 {
-    SWSS_LOG_INFO("Set state to Active from %s", muxStateValToString.at(state_).c_str());
+    SWSS_LOG_INFO("Set state to Active for %s", mux_name_.c_str());
 
     Port port;
     if (!gPortsOrch->getPort(mux_name_, port))
@@ -363,7 +363,7 @@ bool MuxCable::stateActive()
 
 bool MuxCable::stateStandby()
 {
-    SWSS_LOG_INFO("Set state to Standby from %s", muxStateValToString.at(state_).c_str());
+    SWSS_LOG_INFO("Set state to Standby for %s", mux_name_.c_str());
 
     Port port;
     if (!gPortsOrch->getPort(mux_name_, port))
@@ -400,6 +400,8 @@ bool MuxCable::stateStandby()
 
     if (!aclHandler(port.m_port_id))
     {
+        remove_route(srv_ip4_);
+        remove_route(srv_ip6_);
         SWSS_LOG_INFO("Add ACL drop rule failed for %s", mux_name_.c_str());
         return false;
     }
@@ -557,7 +559,7 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port)
     auto found = acl_table_.find(table_name);
     if (found == acl_table_.end())
     {
-        SWSS_LOG_NOTICE("First time create for port %lx", port);
+        SWSS_LOG_NOTICE("First time create for port %" PRIx64 "", port);
 
         // First time handling of Mux Table, create ACL table, and bind
         createMuxAclTable(port, table_name);
@@ -567,7 +569,7 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port)
     }
     else
     {
-        SWSS_LOG_NOTICE("Binding port %lx", port);
+        SWSS_LOG_NOTICE("Binding port %" PRIx64 "", port);
         // Otherwise just bind ACL table with the port
         found->second.bind(port);
     }
@@ -578,7 +580,7 @@ MuxAclHandler::~MuxAclHandler(void)
     SWSS_LOG_ENTER();
     string table_name = MUX_ACL_TABLE_NAME;
 
-    SWSS_LOG_NOTICE("Un-Binding port %lx", port_);
+    SWSS_LOG_NOTICE("Un-Binding port %" PRIx64 "", port_);
 
     auto found = acl_table_.find(table_name);
     found->second.unbind(port_);
