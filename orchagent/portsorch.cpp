@@ -4534,6 +4534,49 @@ void PortsOrch::getPortSerdesVal(const std::string& val_str,
     }
 }
 
+/* Bring up/down Vlan interface associated with L3 VNI*/
+bool PortsOrch::updateL3VniStatus(uint16_t vlan_id, bool isUp)
+{
+    Port vlan;
+    string vlan_alias;
+
+    vlan_alias = VLAN_PREFIX + to_string(vlan_id);
+    SWSS_LOG_INFO("update L3Vni Status for Vlan %d with isUp %d vlan %s",
+            vlan_id, isUp, vlan_alias.c_str());
+
+    if (!getPort(vlan_alias, vlan))
+    {
+        SWSS_LOG_INFO("Failed to locate VLAN %d", vlan_id);
+        return false;
+    }
+
+    SWSS_LOG_INFO("member count %d, l3vni %d", vlan.m_up_member_count, vlan.m_l3_vni);
+    if (isUp) {
+        auto old_count = vlan.m_up_member_count;
+        vlan.m_up_member_count++;
+        if (old_count == 0)
+        {
+            /* updateVlanOperStatus(vlan, true); */ /* TBD */
+            vlan.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+        }
+        vlan.m_l3_vni = true;
+    } else {
+        vlan.m_up_member_count--;
+        if (vlan.m_up_member_count == 0)
+        {
+            /* updateVlanOperStatus(vlan, false); */ /* TBD */
+            vlan.m_oper_status = SAI_PORT_OPER_STATUS_DOWN;
+        }
+        vlan.m_l3_vni = false;
+    }
+
+    m_portList[vlan_alias] = vlan;
+
+    SWSS_LOG_INFO("Updated L3Vni status of VLAN %d member count %d", vlan_id, vlan.m_up_member_count);
+
+    return true;
+}
+
 /*
  * If Gearbox is enabled (wait for GearboxConfigDone),
  * then initialize global storage maps
@@ -4753,6 +4796,7 @@ bool PortsOrch::initGearboxPort(Port &port)
             m_gearboxPortListLaneMap[port.m_port_id] = make_tuple(systemPort, linePort);
         }
     }
+
     return true;
 }
 

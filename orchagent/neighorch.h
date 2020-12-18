@@ -52,9 +52,12 @@ public:
     bool getNeighborEntry(const NextHopKey&, NeighborEntry&, MacAddress&);
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
 
+    sai_object_id_t addTunnelNextHop(const NextHopKey&);
+    bool removeTunnelNextHop(const NextHopKey&);
+
     bool ifChangeInformNextHop(const string &, bool);
     bool isNextHopFlagSet(const NextHopKey &, const uint32_t);
-
+    bool removeOverlayNextHop(const NextHopKey &);
     void update(SubjectType, void *);
 
 private:

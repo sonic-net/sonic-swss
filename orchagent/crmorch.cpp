@@ -541,7 +541,7 @@ void CrmOrch::checkCrmThresholds()
 
             if (cnt.usedCounter != 0)
             {
-                percentageUtil = (cnt.usedCounter * 100) / (cnt.usedCounter + cnt.availableCounter);
+                percentageUtil = (uint32_t)((cnt.usedCounter * 100) / (uint64_t)(cnt.usedCounter + cnt.availableCounter));
             }
 
             switch (res.thresholdType)
