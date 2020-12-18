@@ -124,7 +124,7 @@ void BufferOrch::initBufferConstants()
     vector<FieldValueTuple> fvVector;
     fvVector.emplace_back(make_pair("mmu_size", to_string(attr.value.u64 * 1024)));
     m_stateBufferMaximumValueTable.set("global", fvVector);
-    SWSS_LOG_NOTICE("Got maximum memory size %lu, exposing to %s|global",
+    SWSS_LOG_NOTICE("Got maximum memory size %" PRIx64 ", exposing to %s|global",
                     attr.value.u64, STATE_BUFFER_MAXIMUM_VALUE_TABLE);
 }
 
