@@ -703,8 +703,9 @@ void IntfMgr::doTask(Consumer &consumer)
     if (replayNotDone  &&   WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
     {
         replayNotDone = false;
-        //WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
-        //For now replayed == reconciled for the UT to pass
-        WarmStart::setWarmStartState("vrfmgrd", WarmStart::RECONCILED);
+        WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
+        // There is no operation to be performed for intfmgr reconcillation
+        // Hence mark it reconciled right away
+        WarmStart::setWarmStartState("intfmgrd", WarmStart::RECONCILED);
     }
 }

@@ -86,8 +86,9 @@ int main(int argc, char **argv)
                 if (isWarmStart && firstReadTimeout)
                 {
                     firstReadTimeout = false;
-                    //WarmStart::setWarmStartState("vrfmgrd", WarmStart::REPLAYED);
-                    //For now replayed == reconciled for the UT to pass
+                    WarmStart::setWarmStartState("vrfmgrd", WarmStart::REPLAYED);
+                    // There is no operation to be performed for vrfmgrd reconcillation
+                    // Hence mark it reconciled right away
                     WarmStart::setWarmStartState("vrfmgrd", WarmStart::RECONCILED);
                 }
                 continue;
