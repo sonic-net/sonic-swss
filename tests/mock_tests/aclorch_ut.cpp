@@ -316,8 +316,13 @@ namespace aclorch_test
             TableConnector applDbFdb(m_app_db.get(), APP_FDB_TABLE_NAME);
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
 
+            vector<table_name_with_pri_t> app_fdb_tables = {
+                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
+                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+            };
+
             ASSERT_EQ(gFdbOrch, nullptr);
-            gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
+            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, gPortsOrch);
 
             ASSERT_EQ(gNeighOrch, nullptr);
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch);
@@ -332,16 +337,6 @@ namespace aclorch_test
 
             ASSERT_EQ(gRouteOrch, nullptr);
             gRouteOrch = new RouteOrch(m_app_db.get(), APP_ROUTE_TABLE_NAME, gSwitchOrch, gNeighOrch, gIntfsOrch, gVrfOrch, gFgNhgOrch);
-
-            vector<table_name_with_pri_t> app_fdb_tables = {
-                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
-                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
-            };
-
-            TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
-
-            ASSERT_EQ(gFdbOrch, nullptr);
-            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, gPortsOrch);
 
             PolicerOrch *policer_orch = new PolicerOrch(m_config_db.get(), "POLICER");
 
