@@ -400,7 +400,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             for (auto itr = m_entries.begin(); itr != m_entries.end();)
             {
                 auto next_item = std::next(itr);
-                if (itr->port_name == update.port.m_alias)
+                if (itr->first.port_name == update.port.m_alias)
                 {
                     update.entry.mac = itr->first.mac;
                     update.entry.bv_id = itr->first.bv_id;
@@ -777,7 +777,7 @@ void FdbOrch::notifyObserversFDBFlush(Port &port, sai_object_id_t& bvid)
 
     for (auto itr = m_entries.begin(); itr != m_entries.end(); ++itr)
     {
-        if ((itr->port_name == port.m_alias) &&
+        if ((itr->first.port_name == port.m_alias) &&
             (itr->first.bv_id == bvid))
         {
             SWSS_LOG_INFO("Adding MAC learnt on [ port:%s , bvid:0x%" PRIx64 "]\
