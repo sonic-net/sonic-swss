@@ -156,7 +156,7 @@ private:
     unique_ptr<Table> m_pgIndexTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
-    NotificationProducer* notifications;
+    unique_ptr<NotificationProducer> notifications;
 
     std::string getQueueWatermarkFlexCounterTableKey(std::string s);
     std::string getPriorityGroupWatermarkFlexCounterTableKey(std::string s);
