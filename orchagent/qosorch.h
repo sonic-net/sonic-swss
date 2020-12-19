@@ -60,7 +60,7 @@ public:
     virtual void freeAttribResources(vector<sai_attribute_t> &attributes);
     virtual bool modifyQosItem(sai_object_id_t, vector<sai_attribute_t> &attributes);
     virtual sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes) = 0;//different for sub-classes
-    virtual bool removeQosItem(sai_object_id_t sai_object);
+    virtual task_process_status  removeQosItem(sai_object_id_t sai_object);
 };
 
 class DscpToTcMapHandler : public QosMapHandler
@@ -91,7 +91,7 @@ public:
     void freeAttribResources(vector<sai_attribute_t> &attributes);
     sai_object_id_t addQosItem(const vector<sai_attribute_t> &attributes);
     bool modifyQosItem(sai_object_id_t sai_object, vector<sai_attribute_t> &attribs);
-    bool removeQosItem(sai_object_id_t sai_object);
+    task_process_status removeQosItem(sai_object_id_t sai_object);
 protected:
     bool convertEcnMode(string str, sai_ecn_mark_mode_t &ecn_val);
     bool convertBool(string str, bool &val);
