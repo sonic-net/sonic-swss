@@ -1233,13 +1233,45 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
 
-    if (m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
-            && vrf_id == gVirtualRouterId)
+    if (m_fgNhgOrch->isRouteFineGrainedECMP(vrf_id, ipPrefix, nextHops))
     {
-        /* Only support the default vrf for Fine Grained ECMP */
+        /* The route needs Fine Grained ECMP, first check if routeorch has a route
+         * matching the prefix. If routeorch does then we need to delete the route
+         * so that it can be added for fine grained ecmp after that. */ 
+        auto route_table = m_syncdRoutes.find(vrf_id);
+        if (route_table != m_syncdRoutes.end())
+        {
+            auto route_entry = route_table->second.find(ipPrefix);
+            if (route_entry != route_table->second.end()) 
+            {
+                /* Case where we transition route from Regular ECMP to Fine Grained ECMP */
+                NextHopGroupKey nhgk = route_entry->second;
+                removeRoute(ctx);
+                gRouteBulker.flush();
+                if (!removeRoutePost(ctx))
+                {
+                    SWSS_LOG_ERROR("Failed to remove route %s from routeorch", ipPrefix.to_string().c_str());
+                    return false;
+                }
+                if (m_syncdNextHopGroups[nhgk].ref_count == 0)
+                {
+                    removeNextHopGroup(nhgk);
+                }
+            }
+        }
         SWSS_LOG_INFO("Reroute %s:%s to fgNhgOrch", ipPrefix.to_string().c_str(),
-                nextHops.to_string().c_str());
+                        nextHops.to_string().c_str());
         return m_fgNhgOrch->addRoute(vrf_id, ipPrefix, nextHops);
+    }
+    else
+    {
+        /* Route needs regular next-hop/ECMP. Logic here deals with case where we transition 
+         * route from Fine Grained ECMP to Regular ECMP: we first delete the route from fine grained ECMP 
+         * and then the rest of this function will create the route with regular ECMP/nexthops */
+        if (!m_fgNhgOrch->removeRoute(vrf_id, ipPrefix))
+        {
+            return false;
+        }
     }
 
     /* next_hop_id indicates the next hop id or next hop group id of this route */
@@ -1593,10 +1625,9 @@ bool RouteOrch::removeRoute(RouteBulkContext& ctx)
     sai_object_id_t& vrf_id = ctx.vrf_id;
     IpPrefix& ipPrefix = ctx.ip_prefix;
 
-    if (m_fgNhgOrch->fgNhgPrefixes.find(ipPrefix) != m_fgNhgOrch->fgNhgPrefixes.end()
-            && vrf_id == gVirtualRouterId)
+    /* Remove the route if it exists in fgNhgOrch */
+    if (m_fgNhgOrch->containsRoute(vrf_id, ipPrefix))
     {
-        /* Only support the default vrf for Fine Grained ECMP */
         SWSS_LOG_INFO("Reroute %s to fgNhgOrch", ipPrefix.to_string().c_str());
         return m_fgNhgOrch->removeRoute(vrf_id, ipPrefix);
     }
