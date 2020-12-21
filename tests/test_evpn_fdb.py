@@ -382,52 +382,6 @@ def test_evpnFdb(dvs, testlog):
 
     #raw_input("Check ASIC_DB.........")
 
-    #UT-5 create a Static FDB entry
-    mac = "52:54:00:25:06:E9"
-    print("Creating static FDB Vlan3:"+mac.lower()+":Ethernet0 in CONFIG-DB")
-    create_entry_tbl(
-        dvs.cdb,
-        "FDB", "Vlan3|"+mac.lower(),
-        [
-            ("port", "Ethernet0"),
-            ("type", "static"),
-        ]
-    )
-    time.sleep(2)
-
-    #raw_input("Check ASIC_DB.........")
-
-    # check that the FDB entry was added in APP DB
-    mac1_found, extra = dvs.is_table_entry_exists(dvs.pdb, "FDB_TABLE",
-                    "Vlan3:"+mac.lower(),
-                    [("port", "Ethernet0"),
-                     ("type", "static"),
-                    ]
-    )
-    assert mac1_found, str(extra)
-    print("Static FDB Vlan3:"+mac.lower()+"Ethernet0 is created in APP-DB")
-
-    # check that the FDB entry is now inserted into ASIC DB
-    ok, extra = dvs.is_fdb_entry_exists(dvs.adb, "ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY",
-            [("mac", mac.upper()), ("bvid", vlan_oid_3)],
-                    [("SAI_FDB_ENTRY_ATTR_TYPE", "SAI_FDB_ENTRY_TYPE_STATIC"),
-                     ("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID", iface_2_bridge_port_id["Ethernet0"])]
-    )
-    assert ok, str(extra)
-    print("Static FDB Vlan3:"+mac.lower()+":Ethernet0 is created in ASIC-DB")
-
-    # check that the FDB entry was added in STATE DB
-    mac1_found, extra = dvs.is_table_entry_exists(dvs.sdb, "FDB_TABLE",
-                    "Vlan3:"+mac.lower(),
-                    [("port", "Ethernet0"),
-                     ("type", "static"),
-                    ]
-    )
-    assert mac1_found, str(extra)
-    print("Static FDB Vlan3:"+mac.lower()+":Ethernet0 is created in STATE-DB")
-
-    #raw_input("Check ASIC_DB.........")
-
     #UT-6 Evpn Mac del from remote when only local is present; local mac should not get affected
     mac = "52:54:00:25:06:E9"
     print("Deleting Evpn FDB Vlan3:"+mac.lower()+":6.6.6.6 in APP-DB")
