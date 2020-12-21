@@ -199,7 +199,7 @@ void initSaiApi()
     sai_log_set(SAI_API_SAMPLEPACKET,           SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DEBUG_COUNTER,          SAI_LOG_LEVEL_NOTICE);
     sai_log_set((sai_api_t)SAI_API_NAT,         SAI_LOG_LEVEL_NOTICE);
-    sai_log_set(SAI_API_NAT,                    SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_MACSEC,                 SAI_LOG_LEVEL_NOTICE);
 }
 
 void initSaiRedis(const string &record_location)

@@ -25,12 +25,12 @@ extern sai_acl_api_t *sai_acl_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;
 
-static const std::vector<std::string> macsec_egress_sa_stats =
+static const std::vector<std::string> macsec_egress_sa_attrs =
     {
         "SAI_MACSEC_SA_ATTR_XPN",
 };
 
-static const std::vector<std::string> macsec_ingress_sa_stats =
+static const std::vector<std::string> macsec_ingress_sa_attrs =
     {
         "SAI_MACSEC_SA_ATTR_MINIMUM_XPN",
 };
@@ -172,12 +172,12 @@ static bool hex_to_binary(
     {
         if (!std::isxdigit(static_cast<std::uint8_t>(hex_str[hex_cur])))
         {
-            SWSS_LOG_ERROR("Invalid hex string %s at %lu(%c)", hex_str.c_str(), hex_cur, hex_str[hex_cur]);
+            SWSS_LOG_ERROR("Invalid hex string %s at %" PRIu64 "(%c)", hex_str.c_str(), hex_cur, hex_str[hex_cur]);
             return false;
         }
         if (!std::isxdigit(static_cast<std::uint8_t>(hex_str[hex_cur + 1])))
         {
-            SWSS_LOG_ERROR("Invalid hex string %s at %lu(%c)", hex_str.c_str(), hex_cur + 1, hex_str[hex_cur + 1]);
+            SWSS_LOG_ERROR("Invalid hex string %s at %" PRIu64 "(%c)", hex_str.c_str(), hex_cur + 1, hex_str[hex_cur + 1]);
             return false;
         }
         std::stringstream stream;
@@ -450,7 +450,7 @@ public:
             auto sc = scs.find(*m_sci);
             if (sc == scs.end())
             {
-                SWSS_LOG_INFO("Cannot find the MACsec SC %lu at the port %s.", *m_sci, m_port_name->c_str());
+                SWSS_LOG_INFO("Cannot find the MACsec SC 0x%" PRIx64 " at the port %s.", *m_sci, m_port_name->c_str());
                 return nullptr;
             }
             m_macsec_sc = &sc->second;
@@ -476,7 +476,7 @@ public:
             if (an == sc->m_sa_ids.end())
             {
                 SWSS_LOG_INFO(
-                    "Cannot find the MACsec SA %u of SC %lu at the port %s.",
+                    "Cannot find the MACsec SA %u of SC 0x%" PRIx64 " at the port %s.",
                     *m_an,
                     *m_sci,
                     m_port_name->c_str());
@@ -817,7 +817,7 @@ task_process_status MACsecOrch::updateEgressSA(
     MACsecOrchContext ctx(this, port_name, SAI_MACSEC_DIRECTION_EGRESS, sci, an);
     if (ctx.get_macsec_sc() == nullptr)
     {
-        SWSS_LOG_INFO("The MACsec SC %lu hasn't been created at the port %s.", sci, port_name.c_str());
+        SWSS_LOG_INFO("The MACsec SC 0x%" PRIx64 " hasn't been created at the port %s.", sci, port_name.c_str());
         return task_need_retry;
     }
     if (ctx.get_macsec_sc()->m_encoding_an == an)
@@ -893,7 +893,7 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
     auto macsec_obj = m_macsec_objs.emplace(switch_id, MACsecObject());
     if (!macsec_obj.second)
     {
-        SWSS_LOG_INFO("The MACsec has been initialized at the switch %lu", switch_id);
+        SWSS_LOG_INFO("The MACsec has been initialized at the switch 0x%" PRIx64, switch_id);
         return true;
     }
     recover.add_action([&]() { m_macsec_objs.erase(macsec_obj.first); });
@@ -910,7 +910,7 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
             static_cast<uint32_t>(attrs.size()),
             attrs.data()) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("Cannot initialize MACsec egress object at the switch %lu", switch_id);
+        SWSS_LOG_WARN("Cannot initialize MACsec egress object at the switch 0x%" PRIx64, switch_id);
         return false;
     }
     recover.add_action([&]() { sai_macsec_api->remove_macsec_port(macsec_obj.first->second.m_egress_id); });
@@ -925,7 +925,7 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
             static_cast<uint32_t>(attrs.size()),
             attrs.data()) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("Cannot initialize MACsec ingress object at the switch %lu", switch_id);
+        SWSS_LOG_WARN("Cannot initialize MACsec ingress object at the switch 0x%" PRIx64, switch_id);
         return false;
     }
     recover.add_action([&]() { sai_macsec_api->remove_macsec_port(macsec_obj.first->second.m_ingress_id); });
@@ -939,7 +939,7 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
             attrs.data()) != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN(
-            "Cannot get MACsec attribution SAI_MACSEC_ATTR_SCI_IN_INGRESS_MACSEC_ACL at the switch %lu",
+            "Cannot get MACsec attribution SAI_MACSEC_ATTR_SCI_IN_INGRESS_MACSEC_ACL at the switch 0x%" PRIx64,
             switch_id);
         return false;
     }
@@ -956,7 +956,7 @@ bool MACsecOrch::deinitMACsecObject(sai_object_id_t switch_id)
     auto macsec_obj = m_macsec_objs.find(switch_id);
     if (macsec_obj == m_macsec_objs.end())
     {
-        SWSS_LOG_INFO("The MACsec wasn't initialized at the switch %lu", switch_id);
+        SWSS_LOG_INFO("The MACsec wasn't initialized at the switch 0x%" PRIx64, switch_id);
         return true;
     }
 
@@ -965,14 +965,14 @@ bool MACsecOrch::deinitMACsecObject(sai_object_id_t switch_id)
     if (sai_macsec_api->remove_macsec(
             macsec_obj->second.m_egress_id) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("Cannot deinitialize MACsec egress object at the switch %lu", macsec_obj->first);
+        SWSS_LOG_WARN("Cannot deinitialize MACsec egress object at the switch 0x%" PRIx64, macsec_obj->first);
         result &= false;
     }
 
     if (sai_macsec_api->remove_macsec(
             macsec_obj->second.m_ingress_id) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("Cannot deinitialize MACsec ingress object at the switch %lu", macsec_obj->first);
+        SWSS_LOG_WARN("Cannot deinitialize MACsec ingress object at the switch 0x%" PRIx64, macsec_obj->first);
         result &= false;
     }
 
@@ -1537,7 +1537,7 @@ bool MACsecOrch::createMACsecSC(
             static_cast<uint32_t>(attrs.size()),
             attrs.data()) != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_WARN("Cannot create MACsec egress SC %lu", sci);
+        SWSS_LOG_WARN("Cannot create MACsec egress SC 0x%" PRIx64, sci);
         return false;
     }
     return true;
@@ -1649,7 +1649,7 @@ task_process_status MACsecOrch::createMACsecSA(
 
     if (ctx.get_macsec_sc() == nullptr)
     {
-        SWSS_LOG_INFO("The MACsec SC %lu hasn't been created at the port %s.", sci, port_name.c_str());
+        SWSS_LOG_INFO("The MACsec SC 0x%" PRIx64 " hasn't been created at the port %s.", sci, port_name.c_str());
         return task_need_retry;
     }
     auto sc = ctx.get_macsec_sc();
@@ -1746,12 +1746,12 @@ task_process_status MACsecOrch::createMACsecSA(
     fvVector.emplace_back("state", "ok");
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_egress_sa_stats);
+        installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_egress_sa_attrs);
         m_state_macsec_egress_sa.set(join('|', port_name, sci, an), fvVector);
     }
     else
     {
-        installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_ingress_sa_stats);
+        installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_ingress_sa_attrs);
         m_state_macsec_ingress_sa.set(join('|', port_name, sci, an), fvVector);
     }
 
