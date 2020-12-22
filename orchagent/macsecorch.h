@@ -74,7 +74,6 @@ private:
     struct MACsecSC
     {
         macsec_an_t                             m_encoding_an;
-        bool                                    m_xpn64_enable;
         sai_object_id_t                         m_sc_id;
         std::map<macsec_an_t, sai_object_id_t>  m_sa_ids;
         sai_object_id_t                         m_flow_id;
@@ -91,6 +90,7 @@ private:
         std::map<sai_uint64_t, MACsecSC>    m_ingress_scs;
         MACsecACLTable                      m_egress_acl_table;
         MACsecACLTable                      m_ingress_acl_table;
+        sai_macsec_cipher_suite_t           m_cipher_suite;
         bool                                m_enable_encrypt;
         bool                                m_sci_in_sectag;
         bool                                m_enable;
@@ -160,9 +160,9 @@ private:
         sai_macsec_direction_t direction,
         sai_object_id_t flow_id,
         sai_uint64_t sci,
-        sai_uint32_t ssci,
+        bool encryption_enable,
         bool send_sci,
-        bool xpn64_enable);
+        sai_macsec_cipher_suite_t cipher_suite);
     task_process_status deleteMACsecSC(
         const std::string &port_sci,
         sai_macsec_direction_t direction);
@@ -182,11 +182,9 @@ private:
         sai_macsec_direction_t direction,
         sai_object_id_t sc_id,
         macsec_an_t an,
-        bool encryption_enable,
-        bool sak_256_bit,
         sai_macsec_sak_t sak,
-        bool xpn64_enable,
         sai_macsec_salt_t salt,
+        sai_uint32_t ssci,
         sai_macsec_auth_key_t auth_key,
         sai_uint64_t pn);
     bool deleteMACsecSA(sai_object_id_t sa_id);

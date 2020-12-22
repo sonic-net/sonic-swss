@@ -26,7 +26,8 @@ extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;
 
 constexpr bool DEFAULT_ENABLE_ENCRYPT = true;
-constexpr bool SCI_IN_SECTAG = false;
+constexpr bool DEFAULT_SCI_IN_SECTAG = false;
+constexpr sai_macsec_cipher_suite_t DEFAULT_CIPHER_SUITE = SAI_MACSEC_CIPHER_SUITE_GCM_AES_128;
 
 static const std::vector<std::string> macsec_egress_sa_attrs =
     {
@@ -1024,7 +1025,8 @@ bool MACsecOrch::createMACsecPort(
     });
 
     macsec_port.m_enable_encrypt = DEFAULT_ENABLE_ENCRYPT;
-    macsec_port.m_sci_in_sectag = SCI_IN_SECTAG;
+    macsec_port.m_sci_in_sectag = DEFAULT_SCI_IN_SECTAG;
+    macsec_port.m_cipher_suite = DEFAULT_CIPHER_SUITE;
     macsec_port.m_enable = false;
 
     // If hardware matches SCI in ACL, the macsec_flow maps to an IEEE 802.1ae SecY object.
@@ -1142,6 +1144,31 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
 
     get_value(port_attr, "enable_encrypt", macsec_port.m_enable_encrypt);
     get_value(port_attr, "send_sci", macsec_port.m_sci_in_sectag);
+    std::string cipher_suite;
+    if (get_value(port_attr, "cipher_suite", cipher_suite))
+    {
+        if (cipher_suite == "GCM-AES-128")
+        {
+            macsec_port.m_cipher_suite = SAI_MACSEC_CIPHER_SUITE_GCM_AES_128;
+        }
+        else if (cipher_suite == "GCM-AES-256")
+        {
+            macsec_port.m_cipher_suite = SAI_MACSEC_CIPHER_SUITE_GCM_AES_256;
+        }
+        else if (cipher_suite == "GCM-AES-XPN-128")
+        {
+            macsec_port.m_cipher_suite = SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_128;
+        }
+        else if (cipher_suite == "GCM-AES-XPN-256")
+        {
+            macsec_port.m_cipher_suite = SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_256;
+        }
+        else
+        {
+            SWSS_LOG_WARN("Unknow Cipher Suite %s", cipher_suite.c_str());
+            return false;
+        }
+    }
     bool enable = false;
     if (get_value(port_attr, "enable", enable) && enable != macsec_port.m_enable)
     {
@@ -1407,12 +1434,6 @@ bool MACsecOrch::createMACsecSC(
     });
     auto sc = &sc_itr.first->second;
 
-    sai_uint32_t ssci = 0;
-    sc->m_xpn64_enable = false;
-    if (get_value(sc_attr, "ssci", ssci) && ssci)
-    {
-        sc->m_xpn64_enable = true;
-    }
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
         get_value(sc_attr, "encoding_an", sc->m_encoding_an);
@@ -1444,9 +1465,9 @@ bool MACsecOrch::createMACsecSC(
             direction,
             sc->m_flow_id,
             sci,
-            ssci,
+            macsec_port.m_enable_encrypt,
             macsec_port.m_sci_in_sectag,
-            sc->m_xpn64_enable))
+            macsec_port.m_cipher_suite))
     {
         SWSS_LOG_WARN("Create MACsec SC %s fail.", port_sci.c_str());
         return false;
@@ -1503,9 +1524,9 @@ bool MACsecOrch::createMACsecSC(
     sai_macsec_direction_t direction,
     sai_object_id_t flow_id,
     sai_uint64_t sci,
-    sai_uint32_t ssci,
+    bool encryption_enable,
     bool send_sci,
-    bool xpn64_enable)
+    sai_macsec_cipher_suite_t cipher_suite)
 {
     SWSS_LOG_ENTER();
 
@@ -1521,17 +1542,14 @@ bool MACsecOrch::createMACsecSC(
     attr.id = SAI_MACSEC_SC_ATTR_MACSEC_SCI;
     attr.value.u64 = sci;
     attrs.push_back(attr);
-    if (xpn64_enable)
-    {
-        attr.id = SAI_MACSEC_SC_ATTR_MACSEC_SSCI;
-        attr.value.u32 = ssci;
-        attrs.push_back(attr);
-    }
-    attr.id = SAI_MACSEC_SC_ATTR_MACSEC_XPN64_ENABLE;
-    attr.value.booldata = xpn64_enable;
+    attr.id = SAI_MACSEC_SC_ATTR_ENCRYPTION_ENABLE;
+    attr.value.booldata = encryption_enable;
     attrs.push_back(attr);
     attr.id = SAI_MACSEC_SC_ATTR_MACSEC_EXPLICIT_SCI_ENABLE;
     attr.value.booldata = send_sci;
+    attrs.push_back(attr);
+    attr.id = SAI_MACSEC_SC_ATTR_MACSEC_CIPHER_SUITE;
+    attr.value.s32 = cipher_suite;
     attrs.push_back(attr);
 
     if (sai_macsec_api->create_macsec_sc(
@@ -1659,6 +1677,7 @@ task_process_status MACsecOrch::createMACsecSA(
 
     MACsecSAK sak = {{0}, false};
     MACsecSalt salt = {0};
+    sai_uint32_t ssci = 0;
     MACsecAuthKey auth_key = {0};
     try
     {
@@ -1667,11 +1686,35 @@ task_process_status MACsecOrch::createMACsecSA(
             SWSS_LOG_WARN("The SAK isn't existed at SA %s", port_sci_an.c_str());
             return task_failed;
         }
-        if (sc->m_xpn64_enable)
+        if (sak.m_sak_256_enable)
+        {
+            if (ctx.get_macsec_port()->m_cipher_suite == SAI_MACSEC_CIPHER_SUITE_GCM_AES_128 
+                && ctx.get_macsec_port()->m_cipher_suite == SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_128)
+            {
+                SWSS_LOG_WARN("Wrong SAK with 256 bit, expect 128 bit");
+                return task_failed;
+            }
+        }
+        else
+        {
+            if (ctx.get_macsec_port()->m_cipher_suite == SAI_MACSEC_CIPHER_SUITE_GCM_AES_256 
+                && ctx.get_macsec_port()->m_cipher_suite == SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_256)
+            {
+                SWSS_LOG_WARN("Wrong SAK with 128 bit, expect 256 bit");
+                return task_failed;
+            }
+        }
+        if (ctx.get_macsec_port()->m_cipher_suite == SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_128 
+            || ctx.get_macsec_port()->m_cipher_suite == SAI_MACSEC_CIPHER_SUITE_GCM_AES_XPN_256)
         {
             if (!get_value(sa_attr, "salt", salt))
             {
                 SWSS_LOG_WARN("The salt isn't existed at SA %s", port_sci_an.c_str());
+                return task_failed;
+            }
+            if (!get_value(sa_attr, "ssci", ssci))
+            {
+                SWSS_LOG_WARN("The ssci isn't existed at SA %s", port_sci_an.c_str());
                 return task_failed;
             }
         }
@@ -1729,11 +1772,9 @@ task_process_status MACsecOrch::createMACsecSA(
             direction,
             sc->m_sc_id,
             an,
-            ctx.get_macsec_port()->m_enable_encrypt,
-            sak.m_sak_256_enable,
             sak.m_sak,
-            sc->m_xpn64_enable,
             salt.m_salt,
+            ssci,
             auth_key.m_auth_key,
             pn))
     {
@@ -1828,11 +1869,9 @@ bool MACsecOrch::createMACsecSA(
     sai_macsec_direction_t direction,
     sai_object_id_t sc_id,
     macsec_an_t an,
-    bool encryption_enable,
-    bool sak_256_bit,
     sai_macsec_sak_t sak,
-    bool xpn64_enable,
     sai_macsec_salt_t salt,
+    sai_uint32_t ssci,
     sai_macsec_auth_key_t auth_key,
     sai_uint64_t pn)
 {
@@ -1853,14 +1892,6 @@ bool MACsecOrch::createMACsecSA(
     attr.value.u8 = static_cast<sai_uint8_t>(an);
     attrs.push_back(attr);
 
-    attr.id = SAI_MACSEC_SA_ATTR_ENCRYPTION_ENABLE;
-    attr.value.booldata = encryption_enable;
-    attrs.push_back(attr);
-
-    attr.id = SAI_MACSEC_SA_ATTR_SAK_256_BITS;
-    attr.value.booldata = sak_256_bit;
-    attrs.push_back(attr);
-
     attr.id = SAI_MACSEC_SA_ATTR_SAK;
     std::copy(sak, sak + sizeof(attr.value.macsecsak), attr.value.macsecsak);
     attrs.push_back(attr);
@@ -1868,6 +1899,11 @@ bool MACsecOrch::createMACsecSA(
     // Valid when SAI_MACSEC_SC_ATTR_MACSEC_XPN64_ENABLE == true.
     attr.id = SAI_MACSEC_SA_ATTR_SALT;
     std::copy(salt, salt + sizeof(attr.value.macsecsalt), attr.value.macsecsalt);
+    attrs.push_back(attr);
+
+    // Valid when SAI_MACSEC_SC_ATTR_MACSEC_XPN64_ENABLE == true.
+    attr.id = SAI_MACSEC_SA_ATTR_MACSEC_SSCI;
+    attr.value.u32 = ssci;
     attrs.push_back(attr);
 
     attr.id = SAI_MACSEC_SA_ATTR_AUTH_KEY;
