@@ -579,7 +579,7 @@ MACsecOrch::~MACsecOrch()
     {
         auto port = m_macsec_ports.begin();
         const MACsecOrch::TaskArgs temp;
-        disableMACsecPort(port->first, temp);
+        taskDisableMACsecPort(port->first, temp);
     }
 }
 
@@ -593,25 +593,25 @@ void MACsecOrch::doTask(Consumer &consumer)
         const TaskArgs &);
     const static std::map<TaskType, TaskFunc> TaskMap = {
         {{APP_MACSEC_PORT_TABLE_NAME, SET_COMMAND},
-         &MACsecOrch::updateMACsecPort},
+         &MACsecOrch::taskUpdateMACsecPort},
         {{APP_MACSEC_PORT_TABLE_NAME, DEL_COMMAND},
-         &MACsecOrch::disableMACsecPort},
+         &MACsecOrch::taskDisableMACsecPort},
         {{APP_MACSEC_EGRESS_SC_TABLE_NAME, SET_COMMAND},
-         &MACsecOrch::updateEgressSC},
+         &MACsecOrch::taskUpdateEgressSC},
         {{APP_MACSEC_EGRESS_SC_TABLE_NAME, DEL_COMMAND},
-         &MACsecOrch::deleteEgressSC},
+         &MACsecOrch::taskDeleteEgressSC},
         {{APP_MACSEC_INGRESS_SC_TABLE_NAME, SET_COMMAND},
-         &MACsecOrch::updateIngressSC},
+         &MACsecOrch::taskUpdateIngressSC},
         {{APP_MACSEC_INGRESS_SC_TABLE_NAME, DEL_COMMAND},
-         &MACsecOrch::deleteIngressSC},
+         &MACsecOrch::taskDeleteIngressSC},
         {{APP_MACSEC_EGRESS_SA_TABLE_NAME, SET_COMMAND},
-         &MACsecOrch::updateEgressSA},
+         &MACsecOrch::taskUpdateEgressSA},
         {{APP_MACSEC_EGRESS_SA_TABLE_NAME, DEL_COMMAND},
-         &MACsecOrch::deleteEgressSA},
+         &MACsecOrch::taskDeleteEgressSA},
         {{APP_MACSEC_INGRESS_SA_TABLE_NAME, SET_COMMAND},
-         &MACsecOrch::updateIngressSA},
+         &MACsecOrch::taskUpdateIngressSA},
         {{APP_MACSEC_INGRESS_SA_TABLE_NAME, DEL_COMMAND},
-         &MACsecOrch::deleteIngressSA},
+         &MACsecOrch::taskDeleteIngressSA},
     };
 
     const std::string &table_name = consumer.getTableName();
@@ -666,7 +666,7 @@ void MACsecOrch::doTask(Consumer &consumer)
     }
 }
 
-task_process_status MACsecOrch::updateMACsecPort(
+task_process_status MACsecOrch::taskUpdateMACsecPort(
     const std::string &port_name,
     const TaskArgs &port_attr)
 {
@@ -722,7 +722,7 @@ task_process_status MACsecOrch::updateMACsecPort(
     return task_success;
 }
 
-task_process_status MACsecOrch::disableMACsecPort(
+task_process_status MACsecOrch::taskDisableMACsecPort(
     const std::string &port_name,
     const TaskArgs &port_attr)
 {
@@ -771,7 +771,7 @@ task_process_status MACsecOrch::disableMACsecPort(
     return result;
 }
 
-task_process_status MACsecOrch::updateEgressSC(
+task_process_status MACsecOrch::taskUpdateEgressSC(
     const std::string &port_sci,
     const TaskArgs &sc_attr)
 {
@@ -779,7 +779,7 @@ task_process_status MACsecOrch::updateEgressSC(
     return updateMACsecSC(port_sci, sc_attr, SAI_MACSEC_DIRECTION_EGRESS);
 }
 
-task_process_status MACsecOrch::deleteEgressSC(
+task_process_status MACsecOrch::taskDeleteEgressSC(
     const std::string &port_sci,
     const TaskArgs &sc_attr)
 {
@@ -787,7 +787,7 @@ task_process_status MACsecOrch::deleteEgressSC(
     return deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS);
 }
 
-task_process_status MACsecOrch::updateIngressSC(
+task_process_status MACsecOrch::taskUpdateIngressSC(
     const std::string &port_sci,
     const TaskArgs &sc_attr)
 {
@@ -795,7 +795,7 @@ task_process_status MACsecOrch::updateIngressSC(
     return updateMACsecSC(port_sci, sc_attr, SAI_MACSEC_DIRECTION_INGRESS);
 }
 
-task_process_status MACsecOrch::deleteIngressSC(
+task_process_status MACsecOrch::taskDeleteIngressSC(
     const std::string &port_sci,
     const TaskArgs &sc_attr)
 {
@@ -803,7 +803,7 @@ task_process_status MACsecOrch::deleteIngressSC(
     return deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_INGRESS);
 }
 
-task_process_status MACsecOrch::updateEgressSA(
+task_process_status MACsecOrch::taskUpdateEgressSA(
     const std::string &port_sci_an,
     const TaskArgs &sa_attr)
 {
@@ -830,7 +830,7 @@ task_process_status MACsecOrch::updateEgressSA(
     return task_need_retry;
 }
 
-task_process_status MACsecOrch::deleteEgressSA(
+task_process_status MACsecOrch::taskDeleteEgressSA(
     const std::string &port_sci_an,
     const TaskArgs &sa_attr)
 {
@@ -838,7 +838,7 @@ task_process_status MACsecOrch::deleteEgressSA(
     return deleteMACsecSA(port_sci_an, SAI_MACSEC_DIRECTION_EGRESS);
 }
 
-task_process_status MACsecOrch::updateIngressSA(
+task_process_status MACsecOrch::taskUpdateIngressSA(
     const std::string &port_sci_an,
     const TaskArgs &sa_attr)
 {
@@ -879,7 +879,7 @@ task_process_status MACsecOrch::updateIngressSA(
     }
 }
 
-task_process_status MACsecOrch::deleteIngressSA(
+task_process_status MACsecOrch::taskDeleteIngressSA(
     const std::string &port_sci_an,
     const TaskArgs &sa_attr)
 {

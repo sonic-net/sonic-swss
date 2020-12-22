@@ -42,16 +42,16 @@ public:
 
 private:
 
-    task_process_status updateMACsecPort(const std::string & port_name, const TaskArgs & port_attr);
-    task_process_status disableMACsecPort(const std::string & port_name, const TaskArgs & port_attr);
-    task_process_status updateEgressSC(const std::string & port_sci, const TaskArgs & sc_attr);
-    task_process_status deleteEgressSC(const std::string & port_sci, const TaskArgs & sc_attr);
-    task_process_status updateIngressSC(const std::string & port_sci, const TaskArgs & sc_attr);
-    task_process_status deleteIngressSC(const std::string & port_sci, const TaskArgs & sc_attr);
-    task_process_status updateEgressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
-    task_process_status deleteEgressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
-    task_process_status updateIngressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
-    task_process_status deleteIngressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
+    task_process_status taskUpdateMACsecPort(const std::string & port_name, const TaskArgs & port_attr);
+    task_process_status taskDisableMACsecPort(const std::string & port_name, const TaskArgs & port_attr);
+    task_process_status taskUpdateEgressSC(const std::string & port_sci, const TaskArgs & sc_attr);
+    task_process_status taskDeleteEgressSC(const std::string & port_sci, const TaskArgs & sc_attr);
+    task_process_status taskUpdateIngressSC(const std::string & port_sci, const TaskArgs & sc_attr);
+    task_process_status taskDeleteIngressSC(const std::string & port_sci, const TaskArgs & sc_attr);
+    task_process_status taskUpdateEgressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
+    task_process_status taskDeleteEgressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
+    task_process_status taskUpdateIngressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
+    task_process_status taskDeleteIngressSA(const std::string & port_sci_an, const TaskArgs & sa_attr);
 
     PortsOrch * m_port_orch;
 
