@@ -25,6 +25,9 @@ extern sai_acl_api_t *sai_acl_api;
 extern sai_port_api_t *sai_port_api;
 extern sai_switch_api_t *sai_switch_api;
 
+constexpr bool DEFAULT_ENABLE_ENCRYPT = true;
+constexpr bool SCI_IN_SECTAG = false;
+
 static const std::vector<std::string> macsec_egress_sa_attrs =
     {
         "SAI_MACSEC_SA_ATTR_XPN",
@@ -913,7 +916,7 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
         SWSS_LOG_WARN("Cannot initialize MACsec egress object at the switch 0x%" PRIx64, switch_id);
         return false;
     }
-    recover.add_action([&]() { sai_macsec_api->remove_macsec_port(macsec_obj.first->second.m_egress_id); });
+    recover.add_action([&]() { sai_macsec_api->remove_macsec(macsec_obj.first->second.m_egress_id); });
 
     attrs.clear();
     attr.id = SAI_MACSEC_ATTR_DIRECTION;
@@ -928,7 +931,7 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
         SWSS_LOG_WARN("Cannot initialize MACsec ingress object at the switch 0x%" PRIx64, switch_id);
         return false;
     }
-    recover.add_action([&]() { sai_macsec_api->remove_macsec_port(macsec_obj.first->second.m_ingress_id); });
+    recover.add_action([&]() { sai_macsec_api->remove_macsec(macsec_obj.first->second.m_ingress_id); });
 
     attrs.clear();
     attr.id = SAI_MACSEC_ATTR_SCI_IN_INGRESS_MACSEC_ACL;
@@ -1020,8 +1023,8 @@ bool MACsecOrch::createMACsecPort(
         macsec_port.m_ingress_port_id = SAI_NULL_OBJECT_ID;
     });
 
-    macsec_port.m_enable_encrypt = true;
-    macsec_port.m_sci_in_sectag = true;
+    macsec_port.m_enable_encrypt = DEFAULT_ENABLE_ENCRYPT;
+    macsec_port.m_sci_in_sectag = SCI_IN_SECTAG;
     macsec_port.m_enable = false;
 
     // If hardware matches SCI in ACL, the macsec_flow maps to an IEEE 802.1ae SecY object.
