@@ -382,12 +382,17 @@ def test_evpnFdb(dvs, testlog):
 
     #raw_input("Check ASIC_DB.........")
 
-    #UT-6 Evpn Mac del from remote when only local is present; local mac should not get affected
+    #UT-8 Evpn Mac add from remote when tunnels are already created
     mac = "52:54:00:25:06:E9"
-    print("Deleting Evpn FDB Vlan3:"+mac.lower()+":6.6.6.6 in APP-DB")
-    delete_entry_pst(
+    print("Creating Evpn FDB Vlan3:"+mac.lower()+":6.6.6.6 in APP-DB")
+    create_entry_pst(
         dvs.pdb,
-        "VXLAN_FDB_TABLE", "Vlan3:"+mac.lower()
+        "VXLAN_FDB_TABLE", "Vlan3:"+mac.lower(),
+        [
+            ("remote_vtep", remote_ip_6),
+            ("type", "dynamic"),
+            ("vni", "3")
+        ]
     )
     time.sleep(1)
 
