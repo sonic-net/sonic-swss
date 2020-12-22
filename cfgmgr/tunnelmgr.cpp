@@ -76,7 +76,6 @@ bool TunnelMgr::doIpInIpTunnelTask(const KeyOpFieldsValuesTuple & t)
     if (op == SET_COMMAND)
     {
         m_appIpInIpTunnelTable.set(TunnelName, kfvFieldsValues(t));
-
     }
     else
     {

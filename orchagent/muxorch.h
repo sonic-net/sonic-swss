@@ -36,32 +36,32 @@ class MuxStateOrch;
 // Mux ACL Handler for adding/removing ACLs
 class MuxAclHandler
 {
-    public:
-        MuxAclHandler(sai_object_id_t port);
-        ~MuxAclHandler(void);
+public:
+    MuxAclHandler(sai_object_id_t port);
+    ~MuxAclHandler(void);
 
-    private:
-        void createMuxAclTable(sai_object_id_t port, string strTable);
-        void createMuxAclRule(shared_ptr<AclRuleMux> rule, string strTable);
+private:
+    void createMuxAclTable(sai_object_id_t port, string strTable);
+    void createMuxAclRule(shared_ptr<AclRuleMux> rule, string strTable);
 
-        // class shared dict: ACL table name -> ACL table
-        static std::map<std::string, AclTable> acl_table_;
-        sai_object_id_t port_ = SAI_NULL_OBJECT_ID;
+    // class shared dict: ACL table name -> ACL table
+    static std::map<std::string, AclTable> acl_table_;
+    sai_object_id_t port_ = SAI_NULL_OBJECT_ID;
 };
 
 // Mux Neighbor Handler for adding/removing neigbhors
 class MuxNbrHandler
 {
-    public:
-        MuxNbrHandler() = default;
+public:
+    MuxNbrHandler() = default;
 
-        bool enable();
-        bool disable();
-        void update(IpAddress, string alias = "", bool = true);
+    bool enable();
+    bool disable();
+    void update(IpAddress, string alias = "", bool = true);
 
-    private:
-        IpAddresses neighbors_;
-        string alias_;
+private:
+    IpAddresses neighbors_;
+    string alias_;
 };
 
 // Mux Cable object
@@ -75,8 +75,8 @@ public:
         return (state_ == MuxState::MUX_STATE_ACTIVE);
     }
 
-    typedef pair<MuxStateChange, bool (MuxCable::*)()> handler_pair;
-    typedef map<MuxStateChange, bool (MuxCable::*)()> state_machine_handlers;
+    using handler_pair = pair<MuxStateChange, bool (MuxCable::*)()>;
+    using state_machine_handlers = map<MuxStateChange, bool (MuxCable::*)()>;
 
     void setState(string state);
     string getState();
@@ -146,8 +146,8 @@ class MuxOrch : public Orch2, public Observer, public Subject
 public:
     MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch*, NeighOrch*);
 
-    typedef pair<string, bool (MuxOrch::*) (const Request& )> handler_pair;
-    typedef map<string, bool (MuxOrch::*) (const Request& )> handler_map;
+    using handler_pair = pair<string, bool (MuxOrch::*) (const Request& )>;
+    using handler_map = map<string, bool (MuxOrch::*) (const Request& )>;
 
     bool isMuxExists(const std::string& portName) const
     {

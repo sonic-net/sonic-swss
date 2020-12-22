@@ -304,7 +304,7 @@ MuxCable::MuxCable(string name, IpPrefix& srv_ip4, IpPrefix& srv_ip6, IpAddress 
     mux_cb_orch_ = gDirectory.get<MuxCableOrch*>();
     mux_state_orch_ = gDirectory.get<MuxStateOrch*>();
 
-    nbr_handler_ = unique_ptr<MuxNbrHandler> (new MuxNbrHandler());
+    nbr_handler_ = std::make_unique<MuxNbrHandler> (MuxNbrHandler());
 
     state_machine_handlers_.insert(handler_pair(MUX_STATE_INIT_ACTIVE, &MuxCable::stateInitActive));
     state_machine_handlers_.insert(handler_pair(MUX_STATE_STANDBY_ACTIVE, &MuxCable::stateActive));
@@ -726,8 +726,10 @@ void MuxOrch::update(SubjectType type, void *cntx)
     }
 }
 
-MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch* decapOrch, NeighOrch* neighOrch)
-          : Orch2(db, tables, request_), decap_orch_(decapOrch), neigh_orch_(neighOrch)
+MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch* decapOrch, NeighOrch* neighOrch) :
+         Orch2(db, tables, request_),
+         decap_orch_(decapOrch),
+         neigh_orch_(neighOrch)
 {
     handler_map_.insert(handler_pair(CFG_MUX_CABLE_TABLE_NAME, &MuxOrch::handleMuxCfg));
     handler_map_.insert(handler_pair(CFG_PEER_SWITCH_TABLE_NAME, &MuxOrch::handlePeerSwitch));
@@ -759,8 +761,8 @@ bool MuxOrch::handleMuxCfg(const Request& request)
             return false;
         }
 
-        mux_cable_tb_[port_name] = std::unique_ptr<MuxCable>
-                                   (new MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_));
+        mux_cable_tb_[port_name] = std::make_unique<MuxCable>
+                                   (MuxCable(port_name, srv_ip, srv_ip6, mux_peer_switch_));
 
         SWSS_LOG_NOTICE("Mux entry for port '%s' was added", port_name.c_str());
     }
@@ -864,7 +866,8 @@ bool MuxOrch::delOperation(const Request& request)
     return true;
 }
 
-MuxCableOrch::MuxCableOrch(DBConnector *db, const std::string& tableName): Orch2(db, tableName, request_)
+MuxCableOrch::MuxCableOrch(DBConnector *db, const std::string& tableName):
+              Orch2(db, tableName, request_)
 {
     mux_table_ = unique_ptr<Table>(new Table(db, APP_HW_MUX_CABLE_TABLE_NAME));
 }
