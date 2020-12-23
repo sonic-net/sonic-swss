@@ -92,10 +92,6 @@ public:
     void update(SubjectType type, void *cntx);
     bool getPort(const MacAddress&, uint16_t, Port&);
 
-    bool flushFdbByPortVlan(const string &, const string &, bool flush_static);
-    bool flushFdbByVlan(const string &, bool flush_static);
-    bool flushFdbByPort(const string &, bool flush_static);
-    bool flushFdbAll(bool flush_static);
     bool removeFdbEntry(const FdbEntry& entry, FdbOrigin origin=FDB_ORIGIN_PROVISIONED);
 
     static const int fdborch_pri;

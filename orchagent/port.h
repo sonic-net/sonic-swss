@@ -88,7 +88,6 @@ public:
     VlanInfo            m_vlan_info;
     MacAddress          m_mac;
     sai_object_id_t     m_bridge_port_id = 0;   // TODO: port could have multiple bridge port IDs
-    sai_object_id_t     m_bridge_port_admin_state = 0;   // TODO: port could have multiple bridge port IDs
     sai_vlan_id_t       m_port_vlan_id = DEFAULT_PORT_VLAN_ID;  // Port VLAN ID
     sai_object_id_t     m_rif_id = 0;
     sai_object_id_t     m_vr_id = 0;
