@@ -17,7 +17,7 @@ class MACsecMgr : public Orch
 {
 public:
     using Orch::doTask;
-    MACsecMgr(DBConnector *cfgDb, DBConnector *appDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
+    MACsecMgr(DBConnector *cfgDb, DBConnector *stateDb, const std::vector<std::string> &tableNames);
     ~MACsecMgr();
 private:
     void doTask(Consumer &consumer);

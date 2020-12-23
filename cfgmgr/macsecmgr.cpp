@@ -220,7 +220,6 @@ static void wpa_cli_exec_and_check(
 
 MACsecMgr::MACsecMgr(
     DBConnector *cfgDb,
-    DBConnector *appDb,
     DBConnector *stateDb,
     const vector<std::string> &tables) :
         Orch(cfgDb, tables),

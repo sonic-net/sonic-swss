@@ -51,7 +51,6 @@ int main(int argc, char **argv)
         SWSS_LOG_NOTICE("--- Starting macsecmgrd ---");
 
         swss::DBConnector cfgDb("CONFIG_DB", 0);
-        swss::DBConnector appDb("APPL_DB", 0);
         swss::DBConnector stateDb("STATE_DB", 0);
 
         std::vector<std::string> cfg_macsec_tables = {
@@ -59,7 +58,7 @@ int main(int argc, char **argv)
             CFG_PORT_TABLE_NAME,
         };
 
-        MACsecMgr macsecmgr(&cfgDb, &appDb, &stateDb, cfg_macsec_tables);
+        MACsecMgr macsecmgr(&cfgDb, &stateDb, cfg_macsec_tables);
 
         std::vector<Orch *> cfgOrchList = {&macsecmgr};
 
