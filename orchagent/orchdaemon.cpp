@@ -238,6 +238,19 @@ bool OrchDaemon::init()
 
     gNatOrch = new NatOrch(m_applDb, m_stateDb, nat_tables, gRouteOrch, gNeighOrch);
 
+    vector<string> mux_tables = {
+        CFG_MUX_CABLE_TABLE_NAME,
+        CFG_PEER_SWITCH_TABLE_NAME
+    };
+    MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, tunnel_decap_orch, gNeighOrch);
+    gDirectory.set(mux_orch);
+
+    MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, APP_MUX_CABLE_TABLE_NAME);
+    gDirectory.set(mux_cb_orch);
+
+    MuxStateOrch *mux_st_orch = new MuxStateOrch(m_stateDb, STATE_HW_MUX_CABLE_TABLE_NAME);
+    gDirectory.set(mux_st_orch);
+
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
@@ -295,6 +308,9 @@ bool OrchDaemon::init()
     m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(gNatOrch);
     m_orchList.push_back(gFgNhgOrch);
+    m_orchList.push_back(mux_orch);
+    m_orchList.push_back(mux_cb_orch);
+    m_orchList.push_back(mux_st_orch);
 
     m_select = new Select();
 

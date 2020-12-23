@@ -229,7 +229,7 @@ string BufferMgrDynamic::parseObjectNameFromKey(const string &key, size_t pos = 
     auto keys = tokenize(key, delimiter);
     if (pos >= keys.size())
     {
-        SWSS_LOG_ERROR("Failed to fetch %lu-th sector of key %s", pos, key.c_str());
+        SWSS_LOG_ERROR("Failed to fetch %zu-th sector of key %s", pos, key.c_str());
         return string();
     }
     return keys[pos];

@@ -8,12 +8,17 @@ from dvslib.dvs_common import wait_for_result
 from swsscommon import swsscommon
 
 IF_TB = 'INTERFACE'
+VLAN_TB = 'VLAN'
+VLAN_MEMB_TB = 'VLAN_MEMBER'
+VLAN_IF_TB = 'VLAN_INTERFACE'
+VLAN_IF = 'VLAN_INTERFACE'
 FG_NHG = 'FG_NHG'
 FG_NHG_PREFIX = 'FG_NHG_PREFIX'
 FG_NHG_MEMBER = 'FG_NHG_MEMBER'
 ROUTE_TB = "ROUTE_TABLE"
 ASIC_ROUTE_TB = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
 ASIC_NHG_MEMB = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
+ASIC_NH_TB = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
 
 
 def create_entry(db, table, key, pairs):
@@ -25,26 +30,6 @@ def create_entry(db, table, key, pairs):
 def remove_entry(db, table, key):
     db.delete_entry(table, key)
     db.wait_for_deleted_entry(table,key)
-
-
-def asic_route_exists_and_is_nhg(asic_db, keys, ipprefix):
-    route_exists = False
-    key = ''
-    for k in keys:
-        rt_key = json.loads(k)
-
-        if rt_key['dest'] == ipprefix:
-            route_exists = True
-            key = k
-            break
-    assert route_exists
-
-    fvs = asic_db.get_entry(ASIC_ROUTE_TB, key)
-    if not fvs:
-        return None
-
-    nhgid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
-    return nhgid
 
 
 def get_asic_route_key(asic_db, ipprefix):
@@ -62,15 +47,40 @@ def get_asic_route_key(asic_db, ipprefix):
     return key
 
 
-def validate_asic_nhg(asic_db, nhgid, size):
-    fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhgid)
-    assert fvs != {}
-    nhg_type = fvs.get("SAI_NEXT_HOP_GROUP_ATTR_TYPE")
-    assert nhg_type == "SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP"
-    nhg_cfg_size = fvs.get("SAI_NEXT_HOP_GROUP_ATTR_CONFIGURED_SIZE")
-    assert int(nhg_cfg_size) == size
-    keys = asic_db.get_keys(ASIC_NHG_MEMB)
-    assert len(keys) == size
+def validate_asic_nhg_fine_grained_ecmp(asic_db, ipprefix, size):
+    def _access_function():
+        false_ret = (False, '')
+        keys = asic_db.get_keys(ASIC_ROUTE_TB)
+        key = ''
+        route_exists = False
+        for k in keys:
+            rt_key = json.loads(k)
+            if rt_key['dest'] == ipprefix:
+                route_exists = True
+                key = k
+        if not route_exists:
+            return false_ret
+
+        fvs = asic_db.get_entry(ASIC_ROUTE_TB, key)
+        if not fvs:
+            return false_ret
+
+        nhgid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
+        fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhgid)
+        if not fvs:
+            return false_ret
+
+        nhg_type = fvs.get("SAI_NEXT_HOP_GROUP_ATTR_TYPE")
+        if nhg_type != "SAI_NEXT_HOP_GROUP_TYPE_FINE_GRAIN_ECMP":
+            return false_ret
+        nhg_cfg_size = fvs.get("SAI_NEXT_HOP_GROUP_ATTR_CONFIGURED_SIZE")
+        if int(nhg_cfg_size) != size:
+            return false_ret
+        return (True, nhgid)
+
+    _, result = wait_for_result(_access_function,
+        failure_message="Fine Grained ECMP route not found")
+    return result
 
 
 def validate_asic_nhg_regular_ecmp(asic_db, ipprefix):
@@ -86,13 +96,16 @@ def validate_asic_nhg_regular_ecmp(asic_db, ipprefix):
                 key = k
         if not route_exists:
             return false_ret
+
         fvs = asic_db.get_entry(ASIC_ROUTE_TB, key)
         if not fvs:
             return false_ret
+
         nhgid = fvs.get("SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID")
         fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhgid)
         if not fvs:
             return false_ret
+
         nhg_type = fvs.get("SAI_NEXT_HOP_GROUP_ATTR_TYPE")
         if nhg_type != "SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP":
             return false_ret
@@ -103,7 +116,7 @@ def validate_asic_nhg_regular_ecmp(asic_db, ipprefix):
 
 def get_nh_oid_map(asic_db):
     nh_oid_map = {}
-    keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP")
+    keys = asic_db.get_keys(ASIC_NH_TB)
     for key in keys:
         fvs = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", key)
         assert fvs != {}
@@ -137,11 +150,17 @@ def verify_programmed_fg_asic_db_entry(asic_db,nh_memb_exp_count,nh_oid_map,nhgi
                     nh_oid = val
                 elif key == "SAI_NEXT_HOP_GROUP_MEMBER_ATTR_NEXT_HOP_GROUP_ID":
                     if nhgid != val:
+                        print("Expected nhgid of " + nhgid + " but found " + val)
                         return false_ret
             if (index == -1 or
                nh_oid == "0" or
                nh_oid_map.get(nh_oid,"NULL") == "NULL" or
                nh_oid_map.get(nh_oid) not in nh_memb_exp_count):
+                print("Invalid nh: nh_oid " + nh_oid + " index " + str(index))
+                if nh_oid_map.get(nh_oid,"NULL") == "NULL":
+                    print("nh_oid is null")
+                if nh_oid_map.get(nh_oid) not in nh_memb_exp_count:
+                    print("nh_memb_exp_count is " + str(nh_memb_exp_count) + " nh_oid_map val is " + nh_oid_map.get(nh_oid))
                 return false_ret
             memb_dict[index] = nh_oid_map.get(nh_oid)
         idxs = [0]*bucket_size
@@ -153,6 +172,9 @@ def verify_programmed_fg_asic_db_entry(asic_db,nh_memb_exp_count,nh_oid_map,nhgi
             ret = ret and (nh_memb_count[key] == nh_memb_exp_count[key])
         for idx in idxs:
             ret = ret and (idx == 1)
+        if ret != True:
+            print("Expected member count was " + str(nh_memb_exp_count) + " Received was " + str(nh_memb_count))
+            print("Indexes arr was " + str(idxs))
         return (ret, nh_memb_count)
 
     status, result = wait_for_result(_access_function)
@@ -236,26 +258,30 @@ class TestFineGrainedNextHopGroup(object):
 
         for i in range(0,NUM_NHs):
             if_name_key = "Ethernet" + str(i*4)
-            ip_pref_key = "Ethernet" + str(i*4) + "|10.0.0." + str(i*2) + "/31"
-            create_entry(config_db, IF_TB, if_name_key, fvs_nul)
-            create_entry(config_db, IF_TB, ip_pref_key, fvs_nul)
+            vlan_name_key = "Vlan" + str((i+1)*4)
+            ip_pref_key = vlan_name_key + "|10.0.0." + str(i*2) + "/31"
+            fvs = {"vlanid": str((i+1)*4)}
+            create_entry(config_db, VLAN_TB, vlan_name_key, fvs)
+            fvs = {"tagging_mode": "untagged"}
+            create_entry(config_db, VLAN_MEMB_TB, vlan_name_key + "|" + if_name_key, fvs)
+            create_entry(config_db, VLAN_IF_TB, vlan_name_key, fvs_nul)
+            create_entry(config_db, VLAN_IF_TB, ip_pref_key, fvs_nul)
             dvs.runcmd("config interface startup " + if_name_key)
             dvs.servers[i].runcmd("ip link set down dev eth0") == 0
             dvs.servers[i].runcmd("ip link set up dev eth0") == 0
             bank = 0
             if i >= NUM_NHs/2:
                 bank = 1
-            fvs = {"FG_NHG": fg_nhg_name, "bank": str(bank)}
+            fvs = {"FG_NHG": fg_nhg_name, "bank": str(bank), "link": if_name_key}
             create_entry(config_db, FG_NHG_MEMBER, "10.0.0." + str(1 + i*2), fvs)
-            ip_to_if_map["10.0.0." + str(1 + i*2)] = if_name_key
+            ip_to_if_map["10.0.0." + str(1 + i*2)] = vlan_name_key
+
         # Wait for the software to receive the entries
         time.sleep(1)
 
-        asic_routes_count = len(asic_db.get_keys(ASIC_ROUTE_TB))
         ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"),
-            ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
-
+            ("ifname", "Vlan16,Vlan20,Vlan24")])
         ps.set(fg_nhg_prefix, fvs)
         # No ASIC_DB entry we can wait for since ARP is not resolved yet,
         # We just use sleep so that the sw receives this entry
@@ -275,31 +301,31 @@ class TestFineGrainedNextHopGroup(object):
         # Since we didn't populate ARP yet, the route shouldn't be programmed
         assert (found_route == False)
 
+        asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
         dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
         dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
         dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03")
         dvs.runcmd("arp -s 10.0.0.9 00:00:00:00:00:05")
         dvs.runcmd("arp -s 10.0.0.11 00:00:00:00:00:06")
+        asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + 5)
 
-        keys = asic_db.wait_for_n_keys(ASIC_ROUTE_TB, asic_routes_count + 1)
-        nhgid = asic_route_exists_and_is_nhg(asic_db, keys, fg_nhg_prefix)
-        assert nhgid is not None
-
-        validate_asic_nhg(asic_db, nhgid, bucket_size)
+        asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket_size)
+        nhgid = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size)
 
         nh_oid_map = get_nh_oid_map(asic_db)
 
-        ### Test scenarios with bank 0 having 0 members up
+        ### Test scenarios with bank 0 having 0 members up and only bank 1 having members
         # ARP is not resolved for 10.0.0.7, so fg nhg should be created without 10.0.0.7
         nh_memb_exp_count = {"10.0.0.9":30,"10.0.0.11":30}
         validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                                 nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
 
         # Resolve ARP for 10.0.0.7
-        asic_nh_count = len(asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"))
+        asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
         dvs.runcmd("arp -s 10.0.0.7 00:00:00:00:00:04")
-        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP", asic_nh_count + 1)
+        asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + 1)
         nh_oid_map = get_nh_oid_map(asic_db)
+
         # Now that ARP was resolved, 10.0.0.7 should be added as a valid fg nhg member
         nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
         validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
@@ -307,6 +333,11 @@ class TestFineGrainedNextHopGroup(object):
 
         # Bring down 1 next hop in bank 1
         nh_memb_exp_count = {"10.0.0.7":30,"10.0.0.11":30}
+        program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
+                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+
+        # Bring down 2 next hop and bring up 1 next hop in bank 1
+        nh_memb_exp_count = {"10.0.0.9":60}
         program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
                             fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
 
@@ -367,6 +398,7 @@ class TestFineGrainedNextHopGroup(object):
 
         # bring all links down one by one
         shutdown_link(dvs, app_db, 0)
+        shutdown_link(dvs, app_db, 1)
         nh_memb_exp_count = {"10.0.0.5":30,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
         validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                                 nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
@@ -394,7 +426,19 @@ class TestFineGrainedNextHopGroup(object):
         # bring all links up one by one
         startup_link(dvs, app_db, 3)
         startup_link(dvs, app_db, 4)
+        nh_memb_exp_count = {"10.0.0.7":30,"10.0.0.9":30}
+        validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                                nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+
         startup_link(dvs, app_db, 5)
+        # Perform a route table update, Update the route to contain 10.0.0.3 as well, since Ethernet4 associated with it
+        # is link down, it should make no difference
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.3,10.0.0.5,10.0.0.7,10.0.0.9,10.0.0.11"),
+            ("ifname","Vlan4,Vlan8,Vlan12,Vlan16,Vlan20,Vlan24")])
+        ps.set(fg_nhg_prefix, fvs)
+
+        # 10.0.0.11 associated with newly brought up link 5 should be updated in FG ecmp
+        # 10.0.0.3 addition per above route table change should have no effect
         nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
         validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                                 nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
@@ -438,15 +482,10 @@ class TestFineGrainedNextHopGroup(object):
 
         # Add an ECMP route, since we deleted the FG_NHG_PREFIX it should see
         # standard(non-Fine grained) ECMP behavior
-        asic_routes_count = len(asic_db.get_keys(ASIC_ROUTE_TB))
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"),
-            ("ifname", "Ethernet12,Ethernet16,Ethernet20")])
+            ("ifname", "Vlan16,Vlan20,Vlan24")])
         ps.set(fg_nhg_prefix, fvs)
-
-        keys = asic_db.wait_for_n_keys(ASIC_ROUTE_TB, asic_routes_count + 1)
-        nhgid = asic_route_exists_and_is_nhg(asic_db, keys, fg_nhg_prefix)
-        assert nhgid is not None
-
+        validate_asic_nhg_regular_ecmp(asic_db, fg_nhg_prefix)
         asic_db.wait_for_n_keys(ASIC_NHG_MEMB, 3)
 
         # add fgnhg prefix: The regular route should transition to fine grained ECMP
@@ -455,9 +494,7 @@ class TestFineGrainedNextHopGroup(object):
 
         # Validate the transistion to Fine Grained ECMP
         asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket_size)
-        keys = asic_db.wait_for_n_keys(ASIC_ROUTE_TB, asic_routes_count + 1)
-        nhgid = asic_route_exists_and_is_nhg(asic_db, keys, fg_nhg_prefix)
-        validate_asic_nhg(asic_db, nhgid, bucket_size)
+        nhgid = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size)
 
         nh_oid_map = {}
         nh_oid_map = get_nh_oid_map(asic_db)
@@ -485,9 +522,12 @@ class TestFineGrainedNextHopGroup(object):
 
         for i in range(0,NUM_NHs):
             if_name_key = "Ethernet" + str(i*4)
-            ip_pref_key = "Ethernet" + str(i*4) + "|10.0.0." + str(i*2) + "/31"
-            remove_entry(config_db, IF_TB, if_name_key)
-            remove_entry(config_db, IF_TB, ip_pref_key)
+            vlan_name_key = "Vlan" + str((i+1)*4)
+            ip_pref_key = vlan_name_key + "|10.0.0." + str(i*2) + "/31"
+            remove_entry(config_db, VLAN_IF_TB, ip_pref_key)
+            remove_entry(config_db, VLAN_IF_TB, vlan_name_key)
+            remove_entry(config_db, VLAN_MEMB_TB, vlan_name_key + "|" + if_name_key)
+            remove_entry(config_db, VLAN_TB, vlan_name_key)
             dvs.runcmd("config interface shutdown " + if_name_key)
             dvs.servers[i].runcmd("ip link set down dev eth0") == 0
             remove_entry(config_db, "FG_NHG_MEMBER", "10.0.0." + str(1 + i*2))
@@ -495,7 +535,7 @@ class TestFineGrainedNextHopGroup(object):
 
         ### Create new set of entries with a greater number of FG members and
         ### bigger bucket size such that the # of nhs are not divisible by
-        ### bucket size.
+        ### bucket size. Different physical interface type for dynamicitiy.
         fg_nhg_name = "new_fgnhg_v4"
         fg_nhg_prefix = "3.3.3.0/24"
         # Test with non-divisible bucket size
@@ -512,6 +552,7 @@ class TestFineGrainedNextHopGroup(object):
         fvs = {"FG_NHG": fg_nhg_name}
         create_entry(config_db, FG_NHG_PREFIX, fg_nhg_prefix, fvs)
 
+        asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
         for i in range(0,NUM_NHs):
             if_name_key = "Ethernet" + str(i*4)
             ip_pref_key = "Ethernet" + str(i*4) + "|10.0.0." + str(i*2) + "/31"
@@ -528,18 +569,16 @@ class TestFineGrainedNextHopGroup(object):
             ip_to_if_map["10.0.0." + str(1 + i*2)] = if_name_key
             dvs.runcmd("arp -s 10.0.0." + str(1 + i*2) + " 00:00:00:00:00:" + str(1 + i*2))
 
+        asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + NUM_NHs)
+
         # Program the route
-        asic_routes_count = len(asic_db.get_keys(ASIC_ROUTE_TB))
         fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.1,10.0.0.11"),
             ("ifname", "Ethernet0,Ethernet20")])
         ps.set(fg_nhg_prefix, fvs)
 
         # Validate that the correct ASIC DB elements were setup per Fine Grained ECMP
-        keys = asic_db.wait_for_n_keys(ASIC_ROUTE_TB, asic_routes_count + 1)
-        nhgid = asic_route_exists_and_is_nhg(asic_db, keys, fg_nhg_prefix)
-        assert nhgid is not None
-
-        validate_asic_nhg(asic_db, nhgid, bucket_size)
+        asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket_size)
+        nhgid = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size)
 
         nh_oid_map = get_nh_oid_map(asic_db)
 

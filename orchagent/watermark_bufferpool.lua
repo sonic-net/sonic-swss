@@ -14,7 +14,9 @@ local periodic_table_name = 'PERIODIC_WATERMARKS'
 local sai_buffer_pool_watermark_stat_name = 'SAI_BUFFER_POOL_STAT_WATERMARK_BYTES'
 local sai_hdrm_pool_watermark_stat_name = 'SAI_BUFFER_POOL_STAT_XOFF_ROOM_WATERMARK_BYTES'
 
-local rets = redis.call('SELECT', counters_db)
+local rets = {}
+
+redis.call('SELECT', counters_db)
 
 -- Iterate through each buffer pool oid
 local n = table.getn(KEYS)

@@ -23,8 +23,14 @@ struct NextHopEntry
     uint32_t            nh_flags;       // flags
 };
 
+struct NeighborData
+{
+    MacAddress    mac;
+    bool          hw_configured = false; // False means, entry is not written to HW
+};
+
 /* NeighborTable: NeighborEntry, neighbor MAC address */
-typedef map<NeighborEntry, MacAddress> NeighborTable;
+typedef map<NeighborEntry, NeighborData> NeighborTable;
 /* NextHopTable: NextHopKey, NextHopEntry */
 typedef map<NextHopKey, NextHopEntry> NextHopTable;
 
@@ -52,6 +58,10 @@ public:
     bool getNeighborEntry(const NextHopKey&, NeighborEntry&, MacAddress&);
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
 
+    bool enableNeighbor(const NeighborEntry&);
+    bool disableNeighbor(const NeighborEntry&);
+    bool isHwConfigured(const NeighborEntry&);
+
     sai_object_id_t addTunnelNextHop(const NextHopKey&);
     bool removeTunnelNextHop(const NextHopKey&);
 
@@ -73,7 +83,7 @@ private:
     bool removeNextHop(const IpAddress&, const string&);
 
     bool addNeighbor(const NeighborEntry&, const MacAddress&);
-    bool removeNeighbor(const NeighborEntry&);
+    bool removeNeighbor(const NeighborEntry&, bool disable = false);
 
     bool setNextHopFlag(const NextHopKey &, const uint32_t);
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);

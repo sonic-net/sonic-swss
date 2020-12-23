@@ -1762,7 +1762,7 @@ bool RouteOrch::createRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextH
     {
         ip_refcnt = vtep_ptr->getDipTunnelIPRefCnt(nextHop.ip_address.to_string());
     }
-    SWSS_LOG_INFO("Routeorch Add Remote VTEP %s, VNI %d, VR_ID %lx, IP ref_cnt %d",
+    SWSS_LOG_INFO("Routeorch Add Remote VTEP %s, VNI %d, VR_ID %" PRIx64 ", IP ref_cnt %d",
             nextHop.ip_address.to_string().c_str(), nextHop.vni, vrf_id, ip_refcnt);
     return status;
 }
@@ -1783,7 +1783,7 @@ bool RouteOrch::deleteRemoteVtep(sai_object_id_t vrf_id, const NextHopKey &nextH
         ip_refcnt = vtep_ptr->getDipTunnelIPRefCnt(nextHop.ip_address.to_string());
     }
 
-    SWSS_LOG_INFO("Routeorch Del Remote VTEP %s, VNI %d, VR_ID %lx, IP ref_cnt %d",
+    SWSS_LOG_INFO("Routeorch Del Remote VTEP %s, VNI %d, VR_ID %" PRIx64 ", IP ref_cnt %d",
             nextHop.ip_address.to_string().c_str(), nextHop.vni, vrf_id, ip_refcnt);
     return status;
 }

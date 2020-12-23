@@ -1014,6 +1014,16 @@ bool AclRulePfcwd::validateAddMatch(string attr_name, string attr_value)
     return AclRule::validateAddMatch(attr_name, attr_value);
 }
 
+AclRuleMux::AclRuleMux(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
+        AclRuleL3(aclOrch, rule, table, type, createCounter)
+{
+}
+
+bool AclRuleMux::validateAddMatch(string attr_name, string attr_value)
+{
+    return AclRule::validateAddMatch(attr_name, attr_value);
+}
+
 AclRuleL3V6::AclRuleL3V6(AclOrch *aclOrch, string rule, string table, acl_table_type_t type) :
         AclRuleL3(aclOrch, rule, table, type)
 {
