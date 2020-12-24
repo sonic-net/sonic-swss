@@ -707,21 +707,24 @@ class TestCrm(object):
         # get counters
         used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_used')
         avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_available')
-        assert avail_counter !=0
+        assert used_counter == 0
+        assert avail_counter != 0
 
     def test_CrmDnatEntry(self, dvs, testlog):
 
         # get counters
         used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_used')
         avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_available')
-        assert avail_counter !=0
+        assert used_counter == 0
+        assert avail_counter != 0
 
     def test_CrmIpmcEntry(self, dvs, testlog):
 
         # get counters
         used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_used')
         avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_available')
-        assert avail_counter !=0
+        assert used_counter == 0
+        assert avail_counter != 0
 
     def test_Configure(self, dvs, testlog):
 
@@ -965,11 +968,11 @@ class TestCrm(object):
         dvs.runcmd("crm config thresholds ipmc type percentage")
 
         time.sleep(2)
-        threshold_low = getCrmConfigValue(dvs, 'Config', 'snat_entry_low_threshold')
+        threshold_low = getCrmConfigValue(dvs, 'Config', 'ipmc_entry_low_threshold')
         assert threshold_low == 50
-        threshold_high = getCrmConfigValue(dvs, 'Config', 'snat_entry_high_threshold')
+        threshold_high = getCrmConfigValue(dvs, 'Config', 'ipmc_entry_high_threshold')
         assert threshold_high == 90
-        threshold_type = getCrmConfigStr(dvs, 'Config', 'snat_entry_threshold_type')
+        threshold_type = getCrmConfigStr(dvs, 'Config', 'ipmc_entry_threshold_type')
         assert threshold_type == 'percentage'
 '''
 
