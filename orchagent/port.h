@@ -26,7 +26,6 @@ namespace swss {
 
 struct VlanMemberEntry
 {
-    std::string                alias;
     sai_object_id_t            vlan_member_id;
     sai_vlan_tagging_mode_t    vlan_mode;
 };
@@ -110,7 +109,7 @@ public:
     uint32_t  m_nat_zone_id = 0;
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;
-    uint32_t m_up_member_count = 0;
+    uint32_t  m_up_member_count = 0;
 
     /*
      * Following two bit vectors are used to lock

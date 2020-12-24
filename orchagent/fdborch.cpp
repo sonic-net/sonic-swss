@@ -199,6 +199,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
         }
 
         update.add = true;
+        update.entry.port_name = update.port.m_alias;
         update.type = "dynamic";
 
         storeFdbEntryState(update);
@@ -226,11 +227,11 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
         if (existing_entry->second.bridge_port_id != bridge_port_id)
         {
-            SWSS_LOG_NOTICE("FdbOrch AGE notification: Stale aging event received for mac-bv_id %s-0x%lx with bp=0x%lx existing bp=0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id, existing_entry->second.bridge_port_id);
+            SWSS_LOG_INFO("FdbOrch AGE notification: Stale aging event received for mac-bv_id %s-0x%lx with bp=0x%lx existing bp=0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id, existing_entry->second.bridge_port_id);
             // We need to get the port for bridge-port in existing fdb
             if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, update.port))
             {
-                SWSS_LOG_NOTICE("FdbOrch AGE notification: Failed to get port by bridge port ID 0x%lx", existing_entry->second.bridge_port_id);
+                SWSS_LOG_INFO("FdbOrch AGE notification: Failed to get port by bridge port ID 0x%lx", existing_entry->second.bridge_port_id);
             }
             // dont return, let it delete just to bring SONiC and SAI in sync
             // return;
@@ -832,11 +833,24 @@ void FdbOrch::updateVlanMember(const VlanMemberUpdate& update)
     string port_name = update.member.m_alias;
     auto fdb_list = std::move(saved_fdb_entries[port_name]);
     saved_fdb_entries[port_name].clear();
-    for (const auto& fdb: fdb_list)
+    if(!fdb_list.empty())
     {
-        // try to insert an FDB entry. If the FDB entry is not ready to be inserted yet,
-        // it would be added back to the saved_fdb_entries structure by addFDBEntry()
-        (void)addFdbEntry(fdb.entry, port_name, fdb.fdbData);
+        for (const auto& fdb: fdb_list)
+        {
+            // try to insert an FDB entry. If the FDB entry is not ready to be inserted yet,
+            // it would be added back to the saved_fdb_entries structure by addFDBEntry()
+            if(fdb.vlanId == update.vlan.m_vlan_info.vlan_id)
+            {
+                FdbEntry entry;
+                entry.mac = fdb.mac;
+                entry.bv_id = update.vlan.m_vlan_info.vlan_oid;
+                (void)addFdbEntry(entry, port_name, fdb.fdbData);
+            }
+            else
+            {
+                saved_fdb_entries[port_name].push_back(fdb);
+            }
+        }
     }
 }
 
@@ -847,7 +861,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     Port port;
 
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("mac=%s bv_id=0x%lx port_name=%s type=%s origin=%d",
+    SWSS_LOG_INFO("mac=%s bv_id=0x%lx port_name=%s type=%s origin=%d",
             entry.mac.to_string().c_str(), entry.bv_id, port_name.c_str(),
             fdbData.type.c_str(), fdbData.origin);
 
@@ -886,7 +900,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     FdbOrigin oldOrigin = FDB_ORIGIN_INVALID ;
     bool macUpdate = false;
     auto it = m_entries.find(entry);
-    if(it != m_entries.end())
+    if (it != m_entries.end())
     {
         /* get existing port and type */
         oldType = it->second.type;
@@ -898,18 +912,18 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             return false;
         }
 
-        if((oldOrigin == fdbData.origin) && (oldType == fdbData.type) && (port.m_bridge_port_id == it->second.bridge_port_id))
+        if ((oldOrigin == fdbData.origin) && (oldType == fdbData.type) && (port.m_bridge_port_id == it->second.bridge_port_id))
         {
             /* Duplicate Mac */
-            SWSS_LOG_NOTICE("FdbOrch: mac=%s %s port=%s type=%s origin=%d is duplicate", entry.mac.to_string().c_str(),
+            SWSS_LOG_INFO("FdbOrch: mac=%s %s port=%s type=%s origin=%d is duplicate", entry.mac.to_string().c_str(),
                     vlan.m_alias.c_str(), port_name.c_str(),
                     fdbData.type.c_str(), fdbData.origin);
             return true;
         }
-        else if(fdbData.origin != oldOrigin)
+        else if (fdbData.origin != oldOrigin)
         {
             /* Mac origin has changed */
-            if((oldType == "static") && (oldOrigin == FDB_ORIGIN_PROVISIONED))
+            if ((oldType == "static") && (oldOrigin == FDB_ORIGIN_PROVISIONED))
             {
                 /* old mac was static and provisioned, it can not be changed by Remote Mac */
                 SWSS_LOG_NOTICE("Already existing static MAC:%s in Vlan:%d. "
@@ -920,20 +934,20 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
                 return true;
             }
-            else if((oldType == "static") && (oldOrigin ==
+            else if ((oldType == "static") && (oldOrigin ==
                         FDB_ORIGIN_VXLAN_ADVERTIZED) && (fdbData.type == "dynamic"))
             {
                 /* old mac was static and received from remote, it can not be changed by dynamic locally provisioned Mac */
-                SWSS_LOG_NOTICE("Already existing static MAC:%s in Vlan:%d "
+                SWSS_LOG_INFO("Already existing static MAC:%s in Vlan:%d "
                         "from Peer:%s. Now same is provisioned as dynamic; "
                         "Provisioned dynamic mac is ignored",
                         entry.mac.to_string().c_str(), vlan.m_vlan_info.vlan_id,
                         it->second.remote_ip.c_str());
                 return true;
             }
-            else if(oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)
+            else if (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)
             {
-                if((oldType == "static") && (fdbData.type == "static"))
+                if ((oldType == "static") && (fdbData.type == "static"))
                 {
                     SWSS_LOG_WARN("You have just overwritten existing static MAC:%s "
                             "in Vlan:%d from Peer:%s, "
@@ -982,11 +996,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     attr.value.oid = port.m_bridge_port_id;
     attrs.push_back(attr);
 
-    if(fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
+    if (fdbData.origin == FDB_ORIGIN_VXLAN_ADVERTIZED)
     {
         IpAddress remote = IpAddress(fdbData.remote_ip);
         sai_ip_address_t ipaddr;
-        if(remote.isV4())
+        if (remote.isV4())
         {
             ipaddr.addr_family = SAI_IP_ADDR_FAMILY_IPV4;
             ipaddr.addr.ip4 = remote.getV4Addr();
@@ -1000,7 +1014,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         attr.value.ipaddr = ipaddr;
         attrs.push_back(attr);
     }
-    else if(macUpdate 
+    else if (macUpdate 
             && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED) 
             && (fdbData.origin != oldOrigin))
     {
@@ -1015,9 +1029,9 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         attrs.push_back(attr);
     }
 
-    if(macUpdate && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)) 
+    if (macUpdate && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)) 
     {
-        if((fdbData.origin != oldOrigin)
+        if ((fdbData.origin != oldOrigin)
            || ((oldType == "dynamic") && (oldType != fdbData.type)))
         {
             attr.id = SAI_FDB_ENTRY_ATTR_ALLOW_MAC_MOVE;
@@ -1027,13 +1041,13 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     }
 
     
-    if(macUpdate)
+    if (macUpdate)
     {
-        SWSS_LOG_NOTICE("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
+        SWSS_LOG_INFO("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
                 entry.mac.to_string().c_str(), vlan.m_alias.c_str(), oldPort.m_alias.c_str(),
                 port_name.c_str(), oldType.c_str(), fdbData.type.c_str(),
                 oldOrigin, fdbData.origin);
-        for(auto itr : attrs)
+        for (auto itr : attrs)
         {
             status = sai_fdb_api->set_fdb_entry_attribute(&fdb_entry, &itr);
             if (status != SAI_STATUS_SUCCESS)
@@ -1046,7 +1060,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     }
     else
     {
-        SWSS_LOG_NOTICE("MAC-Create %s FDB %s in %s on %s", fdbData.type.c_str(), entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
+        SWSS_LOG_INFO("MAC-Create %s FDB %s in %s on %s", fdbData.type.c_str(), entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str());
 
         status = sai_fdb_api->create_fdb_entry(&fdb_entry, (uint32_t)attrs.size(), attrs.data());
         if (status != SAI_STATUS_SUCCESS)
@@ -1086,7 +1100,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         m_fdbStateTable.del(key);
     }
 
-    if(!macUpdate)
+    if (!macUpdate)
     {
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_FDB_ENTRY);
     }
@@ -1109,7 +1123,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
 
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_NOTICE("FdbOrch RemoveFDBEntry: mac=%s bv_id=0x%lx origin %d", entry.mac.to_string().c_str(), entry.bv_id, origin);
+    SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: mac=%s bv_id=0x%lx origin %d", entry.mac.to_string().c_str(), entry.bv_id, origin);
 
     if (!m_portsOrch->getPort(entry.bv_id, vlan))
     {
@@ -1118,7 +1132,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     }
 
     auto it= m_entries.find(entry);
-    if(it == m_entries.end())
+    if (it == m_entries.end())
     {
         SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: FDB entry isn't found. mac=%s bv_id=0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
 
@@ -1134,7 +1148,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
         return false;
     }
 
-    if(fdbData.origin != origin)
+    if (fdbData.origin != origin)
     {
         /* When mac is moved from remote to local
          * BGP will delete the mac from vxlan_fdb_table
@@ -1207,14 +1221,14 @@ void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
 
     for (auto& itr: saved_fdb_entries)
     {
-        if(portName.empty() || (portName == itr.first))
+        if (portName.empty() || (portName == itr.first))
         {
             auto iter = saved_fdb_entries[itr.first].begin();
             while(iter != saved_fdb_entries[itr.first].end())
             {
                 if (*iter == entry)
                 {
-                    if(iter->fdbData.origin == origin)
+                    if (iter->fdbData.origin == origin)
                     {
                         SWSS_LOG_NOTICE("FDB entry found in saved fdb. deleting..."
                                 "mac=%s vlan_id=0x%x origin:%d port:%s", 
@@ -1237,7 +1251,7 @@ void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
                 iter++;
             }
         }
-        if(found)
+        if (found)
             break;
     }
 }
@@ -1247,7 +1261,7 @@ void FdbOrch::notifyTunnelOrch(Port& port)
 {
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-    if(port.m_type != Port::TUNNEL)
+    if (port.m_type != Port::TUNNEL)
       return;
 
     tunnel_orch->deleteTunnelPort(port);

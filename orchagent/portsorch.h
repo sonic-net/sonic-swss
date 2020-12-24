@@ -92,7 +92,6 @@ public:
     void decreasePortRefCount(const string &alias);
     bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);
     void setPort(string alias, Port port);
-    void erasePort(string alias);
     void getCpuPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
 
@@ -172,7 +171,7 @@ private:
     Port m_cpuPort;
     // TODO: Add Bridge/Vlan class
     sai_object_id_t m_default1QBridge;
-    sai_vlan_id_t   m_defaultVlan;
+    sai_object_id_t   m_defaultVlan;
 
     typedef enum
     {
