@@ -102,10 +102,10 @@ public:
     void update(SubjectType type, void *cntx);
     bool isRouteFineGrainedECMP(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
     bool containsRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix);
-    bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool removeRoute(sai_object_id_t, const IpPrefix&);
     bool validNextHopInNextHopGroup(const NextHopKey&);
     bool invalidNextHopInNextHopGroup(const NextHopKey&);
+    bool addModifyFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops, sai_object_id_t &next_hop_id, bool &prevNhgWasFineGrained);
+    bool removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix);
 
     // warm reboot support
     bool bake() override;
@@ -117,7 +117,7 @@ private:
 
     FgNhgs m_FgNhgs;
     FGRouteTables m_syncdFGRouteTables;
-    FgNhgMembers m_fgNhgMembers;
+    FgNhgMembers m_fgNhgNexthops;
     FgNhgPrefixes m_fgNhgPrefixes;
     bool isFineGrainedConfigured;
 
@@ -153,8 +153,6 @@ private:
     bool createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     const NextHopGroupKey &nextHops);
     bool removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_route_entry);
-    bool createFineGrainedRouteEntry(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
 
     vector<FieldValueTuple> generateRouteTableFromNhgKey(NextHopGroupKey nhg);
     void cleanupIpInLinkToIpMap(const string &link, const IpAddress &ip, FgNhgEntry &fgNhg_entry);
