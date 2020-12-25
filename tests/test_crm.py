@@ -718,13 +718,14 @@ class TestCrm(object):
         assert used_counter == 0
         assert avail_counter != 0
 
-    def test_CrmIpmcEntry(self, dvs, testlog):
-
-        # get counters
-        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_used')
-        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_available')
-        assert used_counter == 0
-        assert avail_counter != 0
+#    commented ipmc test case till vslib is updated
+#    def test_CrmIpmcEntry(self, dvs, testlog):
+#
+#        # get counters
+#        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_used')
+#        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_available')
+#        assert used_counter == 0
+#        assert avail_counter != 0
 
     def test_Configure(self, dvs, testlog):
 
@@ -929,7 +930,7 @@ class TestCrm(object):
         threshold_type = getCrmConfigStr(dvs, 'Config', 'fdb_entry_threshold_type')
         assert threshold_type == 'percentage'
 
-''' commented snat, dnat and ipmc CLI tests till Azure/sonic-utilities/pull/1258 becomes available
+""" commented snat, dnat and ipmc CLI tests till Azure/sonic-utilities/pull/1258 becomes available
     def test_Configure_snat(self, dvs, testlog):
 
         #thresholds snat low/high threshold/type
@@ -974,7 +975,7 @@ class TestCrm(object):
         assert threshold_high == 90
         threshold_type = getCrmConfigStr(dvs, 'Config', 'ipmc_entry_threshold_type')
         assert threshold_type == 'percentage'
-'''
+"""
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
