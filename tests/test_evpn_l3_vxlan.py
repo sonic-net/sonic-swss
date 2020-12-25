@@ -316,7 +316,6 @@ def create_vxlan_vrf_tunnel_map(dvs, vrfname, vni_id):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
-            ("fallback", "false"),
             ("vni", vni_id),
     ]
 
@@ -331,7 +330,6 @@ def remove_vxlan_vrf_tunnel_map(dvs, vrfname):
     conf_db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
 
     attrs = [
-            ("fallback", "false"),
             ("vni", "0"),
     ]
 
@@ -959,7 +957,6 @@ class VxlanTunnel(object):
         initial_entries = set(tbl.getKeys())
 
         attrs = [
-            ("fallback", "false"),
             ("vni", "0"),
         ]
         tbl = swsscommon.Table(conf_db, "VRF")
@@ -1046,7 +1043,7 @@ class TestL3Vxlan(object):
                 ("vni", "1000"),
         ]
         exp_attr = {}
-        for an in xrange(len(exp_attrs)):
+        for an in range(len(exp_attrs)):
             exp_attr[exp_attrs[an][0]] = exp_attrs[an][1]
 
         check_object(self.pdb, "VRF_TABLE", 'Vrf-RED', exp_attr)
@@ -1056,7 +1053,7 @@ class TestL3Vxlan(object):
                 ("vlan", "Vlan100"),
         ]
         exp_attr1 = {}
-        for an in xrange(len(exp_attrs1)):
+        for an in range(len(exp_attrs1)):
             exp_attr1[exp_attrs1[an][0]] = exp_attrs1[an][1]
 
         check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
@@ -1119,7 +1116,7 @@ class TestL3Vxlan(object):
                 ("vni", "1000"),
         ]
         exp_attr = {}
-        for an in xrange(len(exp_attrs)):
+        for an in range(len(exp_attrs)):
             exp_attr[exp_attrs[an][0]] = exp_attrs[an][1]
 
         check_object(self.pdb, "VRF_TABLE", 'Vrf-RED', exp_attr)
@@ -1129,7 +1126,7 @@ class TestL3Vxlan(object):
                 ("vlan", "Vlan100"),
         ]
         exp_attr1 = {}
-        for an in xrange(len(exp_attrs1)):
+        for an in range(len(exp_attrs1)):
             exp_attr1[exp_attrs1[an][0]] = exp_attrs1[an][1]
 
         check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
@@ -1216,7 +1213,7 @@ class TestL3Vxlan(object):
                 ("vni", "1000"),
         ]
         exp_attr = {}
-        for an in xrange(len(exp_attrs)):
+        for an in range(len(exp_attrs)):
             exp_attr[exp_attrs[an][0]] = exp_attrs[an][1]
 
         check_object(self.pdb, "VRF_TABLE", 'Vrf-RED', exp_attr)
@@ -1226,7 +1223,7 @@ class TestL3Vxlan(object):
                 ("vlan", "Vlan100"),
         ]
         exp_attr1 = {}
-        for an in xrange(len(exp_attrs1)):
+        for an in range(len(exp_attrs1)):
             exp_attr1[exp_attrs1[an][0]] = exp_attrs1[an][1]
 
         check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
@@ -1420,7 +1417,7 @@ class TestL3Vxlan(object):
                 ("vni", "1000"),
         ]
         exp_attr = {}
-        for an in xrange(len(exp_attrs)):
+        for an in range(len(exp_attrs)):
             exp_attr[exp_attrs[an][0]] = exp_attrs[an][1]
 
         print ("\tCheck VRF Table in APP DB")
@@ -1431,7 +1428,7 @@ class TestL3Vxlan(object):
                 ("vlan", "Vlan100"),
         ]
         exp_attr1 = {}
-        for an in xrange(len(exp_attrs1)):
+        for an in range(len(exp_attrs1)):
             exp_attr1[exp_attrs1[an][0]] = exp_attrs1[an][1]
 
         check_object(self.pdb, "VXLAN_VRF_TABLE", "%s:%s" % (tunnel_name, vrf_map_name), exp_attr1)
