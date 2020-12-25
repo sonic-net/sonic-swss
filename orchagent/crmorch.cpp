@@ -541,7 +541,16 @@ void CrmOrch::checkCrmThresholds()
 
             if (cnt.usedCounter != 0)
             {
-                percentageUtil = (uint32_t)((cnt.usedCounter * 100) / (uint64_t)(cnt.usedCounter + cnt.availableCounter));
+                uint32_t dvsr = cnt.usedCounter + cnt.availableCounter;
+                if (dvsr != 0)
+                {
+                    percentageUtil = (cnt.usedCounter * 100) / dvsr;
+                }
+                else
+                {
+                    SWSS_LOG_WARN("%s Exception occured (div by Zero): Used count %u free count %u",
+                                  res.name.c_str(), cnt.usedCounter, cnt.availableCounter);
+                }
             }
 
             switch (res.thresholdType)
