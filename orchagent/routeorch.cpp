@@ -557,7 +557,13 @@ void RouteOrch::doTask(Consumer& consumer)
 
                 for (auto alias : alsv)
                 {
-                    if (alias == "eth0" || alias == "lo" || alias == "docker0")
+                    /* skip route to management, docker, loopback
+                     * TODO: for route to loopback interface, the proper
+                     * way is to create loopback interface and then create
+                     * route pointing to it, so that we can traps packets to
+                     * CPU */
+                    if (alias == "eth0" || alias == "docker0" ||
+                        alias == "lo" || !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
                     {
                         excp_intfs_flag = true;
                         break;
@@ -1231,7 +1237,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             && vrf_id == gVirtualRouterId)
     {
         /* Only support the default vrf for Fine Grained ECMP */
-        SWSS_LOG_INFO("Reroute %s:%s to fgNhgOrch", ipPrefix.to_string().c_str(), 
+        SWSS_LOG_INFO("Reroute %s:%s to fgNhgOrch", ipPrefix.to_string().c_str(),
                 nextHops.to_string().c_str());
         return m_fgNhgOrch->addRoute(vrf_id, ipPrefix, nextHops);
     }

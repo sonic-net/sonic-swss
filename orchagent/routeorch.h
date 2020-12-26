@@ -21,6 +21,8 @@
 /* Length of the Interface Id value in EUI64 format */
 #define EUI64_INTF_ID_LEN 8
 
+#define LOOPBACK_PREFIX     "Loopback"
+
 typedef std::map<NextHopKey, sai_object_id_t> NextHopGroupMembers;
 
 struct NextHopGroupEntry
