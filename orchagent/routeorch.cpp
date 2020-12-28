@@ -1277,7 +1277,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         }
         else
         {
-            nexthop =  NextHopKey(nextHops.to_string())
+            nexthop =  NextHopKey(nextHops.to_string());
         }
 
         if (nexthop.ip_address.isZero())
