@@ -201,6 +201,10 @@ void FdbOrch::update(sai_fdb_event_t        type,
         update.add = true;
         update.entry.port_name = update.port.m_alias;
         update.type = "dynamic";
+        update.port.m_fdb_count++;
+        m_portsOrch->setPort(update.port.m_alias, update.port);
+        vlan.m_fdb_count++;
+        m_portsOrch->setPort(vlan.m_alias, vlan);
 
         storeFdbEntryState(update);
         notify(SUBJECT_TYPE_FDB_CHANGE, &update);
@@ -279,7 +283,16 @@ void FdbOrch::update(sai_fdb_event_t        type,
         }
 
         update.add = false;
-
+        if (!update.port.m_alias.empty())
+        { 
+            update.port.m_fdb_count--;
+            m_portsOrch->setPort(update.port.m_alias, update.port);
+        }
+        if (!vlan.m_alias.empty())
+        {
+            vlan.m_fdb_count--;
+            m_portsOrch->setPort(vlan.m_alias, vlan);
+        }
         storeFdbEntryState(update);
 
         notify(SUBJECT_TYPE_FDB_CHANGE, &update);
@@ -313,7 +326,13 @@ void FdbOrch::update(sai_fdb_event_t        type,
         }
 
         update.add = true;
-
+        if (!port_old.m_alias.empty())
+        {
+            port_old.m_fdb_count--;
+            m_portsOrch->setPort(port_old.m_alias, port_old);
+        }
+        update.port.m_fdb_count++;
+        m_portsOrch->setPort(update.port.m_alias, update.port);
         storeFdbEntryState(update);
 
         notify(SUBJECT_TYPE_FDB_CHANGE, &update);
@@ -1057,6 +1076,13 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                 return false;
             }
         }
+        if (oldPort.m_bridge_port_id != port.m_bridge_port_id)
+        {
+            oldPort.m_fdb_count--;
+            m_portsOrch->setPort(oldPort.m_alias, oldPort);
+            port.m_fdb_count++;
+            m_portsOrch->setPort(port.m_alias, port);
+        }
     }
     else
     {
@@ -1070,6 +1096,10 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
                     vlan.m_alias.c_str(), port_name.c_str(), status);
             return false; //FIXME: it should be based on status. Some could be retried, some not
         }
+        port.m_fdb_count++;
+        m_portsOrch->setPort(port.m_alias, port);
+        vlan.m_fdb_count++;
+        m_portsOrch->setPort(vlan.m_alias, vlan);
     }
 
     FdbData storeFdbData = fdbData;
@@ -1185,6 +1215,10 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     SWSS_LOG_NOTICE("Removed mac=%s bv_id=0x%lx port:%s",
             entry.mac.to_string().c_str(), entry.bv_id, port.m_alias.c_str());
 
+    port.m_fdb_count--;
+    m_portsOrch->setPort(port.m_alias, port);
+    vlan.m_fdb_count--;
+    m_portsOrch->setPort(vlan.m_alias, vlan);
     (void)m_entries.erase(entry);
 
     // Remove in StateDb
@@ -1261,7 +1295,8 @@ void FdbOrch::notifyTunnelOrch(Port& port)
 {
     VxlanTunnelOrch* tunnel_orch = gDirectory.get<VxlanTunnelOrch*>();
 
-    if (port.m_type != Port::TUNNEL)
+    if((port.m_type != Port::TUNNEL) ||
+       (port.m_fdb_count != 0))
       return;
 
     tunnel_orch->deleteTunnelPort(port);
