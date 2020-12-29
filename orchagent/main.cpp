@@ -79,7 +79,7 @@ void usage()
     cout << "    -s: enable synchronous mode (depreacated, use -z)" << endl;
     cout << "    -z: redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
-    cout << "    -j sairedis_rec_filename:  sairedis record log filename(default sairedis.rec)" << endl;
+    cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
 }
 
 void sighup_handler(int signo)
