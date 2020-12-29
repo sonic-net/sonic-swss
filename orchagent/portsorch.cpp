@@ -1881,6 +1881,7 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
 
                 /* Add port to port list */
                 m_portList[alias] = p;
+                m_port_ref_count[alias] = 0;
                 m_portOidToIndex[id] = index;
 
                 /* Add port name map to counter table */
