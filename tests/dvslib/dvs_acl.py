@@ -389,6 +389,26 @@ class DVSAcl:
         self._check_acl_entry_base(fvs, sai_qualifiers, "REDIRECT", priority)
         self._check_acl_entry_redirect_action(fvs, expected_destination)
 
+    def verify_nat_acl_rule(
+            self,
+            sai_qualifiers: Dict[str, str],
+            priority: str = "2020",
+            acl_rule_id=None
+    ) -> None:
+        """Verify that an ACL nat rule has the correct ASIC DB representation.
+
+        Args:
+            sai_qualifiers: The expected set of SAI qualifiers to be found in ASIC DB.
+            priority: The priority of the rule.
+            acl_rule_id: A specific OID to check in ASIC DB. If left empty, this method
+                         assumes that only one rule exists in ASIC DB.
+        """
+        if not acl_rule_id:
+            acl_rule_id = self._get_acl_rule_id()
+
+        fvs = self.asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", acl_rule_id)
+        self._check_acl_entry_base(fvs, sai_qualifiers, "DO_NOT_NAT", priority)
+
     def verify_mirror_acl_rule(
             self,
             sai_qualifiers: Dict[str, str],
@@ -527,6 +547,9 @@ class DVSAcl:
                 assert action == "REDIRECT"
             elif "SAI_ACL_ENTRY_ATTR_ACTION_MIRROR" in k:
                 assert action == "MIRROR"
+            elif "SAI_ACL_ENTRY_ATTR_ACTION_NO_NAT" in k:
+                assert action == "DO_NOT_NAT"
+                assert v == "true"
             elif k in qualifiers:
                 assert qualifiers[k](v)
             else:
