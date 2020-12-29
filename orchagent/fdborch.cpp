@@ -1185,7 +1185,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
          * but we should not delete this mac here since now
          * mac in orchagent represents locally learnt
          */
-        SWSS_LOG_NOTICE("FdbOrch RemoveFDBEntry: mac=%s fdb origin is different; found_origin:%d delete_origin:%d",
+        SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: mac=%s fdb origin is different; found_origin:%d delete_origin:%d",
                 entry.mac.to_string().c_str(), fdbData.origin, origin);
 
         /* We may still have the mac in saved-fdb probably due to unavailability
@@ -1212,7 +1212,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
         return true; //FIXME: it should be based on status. Some could be retried. some not
     }
 
-    SWSS_LOG_NOTICE("Removed mac=%s bv_id=0x%lx port:%s",
+    SWSS_LOG_INFO("Removed mac=%s bv_id=0x%lx port:%s",
             entry.mac.to_string().c_str(), entry.bv_id, port.m_alias.c_str());
 
     port.m_fdb_count--;
@@ -1264,7 +1264,7 @@ void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
                 {
                     if (iter->fdbData.origin == origin)
                     {
-                        SWSS_LOG_NOTICE("FDB entry found in saved fdb. deleting..."
+                        SWSS_LOG_INFO("FDB entry found in saved fdb. deleting..."
                                 "mac=%s vlan_id=0x%x origin:%d port:%s", 
                                 mac.to_string().c_str(), vlanId, origin,
                                 itr.first.c_str());
@@ -1275,7 +1275,7 @@ void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
                     }
                     else
                     {
-                        SWSS_LOG_NOTICE("FDB entry found in saved fdb, but Origin is "
+                        SWSS_LOG_INFO("FDB entry found in saved fdb, but Origin is "
                                 "different mac=%s vlan_id=0x%x reqOrigin:%d "
                                 "foundOrigin:%d port:%s, IGNORED", 
                                 mac.to_string().c_str(), vlanId, origin,

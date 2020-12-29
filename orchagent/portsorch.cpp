@@ -1882,7 +1882,6 @@ bool PortsOrch::initPort(const string &alias, const int index, const set<int> &l
                 /* Add port to port list */
                 m_portList[alias] = p;
                 m_portOidToIndex[id] = index;
-                m_port_ref_count[alias] = 0;   
 
                 /* Add port name map to counter table */
                 FieldValueTuple tuple(p.m_alias, sai_serialize_object_id(p.m_port_id));

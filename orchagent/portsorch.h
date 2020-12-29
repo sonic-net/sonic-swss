@@ -9,7 +9,6 @@
 #include "observer.h"
 #include "macaddress.h"
 #include "producertable.h"
-#include "notificationproducer.h"
 #include "flex_counter_manager.h"
 #include "gearboxutils.h"
 #include "saihelper.h"
@@ -171,7 +170,7 @@ private:
     Port m_cpuPort;
     // TODO: Add Bridge/Vlan class
     sai_object_id_t m_default1QBridge;
-    sai_object_id_t   m_defaultVlan;
+    sai_object_id_t m_defaultVlan;
 
     typedef enum
     {
@@ -200,7 +199,6 @@ private:
     map<set<int>, tuple<string, uint32_t, int, string, int>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
-
     map<string, uint32_t> m_port_ref_count;
     unordered_set<string> m_pendingPortSet;
 
