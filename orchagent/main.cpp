@@ -232,17 +232,16 @@ int main(int argc, char **argv)
             sai_deserialize_redis_communication_mode(optarg, gRedisCommunicationMode);
             break;
         case 'f':
-            swss_rec_filename = optarg;
-            if (swss_rec_filename.empty())
+
+            if (optarg)
             {
-                swss_rec_filename=  "swss.rec";
+                swss_rec_filename = optarg;
             }
             break;
         case 'j':
-            sairedis_rec_filename = optarg;
-            if (sairedis_rec_filename.empty())
+            if (optarg)
             {
-                sairedis_rec_filename=  "sairedis.rec";
+                sairedis_rec_filename = optarg;
             }
             break;
         default: /* '?' */
