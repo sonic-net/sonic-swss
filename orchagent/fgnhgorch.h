@@ -52,7 +52,7 @@ typedef std::map<IpPrefix, NextHopGroupKey> FgPrefixOpCache;
 /* Map from link name to next-hop IP */
 typedef std::unordered_map<string, std::vector<IpAddress>> Links;
 
-enum FGMatchModes
+enum FGMatchMode
 {
     ROUTE_BASED,
     NEXTHOP_BASED
@@ -73,7 +73,7 @@ typedef struct FgNhgEntry
     Links links;                                      // Link to IP map for oper changes
     std::vector<IpPrefix> prefixes;                   // Prefix which desires FG behavior
     std::vector<BankIndexRange> hash_bucket_indices;  // The hash bucket indices for a bank
-    uint8_t match_mode;                               // Stores a match_mode from FGMatchModes
+    FGMatchMode match_mode;                           // Stores a match_mode from FGMatchModes
 } FgNhgEntry;
 
 /* Map from IP prefix to user configured FG NHG entries */
@@ -100,11 +100,11 @@ public:
     FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch);
 
     void update(SubjectType type, void *cntx);
-    bool isRouteFineGrainedECMP(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
-    bool containsRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix);
+    bool isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
+    bool syncdContainsFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix);
     bool validNextHopInNextHopGroup(const NextHopKey&);
     bool invalidNextHopInNextHopGroup(const NextHopKey&);
-    bool addModifyFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops, sai_object_id_t &next_hop_id, bool &prevNhgWasFineGrained);
+    bool setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops, sai_object_id_t &next_hop_id, bool &prevNhgWasFineGrained);
     bool removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix);
 
     // warm reboot support

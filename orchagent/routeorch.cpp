@@ -1237,7 +1237,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     sai_object_id_t next_hop_id = SAI_NULL_OBJECT_ID;
     bool overlay_nh = false;
     bool status = false;
-    bool newNhgIsFineGrained = false;
+    bool curNhgIsFineGrained = false;
     bool prevNhgWasFineGrained;
 
     if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end())
@@ -1253,16 +1253,16 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
 
     auto it_route = m_syncdRoutes.at(vrf_id).find(ipPrefix);
 
-    if (m_fgNhgOrch->isRouteFineGrainedECMP(vrf_id, ipPrefix, nextHops))
+    if (m_fgNhgOrch->isRouteFineGrained(vrf_id, ipPrefix, nextHops))
     {
         /* The route is pointing to a Fine Grained nexthop group */
-        newNhgIsFineGrained = true;
-        /* We get 3 return values from addModifyFgNhg:
+        curNhgIsFineGrained = true;
+        /* We get 3 return values from setFgNhg:
          * 1. success/failure: on addition/modification of nexthop group/members
          * 2. next_hop_id: passed as a param to fn, used for sai route creation
          * 3. prevNhgWasFineGrained: passed as a param to fn, used to determine transitions 
          * between regular and FG ECMP, this is an optimization to prevent multiple lookups */
-        if (!m_fgNhgOrch->addModifyFgNhg(vrf_id, ipPrefix, nextHops, next_hop_id, prevNhgWasFineGrained))
+        if (!m_fgNhgOrch->setFgNhg(vrf_id, ipPrefix, nextHops, next_hop_id, prevNhgWasFineGrained))
         {
             return false;
         }
@@ -1442,10 +1442,10 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             gRouteBulker.set_entry_attribute(&object_statuses.back(), &route_entry, &route_attr);
         }
 
-        if (newNhgIsFineGrained && prevNhgWasFineGrained)
+        if (curNhgIsFineGrained && prevNhgWasFineGrained)
         {
             /* Don't change route entry if the route is previously fine grained and new nhg is also fine grained. 
-             * We already modifed sai nhg objs as part of addModifyFgNhg to account for nhg change. */
+             * We already modifed sai nhg objs as part of setFgNhg to account for nhg change. */
             object_statuses.emplace_back(SAI_STATUS_SUCCESS);
         }
         else 
@@ -1480,7 +1480,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
     /* next_hop_id indicates the next hop id or next hop group id of this route */
     sai_object_id_t next_hop_id;
 
-    if (m_fgNhgOrch->isRouteFineGrainedECMP(vrf_id, ipPrefix, nextHops))
+    if (m_fgNhgOrch->isRouteFineGrained(vrf_id, ipPrefix, nextHops))
     {
         /* Route is pointing to Fine Grained ECMP nexthop group */
         isFineGrained = true;
@@ -1630,7 +1630,7 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
         /* Increase the ref_count for the next hop (group) entry */
         increaseNextHopRefCount(nextHops);
 
-        if (m_fgNhgOrch->containsRoute(vrf_id, ipPrefix))
+        if (m_fgNhgOrch->syncdContainsFgNhg(vrf_id, ipPrefix))
         {
             /* Remove FG nhg since prefix now points to standard nhg/nhs */
             m_fgNhgOrch->removeFgNhg(vrf_id, ipPrefix);
@@ -1776,7 +1776,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
         }
     }
 
-    if (m_fgNhgOrch->containsRoute(vrf_id, ipPrefix))
+    if (m_fgNhgOrch->syncdContainsFgNhg(vrf_id, ipPrefix))
     {
         /* Delete Fine Grained nhg if the revmoved route pointed to it */
         m_fgNhgOrch->removeFgNhg(vrf_id, ipPrefix);

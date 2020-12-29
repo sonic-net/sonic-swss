@@ -1006,7 +1006,7 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
 }
 
 
-bool FgNhgOrch::isRouteFineGrainedECMP(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+bool FgNhgOrch::isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
 {
     SWSS_LOG_ENTER();
  
@@ -1055,7 +1055,7 @@ bool FgNhgOrch::isRouteFineGrainedECMP(sai_object_id_t vrf_id, const IpPrefix &i
 }
 
 
-bool FgNhgOrch::containsRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
+bool FgNhgOrch::syncdContainsFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
 {
     if (!isFineGrainedConfigured || (vrf_id != gVirtualRouterId))
     {
@@ -1077,7 +1077,7 @@ bool FgNhgOrch::containsRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
 }
 
 
-bool FgNhgOrch::addModifyFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops, 
+bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops,
                                     sai_object_id_t &next_hop_id, bool &prevNhgWasFineGrained)
 {
     SWSS_LOG_ENTER();
@@ -1380,7 +1380,7 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
     string key = kfvKey(t);
     string fg_nhg_name = key; 
     auto fgNhg_entry = m_FgNhgs.find(fg_nhg_name);
-    uint8_t match_mode = ROUTE_BASED;
+    FGMatchMode match_mode = ROUTE_BASED;
 
     if (op == SET_COMMAND)
     {
