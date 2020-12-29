@@ -1025,6 +1025,11 @@ bool FgNhgOrch::isRouteFineGrainedECMP(sai_object_id_t vrf_id, const IpPrefix &i
             auto member_entry = m_fgNhgNexthops.find(nhk.ip_address);
             if (member_entry == m_fgNhgNexthops.end())
             {
+                if (fgNhgEntry)
+                {
+                    SWSS_LOG_WARN("Route %s:%s has some FG nhs, but %s is not, route is defaulted to non-fine grained ECMP",
+                                ipPrefix.to_string().c_str(), nextHops.to_string().c_str(), nhk.to_string().c_str());
+                }
                 return false;
             }
 
@@ -1077,6 +1082,9 @@ bool FgNhgOrch::addModifyFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
 {
     SWSS_LOG_ENTER();
 
+    /* default prevNhgWasFineGrained to true so that sai route is unaffected
+     * when we return early with success */
+    prevNhgWasFineGrained = true;
     FgNhgEntry *fgNhgEntry = 0;
     set<NextHopKey> next_hop_set = nextHops.getNextHops();
     auto prefix_entry = m_fgNhgPrefixes.find(ipPrefix);
@@ -1093,7 +1101,7 @@ bool FgNhgOrch::addModifyFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
             {
                 SWSS_LOG_ERROR("fgNhgOrch got a route addition %s:%s for non-configured FG ECMP entry",
                                     ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
-                return true;
+                return false;
             }
             fgNhgEntry = member_entry->second;
             break;
@@ -1188,8 +1196,6 @@ bool FgNhgOrch::addModifyFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix,
     if (syncd_fg_route_entry_it != m_syncdFGRouteTables.at(vrf_id).end())
     {
         FGNextHopGroupEntry *syncd_fg_route_entry = &(syncd_fg_route_entry_it->second);
-        prevNhgWasFineGrained = true;
-
         /* Route exists, update FG ECMP group in SAI */
         for (auto nhk : syncd_fg_route_entry->active_nexthops)
         {

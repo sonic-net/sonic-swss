@@ -1238,7 +1238,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     bool overlay_nh = false;
     bool status = false;
     bool newNhgIsFineGrained = false;
-    bool prevNhgWasFineGrained = false;
+    bool prevNhgWasFineGrained;
 
     if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end())
     {
@@ -1257,7 +1257,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     {
         /* The route is pointing to a Fine Grained nexthop group */
         newNhgIsFineGrained = true;
-        /* We get 3 return values from addModifyGhNhg:
+        /* We get 3 return values from addModifyFgNhg:
          * 1. success/failure: on addition/modification of nexthop group/members
          * 2. next_hop_id: passed as a param to fn, used for sai route creation
          * 3. prevNhgWasFineGrained: passed as a param to fn, used to determine transitions 
@@ -1277,7 +1277,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         }
         else
         {
-            nexthop =  NextHopKey(nextHops.to_string());
+            nexthop = NextHopKey(nextHops.to_string());
         }
 
         if (nexthop.ip_address.isZero())
@@ -1446,8 +1446,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
         {
             /* Don't change route entry if the route is previously fine grained and new nhg is also fine grained. 
              * We already modifed sai nhg objs as part of addModifyFgNhg to account for nhg change. */
-            object_statuses.emplace_back();
-            object_statuses.back() = SAI_STATUS_SUCCESS;
+            object_statuses.emplace_back(SAI_STATUS_SUCCESS);
         }
         else 
         {
