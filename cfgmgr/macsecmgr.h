@@ -3,6 +3,7 @@
 
 #include <orch.h>
 #include <swss/schema.h>
+#include <swss/boolean.h>
 
 #include <cinttypes>
 #include <map>
@@ -26,21 +27,21 @@ public:
     using TaskArgs = std::vector<FieldValueTuple>;
     struct MACsecProfile
     {
-        std::uint8_t  priority;
-        std::string   cipher_suite;
-        std::string   primary_cak;
-        std::string   primary_ckn;
-        std::string   fallback_cak;
-        std::string   fallback_ckn;
+        std::uint8_t        priority;
+        std::string         cipher_suite;
+        std::string         primary_cak;
+        std::string         primary_ckn;
+        std::string         fallback_cak;
+        std::string         fallback_ckn;
         enum Policy
         {
             INTEGRITY_ONLY,
             SECURITY,
-        }             policy;
-        bool          enable_replay_protect;
-        std::uint32_t replay_window;
-        bool          send_sci;
-        std::uint32_t rekey_period;
+        }                   policy;
+        swss::AlphaBoolean  enable_replay_protect;
+        std::uint32_t       replay_window;
+        swss::AlphaBoolean  send_sci;
+        std::uint32_t       rekey_period;
         bool update(const TaskArgs & ta);
     };
 

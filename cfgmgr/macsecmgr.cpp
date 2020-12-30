@@ -1,15 +1,17 @@
 #include "macsecmgr.h"
 
+#include <exec.h>
+#include <shellcmd.h>
+#include <swss/stringutility.h>
+#include <swss/redisutility.h>
+#include <boost/algorithm/string/predicate.hpp>
+
 #include <signal.h>
 #include <unistd.h>
 #include <sys/wait.h>
 #include <sys/types.h>
 #include <string.h>
 #include <error.h>
-
-#include <exec.h>
-#include <shellcmd.h>
-
 #include <string>
 #include <vector>
 #include <map>
@@ -33,23 +35,15 @@ constexpr std::uint64_t RETRY_TIME = 30;
 /* retry interval, in millisecond */
 constexpr std::uint64_t RETRY_INTERVAL = 100;
 
-static std::istringstream& operator>>(
-    std::istringstream &istream,
-    MACsecMgr::MACsecProfile::Policy & policy)
+static void lexical_convert(const std::string &policy_str, MACsecMgr::MACsecProfile::Policy & policy)
 {
     SWSS_LOG_ENTER();
 
-    std::string policy_str = istream.str();
-    std::transform(
-        policy_str.begin(),
-        policy_str.end(),
-        policy_str.begin(),
-        ::tolower);
-    if (policy_str == "integrity_only")
+    if (boost::iequals(policy_str, "integrity_only"))
     {
         policy = MACsecMgr::MACsecProfile::Policy::INTEGRITY_ONLY;
     }
-    else if (policy_str == "security")
+    else if (boost::iequals(policy_str, "security"))
     {
         policy = MACsecMgr::MACsecProfile::Policy::SECURITY;
     }
@@ -57,33 +51,6 @@ static std::istringstream& operator>>(
     {
         throw std::invalid_argument("Invalid policy : " + policy_str);
     }
-    return istream;
-}
-
-static std::istringstream &operator>>(
-    std::istringstream &istream,
-    bool &b)
-{
-    std::string buffer = istream.str();
-    std::transform(
-        buffer.begin(),
-        buffer.end(),
-        buffer.begin(),
-        ::tolower);
-    if (buffer == "true" || buffer == "1")
-    {
-        b = true;
-    }
-    else if (buffer == "false" || buffer == "0")
-    {
-        b = false;
-    }
-    else
-    {
-        throw std::invalid_argument("Invalid bool string : " + buffer);
-    }
-
-    return istream;
 }
 
 template<class T>
@@ -94,42 +61,22 @@ static bool get_value(
 {
     SWSS_LOG_ENTER();
 
-    std::string target_field = field;
-    std::transform(
-        target_field.begin(),
-        target_field.end(),
-        target_field.begin(),
-        ::tolower);
-    auto itr = std::find_if(
-        ta.begin(),
-        ta.end(),
-        [&](const MACsecMgr::TaskArgs::value_type & entry)
-        {
-            std::string field = fvField(entry);
-            std::transform(
-                field.begin(),
-                field.end(),
-                field.begin(),
-                ::tolower);
-            return field == target_field;
-        });
-    if (itr != ta.end())
+    auto value_opt = swss::fvsGetValue(ta, field, true);
+    if (!value_opt)
     {
-        std::istringstream istream(fvValue(*itr));
-        istream >> value;
-        SWSS_LOG_DEBUG(
-            "Set field '%s' as '%s'",
-            field.c_str(),
-            fvValue(*itr).c_str());
-        return true;
+        SWSS_LOG_WARN("Cannot find field : %s", field.c_str());
+        return false;
     }
-    SWSS_LOG_WARN("Cannot find field : %s", field.c_str());
+
+    lexical_convert(*value_opt, value);
+
     return false;
 }
 
-
 static void wpa_cli_commands(std::ostringstream & ostream)
 {
+    // Intentionally emtpy function to adapt
+    // the recursively calling of wpa_cli_commands
 }
 
 template<typename T, typename...Args>
