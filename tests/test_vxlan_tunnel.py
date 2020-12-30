@@ -40,6 +40,13 @@ def get_exist_entries(dvs, table):
     tbl =  swsscommon.Table(db, table)
     return set(tbl.getKeys())
 
+def get_created_entry_mapid(db, table, existed_entries):
+    tbl =  swsscommon.Table(db, table)
+    entries = set(tbl.getKeys())
+    new_entries = list(entries - existed_entries)
+    new_entries.sort()
+    return new_entries
+
 def get_created_entry(db, table, existed_entries):
     tbl =  swsscommon.Table(db, table)
     entries = set(tbl.getKeys())
@@ -105,29 +112,35 @@ def create_vlan(dvs, vlan_name, vlan_ids):
 
 def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, lo_id):
     asic_db = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
-    tunnel_map_id  = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", tunnel_map_ids)
+    tunnel_map_id  = get_created_entry_mapid(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", tunnel_map_ids)
     tunnel_id      = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_ids)
     tunnel_term_id = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", tunnel_term_ids)
 
     # check that the vxlan tunnel termination are there
-    assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP") == (len(tunnel_map_ids) + 1), "The TUNNEL_MAP wasn't created"
+    assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP") == (len(tunnel_map_ids) + 4), "The TUNNEL_MAP wasn't created"
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY") == len(tunnel_map_entry_ids), "The TUNNEL_MAP_ENTRY is created too early"
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL") == (len(tunnel_ids) + 1), "The TUNNEL wasn't created"
     assert how_many_entries_exist(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY") == (len(tunnel_term_ids) + 1), "The TUNNEL_TERM_TABLE_ENTRY wasm't created"
 
     default_vr_id = get_default_vr_id(asic_db)
 
-    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", tunnel_map_id,
+    check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", tunnel_map_id[0],
                         {
                             'SAI_TUNNEL_MAP_ATTR_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID',
                         }
                 )
 
+    decapstr = '2:' + tunnel_map_id[0] + ',' + tunnel_map_id[2]
+    encapstr = '2:' + tunnel_map_id[1] + ',' + tunnel_map_id[3]
+
     check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL", tunnel_id,
                     {
                         'SAI_TUNNEL_ATTR_TYPE': 'SAI_TUNNEL_TYPE_VXLAN',
                         'SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE': lo_id,
-                        'SAI_TUNNEL_ATTR_DECAP_MAPPERS': '1:%s' % tunnel_map_id,
+                        'SAI_TUNNEL_ATTR_DECAP_MAPPERS': decapstr,
+                        'SAI_TUNNEL_ATTR_ENCAP_MAPPERS': encapstr,
+                        'SAI_TUNNEL_ATTR_PEER_MODE': 'SAI_TUNNEL_PEER_MODE_P2MP',
+                        'SAI_TUNNEL_ATTR_ENCAP_SRC_IP': src_ip
                     }
                 )
 
@@ -145,11 +158,11 @@ def check_vxlan_tunnel(dvs, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids
 
     check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_TERM_TABLE_ENTRY", tunnel_term_id, expected_attributes)
 
-    tunnel_map_ids.add(tunnel_map_id)
+    tunnel_map_ids.update(tunnel_map_id)
     tunnel_ids.add(tunnel_id)
     tunnel_term_ids.add(tunnel_term_id)
 
-    return tunnel_map_id
+    return tunnel_map_id[0]
 
 
 def create_vxlan_tunnel(dvs, name, src_ip, dst_ip, tunnel_map_ids, tunnel_map_entry_ids, tunnel_ids, tunnel_term_ids, lo_id, skip_dst_ip=False):
@@ -199,9 +212,10 @@ def create_vxlan_tunnel_entry(dvs, tunnel_name, tunnel_map_entry_name, tunnel_ma
     )
 
     if (tunnel_map_map.get(tunnel_name) is None):
-        tunnel_map_id = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", tunnel_map_ids)
+        tunnel_map_id = get_created_entry_mapid(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP", tunnel_map_ids)
+        vni_vlan_map_id = tunnel_map_id[0]
     else:
-        tunnel_map_id = tunnel_map_map[tunnel_name]
+        vni_vlan_map_id = tunnel_map_map[tunnel_name]
 
     tunnel_map_entry_id = get_created_entry(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY", tunnel_map_entry_ids)
 
@@ -212,7 +226,7 @@ def create_vxlan_tunnel_entry(dvs, tunnel_name, tunnel_map_entry_name, tunnel_ma
     check_object(asic_db, "ASIC_STATE:SAI_OBJECT_TYPE_TUNNEL_MAP_ENTRY", tunnel_map_entry_id,
         {
             'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP_TYPE': 'SAI_TUNNEL_MAP_TYPE_VNI_TO_VLAN_ID',
-            'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': tunnel_map_id,
+            'SAI_TUNNEL_MAP_ENTRY_ATTR_TUNNEL_MAP': vni_vlan_map_id,
             'SAI_TUNNEL_MAP_ENTRY_ATTR_VNI_ID_KEY': vni_id,
             'SAI_TUNNEL_MAP_ENTRY_ATTR_VLAN_ID_VALUE': vlan_id,
         }

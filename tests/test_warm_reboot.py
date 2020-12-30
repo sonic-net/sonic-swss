@@ -1783,6 +1783,24 @@ class TestWarmReboot(object):
         (addobjs, delobjs) = dvs.GetSubscribedAsicDbObjects(pubsubAsicDB)
         assert len(addobjs) == 0 and len(delobjs) == 0
 
+        #
+        # Remove route entries so they don't interfere with later tests
+        #
+        dvs.runcmd("ip route del 192.168.1.100/32")
+        dvs.runcmd("ip route del 192.168.1.200/32")
+        dvs.runcmd("ip route del 192.168.1.230/32")
+        dvs.runcmd("ip route del 192.168.1.1/32")
+        dvs.runcmd("ip route del 192.168.1.2/32")
+        dvs.runcmd("ip route del 192.168.1.3/32")
+        dvs.runcmd("ip route del 192.168.100.0/24")
+        dvs.runcmd("ip -6 route del fc00:11:11::1/128")
+        dvs.runcmd("ip -6 route del fc00:12:12::1/128")
+        dvs.runcmd("ip -6 route del fc00:13:13::1/128")
+        dvs.runcmd("ip -6 route del fc00:1:1::1/128")
+        dvs.runcmd("ip -6 route del fc00:2:2::1/128")
+        dvs.runcmd("ip -6 route del fc00:3:3::1/128")
+        time.sleep(5)
+
         intf_tbl._del("{}|111.0.0.1/24".format(intfs[0]))
         intf_tbl._del("{}|1110::1/64".format(intfs[0]))
         intf_tbl._del("{}|122.0.0.1/24".format(intfs[1]))
@@ -2190,6 +2208,137 @@ class TestWarmReboot(object):
         dvs.servers[0].runcmd("ifconfig eth0 0")
         dvs.servers[1].runcmd("ifconfig eth0 0")
         time.sleep(2)
+
+    @pytest.fixture(scope="class")
+    def setup_erspan_neighbors(self, dvs):
+        dvs.setup_db()
+
+        dvs.set_interface_status("Ethernet12", "up")
+        dvs.set_interface_status("Ethernet16", "up")
+        dvs.set_interface_status("Ethernet20", "up")
+
+        dvs.add_ip_address("Ethernet12", "10.0.0.0/31")
+        dvs.add_ip_address("Ethernet16", "11.0.0.0/31")
+        dvs.add_ip_address("Ethernet20", "12.0.0.0/31")
+
+        dvs.add_neighbor("Ethernet12", "10.0.0.1", "02:04:06:08:10:12")
+        dvs.add_neighbor("Ethernet16", "11.0.0.1", "03:04:06:08:10:12")
+        dvs.add_neighbor("Ethernet20", "12.0.0.1", "04:04:06:08:10:12")
+
+        dvs.add_route("2.2.2.2", "10.0.0.1")
+
+        yield
+
+        dvs.remove_route("2.2.2.2")
+
+        dvs.remove_neighbor("Ethernet12", "10.0.0.1")
+        dvs.remove_neighbor("Ethernet16", "11.0.0.1")
+        dvs.remove_neighbor("Ethernet20", "12.0.0.1")
+
+        dvs.remove_ip_address("Ethernet12", "10.0.0.0/31")
+        dvs.remove_ip_address("Ethernet16", "11.0.0.0/31")
+        dvs.remove_ip_address("Ethernet20", "12.0.0.1/31")
+
+        dvs.set_interface_status("Ethernet12", "down")
+        dvs.set_interface_status("Ethernet16", "down")
+        dvs.set_interface_status("Ethernet20", "down")
+
+    @pytest.mark.usefixtures("dvs_mirror_manager", "setup_erspan_neighbors")
+    def test_MirrorSessionWarmReboot(self, dvs):
+        dvs.setup_db()
+
+        # Setup the mirror session
+        self.dvs_mirror.create_erspan_session("test_session", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0")
+
+        # Verify the monitor port
+        state_db = dvs.get_state_db()
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"monitor_port": "Ethernet12"})
+
+        # Setup ECMP routes to the session destination
+        dvs.change_route_ecmp("2.2.2.2", ["12.0.0.1", "11.0.0.1", "10.0.0.1"])
+
+        # Monitor port should not change b/c routes are ECMP
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"monitor_port": "Ethernet12"})
+
+        dvs.runcmd("config warm_restart enable swss")
+        dvs.stop_swss()
+        dvs.start_swss()
+
+        dvs.check_swss_ready()
+
+        # Monitor port should not change b/c destination is frozen
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"monitor_port": "Ethernet12"})
+
+        self.dvs_mirror.remove_mirror_session("test_session")
+
+        # Revert the route back to the fixture-defined route
+        dvs.change_route("2.2.2.2", "10.0.0.1")
+
+        # Reset for test cases after this one
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.check_swss_ready()
+
+    @pytest.mark.usefixtures("dvs_mirror_manager", "dvs_policer_manager", "setup_erspan_neighbors")
+    def test_EverflowWarmReboot(self, dvs, dvs_acl):
+        # Setup the policer
+        self.dvs_policer.create_policer("test_policer")
+        self.dvs_policer.verify_policer("test_policer")
+
+        # Setup the mirror session
+        self.dvs_mirror.create_erspan_session("test_session", "1.1.1.1", "2.2.2.2", "0x6558", "8", "100", "0", policer="test_policer")
+
+        state_db = dvs.get_state_db()
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"status": "active"})
+
+        # Create the mirror table
+        dvs_acl.create_acl_table("EVERFLOW_TEST", "MIRROR", ["Ethernet12"])
+
+
+        # TODO: The standard methods for counting ACL tables and ACL rules break down after warm reboot b/c the OIDs
+        # of the default tables change. We also can't just re-initialize the default value b/c we've added another
+        # table and rule that aren't part of the base device config. We should come up with a way to handle warm reboot
+        # changes more gracefully to make it easier for future tests.
+        asic_db = dvs.get_asic_db()
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 1 + len(asic_db.default_acl_tables))
+
+        # Create a mirror rule
+        dvs_acl.create_mirror_acl_rule("EVERFLOW_TEST", "TEST_RULE", {"SRC_IP": "20.0.0.2"}, "test_session")
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 1 + len(asic_db.default_acl_entries))
+
+        # Execute the warm reboot
+        dvs.runcmd("config warm_restart enable swss")
+        dvs.stop_swss()
+        dvs.start_swss()
+
+        # Make sure the system is stable
+        dvs.check_swss_ready()
+
+        # Verify that the ASIC DB is intact
+        self.dvs_policer.verify_policer("test_policer")
+        state_db.wait_for_field_match("MIRROR_SESSION_TABLE", "test_session", {"status": "active"})
+
+        asic_db = dvs.get_asic_db()
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", 1 + len(asic_db.default_acl_tables))
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", 1 + len(asic_db.default_acl_entries))
+
+        # Clean up
+        dvs_acl.remove_acl_rule("EVERFLOW_TEST", "TEST_RULE")
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_ENTRY", len(asic_db.default_acl_entries))
+
+        dvs_acl.remove_acl_table("EVERFLOW_TEST")
+        asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_ACL_TABLE", len(asic_db.default_acl_tables))
+
+        self.dvs_mirror.remove_mirror_session("test_session")
+        self.dvs_mirror.verify_no_mirror()
+
+        self.dvs_policer.remove_policer("test_policer")
+        self.dvs_policer.verify_no_policer()
+
+        # Reset for test cases after this one
+        dvs.stop_swss()
+        dvs.start_swss()
+        dvs.check_swss_ready()
 
 
 # Add Dummy always-pass test at end as workaroud

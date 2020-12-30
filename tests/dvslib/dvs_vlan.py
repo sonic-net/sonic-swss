@@ -1,4 +1,4 @@
-from .dvs_database import DVSDatabase
+from .dvs_common import PollingConfig
 
 class DVSVlan(object):
     def __init__(self, adb, cdb, sdb, cntrdb, appdb):
@@ -49,7 +49,7 @@ class DVSVlan(object):
 
     def get_and_verify_vlan_ids(self,
                                 expected_num,
-                                polling_config=DVSDatabase.DEFAULT_POLLING_CONFIG):
+                                polling_config=PollingConfig()):
         vlan_entries = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_VLAN",
                                                     expected_num + 1,
                                                     polling_config)

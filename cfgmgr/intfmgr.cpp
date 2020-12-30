@@ -272,6 +272,36 @@ void IntfMgr::removeSubIntfState(const string &alias)
     }
 }
 
+bool IntfMgr::setIntfGratArp(const string &alias, const string &grat_arp)
+{
+    /*
+     * Enable gratuitous ARP by accepting unsolicited ARP replies
+     */
+    stringstream cmd;
+    string res;
+    string garp_enabled;
+
+    if (grat_arp == "enabled")
+    {
+        garp_enabled = "1";
+    }
+    else if (grat_arp == "disabled")
+    {
+        garp_enabled = "0";
+    }
+    else
+    {
+        SWSS_LOG_ERROR("GARP state is invalid: \"%s\"", grat_arp.c_str());
+        return false;
+    }
+
+    cmd << ECHO_CMD << " " << garp_enabled << " > /proc/sys/net/ipv4/conf/" << alias << "/arp_accept";
+    EXEC_WITH_ERROR_THROW(cmd.str(), res);
+
+    SWSS_LOG_INFO("ARP accept set to \"%s\" on interface \"%s\"",  grat_arp.c_str(), alias.c_str());
+    return true;
+}
+
 bool IntfMgr::setIntfProxyArp(const string &alias, const string &proxy_arp)
 {
     stringstream cmd;
@@ -374,6 +404,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     string adminStatus = "";
     string nat_zone = "";
     string proxy_arp = "";
+    string grat_arp = "";
 
     for (auto idx : data)
     {
@@ -395,6 +426,10 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         else if (field == "proxy_arp")
         {
             proxy_arp = value;
+        }
+        else if (field == "grat_arp")
+        {
+            grat_arp = value;
         }
 
         if (field == "nat_zone")
@@ -470,6 +505,21 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
             if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
             {
                 FieldValueTuple fvTuple("proxy_arp", proxy_arp);
+                data.push_back(fvTuple);
+            }
+        }
+
+        if (!grat_arp.empty())
+        {
+            if (!setIntfGratArp(alias, grat_arp))
+            {
+                SWSS_LOG_ERROR("Failed to set ARP accept to \"%s\" state for the \"%s\" interface", grat_arp.c_str(), alias.c_str());
+                return false;
+            }
+
+            if (!alias.compare(0, strlen(VLAN_PREFIX), VLAN_PREFIX))
+            {
+                FieldValueTuple fvTuple("grat_arp", grat_arp);
                 data.push_back(fvTuple);
             }
         }
