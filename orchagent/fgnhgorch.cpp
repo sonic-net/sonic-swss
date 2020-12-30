@@ -1189,8 +1189,8 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
             }
         }
 
-        sai_object_id_t next_hop_id = m_neighOrch->getNextHopId(nhk);
-        nhopgroup_members_set[nhk] = next_hop_id;
+        sai_object_id_t nhid = m_neighOrch->getNextHopId(nhk);
+        nhopgroup_members_set[nhk] = nhid;
     }
 
     if (syncd_fg_route_entry_it != m_syncdFGRouteTables.at(vrf_id).end())
