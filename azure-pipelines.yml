@@ -72,6 +72,7 @@ jobs:
 
 - job:
   displayName: "arm64"
+  timeoutInMinutes: 180
   pool: sonic
 
   container:
@@ -132,6 +133,7 @@ jobs:
 
 - job:
   displayName: "armhf"
+  timeoutInMinutes: 180
   pool: sonic
 
   container:
