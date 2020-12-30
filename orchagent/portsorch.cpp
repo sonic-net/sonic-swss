@@ -702,6 +702,17 @@ bool PortsOrch::addSubPort(Port &port, const string &alias, const bool &adminUp,
     }
     p.m_vlan_info.vlan_id = vlan_id;
 
+    // Change hostif vlan tag for the parent port only when a first subport is created
+    if (parentPort.m_child_ports.empty())
+    {
+        if (!setHostIntfsStripTag(parentPort, SAI_HOSTIF_VLAN_TAG_KEEP))
+        {
+            SWSS_LOG_ERROR("Failed to set %s for hostif of port %s",
+                    hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_KEEP], parentPort.m_alias.c_str());
+            return false;
+        }
+    }
+
     parentPort.m_child_ports.insert(p.m_alias);
 
     m_portList[alias] = p;
@@ -738,6 +749,21 @@ bool PortsOrch::removeSubPort(const string &alias)
     m_portList[parentPort.m_alias] = parentPort;
 
     m_portList.erase(it);
+
+    // Restore hostif vlan tag for the parent port when the last subport is removed
+    if (parentPort.m_child_ports.empty())
+    {
+        if (!parentPort.m_bridge_port_id)
+        {
+            if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
+            {
+                SWSS_LOG_WARN("Failed to set %s for hostif of port %s",
+                        hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], parentPort.m_alias.c_str());
+                return false;
+            }
+        }
+    }
+
     return true;
 }
 
