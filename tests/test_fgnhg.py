@@ -196,6 +196,7 @@ def startup_link(dvs, db, port):
     dvs.servers[port].runcmd("ip link set up dev eth0") == 0
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "up"})
 
+
 def run_warm_reboot(dvs):
     dvs.runcmd("config warm_restart enable swss")
 
@@ -207,8 +208,6 @@ def run_warm_reboot(dvs):
     dvs.runcmd(['sh', '-c', 'supervisorctl start neighsyncd'])
     dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
 
-    # Enabling some extra logging for validating the order of orchagent
-    dvs.runcmd("swssloglevel -l INFO -c orchagent")
 
 def verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, nh_memb_exp_count):
     memb_dict = nh_memb_exp_count
