@@ -392,9 +392,17 @@ void RouteSync::onEvpnRouteMsg(struct nlmsghdr *h, int len)
         destipprefix[strlen(destipprefix)] = ':';
     }
 
-    /* Full mask route append prefix length, or else resync cannot match. */
-    snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "%s/%u", 
+    if((rtm->rtm_family == AF_INET && dst_len == IPV4_MAX_BITLEN)
+        || (rtm->rtm_family == AF_INET6 && dst_len == IPV6_MAX_BITLEN))
+    {
+        snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "%s",
+                inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE));
+    }
+    else
+    {
+        snprintf(destipprefix + strlen(destipprefix), sizeof(destipprefix) - strlen(destipprefix), "%s/%u",
                 inet_ntop(rtm->rtm_family, dstaddr, buf, MAX_ADDR_SIZE), dst_len);
+    }
 
     SWSS_LOG_INFO("Receive route message dest ip prefix: %s Op:%s", 
                     destipprefix,

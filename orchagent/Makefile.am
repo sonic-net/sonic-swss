@@ -61,6 +61,7 @@ orchagent_SOURCES = \
             chassisorch.cpp \
             debugcounterorch.cpp \
             natorch.cpp \
+            muxorch.cpp \
             macsecorch.cpp
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp

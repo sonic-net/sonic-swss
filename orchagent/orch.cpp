@@ -299,13 +299,6 @@ bool Orch::bake()
     return true;
 }
 
-bool Orch::postBake()
-{
-    SWSS_LOG_ENTER();
-
-    return true;
-}
-
 /*
 - Validates reference has proper format which is [table_name:object_name]
 - validates table_name exists

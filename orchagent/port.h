@@ -20,6 +20,8 @@ extern "C" {
  */
 #define DEFAULT_MTU             1492
 
+#define VNID_NONE               0xFFFFFFFF
+
 namespace swss {
 
 struct VlanMemberEntry
@@ -46,6 +48,7 @@ public:
         LOOPBACK,
         VLAN,
         LAG,
+        TUNNEL,
         SUBPORT,
         UNKNOWN
     } ;
@@ -78,6 +81,7 @@ public:
     bool                m_autoneg = false;
     bool                m_admin_state_up = false;
     bool                m_init = false;
+    bool                m_l3_vni = false;
     sai_object_id_t     m_port_id = 0;
     sai_port_fec_mode_t m_fec_mode = SAI_PORT_FEC_MODE_NONE;
     VlanInfo            m_vlan_info;
@@ -89,6 +93,7 @@ public:
     sai_object_id_t     m_hif_id = 0;
     sai_object_id_t     m_lag_id = 0;
     sai_object_id_t     m_lag_member_id = 0;
+    sai_object_id_t     m_tunnel_id = 0;
     sai_object_id_t     m_ingress_acl_table_group_id = 0;
     sai_object_id_t     m_egress_acl_table_group_id = 0;
     vlan_members_t      m_vlan_members;
@@ -100,8 +105,11 @@ public:
     std::vector<sai_object_id_t> m_queue_ids;
     std::vector<sai_object_id_t> m_priority_group_ids;
     sai_port_priority_flow_control_mode_t m_pfc_asym = SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_COMBINED;
-    uint8_t m_pfc_bitmask = 0;
-    uint32_t m_nat_zone_id = 0;
+    uint8_t   m_pfc_bitmask = 0;
+    uint32_t  m_nat_zone_id = 0;
+    uint32_t  m_vnid = VNID_NONE;
+    uint32_t  m_fdb_count = 0;
+    uint32_t  m_up_member_count = 0;
 
     /*
      * Following two bit vectors are used to lock
@@ -112,6 +120,7 @@ public:
      */
     std::vector<bool> m_queue_lock;
     std::vector<bool> m_priority_group_lock;
+    std::vector<sai_object_id_t> m_priority_group_pending_profile;
 
     std::unordered_set<sai_object_id_t> m_ingress_acl_tables_uset;
     std::unordered_set<sai_object_id_t> m_egress_acl_tables_uset;

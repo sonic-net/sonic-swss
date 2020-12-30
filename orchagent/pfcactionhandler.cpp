@@ -523,10 +523,25 @@ PfcWdZeroBufferHandler::~PfcWdZeroBufferHandler(void)
         return;
     }
 
-    sai_object_id_t pg = portInstance.m_priority_group_ids[size_t(getQueueId())];
+    auto idx = size_t(getQueueId());
+    sai_object_id_t pg = portInstance.m_priority_group_ids[idx];
+    sai_object_id_t pending_profile_id = portInstance.m_priority_group_pending_profile[idx];
 
     attr.id = SAI_INGRESS_PRIORITY_GROUP_ATTR_BUFFER_PROFILE;
-    attr.value.oid = m_originalPgBufferProfile;
+
+    if (pending_profile_id != SAI_NULL_OBJECT_ID)
+    {
+        attr.value.oid = pending_profile_id;
+        SWSS_LOG_NOTICE("Priority group %zd on port %s has been restored to pending profile 0x%" PRIx64,
+                        idx, portInstance.m_alias.c_str(), pending_profile_id);
+        portInstance.m_priority_group_pending_profile[idx] = SAI_NULL_OBJECT_ID;
+    }
+    else
+    {
+        attr.value.oid = m_originalPgBufferProfile;
+        SWSS_LOG_NOTICE("Priority group %zd on port %s has been restored to original profile 0x%" PRIx64,
+                        idx, portInstance.m_alias.c_str(), m_originalPgBufferProfile);
+    }
 
     // Set our zero buffer profile
     status = sai_buffer_api->set_ingress_priority_group_attribute(pg, &attr);

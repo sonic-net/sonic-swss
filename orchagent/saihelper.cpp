@@ -14,6 +14,7 @@ extern "C" {
 #include <set>
 #include <tuple>
 #include <vector>
+#include <linux/limits.h>
 #include "timestamp.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
@@ -272,6 +273,7 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
     sai_status_t status;
+    char fwPath[PATH_MAX];
 
     SWSS_LOG_ENTER();
 
@@ -292,9 +294,29 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     attr.value.s8list.list = 0;
     attrs.push_back(attr);
 
-    attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_METHOD;
-    attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_METHOD_NONE;
-    attrs.push_back(attr);
+    if (phy->firmware.length() == 0)
+    {
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_METHOD;
+        attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_METHOD_NONE;
+        attrs.push_back(attr);
+    }
+    else
+    {
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_METHOD;
+        attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_METHOD_INTERNAL;
+        attrs.push_back(attr);
+
+        strncpy(fwPath, phy->firmware.c_str(), PATH_MAX - 1);
+
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_PATH_NAME;
+        attr.value.s8list.list = (int8_t *) fwPath;
+        attr.value.s8list.count = (uint32_t) strlen(fwPath) + 1;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_FIRMWARE_LOAD_TYPE;
+        attr.value.u32 = SAI_SWITCH_FIRMWARE_LOAD_TYPE_AUTO;
+        attrs.push_back(attr);
+    }
 
     attr.id = SAI_SWITCH_ATTR_REGISTER_READ;
     attr.value.ptr = (void *) mdio_read;
