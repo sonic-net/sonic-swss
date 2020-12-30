@@ -194,23 +194,32 @@ void SflowMgr::sflowGetPortInfo(vector<FieldValueTuple> &fvs, SflowPortInfo &loc
     fvs.push_back(fv2);
 }
 
-void SflowMgr::sflowCheckAndFillValues(string alias, vector<FieldValueTuple> &fvs)
+void SflowMgr::sflowCheckAndFillValues(string alias, vector<FieldValueTuple> &values,
+                                       vector<FieldValueTuple> &fvs)
 {
     string rate;
     bool admin_present = false;
     bool rate_present = false;
 
-    for (auto i : fvs)
+    for (auto i : values)
     {
         if (fvField(i) == "sample_rate")
         {
             rate_present = true;
             m_sflowPortConfMap[alias].rate = fvValue(i);
+            FieldValueTuple fv(fvField(i), fvValue(i));
+            fvs.push_back(fv);
         }
         if (fvField(i) == "admin_state")
         {
             admin_present = true;
             m_sflowPortConfMap[alias].admin = fvValue(i);
+            FieldValueTuple fv(fvField(i), fvValue(i));
+            fvs.push_back(fv);
+        }
+        if (fvField(i) == "NULL")
+        {
+            continue;
         }
     }
 
@@ -326,11 +335,12 @@ void SflowMgr::doTask(Consumer &consumer)
                         it++;
                         continue;
                     }
-                    sflowCheckAndFillValues(key,values);
+                    vector<FieldValueTuple> fvs;
+                    sflowCheckAndFillValues(key, values, fvs);
                     m_sflowPortConfMap[key].local_conf = true;
                     if (m_gEnable)
                     {
-                        m_appSflowSessionTable.set(key, values);
+                        m_appSflowSessionTable.set(key, fvs);
                     }
                 }
             }

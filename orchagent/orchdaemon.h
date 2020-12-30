@@ -32,6 +32,7 @@
 #include "directory.h"
 #include "natorch.h"
 #include "mlagorch.h"
+#include "muxorch.h"
 
 using namespace swss;
 

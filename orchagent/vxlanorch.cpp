@@ -279,7 +279,7 @@ create_tunnel(
       if (ids->tunnel_decap_id[i] != SAI_NULL_OBJECT_ID)
       {
           map_list[num_map] = ids->tunnel_decap_id[i];
-          SWSS_LOG_INFO("create_tunnel:maplist[%d]=0x%lx",num_map,map_list[num_map]);
+          SWSS_LOG_INFO("create_tunnel:maplist[%d]=0x%" PRIx64 "",num_map,map_list[num_map]);
           num_map++;
       }
     }
@@ -297,7 +297,7 @@ create_tunnel(
         if (ids->tunnel_encap_id[i] != SAI_NULL_OBJECT_ID)
         {
             emap_list[num_emap] = ids->tunnel_encap_id[i];
-            SWSS_LOG_NOTICE("create_tunnel:encapmaplist[%d]=0x%lx",num_emap,emap_list[num_emap]);
+            SWSS_LOG_NOTICE("create_tunnel:encapmaplist[%d]=0x%" PRIx64 "",num_emap,emap_list[num_emap]);
             num_emap++;
         }
     }
@@ -845,7 +845,7 @@ bool VxlanTunnel::deleteTunnelHw(uint8_t mapper_list, tunnel_map_use_t map_src,
             remove_tunnel_termination(ids_.tunnel_term_id);
         }
   
-        remove_tunnel_termination(ids_.tunnel_id);
+        remove_tunnel(ids_.tunnel_id);
         deleteMapperHw(mapper_list, map_src);
     }
 
@@ -1821,7 +1821,7 @@ bool VxlanTunnelMapOrch::delOperation(const Request& request)
     }
 
     vector<string> map_entries = tokenize(tunnel_map_entry_name, '_');
-    SWSS_LOG_INFO("Vxlan tunnel map '%s' size %ld", tunnel_map_entry_name.c_str(), 
+    SWSS_LOG_INFO("Vxlan tunnel map '%s' size %zu", tunnel_map_entry_name.c_str(), 
                                                     map_entries.size());
     if (map_entries.size() == 3)
     {
@@ -1898,7 +1898,9 @@ bool VxlanVrfMapOrch::addOperation(const Request& request)
          * Create encap and decap mapper
          */
         entry.encap_id = tunnel_obj->addEncapMapperEntry(vrf_id, vni_id);
+        vrf_orch->increaseVrfRefCount(vrf_name);
         entry.decap_id = tunnel_obj->addDecapMapperEntry(vrf_id, vni_id);
+        vrf_orch->increaseVrfRefCount(vrf_name);
 
         SWSS_LOG_DEBUG("Vxlan tunnel encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'",
                 entry.encap_id, entry.decap_id);
@@ -1953,7 +1955,7 @@ bool VxlanVrfMapOrch::delOperation(const Request& request)
          */
         entry = vxlan_vrf_table_[full_map_entry_name];
 
-        SWSS_LOG_NOTICE("VxlanVrfMapOrch Vxlan tunnel VRF encap entry '%lx' decap entry '0x%lx'",
+        SWSS_LOG_NOTICE("VxlanVrfMapOrch Vxlan tunnel VRF encap entry '%" PRIx64 "' decap entry '0x%" PRIx64 "'",
                 entry.encap_id, entry.decap_id);
 
         remove_tunnel_map_entry(entry.encap_id);
@@ -2160,4 +2162,3 @@ bool EvpnNvoOrch::delOperation(const Request& request)
 
     return true;
 }
-
