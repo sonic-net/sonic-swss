@@ -57,6 +57,7 @@ gearsyncd/gearsyncd
 mclagsyncd/mclagsyncd
 natsyncd/natsyncd
 neighsyncd/neighsyncd
+fdbsyncd/fdbsyncd
 orchagent/orchagent
 orchagent/orchagent_restart_check
 orchagent/routeresync

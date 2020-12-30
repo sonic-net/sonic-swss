@@ -2,7 +2,6 @@ import json
 import time
 
 from dvslib.dvs_common import wait_for_result
-from dvslib.dvs_database import DVSDatabase
 from swsscommon import swsscommon
 
 DEFAULT_MTU = "9100"
@@ -138,7 +137,7 @@ class TestSubPortIntf(object):
 
             return (route_entry_found, raw_route_entry_key)
 
-        (route_entry_found, raw_route_entry_key) = wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
+        (route_entry_found, raw_route_entry_key) = wait_for_result(_access_function)
 
         fvs = self.asic_db.get_entry(ASIC_ROUTE_ENTRY_TABLE, raw_route_entry_key)
 
@@ -166,7 +165,7 @@ class TestSubPortIntf(object):
                                   for raw_route_entry in raw_route_entries]
             return (all(dest in route_destinations for dest in expected_destinations), None)
 
-        wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
+        wait_for_result(_access_function)
 
     def check_sub_port_intf_key_removal(self, db, table_name, key):
         db.wait_for_deleted_keys(table_name, [key])
@@ -179,7 +178,7 @@ class TestSubPortIntf(object):
                          for raw_route_entry in raw_route_entries)
             return (status, None)
 
-        wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
+        wait_for_result(_access_function)
 
     def _test_sub_port_intf_creation(self, dvs, sub_port_intf_name):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)

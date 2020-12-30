@@ -23,18 +23,21 @@ class DVSMirror(object):
         self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
 
     def create_erspan_session(self, name, src, dst, gre, dscp, ttl, queue, policer=None, src_ports=None, direction="BOTH"):
-        mirror_entry = {}
-        mirror_entry["src_ip"] = src
-        mirror_entry["dst_ip"] = dst
-        mirror_entry["gre_type"] = gre
-        mirror_entry["dscp"] = dscp
-        mirror_entry["ttl"] = ttl
-        mirror_entry["queue"] = queue
+        mirror_entry = {
+            "src_ip": src,
+            "dst_ip": dst,
+            "gre_type": gre,
+            "dscp": dscp,
+            "ttl": ttl,
+            "queue": queue,
+            "direction": direction
+        }
+
         if policer:
             mirror_entry["policer"] = policer
+
         if src_ports:
             mirror_entry["src_port"] = src_ports
-        mirror_entry["direction"] = direction
 
         self.config_db.create_entry("MIRROR_SESSION", name, mirror_entry)
 

@@ -4,6 +4,8 @@
 #include "swssnet.h"
 #include "crmorch.h"
 #include "routeorch.h"
+#include "directory.h"
+#include "muxorch.h"
 
 extern sai_neighbor_api_t*         sai_neighbor_api;
 extern sai_next_hop_api_t*         sai_next_hop_api;
@@ -13,6 +15,7 @@ extern sai_object_id_t gSwitchId;
 extern CrmOrch *gCrmOrch;
 extern RouteOrch *gRouteOrch;
 extern FgNhgOrch *gFgNhgOrch;
+extern Directory<Orch*> gDirectory;
 
 const int neighorch_pri = 30;
 
@@ -89,9 +92,9 @@ void NeighOrch::processFDBFlushUpdate(const FdbFlushUpdate& update)
         for (const auto &neighborEntry : m_syncdNeighbors)
         {
             if (neighborEntry.first.alias == vlan.m_alias &&
-                neighborEntry.second == entry.mac)
+                neighborEntry.second.mac == entry.mac)
             {
-                resolveNeighborEntry(neighborEntry.first, neighborEntry.second);
+                resolveNeighborEntry(neighborEntry.first, neighborEntry.second.mac);
             }
         }
     }
@@ -337,6 +340,23 @@ bool NeighOrch::removeNextHop(const IpAddress &ipAddress, const string &alias)
     return true;
 }
 
+bool NeighOrch::removeOverlayNextHop(const NextHopKey &nexthop)
+{
+    SWSS_LOG_ENTER();
+
+    assert(hasNextHop(nexthop));
+
+    if (m_syncdNextHops[nexthop].ref_count > 0)
+    {
+        SWSS_LOG_ERROR("Failed to remove still referenced next hop %s on %s",
+                   nexthop.ip_address.to_string().c_str(), nexthop.alias.c_str());
+        return false;
+    }
+
+    m_syncdNextHops.erase(nexthop);
+    return true;
+}
+
 sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
 {
     assert(hasNextHop(nexthop));
@@ -373,7 +393,7 @@ bool NeighOrch::getNeighborEntry(const NextHopKey &nexthop, NeighborEntry &neigh
         if (entry.first.ip_address == nexthop.ip_address && entry.first.alias == nexthop.alias)
         {
             neighborEntry = entry.first;
-            macAddress = entry.second;
+            macAddress = entry.second.mac;
             return true;
         }
     }
@@ -455,7 +475,8 @@ void NeighOrch::doTask(Consumer &consumer)
                     mac_address = MacAddress(fvValue(*i));
             }
 
-            if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end() || m_syncdNeighbors[neighbor_entry] != mac_address)
+            if (m_syncdNeighbors.find(neighbor_entry) == m_syncdNeighbors.end()
+                    || m_syncdNeighbors[neighbor_entry].mac != mac_address)
             {
                 if (addNeighbor(neighbor_entry, mac_address))
                 {
@@ -529,13 +550,20 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
     neighbor_entry.switch_id = gSwitchId;
     copy(neighbor_entry.ip_address, ip_address);
 
+    vector<sai_attribute_t> neighbor_attrs;
     sai_attribute_t neighbor_attr;
+
     neighbor_attr.id = SAI_NEIGHBOR_ENTRY_ATTR_DST_MAC_ADDRESS;
     memcpy(neighbor_attr.value.mac, macAddress.getMac(), 6);
+    neighbor_attrs.push_back(neighbor_attr);
 
-    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    bool hw_config = isHwConfigured(neighborEntry);
+
+    if (!hw_config && mux_orch->isNeighborActive(ip_address, alias))
     {
-        status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry, 1, &neighbor_attr);
+        status = sai_neighbor_api->create_neighbor_entry(&neighbor_entry,
+                                   (uint32_t)neighbor_attrs.size(), neighbor_attrs.data());
         if (status != SAI_STATUS_SUCCESS)
         {
             if (status == SAI_STATUS_ITEM_ALREADY_EXISTS)
@@ -552,8 +580,8 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
                 return false;
             }
         }
-
-        SWSS_LOG_NOTICE("Created neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
+        SWSS_LOG_NOTICE("Created neighbor ip %s, %s on %s", ip_address.to_string().c_str(),
+                macAddress.to_string().c_str(), alias.c_str());
         m_intfsOrch->increaseRouterIntfsRefCount(alias);
 
         if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
@@ -587,8 +615,9 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
 
             return false;
         }
+        hw_config = true;
     }
-    else
+    else if (isHwConfigured(neighborEntry))
     {
         status = sai_neighbor_api->set_neighbor_entry_attribute(&neighbor_entry, &neighbor_attr);
         if (status != SAI_STATUS_SUCCESS)
@@ -600,7 +629,7 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
     }
 
-    m_syncdNeighbors[neighborEntry] = macAddress;
+    m_syncdNeighbors[neighborEntry] = { macAddress, hw_config };
 
     NeighborUpdate update = { neighborEntry, macAddress, true };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
@@ -608,7 +637,7 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
     return true;
 }
 
-bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry)
+bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
 {
     SWSS_LOG_ENTER();
 
@@ -625,86 +654,214 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry)
     if (m_syncdNextHops[nexthop].ref_count > 0)
     {
         SWSS_LOG_INFO("Failed to remove still referenced neighbor %s on %s",
-                      m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str());
+                      m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
         return false;
     }
 
-    sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
-
-    sai_neighbor_entry_t neighbor_entry;
-    neighbor_entry.rif_id = rif_id;
-    neighbor_entry.switch_id = gSwitchId;
-    copy(neighbor_entry.ip_address, ip_address);
-
-    sai_object_id_t next_hop_id = m_syncdNextHops[nexthop].next_hop_id;
-    status = sai_next_hop_api->remove_next_hop(next_hop_id);
-    if (status != SAI_STATUS_SUCCESS)
+    if (isHwConfigured(neighborEntry))
     {
-        /* When next hop is not found, we continue to remove neighbor entry. */
-        if (status == SAI_STATUS_ITEM_NOT_FOUND)
-        {
-            SWSS_LOG_ERROR("Failed to locate next hop %s on %s, rv:%d",
-                           ip_address.to_string().c_str(), alias.c_str(), status);
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
-                           ip_address.to_string().c_str(), alias.c_str(), status);
-            return false;
-        }
-    }
+        sai_object_id_t rif_id = m_intfsOrch->getRouterIntfsId(alias);
 
-    if (status != SAI_STATUS_ITEM_NOT_FOUND)
-    {
+        sai_neighbor_entry_t neighbor_entry;
+        neighbor_entry.rif_id = rif_id;
+        neighbor_entry.switch_id = gSwitchId;
+        copy(neighbor_entry.ip_address, ip_address);
+
+        sai_object_id_t next_hop_id = m_syncdNextHops[nexthop].next_hop_id;
+        status = sai_next_hop_api->remove_next_hop(next_hop_id);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            /* When next hop is not found, we continue to remove neighbor entry. */
+            if (status == SAI_STATUS_ITEM_NOT_FOUND)
+            {
+                SWSS_LOG_ERROR("Failed to locate next hop %s on %s, rv:%d",
+                               ip_address.to_string().c_str(), alias.c_str(), status);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
+                               ip_address.to_string().c_str(), alias.c_str(), status);
+                return false;
+            }
+        }
+
+        if (status != SAI_STATUS_ITEM_NOT_FOUND)
+        {
+            if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+            }
+            else
+            {
+                gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+            }
+        }
+
+        SWSS_LOG_NOTICE("Removed next hop %s on %s",
+                        ip_address.to_string().c_str(), alias.c_str());
+
+        status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            if (status == SAI_STATUS_ITEM_NOT_FOUND)
+            {
+                SWSS_LOG_ERROR("Failed to locate neigbor %s on %s, rv:%d",
+                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
+                return true;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
+                        m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
+                return false;
+            }
+        }
+
         if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
         {
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEXTHOP);
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
         }
         else
         {
-            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEXTHOP);
+            gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
         }
-    }
 
-    SWSS_LOG_NOTICE("Removed next hop %s on %s",
-                    ip_address.to_string().c_str(), alias.c_str());
-
-    status = sai_neighbor_api->remove_neighbor_entry(&neighbor_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        if (status == SAI_STATUS_ITEM_NOT_FOUND)
-        {
-            SWSS_LOG_ERROR("Failed to locate neigbor %s on %s, rv:%d",
-                    m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str(), status);
-            return true;
-        }
-        else
-        {
-            SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
-                    m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str(), status);
-            return false;
-        }
-    }
-
-    if (neighbor_entry.ip_address.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-    {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_NEIGHBOR);
-    }
-    else
-    {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_NEIGHBOR);
+        removeNextHop(ip_address, alias);
+        m_intfsOrch->decreaseRouterIntfsRefCount(alias);
     }
 
     SWSS_LOG_NOTICE("Removed neighbor %s on %s",
-            m_syncdNeighbors[neighborEntry].to_string().c_str(), alias.c_str());
+            m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
+
+    /* Do not delete entry from cache if its disable request */
+    if (disable)
+    {
+        m_syncdNeighbors[neighborEntry].hw_configured = false;
+        return true;
+    }
 
     m_syncdNeighbors.erase(neighborEntry);
-    m_intfsOrch->decreaseRouterIntfsRefCount(alias);
 
     NeighborUpdate update = { neighborEntry, MacAddress(), false };
     notify(SUBJECT_TYPE_NEIGH_CHANGE, static_cast<void *>(&update));
 
-    removeNextHop(ip_address, alias);
-
     return true;
 }
+
+bool NeighOrch::isHwConfigured(const NeighborEntry& neighborEntry)
+{
+    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+    {
+        return false;
+    }
+
+    return (m_syncdNeighbors[neighborEntry].hw_configured);
+}
+
+bool NeighOrch::enableNeighbor(const NeighborEntry& neighborEntry)
+{
+    SWSS_LOG_NOTICE("Neighbor enable request for %s ", neighborEntry.ip_address.to_string().c_str());
+
+    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+    {
+        SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
+        return true;
+    }
+
+    if (isHwConfigured(neighborEntry))
+    {
+        SWSS_LOG_INFO("Neighbor %s is already programmed to HW", neighborEntry.ip_address.to_string().c_str());
+        return true;
+    }
+
+    return addNeighbor(neighborEntry, m_syncdNeighbors[neighborEntry].mac);
+}
+
+bool NeighOrch::disableNeighbor(const NeighborEntry& neighborEntry)
+{
+    SWSS_LOG_NOTICE("Neighbor disable request for %s ", neighborEntry.ip_address.to_string().c_str());
+
+    if (m_syncdNeighbors.find(neighborEntry) == m_syncdNeighbors.end())
+    {
+        SWSS_LOG_INFO("Neighbor %s not found", neighborEntry.ip_address.to_string().c_str());
+        return true;
+    }
+
+    if (!isHwConfigured(neighborEntry))
+    {
+        SWSS_LOG_INFO("Neighbor %s is not programmed to HW", neighborEntry.ip_address.to_string().c_str());
+        return true;
+    }
+
+    return removeNeighbor(neighborEntry, true);
+}
+
+sai_object_id_t NeighOrch::addTunnelNextHop(const NextHopKey& nh)
+{
+    SWSS_LOG_ENTER();
+    sai_object_id_t nh_id = SAI_NULL_OBJECT_ID;
+
+    EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
+    auto vtep_ptr = evpn_orch->getEVPNVtep();
+
+    if(!vtep_ptr)
+    {
+        SWSS_LOG_ERROR("Add Tunnel next hop unable to find EVPN VTEP");
+        return nh_id;
+    }
+
+    auto tun_name = vtep_ptr->getTunnelName();
+
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+    IpAddress tnl_dip = nh.ip_address;
+    nh_id = vxlan_orch->createNextHopTunnel(tun_name, tnl_dip, nh.mac_address, nh.vni);
+
+    if (nh_id == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Failed to create Tunnel next hop %s, %s@%d@%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+            nh.vni, nh.mac_address.to_string().c_str());
+        return nh_id;
+    }
+
+    SWSS_LOG_NOTICE("Created Tunnel next hop %s, %s@%d@%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+            nh.vni, nh.mac_address.to_string().c_str());
+
+    NextHopEntry next_hop_entry;
+    next_hop_entry.next_hop_id = nh_id;
+    next_hop_entry.ref_count = 0;
+    next_hop_entry.nh_flags = 0;
+    m_syncdNextHops[nh] = next_hop_entry;
+
+    return nh_id;
+}
+
+bool NeighOrch::removeTunnelNextHop(const NextHopKey& nh)
+{
+    SWSS_LOG_ENTER();
+
+    EvpnNvoOrch* evpn_orch = gDirectory.get<EvpnNvoOrch*>();
+    auto vtep_ptr = evpn_orch->getEVPNVtep();
+
+    if(!vtep_ptr)
+    {
+        SWSS_LOG_ERROR("Remove Tunnel next hop unable to find EVPN VTEP");
+        return false;
+    }
+
+    auto tun_name = vtep_ptr->getTunnelName();
+
+    VxlanTunnelOrch* vxlan_orch = gDirectory.get<VxlanTunnelOrch*>();
+
+    IpAddress tnl_dip = nh.ip_address;
+    if (!vxlan_orch->removeNextHopTunnel(tun_name, tnl_dip, nh.mac_address, nh.vni))
+    {
+        SWSS_LOG_ERROR("Failed to remove Tunnel next hop %s, %s@%d@%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+            nh.vni, nh.mac_address.to_string().c_str());
+        return false;
+    }
+
+    SWSS_LOG_NOTICE("Removed Tunnel next hop %s, %s@%d@%s", tun_name.c_str(), nh.ip_address.to_string().c_str(),
+            nh.vni, nh.mac_address.to_string().c_str());
+    return true;
+}
+

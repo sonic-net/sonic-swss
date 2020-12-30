@@ -24,6 +24,8 @@ from dvslib import dvs_lag
 from dvslib import dvs_mirror
 from dvslib import dvs_policer
 
+from buffer_model import enable_dynamic_buffer
+
 # FIXME: For the sake of stabilizing the PR pipeline we currently assume there are 32 front-panel
 # ports in the system (much like the rest of the test suite). This should be adjusted to accomodate
 # a dynamic number of ports. GitHub Issue: Azure/sonic-swss#1384.
@@ -72,6 +74,11 @@ def pytest_addoption(parser):
                      action="store",
                      default=None,
                      help="Topology file for the Virtual Chassis Topology")
+
+    parser.addoption("--buffer_model",
+                     action="store",
+                     default="traditional",
+                     help="Buffer model")
 
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
@@ -162,9 +169,11 @@ class VirtualServer:
             ensure_system(f"ip netns add {self.nsname}")
 
             # create vpeer link
-            ensure_system(f"ip link add {self.nsname[0:12]} type veth peer name {self.pifname}")
-            ensure_system(f"ip link set {self.nsname[0:12]} netns {self.nsname}")
-            ensure_system(f"ip link set {self.pifname} netns {pid}")
+            ensure_system(
+                f"ip netns exec {self.nsname} ip link add {self.nsname[0:12]}"
+                f" type veth peer name {self.pifname}"
+            )
+            ensure_system(f"ip netns exec {self.nsname} ip link set {self.pifname} netns {pid}")
 
             # bring up link in the virtual server
             ensure_system(f"ip netns exec {self.nsname} ip link set dev {self.nsname[0:12]} name eth0")
@@ -229,7 +238,8 @@ class DockerVirtualSwitch:
         forcedvs: bool = None,
         vct: str = None,
         newctnname: str = None,
-        ctnmounts: Dict[str, str] = None
+        ctnmounts: Dict[str, str] = None,
+        buffer_model: str = None,
     ):
         self.basicd = ["redis-server", "rsyslogd"]
         self.swssd = [
@@ -373,6 +383,10 @@ class DockerVirtualSwitch:
 
         # Make sure everything is up and running before turning over control to the caller
         self.check_ready_status_and_init_db()
+
+        # Switch buffer model to dynamic if necessary
+        if buffer_model == 'dynamic':
+            enable_dynamic_buffer(self.get_config_db(), self.runcmd)
 
     def destroy(self) -> None:
         if self.appldb:
@@ -1019,14 +1033,23 @@ class DockerVirtualSwitch:
         tbl._del(interface + ":" + ip)
         time.sleep(1)
 
-    # deps: mirror_port_erspan
+    # deps: mirror_port_erspan, warm_reboot
     def add_route(self, prefix, nexthop):
         self.runcmd("ip route add " + prefix + " via " + nexthop)
         time.sleep(1)
 
-    # deps: mirror_port_erspan
+    # deps: mirror_port_erspan, warm_reboot
     def change_route(self, prefix, nexthop):
         self.runcmd("ip route change " + prefix + " via " + nexthop)
+        time.sleep(1)
+
+    # deps: warm_reboot
+    def change_route_ecmp(self, prefix, nexthops):
+        cmd = ""
+        for nexthop in nexthops:
+            cmd += " nexthop via " + nexthop
+
+        self.runcmd("ip route change " + prefix + cmd)
         time.sleep(1)
 
     # deps: acl, mirror_port_erspan
@@ -1497,10 +1520,11 @@ def dvs(request) -> DockerVirtualSwitch:
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
+    buffer_model = request.config.getoption("--buffer_model")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
     log_path = name if name else request.module.__name__
 
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, forcedvs)
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
 
     yield dvs
 

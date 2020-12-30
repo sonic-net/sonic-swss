@@ -35,6 +35,7 @@
 #define TABLE_TYPE_DTEL_FLOW_WATCHLIST  "DTEL_FLOW_WATCHLIST"
 #define TABLE_TYPE_DTEL_DROP_WATCHLIST  "DTEL_DROP_WATCHLIST"
 #define TABLE_TYPE_MCLAG                "MCLAG"
+#define TABLE_TYPE_MUX                  "MUX"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
@@ -115,7 +116,8 @@ typedef enum
     ACL_TABLE_CTRLPLANE,
     ACL_TABLE_DTEL_FLOW_WATCHLIST,
     ACL_TABLE_DTEL_DROP_WATCHLIST,
-    ACL_TABLE_MCLAG
+    ACL_TABLE_MCLAG,
+    ACL_TABLE_MUX
 } acl_table_type_t;
 
 typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
@@ -272,6 +274,12 @@ public:
     bool validateAddMatch(string attr_name, string attr_value);
 };
 
+class AclRuleMux: public AclRuleL3
+{
+public:
+    AclRuleMux(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = false);
+    bool validateAddMatch(string attr_name, string attr_value);
+};
 
 class AclRuleMirror: public AclRule
 {
@@ -433,6 +441,8 @@ public:
     
     // Get the OID for the ACL bind point for a given port
     static bool getAclBindPortId(Port& port, sai_object_id_t& port_id);
+
+    using Orch::doTask;  // Allow access to the basic doTask
 
 private:
     SwitchOrch *m_switchOrch;
