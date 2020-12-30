@@ -4,6 +4,9 @@
 #include <redisapi.h>
 #include <redisclient.h>
 #include <sai_serialize.h>
+#include <swss/stringutility.h>
+#include <swss/redisutility.h>
+#include <swss/boolean.h>
 
 #include <vector>
 #include <sstream>
@@ -11,6 +14,7 @@
 #include <functional>
 #include <stack>
 #include <memory>
+#include <typeinfo>
 
 /* Global Variables*/
 
@@ -39,160 +43,46 @@ static const std::vector<std::string> macsec_ingress_sa_attrs =
         "SAI_MACSEC_SA_ATTR_MINIMUM_XPN",
 };
 
-/* Helpers */
-
-template <typename T>
-static bool split(const std::string &input, char delimiter, T &output)
-{
-    if (input.find(delimiter) != std::string::npos)
-    {
-        return false;
-    }
-    std::istringstream istream(input);
-    istream >> output;
-    return true;
-}
-
 template <typename T, typename... Args>
-static bool split(const std::string &input, char delimiter, T &output, Args &... args)
+static bool extract_variables(const std::string &input, char delimiter, T &output, Args &... args)
 {
-    auto pos = input.find(delimiter);
-    if (pos == std::string::npos)
+    const auto tokens = swss::tokenize(input, delimiter);
+    try
     {
-        return false;
-    }
-    std::istringstream istream(input.substr(0, pos));
-    istream >> output;
-    return split(input.substr(pos + 1, input.length() - pos - 1), delimiter, args...);
-}
-
-template <typename T>
-static std::string join(const T &input)
-{
-    std::ostringstream ostream;
-    ostream << input;
-    return ostream.str();
-}
-
-template <typename T>
-static std::string join(char delimiter, const T &input)
-{
-    return join(input);
-}
-
-template <typename T, typename... Args>
-static std::string join(char delimiter, const T &input, const Args &... args)
-{
-    std::ostringstream ostream;
-    ostream << input << delimiter << join(delimiter, args...);
-    return ostream.str();
-}
-
-template <class T>
-static bool get_value(
-    const MACsecOrch::TaskArgs &ta,
-    const std::string &field,
-    T &value)
-{
-    SWSS_LOG_ENTER();
-
-    std::string target_field = field;
-    std::transform(
-        target_field.begin(),
-        target_field.end(),
-        target_field.begin(),
-        ::tolower);
-    auto itr = std::find_if(
-        ta.begin(),
-        ta.end(),
-        [&](const MACsecOrch::TaskArgs::value_type &entry) {
-            std::string field = fvField(entry);
-            std::transform(
-                field.begin(),
-                field.end(),
-                field.begin(),
-                ::tolower);
-            return field == target_field;
-        });
-    if (itr != ta.end())
-    {
-        std::istringstream istream(fvValue(*itr));
-        istream >> value;
-        SWSS_LOG_DEBUG(
-            "Set field '%s' as '%s'",
-            field.c_str(),
-            fvValue(*itr).c_str());
+        swss::lexical_convert(tokens, output, args...);
         return true;
     }
-    SWSS_LOG_DEBUG("Cannot find field : %s", field.c_str());
-    return false;
+    catch(const std::exception& e)
+    {
+        return false;
+    }
 }
 
-static std::istringstream &operator>>(
-    std::istringstream &istream,
-    bool &b)
-{
-    std::string buffer = istream.str();
-    std::transform(
-        buffer.begin(),
-        buffer.end(),
-        buffer.begin(),
-        ::tolower);
-    if (buffer == "true" || buffer == "1")
-    {
-        b = true;
-    }
-    else if (buffer == "false" || buffer == "0")
-    {
-        b = false;
-    }
-    else
-    {
-        throw std::invalid_argument("Invalid bool string : " + buffer);
-    }
-
-    return istream;
-}
-
-static bool hex_to_binary(
-    const std::string &hex_str,
-    std::uint8_t *buffer,
-    size_t buffer_length)
+template<class T>
+static bool get_value(
+    const MACsecOrch::TaskArgs & ta,
+    const std::string & field,
+    T & value)
 {
     SWSS_LOG_ENTER();
-    size_t buffer_cur = 0;
-    size_t hex_cur = 0;
-    if (hex_str.length() %2 != 0)
+
+    auto value_opt = swss::fvsGetValue(ta, field, true);
+    if (!value_opt)
     {
-        SWSS_LOG_ERROR("Invalid hex string %s", hex_str.c_str());
+        SWSS_LOG_DEBUG("Cannot find field : %s", field.c_str());
         return false;
     }
-    if (hex_str.length() > (buffer_length * 2))
+
+    try
     {
-        SWSS_LOG_ERROR("Buffer length isn't sufficient.");
+        lexical_convert(*value_opt, value);
+        return true;
+    }
+    catch(const std::exception &err)
+    {
+        SWSS_LOG_DEBUG("Cannot convert field : %s to type : %s", field.c_str(), typeid(T).name());
         return false;
     }
-    while (hex_cur < hex_str.length())
-    {
-        if (!std::isxdigit(static_cast<std::uint8_t>(hex_str[hex_cur])))
-        {
-            SWSS_LOG_ERROR("Invalid hex string %s at %" PRIu64 "(%c)", hex_str.c_str(), hex_cur, hex_str[hex_cur]);
-            return false;
-        }
-        if (!std::isxdigit(static_cast<std::uint8_t>(hex_str[hex_cur + 1])))
-        {
-            SWSS_LOG_ERROR("Invalid hex string %s at %" PRIu64 "(%c)", hex_str.c_str(), hex_cur + 1, hex_str[hex_cur + 1]);
-            return false;
-        }
-        std::stringstream stream;
-        stream << std::hex;
-        stream << hex_str[hex_cur++];
-        stream << hex_str[hex_cur++];
-        std::uint32_t value;
-        stream >> value;
-        buffer[buffer_cur++] = static_cast<std::uint8_t>(value);
-    }
-    return true;
 }
 
 struct MACsecSAK
@@ -201,12 +91,10 @@ struct MACsecSAK
     bool                m_sak_256_enable;
 };
 
-static std::istringstream &operator>>(
-    std::istringstream &istream,
-    MACsecSAK &sak)
+static void lexical_convert(const std::string &buffer, MACsecSAK &sak)
 {
     SWSS_LOG_ENTER();
-    const std::string &buffer = istream.str();
+
     bool convert_done = false;
     memset(&sak, 0, sizeof(sak));
     // One hex indicates 4 bits 
@@ -216,7 +104,7 @@ static std::istringstream &operator>>(
     {
         // 128-bit SAK uses only Bytes 16..31.
         sak.m_sak_256_enable = false;
-        convert_done = hex_to_binary(
+        convert_done = swss::hex_to_binary(
             buffer,
             &sak.m_sak[16],
             16);
@@ -225,16 +113,16 @@ static std::istringstream &operator>>(
     else if (bit_count == 256)
     {
         sak.m_sak_256_enable = true;
-        convert_done = hex_to_binary(
+        convert_done = swss::hex_to_binary(
             buffer,
             sak.m_sak,
             32);
     }
+
     if (!convert_done)
     {
-        throw std::invalid_argument("Invalid SAK : " + buffer);
+        SWSS_LOG_THROW("Invalid SAK %s", buffer.c_str());
     }
-    return istream;
 }
 
 struct MACsecSalt
@@ -242,19 +130,16 @@ struct MACsecSalt
     sai_macsec_salt_t m_salt;
 };
 
-static std::istringstream &operator>>(
-    std::istringstream &istream,
-    MACsecSalt &salt)
+static void lexical_convert(const std::string &buffer, MACsecSalt &salt)
 {
     SWSS_LOG_ENTER();
-    const std::string &buffer = istream.str();
+
     memset(&salt, 0, sizeof(salt));
     if (
-        (buffer.length() != sizeof(salt.m_salt) * 2) || (!hex_to_binary(buffer, salt.m_salt, sizeof(salt.m_salt))))
+        (buffer.length() != sizeof(salt.m_salt) * 2) || (!swss::hex_to_binary(buffer, salt.m_salt, sizeof(salt.m_salt))))
     {
-        throw std::invalid_argument("Invalid SALT : " + buffer);
+        SWSS_LOG_THROW("Invalid SALT %s", buffer.c_str());
     }
-    return istream;
 }
 
 struct MACsecAuthKey
@@ -262,22 +147,19 @@ struct MACsecAuthKey
     sai_macsec_auth_key_t m_auth_key;
 };
 
-static std::istringstream &operator>>(
-    std::istringstream &istream,
-    MACsecAuthKey &auth_key)
+static void lexical_convert(const std::string &buffer, MACsecAuthKey &auth_key)
 {
     SWSS_LOG_ENTER();
-    const std::string &buffer = istream.str();
+
     memset(&auth_key, 0, sizeof(auth_key));
     if (
-        (buffer.length() != sizeof(auth_key.m_auth_key) * 2) || (!hex_to_binary(
+        (buffer.length() != sizeof(auth_key.m_auth_key) * 2) || (!swss::hex_to_binary(
                                                                     buffer,
                                                                     auth_key.m_auth_key,
                                                                     sizeof(auth_key.m_auth_key))))
     {
-        throw std::invalid_argument("Invalid Auth Key : " + buffer);
+        SWSS_LOG_THROW("Invalid Auth Key %s", buffer.c_str());
     }
-    return istream;
 }
 
 /* Recover from a fail action by a serial of pre-defined recover actions */
@@ -812,7 +694,7 @@ task_process_status MACsecOrch::taskUpdateEgressSA(
     std::string port_name;
     sai_uint64_t sci = 0;
     macsec_an_t an = 0;
-    if (!split(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
+    if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
     {
         SWSS_LOG_WARN("The key %s isn't correct.", port_sci_an.c_str());
         return task_failed;
@@ -845,8 +727,9 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
 {
     SWSS_LOG_ENTER();
 
-    bool active = false;
-    get_value(sa_attr, "active", active);
+    swss::AlphaBoolean alpha_boolean = false;
+    get_value(sa_attr, "active", alpha_boolean);
+    bool active = alpha_boolean.operator bool();
     if (active)
     {
         return createMACsecSA(port_sci_an, sa_attr, SAI_MACSEC_DIRECTION_INGRESS);
@@ -857,7 +740,7 @@ task_process_status MACsecOrch::taskUpdateIngressSA(
         std::string port_name;
         sai_uint64_t sci = 0;
         macsec_an_t an = 0;
-        if (!split(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
+        if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
         {
             SWSS_LOG_WARN("The key %s isn't correct.", port_sci_an.c_str());
             return task_failed;
@@ -1142,8 +1025,16 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
 
     RecoverStack recover;
 
-    get_value(port_attr, "enable_encrypt", macsec_port.m_enable_encrypt);
-    get_value(port_attr, "send_sci", macsec_port.m_sci_in_sectag);
+    swss::AlphaBoolean alpha_boolean;
+
+    if (get_value(port_attr, "enable_encrypt", alpha_boolean))
+    {
+        macsec_port.m_enable_encrypt = alpha_boolean.operator bool();
+    }
+    if (get_value(port_attr, "send_sci", alpha_boolean))
+    {
+        macsec_port.m_sci_in_sectag = alpha_boolean.operator bool();
+    }
     std::string cipher_suite;
     if (get_value(port_attr, "cipher_suite", cipher_suite))
     {
@@ -1169,11 +1060,11 @@ bool MACsecOrch::updateMACsecPort(MACsecPort &macsec_port, const TaskArgs &port_
             return false;
         }
     }
-    bool enable = false;
-    if (get_value(port_attr, "enable", enable) && enable != macsec_port.m_enable)
+    swss::AlphaBoolean enable = false;
+    if (get_value(port_attr, "enable", enable) && enable.operator bool() != macsec_port.m_enable)
     {
         std::vector<MACsecOrch::MACsecSC *> macsec_scs;
-        macsec_port.m_enable = enable;
+        macsec_port.m_enable = enable.operator bool();
         for (auto &sc : macsec_port.m_egress_scs)
         {
             macsec_scs.push_back(&sc.second);
@@ -1219,7 +1110,7 @@ bool MACsecOrch::deleteMACsecPort(
 
     for (auto &sc : macsec_port.m_egress_scs)
     {
-        const std::string port_sci = join(':', port_name, sc.first);
+        const std::string port_sci = swss::join(':', port_name, sc.first);
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_EGRESS) != task_success)
         {
             result &= false;
@@ -1227,7 +1118,7 @@ bool MACsecOrch::deleteMACsecPort(
     }
     for (auto &sc : macsec_port.m_ingress_scs)
     {
-        const std::string port_sci = join(':', port_name, sc.first);
+        const std::string port_sci = swss::join(':', port_name, sc.first);
         if (deleteMACsecSC(port_sci, SAI_MACSEC_DIRECTION_INGRESS) != task_success)
         {
             result &= false;
@@ -1336,7 +1227,7 @@ task_process_status MACsecOrch::updateMACsecSC(
 
     std::string port_name;
     sai_uint64_t sci = {0};
-    if (!split(port_sci, ':', port_name, sci))
+    if (!extract_variables(port_sci, ':', port_name, sci))
     {
         SWSS_LOG_WARN("The key %s isn't correct.", port_sci.c_str());
         return task_failed;
@@ -1414,7 +1305,7 @@ bool MACsecOrch::createMACsecSC(
 
     RecoverStack recover;
 
-    const std::string port_sci = join(':', port_name, sci);
+    const std::string port_sci = swss::join(':', port_name, sci);
 
     auto scs =
         (direction == SAI_MACSEC_DIRECTION_EGRESS)
@@ -1507,11 +1398,11 @@ bool MACsecOrch::createMACsecSC(
     fvVector.emplace_back("state", "ok");
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        m_state_macsec_egress_sc.set(join('|', port_name, sci), fvVector);
+        m_state_macsec_egress_sc.set(swss::join('|', port_name, sci), fvVector);
     }
     else
     {
-        m_state_macsec_ingress_sc.set(join('|', port_name, sci), fvVector);
+        m_state_macsec_ingress_sc.set(swss::join('|', port_name, sci), fvVector);
     }
 
     recover.clear();
@@ -1572,7 +1463,7 @@ task_process_status MACsecOrch::deleteMACsecSC(
 
     std::string port_name;
     sai_uint64_t sci = 0;
-    if (!split(port_sci, ':', port_name, sci))
+    if (!extract_variables(port_sci, ':', port_name, sci))
     {
         SWSS_LOG_WARN("The key %s isn't correct.", port_sci.c_str());
         return task_failed;
@@ -1590,7 +1481,7 @@ task_process_status MACsecOrch::deleteMACsecSC(
 
     for (auto &sa : ctx.get_macsec_sc()->m_sa_ids)
     {
-        const std::string port_sci_an = join(':', port_sci, sa.first);
+        const std::string port_sci_an = swss::join(':', port_sci, sa.first);
         deleteMACsecSA(port_sci_an, direction);
     }
 
@@ -1622,11 +1513,11 @@ task_process_status MACsecOrch::deleteMACsecSC(
 
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        m_state_macsec_egress_sc.del(join('|', port_name, sci));
+        m_state_macsec_egress_sc.del(swss::join('|', port_name, sci));
     }
     else
     {
-        m_state_macsec_ingress_sc.del(join('|', port_name, sci));
+        m_state_macsec_ingress_sc.del(swss::join('|', port_name, sci));
     }
 
     return result;
@@ -1654,7 +1545,7 @@ task_process_status MACsecOrch::createMACsecSA(
     std::string port_name;
     sai_uint64_t sci = 0;
     macsec_an_t an = 0;
-    if (!split(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
+    if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
     {
         SWSS_LOG_WARN("The key %s isn't correct.", port_sci_an.c_str());
         return task_failed;
@@ -1791,12 +1682,12 @@ task_process_status MACsecOrch::createMACsecSA(
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
         installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_egress_sa_attrs);
-        m_state_macsec_egress_sa.set(join('|', port_name, sci, an), fvVector);
+        m_state_macsec_egress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
     else
     {
         installCounter(CounterType::MACSEC_SA_ATTR, port_sci_an, sc->m_sa_ids[an], macsec_ingress_sa_attrs);
-        m_state_macsec_ingress_sa.set(join('|', port_name, sci, an), fvVector);
+        m_state_macsec_ingress_sa.set(swss::join('|', port_name, sci, an), fvVector);
     }
 
     SWSS_LOG_NOTICE("MACsec SA %s is created.", port_sci_an.c_str());
@@ -1814,7 +1705,7 @@ task_process_status MACsecOrch::deleteMACsecSA(
     std::string port_name = "";
     sai_uint64_t sci = 0;
     macsec_an_t an = 0;
-    if (!split(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
+    if (!extract_variables(port_sci_an, ':', port_name, sci, an) || an > MAX_SA_NUMBER)
     {
         SWSS_LOG_WARN("The key %s isn't correct.", port_sci_an.c_str());
         return task_failed;
@@ -1852,11 +1743,11 @@ task_process_status MACsecOrch::deleteMACsecSA(
 
     if (direction == SAI_MACSEC_DIRECTION_EGRESS)
     {
-        m_state_macsec_egress_sa.del(join('|', port_name, sci, an));
+        m_state_macsec_egress_sa.del(swss::join('|', port_name, sci, an));
     }
     else
     {
-        m_state_macsec_ingress_sa.del(join('|', port_name, sci, an));
+        m_state_macsec_ingress_sa.del(swss::join('|', port_name, sci, an));
     }
 
     SWSS_LOG_NOTICE("MACsec SA %s is deleted.", port_sci_an.c_str());
