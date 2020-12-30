@@ -395,7 +395,7 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
     nh_oid_map = get_nh_oid_map(asic_db)
     nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
     validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
-                            nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
 
     # Bring down 1 next hop in bank 1
     nh_memb_exp_count = {"10.0.0.7":30,"10.0.0.11":30}
@@ -424,7 +424,7 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
     nh_oid_map = get_nh_oid_map(asic_db)
     nh_memb_exp_count = {"10.0.0.1":10,"10.0.0.3":10,"10.0.0.5":10,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
     validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
-                            nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
 
     # Bring down 1 next-hop from bank 0, and 2 next-hops from bank 1
     nh_memb_exp_count = {"10.0.0.1":15,"10.0.0.5":15,"10.0.0.11":30}
@@ -587,11 +587,11 @@ def fine_grained_ecmp_base_test(dvs, match_mode):
         asic_db.wait_for_n_keys(ASIC_NHG_MEMB, 3)
         state_db.wait_for_n_keys("FG_ROUTE_TABLE", 0)
 
-    # remove prefix entry
-    asic_rt_key = get_asic_route_key(asic_db, fg_nhg_prefix)
-    ps._del(fg_nhg_prefix)
-    asic_db.wait_for_deleted_entry(ASIC_ROUTE_TB, asic_rt_key)
-    asic_db.wait_for_n_keys(ASIC_NHG_MEMB, 0)
+        # remove prefix entry
+        asic_rt_key = get_asic_route_key(asic_db, fg_nhg_prefix)
+        ps._del(fg_nhg_prefix)
+        asic_db.wait_for_deleted_entry(ASIC_ROUTE_TB, asic_rt_key)
+        asic_db.wait_for_n_keys(ASIC_NHG_MEMB, 0)
 
     # Cleanup all FG, arp and interface
     remove_entry(config_db, "FG_NHG", fg_nhg_name)
