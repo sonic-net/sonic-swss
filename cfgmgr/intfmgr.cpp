@@ -655,7 +655,7 @@ bool IntfMgr::doIntfAddrTask(const vector<string>& keys,
 void IntfMgr::doTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
-    static bool replayNotDone = true;
+    static bool replayDone = false;
 
     auto it = consumer.m_toSync.begin();
     while (it != consumer.m_toSync.end())
@@ -700,9 +700,9 @@ void IntfMgr::doTask(Consumer &consumer)
         it = consumer.m_toSync.erase(it);
     }
     
-    if (replayNotDone  &&   WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
+    if (!replayDone && WarmStart::isWarmStart() && m_pendingReplayIntfList.empty() )
     {
-        replayNotDone = false;
+        replayDone = true;
         WarmStart::setWarmStartState("intfmgrd", WarmStart::REPLAYED);
         // There is no operation to be performed for intfmgr reconcillation
         // Hence mark it reconciled right away
