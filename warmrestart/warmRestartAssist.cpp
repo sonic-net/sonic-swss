@@ -119,12 +119,12 @@ AppRestartAssist::cache_state_t AppRestartAssist::getCacheEntryState(const std::
 
 void AppRestartAssist::appDataReplayed()
 {
-        WarmStart::setWarmStartState(m_appName, WarmStart::REPLAYED);
+    WarmStart::setWarmStartState(m_appName, WarmStart::REPLAYED);
 }
 
 void AppRestartAssist::warmStartDisabled()
 {
-        WarmStart::setWarmStartState(m_appName, WarmStart::WSDISABLED);
+    WarmStart::setWarmStartState(m_appName, WarmStart::WSDISABLED);
 }
 
 // Read table(s) from APPDB and append stale flag then insert to cachemap
