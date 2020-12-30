@@ -1238,7 +1238,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
     bool overlay_nh = false;
     bool status = false;
     bool curNhgIsFineGrained = false;
-    bool prevNhgWasFineGrained;
+    bool prevNhgWasFineGrained = false;
 
     if (m_syncdRoutes.find(vrf_id) == m_syncdRoutes.end())
     {

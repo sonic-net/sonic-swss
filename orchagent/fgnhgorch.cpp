@@ -1394,7 +1394,7 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
             }
             else if (fvField(i) == "match_mode")
             {
-                if (fvValue(i) == "next-hop-based")
+                if (fvValue(i) == "nexthop-based")
                 {
                     match_mode = NEXTHOP_BASED;
                 }
