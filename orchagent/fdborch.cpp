@@ -231,21 +231,6 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
                 itr = next_item;
             }
         }
-        else if (bridge_port_id == SAI_NULL_OBJECT_ID)
-        {
-            /* FLUSH based on VLAN - unsupported */
-            SWSS_LOG_ERROR("Unsupported FDB Flush: [ %s , %s ] = { port: - }",
-                           update.entry.mac.to_string().c_str(),
-                           vlanName.c_str());
-
-        }
-        else
-        {
-            /* FLUSH based on port and VLAN - unsupported */
-            SWSS_LOG_ERROR("Unsupported FDB Flush: [ %s , %s ] = { port: %s }",
-                           update.entry.mac.to_string().c_str(),
-                           vlanName.c_str(), update.port.m_alias.c_str());
-        }
         break;
     }
 

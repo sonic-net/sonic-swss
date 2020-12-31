@@ -3230,6 +3230,10 @@ bool PortsOrch::removeVlanMember(Port &vlan, Port &port)
     sai_tagging_mode = vlan_member->second.vlan_mode;
     vlan_member_id = vlan_member->second.vlan_member_id;
 
+    /* Flush FDB entries pointing to this bridge port for the VLAN */
+    gFdbOrch->flushFDBEntries(port.m_bridge_port_id, vlan.m_vlan_info.vlan_oid);
+    SWSS_LOG_INFO("Flush FDB entries for port %s vlan %s", port.m_alias.c_str(), vlan.m_alias.c_str());
+
     sai_status_t status = sai_vlan_api->remove_vlan_member(vlan_member_id);
     if (status != SAI_STATUS_SUCCESS)
     {
