@@ -63,7 +63,6 @@ int main(int argc, char **argv)
                 replayCheckTimer.setInterval(timespec{1, 0});
                 replayCheckTimer.start();
                 s.addSelectable(&replayCheckTimer);
-
             }
             else
             {

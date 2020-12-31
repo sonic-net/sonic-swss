@@ -67,7 +67,7 @@ bool FdbSync::isIntfRestoreDone()
         {
             SWSS_LOG_INFO("Module %s NOT Replayed or Reconciled %d",module.c_str(), (int) state);            
             //return false;
-            //Return true till all the dependant code is checked in
+            // Return true till all the dependant code is checked in
             return true;
         }
     }
@@ -79,8 +79,8 @@ bool FdbSync::isIntfRestoreDone()
 bool FdbSync::isReadyToReconcile()
 {
     vector<string> required_modules = {
-            "orchagent",
-        };
+        "orchagent",
+    };
 
     for(string& module : required_modules)
     {
@@ -95,7 +95,7 @@ bool FdbSync::isReadyToReconcile()
         {
             SWSS_LOG_INFO("Module %s NOT Reconciled %d",module.c_str(), (int) state);            
             //return false;
-            //Return True untill the dependant orchagent code is commited
+            // Return True untill the dependant orchagent code is commited
             return true;
         }
     }
