@@ -328,10 +328,12 @@ namespace aclorch_test
             gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch);
 
             ASSERT_EQ(gFgNhgOrch, nullptr);
-            vector<string> fgnhg_tables = {
-                CFG_FG_NHG,
-                CFG_FG_NHG_PREFIX,
-                CFG_FG_NHG_MEMBER
+            const int fgnhgorch_pri = 15;
+
+            vector<table_name_with_pri_t> fgnhg_tables = {
+                { CFG_FG_NHG,                 fgnhgorch_pri },
+                { CFG_FG_NHG_PREFIX,          fgnhgorch_pri },
+                { CFG_FG_NHG_MEMBER,          fgnhgorch_pri }
             };
             gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
 

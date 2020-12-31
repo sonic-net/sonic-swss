@@ -192,6 +192,19 @@ def startup_link(dvs, db, port):
     dvs.servers[port].runcmd("ip link set up dev eth0") == 0
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "up"})
 
+def run_warm_reboot(dvs):
+    dvs.runcmd("config warm_restart enable swss")
+
+    # Stop swss before modifing the configDB
+    dvs.stop_swss()
+
+    # start to apply new port_config.ini
+    dvs.start_swss()
+    dvs.runcmd(['sh', '-c', 'supervisorctl start neighsyncd'])
+    dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
+
+    # Enabling some extra logging for validating the order of orchagent
+    dvs.runcmd("swssloglevel -l INFO -c orchagent")
 
 def verify_programmed_fg_state_db_entry(state_db,nh_memb_exp_count):
     memb_dict = nh_memb_exp_count
@@ -236,6 +249,25 @@ def program_route_and_validate_fine_grained_ecmp(app_db, asic_db, state_db, ip_t
     ps.set(fg_nhg_prefix, fvs)
     validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                                 nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+
+def fgnhg_clean_up(config_db, asic_db, app_db, state_db, fg_nhg_name, fg_nhg_prefix, active_nhs):
+    # remove fgnhg prefix: The fine grained route should transition to regular ECMP/route
+    remove_entry(config_db, "FG_NHG_PREFIX", fg_nhg_prefix)
+
+    # Validate regular ECMP
+    validate_asic_nhg_regular_ecmp(asic_db, fg_nhg_prefix)
+    asic_db.wait_for_n_keys(ASIC_NHG_MEMB, active_nhs)
+    state_db.wait_for_n_keys("FG_ROUTE_TABLE", 0)
+
+    # clean up route entry
+    asic_rt_key = get_asic_route_key(asic_db, fg_nhg_prefix)
+    ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
+    ps._del(fg_nhg_prefix)
+    asic_db.wait_for_deleted_entry(ASIC_ROUTE_TB, asic_rt_key)
+    asic_db.wait_for_n_keys(ASIC_NHG_MEMB, 0)
+
+    # Cleanup all FG, arp and interface
+    remove_entry(config_db, "FG_NHG", fg_nhg_name)
 
 class TestFineGrainedNextHopGroup(object):
     def test_route_fgnhg(self, dvs, testlog):
@@ -503,23 +535,9 @@ class TestFineGrainedNextHopGroup(object):
         validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                                 nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
 
-        # remove fgnhg prefix: The fine grained route should transition to regular ECMP/route
-        remove_entry(config_db, "FG_NHG_PREFIX", fg_nhg_prefix)
-
-        # Validate regular ECMP
-        validate_asic_nhg_regular_ecmp(asic_db, fg_nhg_prefix)
-        asic_db.wait_for_n_keys(ASIC_NHG_MEMB, 3)
-        state_db.wait_for_n_keys("FG_ROUTE_TABLE", 0)
-
-        # remove prefix entry
-        asic_rt_key = get_asic_route_key(asic_db, fg_nhg_prefix)
-        ps._del(fg_nhg_prefix)
-        asic_db.wait_for_deleted_entry(ASIC_ROUTE_TB, asic_rt_key)
-        asic_db.wait_for_n_keys(ASIC_NHG_MEMB, 0)
-
-        # Cleanup all FG, arp and interface
-        remove_entry(config_db, "FG_NHG", fg_nhg_name)
-
+        fgnhg_clean_up(config_db, asic_db, app_db, state_db, fg_nhg_name, fg_nhg_prefix, 3)
+        
+        # clean up nh entries
         for i in range(0,NUM_NHs):
             if_name_key = "Ethernet" + str(i*4)
             vlan_name_key = "Vlan" + str((i+1)*4)
@@ -531,7 +549,6 @@ class TestFineGrainedNextHopGroup(object):
             dvs.runcmd("config interface shutdown " + if_name_key)
             dvs.servers[i].runcmd("ip link set down dev eth0") == 0
             remove_entry(config_db, "FG_NHG_MEMBER", "10.0.0." + str(1 + i*2))
-
 
         ### Create new set of entries with a greater number of FG members and
         ### bigger bucket size such that the # of nhs are not divisible by
@@ -626,12 +643,126 @@ class TestFineGrainedNextHopGroup(object):
                 "10.0.0.9":13,"10.0.0.11":64}
         program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
                             fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+        
+        fgnhg_clean_up(config_db, asic_db, app_db, state_db, fg_nhg_name, fg_nhg_prefix, 6)
+        # clean up nh entries
+        for i in range(0,NUM_NHs):
+            if_name_key = "Ethernet" + str(i*4)
+            ip_pref_key = "Ethernet" + str(i*4) + "|10.0.0." + str(i*2) + "/31"
+            remove_entry(config_db, IF_TB, ip_pref_key)
+            remove_entry(config_db, IF_TB, vlan_name_key)
+            dvs.runcmd("config interface shutdown " + if_name_key)
+            dvs.servers[i].runcmd("ip link set down dev eth0") == 0
+            remove_entry(config_db, "FG_NHG_MEMBER", "10.0.0." + str(1 + i*2))
 
-        # Remove route
-        # remove prefix entry
-        asic_rt_key = get_asic_route_key(asic_db, fg_nhg_prefix)
-        ps._del(fg_nhg_prefix)
-        asic_db.wait_for_deleted_entry(ASIC_ROUTE_TB, asic_rt_key)
-        asic_db.wait_for_n_keys(ASIC_NHG_MEMB, 0)
+    def test_route_fgnhg_warm_reboot(self, dvs, testlog):
+        dvs.runcmd("swssloglevel -l INFO -c orchagent")
+        app_db = dvs.get_app_db()
+        asic_db = dvs.get_asic_db()
+        config_db = dvs.get_config_db()
+        state_db = dvs.get_state_db()
+        fvs_nul = {"NULL": "NULL"}
+        NUM_NHs = 6
+        fg_nhg_name = "fgnhg_v4"
+        fg_nhg_prefix = "2.2.2.0/24"
+        bucket_size = 60
+        ip_to_if_map = {}
 
-        remove_entry(config_db, "FG_NHG_PREFIX", fg_nhg_prefix)
+        fvs = {"bucket_size": str(bucket_size)}
+        create_entry(config_db, FG_NHG, fg_nhg_name, fvs)
+
+        fvs = {"FG_NHG": fg_nhg_name}
+        create_entry(config_db, FG_NHG_PREFIX, fg_nhg_prefix, fvs)
+
+        for i in range(0,NUM_NHs):
+            if_name_key = "Ethernet" + str(i*4)
+            vlan_name_key = "Vlan" + str((i+1)*4)
+            ip_pref_key = vlan_name_key + "|10.0.0." + str(i*2) + "/31"
+            fvs = {"vlanid": str((i+1)*4)}
+            create_entry(config_db, VLAN_TB, vlan_name_key, fvs)
+            fvs = {"tagging_mode": "untagged"}
+            create_entry(config_db, VLAN_MEMB_TB, vlan_name_key + "|" + if_name_key, fvs)
+            create_entry(config_db, VLAN_IF_TB, vlan_name_key, fvs_nul)
+            create_entry(config_db, VLAN_IF_TB, ip_pref_key, fvs_nul)
+            dvs.runcmd("config interface startup " + if_name_key)
+            dvs.servers[i].runcmd("ip link set down dev eth0") == 0
+            dvs.servers[i].runcmd("ip link set up dev eth0") == 0
+            bank = 0
+            if i >= NUM_NHs/2:
+                bank = 1
+            fvs = {"FG_NHG": fg_nhg_name, "bank": str(bank), "link": if_name_key}
+            create_entry(config_db, FG_NHG_MEMBER, "10.0.0." + str(1 + i*2), fvs)
+            ip_to_if_map["10.0.0." + str(1 + i*2)] = vlan_name_key
+
+        # Wait for the software to receive the entries
+        time.sleep(1)
+
+        ps = swsscommon.ProducerStateTable(app_db.db_connection, ROUTE_TB)
+        fvs = swsscommon.FieldValuePairs([("nexthop","10.0.0.7,10.0.0.9,10.0.0.11"),
+            ("ifname", "Vlan16,Vlan20,Vlan24")])
+        ps.set(fg_nhg_prefix, fvs)
+        # No ASIC_DB entry we can wait for since ARP is not resolved yet,
+        # We just use sleep so that the sw receives this entry
+        time.sleep(1)
+
+        asic_nh_count = len(asic_db.get_keys(ASIC_NH_TB))
+        dvs.runcmd("arp -s 10.0.0.1 00:00:00:00:00:01")
+        dvs.runcmd("arp -s 10.0.0.3 00:00:00:00:00:02")
+        dvs.runcmd("arp -s 10.0.0.5 00:00:00:00:00:03")
+        dvs.runcmd("arp -s 10.0.0.7 00:00:00:00:00:04")
+        dvs.runcmd("arp -s 10.0.0.9 00:00:00:00:00:05")
+        dvs.runcmd("arp -s 10.0.0.11 00:00:00:00:00:06")
+        asic_db.wait_for_n_keys(ASIC_NH_TB, asic_nh_count + 6)
+
+        asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket_size)
+        nhgid = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size)
+
+        nh_oid_map = get_nh_oid_map(asic_db)
+
+        # Now that ARP was resolved, 10.0.0.7 should be added as a valid fg nhg member
+        nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
+        validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                                nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+
+        
+        run_warm_reboot(dvs)
+
+        asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket_size)
+        nhgid = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size)
+
+        nh_oid_map = get_nh_oid_map(asic_db)
+
+        nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
+        validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
+                                nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+
+        # Bring down 1 next hop in bank 1
+        nh_memb_exp_count = {"10.0.0.7":30,"10.0.0.11":30}
+        program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
+                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+
+        # Bring down 2 next hop and bring up 1 next hop in bank 1
+        nh_memb_exp_count = {"10.0.0.9":60}
+        program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
+                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+
+        # Bring up 1 next hop in bank 1
+        nh_memb_exp_count = {"10.0.0.7":20,"10.0.0.9":20,"10.0.0.11":20}
+        program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
+                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+
+        # Bring up some next-hops in bank 0 for the 1st time
+        nh_memb_exp_count = {"10.0.0.1":10,"10.0.0.3":10,"10.0.0.5":10,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
+        program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
+                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
+
+        run_warm_reboot(dvs)
+
+        asic_db.wait_for_n_keys(ASIC_NHG_MEMB, bucket_size)
+        nhgid = validate_asic_nhg_fine_grained_ecmp(asic_db, fg_nhg_prefix, bucket_size)
+
+        nh_oid_map = get_nh_oid_map(asic_db)
+
+        nh_memb_exp_count = {"10.0.0.1":10,"10.0.0.3":10,"10.0.0.5":10,"10.0.0.7":10,"10.0.0.9":10,"10.0.0.11":10}
+        program_route_and_validate_fine_grained_ecmp(app_db.db_connection, asic_db, state_db, ip_to_if_map,
+                            fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
