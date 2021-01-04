@@ -25,6 +25,7 @@ FdbSync::FdbSync(RedisPipeline *pipelineAppDB, DBConnector *stateDb, DBConnector
     m_fdbTable(pipelineAppDB, APP_VXLAN_FDB_TABLE_NAME),
     m_imetTable(pipelineAppDB, APP_VXLAN_REMOTE_VNI_TABLE_NAME),
     m_fdbStateTable(stateDb, STATE_FDB_TABLE_NAME),
+    m_mclagRemoteFdbStateTable(stateDb, STATE_MCLAG_REMOTE_FDB_TABLE_NAME),
     m_cfgEvpnNvoTable(config_db, CFG_VXLAN_EVPN_NVO_TABLE_NAME)
 {
     m_AppRestartAssist = new AppRestartAssist(pipelineAppDB, "fdbsyncd", "swss", DEFAULT_FDBSYNC_WARMSTART_TIMER);
@@ -150,11 +151,83 @@ void FdbSync::processStateFdb()
     }
 }
 
+void FdbSync::processStateMclagRemoteFdb()
+{
+    struct m_fdb_info info;
+    std::deque<KeyOpFieldsValuesTuple> entries;
+
+    m_mclagRemoteFdbStateTable.pops(entries);
+
+    int count =0 ;
+    for (auto entry: entries)
+    {
+        count++;
+        std::string key = kfvKey(entry);
+        std::string op = kfvOp(entry);
+
+        std::size_t delimiter = key.find_first_of(":");
+        auto vlan_name = key.substr(0, delimiter);
+        auto mac_address = key.substr(delimiter+1);
+
+        info.vid = vlan_name;
+        memcpy(info.mac, mac_address.c_str(),mac_address.length());
+
+        if(op == "SET")
+        {
+            info.op_type = FDB_OPER_ADD ;
+        }
+        else
+        {
+            info.op_type = FDB_OPER_DEL ;
+        }
+
+        SWSS_LOG_INFO("FDBSYNCD STATE FDB updates key=%s, operation=%s\n", key.c_str(), op.c_str());
+
+        for (auto i : kfvFieldsValues(entry))
+        {
+            SWSS_LOG_INFO(" FDBSYNCD STATE FDB updates : "
+            "FvFiels %s, FvValues: %s \n", fvField(i).c_str(), fvValue(i).c_str());
+
+            if(fvField(i) == "port")
+            {
+                memcpy(info.port_name, fvValue(i).c_str(), fvValue(i).length());
+            }
+
+            if(fvField(i) == "type")
+            {
+                if(fvValue(i) == "dynamic")
+                {
+                    info.type = FDB_TYPE_DYNAMIC;
+                }
+                else if (fvValue(i) == "static")
+                {
+                    info.type = FDB_TYPE_STATIC;
+                }
+            }
+        }
+
+        if (op != "SET" && macCheckSrcDB(&info) == false)
+        {
+            continue;
+        }
+        updateMclagRemoteMac(&info);
+    }
+}
+
 void FdbSync::macUpdateCache(struct m_fdb_info *info)
 {
     string key = info->vid + ":" + info->mac;
     m_fdb_mac[key].port_name = info->port_name;
     m_fdb_mac[key].type      = info->type;
+
+    return;
+}
+
+void FdbSync::macUpdateMclagRemoteCache(struct m_fdb_info *info)
+{
+    string key = info->vid + ":" + info->mac;
+    m_mclag_remote_fdb_mac[key].port_name = info->port_name;
+    m_mclag_remote_fdb_mac[key].type      = info->type;
 
     return;
 }
@@ -298,6 +371,50 @@ void FdbSync::addLocalMac(string key, string op)
 
         SWSS_LOG_INFO("Config triggered cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
     }
+    return;
+}
+
+void FdbSync::updateMclagRemoteMac (struct m_fdb_info *info)
+{
+    char *op;
+    char *type;
+    string port_name = "";
+    string key = info->vid + ":" + info->mac;
+    short fdb_type;    /*dynamic or static*/
+
+    if (info->op_type == FDB_OPER_ADD)
+    {
+        macUpdateMclagRemoteCache(info);
+        op = "replace";
+        port_name = info->port_name;
+        fdb_type = info->type;
+    }
+    else
+    {
+        op = "del";
+        port_name = m_mclag_remote_fdb_mac[key].port_name;
+        fdb_type = m_mclag_remote_fdb_mac[key].type;
+        m_mclag_remote_fdb_mac.erase(key);
+    }
+
+    if (fdb_type == FDB_TYPE_DYNAMIC)
+    {
+        type = "dynamic";
+    }
+    else
+    {
+        type = "static";
+    }
+
+    const std::string cmds = std::string("")
+        + " bridge fdb " + op + " " + info->mac + " dev "
+        + port_name + " master " + type + " vlan " + info->vid.substr(4);
+
+    std::string res;
+    int ret = swss::exec(cmds, res);
+
+    SWSS_LOG_INFO("cmd:%s, res=%s, ret=%d", cmds.c_str(), res.c_str(), ret);
+
     return;
 }
 
@@ -683,4 +800,5 @@ void FdbSync::onMsg(int nlmsg_type, struct nl_object *obj)
         onMsgNbr(nlmsg_type, obj);
     }
 }
+
 
