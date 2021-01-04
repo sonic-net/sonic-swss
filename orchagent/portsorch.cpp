@@ -56,7 +56,7 @@ extern Directory<Orch*> gDirectory;
 #define QUEUE_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS "10000"
 #define PG_WATERMARK_FLEX_STAT_COUNTER_POLL_MSECS    "10000"
 #define PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS   "1000"
-
+#define INGRESS_PG_STAT_DROPPED_PACKETS_POLLING_INTERVAL_MS "10000"
 
 static map<string, sai_port_fec_mode_t> fec_mode_map =
 {
@@ -198,6 +198,11 @@ static const vector<sai_ingress_priority_group_stat_t> ingressPriorityGroupWater
     SAI_INGRESS_PRIORITY_GROUP_STAT_SHARED_WATERMARK_BYTES,
 };
 
+static const vector<sai_ingress_priority_group_stat_t> ingressPriorityGroupDroppedPktsStatIds =
+{
+    SAI_INGRESS_PRIORITY_GROUP_STAT_DROPPED_PACKETS
+};
+
 static char* hostif_vlan_tag[] = {
     [SAI_HOSTIF_VLAN_TAG_STRIP]     = "SAI_HOSTIF_VLAN_TAG_STRIP",
     [SAI_HOSTIF_VLAN_TAG_KEEP]      = "SAI_HOSTIF_VLAN_TAG_KEEP",
@@ -292,6 +297,11 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
         fieldValues.emplace_back(POLL_INTERVAL_FIELD, PORT_RATE_FLEX_COUNTER_POLLING_INTERVAL_MS);
         fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
         m_flexCounterGroupTable->set(PORT_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
+
+        fieldValues.clear();
+        fieldValues.emplace_back(POLL_INTERVAL_FIELD, INGRESS_PG_STAT_DROPPED_PACKETS_POLLING_INTERVAL_MS);
+        fieldValues.emplace_back(STATS_MODE_FIELD, STATS_MODE_READ);
+        m_flexCounterGroupTable->set(PG_DROPPED_PACKETS_STAT_COUNTER_FLEX_COUNTER_GROUP, fieldValues);
     }
     catch (const runtime_error &e)
     {
@@ -1851,6 +1861,11 @@ string PortsOrch::getQueueWatermarkFlexCounterTableKey(string key)
 string PortsOrch::getPriorityGroupWatermarkFlexCounterTableKey(string key)
 {
     return string(PG_WATERMARK_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
+}
+
+string PortsOrch::getPriorityGroupDropPacketsFlexCounterTableKey(string key)
+{
+    return string(PG_DROPPED_PACKETS_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
 bool PortsOrch::initPort(const string &alias, const int index, const set<int> &lane_set)
@@ -4159,7 +4174,19 @@ void PortsOrch::generatePriorityGroupMapPerPort(const Port& port)
 
         vector<FieldValueTuple> fieldValues;
         fieldValues.emplace_back(PG_COUNTER_ID_LIST, counters_stream.str());
+        m_flexCounterTable->set(key, fieldValues);
 
+        delimiter = "";
+        std::ostringstream ingress_pg_drop_packets_counters_stream;
+        key = getPriorityGroupDropPacketsFlexCounterTableKey(id);
+        /* Add dropped packets counters to flex_counter */
+        for (const auto& it: ingressPriorityGroupDroppedPktsStatIds)
+        {
+            ingress_pg_drop_packets_counters_stream << delimiter << sai_serialize_ingress_priority_group_stat(it);
+            delimiter = comma;
+        }
+        fieldValues.clear();
+        fieldValues.emplace_back(PG_COUNTER_ID_LIST, ingress_pg_drop_packets_counters_stream.str());
         m_flexCounterTable->set(key, fieldValues);
     }
 
