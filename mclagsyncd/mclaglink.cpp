@@ -66,10 +66,9 @@ void MclagLink::delVlanMbr(std::string vlan, std::string mbr_port)
 
 void MclagLink::getOidToPortNameMap(std::unordered_map<std::string, std:: string> & port_map)
 {
-    std::unordered_map<std::string, std:: string>::iterator it;
     auto hash = p_counters_db->hgetall("COUNTERS_PORT_NAME_MAP");
 
-    for (it = hash.begin(); it != hash.end(); ++it)
+    for (auto it = hash.begin(); it != hash.end(); ++it)
         port_map.insert(pair<string, string>(it->second, it->first));
 
     return;
@@ -80,8 +79,6 @@ void MclagLink::getBridgePortIdToAttrPortIdMap(std::map<std::string, std:: strin
     std::string bridge_port_id;
     size_t pos1 = 0;
 
-    std::unordered_map<string, string>::iterator attr_port_id;
-
     auto keys = p_asic_db->keys("ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT:*");
 
     for (auto& key : keys)
@@ -90,7 +87,7 @@ void MclagLink::getBridgePortIdToAttrPortIdMap(std::map<std::string, std:: strin
         bridge_port_id = key.substr(pos1);
 
         auto hash = p_asic_db->hgetall(key);
-        attr_port_id = hash.find("SAI_BRIDGE_PORT_ATTR_PORT_ID");
+        auto attr_port_id = hash.find("SAI_BRIDGE_PORT_ATTR_PORT_ID");
         if (attr_port_id == hash.end())
         {
             attr_port_id = hash.find("SAI_BRIDGE_PORT_ATTR_TUNNEL_ID");
@@ -106,13 +103,12 @@ void MclagLink::getBridgePortIdToAttrPortIdMap(std::map<std::string, std:: strin
 
 void MclagLink::getVidByBvid(std::string &bvid, std::string &vlanid)
 {
-    std::unordered_map<std::string, std::string>::iterator attr_vlan_id;
     std::string pre = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN:";
     std::string key = pre + bvid;
 
     auto hash = p_asic_db->hgetall(key.c_str());
 
-    attr_vlan_id = hash.find("SAI_VLAN_ATTR_VLAN_ID");
+    auto attr_vlan_id = hash.find("SAI_VLAN_ATTR_VLAN_ID");
     if (attr_vlan_id == hash.end())
         return;
 
@@ -122,7 +118,6 @@ void MclagLink::getVidByBvid(std::string &bvid, std::string &vlanid)
 
 void MclagLink::mclagsyncd_fetch_system_mac_from_configdb()
 {
-
     vector<FieldValueTuple> fvs; 
     p_device_metadata_tbl->get("localhost",fvs);
     auto it = find_if(fvs.begin(), fvs.end(), [](const FieldValueTuple &fv) {
@@ -148,6 +143,7 @@ void MclagLink::mclagsyncd_fetch_mclag_config_from_configdb()
     SWSS_LOG_NOTICE("mclag cfg dump....");
     p_mclag_cfg_table->dump(mclag_cfg_dump);
 
+
     std::deque<KeyOpFieldsValuesTuple> entries;
     for (const auto&key: mclag_cfg_dump)
     {
@@ -162,7 +158,6 @@ void MclagLink::mclagsyncd_fetch_mclag_config_from_configdb()
             fvField(value) = val.first;
             fvValue(value) = val.second;
             kfvFieldsValues(cfgentry).push_back(value);
-
         }
         entries.push_back(cfgentry);
         processMclagDomainCfg(entries);
