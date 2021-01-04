@@ -286,8 +286,16 @@ namespace aclorch_test
             gVirtualRouterId = attr.value.oid;
 
             TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
+            TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
+            TableConnector app_switch_table(m_app_db.get(),  APP_SWITCH_TABLE_NAME);
+
+            vector<TableConnector> switch_tables = {
+                conf_asic_sensors,
+                app_switch_table
+            };
+
             ASSERT_EQ(gSwitchOrch, nullptr);
-            gSwitchOrch = new SwitchOrch(m_app_db.get(), APP_SWITCH_TABLE_NAME, stateDbSwitchTable);
+            gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
 
             // Create dependencies ...
 

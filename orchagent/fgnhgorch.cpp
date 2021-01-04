@@ -114,7 +114,7 @@ bool FgNhgOrch::bake()
     vector<string> keys;
     m_stateWarmRestartRouteTable.getKeys(keys);
 
-    SWSS_LOG_NOTICE("Warm reboot: recovering entry %lu from state", keys.size());
+    SWSS_LOG_NOTICE("Warm reboot: recovering entry %zu from state", keys.size());
 
     for (const auto &key : keys)
     {
