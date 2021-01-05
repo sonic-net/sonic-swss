@@ -65,7 +65,9 @@ tests_SOURCES = aclorch_ut.cpp \
                 $(top_srcdir)/orchagent/sfloworch.cpp \
                 $(top_srcdir)/orchagent/debugcounterorch.cpp \
                 $(top_srcdir)/orchagent/natorch.cpp \
-                $(top_srcdir)/orchagent/muxorch.cpp
+                $(top_srcdir)/orchagent/muxorch.cpp \
+                $(top_srcdir)/orchagent/mlagorch.cpp \
+                $(top_srcdir)/orchagent/isolationgrouporch.cpp
 
 tests_SOURCES += $(FLEX_CTR_DIR)/flex_counter_manager.cpp $(FLEX_CTR_DIR)/flex_counter_stat_manager.cpp
 tests_SOURCES += $(DEBUG_CTR_DIR)/debug_counter.cpp $(DEBUG_CTR_DIR)/drop_counter.cpp
