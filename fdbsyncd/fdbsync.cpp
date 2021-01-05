@@ -801,4 +801,3 @@ void FdbSync::onMsg(int nlmsg_type, struct nl_object *obj)
     }
 }
 
-

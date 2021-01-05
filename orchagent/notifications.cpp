@@ -5,7 +5,7 @@ extern "C" {
 #include "logger.h"
 #include "notifications.h"
 
-void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *data)
+void on_fdb_event(uint32_t count, sai_fdb_event_notification_data_t *fdbevent)
 {
     // don't use this event handler, because it runs by libsairedis in a separate thread
     // which causes concurrency access to the DB
