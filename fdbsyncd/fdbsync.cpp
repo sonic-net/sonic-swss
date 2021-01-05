@@ -190,7 +190,7 @@ void FdbSync::processStateMclagRemoteFdb()
 
             if(fvField(i) == "port")
             {
-                memcpy(info.port_name, fvValue(i).c_str(), fvValue(i).length());
+                info.port_name = fvValue(i);
             }
 
             if(fvField(i) == "type")
