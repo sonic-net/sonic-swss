@@ -170,7 +170,7 @@ void FdbSync::processStateMclagRemoteFdb()
         auto mac_address = key.substr(delimiter+1);
 
         info.vid = vlan_name;
-        memcpy(info.mac, mac_address.c_str(),mac_address.length());
+        info.mac = mac_address;
 
         if(op == "SET")
         {
