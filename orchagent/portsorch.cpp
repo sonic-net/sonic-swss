@@ -257,7 +257,8 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
     m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
 
-    notifications = new swss::NotificationProducer(db, "VLANSTATE");
+    notifications = unique_ptr<swss::NotificationProducer>(new swss::NotificationProducer(db, "VLANSTATE"));
+
     initGearbox();
 
     string queueWmSha, pgWmSha;
@@ -1825,16 +1826,6 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
     SWSS_LOG_ENTER();
 
     Port port;
-
-    /* 
-     * Make sure to bring down admin state.
-     * SET would have replaced with DEL
-     */
-    if (getPort(port_id, port))
-    {
-        setPortAdminStatus(port, false);
-    }
-    /* else : port is in default state or not yet created */
 
     sai_status_t status = sai_port_api->remove_port(port_id);
     if (status != SAI_STATUS_SUCCESS)
