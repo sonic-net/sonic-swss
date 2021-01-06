@@ -27,6 +27,10 @@ private:
     std::set<std::string> m_vlans;
     NotificationConsumer* m_VlanStateNotificationConsumer;
 
+    std::set<std::string> m_vlanReplay;
+    std::set<std::string> m_vlanMemberReplay;
+    bool replayDone;
+    
     void doTask(Consumer &consumer);
     void doTask(NotificationConsumer &consumer);
     void doVlanTask(Consumer &consumer);

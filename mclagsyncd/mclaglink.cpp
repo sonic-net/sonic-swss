@@ -37,10 +37,9 @@ using namespace std;
 
 void MclagLink::getOidToPortNameMap(std::unordered_map<std::string, std:: string> & port_map)
 {
-    std::unordered_map<std::string, std:: string>::iterator it;
     auto hash = p_counters_db->hgetall("COUNTERS_PORT_NAME_MAP");
 
-    for (it = hash.begin(); it != hash.end(); ++it)
+    for (auto it = hash.begin(); it != hash.end(); ++it)
         port_map.insert(pair<string, string>(it->second, it->first));
 
     return;
@@ -51,8 +50,6 @@ void MclagLink::getBridgePortIdToAttrPortIdMap(std::map<std::string, std:: strin
     std::string bridge_port_id;
     size_t pos1 = 0;
 
-    std::unordered_map<string, string>::iterator attr_port_id;
-
     auto keys = p_asic_db->keys("ASIC_STATE:SAI_OBJECT_TYPE_BRIDGE_PORT:*");
 
     for (auto& key : keys)
@@ -61,7 +58,7 @@ void MclagLink::getBridgePortIdToAttrPortIdMap(std::map<std::string, std:: strin
         bridge_port_id = key.substr(pos1);
 
         auto hash = p_asic_db->hgetall(key);
-        attr_port_id = hash.find("SAI_BRIDGE_PORT_ATTR_PORT_ID");
+        auto attr_port_id = hash.find("SAI_BRIDGE_PORT_ATTR_PORT_ID");
         if (attr_port_id == hash.end())
         {
             attr_port_id = hash.find("SAI_BRIDGE_PORT_ATTR_TUNNEL_ID");
@@ -77,13 +74,12 @@ void MclagLink::getBridgePortIdToAttrPortIdMap(std::map<std::string, std:: strin
 
 void MclagLink::getVidByBvid(std::string &bvid, std::string &vlanid)
 {
-    std::unordered_map<std::string, std::string>::iterator attr_vlan_id;
     std::string pre = "ASIC_STATE:SAI_OBJECT_TYPE_VLAN:";
     std::string key = pre + bvid;
 
     auto hash = p_asic_db->hgetall(key.c_str());
 
-    attr_vlan_id = hash.find("SAI_VLAN_ATTR_VLAN_ID");
+    auto attr_vlan_id = hash.find("SAI_VLAN_ATTR_VLAN_ID");
     if (attr_vlan_id == hash.end())
         return;
 
@@ -104,10 +100,7 @@ void MclagLink::getFdbSet(std::set<mclag_fdb> *fdb_set)
     size_t pos2 = 0;
     std::unordered_map<std::string, std:: string> oid_to_portname_map;
     std::map<std::string, std:: string> brPortId_to_attrPortId_map;
-    std::unordered_map<std::string, std::string>::iterator type_it;
-    std::unordered_map<std::string, std::string>::iterator brPortId_it;
     std::map<std::string, std::string>::iterator brPortId_to_attrPortId_it;
-    std::unordered_map<std::string, std::string>::iterator oid_to_portName_it;
 
     auto keys = p_asic_db->keys("ASIC_STATE:SAI_OBJECT_TYPE_FDB_ENTRY:*");
 
@@ -137,7 +130,7 @@ void MclagLink::getFdbSet(std::set<mclag_fdb> *fdb_set)
 
         /*get type*/
         auto hash = p_asic_db->hgetall(key);
-        type_it = hash.find("SAI_FDB_ENTRY_ATTR_TYPE");
+        auto type_it = hash.find("SAI_FDB_ENTRY_ATTR_TYPE");
         if (type_it == hash.end())
         {
             continue;
@@ -151,7 +144,7 @@ void MclagLink::getFdbSet(std::set<mclag_fdb> *fdb_set)
         /*get port name*/
         getOidToPortNameMap(oid_to_portname_map);
         getBridgePortIdToAttrPortIdMap(&brPortId_to_attrPortId_map);
-        brPortId_it = hash.find("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID");
+        auto brPortId_it = hash.find("SAI_FDB_ENTRY_ATTR_BRIDGE_PORT_ID");
         if (brPortId_it == hash.end())
         {
             continue;
@@ -164,7 +157,7 @@ void MclagLink::getFdbSet(std::set<mclag_fdb> *fdb_set)
             continue;
         }
 
-        oid_to_portName_it = oid_to_portname_map.find(brPortId_to_attrPortId_it->second);
+        auto oid_to_portName_it = oid_to_portname_map.find(brPortId_to_attrPortId_it->second);
         if (oid_to_portName_it == oid_to_portname_map.end())
         {
             continue;

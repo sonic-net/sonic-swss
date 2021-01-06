@@ -1,14 +1,16 @@
 #include <unistd.h>
 #include <vector>
+#include <sstream>
+#include <fstream>
+#include <iostream>
 #include <mutex>
+#include <algorithm>
+
 #include "dbconnector.h"
 #include "select.h"
 #include "exec.h"
 #include "schema.h"
-#include "vrfmgr.h"
-#include <fstream>
-#include <iostream>
-#include "warm_restart.h"
+#include "tunnelmgr.h"
 
 using namespace std;
 using namespace swss;
@@ -34,30 +36,19 @@ mutex gDbMutex;
 
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("vrfmgrd");
-    SWSS_LOG_ENTER();
+    Logger::linkToDbNative("tunnelmgrd");
 
-    SWSS_LOG_NOTICE("--- Starting vrfmgrd ---");
+    SWSS_LOG_NOTICE("--- Starting Tunnelmgrd ---");
 
     try
     {
-        vector<string> cfg_vrf_tables = {
-            CFG_VRF_TABLE_NAME,
-            CFG_VNET_TABLE_NAME,
-            CFG_VXLAN_EVPN_NVO_TABLE_NAME,
-        };
 
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
-        DBConnector stateDb("STATE_DB", 0);
 
-        WarmStart::initialize("vrfmgrd", "swss");
-        WarmStart::checkWarmStart("vrfmgrd", "swss");
+        TunnelMgr tunnelmgr(&cfgDb, &appDb, CFG_TUNNEL_TABLE_NAME);
 
-        VrfMgr vrfmgr(&cfgDb, &appDb, &stateDb, cfg_vrf_tables);
-
-        // TODO: add tables in stateDB which interface depends on to monitor list
-        std::vector<Orch *> cfgOrchList = {&vrfmgr};
+        std::vector<Orch *> cfgOrchList = {&tunnelmgr};
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
@@ -79,7 +70,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                vrfmgr.doTask();
+                tunnelmgr.doTask();
                 continue;
             }
 
