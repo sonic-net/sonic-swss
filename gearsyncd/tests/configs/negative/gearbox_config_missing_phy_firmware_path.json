@@ -7,7 +7,8 @@
       "lib_name": "libsai_phy_example1.so",
       "config_file": "tests/configs/positive/phy1_config_1.json",
       "phy_access": "MDIO(NPU)",
-      "bus_id": 0
+      "bus_id": 0,
+      "hwinfo": "mdio0/0"
     },
     {
       "phy_id": 1,
@@ -17,7 +18,8 @@
       "firmware_path": "/tmp/phy-example2.bin",
       "config_file": "tests/configs/positive/phy2_config_1.json",
       "phy_access": "I2C",
-      "bus_id": 1
+      "bus_id": 1,
+      "hwinfo": ""
     }
   ],
   "interfaces": [

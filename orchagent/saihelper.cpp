@@ -15,6 +15,7 @@ extern "C" {
 #include <tuple>
 #include <vector>
 #include <linux/limits.h>
+#include <net/if.h>
 #include "timestamp.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
@@ -22,7 +23,13 @@ extern "C" {
 using namespace std;
 using namespace swss;
 
+#define _STR(s) #s
+#define STR(s) _STR(s)
+
 #define CONTEXT_CFG_FILE "/usr/share/sonic/hwsku/context_config.json"
+
+// hwinfo = "INTERFACE_NAME/PHY ID", mii_ioctl_data->phy_id is a __u16
+#define HWINFO_MAX_SIZE IFNAMSIZ + 1 + 5
 
 /* Initialize all global api pointers */
 sai_switch_api_t*           sai_switch_api;
@@ -271,6 +278,10 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     vector<sai_attribute_t> attrs;
     sai_status_t status;
     char fwPath[PATH_MAX];
+    char hwinfo[HWINFO_MAX_SIZE + 1];
+    char hwinfoIntf[IFNAMSIZ + 1];
+    unsigned int hwinfoPhyid;
+    int ret;
 
     SWSS_LOG_ENTER();
 
@@ -286,9 +297,23 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     attr.value.u32 = 0;
     attrs.push_back(attr);
 
+    ret = sscanf(phy->hwinfo.c_str(), "%" STR(IFNAMSIZ) "[^/]/%u", hwinfoIntf, &hwinfoPhyid);
+    if (ret != 2) {
+        SWSS_LOG_ERROR("BOX: hardware info doesn't match the 'interface_name/phyid' "
+                       "format");
+        return SAI_STATUS_FAILURE;
+    }
+
+    if (hwinfoPhyid > std::numeric_limits<uint16_t>::max()) {
+        SWSS_LOG_ERROR("BOX: phyid is bigger than maximum limit");
+        return SAI_STATUS_FAILURE;
+    }
+
+    strcpy(hwinfo, phy->hwinfo.c_str());
+
     attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
-    attr.value.s8list.count = 0;
-    attr.value.s8list.list = 0;
+    attr.value.s8list.count = (uint32_t) phy->hwinfo.length();
+    attr.value.s8list.list = (int8_t *) hwinfo;
     attrs.push_back(attr);
 
     if (phy->firmware.length() == 0)

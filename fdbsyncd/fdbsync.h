@@ -35,9 +35,9 @@ enum FDB_TYPE {
 
 struct m_fdb_info
 {
-    char mac[32];
+    std::string  mac;
     std::string  vid;           /*Store as Vlan<ID> */
-    char port_name[32];
+    std::string  port_name;
     short type;                 /*dynamic or static*/
     short op_type;              /*add or del*/
 };

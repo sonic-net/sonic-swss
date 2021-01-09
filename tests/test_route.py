@@ -6,7 +6,6 @@ import pytest
 
 from swsscommon import swsscommon
 from dvslib.dvs_common import wait_for_result
-from dvslib.dvs_database import DVSDatabase
 
 class TestRouteBase(object):
     def setup_db(self, dvs):
@@ -61,7 +60,7 @@ class TestRouteBase(object):
                                   for route_entry in route_entries]
             return (all(destination in route_destinations for destination in destinations), None)
 
-        wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
+        wait_for_result(_access_function)
 
     def check_route_entries_with_vrf(self, destinations, vrf_oids):
         def _access_function():
@@ -71,7 +70,7 @@ class TestRouteBase(object):
             return (all((destination, vrf_oid) in route_destination_vrf
                         for destination, vrf_oid in zip(destinations, vrf_oids)), None)
 
-        wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
+        wait_for_result(_access_function)
 
     def check_route_entries_nexthop(self, destinations, vrf_oids, nexthops):
         def _access_function_nexthop():
@@ -80,7 +79,7 @@ class TestRouteBase(object):
                                  for key in nexthop_entries])
             return (all(nexthop in nexthop_oids for nexthop in nexthops), nexthop_oids)
 
-        status, nexthop_oids = wait_for_result(_access_function_nexthop, DVSDatabase.DEFAULT_POLLING_CONFIG)
+        status, nexthop_oids = wait_for_result(_access_function_nexthop)
 
         def _access_function_route_nexthop():
             route_entries = self.adb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY")
@@ -90,7 +89,7 @@ class TestRouteBase(object):
             return (all(route_destination_nexthop.get((destination, vrf_oid)) == nexthop_oids.get(nexthop)
                         for destination, vrf_oid, nexthop in zip(destinations, vrf_oids, nexthops)), None)
 
-        wait_for_result(_access_function_route_nexthop, DVSDatabase.DEFAULT_POLLING_CONFIG)
+        wait_for_result(_access_function_route_nexthop)
 
     def check_deleted_route_entries(self, destinations):
         def _access_function():
@@ -98,7 +97,7 @@ class TestRouteBase(object):
             route_destinations = [json.loads(route_entry)["dest"] for route_entry in route_entries]
             return (all(destination not in route_destinations for destination in destinations), None)
 
-        wait_for_result(_access_function, DVSDatabase.DEFAULT_POLLING_CONFIG)
+        wait_for_result(_access_function)
 
     def clear_srv_config(self, dvs):
         dvs.servers[0].runcmd("ip address flush dev eth0")
@@ -329,6 +328,7 @@ class TestRoute(TestRouteBase):
         dvs.servers[3].runcmd("ip route del default dev eth0")
         dvs.servers[3].runcmd("ip address del 10.0.0.3/31 dev eth0")
 
+    @pytest.mark.skip(reason="FRR 7.5 issue https://github.com/Azure/sonic-buildimage/issues/6359")
     def test_RouteAddRemoveIpv6RouteWithVrf(self, dvs, testlog):
         self.setup_db(dvs)
 
@@ -425,6 +425,7 @@ class TestRoute(TestRouteBase):
         dvs.servers[3].runcmd("ip -6 route del default dev eth0")
         dvs.servers[3].runcmd("ip -6 address del 2001::2/64 dev eth0")
 
+    @pytest.mark.skip(reason="FRR 7.5 issue https://github.com/Azure/sonic-buildimage/issues/6359")
     def test_RouteAndNexthopInDifferentVrf(self, dvs, testlog):
         self.setup_db(dvs)
 

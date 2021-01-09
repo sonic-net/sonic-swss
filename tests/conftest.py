@@ -24,6 +24,8 @@ from dvslib import dvs_lag
 from dvslib import dvs_mirror
 from dvslib import dvs_policer
 
+from buffer_model import enable_dynamic_buffer
+
 # FIXME: For the sake of stabilizing the PR pipeline we currently assume there are 32 front-panel
 # ports in the system (much like the rest of the test suite). This should be adjusted to accomodate
 # a dynamic number of ports. GitHub Issue: Azure/sonic-swss#1384.
@@ -72,6 +74,11 @@ def pytest_addoption(parser):
                      action="store",
                      default=None,
                      help="Topology file for the Virtual Chassis Topology")
+
+    parser.addoption("--buffer_model",
+                     action="store",
+                     default="traditional",
+                     help="Buffer model")
 
 
 def random_string(size=4, chars=string.ascii_uppercase + string.digits):
@@ -231,7 +238,8 @@ class DockerVirtualSwitch:
         forcedvs: bool = None,
         vct: str = None,
         newctnname: str = None,
-        ctnmounts: Dict[str, str] = None
+        ctnmounts: Dict[str, str] = None,
+        buffer_model: str = None,
     ):
         self.basicd = ["redis-server", "rsyslogd"]
         self.swssd = [
@@ -375,6 +383,10 @@ class DockerVirtualSwitch:
 
         # Make sure everything is up and running before turning over control to the caller
         self.check_ready_status_and_init_db()
+
+        # Switch buffer model to dynamic if necessary
+        if buffer_model == 'dynamic':
+            enable_dynamic_buffer(self.get_config_db(), self.runcmd)
 
     def destroy(self) -> None:
         if self.appldb:
@@ -1067,6 +1079,24 @@ class DockerVirtualSwitch:
         self.cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
         self.sdb = swsscommon.DBConnector(6, self.redis_sock, 0)
 
+    def getSwitchOid(self):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
+        keys = tbl.getKeys()
+        return str(keys[0])
+
+    def getVlanOid(self, vlanId):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_oid = None
+        keys = tbl.getKeys()
+        for k in keys:
+            (status, fvs) = tbl.get(k)
+            assert status == True, "Could not read vlan from DB"
+            for fv in fvs:
+                if fv[0] == "SAI_VLAN_ATTR_VLAN_ID" and fv[1] == str(vlanId):
+                    vlan_oid = str(k)
+                    break
+        return vlan_oid
+        
     # deps: acl_portchannel, fdb
     def getCrmCounterValue(self, key, counter):
         counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, self.redis_sock, 0)
@@ -1508,10 +1538,11 @@ def dvs(request) -> DockerVirtualSwitch:
     keeptb = request.config.getoption("--keeptb")
     imgname = request.config.getoption("--imgname")
     max_cpu = request.config.getoption("--max_cpu")
+    buffer_model = request.config.getoption("--buffer_model")
     fakeplatform = getattr(request.module, "DVS_FAKE_PLATFORM", None)
     log_path = name if name else request.module.__name__
 
-    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, forcedvs)
+    dvs = DockerVirtualSwitch(name, imgname, keeptb, fakeplatform, log_path, max_cpu, forcedvs, buffer_model = buffer_model)
 
     yield dvs
 
