@@ -9,6 +9,7 @@
 #define SAI_SWITCH_ATTR_CUSTOM_RANGE_BASE SAI_SWITCH_ATTR_CUSTOM_RANGE_START
 #include "sairedis.h"
 #include "chassisorch.h"
+#include "txmonorch.h"
 
 using namespace std;
 using namespace swss;
@@ -36,6 +37,7 @@ BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
 NatOrch *gNatOrch;
+TxMonOrch *gTxMonOrch;
 
 bool gIsNatSupported = false;
 
@@ -74,6 +76,10 @@ bool OrchDaemon::init()
     TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
 
     gSwitchOrch = new SwitchOrch(m_applDb, APP_SWITCH_TABLE_NAME, stateDbSwitchTable);
+
+    TableConnector stateDbTxErr(m_stateDb, STATE_TX_ERROR_TABLE_NAME);
+    TableConnector confDbTxErr(m_configDb, CFG_TX_ERROR_TABLE_NAME);
+    gTxMonOrch = new TxMonOrch(confDbTxErr, stateDbTxErr);
 
     const int portsorch_base_pri = 40;
 
@@ -227,7 +233,9 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch,
+                   gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch,
+                   sflow_orch, debug_counter_orch, gTxMonOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
