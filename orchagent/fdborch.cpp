@@ -1215,7 +1215,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
         return true; //FIXME: it should be based on status. Some could be retried. some not
     }
 
-    SWSS_LOG_INFO("Removed mac=%s bv_id=0x%lx port:%s",
+    SWSS_LOG_INFO("Removed mac=%s bv_id=0x%" PRIx64 " port:%s",
             entry.mac.to_string().c_str(), entry.bv_id, port.m_alias.c_str());
 
     port.m_fdb_count--;
