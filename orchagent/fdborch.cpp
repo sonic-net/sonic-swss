@@ -109,7 +109,7 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
         m_entries[entry] = fdbdata;
         SWSS_LOG_INFO("FdbOrch notification: mac %s was inserted in port %s into bv_id 0x%" PRIx64,
                         entry.mac.to_string().c_str(), portName.c_str(), entry.bv_id);
-        SWSS_LOG_INFO("m_entries size=%lu mac=%s port=0x%" PRIx64,
+        SWSS_LOG_INFO("m_entries size=%zu mac=%s port=0x%" PRIx64,
             m_entries.size(), entry.mac.to_string().c_str(),  m_entries[entry].bridge_port_id);
 
         // Write to StateDb
@@ -213,29 +213,31 @@ void FdbOrch::update(sai_fdb_event_t        type,
     }
     case SAI_FDB_EVENT_AGED:
     {
-        SWSS_LOG_INFO("Received AGE event for bvid=%lx mac=%s port=%lx", entry->bv_id, update.entry.mac.to_string().c_str(), bridge_port_id);
+        SWSS_LOG_INFO("Received AGE event for bvid=0x%" PRIx64 " mac=%s port=0x%" PRIx64,
+                       entry->bv_id, update.entry.mac.to_string().c_str(), bridge_port_id);
 
         if (!m_portsOrch->getPort(entry->bv_id, vlan))
         {
-            SWSS_LOG_NOTICE("FdbOrch AGE notification: Failed to locate vlan port from bv_id 0x%lx", entry->bv_id);
+            SWSS_LOG_NOTICE("FdbOrch AGE notification: Failed to locate vlan port from bv_id 0x%" PRIx64, entry->bv_id);
         }
 
         auto existing_entry = m_entries.find(update.entry);
         // we don't have such entries
         if (existing_entry == m_entries.end())
         {
-             SWSS_LOG_INFO("FdbOrch AGE notification: mac %s is not present in bv_id 0x%lx bp 0x%lx",
+             SWSS_LOG_INFO("FdbOrch AGE notification: mac %s is not present in bv_id 0x%" PRIx64 " bp 0x%" PRIx64,
                     update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id);
              break;
         }
 
         if (existing_entry->second.bridge_port_id != bridge_port_id)
         {
-            SWSS_LOG_INFO("FdbOrch AGE notification: Stale aging event received for mac-bv_id %s-0x%lx with bp=0x%lx existing bp=0x%lx", update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id, existing_entry->second.bridge_port_id);
+            SWSS_LOG_INFO("FdbOrch AGE notification: Stale aging event received for mac-bv_id %s-0x%" PRIx64 " with bp=0x%" PRIx64 " existing bp=0x%" PRIx64,
+                           update.entry.mac.to_string().c_str(), entry->bv_id, bridge_port_id, existing_entry->second.bridge_port_id);
             // We need to get the port for bridge-port in existing fdb
             if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, update.port))
             {
-                SWSS_LOG_INFO("FdbOrch AGE notification: Failed to get port by bridge port ID 0x%lx", existing_entry->second.bridge_port_id);
+                SWSS_LOG_INFO("FdbOrch AGE notification: Failed to get port by bridge port ID 0x%" PRIx64, existing_entry->second.bridge_port_id);
             }
             // dont return, let it delete just to bring SONiC and SAI in sync
             // return;
@@ -305,23 +307,24 @@ void FdbOrch::update(sai_fdb_event_t        type,
         Port port_old;
         auto existing_entry = m_entries.find(update.entry);
 
-        SWSS_LOG_INFO("Received MOVE event for bvid=%lx mac=%s port=%lx", entry->bv_id, update.entry.mac.to_string().c_str(), bridge_port_id);
+        SWSS_LOG_INFO("Received MOVE event for bvid=0x%" PRIx64 " mac=%s port=0x%" PRIx64,
+                       entry->bv_id, update.entry.mac.to_string().c_str(), bridge_port_id);
 
         if (!m_portsOrch->getPort(entry->bv_id, vlan))
         {
-            SWSS_LOG_ERROR("FdbOrch MOVE notification: Failed to locate vlan port from bv_id 0x%lx", entry->bv_id);
+            SWSS_LOG_ERROR("FdbOrch MOVE notification: Failed to locate vlan port from bv_id 0x%" PRIx64, entry->bv_id);
             return;
         }
 
         // We should already have such entry
         if (existing_entry == m_entries.end())
         {
-             SWSS_LOG_WARN("FdbOrch MOVE notification: mac %s is not found in bv_id 0x%lx",
+             SWSS_LOG_WARN("FdbOrch MOVE notification: mac %s is not found in bv_id 0x%" PRIx64,
                     update.entry.mac.to_string().c_str(), entry->bv_id);
         }
         else if (!m_portsOrch->getPortByBridgePortId(existing_entry->second.bridge_port_id, port_old))
         {
-            SWSS_LOG_ERROR("FdbOrch MOVE notification: Failed to get port by bridge port ID 0x%lx", existing_entry->second.bridge_port_id);
+            SWSS_LOG_ERROR("FdbOrch MOVE notification: Failed to get port by bridge port ID 0x%" PRIx64, existing_entry->second.bridge_port_id);
             return;
         }
 
@@ -880,13 +883,13 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
     Port port;
 
     SWSS_LOG_ENTER();
-    SWSS_LOG_INFO("mac=%s bv_id=0x%lx port_name=%s type=%s origin=%d",
+    SWSS_LOG_INFO("mac=%s bv_id=0x%" PRIx64 " port_name=%s type=%s origin=%d",
             entry.mac.to_string().c_str(), entry.bv_id, port_name.c_str(),
             fdbData.type.c_str(), fdbData.origin);
 
     if (!m_portsOrch->getPort(entry.bv_id, vlan))
     {
-        SWSS_LOG_NOTICE("addFdbEntry: Failed to locate vlan port from bv_id 0x%lx", entry.bv_id);
+        SWSS_LOG_NOTICE("addFdbEntry: Failed to locate vlan port from bv_id 0x%" PRIx64, entry.bv_id);
         return false;
     }
 
@@ -927,7 +930,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
 
         if (!m_portsOrch->getPortByBridgePortId(it->second.bridge_port_id, oldPort))
         {
-            SWSS_LOG_ERROR("Existing port 0x%lx details not found", it->second.bridge_port_id);
+            SWSS_LOG_ERROR("Existing port 0x%" PRIx64 " details not found", it->second.bridge_port_id);
             return false;
         }
 
@@ -1153,18 +1156,18 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
 
     SWSS_LOG_ENTER();
 
-    SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: mac=%s bv_id=0x%lx origin %d", entry.mac.to_string().c_str(), entry.bv_id, origin);
+    SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: mac=%s bv_id=0x%" PRIx64 "origin %d", entry.mac.to_string().c_str(), entry.bv_id, origin);
 
     if (!m_portsOrch->getPort(entry.bv_id, vlan))
     {
-        SWSS_LOG_NOTICE("FdbOrch notification: Failed to locate vlan port from bv_id 0x%lx", entry.bv_id);
+        SWSS_LOG_NOTICE("FdbOrch notification: Failed to locate vlan port from bv_id 0x%" PRIx64, entry.bv_id);
         return false;
     }
 
     auto it= m_entries.find(entry);
     if (it == m_entries.end())
     {
-        SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: FDB entry isn't found. mac=%s bv_id=0x%lx", entry.mac.to_string().c_str(), entry.bv_id);
+        SWSS_LOG_INFO("FdbOrch RemoveFDBEntry: FDB entry isn't found. mac=%s bv_id=0x%" PRIx64, entry.mac.to_string().c_str(), entry.bv_id);
 
         /* check whether the entry is in the saved fdb, if so delete it from there. */
         deleteFdbEntryFromSavedFDB(entry.mac, vlan.m_vlan_info.vlan_id, origin);
@@ -1174,7 +1177,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     FdbData fdbData = it->second;
     if (!m_portsOrch->getPortByBridgePortId(fdbData.bridge_port_id, port))
     {
-        SWSS_LOG_NOTICE("FdbOrch RemoveFDBEntry: Failed to locate port from bridge_port_id 0x%lx", fdbData.bridge_port_id);
+        SWSS_LOG_NOTICE("FdbOrch RemoveFDBEntry: Failed to locate port from bridge_port_id 0x%" PRIx64, fdbData.bridge_port_id);
         return false;
     }
 
@@ -1207,7 +1210,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     status = sai_fdb_api->remove_fdb_entry(&fdb_entry);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("FdbOrch RemoveFDBEntry: Failed to remove FDB entry. mac=%s, bv_id=0x%lx",
+        SWSS_LOG_ERROR("FdbOrch RemoveFDBEntry: Failed to remove FDB entry. mac=%s, bv_id=0x%" PRIx64,
                        entry.mac.to_string().c_str(), entry.bv_id);
         return true; //FIXME: it should be based on status. Some could be retried. some not
     }
