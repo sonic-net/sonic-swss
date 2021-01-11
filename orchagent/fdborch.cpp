@@ -109,7 +109,7 @@ bool FdbOrch::storeFdbEntryState(const FdbUpdate& update)
         m_entries[entry] = fdbdata;
         SWSS_LOG_INFO("FdbOrch notification: mac %s was inserted in port %s into bv_id 0x%" PRIx64,
                         entry.mac.to_string().c_str(), portName.c_str(), entry.bv_id);
-        SWSS_LOG_INFO("m_entries size=%lu mac=%s port=0x%" PRIx64,
+        SWSS_LOG_INFO("m_entries size=%u mac=%s port=0x%" PRIx64,
             m_entries.size(), entry.mac.to_string().c_str(),  m_entries[entry].bridge_port_id);
 
         // Write to StateDb
