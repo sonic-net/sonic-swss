@@ -218,6 +218,11 @@ public:
     static void recordTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
 
     void dumpPendingTasks(std::vector<std::string> &ts);
+
+    /* Failure handling */
+    bool handleSaiCreateFailure(sai_status_t status);
+    bool handleSaiSetFailure(sai_status_t status);
+    bool handleSaiRemoveFailure(sai_status_t status);
 protected:
     ConsumerMap m_consumerMap;
 
