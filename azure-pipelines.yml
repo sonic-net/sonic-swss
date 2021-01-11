@@ -63,8 +63,7 @@ jobs:
     submodules: true
   - script: |
       ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc)
-      cp ../*.deb .
+      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: sonic-swss
@@ -124,8 +123,7 @@ jobs:
     submodules: true
   - script: |
       ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc)
-      cp ../*.deb .
+      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: sonic-swss.arm64
@@ -185,8 +183,7 @@ jobs:
     submodules: true
   - script: |
       ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc)
-      cp ../*.deb .
+      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: sonic-swss.armhf
