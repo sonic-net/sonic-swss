@@ -21,17 +21,14 @@ ASIC_NHG = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
 ASIC_NHG_MEMB = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
 ASIC_NH_TB = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
 
-
 def create_entry(db, table, key, pairs):
     db.create_entry(table, key, pairs)
     programmed_table = db.wait_for_entry(table,key)
     assert programmed_table != {}
 
-
 def remove_entry(db, table, key):
     db.delete_entry(table, key)
     db.wait_for_deleted_entry(table,key)
-
 
 def get_asic_route_key(asic_db, ipprefix):
     route_exists = False
@@ -46,7 +43,6 @@ def get_asic_route_key(asic_db, ipprefix):
             break
     assert route_exists
     return key
-
 
 def validate_asic_nhg_fine_grained_ecmp(asic_db, ipprefix, size):
     def _access_function():
@@ -83,7 +79,6 @@ def validate_asic_nhg_fine_grained_ecmp(asic_db, ipprefix, size):
         failure_message="Fine Grained ECMP route not found")
     return result
 
-
 def validate_asic_nhg_regular_ecmp(asic_db, ipprefix):
     def _access_function():
         false_ret = (False, '')
@@ -114,7 +109,6 @@ def validate_asic_nhg_regular_ecmp(asic_db, ipprefix):
     _, result = wait_for_result(_access_function, failure_message="SAI_NEXT_HOP_GROUP_TYPE_DYNAMIC_UNORDERED_ECMP not found")
     return result
 
-
 def get_nh_oid_map(asic_db):
     nh_oid_map = {}
     keys = asic_db.get_keys(ASIC_NH_TB)
@@ -125,7 +119,6 @@ def get_nh_oid_map(asic_db):
 
     assert nh_oid_map != {}
     return nh_oid_map
-
 
 def verify_programmed_fg_asic_db_entry(asic_db,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size):
     def _access_function():
@@ -186,16 +179,13 @@ def verify_programmed_fg_asic_db_entry(asic_db,nh_memb_exp_count,nh_oid_map,nhgi
     assert status, f"Exact match not found: expected={nh_memb_exp_count}, received={result}"
     return result
 
-
 def shutdown_link(dvs, db, port):
     dvs.servers[port].runcmd("ip link set down dev eth0") == 0
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "down"})
 
-
 def startup_link(dvs, db, port):
     dvs.servers[port].runcmd("ip link set up dev eth0") == 0
     db.wait_for_field_match("PORT_TABLE", "Ethernet%d" % (port * 4), {"oper_status": "up"})
-
 
 def run_warm_reboot(dvs):
     dvs.runcmd("config warm_restart enable swss")
@@ -207,7 +197,6 @@ def run_warm_reboot(dvs):
     dvs.start_swss()
     dvs.runcmd(['sh', '-c', 'supervisorctl start neighsyncd'])
     dvs.runcmd(['sh', '-c', 'supervisorctl start restore_neighbors'])
-
 
 def verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, nh_memb_exp_count):
     memb_dict = nh_memb_exp_count
@@ -225,7 +214,6 @@ def verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, nh_memb_exp_cou
     for idx,memb in memb_dict.items():
         assert memb == 0
 
-
 def validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                                 fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size):
     state_db_entry_memb_exp_count = {}
@@ -235,7 +223,6 @@ def validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_ma
 
     verify_programmed_fg_asic_db_entry(asic_db,nh_memb_exp_count,nh_oid_map,nhgid,bucket_size)
     verify_programmed_fg_state_db_entry(state_db, fg_nhg_prefix, state_db_entry_memb_exp_count)
-
 
 def program_route_and_validate_fine_grained_ecmp(app_db, asic_db, state_db, ip_to_if_map,
                             fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size):
@@ -254,7 +241,6 @@ def program_route_and_validate_fine_grained_ecmp(app_db, asic_db, state_db, ip_t
     ps.set(fg_nhg_prefix, fvs)
     validate_fine_grained_asic_n_state_db_entries(asic_db, state_db, ip_to_if_map,
                           fg_nhg_prefix, nh_memb_exp_count, nh_oid_map, nhgid, bucket_size)
-
 
 def create_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_name):
     ip_to_if_map = {}
@@ -278,7 +264,6 @@ def create_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_
         dvs.runcmd("arp -s 10.0.0." + str(1 + i*2) + " 00:00:00:00:00:" + str(1 + i*2))
     return ip_to_if_map
 
-
 def remove_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_name):
     app_db = dvs.get_app_db()
     config_db = dvs.get_config_db()
@@ -291,7 +276,6 @@ def remove_interface_n_fg_ecmp_config(dvs, nh_range_start, nh_range_end, fg_nhg_
         shutdown_link(dvs, app_db, i)
         remove_entry(config_db, FG_NHG_MEMBER, "10.0.0." + str(1 + i*2))
     remove_entry(config_db, FG_NHG, fg_nhg_name)
-
 
 def fine_grained_ecmp_base_test(dvs, match_mode):
     app_db = dvs.get_app_db()
