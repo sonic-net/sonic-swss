@@ -171,7 +171,7 @@ void FdbOrch::update(sai_fdb_event_t type, const sai_fdb_entry_t* entry, sai_obj
 
             if (!m_portsOrch->getPort(entry->bv_id, vlan))
             {
-                SWSS_LOG_WARN("FdbOrch notification: Failed to locate vlan\
+                SWSS_LOG_NOTICE("FdbOrch notification: Failed to locate vlan\
                                 port from bv_id 0x%" PRIx64, entry->bv_id);
                 return;
             }
