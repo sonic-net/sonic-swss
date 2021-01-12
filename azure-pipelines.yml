@@ -39,8 +39,8 @@ jobs:
       project: build
       pipeline: 9
       artifacts: sonic-swss-common
-      runVersion: LatestFromBranch
-      runBranch: refs/heads/master
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -48,8 +48,8 @@ jobs:
       project: build
       pipeline: 12
       artifacts: sonic-sairedis
-      runVersion: LatestFromBranch
-      runBranch: refs/heads/master
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic sairedis deb packages"
   - script: |
       sudo dpkg -i sonic-swss-common/libswsscommon_1.0.0_amd64.deb
@@ -103,8 +103,8 @@ jobs:
       project: build
       pipeline: 9
       artifacts: sonic-swss-common.arm64
-      runVersion: LatestFromBranch
-      runBranch: refs/heads/master
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -112,8 +112,8 @@ jobs:
       project: build
       pipeline: 12
       artifacts: sonic-sairedis.arm64
-      runVersion: LatestFromBranch
-      runBranch: refs/heads/master
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic sairedis deb packages"
   - script: |
       sudo dpkg -i sonic-swss-common.arm64/libswsscommon_1.0.0_arm64.deb
@@ -167,8 +167,8 @@ jobs:
       project: build
       pipeline: 9
       artifacts: sonic-swss-common.armhf
-      runVersion: LatestFromBranch
-      runBranch: refs/heads/master
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -176,8 +176,8 @@ jobs:
       project: build
       pipeline: 12
       artifacts: sonic-sairedis.armhf
-      runVersion: LatestFromBranch
-      runBranch: refs/heads/master
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic sairedis deb packages"
   - script: |
       sudo dpkg -i sonic-swss-common.armhf/libswsscommon_1.0.0_armhf.deb
