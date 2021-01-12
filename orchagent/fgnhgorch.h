@@ -52,6 +52,11 @@ typedef std::map<IpPrefix, NextHopGroupKey> FgPrefixOpCache;
 /* Map from link name to next-hop IP */
 typedef std::unordered_map<string, std::vector<IpAddress>> Links;
 
+enum FGMatchMode
+{
+    ROUTE_BASED,
+    NEXTHOP_BASED
+};
 /* Store the indices occupied by a bank */
 typedef struct
 {
@@ -68,10 +73,13 @@ typedef struct FgNhgEntry
     Links links;                                      // Link to IP map for oper changes
     std::vector<IpPrefix> prefixes;                   // Prefix which desires FG behavior
     std::vector<BankIndexRange> hash_bucket_indices;  // The hash bucket indices for a bank
+    FGMatchMode match_mode;                           // Stores a match_mode from FGMatchModes
 } FgNhgEntry;
 
 /* Map from IP prefix to user configured FG NHG entries */
 typedef std::map<IpPrefix, FgNhgEntry*> FgNhgPrefixes; 
+/* Map from IP address to user configured FG NHG entries */
+typedef std::map<IpAddress, FgNhgEntry*> FgNhgMembers; 
 /* Main structure to hold user configuration */
 typedef std::map<FgNhg, FgNhgEntry> FgNhgs;
 
@@ -89,14 +97,15 @@ typedef map<string, NextHopIndexMap> WarmBootRecoveryMap;
 class FgNhgOrch : public Orch, public Observer
 {
 public:
-    FgNhgPrefixes fgNhgPrefixes;
     FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, vector<table_name_with_pri_t> &tableNames, NeighOrch *neighOrch, IntfsOrch *intfsOrch, VRFOrch *vrfOrch);
 
     void update(SubjectType type, void *cntx);
-    bool addRoute(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&);
-    bool removeRoute(sai_object_id_t, const IpPrefix&);
+    bool isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
+    bool syncdContainsFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix);
     bool validNextHopInNextHopGroup(const NextHopKey&);
     bool invalidNextHopInNextHopGroup(const NextHopKey&);
+    bool setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops, sai_object_id_t &next_hop_id, bool &prevNhgWasFineGrained);
+    bool removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix);
 
     // warm reboot support
     bool bake() override;
@@ -105,10 +114,16 @@ private:
     NeighOrch *m_neighOrch;
     IntfsOrch *m_intfsOrch;
     VRFOrch *m_vrfOrch;
+
     FgNhgs m_FgNhgs;
     FGRouteTables m_syncdFGRouteTables;
+    FgNhgMembers m_fgNhgNexthops;
+    FgNhgPrefixes m_fgNhgPrefixes;
+    bool isFineGrainedConfigured;
+
     Table m_stateWarmRestartRouteTable;
     ProducerStateTable m_routeTable;
+
     FgPrefixOpCache m_fgPrefixAddCache;
     FgPrefixOpCache m_fgPrefixDelCache;
 
@@ -137,9 +152,7 @@ private:
                     const IpPrefix &ipPrefix, NextHopKey nextHop);
     bool createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
                     const NextHopGroupKey &nextHops);
-    bool removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry);
-    bool createFineGrainedRouteEntry(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-                    sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops);
+    bool removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_route_entry);
 
     vector<FieldValueTuple> generateRouteTableFromNhgKey(NextHopGroupKey nhg);
     void cleanupIpInLinkToIpMap(const string &link, const IpAddress &ip, FgNhgEntry &fgNhg_entry);

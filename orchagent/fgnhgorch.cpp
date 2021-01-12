@@ -30,6 +30,7 @@ FgNhgOrch::FgNhgOrch(DBConnector *db, DBConnector *appDb, DBConnector *stateDb, 
         m_routeTable(appDb, APP_ROUTE_TABLE_NAME)
 {
     SWSS_LOG_ENTER();
+    isFineGrainedConfigured = false;
     gPortsOrch->attach(this);
 }
 
@@ -289,7 +290,7 @@ bool FgNhgOrch::createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_rout
         {
             SWSS_LOG_ERROR("Failed to query next hop group %s SAI_NEXT_HOP_GROUP_ATTR_REAL_SIZE, rv:%d",
                        nextHops.to_string().c_str(), status);
-            if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry, fgNhgEntry))
+            if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry))
             {
                 SWSS_LOG_ERROR("Failed to clean-up after next hop group real_size query failure");
             }
@@ -305,7 +306,7 @@ bool FgNhgOrch::createFineGrainedNextHopGroup(FGNextHopGroupEntry &syncd_fg_rout
 }
 
 
-bool FgNhgOrch::removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_route_entry, FgNhgEntry *fgNhgEntry)
+bool FgNhgOrch::removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_route_entry)
 {
     SWSS_LOG_ENTER();
     sai_status_t status;
@@ -331,43 +332,6 @@ bool FgNhgOrch::removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_rout
 }
 
 
-bool FgNhgOrch::createFineGrainedRouteEntry(FGNextHopGroupEntry &syncd_fg_route_entry, FgNhgEntry *fgNhgEntry,
-        sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
-{
-    SWSS_LOG_ENTER();
-    sai_route_entry_t route_entry;
-    sai_attribute_t route_attr;
-    route_entry.vr_id = vrf_id;
-    route_entry.switch_id = gSwitchId;
-    copy(route_entry.destination, ipPrefix);
-    route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
-    route_attr.value.oid = syncd_fg_route_entry.next_hop_group_id;
-    sai_status_t status = sai_route_api->create_route_entry(&route_entry, 1, &route_attr);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to create route %s with next hop(s) %s",
-                ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
-
-        /* Clean up the newly created next hop group entry */
-        if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry, fgNhgEntry))
-        {
-            SWSS_LOG_ERROR("Failed to clean-up after route creation failure");
-        }
-        return false;
-    }
-
-    if (route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
-    }
-    else
-    {
-        gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
-    }
-    return true;
-}
-
-
 bool FgNhgOrch::validNextHopInNextHopGroup(const NextHopKey& nexthop)
 {
     SWSS_LOG_ENTER();
@@ -382,15 +346,22 @@ bool FgNhgOrch::validNextHopInNextHopGroup(const NextHopKey& nexthop)
             }
 
             FGNextHopGroupEntry *syncd_fg_route_entry = &(route_table.second);
-            auto prefix_entry = fgNhgPrefixes.find(route_table.first);
-            if (prefix_entry == fgNhgPrefixes.end())
+            FgNhgEntry *fgNhgEntry = 0;
+            auto prefix_entry = m_fgNhgPrefixes.find(route_table.first);
+            if (prefix_entry == m_fgNhgPrefixes.end())
             {
-                SWSS_LOG_ERROR("Hit unexpected condition for %s:%s where route_table exists but no fgNhgEntry found",
-                        route_table.first.to_string().c_str(), syncd_fg_route_entry->nhg_key.to_string().c_str());
-                return false;
+                auto member_entry = m_fgNhgNexthops.find(nexthop.ip_address);
+                if (member_entry == m_fgNhgNexthops.end())
+                {
+                    SWSS_LOG_ERROR("fgNhgOrch got a validNextHopInNextHopGroup for non-configured FG ECMP entry");
+                    return false;
+                }
+                fgNhgEntry = member_entry->second;
             }
-
-            FgNhgEntry *fgNhgEntry = prefix_entry->second;
+            else 
+            {
+                fgNhgEntry = prefix_entry->second;
+            }
             std::map<NextHopKey,sai_object_id_t> nhopgroup_members_set;
 
             std::vector<BankMemberChanges> bank_member_changes(
@@ -445,15 +416,23 @@ bool FgNhgOrch::invalidNextHopInNextHopGroup(const NextHopKey& nexthop)
             }
 
             FGNextHopGroupEntry *syncd_fg_route_entry = &(route_table.second);
-            auto prefix_entry = fgNhgPrefixes.find(route_table.first);
-            if (prefix_entry == fgNhgPrefixes.end())
+            FgNhgEntry *fgNhgEntry = 0;
+            auto prefix_entry = m_fgNhgPrefixes.find(route_table.first);
+            if (prefix_entry == m_fgNhgPrefixes.end())
             {
-                SWSS_LOG_ERROR("Hit unexpected condition for %s:%s where route_table exists but no fgNhgEntry found",
-                        route_table.first.to_string().c_str(), syncd_fg_route_entry->nhg_key.to_string().c_str());
-                return false;
+                auto member_entry = m_fgNhgNexthops.find(nexthop.ip_address);
+                if (member_entry == m_fgNhgNexthops.end())
+                {
+                    SWSS_LOG_ERROR("fgNhgOrch got an invalidNextHopInNextHopGroup for non-configured FG ECMP entry");
+                    return false;
+                }
+                fgNhgEntry = member_entry->second;
+            }
+            else 
+            {
+                fgNhgEntry = prefix_entry->second;
             }
 
-            FgNhgEntry *fgNhgEntry = prefix_entry->second;
             std::map<NextHopKey,sai_object_id_t> nhopgroup_members_set;
 
             std::vector<BankMemberChanges> bank_member_changes(
@@ -1002,7 +981,7 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
                 SWSS_LOG_ERROR("Failed to create next hop group %" PRIx64 " member %" PRIx64 ": %d",
                    syncd_fg_route_entry.next_hop_group_id, next_hop_group_member_id, status);
                 
-                if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry, fgNhgEntry))
+                if (!removeFineGrainedNextHopGroup(&syncd_fg_route_entry))
                 {
                     SWSS_LOG_ERROR("Failed to clean-up after next-hop member creation failure");
                 }
@@ -1027,10 +1006,108 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
 }
 
 
-bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+bool FgNhgOrch::isRouteFineGrained(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops)
+{
+    SWSS_LOG_ENTER();
+ 
+    if (!isFineGrainedConfigured || (vrf_id != gVirtualRouterId))
+    {
+        return false;
+    }
+
+    FgNhgEntry *fgNhgEntry = 0;
+    set<NextHopKey> next_hop_set = nextHops.getNextHops();
+    auto prefix_entry = m_fgNhgPrefixes.find(ipPrefix);
+    if (prefix_entry == m_fgNhgPrefixes.end())
+    {
+        for (NextHopKey nhk : next_hop_set)
+        {
+            auto member_entry = m_fgNhgNexthops.find(nhk.ip_address);
+            if (member_entry == m_fgNhgNexthops.end())
+            {
+                if (fgNhgEntry)
+                {
+                    SWSS_LOG_WARN("Route %s:%s has some FG nhs, but %s is not, route is defaulted to non-fine grained ECMP",
+                                ipPrefix.to_string().c_str(), nextHops.to_string().c_str(), nhk.to_string().c_str());
+                }
+                return false;
+            }
+
+            if (!fgNhgEntry)
+            {
+                fgNhgEntry = member_entry->second;
+            }
+            else
+            {
+                /* Case where fgNhgEntry is alredy found via previous nexthop
+                 * We validate the it belongs to the same next-hop group set
+                 */
+                if (fgNhgEntry != member_entry->second)
+                {
+                    SWSS_LOG_INFO("FG nh found across different FG_NH groups: %s expected %s, actual %s", 
+                        nhk.to_string().c_str(), fgNhgEntry->fg_nhg_name.c_str(), member_entry->second->fg_nhg_name.c_str());
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
+
+
+bool FgNhgOrch::syncdContainsFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
+{
+    if (!isFineGrainedConfigured || (vrf_id != gVirtualRouterId))
+    {
+        return false;
+    }
+
+    auto it_route_table = m_syncdFGRouteTables.find(vrf_id);
+    if (it_route_table == m_syncdFGRouteTables.end())
+    {
+        return false;
+    }
+
+    auto it_route = it_route_table->second.find(ipPrefix);
+    if (it_route == it_route_table->second.end())
+    {
+        return false;
+    }
+    return true;
+}
+
+
+bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const NextHopGroupKey &nextHops,
+                                    sai_object_id_t &next_hop_id, bool &prevNhgWasFineGrained)
 {
     SWSS_LOG_ENTER();
 
+    /* default prevNhgWasFineGrained to true so that sai route is unaffected
+     * when we return early with success */
+    prevNhgWasFineGrained = true;
+    FgNhgEntry *fgNhgEntry = 0;
+    set<NextHopKey> next_hop_set = nextHops.getNextHops();
+    auto prefix_entry = m_fgNhgPrefixes.find(ipPrefix);
+    if (prefix_entry != m_fgNhgPrefixes.end())
+    {
+        fgNhgEntry = prefix_entry->second;
+    }
+    else
+    {
+        for (NextHopKey nhk : next_hop_set)
+        {
+            auto member_entry = m_fgNhgNexthops.find(nhk.ip_address);
+            if (member_entry == m_fgNhgNexthops.end())
+            {
+                SWSS_LOG_ERROR("fgNhgOrch got a route addition %s:%s for non-configured FG ECMP entry",
+                                    ipPrefix.to_string().c_str(), nextHops.to_string().c_str());
+                return false;
+            }
+            fgNhgEntry = member_entry->second;
+            break;
+        }
+    }
+ 
     if (m_syncdFGRouteTables.find(vrf_id) != m_syncdFGRouteTables.end() &&
         m_syncdFGRouteTables.at(vrf_id).find(ipPrefix) != m_syncdFGRouteTables.at(vrf_id).end() &&
         m_syncdFGRouteTables.at(vrf_id).at(ipPrefix).nhg_key == nextHops)
@@ -1044,11 +1121,6 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
         m_vrfOrch->increaseVrfRefCount(vrf_id);
     }
 
-    auto prefix_entry = fgNhgPrefixes.find(ipPrefix);
-    assert(prefix_entry != fgNhgPrefixes.end());
-    FgNhgEntry *fgNhgEntry = prefix_entry->second;
-
-    set<NextHopKey> next_hop_set = nextHops.getNextHops();
     std::map<NextHopKey,sai_object_id_t> nhopgroup_members_set;
     auto syncd_fg_route_entry_it = m_syncdFGRouteTables.at(vrf_id).find(ipPrefix);
     bool next_hop_to_add = false;
@@ -1117,14 +1189,13 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
             }
         }
 
-        sai_object_id_t next_hop_id = m_neighOrch->getNextHopId(nhk);
-        nhopgroup_members_set[nhk] = next_hop_id;
+        sai_object_id_t nhid = m_neighOrch->getNextHopId(nhk);
+        nhopgroup_members_set[nhk] = nhid;
     }
 
     if (syncd_fg_route_entry_it != m_syncdFGRouteTables.at(vrf_id).end())
     {
         FGNextHopGroupEntry *syncd_fg_route_entry = &(syncd_fg_route_entry_it->second);
-
         /* Route exists, update FG ECMP group in SAI */
         for (auto nhk : syncd_fg_route_entry->active_nexthops)
         {
@@ -1149,6 +1220,7 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
     else
     {
         /* New route + nhg addition */
+        prevNhgWasFineGrained = false;
         if (next_hop_to_add == false)
         {
             SWSS_LOG_INFO("There were no valid next-hops to add %s:%s", ipPrefix.to_string().c_str(),
@@ -1164,11 +1236,6 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
         }
 
         if (!setNewNhgMembers(syncd_fg_route_entry, fgNhgEntry, bank_member_changes, nhopgroup_members_set, ipPrefix))
-        {
-            return false;
-        }
-
-        if (!createFineGrainedRouteEntry(syncd_fg_route_entry, fgNhgEntry, vrf_id, ipPrefix, nextHops))
         {
             return false;
         }
@@ -1196,13 +1263,19 @@ bool FgNhgOrch::addRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
         }
     }
 
+    next_hop_id =  m_syncdFGRouteTables[vrf_id][ipPrefix].next_hop_group_id;
     return true;
 }
 
 
-bool FgNhgOrch::removeRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
+bool FgNhgOrch::removeFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
 {
     SWSS_LOG_ENTER();
+
+    if (!isFineGrainedConfigured)
+    {
+        return true;
+    }
 
     auto it_route_table = m_syncdFGRouteTables.find(vrf_id);
     if (it_route_table == m_syncdFGRouteTables.end())
@@ -1220,32 +1293,8 @@ bool FgNhgOrch::removeRoute(sai_object_id_t vrf_id, const IpPrefix &ipPrefix)
         return true;
     }
 
-    auto prefix_entry = fgNhgPrefixes.find(ipPrefix);
-    assert(prefix_entry != fgNhgPrefixes.end());
-    FgNhgEntry *fgNhgEntry = prefix_entry->second;
-
-    sai_route_entry_t route_entry;
-    route_entry.vr_id = vrf_id;
-    route_entry.switch_id = gSwitchId;
-    copy(route_entry.destination, ipPrefix);
-    sai_status_t status = sai_route_api->remove_route_entry(&route_entry);
-    if (status != SAI_STATUS_SUCCESS)
-    {
-        SWSS_LOG_ERROR("Failed to remove route prefix:%s", ipPrefix.to_string().c_str());
-        return false;
-    }
-
-    if (route_entry.destination.addr_family == SAI_IP_ADDR_FAMILY_IPV4)
-    {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV4_ROUTE);
-    }
-    else
-    {
-        gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_IPV6_ROUTE);
-    }
-
     FGNextHopGroupEntry *syncd_fg_route_entry = &(it_route->second);
-    if (!removeFineGrainedNextHopGroup(syncd_fg_route_entry, fgNhgEntry))
+    if (!removeFineGrainedNextHopGroup(syncd_fg_route_entry))
     {
         SWSS_LOG_ERROR("Failed to clean-up fine grained ECMP SAI group");
         return false;
@@ -1331,6 +1380,7 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
     string key = kfvKey(t);
     string fg_nhg_name = key; 
     auto fgNhg_entry = m_FgNhgs.find(fg_nhg_name);
+    FGMatchMode match_mode = ROUTE_BASED;
 
     if (op == SET_COMMAND)
     {
@@ -1342,6 +1392,18 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
             {
                 bucket_size = stoi(fvValue(i));
             }
+            else if (fvField(i) == "match_mode")
+            {
+                if (fvValue(i) == "nexthop-based")
+                {
+                    match_mode = NEXTHOP_BASED;
+                }
+                else if (fvValue(i) != "route-based")
+                {
+                    SWSS_LOG_WARN("Received unsupported match_mode %s, defaulted to route-based",
+                                    fvValue(i).c_str());
+                }
+            }
         }
 
         if (bucket_size == 0)
@@ -1352,20 +1414,17 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
 
         if (fgNhg_entry != m_FgNhgs.end()) 
         {
-            if (bucket_size != (fgNhg_entry->second).configured_bucket_size)
-            {
-                SWSS_LOG_WARN("Received request to change %s's bucket size to %d, unsupported operation, skipping",
-                        fg_nhg_name.c_str(), bucket_size);
-                return true;
-            }
+            SWSS_LOG_WARN("FG_NHG %s already exists, ignoring", fg_nhg_name.c_str());
         }
         else
         {
             FgNhgEntry fgNhgEntry;
             fgNhgEntry.configured_bucket_size = bucket_size;
             fgNhgEntry.fg_nhg_name = fg_nhg_name;
-            SWSS_LOG_INFO("Added new FG_NHG entry with configured_bucket_size %d", 
-                    fgNhgEntry.configured_bucket_size);
+            fgNhgEntry.match_mode = match_mode;
+            SWSS_LOG_NOTICE("Added new FG_NHG entry with bucket_size %d, match_mode: %'" PRIu8, 
+                    bucket_size, match_mode);
+            isFineGrainedConfigured = true;
             m_FgNhgs[fg_nhg_name] = fgNhgEntry;
         }
     }
@@ -1382,7 +1441,6 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
             if (fgNhg_entry->second.prefixes.size() == 0 && fgNhg_entry->second.next_hops.size() == 0)
             {
                 m_FgNhgs.erase(fgNhg_entry);
-                assert(m_FgNhgs.find(fg_nhg_name) == fgNhgPrefixes.end());
                 SWSS_LOG_INFO("Received delete call for valid entry with no further dependencies, deleting %s",
                         fg_nhg_name.c_str());
             }
@@ -1391,6 +1449,10 @@ bool FgNhgOrch::doTaskFgNhg(const KeyOpFieldsValuesTuple & t)
                 SWSS_LOG_INFO("Child Prefix/Member entries are still associated with this FG_NHG %s", 
                         fg_nhg_name.c_str());
                 return false;
+            }
+            if (m_FgNhgs.size() == 0)
+            {
+                isFineGrainedConfigured = false;
             }
         }
     }
@@ -1404,11 +1466,11 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
     string op = kfvOp(t);
     string key = kfvKey(t);
     IpPrefix ip_prefix = IpPrefix(key);
-    auto prefix_entry = fgNhgPrefixes.find(ip_prefix);
+    auto prefix_entry = m_fgNhgPrefixes.find(ip_prefix);
 
     if (op == SET_COMMAND)
     {
-        if (prefix_entry != fgNhgPrefixes.end())
+        if (prefix_entry != m_fgNhgPrefixes.end())
         {
             SWSS_LOG_INFO("FG_NHG prefix already exists");
             return true;
@@ -1435,6 +1497,13 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
             return false;
         }
 
+        if (fgNhg_entry->second.match_mode == NEXTHOP_BASED)
+        {
+            SWSS_LOG_NOTICE("FG_NHG %s is configured as nexthop_based: FG_NHG_PREFIX is a no-op",
+                                fg_nhg_name.c_str());
+            return true;
+        }
+
         /* delete regular ecmp handling for prefix */
         sai_object_id_t vrf_id = gVirtualRouterId;
         NextHopGroupKey nhg = gRouteOrch->getSyncdRouteNhgKey(vrf_id, ip_prefix);
@@ -1445,7 +1514,7 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
             {
                 SWSS_LOG_INFO("Route does not exist in routeorch, don't need to migrate route to fgnhgorch");
                 fgNhg_entry->second.prefixes.push_back(ip_prefix);
-                fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
+                m_fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
             }
             else
             {
@@ -1462,7 +1531,7 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
                 /* Case where APP_DB route entry was present and the route delete was completed */
                 SWSS_LOG_INFO("Route removed in routeorch, now do an APP_DB addition");
                 fgNhg_entry->second.prefixes.push_back(ip_prefix);
-                fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
+                m_fgNhgPrefixes[ip_prefix] = &(fgNhg_entry->second);
                 m_routeTable.set(ip_prefix.to_string(), generateRouteTableFromNhgKey(addCache->second));
                 m_fgPrefixAddCache.erase(addCache);
                 SWSS_LOG_INFO("Performed APP_DB addition with prefix %s", ip_prefix.to_string().c_str());
@@ -1474,11 +1543,11 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
             }
         }
         SWSS_LOG_INFO("FG_NHG added for group %s, prefix %s",
-                fgNhgPrefixes[ip_prefix]->fg_nhg_name.c_str(), ip_prefix.to_string().c_str());
+                m_fgNhgPrefixes[ip_prefix]->fg_nhg_name.c_str(), ip_prefix.to_string().c_str());
     }
     else if (op == DEL_COMMAND)
     {
-        if (prefix_entry == fgNhgPrefixes.end())
+        if (prefix_entry == m_fgNhgPrefixes.end())
         {
             SWSS_LOG_INFO("FG_NHG prefix doesn't exists, ignore");
             return true;
@@ -1508,7 +1577,7 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
                     }
                 }
 
-                fgNhgPrefixes.erase(ip_prefix); 
+                m_fgNhgPrefixes.erase(ip_prefix); 
             }
             else
             {
@@ -1532,7 +1601,7 @@ bool FgNhgOrch::doTaskFgNhgPrefix(const KeyOpFieldsValuesTuple & t)
                         break;
                     }
                 }
-                fgNhgPrefixes.erase(ip_prefix); 
+                m_fgNhgPrefixes.erase(ip_prefix); 
 
                 m_routeTable.set(ip_prefix.to_string(), generateRouteTableFromNhgKey(delCache->second));
                 SWSS_LOG_INFO("Perform APP_DB addition with prefix %s", ip_prefix.to_string().c_str());
@@ -1637,6 +1706,14 @@ bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
                 }
             }
 
+            fgNhg_entry->second.next_hops[next_hop] = fg_nh_info;
+
+            if (fgNhg_entry->second.match_mode == NEXTHOP_BASED)
+            {
+                SWSS_LOG_NOTICE("Add member %s as NEXTHOP_BASED", next_hop.to_string().c_str());
+                m_fgNhgNexthops[next_hop] = &(fgNhg_entry->second);
+            }
+
             /* query and check the next hop is valid in neighOrcch */
             if (!m_neighOrch->hasNextHop(nhk))
             {
@@ -1648,11 +1725,13 @@ bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
                 if (!validNextHopInNextHopGroup(nhk))
                 {
                     cleanupIpInLinkToIpMap(link, next_hop, fgNhg_entry->second);
+                    fgNhg_entry->second.next_hops.erase(next_hop);
+                    m_fgNhgNexthops.erase(next_hop);
                     SWSS_LOG_INFO("Failing validNextHopInNextHopGroup for %s", nhk.to_string().c_str());
                     return false;
                 }
             }
-            fgNhg_entry->second.next_hops[next_hop] = fg_nh_info;
+
             SWSS_LOG_INFO("FG_NHG member added for group %s, next-hop %s",
                     fgNhg_entry->second.fg_nhg_name.c_str(), nhk.to_string().c_str());
         }
@@ -1679,12 +1758,13 @@ bool FgNhgOrch::doTaskFgNhgMember(const KeyOpFieldsValuesTuple & t)
             {
                 string link = it->second.link;
                 cleanupIpInLinkToIpMap(link, next_hop, fgnhg_it->second);
-
                 fgnhg_it->second.next_hops.erase(it);
                 SWSS_LOG_INFO("FG_NHG member removed for group %s, next-hop %s",
-                        fgnhg_it->second.fg_nhg_name.c_str(), next_hop.to_string().c_str());
+                    fgnhg_it->second.fg_nhg_name.c_str(), next_hop.to_string().c_str());
+                break;
             }
         }
+        m_fgNhgNexthops.erase(next_hop);
     }
     return true;
 }
