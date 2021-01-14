@@ -138,10 +138,10 @@ int main(int argc, char **argv)
                  */
                 if (temps == &warmStartTimer || temps == &eoiuHoldTimer || temps == &reconcileHoldTimer)
                 {
-					bool readyToReconcile = false;                    
+                    bool readyToReconcile = false;                    
                     if (temps == &warmStartTimer)
                     {
-						readyToReconcile = true;
+                        readyToReconcile = true;
                         SWSS_LOG_NOTICE("Warm-Restart timer expired.");
                     }
                     else if (temps == &reconcileHoldTimer)
@@ -151,7 +151,7 @@ int main(int argc, char **argv)
                     }
                     else
                     {
-						readyToReconcile = sync.isReadyToReconcile();
+                        readyToReconcile = sync.isReadyToReconcile();
                         SWSS_LOG_NOTICE("Warm-Restart EOIU hold timer expired.");
                     }
 
