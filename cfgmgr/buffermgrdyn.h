@@ -47,6 +47,14 @@ typedef struct {
     bool static_configured;
     bool ingress;
     bool lossless;
+
+    // fields representing parameters by which the headroom is calculated
+    std::string speed;
+    std::string cable_length;
+    std::string port_mtu;
+    std::string gearbox_model;
+
+    // APPL_DB.BUFFER_PROFILE fields
     std::string name;
     std::string size;
     std::string xon;
@@ -124,6 +132,9 @@ private:
     bool m_portInitDone;
     bool m_firstTimeCalculateBufferPool;
 
+    bool m_isSharedHeadroomPoolSizeConfigured;
+    std::string m_configuredSharedHeadroomPoolSize;
+
     std::shared_ptr<DBConnector> m_applDb = nullptr;
     SelectableTimer *m_buffermgrPeriodtimer = nullptr;
 
@@ -191,6 +202,8 @@ private:
     unsigned long m_mmuSizeNumber;
     std::string m_defaultThreshold;
 
+    std::string m_overSubscribeRatio;
+
     // Initializers
     void initTableHandlerMap();
     void parseGearboxInfo(std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
@@ -202,6 +215,10 @@ private:
     std::string parseObjectNameFromKey(const std::string &key, size_t pos/* = 1*/);
     std::string parseObjectNameFromReference(const std::string &reference);
     std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model);
+    inline bool isNonZero(const std::string &value) const
+    {
+        return !value.empty() && value != "0";
+    }
 
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);
@@ -209,12 +226,13 @@ private:
     void updateBufferPgToDb(const std::string &key, const std::string &profile, bool add);
 
     // Meta flows
-    void calculateHeadroomSize(const std::string &speed, const std::string &cable, const std::string &port_mtu, const std::string &gearbox_model, buffer_profile_t &headroom);
+    void calculateHeadroomSize(buffer_profile_t &headroom);
     void checkSharedBufferPoolSize();
     void recalculateSharedBufferPool();
     task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, std::string &profile_name);
     void releaseProfile(const std::string &profile_name);
     bool isHeadroomResourceValid(const std::string &port, const buffer_profile_t &profile, const std::string &new_pg);
+    void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
 
     // Main flows
     task_process_status refreshPriorityGroupsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);

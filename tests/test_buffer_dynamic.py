@@ -408,3 +408,81 @@ class TestBufferMgrDyn(object):
         # clear configuration
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
         self.config_db.delete_entry('BUFFER_PROFILE', 'non-default-dynamic')
+
+    def test_sharedHeadroomPool(self, dvs, testlog):
+        self.setup_db(dvs)
+
+        # configure lossless PG 3-4 on interface and start up the interface
+        self.config_db.update_entry('BUFFER_PG', 'Ethernet0|3-4', {'profile': 'NULL'})
+        dvs.runcmd('config interface startup Ethernet0')
+
+        expectedProfile = self.make_lossless_profile_name(self.originalSpeed, self.originalCableLen)
+        self.app_db.wait_for_entry("BUFFER_PROFILE_TABLE", expectedProfile)
+        self.app_db.wait_for_field_match("BUFFER_PG_TABLE", "Ethernet0:3-4", {"profile": "[BUFFER_PROFILE_TABLE:" + expectedProfile + "]"})
+        self.check_new_profile_in_asic_db(dvs, expectedProfile)
+        profileInApplDb = self.app_db.get_entry('BUFFER_PROFILE_TABLE', expectedProfile)
+
+        # enable shared headroom pool by configuring over subscribe ratio
+        default_lossless_buffer_parameter = self.config_db.get_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE')
+        over_subscribe_ratio = default_lossless_buffer_parameter.get('over_subscribe_ratio')
+        assert not over_subscribe_ratio or over_subscribe_ratio == '0', "Over subscribe ratio isn't 0"
+
+        # config over subscribe ratio to 2
+        default_lossless_buffer_parameter['over_subscribe_ratio'] = '2'
+        self.config_db.update_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE', default_lossless_buffer_parameter)
+
+        # check buffer profile: xoff should be removed from size
+        profileInApplDb['size'] = profileInApplDb['xon']
+        self.app_db.wait_for_field_match('BUFFER_PROFILE_TABLE', expectedProfile, profileInApplDb)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile)
+
+        # check ingress_lossless_pool between appldb and asicdb
+        # there are only two lossless PGs configured on one port.
+        # hence the shared headroom pool size should be pg xoff * 2 / over subscribe ratio (2) = xoff.
+        ingress_lossless_pool_in_appldb = self.app_db.get_entry('BUFFER_POOL_TABLE', 'ingress_lossless_pool')
+        shp_size = profileInApplDb['xoff']
+        ingress_lossless_pool_in_appldb['xoff'] = shp_size
+        # toggle shared headroom pool, it requires some time to update pools
+        time.sleep(20)
+        self.app_db.wait_for_field_match('BUFFER_POOL_TABLE', 'ingress_lossless_pool', ingress_lossless_pool_in_appldb)
+        ingress_lossless_pool_in_asicdb = self.asic_db.get_entry('ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE', self.ingress_lossless_pool_oid)
+        ingress_lossless_pool_in_asicdb['SAI_BUFFER_POOL_ATTR_XOFF_SIZE'] = shp_size
+        self.asic_db.wait_for_field_match('ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL', self.ingress_lossless_pool_oid, ingress_lossless_pool_in_asicdb)
+
+        # config shared headroom pool size
+        shp_size = '204800'
+        ingress_lossless_pool_in_configdb = self.config_db.get_entry('BUFFER_POOL', 'ingress_lossless_pool')
+        ingress_lossless_pool_in_configdb['xoff'] = shp_size
+        self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', ingress_lossless_pool_in_configdb)
+        # config over subscribe ratio to 4
+        default_lossless_buffer_parameter['over_subscribe_ratio'] = '4'
+        self.config_db.update_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE', default_lossless_buffer_parameter)
+        # shp size wins in case both size and over subscribe ratio is configured
+        ingress_lossless_pool_in_appldb['xoff'] = shp_size
+        self.app_db.wait_for_field_match('BUFFER_POOL_TABLE', 'ingress_lossless_pool', ingress_lossless_pool_in_appldb)
+        ingress_lossless_pool_in_asicdb['SAI_BUFFER_POOL_ATTR_XOFF_SIZE'] = shp_size
+        self.asic_db.wait_for_field_match('ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL', self.ingress_lossless_pool_oid, ingress_lossless_pool_in_asicdb)
+
+        # remove size configuration, new over subscribe ratio takes effect
+        ingress_lossless_pool_in_configdb['xoff'] = '0'
+        self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', ingress_lossless_pool_in_configdb)
+        # shp size: pg xoff * 2 / over subscribe ratio (4) = pg xoff / 2
+        shp_size = str(int(int(profileInApplDb['xoff']) / 2))
+        time.sleep(30)
+        ingress_lossless_pool_in_appldb['xoff'] = shp_size
+        self.app_db.wait_for_field_match('BUFFER_POOL_TABLE', 'ingress_lossless_pool', ingress_lossless_pool_in_appldb)
+        ingress_lossless_pool_in_asicdb['SAI_BUFFER_POOL_ATTR_XOFF_SIZE'] = shp_size
+        self.asic_db.wait_for_field_match('ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL', self.ingress_lossless_pool_oid, ingress_lossless_pool_in_asicdb)
+
+        # remove over subscribe ratio configuration
+        default_lossless_buffer_parameter['over_subscribe_ratio'] = '0'
+        self.config_db.update_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE', default_lossless_buffer_parameter)
+        # check whether shp size has been removed from both asic db and appl db
+        ingress_lossless_pool_in_appldb['xoff'] = '0'
+        self.app_db.wait_for_field_match('BUFFER_POOL_TABLE', 'ingress_lossless_pool', ingress_lossless_pool_in_appldb)
+        ingress_lossless_pool_in_asicdb['SAI_BUFFER_POOL_ATTR_XOFF_SIZE'] = '0'
+        self.asic_db.wait_for_field_match('ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL', self.ingress_lossless_pool_oid, ingress_lossless_pool_in_asicdb)
+
+        # remove lossless PG 3-4 on interface
+        self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')
+        dvs.runcmd('config interface shutdown Ethernet0')
