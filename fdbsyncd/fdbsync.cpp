@@ -54,21 +54,19 @@ bool FdbSync::isIntfRestoreDone()
             "vrfmgrd"
         };
 
-    for(string& module : required_modules)
+    for (string& module : required_modules)
     {
         WarmStart::WarmStartState state;
         
         WarmStart::getWarmStartState(module, state);
-        if(state == WarmStart::REPLAYED || state == WarmStart::RECONCILED)
+        if (state == WarmStart::REPLAYED || state == WarmStart::RECONCILED)
         {
             SWSS_LOG_INFO("Module %s Replayed or Reconciled %d",module.c_str(), (int) state);            
         }
         else
         {
             SWSS_LOG_INFO("Module %s NOT Replayed or Reconciled %d",module.c_str(), (int) state);            
-            //return false;
-            // Return true till all the dependant code is checked in
-            return true;
+            return false;
         }
     }
     
@@ -82,21 +80,19 @@ bool FdbSync::isReadyToReconcile()
         "orchagent",
     };
 
-    for(string& module : required_modules)
+    for (string& module : required_modules)
     {
         WarmStart::WarmStartState state;
         
         WarmStart::getWarmStartState(module, state);
-        if(state == WarmStart::RECONCILED)
+        if (state == WarmStart::RECONCILED)
         {
             SWSS_LOG_INFO("Module %s Reconciled %d",module.c_str(), (int) state);            
         }
         else
         {
             SWSS_LOG_INFO("Module %s NOT Reconciled %d",module.c_str(), (int) state);            
-            //return false;
-            // Return True untill the dependant orchagent code is commited
-            return true;
+            return false;
         }
     }
     

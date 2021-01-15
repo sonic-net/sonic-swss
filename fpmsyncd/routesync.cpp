@@ -940,9 +940,7 @@ bool RouteSync::isReadyToReconcile()
         else
         {
             SWSS_LOG_INFO("Module %s NOT Reconciled %d",module.c_str(), (int) state);            
-            //return false;
-            //Return true untill dependent module code is commited
-            return true;
+            return false;
         }
     }
     

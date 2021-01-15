@@ -13,13 +13,13 @@
 #define DEFAULT_FDBSYNC_WARMSTART_TIMER 600
 
 // Time to wait to run fdb reconcillation after fdbsyncd replay
-#define FDBSYNC_RECON_TIMER 120
+#define FDBSYNC_RECON_WAIT_TIME 120
 /*
  * This is the MAX time in seconds, fdbsyncd will wait after warm-reboot
  * for the interface entries to be recreated in kernel before attempting to 
  * write the FDB data to kernel
  */
-#define WARM_RESTORE_WAIT_TIME_OUT_MAX 180
+#define INTF_RESTORE_MAX_WAIT_TIME 180
 
 namespace swss {
 

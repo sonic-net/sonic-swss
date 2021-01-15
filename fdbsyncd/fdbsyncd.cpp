@@ -46,12 +46,16 @@ int main(int argc, char **argv)
              */
             if (sync.getRestartAssist()->isWarmStartInProgress())
             {
-                int pasttime = 0;                
                 sync.getRestartAssist()->readTablesToMap();
                 
+                steady_clock::time_point starttime = steady_clock::now();
                 while (!sync.isIntfRestoreDone())
                 {
-                    if (pasttime++ > WARM_RESTORE_WAIT_TIME_OUT_MAX)
+                    duration<double> time_span =
+                        duration_cast<duration<double>>(steady_clock::now() - starttime);
+                    int pasttime = int(time_span.count());
+
+                    if (pasttime++ > INTF_RESTORE_MAX_WAIT_TIME)
                     {
                         SWSS_LOG_INFO("timed-out before all interface data was replayed to kernel!!!");
                         break;
@@ -103,7 +107,7 @@ int main(int argc, char **argv)
                     {
                         sync.getRestartAssist()->appDataReplayed();
                         SWSS_LOG_NOTICE("FDB Replay Complete,  Start Reconcile Check");
-                        reconCheckTimer.setInterval(timespec{FDBSYNC_RECON_TIMER, 0});
+                        reconCheckTimer.setInterval(timespec{FDBSYNC_RECON_WAIT_TIME, 0});
                         reconCheckTimer.start();
                         s.addSelectable(&reconCheckTimer);
                     }
