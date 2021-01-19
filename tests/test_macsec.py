@@ -6,6 +6,13 @@ import pytest
 import functools
 import typing
 import re
+import time
+
+
+def to_string(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
 
 
 class Table(object):
@@ -19,7 +26,7 @@ class Table(object):
     def __setitem__(self, key: str, pairs: dict):
         pairs_str = {}
         for k, v in pairs.items():
-            pairs_str[str(k)] = str(v)
+            pairs_str[to_string(k)] = to_string(v)
         key = self.convert_key(key)
         if self.__getitem__(key) is None:
             self.db.create_entry(self.table_name, key, pairs_str)
@@ -56,7 +63,7 @@ class ProduceStateTable(object):
         if isinstance(pairs, dict):
             pairs = pairs.items()
         for k, v in pairs:
-            pairs_str.append((str(k), str(v)))
+            pairs_str.append((to_string(k), to_string(v)))
         self.table.set(key, pairs_str)
 
     def __delitem__(self, key: str):
@@ -302,7 +309,7 @@ class WPASupplicantMock(object):
             "Wrong parameter to MACsec receive SA")
         self.app_transmit_sa_table[sai] = {
             "sak": sak, "auth_key": auth_key,
-            "init_pn": init_pn, "salt": salt}
+            "next_pn": init_pn, "salt": salt}
 
     @macsec_sa()
     def delete_transmit_sa(self, sai: str):
