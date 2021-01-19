@@ -283,8 +283,12 @@ private:
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
 
-    bool setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
-                                vector<uint32_t> &serdes_val);
+    bool setPortSerdesAttribute(sai_object_id_t port_id,
+                                std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> &serdes_attr);
+
+
+    void removePortSerdesAttribute(sai_object_id_t port_id);
+
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();

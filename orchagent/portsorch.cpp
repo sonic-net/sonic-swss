@@ -1944,6 +1944,8 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     /* remove port name map from counter table */
     m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
 
+    removePortSerdesAttribute(p.m_port_id);
+
     m_portList[alias].m_init = false;
     SWSS_LOG_NOTICE("De-Initialized port %s", alias.c_str());
 }
@@ -2102,9 +2104,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
         if (op == SET_COMMAND)
         {
             set<int> lane_set;
-            vector<uint32_t> pre_emphasis;
-            vector<uint32_t> idriver;
-            vector<uint32_t> ipredriver;
+            vector<uint32_t> attr_val;
+            map<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr;
+            typedef pair<sai_port_serdes_attr_t, vector<uint32_t>> serdes_attr_pair;
             string admin_status;
             string fec_mode;
             string pfc_asym;
@@ -2177,22 +2179,92 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 }
 
                 /* Set port serdes Pre-emphasis */
+                attr_val.clear();
                 if (fvField(i) == "preemphasis")
                 {
-                    getPortSerdesVal(fvValue(i), pre_emphasis);
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_PREEMPHASIS,attr_val));
                 }
 
+                attr_val.clear();
                 /* Set port serdes idriver */
                 if (fvField(i) == "idriver")
                 {
-                    getPortSerdesVal(fvValue(i), idriver);
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_IDRIVER,attr_val));
                 }
 
+                attr_val.clear();
                 /* Set port serdes ipredriver */
                 if (fvField(i) == "ipredriver")
                 {
-                    getPortSerdesVal(fvValue(i), ipredriver);
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_IPREDRIVER,attr_val));
                 }
+
+                /* Set port serdes pre1 */
+                attr_val.clear();
+                if (fvField(i) == "pre1")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_PRE1, attr_val));
+                }
+
+                /* Set port serdes pre2 */
+                attr_val.clear();
+                if (fvField(i) == "pre2")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_PRE2, attr_val));
+                }
+
+                /* Set port serdes pre3 */
+                attr_val.clear();
+                if (fvField(i) == "pre3")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_PRE3, attr_val));
+                }
+
+                /* Set port serdes main */
+                attr_val.clear();
+                if (fvField(i) == "main")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_MAIN, attr_val));
+                }
+
+                /* Set port serdes post1 */
+                attr_val.clear();
+                if (fvField(i) == "post1")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_POST1, attr_val));
+                }
+
+                /* Set port serdes post2 */
+                attr_val.clear();
+                if (fvField(i) == "post2")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_POST2, attr_val));
+                }
+
+                /* Set port serdes post3 */
+                attr_val.clear();
+                if (fvField(i) == "post3")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_POST3, attr_val));
+                }
+
+                /* Set port serdes attn */
+                attr_val.clear();
+                if (fvField(i) == "attn")
+                {
+                    getPortSerdesVal(fvValue(i), attr_val);
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN, attr_val));
+                 }
             }
 
             /* Collect information about all received ports */
@@ -2512,45 +2584,15 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     }
                 }
 
-                if (pre_emphasis.size() != 0)
+                if (serdes_attr.size() != 0)
                 {
-                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_PREEMPHASIS, pre_emphasis))
+                    if (setPortSerdesAttribute(p.m_port_id, serdes_attr))
                     {
                         SWSS_LOG_NOTICE("Set port %s  preemphasis is success", alias.c_str());
                     }
                     else
                     {
                         SWSS_LOG_ERROR("Failed to set port %s pre-emphasis", alias.c_str());
-                        it++;
-                        continue;
-                    }
-
-                }
-
-                if (idriver.size() != 0)
-                {
-                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_IDRIVER, idriver))
-                    {
-                        SWSS_LOG_NOTICE("Set port %s idriver is success", alias.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set port %s idriver", alias.c_str());
-                        it++;
-                        continue;
-                    }
-
-                }
-
-                if (ipredriver.size() != 0)
-                {
-                    if (setPortSerdesAttribute(p.m_port_id, SAI_PORT_ATTR_SERDES_IPREDRIVER, ipredriver))
-                    {
-                        SWSS_LOG_NOTICE("Set port %s ipredriver is success", alias.c_str());
-                    }
-                    else
-                    {
-                        SWSS_LOG_ERROR("Failed to set port %s ipredriver", alias.c_str());
                         it++;
                         continue;
                     }
@@ -4387,27 +4429,93 @@ bool PortsOrch::removeAclTableGroup(const Port &p)
     return true;
 }
 
-bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
-                                       vector<uint32_t> &serdes_val)
+bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
+                                       map<sai_port_serdes_attr_t, vector<uint32_t>> &serdes_attr)
 {
     SWSS_LOG_ENTER();
 
-    sai_attribute_t attr;
+    vector<sai_attribute_t> attr_list;
+    sai_attribute_t port_attr;
+    sai_attribute_t port_serdes_attr;
+    sai_status_t status;
+    sai_object_id_t port_serdes_id = SAI_NULL_OBJECT_ID;
 
-    memset(&attr, 0, sizeof(attr));
-    attr.id = attr_id;
-
-    attr.value.u32list.count = (uint32_t)serdes_val.size();
-    attr.value.u32list.list = serdes_val.data();
-
-    sai_status_t status = sai_port_api->set_port_attribute(port_id, &attr);
+    port_attr.id = SAI_PORT_ATTR_PORT_SERDES_ID;
+    status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to set serdes attribute %d to port pid:%" PRIx64,
-                       attr_id, port_id);
+        SWSS_LOG_ERROR("Failed to get port attr serdes id %d to port pid:%lx",
+                       port_attr.id, port_id);
         return false;
     }
+
+    if (port_attr.value.oid != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_port_api->remove_port_serdes(port_attr.value.oid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove existing port serdes attr %lx port %lx",
+                           port_attr.value.oid, port_id);
+            return false;
+        }
+    }
+
+
+    port_serdes_attr.id = SAI_PORT_SERDES_ATTR_PORT_ID;
+    port_serdes_attr.value.oid = port_id;
+    attr_list.emplace_back(port_serdes_attr);
+    SWSS_LOG_ERROR("Creating serdes for port %lx",port_id);
+
+    for (auto it = serdes_attr.begin(); it != serdes_attr.end(); it++)
+    {
+        port_serdes_attr.id = it->first;
+        port_serdes_attr.value.u32list.count = (uint32_t)it->second.size();
+        port_serdes_attr.value.u32list.list = it->second.data();
+        attr_list.emplace_back(port_serdes_attr);
+    }
+    status = sai_port_api->create_port_serdes(&port_serdes_id, gSwitchId,
+                                              static_cast<uint32_t>(serdes_attr.size()+1),
+                                              attr_list.data());
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create port serdes for port %lx",
+                       port_id);
+         return false;
+    }
+    SWSS_LOG_NOTICE("Created port serdes object %lx for port %lx", port_serdes_id, port_id);
     return true;
+}
+
+void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t port_attr;
+    sai_status_t status;
+    sai_object_id_t port_serdes_id = SAI_NULL_OBJECT_ID;
+
+    port_attr.id = SAI_PORT_ATTR_PORT_SERDES_ID;
+    status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
+
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_DEBUG("Failed to get port attr serdes id %d to port pid:%lx",
+                       port_attr.id, port_id);
+        return;
+    }
+
+    if (port_attr.value.oid != SAI_NULL_OBJECT_ID)
+    {
+        status = sai_port_api->remove_port_serdes(port_attr.value.oid);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to remove existing port serdes attr %lx port %lx",
+                           port_attr.value.oid, port_id);
+            return;
+        }
+    }
+    SWSS_LOG_NOTICE("Removed port serdes object %lx for port %lx", port_serdes_id, port_id);
 }
 
 void PortsOrch::getPortSerdesVal(const std::string& val_str,
