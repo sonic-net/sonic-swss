@@ -443,7 +443,7 @@ class TestMirror(object):
         # mirror session move round 2
         # remove port channel member
         self.dvs_lag.remove_port_channel_member("080", "Ethernet32")
-        self.dvs_mirror.verify_session_status(session, status="inactive")
+        self.dvs_mirror.verify_session_status(session)
 
         # mirror session move round 3
         # create port channel member

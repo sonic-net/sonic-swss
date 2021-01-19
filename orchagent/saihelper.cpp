@@ -15,6 +15,7 @@ extern "C" {
 #include <tuple>
 #include <vector>
 #include <linux/limits.h>
+#include <net/if.h>
 #include "timestamp.h"
 #include "sai_serialize.h"
 #include "saihelper.h"
@@ -22,7 +23,13 @@ extern "C" {
 using namespace std;
 using namespace swss;
 
+#define _STR(s) #s
+#define STR(s) _STR(s)
+
 #define CONTEXT_CFG_FILE "/usr/share/sonic/hwsku/context_config.json"
+
+// hwinfo = "INTERFACE_NAME/PHY ID", mii_ioctl_data->phy_id is a __u16
+#define HWINFO_MAX_SIZE IFNAMSIZ + 1 + 5
 
 /* Initialize all global api pointers */
 sai_switch_api_t*           sai_switch_api;
@@ -52,6 +59,7 @@ sai_dtel_api_t*             sai_dtel_api;
 sai_samplepacket_api_t*     sai_samplepacket_api;
 sai_debug_counter_api_t*    sai_debug_counter_api;
 sai_nat_api_t*              sai_nat_api;
+sai_system_port_api_t*      sai_system_port_api;
 sai_macsec_api_t*           sai_macsec_api;
 
 extern sai_object_id_t gSwitchId;
@@ -171,6 +179,7 @@ void initSaiApi()
     sai_api_query(SAI_API_SAMPLEPACKET,         (void **)&sai_samplepacket_api);
     sai_api_query(SAI_API_DEBUG_COUNTER,        (void **)&sai_debug_counter_api);
     sai_api_query(SAI_API_NAT,                  (void **)&sai_nat_api);
+    sai_api_query(SAI_API_SYSTEM_PORT,          (void **)&sai_system_port_api);
     sai_api_query(SAI_API_MACSEC,               (void **)&sai_macsec_api);
 
     sai_log_set(SAI_API_SWITCH,                 SAI_LOG_LEVEL_NOTICE);
@@ -200,6 +209,7 @@ void initSaiApi()
     sai_log_set(SAI_API_SAMPLEPACKET,           SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_DEBUG_COUNTER,          SAI_LOG_LEVEL_NOTICE);
     sai_log_set((sai_api_t)SAI_API_NAT,         SAI_LOG_LEVEL_NOTICE);
+    sai_log_set(SAI_API_SYSTEM_PORT,            SAI_LOG_LEVEL_NOTICE);
     sai_log_set(SAI_API_MACSEC,                 SAI_LOG_LEVEL_NOTICE);
 }
 
@@ -274,6 +284,10 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     vector<sai_attribute_t> attrs;
     sai_status_t status;
     char fwPath[PATH_MAX];
+    char hwinfo[HWINFO_MAX_SIZE + 1];
+    char hwinfoIntf[IFNAMSIZ + 1];
+    unsigned int hwinfoPhyid;
+    int ret;
 
     SWSS_LOG_ENTER();
 
@@ -289,9 +303,23 @@ sai_status_t initSaiPhyApi(swss::gearbox_phy_t *phy)
     attr.value.u32 = 0;
     attrs.push_back(attr);
 
+    ret = sscanf(phy->hwinfo.c_str(), "%" STR(IFNAMSIZ) "[^/]/%u", hwinfoIntf, &hwinfoPhyid);
+    if (ret != 2) {
+        SWSS_LOG_ERROR("BOX: hardware info doesn't match the 'interface_name/phyid' "
+                       "format");
+        return SAI_STATUS_FAILURE;
+    }
+
+    if (hwinfoPhyid > std::numeric_limits<uint16_t>::max()) {
+        SWSS_LOG_ERROR("BOX: phyid is bigger than maximum limit");
+        return SAI_STATUS_FAILURE;
+    }
+
+    strcpy(hwinfo, phy->hwinfo.c_str());
+
     attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
-    attr.value.s8list.count = 0;
-    attr.value.s8list.list = 0;
+    attr.value.s8list.count = (uint32_t) phy->hwinfo.length();
+    attr.value.s8list.list = (int8_t *) hwinfo;
     attrs.push_back(attr);
 
     if (phy->firmware.length() == 0)

@@ -143,6 +143,14 @@ bool GearboxParser::parse()
             val = phy["bus_id"];
             attr = std::make_pair("bus_id", std::to_string(val.get<int>()));
             attrs.push_back(attr);
+            if (phy.find("hwinfo") == phy.end())
+            {
+                SWSS_LOG_ERROR("missing 'hwinfo' field in 'phys' item %d in gearbox configuration", iter);
+                return false;
+            }
+            val = phy["hwinfo"];
+            attr = std::make_pair("hwinfo", std::string(val.get<std::string>()));
+            attrs.push_back(attr);
             std::string key;
             key = "phy:" + std::to_string(phyId);
             if (getWriteToDb() == true) 

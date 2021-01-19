@@ -45,6 +45,7 @@ extern CrmOrch *gCrmOrch;
 extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
 extern Directory<Orch*> gDirectory;
+extern sai_system_port_api_t *sai_system_port_api;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -229,14 +230,13 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     /* Initialize counter table */
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
     m_counterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PORT_NAME_MAP));
-
     m_counterLagTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_LAG_NAME_MAP));
     FieldValueTuple tuple("", "");
     vector<FieldValueTuple> defaultLagFv;
     defaultLagFv.push_back(tuple);
     m_counterLagTable->set("", defaultLagFv);
 
-    /* Initialize port table */
+    /* Initialize port and vlan table */
     m_portTable = unique_ptr<Table>(new Table(db, APP_PORT_TABLE_NAME));
 
     /* Initialize gearbox */
@@ -394,6 +394,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_default1QBridge = attrs[0].value.oid;
     m_defaultVlan = attrs[1].value.oid;
 
+    /* Get System ports */
+    getSystemPorts();
+
     removeDefaultVlanMembers();
     removeDefaultBridgePorts();
 
@@ -407,7 +410,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
 void PortsOrch::removeDefaultVlanMembers()
 {
     /* Get VLAN members in default VLAN */
-    vector<sai_object_id_t> vlan_member_list(m_portCount);
+    vector<sai_object_id_t> vlan_member_list(m_portCount + m_systemPortCount);
 
     sai_attribute_t attr;
     attr.id = SAI_VLAN_ATTR_MEMBER_LIST;
@@ -438,10 +441,10 @@ void PortsOrch::removeDefaultVlanMembers()
 void PortsOrch::removeDefaultBridgePorts()
 {
     /* Get bridge ports in default 1Q bridge
-     * By default, there will be m_portCount number of SAI_BRIDGE_PORT_TYPE_PORT
+     * By default, there will be (m_portCount + m_systemPortCount) number of SAI_BRIDGE_PORT_TYPE_PORT
      * ports and one SAI_BRIDGE_PORT_TYPE_1Q_ROUTER port. The former type of
      * ports will be removed. */
-    vector<sai_object_id_t> bridge_port_list(m_portCount + 1);
+    vector<sai_object_id_t> bridge_port_list(m_portCount + m_systemPortCount + 1);
 
     sai_attribute_t attr;
     attr.id = SAI_BRIDGE_ATTR_PORT_LIST;
@@ -578,6 +581,7 @@ bool PortsOrch::getPort(sai_object_id_t id, Port &port)
         switch (portIter.second.m_type)
         {
         case Port::PHY:
+        case Port::SYSTEM:
             if(portIter.second.m_port_id == id)
             {
                 port = portIter.second;
@@ -2085,6 +2089,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
              */
             if (!m_initDone)
             {
+                addSystemPorts();
                 m_initDone = true;
                 SWSS_LOG_INFO("Get PortInitDone notification from portsyncd.");
             }
@@ -4686,4 +4691,259 @@ bool PortsOrch::initGearboxPort(Port &port)
 
     return true;
 }
+
+bool PortsOrch::getSystemPorts()
+{
+    sai_status_t status;
+    sai_attribute_t attr;
+    uint32_t i;
+
+    m_systemPortCount = 0;
+
+    attr.id = SAI_SWITCH_ATTR_NUMBER_OF_SYSTEM_PORTS;
+
+    status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to get number of system ports, rv:%d", status);
+        return false;
+    }
+
+    m_systemPortCount = attr.value.u32;
+    SWSS_LOG_NOTICE("Got %d system ports", m_systemPortCount);
+
+    if(m_systemPortCount)
+    {
+        /* Make <switch_id, core, core port> tuple and system port oid map */
+
+        vector<sai_object_id_t> system_port_list;
+        system_port_list.resize(m_systemPortCount);
+
+        attr.id = SAI_SWITCH_ATTR_SYSTEM_PORT_LIST;
+        attr.value.objlist.count = (uint32_t)system_port_list.size();
+        attr.value.objlist.list = system_port_list.data();
+
+        status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to get system port list, rv:%d", status);
+            return false;
+        }
+
+        uint32_t spcnt = attr.value.objlist.count;
+        for(i = 0; i < spcnt; i++)
+        {
+            attr.id = SAI_SYSTEM_PORT_ATTR_CONFIG_INFO;
+
+            status = sai_system_port_api->get_system_port_attribute(system_port_list[i], 1, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to get system port config info spid:%" PRIx64, system_port_list[i]);
+                return false;
+            }
+
+            SWSS_LOG_NOTICE("SystemPort(0x%" PRIx64 ") - port_id:%u, switch_id:%u, core:%u, core_port:%u, speed:%u, voqs:%u",
+                            system_port_list[i],
+                            attr.value.sysportconfig.port_id,
+                            attr.value.sysportconfig.attached_switch_id,
+                            attr.value.sysportconfig.attached_core_index,
+                            attr.value.sysportconfig.attached_core_port_index,
+                            attr.value.sysportconfig.speed,
+                            attr.value.sysportconfig.num_voq);
+
+            tuple<int, int, int> sp_key(attr.value.sysportconfig.attached_switch_id,
+                    attr.value.sysportconfig.attached_core_index,
+                    attr.value.sysportconfig.attached_core_port_index);
+
+            m_systemPortOidMap[sp_key] = system_port_list[i];
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::addSystemPorts()
+{
+    vector<string> keys;
+    vector<FieldValueTuple> spFv;
+
+    DBConnector appDb(APPL_DB, DBConnector::DEFAULT_UNIXSOCKET, 0);
+    Table appSystemPortTable(&appDb, APP_SYSTEM_PORT_TABLE_NAME);
+
+    //Retrieve system port configurations from APP DB
+    appSystemPortTable.getKeys(keys);
+    for ( auto &alias : keys )
+    {
+        appSystemPortTable.get(alias, spFv);
+
+        int32_t system_port_id = -1;
+        int32_t switch_id = -1;
+        int32_t core_index = -1;
+        int32_t core_port_index = -1;
+
+        for ( auto &fv : spFv )
+        {
+            if(fv.first == "switch_id")
+            {
+                switch_id = stoi(fv.second);
+                continue;
+            }
+            if(fv.first == "core_index")
+            {
+                core_index = stoi(fv.second);
+                continue;
+            }
+            if(fv.first == "core_port_index")
+            {
+                core_port_index = stoi(fv.second);
+                continue;
+            }
+            if(fv.first == "system_port_id")
+            {
+                system_port_id = stoi(fv.second);
+                continue;
+            }
+        }
+
+        if(system_port_id < 0 || switch_id < 0 || core_index < 0 || core_port_index < 0)
+        {
+            SWSS_LOG_ERROR("Invalid or Missing field values for %s! system_port id:%d, switch_id:%d, core_index:%d, core_port_index:%d",
+                    alias.c_str(), system_port_id, switch_id, core_index, core_port_index);
+            continue;
+        }
+
+        tuple<int, int, int> sp_key(switch_id, core_index, core_port_index);
+
+        if(m_systemPortOidMap.find(sp_key) != m_systemPortOidMap.end())
+        {
+
+            sai_attribute_t attr;
+            vector<sai_attribute_t> attrs;
+            sai_object_id_t system_port_oid;
+            sai_status_t status;
+
+            //Retrive system port config info and enable
+            system_port_oid = m_systemPortOidMap[sp_key];
+
+            attr.id = SAI_SYSTEM_PORT_ATTR_TYPE;
+            attrs.push_back(attr);
+
+            attr.id = SAI_SYSTEM_PORT_ATTR_CONFIG_INFO;
+            attrs.push_back(attr);
+
+            status = sai_system_port_api->get_system_port_attribute(system_port_oid, static_cast<uint32_t>(attrs.size()), attrs.data());
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Failed to get system port config info spid:%" PRIx64, system_port_oid);
+                continue;
+            }
+
+            //Create or update system port and add to the port list.
+            Port port(alias, Port::SYSTEM);
+            port.m_port_id = system_port_oid;
+            port.m_admin_state_up = true;
+            port.m_oper_status = SAI_PORT_OPER_STATUS_UP;
+            port.m_speed = attrs[1].value.sysportconfig.speed;
+            if (attrs[0].value.s32 == SAI_SYSTEM_PORT_TYPE_LOCAL)
+            {
+                //Get the local port oid
+                attr.id = SAI_SYSTEM_PORT_ATTR_PORT;
+
+                status = sai_system_port_api->get_system_port_attribute(system_port_oid, 1, &attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to get local port oid of local system port spid:%" PRIx64, system_port_oid);
+                    continue;
+                }
+
+                //System port for local port. Update the system port info in the existing physical port
+                if(!getPort(attr.value.oid, port))
+                {
+                    //This is system port for non-front panel local port (CPU or OLP or RCY (Inband)). Not an error
+                    SWSS_LOG_NOTICE("Add port for non-front panel local system port 0x%" PRIx64 "; core: %d, core port: %d",
+                            system_port_oid, core_index, core_port_index);
+                }
+                port.m_system_port_info.local_port_oid = attr.value.oid;
+            }
+
+            port.m_system_port_oid = system_port_oid;
+
+            port.m_system_port_info.alias = alias;
+            port.m_system_port_info.type = (sai_system_port_type_t) attrs[0].value.s32;
+            port.m_system_port_info.port_id = attrs[1].value.sysportconfig.port_id;
+            port.m_system_port_info.switch_id = attrs[1].value.sysportconfig.attached_switch_id;
+            port.m_system_port_info.core_index = attrs[1].value.sysportconfig.attached_core_index;
+            port.m_system_port_info.core_port_index = attrs[1].value.sysportconfig.attached_core_port_index;
+            port.m_system_port_info.speed = attrs[1].value.sysportconfig.speed;
+            port.m_system_port_info.num_voq = attrs[1].value.sysportconfig.num_voq;
+
+            setPort(port.m_alias, port);
+            if(m_port_ref_count.find(port.m_alias) == m_port_ref_count.end())
+            {
+                m_port_ref_count[port.m_alias] = 0;
+            }
+
+            SWSS_LOG_NOTICE("Added system port %" PRIx64 " for %s", system_port_oid, alias.c_str());
+        }
+        else
+        {
+            //System port does not exist in the switch
+            //This can not happen since all the system ports are supposed to be created during switch creation itself
+
+            SWSS_LOG_ERROR("System port %s does not exist in switch. Port not added!", alias.c_str());
+            continue;
+        }
+    }
+
+    return true;
+}
+
+bool PortsOrch::getInbandPort(Port &port)
+{
+    if (m_portList.find(m_inbandPortName) == m_portList.end())
+    {
+        return false;
+    }
+    else
+    {
+        port = m_portList[m_inbandPortName];
+        return true;
+    }
+}
+
+bool PortsOrch::isInbandPort(const string &alias)
+{
+    return (m_inbandPortName == alias);
+}
+
+bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
+{
+    if(m_inbandPortName == alias)
+    {
+        //Inband interface already exists with this name
+        SWSS_LOG_NOTICE("Interface %s is already configured as inband!", alias.c_str());
+        return true;
+    }
+
+    Port port;
+    if(type == "port")
+    {
+        if (!getPort(alias, port))
+        {
+            SWSS_LOG_NOTICE("Port configured for inband intf %s is not ready!", alias.c_str());
+            return false;
+        }
+    }
+
+    // Check for existence of host interface. If does not exist, may create
+    // host if for the inband here
+
+    // May do the processing for other inband type like type=vlan here
+    
+    //Store the name of the local inband port
+    m_inbandPortName = alias;
+
+    return true;
+}
+
 

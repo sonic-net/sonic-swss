@@ -39,6 +39,8 @@ jobs:
       project: build
       pipeline: 9
       artifacts: sonic-swss-common
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -46,6 +48,8 @@ jobs:
       project: build
       pipeline: 12
       artifacts: sonic-sairedis
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic sairedis deb packages"
   - script: |
       sudo dpkg -i sonic-swss-common/libswsscommon_1.0.0_amd64.deb
@@ -63,8 +67,7 @@ jobs:
     submodules: true
   - script: |
       ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc)
-      cp ../*.deb .
+      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: sonic-swss
@@ -73,7 +76,7 @@ jobs:
 - job:
   displayName: "arm64"
   timeoutInMinutes: 180
-  pool: sonic
+  pool: sonicbld
 
   container:
     image: sonicdev-microsoft.azurecr.io:443/sonic-slave-buster-arm64:latest
@@ -100,6 +103,8 @@ jobs:
       project: build
       pipeline: 9
       artifacts: sonic-swss-common.arm64
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -107,6 +112,8 @@ jobs:
       project: build
       pipeline: 12
       artifacts: sonic-sairedis.arm64
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic sairedis deb packages"
   - script: |
       sudo dpkg -i sonic-swss-common.arm64/libswsscommon_1.0.0_arm64.deb
@@ -124,8 +131,7 @@ jobs:
     submodules: true
   - script: |
       ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc)
-      cp ../*.deb .
+      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: sonic-swss.arm64
@@ -134,7 +140,7 @@ jobs:
 - job:
   displayName: "armhf"
   timeoutInMinutes: 180
-  pool: sonic
+  pool: sonicbld
 
   container:
     image: sonicdev-microsoft.azurecr.io:443/sonic-slave-buster-armhf:latest
@@ -161,6 +167,8 @@ jobs:
       project: build
       pipeline: 9
       artifacts: sonic-swss-common.armhf
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic swss common deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
@@ -168,6 +176,8 @@ jobs:
       project: build
       pipeline: 12
       artifacts: sonic-sairedis.armhf
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic sairedis deb packages"
   - script: |
       sudo dpkg -i sonic-swss-common.armhf/libswsscommon_1.0.0_armhf.deb
@@ -185,8 +195,7 @@ jobs:
     submodules: true
   - script: |
       ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc)
-      cp ../*.deb .
+      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: sonic-swss.armhf

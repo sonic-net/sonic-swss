@@ -63,6 +63,8 @@ void negativeConfigTest()
     CU_ASSERT_EQUAL(ret, false);
     ret = handleGearboxConfigFile("tests/configs/negative/gearbox_config_missing_phy_bus_id.json", false);
     CU_ASSERT_EQUAL(ret, false);
+    ret = handleGearboxConfigFile("tests/configs/negative/gearbox_config_missing_phy_hwinfo.json", false);
+    CU_ASSERT_EQUAL(ret, false);
     ret = handleGearboxConfigFile("tests/configs/negative/gearbox_config_invalid_phy_config_file.json", false);
     CU_ASSERT_EQUAL(ret, false);
 

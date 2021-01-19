@@ -44,7 +44,7 @@ struct NeighborUpdate
 class NeighOrch : public Orch, public Subject, public Observer
 {
 public:
-    NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch);
+    NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb);
     ~NeighOrch();
 
     bool hasNextHop(const NextHopKey&);
@@ -70,6 +70,9 @@ public:
     bool removeOverlayNextHop(const NextHopKey &);
     void update(SubjectType, void *);
 
+    bool addInbandNeighbor(string alias, IpAddress ip_address);
+    bool delInbandNeighbor(string alias, IpAddress ip_address);
+
 private:
     PortsOrch *m_portsOrch;
     IntfsOrch *m_intfsOrch;
@@ -92,6 +95,14 @@ private:
     bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
 
     void doTask(Consumer &consumer);
+    void doVoqSystemNeighTask(Consumer &consumer);
+
+    unique_ptr<Table> m_tableVoqSystemNeighTable;
+    unique_ptr<Table> m_stateSystemNeighTable;
+    bool getSystemPortNeighEncapIndex(string &alias, IpAddress &ip, uint32_t &encap_index);
+    bool addVoqEncapIndex(string &alias, IpAddress &ip, vector<sai_attribute_t> &neighbor_attrs);
+    void voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacAddress &mac, sai_neighbor_entry_t &neighbor_entry);
+    void voqSyncDelNeigh(string &alias, IpAddress &ip_address);
 };
 
 #endif /* SWSS_NEIGHORCH_H */

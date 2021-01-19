@@ -47,6 +47,7 @@ int main(int argc, char **argv)
             CFG_VLAN_INTF_TABLE_NAME,
             CFG_LOOPBACK_INTERFACE_TABLE_NAME,
             CFG_VLAN_SUB_INTF_TABLE_NAME,
+            CFG_VOQ_INBAND_INTERFACE_TABLE_NAME,
         };
 
         DBConnector cfgDb("CONFIG_DB", 0);

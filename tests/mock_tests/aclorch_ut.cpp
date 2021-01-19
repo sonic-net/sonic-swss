@@ -21,6 +21,7 @@ extern sai_vlan_api_t *sai_vlan_api;
 extern sai_bridge_api_t *sai_bridge_api;
 extern sai_route_api_t *sai_route_api;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
+extern string gMySwitchType;
 
 namespace aclorch_test
 {
@@ -182,6 +183,7 @@ namespace aclorch_test
         shared_ptr<swss::DBConnector> m_app_db;
         shared_ptr<swss::DBConnector> m_config_db;
         shared_ptr<swss::DBConnector> m_state_db;
+        shared_ptr<swss::DBConnector> m_chassis_app_db;
 
         AclOrchTest()
         {
@@ -189,6 +191,8 @@ namespace aclorch_test
             m_app_db = make_shared<swss::DBConnector>("APPL_DB", 0);
             m_config_db = make_shared<swss::DBConnector>("CONFIG_DB", 0);
             m_state_db = make_shared<swss::DBConnector>("STATE_DB", 0);
+            if(gMySwitchType == "voq")
+                m_chassis_app_db = make_shared<swss::DBConnector>("CHASSIS_APP_DB", 0);
         }
 
         static map<string, string> gProfileMap;
@@ -286,8 +290,16 @@ namespace aclorch_test
             gVirtualRouterId = attr.value.oid;
 
             TableConnector stateDbSwitchTable(m_state_db.get(), "SWITCH_CAPABILITY");
+            TableConnector conf_asic_sensors(m_config_db.get(), CFG_ASIC_SENSORS_TABLE_NAME);
+            TableConnector app_switch_table(m_app_db.get(),  APP_SWITCH_TABLE_NAME);
+
+            vector<TableConnector> switch_tables = {
+                conf_asic_sensors,
+                app_switch_table
+            };
+
             ASSERT_EQ(gSwitchOrch, nullptr);
-            gSwitchOrch = new SwitchOrch(m_app_db.get(), APP_SWITCH_TABLE_NAME, stateDbSwitchTable);
+            gSwitchOrch = new SwitchOrch(m_app_db.get(), switch_tables, stateDbSwitchTable);
 
             // Create dependencies ...
 
@@ -311,22 +323,29 @@ namespace aclorch_test
             gVrfOrch = new VRFOrch(m_app_db.get(), APP_VRF_TABLE_NAME, m_state_db.get(), STATE_VRF_OBJECT_TABLE_NAME);
 
             ASSERT_EQ(gIntfsOrch, nullptr);
-            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch);
+            gIntfsOrch = new IntfsOrch(m_app_db.get(), APP_INTF_TABLE_NAME, gVrfOrch, m_chassis_app_db.get());
 
             TableConnector applDbFdb(m_app_db.get(), APP_FDB_TABLE_NAME);
             TableConnector stateDbFdb(m_state_db.get(), STATE_FDB_TABLE_NAME);
 
+            vector<table_name_with_pri_t> app_fdb_tables = {
+                { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
+                { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+            };
+
             ASSERT_EQ(gFdbOrch, nullptr);
-            gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
+            gFdbOrch = new FdbOrch(m_app_db.get(), app_fdb_tables, stateDbFdb, gPortsOrch);
 
             ASSERT_EQ(gNeighOrch, nullptr);
-            gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch);
+            gNeighOrch = new NeighOrch(m_app_db.get(), APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassis_app_db.get());
 
             ASSERT_EQ(gFgNhgOrch, nullptr);
-            vector<string> fgnhg_tables = {
-                CFG_FG_NHG,
-                CFG_FG_NHG_PREFIX,
-                CFG_FG_NHG_MEMBER
+            const int fgnhgorch_pri = 15;
+
+            vector<table_name_with_pri_t> fgnhg_tables = {
+                { CFG_FG_NHG,                 fgnhgorch_pri },
+                { CFG_FG_NHG_PREFIX,          fgnhgorch_pri },
+                { CFG_FG_NHG_MEMBER,          fgnhgorch_pri }
             };
             gFgNhgOrch = new FgNhgOrch(m_config_db.get(), m_app_db.get(), m_state_db.get(), fgnhg_tables, gNeighOrch, gIntfsOrch, gVrfOrch);
 

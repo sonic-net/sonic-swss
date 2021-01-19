@@ -63,6 +63,11 @@ extern bool gIsNatSupported;
 ofstream gRecordOfs;
 string gRecordFile;
 
+string gMySwitchType = "";
+int32_t gVoqMySwitchId = -1;
+int32_t gVoqMaxCores = 0;
+uint32_t gCfgSystemPorts = 0;
+
 void usage()
 {
     cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode]" << endl;
@@ -140,6 +145,124 @@ void init_gearbox_phys(DBConnector *applDb)
         }
     }
     delete tmpGearboxTable;
+}
+
+void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
+{
+    Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+
+    if (!cfgDeviceMetaDataTable.hget("localhost", "switch_type", switch_type))
+    {
+        //Switch type is not configured. Consider it default = "switch" (regular switch)
+        switch_type = "switch";
+    }
+
+    if (switch_type != "voq" && switch_type != "fabric" && switch_type != "switch")
+    {
+        SWSS_LOG_ERROR("Invalid switch type %s configured", switch_type.c_str());
+    	//If configured switch type is none of the supported, assume regular switch
+        switch_type = "switch";
+    }
+}
+
+bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_system_port_config_t> &sysportcfglist)
+{
+    Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    Table cfgSystemPortTable(cfgDb, CFG_SYSTEM_PORT_TABLE_NAME);
+    Table appSystemPortTable(appDb, APP_SYSTEM_PORT_TABLE_NAME);
+
+    if (gMySwitchType != "voq")
+    {
+        //Non VOQ switch. Nothing to read
+        return true;
+    }
+
+    string value;
+    if (!cfgDeviceMetaDataTable.hget("localhost", "switch_id", value))
+    {
+        //VOQ switch id is not configured.
+        SWSS_LOG_ERROR("VOQ switch id is not configured");
+        return false;
+    }
+
+    if (value.size())
+        gVoqMySwitchId = stoi(value);
+
+    if (gVoqMySwitchId < 0)
+    {
+        SWSS_LOG_ERROR("Invalid VOQ switch id %d configured", gVoqMySwitchId);
+        return false;
+    }
+
+    if (!cfgDeviceMetaDataTable.hget("localhost", "max_cores", value))
+    {
+        //VOQ max cores is not configured.
+        SWSS_LOG_ERROR("VOQ max cores is not configured");
+        return false;
+    }
+
+    if (value.size())
+        gVoqMaxCores = stoi(value);
+
+    if (gVoqMaxCores == 0)
+    {
+        SWSS_LOG_ERROR("Invalid VOQ max cores %d configured", gVoqMaxCores);
+        return false;
+    }
+
+    vector<string> spKeys;
+    cfgSystemPortTable.getKeys(spKeys);
+
+    //Retrieve system port configurations
+    vector<FieldValueTuple> spFv;
+    sai_system_port_config_t sysport;
+    for (auto &k : spKeys)
+    {
+        cfgSystemPortTable.get(k, spFv);
+
+        for (auto &fv : spFv)
+        {
+            if (fv.first == "switch_id")
+            {
+                sysport.attached_switch_id = stoi(fv.second);
+                continue;
+            }
+            if (fv.first == "core_index")
+            {
+                sysport.attached_core_index = stoi(fv.second);
+                continue;
+            }
+            if (fv.first == "core_port_index")
+            {
+                sysport.attached_core_port_index = stoi(fv.second);
+                continue;
+            }
+            if (fv.first == "speed")
+            {
+                sysport.speed = stoi(fv.second);
+                continue;
+            }
+            if (fv.first == "system_port_id")
+            {
+                sysport.port_id = stoi(fv.second);
+                continue;
+            }
+            if (fv.first == "num_voq")
+            {
+                sysport.num_voq = stoi(fv.second);
+                continue;
+            }
+        }
+        //Add to system port config list
+        sysportcfglist.push_back(sysport);
+
+        //Also push to APP DB
+        appSystemPortTable.set(k, spFv);
+    }
+
+    SWSS_LOG_NOTICE("Created System Port config list for %d system ports", (int32_t) sysportcfglist.size());
+
+    return true;
 }
 
 int main(int argc, char **argv)
@@ -269,17 +392,20 @@ int main(int argc, char **argv)
     attr.value.ptr = (void *)on_switch_shutdown_request;
     attrs.push_back(attr);
 
+    // Instantiate database connectors
+    DBConnector appl_db("APPL_DB", 0);
+    DBConnector config_db("CONFIG_DB", 0);
+    DBConnector state_db("STATE_DB", 0);
+
+    // Get switch_type
+    getCfgSwitchType(&config_db, gMySwitchType);
+
     if (gMacAddress)
     {
         attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
         memcpy(attr.value.mac, gMacAddress.getMac(), 6);
         attrs.push_back(attr);
     }
-
-    /* Must be last Attribute */
-    attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
-    attr.value.u64 = gSwitchId;
-    attrs.push_back(attr);
 
     // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
     // since it is not using ASIC_DB, we can execute it before create_switch
@@ -304,6 +430,48 @@ int main(int argc, char **argv)
         attr.value.s8list.list = (int8_t *)const_cast<char *>(gAsicInstance.c_str());
         attrs.push_back(attr);
     }
+
+    // Get info required for VOQ system and connect to CHASSISS_APP_DB
+    shared_ptr<DBConnector> chassis_app_db;
+    vector<sai_system_port_config_t> sysportconfiglist;
+    if ((gMySwitchType == "voq") &&
+            (getSystemPortConfigList(&config_db, &appl_db, sysportconfiglist)))
+    {
+        attr.id = SAI_SWITCH_ATTR_TYPE;
+        attr.value.u32 = SAI_SWITCH_TYPE_VOQ;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_SWITCH_ID;
+        attr.value.u32 = gVoqMySwitchId;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_MAX_SYSTEM_CORES;
+        attr.value.u32 = gVoqMaxCores;
+        attrs.push_back(attr);
+
+        gCfgSystemPorts = (uint32_t) sysportconfiglist.size();
+        if (gCfgSystemPorts)
+        {
+            attr.id = SAI_SWITCH_ATTR_SYSTEM_PORT_CONFIG_LIST;
+            attr.value.sysportconfiglist.count = gCfgSystemPorts;
+            attr.value.sysportconfiglist.list = sysportconfiglist.data();
+            attrs.push_back(attr);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Voq switch create with 0 system ports!");
+            exit(EXIT_FAILURE);
+        }
+
+        //Connect to CHASSIS_APP_DB in redis-server in control/supervisor card as per
+        //connection info in database_config.json
+        chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
+    }
+
+    /* Must be last Attribute */
+    attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
+    attr.value.u64 = gSwitchId;
+    attrs.push_back(attr);
 
     status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -384,13 +552,10 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
 
     /* Initialize orchestration components */
-    DBConnector appl_db("APPL_DB", 0);
-    DBConnector config_db("CONFIG_DB", 0);
-    DBConnector state_db("STATE_DB", 0);
-
+    
     init_gearbox_phys(&appl_db);
 
-    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
+    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get());
 
     if (!orchDaemon->init())
     {
