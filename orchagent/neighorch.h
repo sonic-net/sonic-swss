@@ -50,6 +50,7 @@ public:
     bool hasNextHop(const NextHopKey&);
 
     sai_object_id_t getNextHopId(const NextHopKey&);
+    sai_object_id_t getLocalNextHopId(const NextHopKey&);
     int getNextHopRefCount(const NextHopKey&);
 
     void increaseNextHopRefCount(const NextHopKey&);
