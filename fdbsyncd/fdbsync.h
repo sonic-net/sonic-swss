@@ -9,11 +9,18 @@
 #include "netmsg.h"
 #include "warmRestartAssist.h"
 
-// The timeout value (in seconds) for fdbsyncd reconcilation logic
+/*
+ * The timeout value (in seconds) for fdbsyncd reconcilation logic
+ * This timers avoids indefinite wait for orchagent reconcillation
+ */
 #define DEFAULT_FDBSYNC_WARMSTART_TIMER 600
 
-// Time to wait to run fdb reconcillation after fdbsyncd replay
+/* Time to wait to run fdb reconcillation after fdbsyncd replay.
+ * fdbsyncd will wait for this time and for orchagnet to reconcile 
+ * before reconciling itself
+ */
 #define FDBSYNC_RECON_WAIT_TIME 120
+
 /*
  * This is the MAX time in seconds, fdbsyncd will wait after warm-reboot
  * for the interface entries to be recreated in kernel before attempting to 

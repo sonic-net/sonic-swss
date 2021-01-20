@@ -928,12 +928,12 @@ bool RouteSync::isReadyToReconcile()
             "orchagent",
         };
 
-    for(string& module : required_modules)
+    for (string& module : required_modules)
     {
         WarmStart::WarmStartState state;
         
         WarmStart::getWarmStartState(module, state);
-        if(state == WarmStart::RECONCILED || state == WarmStart::WSDISABLED)
+        if (state == WarmStart::RECONCILED || state == WarmStart::WSDISABLED)
         {
             SWSS_LOG_INFO("Module %s Reconciled %d",module.c_str(), (int) state);            
         }

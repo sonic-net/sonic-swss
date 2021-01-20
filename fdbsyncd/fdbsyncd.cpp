@@ -55,7 +55,7 @@ int main(int argc, char **argv)
                         duration_cast<duration<double>>(steady_clock::now() - starttime);
                     int pasttime = int(time_span.count());
 
-                    if (pasttime++ > INTF_RESTORE_MAX_WAIT_TIME)
+                    if (pasttime > INTF_RESTORE_MAX_WAIT_TIME)
                     {
                         SWSS_LOG_INFO("timed-out before all interface data was replayed to kernel!!!");
                         break;
