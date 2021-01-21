@@ -755,7 +755,7 @@ bool PortsOrch::removeSubPort(const string &alias)
     {
         if (!parentPort.m_bridge_port_id)
         {
-            if (!setHostIntfsStripTag(port, SAI_HOSTIF_VLAN_TAG_STRIP))
+            if (!setHostIntfsStripTag(parentPort, SAI_HOSTIF_VLAN_TAG_STRIP))
             {
                 SWSS_LOG_WARN("Failed to set %s for hostif of port %s",
                         hostif_vlan_tag[SAI_HOSTIF_VLAN_TAG_STRIP], parentPort.m_alias.c_str());
