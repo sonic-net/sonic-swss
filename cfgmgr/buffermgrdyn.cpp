@@ -384,7 +384,7 @@ void BufferMgrDynamic::checkSharedBufferPoolSize()
             if (m_firstTimeCalculateBufferPool)
             {
                 // It's something like a placeholder especially for warm reboot flow
-                // without all buffer pools created, buffer profiles are unable to be cureated,
+                // without all buffer pools created, buffer profiles are unable to be created,
                 // which in turn causes buffer pgs and buffer queues unable to be created,
                 // which prevents the port from being ready and eventually fails the warm reboot
                 // After the buffer pools are created for the first time, we won't touch it
@@ -1424,7 +1424,7 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
                     }
                     else
                     {
-                        // In this case, we shouldn't set the dynamc calculated flag to true
+                        // In this case, we shouldn't set the dynamic calculated flag to true
                         // It will be updated when its profile configured.
                         bufferPg.dynamic_calculated = false;
                         SWSS_LOG_WARN("Profile %s hasn't been configured yet, skip", profileName.c_str());
