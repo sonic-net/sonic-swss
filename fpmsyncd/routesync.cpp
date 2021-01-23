@@ -679,7 +679,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     {
         /*
          * An FRR behavior change from 7.2 to 7.5 makes FRR update default route to eth0 in interface
-         * up/down events. Skipping routes to eth0 or docker0 to aviod such behavior
+         * up/down events. Skipping routes to eth0 or docker0 to avoid such behavior
          */
         if (alias == "eth0" || alias == "docker0")
         {
