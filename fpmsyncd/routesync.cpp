@@ -674,6 +674,21 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
     string nexthops = getNextHopGw(route_obj);
     string ifnames = getNextHopIf(route_obj);
 
+    vector<string> alsv = tokenize(ifnames, ',');
+    for (auto alias : alsv)
+    {
+        /*
+         * An FRR behavior change from 7.2 to 7.5 makes FRR update default route to eth0 in interface
+         * up/down events. Skipping routes to eth0 or docker0 to aviod such behavior
+         */
+        if (alias == "eth0" || alias == "docker0")
+        {
+            SWSS_LOG_NOTICE("Skip routes to eth0 or docker0: %s %s %s",
+                    destipprefix, nexthops.c_str(), ifnames.c_str());
+            return;
+        }
+    }
+
     vector<FieldValueTuple> fvVector;
     FieldValueTuple nh("nexthop", nexthops);
     FieldValueTuple idx("ifname", ifnames);
