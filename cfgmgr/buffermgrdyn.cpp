@@ -887,7 +887,10 @@ void BufferMgrDynamic::refreshSharedHeadroomPool(bool enable_state_updated_by_ra
                           profile.speed.c_str(), profile.cable_length.c_str(), profile.port_mtu.c_str(), profile.gearbox_model.c_str());
             // recalculate the headroom size
             calculateHeadroomSize(profile);
-            updateBufferProfileToDb(name, profile);
+            if (task_process_status::task_success != doUpdateBufferProfileForSize(profile, false))
+            {
+                SWSS_LOG_ERROR("Failed to updage buffer profile %s when toggle shared headroom pool. See previous message for detail. Please adjust the configuration manually", name.c_str());
+            }
         }
         SWSS_LOG_NOTICE("Updating dynamic buffer profiles finished");
     }
@@ -984,13 +987,13 @@ task_process_status BufferMgrDynamic::doRemovePgTask(const string &pg_key, const
     return task_process_status::task_success;
 }
 
-task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(buffer_profile_t &profile)
+task_process_status BufferMgrDynamic::doUpdateBufferProfileForDynamicTh(buffer_profile_t &profile)
 {
     const string &profileName = profile.name;
     auto &profileToMap = profile.port_pgs;
     set<string> portsChecked;
 
-    if (profile.dynamic_calculated)
+    if (profile.static_configured && profile.dynamic_calculated)
     {
         for (auto &key : profileToMap)
         {
@@ -1012,7 +1015,19 @@ task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(buffer_profile_t
             }
         }
     }
-    else
+
+    checkSharedBufferPoolSize();
+
+    return task_process_status::task_success;
+}
+
+task_process_status BufferMgrDynamic::doUpdateBufferProfileForSize(buffer_profile_t &profile, bool update_pool_size=true)
+{
+    const string &profileName = profile.name;
+    auto &profileToMap = profile.port_pgs;
+    set<string> portsChecked;
+
+    if (!profile.static_configured || !profile.dynamic_calculated)
     {
         for (auto &key : profileToMap)
         {
@@ -1025,7 +1040,6 @@ task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(buffer_profile_t
 
             if (!isHeadroomResourceValid(port, profile))
             {
-                // to do: get the value from application database
                 SWSS_LOG_ERROR("BUFFER_PROFILE %s cannot be updated because %s referencing it violates the resource limitation",
                                profileName.c_str(), key.c_str());
                 return task_process_status::task_failed;
@@ -1037,7 +1051,8 @@ task_process_status BufferMgrDynamic::doUpdateStaticProfileTask(buffer_profile_t
         updateBufferProfileToDb(profileName, profile);
     }
 
-    checkSharedBufferPoolSize();
+    if (update_pool_size)
+        checkSharedBufferPoolSize();
 
     return task_process_status::task_success;
 }
@@ -1498,12 +1513,12 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                 profileApp.state = PROFILE_NORMAL;
                 SWSS_LOG_NOTICE("BUFFER_PROFILE %s is dynamic calculation so it won't be deployed to APPL_DB until referenced by a port",
                                 profileName.c_str());
-                doUpdateStaticProfileTask(profileApp);
+                doUpdateBufferProfileForDynamicTh(profileApp);
             }
             else
             {
                 profileApp.state = PROFILE_NORMAL;
-                doUpdateStaticProfileTask(profileApp);
+                doUpdateBufferProfileForSize(profileApp);
                 SWSS_LOG_NOTICE("BUFFER_PROFILE %s has been inserted into APPL_DB", profileName.c_str());
                 SWSS_LOG_DEBUG("BUFFER_PROFILE %s for headroom override has been stored internally: [pool %s xon %s xoff %s size %s]",
                                profileName.c_str(),

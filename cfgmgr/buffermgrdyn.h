@@ -239,7 +239,8 @@ private:
     task_process_status doUpdatePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doRemovePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doAdminStatusTask(const std::string port, const std::string adminStatus);
-    task_process_status doUpdateStaticProfileTask(buffer_profile_t &profile);
+    task_process_status doUpdateBufferProfileForDynamicTh(buffer_profile_t &profile);
+    task_process_status doUpdateBufferProfileForSize(buffer_profile_t &profile, bool update_pool_size);
 
     // Table update handlers
     task_process_status handleBufferMaxParam(KeyOpFieldsValuesTuple &t);
