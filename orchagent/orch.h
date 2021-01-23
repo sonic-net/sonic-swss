@@ -218,11 +218,6 @@ public:
     static void recordTuple(Consumer &consumer, const swss::KeyOpFieldsValuesTuple &tuple);
 
     void dumpPendingTasks(std::vector<std::string> &ts);
-
-    /* Failure handling */
-    bool handleSaiCreateFailure(sai_status_t status);
-    bool handleSaiSetFailure(sai_status_t status);
-    bool handleSaiRemoveFailure(sai_status_t status);
 protected:
     ConsumerMap m_consumerMap;
 
@@ -240,6 +235,11 @@ protected:
     /* Note: consumer will be owned by this class */
     void addExecutor(Executor* executor);
     Executor *getExecutor(std::string executorName);
+
+    /* Failure handling */
+    virtual bool handleSaiCreateFailure(sai_api_t api, sai_status_t status);
+    virtual bool handleSaiSetFailure(sai_api_t api, sai_status_t status);
+    virtual bool handleSaiRemoveFailure(sai_api_t api, sai_status_t status);
 private:
     void removeMeFromObjsReferencedByMe(type_map &type_maps, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name);
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);

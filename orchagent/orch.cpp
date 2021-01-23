@@ -685,7 +685,7 @@ Executor *Orch::getExecutor(string executorName)
     return NULL;
 }
 
-bool Orch::handleSaiCreateFailure(sai_status_t status)
+bool Orch::handleSaiCreateFailure(sai_api_t api, sai_status_t status)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis create
@@ -693,12 +693,13 @@ bool Orch::handleSaiCreateFailure(sai_status_t status)
      * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_ITEM_ALREADY_EXISTS)
      *       2. Develop fine-grain failure handling mechanisms specific and replace
      *          this coarse handling in each orch.
+     *       3. Take the type of sai api into consideration.
      */
-    SWSS_LOG_THROW("Encountered failure in Create operation, status: %d", status);
+    SWSS_LOG_THROW("Encountered failure in create operation, status: %d", status);
     return false;
 }
 
-bool Orch::handleSaiSetFailure(sai_status_t status)
+bool Orch::handleSaiSetFailure(sai_api_t api, sai_status_t status)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis set
@@ -706,12 +707,13 @@ bool Orch::handleSaiSetFailure(sai_status_t status)
      * TODO: 1. Add general handling logic for specific statuses
      *       2. Develop fine-grain failure handling mechanisms specific and replace
      *          this coarse handling in each orch.
+     *       3. Take the type of sai api into consideration.
      */
     SWSS_LOG_THROW("Encountered failure in set operation, status: %d", status); // need to update message, comment, and status 
     return false;
 }
 
-bool Orch::handleSaiRemoveFailure(sai_status_t status)
+bool Orch::handleSaiRemoveFailure(sai_api_t api, sai_status_t status)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis remove
@@ -720,8 +722,9 @@ bool Orch::handleSaiRemoveFailure(sai_status_t status)
      *          SAI_STATUS_ITEM_NOT_FOUND)
      *       2. Develop fine-grain failure handling mechanisms specific and replace
      *          this coarse handling in each orch.
+     *       3. Take the type of sai api into consideration.
      */
-    SWSS_LOG_THROW("Encountered failure in DEL operation, status: %d", status); // need to update message, comment, and status 
+    SWSS_LOG_THROW("Encountered failure in del operation, status: %d", status); // need to update message, comment, and status 
     return false;
 }
 
