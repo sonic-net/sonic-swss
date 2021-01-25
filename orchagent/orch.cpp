@@ -685,7 +685,7 @@ Executor *Orch::getExecutor(string executorName)
     return NULL;
 }
 
-bool Orch::handleSaiCreateFailure(sai_api_t api, sai_status_t status)
+bool Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis create
@@ -699,7 +699,7 @@ bool Orch::handleSaiCreateFailure(sai_api_t api, sai_status_t status)
     return false;
 }
 
-bool Orch::handleSaiSetFailure(sai_api_t api, sai_status_t status)
+bool Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis set
@@ -713,7 +713,7 @@ bool Orch::handleSaiSetFailure(sai_api_t api, sai_status_t status)
     return false;
 }
 
-bool Orch::handleSaiRemoveFailure(sai_api_t api, sai_status_t status)
+bool Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis remove
