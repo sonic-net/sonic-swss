@@ -709,7 +709,7 @@ bool Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status)
      *          this coarse handling in each orch.
      *       3. Take the type of sai api into consideration.
      */
-    SWSS_LOG_THROW("Encountered failure in set operation, status: %d", status); // need to update message, comment, and status 
+    SWSS_LOG_THROW("Encountered failure in set operation, status: %d", status);
     return false;
 }
 
@@ -724,7 +724,7 @@ bool Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status)
      *          this coarse handling in each orch.
      *       3. Take the type of sai api into consideration.
      */
-    SWSS_LOG_THROW("Encountered failure in del operation, status: %d", status); // need to update message, comment, and status 
+    SWSS_LOG_THROW("Encountered failure in remove operation, status: %d", status);
     return false;
 }
 
