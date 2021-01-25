@@ -56,6 +56,7 @@ private:
     bool checkPortIffUp(const std::string &);
     bool isPortStateOk(const std::string&);
     bool isLagStateOk(const std::string&);
+    uint16_t generateLacpKey(const std::string&);
 };
 
 }
