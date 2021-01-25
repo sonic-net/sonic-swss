@@ -8,6 +8,7 @@
 #include "orch.h"
 #include "producerstatetable.h"
 #include <sys/types.h>
+#include <unordered_map>
 
 namespace swss {
 
@@ -31,10 +32,14 @@ private:
     ProducerStateTable m_appPortTable;
     ProducerStateTable m_appLagTable;
 
-    std::set<std::string> m_lagList;
-    std::map<std::string, pid_t> m_lagPIDList;
+    std::set <std::string> m_lagList;
+    std::map <std::string, pid_t> m_lagPIDList;
 
     MacAddress m_mac;
+    uint16_t lacpKeyId = 1;
+
+    const std::unordered_map <uint16_t, std::string> lacpKeysMap;
+    const std::unordered_map <std::string, uint16_t> lacpNamesMap;
 
     void doTask(Consumer &consumer);
     void doLagTask(Consumer &consumer);
@@ -49,7 +54,9 @@ private:
     bool setLagAdminStatus(const std::string &alias, const std::string &admin_status);
     bool setLagMtu(const std::string &alias, const std::string &mtu);
     bool setLagLearnMode(const std::string &alias, const std::string &learn_mode);
- 
+
+    uint16_t createUniqueKey(const std::string&);
+    void removeUniqueKey(const std::string&);
 
     bool isPortEnslaved(const std::string &);
     bool findPortMaster(std::string &, const std::string &);

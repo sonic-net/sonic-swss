@@ -417,6 +417,7 @@ task_process_status TeamMgr::addLag(const string &alias, int min_links, bool fal
 
     const string dump_path = "/var/warmboot/teamd/";
     MacAddress mac_boot = m_mac;
+    uint16_t keyId = createUniqueKey(alias);
 
     // set portchannel mac same with mac before warmStart, when warmStart and there
     // is a file written by teamd.
@@ -499,9 +500,30 @@ bool TeamMgr::removeLag(const string &alias)
     cmd << TEAMD_CMD << " -k -t " << shellquote(alias);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
+    removeUniqueKey(alias);
+
     SWSS_LOG_NOTICE("Stop port channel %s", alias.c_str());
 
     return true;
+}
+
+void TeamMgr::removeUniqueKey(const string &lagName)
+{
+    uint16_t lacpKeyId = lacpNamesMap[lagName];
+    lacpNamesMap.erase(lagName);
+    lacpKeysMap.erase(lacpKeyId);
+}
+
+uint16_t TeamMgr::createUniqueKey(const string &lagName)
+{
+    do
+    {
+        ++lacpKeyId;
+    } while (lacpKeysMap.count(lacpKeyId) > 0);
+
+    lacpKeysMap[lacpKeyId] = lagName;
+    lacpNamesMap[lagName] = lacpKeyId;
+    return lacpKeyId;
 }
 
 // Once a port is enslaved into a port channel, the port's MTU will
@@ -520,11 +542,25 @@ task_process_status TeamMgr::addLagMember(const string &lag, const string &membe
 
     stringstream cmd;
     string res;
+    uint16_t keyId;
+
+    try
+    {
+        keyId = lacpNamesMap.at(lag);
+    }
+    catch (const std::out_of_range &oor)
+    {
+        SWSS_LOG_THROW("Failed to get LACP key for port channel %s", lag.c_str());
+    }
 
     // Set admin down LAG member (required by teamd) and enslave it
     // ip link set dev <member> down;
     // teamdctl <port_channel_name> port add <member>;
     cmd << IP_CMD << " link set dev " << shellquote(member) << " down; ";
+    cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port config update " << shellquote(member)
+        << " '{\"lacp_key\":"
+        << shellquote(to_string(keyId))
+        << ",\"link_watch\": {\"name\": \"ethtool\"} }'; ";
     cmd << TEAMDCTL_CMD << " " << shellquote(lag) << " port add " << shellquote(member);
 
     if (exec(cmd.str(), res) != 0)
