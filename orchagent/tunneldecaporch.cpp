@@ -758,7 +758,7 @@ IpAddresses TunnelDecapOrch::getDstIpAddresses(std::string tunnelKey)
 {
     if (tunnelTable.find(tunnelKey) == tunnelTable.end())
     {
-        SWSS_LOG_ERROR("Tunnel not found %s", tunnelKey.c_str());
+        SWSS_LOG_INFO("Tunnel not found %s", tunnelKey.c_str());
         return IpAddresses();
     }
 
