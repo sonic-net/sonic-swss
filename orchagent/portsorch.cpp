@@ -3264,7 +3264,7 @@ void PortsOrch::initializePortMaximumHeadroom(Port &port)
     sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_NOTICE("Unable to get number of priority groups for port %s rv:%d, ignored", port.m_alias.c_str(), status);
+        SWSS_LOG_NOTICE("Unable to get the maximum headroom for port %s rv:%d, ignored", port.m_alias.c_str(), status);
         return;
     }
 
