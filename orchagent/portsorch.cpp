@@ -1825,7 +1825,7 @@ sai_status_t PortsOrch::removePort(sai_object_id_t port_id)
 
     Port port;
 
-    /*
+    /* 
      * Make sure to bring down admin state.
      * SET would have replaced with DEL
      */
@@ -3600,12 +3600,7 @@ bool PortsOrch::removeVlan(Port vlan)
     /* Vlan removing is not allowed when the VLAN still has members */
     if (vlan.m_members.size() > 0)
     {
-        string vlan_members;
-        for (auto &name: vlan.m_members)
-        {
-            vlan_members += " " + name;
-        }
-        SWSS_LOG_INFO("VLAN %s still has members assigned: [%s ].", vlan.m_alias.c_str(), vlan_members.c_str());
+        SWSS_LOG_ERROR("Failed to remove non-empty VLAN %s", vlan.m_alias.c_str());
         return false;
     }
 
@@ -4944,7 +4939,7 @@ bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
     // host if for the inband here
 
     // May do the processing for other inband type like type=vlan here
-
+    
     //Store the name of the local inband port
     m_inbandPortName = alias;
 
