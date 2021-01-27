@@ -4444,7 +4444,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
     status = sai_port_api->get_port_attribute(port_id, 1, &port_attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get port attr serdes id %d to port pid:%lx",
+        SWSS_LOG_ERROR("Failed to get port attr serdes id %d to port pid:0x%" PRIx64,
                        port_attr.id, port_id);
         return false;
     }
@@ -4454,7 +4454,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
         status = sai_port_api->remove_port_serdes(port_attr.value.oid);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to remove existing port serdes attr %lx port %lx",
+            SWSS_LOG_ERROR("Failed to remove existing port serdes attr 0x%" PRIx64 " port 0x%" PRIx64,
                            port_attr.value.oid, port_id);
             return false;
         }
@@ -4464,7 +4464,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
     port_serdes_attr.id = SAI_PORT_SERDES_ATTR_PORT_ID;
     port_serdes_attr.value.oid = port_id;
     attr_list.emplace_back(port_serdes_attr);
-    SWSS_LOG_ERROR("Creating serdes for port %lx",port_id);
+    SWSS_LOG_ERROR("Creating serdes for port 0x%" PRIx64, port_id);
 
     for (auto it = serdes_attr.begin(); it != serdes_attr.end(); it++)
     {
@@ -4479,11 +4479,11 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to create port serdes for port %lx",
+        SWSS_LOG_ERROR("Failed to create port serdes for port 0x%" PRIx64,
                        port_id);
          return false;
     }
-    SWSS_LOG_NOTICE("Created port serdes object %lx for port %lx", port_serdes_id, port_id);
+    SWSS_LOG_NOTICE("Created port serdes object 0x%" PRIx64 " for port 0x%" PRIx64, port_serdes_id, port_id);
     return true;
 }
 
@@ -4500,7 +4500,7 @@ void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)
 
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_DEBUG("Failed to get port attr serdes id %d to port pid:%lx",
+        SWSS_LOG_DEBUG("Failed to get port attr serdes id %d to port pid:0x%" PRIx64,
                        port_attr.id, port_id);
         return;
     }
@@ -4510,12 +4510,12 @@ void PortsOrch::removePortSerdesAttribute(sai_object_id_t port_id)
         status = sai_port_api->remove_port_serdes(port_attr.value.oid);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to remove existing port serdes attr %lx port %lx",
+            SWSS_LOG_ERROR("Failed to remove existing port serdes attr 0x%" PRIx64 " port 0x%" PRIx64,
                            port_attr.value.oid, port_id);
             return;
         }
     }
-    SWSS_LOG_NOTICE("Removed port serdes object %lx for port %lx", port_serdes_id, port_id);
+    SWSS_LOG_NOTICE("Removed port serdes object 0x%" PRIx64 " for port 0x%" PRIx64, port_serdes_id, port_id);
 }
 
 void PortsOrch::getPortSerdesVal(const std::string& val_str,
