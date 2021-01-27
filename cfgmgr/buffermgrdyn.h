@@ -132,7 +132,6 @@ private:
     bool m_portInitDone;
     bool m_firstTimeCalculateBufferPool;
 
-    bool m_isSharedHeadroomPoolSizeConfigured;
     std::string m_configuredSharedHeadroomPoolSize;
 
     std::shared_ptr<DBConnector> m_applDb = nullptr;
