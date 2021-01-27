@@ -4464,7 +4464,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
     port_serdes_attr.id = SAI_PORT_SERDES_ATTR_PORT_ID;
     port_serdes_attr.value.oid = port_id;
     attr_list.emplace_back(port_serdes_attr);
-    SWSS_LOG_ERROR("Creating serdes for port 0x%" PRIx64, port_id);
+    SWSS_LOG_INFO("Creating serdes for port 0x%" PRIx64, port_id);
 
     for (auto it = serdes_attr.begin(); it != serdes_attr.end(); it++)
     {
@@ -4481,7 +4481,7 @@ bool PortsOrch::setPortSerdesAttribute(sai_object_id_t port_id,
     {
         SWSS_LOG_ERROR("Failed to create port serdes for port 0x%" PRIx64,
                        port_id);
-         return false;
+        return false;
     }
     SWSS_LOG_NOTICE("Created port serdes object 0x%" PRIx64 " for port 0x%" PRIx64, port_serdes_id, port_id);
     return true;
