@@ -2183,7 +2183,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (fvField(i) == "preemphasis")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
-                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_PREEMPHASIS,attr_val));
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_PREEMPHASIS, attr_val));
                 }
 
                 attr_val.clear();
@@ -2191,7 +2191,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (fvField(i) == "idriver")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
-                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_IDRIVER,attr_val));
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_IDRIVER, attr_val));
                 }
 
                 attr_val.clear();
@@ -2199,7 +2199,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (fvField(i) == "ipredriver")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
-                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_IPREDRIVER,attr_val));
+                    serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_IPREDRIVER, attr_val));
                 }
 
                 /* Set port serdes pre1 */
