@@ -384,7 +384,7 @@ void BufferMgrDynamic::checkSharedBufferPoolSize()
             if (m_firstTimeCalculateBufferPool)
             {
                 // It's something like a placeholder especially for warm reboot flow
-                // without all buffer pools created, buffer profiles are unable to be cureated,
+                // without all buffer pools created, buffer profiles are unable to be created,
                 // which in turn causes buffer pgs and buffer queues unable to be created,
                 // which prevents the port from being ready and eventually fails the warm reboot
                 // After the buffer pools are created for the first time, we won't touch it
@@ -435,14 +435,14 @@ void BufferMgrDynamic::updateBufferProfileToDb(const string &name, const buffer_
         m_applBufferProfileTable.getTableNameSeparator() +
         INGRESS_LOSSLESS_PG_POOL_NAME;
 
-    fvVector.emplace_back(make_pair("xon", profile.xon));
+    fvVector.emplace_back("xon", profile.xon);
     if (!profile.xon_offset.empty()) {
-        fvVector.emplace_back(make_pair("xon_offset", profile.xon_offset));
+        fvVector.emplace_back("xon_offset", profile.xon_offset);
     }
-    fvVector.emplace_back(make_pair("xoff", profile.xoff));
-    fvVector.emplace_back(make_pair("size", profile.size));
-    fvVector.emplace_back(make_pair("pool", "[" + pg_pool_reference + "]"));
-    fvVector.emplace_back(make_pair(mode, profile.threshold));
+    fvVector.emplace_back("xoff", profile.xoff);
+    fvVector.emplace_back("size", profile.size);
+    fvVector.emplace_back("pool", "[" + pg_pool_reference + "]");
+    fvVector.emplace_back(mode, profile.threshold);
 
     m_applBufferProfileTable.set(name, fvVector);
     m_stateBufferProfileTable.set(name, fvVector);
@@ -721,17 +721,19 @@ task_process_status BufferMgrDynamic::refreshPriorityGroupsForPort(const string 
         {
             // Need to remove the reference to the old profile
             // and create the reference to the new one
-            m_bufferProfileLookup[oldProfile].port_pgs.erase(key);
             m_bufferProfileLookup[newProfile].port_pgs.insert(key);
             SWSS_LOG_INFO("Move profile reference for %s from [%s] to [%s]", key.c_str(), oldProfile.c_str(), newProfile.c_str());
 
-            // buffer pg needs to be updated as well
-            portPg.running_profile_name = newProfile;
-
             // Add the old profile to "to be removed" set
             if (!oldProfile.empty())
+            {
                 profilesToBeReleased.insert(oldProfile);
+                m_bufferProfileLookup[oldProfile].port_pgs.erase(key);
+            }
         }
+
+        // buffer pg needs to be updated as well
+        portPg.running_profile_name = newProfile;
 
         //appl_db Database operation: set item BUFFER_PG|<port>|<pg>
         updateBufferPgToDb(key, newProfile, true);
@@ -811,12 +813,6 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
         return task_process_status::task_success;
     }
 
-    if (bufferPg.static_configured && bufferPg.dynamic_calculated)
-    {
-        auto &profile = m_bufferProfileLookup[bufferPg.configured_profile_name];
-        profile.port_pgs.insert(pg_key);
-    }
-
     return task_process_status::task_success;
 }
 
@@ -842,12 +838,6 @@ task_process_status BufferMgrDynamic::doRemovePgTask(const string &pg_key, const
         portInfo.state = PORT_INITIALIZING;
     SWSS_LOG_NOTICE("try removing the original profile %s", bufferPg.running_profile_name.c_str());
     releaseProfile(bufferPg.running_profile_name);
-
-    if (bufferPg.static_configured && bufferPg.dynamic_calculated)
-    {
-        auto &profile = m_bufferProfileLookup[bufferPg.configured_profile_name];
-        profile.port_pgs.erase(pg_key);
-    }
 
     return task_process_status::task_success;
 }
@@ -1099,15 +1089,18 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         string &mtu = portInfo.mtu;
         string &speed = portInfo.speed;
 
-        if (cable_length.empty() || speed.empty())
-        {
-            SWSS_LOG_WARN("Cable length for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
-            // We don't retry here because it doesn't make sense until the cable length is configured.
-            return task_process_status::task_success;
-        }
-
         if (speed_updated || mtu_updated)
         {
+            if (cable_length.empty() || speed.empty())
+            {
+                // we still need to update pool size when port with headroom override is shut down
+                // even if its cable length or speed isn't configured
+                // so cable length and speed isn't tested for shutdown
+                SWSS_LOG_WARN("Cable length for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
+                // We don't retry here because it doesn't make sense until the cable length is configured.
+                return task_process_status::task_success;
+            }
+
             SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to speed or port updated", port.c_str());
 
             //Try updating the buffer information
@@ -1295,7 +1288,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                     profileApp.ingress = true;
                 }
             }
-            fvVector.emplace_back(FieldValueTuple(field, value));
+            fvVector.emplace_back(field, value);
             SWSS_LOG_INFO("Inserting BUFFER_PROFILE table field %s value %s", field.c_str(), value.c_str());
         }
         // don't insert dynamically calculated profiles into APPL_DB
@@ -1353,13 +1346,20 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
                     return task_process_status::task_invalid_entry;
                 }
             }
+
+            if (!profile.static_configured || !profile.dynamic_calculated)
+            {
+                m_applBufferProfileTable.del(profileName);
+                m_stateBufferProfileTable.del(profileName);
+            }
+
+            m_bufferProfileLookup.erase(profileName);
+            m_bufferProfileIgnored.erase(profileName);
         }
-
-        m_applBufferProfileTable.del(profileName);
-        m_stateBufferProfileTable.del(profileName);
-
-        m_bufferProfileLookup.erase(profileName);
-        m_bufferProfileIgnored.erase(profileName);
+        else
+        {
+            SWSS_LOG_ERROR("Profile %s not found while being removed", profileName.c_str());
+        }
     }
     else
     {
@@ -1387,6 +1387,12 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
 
         bufferPg.dynamic_calculated = true;
         bufferPg.static_configured = false;
+        if (!bufferPg.configured_profile_name.empty())
+        {
+            m_bufferProfileLookup[bufferPg.configured_profile_name].port_pgs.erase(key);
+            bufferPg.configured_profile_name = "";
+        }
+
         for (auto i = kfvFieldsValues(tuple).begin(); i != kfvFieldsValues(tuple).end(); i++)
         {
             const string &field = fvField(*i);
@@ -1418,7 +1424,7 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
                     }
                     else
                     {
-                        // In this case, we shouldn't set the dynamc calculated flat to true
+                        // In this case, we shouldn't set the dynamic calculated flag to true
                         // It will be updated when its profile configured.
                         bufferPg.dynamic_calculated = false;
                         SWSS_LOG_WARN("Profile %s hasn't been configured yet, skip", profileName.c_str());
@@ -1435,7 +1441,7 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
                 bufferPg.static_configured = true;
                 bufferPg.configured_profile_name = profileName;
             }
-            fvVector.emplace_back(FieldValueTuple(field, value));
+            fvVector.emplace_back(field, value);
             SWSS_LOG_INFO("Inserting BUFFER_PG table field %s value %s", field.c_str(), value.c_str());
         }
 
@@ -1449,6 +1455,11 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
         if (!ignored && bufferPg.lossless)
         {
             doUpdatePgTask(key, port);
+
+            if (!bufferPg.configured_profile_name.empty())
+            {
+                m_bufferProfileLookup[bufferPg.configured_profile_name].port_pgs.insert(key);
+            }
         }
         else
         {
@@ -1464,6 +1475,10 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
         string &profileName = bufferPg.running_profile_name;
 
         m_bufferProfileLookup[profileName].port_pgs.erase(key);
+        if (!bufferPg.configured_profile_name.empty())
+        {
+            m_bufferProfileLookup[bufferPg.configured_profile_name].port_pgs.erase(key);
+        }
 
         if (bufferPg.lossless)
         {
@@ -1589,7 +1604,7 @@ task_process_status BufferMgrDynamic::doBufferTableTask(KeyOpFieldsValuesTuple &
                 transformReference(fvValue(i));
             if (fvField(i) == "profile_list")
                 transformReference(fvValue(i));
-            fvVector.emplace_back(FieldValueTuple(fvField(i), fvValue(i)));
+            fvVector.emplace_back(fvField(i), fvValue(i));
             SWSS_LOG_INFO("Inserting field %s value %s", fvField(i).c_str(), fvValue(i).c_str());
         }
         applTable.set(key, fvVector);

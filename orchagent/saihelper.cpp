@@ -210,7 +210,7 @@ void initSaiApi()
     sai_log_set(SAI_API_SYSTEM_PORT,            SAI_LOG_LEVEL_NOTICE);
 }
 
-void initSaiRedis(const string &record_location)
+void initSaiRedis(const string &record_location, const std::string &record_filename)
 {
     /**
      * NOTE: Notice that all Redis attributes here are using SAI_NULL_OBJECT_ID
@@ -236,6 +236,19 @@ void initSaiRedis(const string &record_location)
                 record_location.c_str(), status);
             exit(EXIT_FAILURE);
         }
+
+        attr.id = SAI_REDIS_SWITCH_ATTR_RECORDING_FILENAME;
+        attr.value.s8list.count = (uint32_t)record_filename.size();
+        attr.value.s8list.list = (int8_t*)const_cast<char *>(record_filename.c_str());
+
+        status = sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to set SAI Redis recording logfile to %s, rv:%d",
+                record_filename.c_str(), status);
+            exit(EXIT_FAILURE);
+        }
+
     }
 
     /* Disable/enable SAI Redis recording */

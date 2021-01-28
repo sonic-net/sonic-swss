@@ -966,7 +966,7 @@ void BufferOrch::doTask()
     //     ├── buffer queue
     //     └── buffer pq table
 
-    SWSS_LOG_INFO("Handling buffer task");
+    SWSS_LOG_DEBUG("Handling buffer task");
 
     auto pool_consumer = getExecutor((APP_BUFFER_POOL_TABLE_NAME));
     pool_consumer->drain();
