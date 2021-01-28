@@ -1249,9 +1249,9 @@ bool PortsOrch::unbindAclTable(sai_object_id_t  port_oid,
 
 
     Port port;
-    if (getPort(port_id, port))
+    if (getPort(port_oid, port))
     {
-        decreasePortRefCount(it->second);
+        decreasePortRefCount(port.m_alias);
     }
 
     if (!unbindRemoveAclTableGroup(port_oid, acl_table_oid, acl_stage)) {
@@ -1315,7 +1315,7 @@ bool PortsOrch::bindAclTable(sai_object_id_t  port_oid,
     }
 
     Port port;
-    if (getPort(port_id, port))
+    if (getPort(port_oid, port))
     {
         increasePortRefCount(port.m_alias);
     }
