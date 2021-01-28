@@ -458,8 +458,9 @@ void CrmOrch::getResAvailableCounters()
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     if((status == SAI_STATUS_NOT_SUPPORTED) ||
-                       (status == SAI_STATUS_ATTR_NOT_SUPPORTED_0) ||
-                       (status == SAI_STATUS_ATTR_NOT_IMPLEMENTED_0))
+                       (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                       SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                       SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
                     {
                         // remove unsupported resources from map
                         m_resourcesMap.erase(res.first);
