@@ -1247,6 +1247,12 @@ bool PortsOrch::unbindAclTable(sai_object_id_t  port_oid,
         return false;
     }
 
+    auto it = portOidToName.find(port_oid);
+    if (it != portOidToName.end())
+    {
+        decreasePortRefCount(it->second);
+    }
+
     if (!unbindRemoveAclTableGroup(port_oid, acl_table_oid, acl_stage)) {
         return false;
     }
@@ -1305,6 +1311,12 @@ bool PortsOrch::bindAclTable(sai_object_id_t  port_oid,
         SWSS_LOG_ERROR("Failed to create member in ACL table group %" PRIx64 " for ACL table %" PRIx64 ", rv:%d",
                 group_oid, table_oid, status);
         return false;
+    }
+
+    auto it = portOidToName.find(port_oid);
+    if (it != portOidToName.end())
+    {
+        increasePortRefCount(it->second);
     }
 
     return true;
