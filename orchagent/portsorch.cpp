@@ -2118,14 +2118,14 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
             for (auto i : kfvFieldsValues(t))
             {
+                attr_val.clear();
                 /* Set interface index */
                 if (fvField(i) == "index")
                 {
                     index = (int)stoul(fvValue(i));
                 }
-
                 /* Get lane information of a physical port and initialize the port */
-                if (fvField(i) == "lanes")
+                else if (fvField(i) == "lanes")
                 {
                     string lane_str;
                     istringstream iss(fvValue(i));
@@ -2135,136 +2135,112 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         int lane = stoi(lane_str);
                         lane_set.insert(lane);
                     }
-
                 }
-
                 /* Set port admin status */
-                if (fvField(i) == "admin_status")
+                else if (fvField(i) == "admin_status")
                 {
                     admin_status = fvValue(i);
                 }
-
                 /* Set port MTU */
-                if (fvField(i) == "mtu")
+                else if (fvField(i) == "mtu")
                 {
                     mtu = (uint32_t)stoul(fvValue(i));
                 }
-
                 /* Set port speed */
-                if (fvField(i) == "speed")
+                else if (fvField(i) == "speed")
                 {
                     speed = (uint32_t)stoul(fvValue(i));
                 }
-
                 /* Set port fec */
-                if (fvField(i) == "fec")
+                else if (fvField(i) == "fec")
                 {
                     fec_mode = fvValue(i);
                 }
-
                 /* Get port fdb learn mode*/
-                if (fvField(i) == "learn_mode")
+                else if (fvField(i) == "learn_mode")
                 {
                     learn_mode = fvValue(i);
                 }
-
                 /* Set port asymmetric PFC */
-                if (fvField(i) == "pfc_asym")
+                else if (fvField(i) == "pfc_asym")
+                {
                     pfc_asym = fvValue(i);
-
+                }
                 /* Set autoneg and ignore the port speed setting */
-                if (fvField(i) == "autoneg")
+                else if (fvField(i) == "autoneg")
                 {
                     an = (int)stoul(fvValue(i));
                 }
-
                 /* Set port serdes Pre-emphasis */
-                attr_val.clear();
-                if (fvField(i) == "preemphasis")
+                else if (fvField(i) == "preemphasis")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_PREEMPHASIS, attr_val));
                 }
-
-                attr_val.clear();
                 /* Set port serdes idriver */
-                if (fvField(i) == "idriver")
+                else if (fvField(i) == "idriver")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_IDRIVER, attr_val));
                 }
-
-                attr_val.clear();
                 /* Set port serdes ipredriver */
-                if (fvField(i) == "ipredriver")
+                else if (fvField(i) == "ipredriver")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_IPREDRIVER, attr_val));
                 }
-
                 /* Set port serdes pre1 */
-                attr_val.clear();
-                if (fvField(i) == "pre1")
+                else if (fvField(i) == "pre1")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_PRE1, attr_val));
                 }
-
                 /* Set port serdes pre2 */
-                attr_val.clear();
-                if (fvField(i) == "pre2")
+                else if (fvField(i) == "pre2")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_PRE2, attr_val));
                 }
-
                 /* Set port serdes pre3 */
-                attr_val.clear();
-                if (fvField(i) == "pre3")
+                else if (fvField(i) == "pre3")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_PRE3, attr_val));
                 }
-
                 /* Set port serdes main */
-                attr_val.clear();
-                if (fvField(i) == "main")
+                else if (fvField(i) == "main")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_MAIN, attr_val));
                 }
-
                 /* Set port serdes post1 */
-                attr_val.clear();
-                if (fvField(i) == "post1")
+                else if (fvField(i) == "post1")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_POST1, attr_val));
                 }
-
                 /* Set port serdes post2 */
-                attr_val.clear();
-                if (fvField(i) == "post2")
+                else if (fvField(i) == "post2")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_POST2, attr_val));
                 }
-
                 /* Set port serdes post3 */
-                attr_val.clear();
-                if (fvField(i) == "post3")
+                else if (fvField(i) == "post3")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_POST3, attr_val));
                 }
-
                 /* Set port serdes attn */
-                attr_val.clear();
-                if (fvField(i) == "attn")
+                else if (fvField(i) == "attn")
                 {
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN, attr_val));
-                 }
+                }
+                else
+                {
+                    SWSS_LOG_ERROR("Unknown port field: %s", fvField(i).c_str());
+                }
             }
 
             /* Collect information about all received ports */
