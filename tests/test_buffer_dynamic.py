@@ -454,6 +454,10 @@ class TestBufferMgrDyn(object):
         ingress_lossless_pool_in_configdb = self.config_db.get_entry('BUFFER_POOL', 'ingress_lossless_pool')
         ingress_lossless_pool_in_configdb['xoff'] = shp_size
         self.config_db.update_entry('BUFFER_POOL', 'ingress_lossless_pool', ingress_lossless_pool_in_configdb)
+        # make sure the size is still equal to xon in the profile
+        self.app_db.wait_for_field_match('BUFFER_PROFILE_TABLE', expectedProfile, profileInApplDb)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile)
+
         # config over subscribe ratio to 4
         default_lossless_buffer_parameter['over_subscribe_ratio'] = '4'
         self.config_db.update_entry('DEFAULT_LOSSLESS_BUFFER_PARAMETER', 'AZURE', default_lossless_buffer_parameter)
@@ -462,6 +466,9 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match('BUFFER_POOL_TABLE', 'ingress_lossless_pool', ingress_lossless_pool_in_appldb)
         ingress_lossless_pool_in_asicdb['SAI_BUFFER_POOL_ATTR_XOFF_SIZE'] = shp_size
         self.asic_db.wait_for_field_match('ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL', self.ingress_lossless_pool_oid, ingress_lossless_pool_in_asicdb)
+        # make sure the size is still equal to xon in the profile
+        self.app_db.wait_for_field_match('BUFFER_PROFILE_TABLE', expectedProfile, profileInApplDb)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile)
 
         # remove size configuration, new over subscribe ratio takes effect
         ingress_lossless_pool_in_configdb['xoff'] = '0'
@@ -473,6 +480,9 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match('BUFFER_POOL_TABLE', 'ingress_lossless_pool', ingress_lossless_pool_in_appldb)
         ingress_lossless_pool_in_asicdb['SAI_BUFFER_POOL_ATTR_XOFF_SIZE'] = shp_size
         self.asic_db.wait_for_field_match('ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL', self.ingress_lossless_pool_oid, ingress_lossless_pool_in_asicdb)
+        # make sure the size is still equal to xon in the profile
+        self.app_db.wait_for_field_match('BUFFER_PROFILE_TABLE', expectedProfile, profileInApplDb)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile)
 
         # remove over subscribe ratio configuration
         default_lossless_buffer_parameter['over_subscribe_ratio'] = '0'
@@ -482,6 +492,10 @@ class TestBufferMgrDyn(object):
         self.app_db.wait_for_field_match('BUFFER_POOL_TABLE', 'ingress_lossless_pool', ingress_lossless_pool_in_appldb)
         ingress_lossless_pool_in_asicdb['SAI_BUFFER_POOL_ATTR_XOFF_SIZE'] = '0'
         self.asic_db.wait_for_field_match('ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_POOL', self.ingress_lossless_pool_oid, ingress_lossless_pool_in_asicdb)
+        # make sure the size is equal to xon + xoff in the profile
+        profileInApplDb['size'] = str(int(profileInApplDb['xon']) + int(profileInApplDb['xoff']))
+        self.app_db.wait_for_field_match('BUFFER_PROFILE_TABLE', expectedProfile, profileInApplDb)
+        self.check_new_profile_in_asic_db(dvs, expectedProfile)
 
         # remove lossless PG 3-4 on interface
         self.config_db.delete_entry('BUFFER_PG', 'Ethernet0|3-4')

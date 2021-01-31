@@ -87,9 +87,6 @@ else
     shp_enabled = false
 end
 
--- Fetch DEFAULT_LOSSLESS_BUFFER_PARAMETER from CONFIG_DB
-local lossless_traffic_keys = redis.call('KEYS', 'DEFAULT_LOSSLESS_BUFFER_PARAMETER*')
-
 -- Calculate the headroom information
 local speed_of_light = 198000000
 local minimal_packet_size = 64
@@ -136,11 +133,10 @@ xon_value = math.ceil(xon_value / 1024) * 1024
 
 if shp_enabled then
     headroom_size = xon_value + speed_overhead
-    headroom_size = math.ceil(headroom_size / 1024) * 1024
 else
     headroom_size = xoff_value + xon_value + speed_overhead
-    headroom_size = math.ceil(headroom_size / 1024) * 1024
 end
+headroom_size = math.ceil(headroom_size / 1024) * 1024
 
 table.insert(ret, "xon" .. ":" .. math.ceil(xon_value))
 table.insert(ret, "xoff" .. ":" .. math.ceil(xoff_value))
