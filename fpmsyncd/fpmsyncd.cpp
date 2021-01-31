@@ -16,9 +16,14 @@ using namespace swss;
  * Default warm-restart timer interval for routing-stack app. To be used only if
  * no explicit value has been defined in configuration.
  */
+const uint32_t DEFAULT_ROUTING_RECON_CHECK_INTERVAL = 120;
+
+/*
+ * The timeout value (in seconds) for fpmsyncd reconcilation logic
+ * This timers avoids indefinite wait for orchagent reconcillation
+ */
 const uint32_t DEFAULT_ROUTING_RESTART_INTERVAL = 600;
 
-const uint32_t DEFAULT_ROUTING_RECON_CHECK_INTERVAL = 120;
 
 // Wait 3 seconds after detecting EOIU reached state
 // TODO: support eoiu hold interval config
