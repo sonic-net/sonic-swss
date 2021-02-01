@@ -23,6 +23,8 @@ extern sai_route_api_t *sai_route_api;
 extern sai_next_hop_group_api_t* sai_next_hop_group_api;
 extern string gMySwitchType;
 
+using namespace saimeta;
+
 namespace aclorch_test
 {
     using namespace std;
