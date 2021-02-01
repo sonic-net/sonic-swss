@@ -1944,6 +1944,7 @@ void PortsOrch::deInitPort(string alias, sai_object_id_t port_id)
     /* remove port name map from counter table */
     m_counter_db->hdel(COUNTERS_PORT_NAME_MAP, alias);
 
+    /* Remove the associated port serdes attribute */
     removePortSerdesAttribute(p.m_port_id);
 
     m_portList[alias].m_init = false;
