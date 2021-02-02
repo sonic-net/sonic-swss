@@ -132,7 +132,7 @@ xon_value = pipeline_latency
 xon_value = math.ceil(xon_value / 1024) * 1024
 
 if shp_enabled then
-    headroom_size = xon_value + speed_overhead
+    headroom_size = xon_value
 else
     headroom_size = xoff_value + xon_value + speed_overhead
 end

@@ -136,7 +136,7 @@ for i = 1, #profiles, 1 do
                 if shp_enabled and shp_size == 0 then
                     local xon = tonumber(redis.call('HGET', profiles[i][1], 'xon'))
                     local xoff = tonumber(redis.call('HGET', profiles[i][1], 'xoff'))
-                    if xon ~= nil and xoff ~= nil then
+                    if xon ~= nil and xoff ~= nil and xon + xoff > size then
                         accumulative_xoff = accumulative_xoff + (xon + xoff - size) * profiles[i][2]
                     end
                 end
