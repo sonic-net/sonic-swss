@@ -372,19 +372,20 @@ int main(int argc, char **argv)
     obj_attr_get.value.s32list.list= gSupportedObjectTypeList;
 
     status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &obj_attr_get);
-    if (SAI_STATUS_SUCCESS != status)
+    if (SAI_STATUS_SUCCESS == status)
     {
-        SWSS_LOG_ERROR("get_switch_attribute failed with error %d\n", status);
-        exit(EXIT_FAILURE);
+        gSupportedObjectTypeListCount = obj_attr_get.value.s32list.count;
+
+        SWSS_LOG_DEBUG("Adapter supports %d object types\n", obj_attr_get.value.s32list.count);
+
+        for (uint32_t iter = 0; iter < gSupportedObjectTypeListCount; iter++)
+        {
+            SWSS_LOG_DEBUG("gSupportedObjectTypeList[%d] = %d\n", iter, gSupportedObjectTypeList[iter]);
+        }
     }
-
-    gSupportedObjectTypeListCount = obj_attr_get.value.s32list.count;
-
-    SWSS_LOG_DEBUG("Adapter supports %d object types\n", obj_attr_get.value.s32list.count);
-
-    for (uint32_t iter = 0; iter < gSupportedObjectTypeListCount; iter++)
+    else
     {
-        SWSS_LOG_DEBUG("gSupportedObjectTypeList[%d] = %d\n", iter, gSupportedObjectTypeList[iter]);
+        SWSS_LOG_NOTICE("get_switch_attribute failed with error %d\n", status);
     }
 
     /* Initialize orchestration components */
