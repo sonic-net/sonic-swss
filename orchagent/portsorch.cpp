@@ -1783,21 +1783,73 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
     return true;
 }
 
-bool PortsOrch::isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed)
+const PortSupportedSpeeds& PortsOrch::getSupportedSpeed(const std::string& alias, sai_object_id_t port_id)
 {
-    // This method will return false iff we get a list of supported speeds and the requested speed
-    // is not supported
-    // Otherwise the method will return true (even if we received errors)
-    initPortSupportedSpeeds(alias, port_id);
+    // This method will return vector of supported speeds for the port
+    // The method will return empty vector if there was something wrong during method execution.
 
-    const auto &supp_speeds = m_portSupportedSpeeds[port_id];
-    if (supp_speeds.empty())
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    // "Lazy" query of supported speeds for given port
+    // Once received the list will be stored in m_portSupportedSpeeds
+    if (!m_portSupportedSpeeds.count(port_id))
     {
-        // we don't have the list for this port, so return true to change speed anyway
-        return true;
+        const auto size_guess = 25; // Guess the size which could be enough
+
+        std::vector<sai_uint32_t> speeds(size_guess);
+
+        for (int attempt = 0; attempt < 2; ++attempt) // two attempts to get our value
+        {                                             // first with the guess,
+                                                      // other with the returned value
+            attr.id = SAI_PORT_ATTR_SUPPORTED_SPEED;
+            attr.value.u32list.count = static_cast<uint32_t>(speeds.size());
+            attr.value.u32list.list = speeds.data();
+
+            status = sai_port_api->get_port_attribute(port_id, 1, &attr);
+            if (status != SAI_STATUS_BUFFER_OVERFLOW)
+            {
+                break;
+            }
+
+            speeds.resize(attr.value.u32list.count); // if our guess was wrong
+                                                     // retry with the correct value
+        }
+
+        if (status == SAI_STATUS_SUCCESS)
+        {
+                speeds.resize(attr.value.u32list.count);
+                m_portSupportedSpeeds[port_id] = speeds;
+        }
+        else
+        {
+            if (status == SAI_STATUS_BUFFER_OVERFLOW)
+            {
+                // something went wrong in SAI implementation
+                SWSS_LOG_ERROR("Failed to get supported speed list for port %s id=%" PRIx64 ". Not enough container size",
+                               alias.c_str(), port_id);
+            }
+            else if (SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                     SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status) ||
+                     status == SAI_STATUS_NOT_IMPLEMENTED)
+            {
+                // unable to validate speed if attribute is not supported on platform
+                // assuming input value is correct
+                SWSS_LOG_WARN("Unable to validate speed for port %s id=%" PRIx64 ". Not supported by platform",
+                              alias.c_str(), port_id);
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to get a list of supported speeds for port %s id=%" PRIx64 ". Error=%d",
+                               alias.c_str(), port_id, status);
+            }
+            m_portSupportedSpeeds[port_id] = {}; // use an empty list,
+                                                 // we don't want to get the port speed for this port again
+        }
+
     }
 
-    return std::find(supp_speeds.begin(), supp_speeds.end(), speed) != supp_speeds.end();
+    return m_portSupportedSpeeds[port_id];
 }
 
 void PortsOrch::getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds)
@@ -1871,6 +1923,22 @@ void PortsOrch::initPortSupportedSpeeds(const std::string& alias, sai_object_id_
     std::string supported_speeds_str = swss::join(',', supported_speeds.begin(), supported_speeds.end());
     v.emplace_back(std::make_pair("supported_speeds", supported_speeds_str));
     m_portStateTable.set(alias, v);
+}
+
+bool PortsOrch::isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed)
+{
+    // This method will return false if we get a list of supported speeds and the requested speed
+    // is not supported
+    // Otherwise the method will return true (even if did not receive list of supported speed)
+
+    const PortSupportedSpeeds &supp_speeds = getSupportedSpeed(alias, port_id);
+    if (supp_speeds.size() == 0)
+    {
+        // we don't have the list for this port, so return true to change speed anyway
+        return true;
+    }
+
+    return std::find(supp_speeds.begin(), supp_speeds.end(), speed) != supp_speeds.end();
 }
 
 /*
@@ -4165,6 +4233,28 @@ bool PortsOrch::initializePort(Port &port)
         SWSS_LOG_WARN("Failed to set operation status %s to host interface %s",
                       operStatus.c_str(), port.m_alias.c_str());
         return false;
+    }
+
+    /* 
+     * initialize field with supported speeds of the port.
+     */
+    auto supp_speed_temp = getSupportedSpeed(port.m_alias, port.m_port_id);
+    /* Copy the vector to be able to modify it */
+    auto supp_speed(supp_speed_temp);
+    if (supp_speed.size() > 0)
+    {
+        sort(supp_speed.begin(), supp_speed.end());
+
+        string tmp_supp_speed_str = "";
+        /* Add (count - 1) elements to the string with separator*/
+        for (auto iter = supp_speed.begin(); iter < prev(supp_speed.end()); iter++)
+        {
+            tmp_supp_speed_str += to_string(*iter) + ",";
+        }
+        /* Add the last element w/o separator*/
+        tmp_supp_speed_str += to_string(supp_speed.back());
+
+        m_portTable->hset(port.m_alias, "supp_speed", tmp_supp_speed_str);
     }
 
     return true;

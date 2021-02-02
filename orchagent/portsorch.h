@@ -289,6 +289,7 @@ private:
 
     bool setBridgePortAdminStatus(sai_object_id_t id, bool up);
 
+    const PortSupportedSpeeds& getSupportedSpeed(const std::string& alias, sai_object_id_t port_id);
     bool isSpeedSupported(const std::string& alias, sai_object_id_t port_id, sai_uint32_t speed);
     void getPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id, PortSupportedSpeeds &supported_speeds);
     void initPortSupportedSpeeds(const std::string& alias, sai_object_id_t port_id);
