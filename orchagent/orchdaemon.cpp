@@ -32,9 +32,6 @@ extern void syncd_apply_view();
 int32_t  gSupportedObjectTypeList[SAI_OBJECT_TYPE_MAX];
 uint32_t gSupportedObjectTypeListCount;
 
-/* Global Snapshot support flag */
-bool gIsSnapshotSupported = false;
-
 /* Global Threshold support flag */
 bool gIsThresholdSupported = false;
 
@@ -109,27 +106,6 @@ OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *
                     break;
                 }
             }
-        }
-
-        /* Snapshot support */
-        if (isTamCollectorSupported && isTamSupported && isTamTelemetrySupported &&
-            isTamReportSupported && isTamTransportSupported)
-        {
-            if (isTamSupported && isTamTelemetrySupported)
-                SWSS_LOG_DEBUG("TAM and telemetry objects supported.");
-
-            /* Added snapshot supported field in APP DB's switch table */
-            Table m_appSwitchTable(m_applDb, APP_SWITCH_TABLE_NAME);
-            string key = SWITCH_TABLE_KEY;
-            vector<FieldValueTuple> fvVector;
-            FieldValueTuple snapshot_supported(SNAPSHOT_SUPPORTED_FIELD, "True");
-            fvVector.push_back(snapshot_supported);
-
-            m_appSwitchTable.set(key, fvVector);
-
-            SWSS_LOG_DEBUG("APP Switch Table updated with snapshot supported entry\n");
-
-            gIsSnapshotSupported = true;
         }
 
         /* Threshold support */
