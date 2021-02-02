@@ -2238,10 +2238,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     getPortSerdesVal(fvValue(i), attr_val);
                     serdes_attr.insert(serdes_attr_pair(SAI_PORT_SERDES_ATTR_TX_FIR_ATTN, attr_val));
                 }
-                else
-                {
-                    SWSS_LOG_ERROR("Unknown port field: %s", fvField(i).c_str());
-                }
             }
 
             /* Collect information about all received ports */
