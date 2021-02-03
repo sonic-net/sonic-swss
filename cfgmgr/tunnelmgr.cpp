@@ -62,6 +62,7 @@ static int cmdIpTunnelIfAddress(const std::string& ip, std::string & res)
 static int cmdIpTunnelRouteAdd(const std::string& pfx, std::string & res)
 {
     // ip route add/replace {{ip prefix}} dev {{tunnel intf}}
+    // Replace route if route already exists
     ostringstream cmd;
     cmd << IP_CMD " route replace "
         << shellquote(pfx)
@@ -99,6 +100,7 @@ TunnelMgr::TunnelMgr(DBConnector *cfgDb, DBConnector *appDb, const std::vector<s
             if (fvField(j) == "address_ipv4")
             {
                 m_peerIp = fvValue(j);
+                break;
             }
         }
     }
@@ -177,10 +179,10 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
     const std::string & op = kfvOp(t);
     TunnelInfo tunInfo;
 
-    for (auto idx : kfvFieldsValues(t))
+    for (auto fieldValue : kfvFieldsValues(t))
     {
-        const std::string & field = fvField(idx);
-        const std::string & value = fvValue(idx);
+        const std::string & field = fvField(fieldValue);
+        const std::string & value = fvValue(fieldValue);
         if (field == "dst_ip")
         {
             tunInfo.dst_ip = value;
@@ -216,7 +218,7 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
 
         if (it == m_tunnelCache.end())
         {
-            SWSS_LOG_NOTICE("Tunnel %s not found", tunnelName.c_str());
+            SWSS_LOG_ERROR("Tunnel %s not found", tunnelName.c_str());
             return true;
         }
 
@@ -224,6 +226,10 @@ bool TunnelMgr::doTunnelTask(const KeyOpFieldsValuesTuple & t)
         if (tunInfo.type == IPINIP)
         {
             m_appIpInIpTunnelTable.del(tunnelName);
+        }
+        else
+        {
+            SWSS_LOG_WARN("Tunnel %s type %s is not handled", tunnelName.c_str(), tunInfo.type.c_str());
         }
         m_tunnelCache.erase(tunnelName);
     }
@@ -256,7 +262,8 @@ bool TunnelMgr::doLpbkIntfTask(const KeyOpFieldsValuesTuple & t)
         ret = cmdIpTunnelIfAddress(ipPrefix.to_string(), res);
         if (ret != 0)
         {
-            SWSS_LOG_WARN("Failed to assign IP addr for tun if %s", ipPrefix.to_string().c_str());
+            SWSS_LOG_WARN("Failed to assign IP addr for tun if %s, res %s",
+                           ipPrefix.to_string().c_str(), res.c_str());
         }
     }
 
@@ -278,7 +285,7 @@ bool TunnelMgr::doTunnelRouteTask(const KeyOpFieldsValuesTuple & t)
         ret = cmdIpTunnelRouteAdd(prefix, res);
         if (ret != 0)
         {
-            SWSS_LOG_WARN("Failed to add route %s", prefix.c_str());
+            SWSS_LOG_WARN("Failed to add route %s, res %s", prefix.c_str(), res.c_str());
         }
     }
     else
@@ -286,7 +293,7 @@ bool TunnelMgr::doTunnelRouteTask(const KeyOpFieldsValuesTuple & t)
         ret = cmdIpTunnelRouteDel(prefix, res);
         if (ret != 0)
         {
-            SWSS_LOG_WARN("Failed to del route %s", prefix.c_str());
+            SWSS_LOG_WARN("Failed to del route %s, res %s", prefix.c_str(), res.c_str());
         }
     }
 
@@ -303,15 +310,15 @@ bool TunnelMgr::configIpTunnel(const TunnelInfo& tunInfo)
     ret = cmdIpTunnelIfCreate(tunInfo, res);
     if (ret != 0)
     {
-        SWSS_LOG_WARN("Failed to create IP tunnel if (dst ip: %s, peer ip %s)",
-                       tunInfo.dst_ip.c_str(),tunInfo.remote_ip.c_str());
+        SWSS_LOG_WARN("Failed to create IP tunnel if (dst ip: %s, peer ip %s), res %s",
+                       tunInfo.dst_ip.c_str(),tunInfo.remote_ip.c_str(), res.c_str());
     }
 
     ret = cmdIpTunnelIfUp(res);
     if (ret != 0)
     {
-        SWSS_LOG_WARN("Failed to enable IP tunnel intf (dst ip: %s, peer ip %s)",
-                       tunInfo.dst_ip.c_str(),tunInfo.remote_ip.c_str());
+        SWSS_LOG_WARN("Failed to enable IP tunnel intf (dst ip: %s, peer ip %s), res %s",
+                       tunInfo.dst_ip.c_str(),tunInfo.remote_ip.c_str(), res.c_str());
     }
 
     auto it = m_intfCache.find(LOOPBACK_SRC);
@@ -320,7 +327,8 @@ bool TunnelMgr::configIpTunnel(const TunnelInfo& tunInfo)
         ret = cmdIpTunnelIfAddress(it->second.to_string(), res);
         if (ret != 0)
         {
-            SWSS_LOG_WARN("Failed to assign IP addr for tun if %s", it->second.to_string().c_str());
+            SWSS_LOG_WARN("Failed to assign IP addr for tun if %s, res %s",
+                           it->second.to_string().c_str(), res.c_str());
         }
     }
 

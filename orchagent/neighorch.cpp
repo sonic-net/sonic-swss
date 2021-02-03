@@ -434,21 +434,21 @@ int NeighOrch::getNextHopRefCount(const NextHopKey &nexthop)
     return m_syncdNextHops[nexthop].ref_count;
 }
 
-void NeighOrch::increaseNextHopRefCount(const NextHopKey &nexthop)
+void NeighOrch::increaseNextHopRefCount(const NextHopKey &nexthop, uint32_t count)
 {
     assert(hasNextHop(nexthop));
     if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end())
     {
-        m_syncdNextHops[nexthop].ref_count ++;
+        m_syncdNextHops[nexthop].ref_count += count;
     }
 }
 
-void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop)
+void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop, uint32_t count)
 {
     assert(hasNextHop(nexthop));
     if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end())
     {
-        m_syncdNextHops[nexthop].ref_count --;
+        m_syncdNextHops[nexthop].ref_count -= count;
     }
 }
 

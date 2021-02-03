@@ -42,7 +42,7 @@ int main(int argc, char **argv)
 
     try
     {
-        vector<string> cfg_tun_tables = {
+        vector<string> cfgTunTables = {
             CFG_TUNNEL_TABLE_NAME,
             CFG_LOOPBACK_INTERFACE_TABLE_NAME
         };
@@ -50,7 +50,7 @@ int main(int argc, char **argv)
         DBConnector cfgDb("CONFIG_DB", 0);
         DBConnector appDb("APPL_DB", 0);
 
-        TunnelMgr tunnelmgr(&cfgDb, &appDb, cfg_tun_tables);
+        TunnelMgr tunnelmgr(&cfgDb, &appDb, cfgTunTables);
 
         std::vector<Orch *> cfgOrchList = {&tunnelmgr};
 

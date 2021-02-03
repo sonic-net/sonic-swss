@@ -53,8 +53,8 @@ public:
     sai_object_id_t getLocalNextHopId(const NextHopKey&);
     int getNextHopRefCount(const NextHopKey&);
 
-    void increaseNextHopRefCount(const NextHopKey&);
-    void decreaseNextHopRefCount(const NextHopKey&);
+    void increaseNextHopRefCount(const NextHopKey&, uint32_t count = 1);
+    void decreaseNextHopRefCount(const NextHopKey&, uint32_t count = 1);
 
     bool getNeighborEntry(const NextHopKey&, NeighborEntry&, MacAddress&);
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);

@@ -42,18 +42,6 @@ struct NextHopUpdate
 
 struct NextHopObserverEntry;
 
-/* Route destination key for a nexthop */
-struct RouteKey
-{
-    sai_object_id_t vrf_id;
-    IpPrefix prefix;
-
-    bool operator < (const RouteKey& rhs) const
-    {
-        return (vrf_id <= rhs.vrf_id && prefix < rhs.prefix);
-    }
-};
-
 /* NextHopGroupTable: NextHopGroupKey, NextHopGroupEntry */
 typedef std::map<NextHopGroupKey, NextHopGroupEntry> NextHopGroupTable;
 /* RouteTable: destination network, NextHopGroupKey */
@@ -64,8 +52,6 @@ typedef std::map<sai_object_id_t, RouteTable> RouteTables;
 typedef std::pair<sai_object_id_t, IpAddress> Host;
 /* NextHopObserverTable: Host, next hop observer entry */
 typedef std::map<Host, NextHopObserverEntry> NextHopObserverTable;
-/* Single Nexthop to Routemap */
-typedef std::map<NextHopKey, std::set<RouteKey>> NextHopRouteTable;
 
 struct NextHopObserverEntry
 {
@@ -121,8 +107,6 @@ public:
     bool addNextHopGroup(const NextHopGroupKey&);
     bool removeNextHopGroup(const NextHopGroupKey&);
 
-    void addNextHopRoute(const NextHopKey&, const RouteKey&);
-    void removeNextHopRoute(const NextHopKey&, const RouteKey&);
     bool updateNextHopRoutes(const NextHopKey&, uint32_t&);
 
     bool validnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
@@ -150,7 +134,6 @@ private:
 
     RouteTables m_syncdRoutes;
     NextHopGroupTable m_syncdNextHopGroups;
-    NextHopRouteTable m_nextHops;
 
     std::set<NextHopGroupKey> m_bulkNhgReducedRefCnt;
 

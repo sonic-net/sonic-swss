@@ -100,8 +100,8 @@ private:
     bool stateInitActive();
     bool stateStandby();
 
-    bool aclHandler(sai_object_id_t, bool = true);
-    bool nbrHandler(bool, bool = true);
+    bool aclHandler(sai_object_id_t, bool add = true);
+    bool nbrHandler(bool enable, bool update_routes = true);
 
     string mux_name_;
 
