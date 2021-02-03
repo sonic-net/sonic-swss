@@ -49,7 +49,7 @@ jobs:
       pipeline: 12
       artifacts: sonic-sairedis
       runVersion: specific
-      runId: 2748
+      runId: 2620
     displayName: "Download sonic sairedis deb packages"
   - script: |
       sudo dpkg -i sonic-swss-common/libswsscommon_1.0.0_amd64.deb
