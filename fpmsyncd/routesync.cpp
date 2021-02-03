@@ -710,7 +710,7 @@ void RouteSync::onRouteMsg(int nlmsg_type, struct nl_object *obj, char *vrf)
          */
         if (alias == "eth0" || alias == "docker0")
         {
-            SWSS_LOG_NOTICE("Skip routes to eth0 or docker0: %s %s %s",
+            SWSS_LOG_DEBUG("Skip routes to eth0 or docker0: %s %s %s",
                     destipprefix, nexthops.c_str(), ifnames.c_str());
             return;
         }
