@@ -21,8 +21,8 @@ bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
+string gMySwitchType = "voq";
 
-MirrorOrch *gMirrorOrch;
 VRFOrch *gVrfOrch;
 
 void syncd_apply_view() {}

@@ -25,6 +25,9 @@ enum class CrmResourceType
     CRM_ACL_ENTRY,
     CRM_ACL_COUNTER,
     CRM_FDB_ENTRY,
+    CRM_IPMC_ENTRY,
+    CRM_SNAT_ENTRY,
+    CRM_DNAT_ENTRY,
 };
 
 enum class CrmThresholdType

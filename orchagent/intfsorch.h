@@ -32,7 +32,7 @@ typedef map<string, IntfsEntry> IntfsTable;
 class IntfsOrch : public Orch
 {
 public:
-    IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch);
+    IntfsOrch(DBConnector *db, string tableName, VRFOrch *vrf_orch, DBConnector *chassisAppDb);
 
     sai_object_id_t getRouterIntfsId(const string&);
     bool isPrefixSubnet(const IpPrefix&, const string&);
@@ -65,7 +65,7 @@ public:
 
     bool updateSyncdIntfPfx(const string &alias, const IpPrefix &ip_prefix, bool add = true);
 
-    bool addRouterIntfForRecircPort(Port &port);
+    bool isRemoteSystemPortIntf(string alias);
 
 private:
 
@@ -97,6 +97,11 @@ private:
 
     bool setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_type_t vlan_flood_type);
     bool setIntfProxyArp(const string &alias, const string &proxy_arp);
+
+    unique_ptr<Table> m_tableVoqSystemInterfaceTable;
+    void voqSyncAddIntf(string &alias);
+    void voqSyncDelIntf(string &alias);
+
 };
 
 #endif /* SWSS_INTFSORCH_H */

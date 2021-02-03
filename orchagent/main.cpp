@@ -55,7 +55,8 @@ bool gSwssRecord = true;
 bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
 bool gSyncMode = false;
-char *gAsicInstance = NULL;
+sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
+string gAsicInstance;
 
 extern bool gIsNatSupported;
 
@@ -63,10 +64,13 @@ ofstream gRecordOfs;
 string gRecordFile;
 
 string gMySwitchType = "";
+int32_t gVoqMySwitchId = -1;
+int32_t gVoqMaxCores = 0;
+uint32_t gCfgSystemPorts = 0;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-b batch_size] [-m MAC] [-i INST_ID] [-s]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -77,7 +81,10 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
-    cout << "    -s: enable synchronous mode" << endl;
+    cout << "    -s: enable synchronous mode (depreacated, use -z)" << endl;
+    cout << "    -z: redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
+    cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
+    cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
 }
 
 void sighup_handler(int signo)
@@ -142,6 +149,124 @@ void init_gearbox_phys(DBConnector *applDb)
     delete tmpGearboxTable;
 }
 
+void getCfgSwitchType(DBConnector *cfgDb, string &switch_type)
+{
+    Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+
+    if (!cfgDeviceMetaDataTable.hget("localhost", "switch_type", switch_type))
+    {
+        //Switch type is not configured. Consider it default = "switch" (regular switch)
+        switch_type = "switch";
+    }
+
+    if (switch_type != "voq" && switch_type != "fabric" && switch_type != "switch")
+    {
+        SWSS_LOG_ERROR("Invalid switch type %s configured", switch_type.c_str());
+    	//If configured switch type is none of the supported, assume regular switch
+        switch_type = "switch";
+    }
+}
+
+bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_system_port_config_t> &sysportcfglist)
+{
+    Table cfgDeviceMetaDataTable(cfgDb, CFG_DEVICE_METADATA_TABLE_NAME);
+    Table cfgSystemPortTable(cfgDb, CFG_SYSTEM_PORT_TABLE_NAME);
+    Table appSystemPortTable(appDb, APP_SYSTEM_PORT_TABLE_NAME);
+
+    if (gMySwitchType != "voq")
+    {
+        //Non VOQ switch. Nothing to read
+        return true;
+    }
+
+    string value;
+    if (!cfgDeviceMetaDataTable.hget("localhost", "switch_id", value))
+    {
+        //VOQ switch id is not configured.
+        SWSS_LOG_ERROR("VOQ switch id is not configured");
+        return false;
+    }
+
+    if (value.size())
+        gVoqMySwitchId = stoi(value);
+
+    if (gVoqMySwitchId < 0)
+    {
+        SWSS_LOG_ERROR("Invalid VOQ switch id %d configured", gVoqMySwitchId);
+        return false;
+    }
+
+    if (!cfgDeviceMetaDataTable.hget("localhost", "max_cores", value))
+    {
+        //VOQ max cores is not configured.
+        SWSS_LOG_ERROR("VOQ max cores is not configured");
+        return false;
+    }
+
+    if (value.size())
+        gVoqMaxCores = stoi(value);
+
+    if (gVoqMaxCores == 0)
+    {
+        SWSS_LOG_ERROR("Invalid VOQ max cores %d configured", gVoqMaxCores);
+        return false;
+    }
+
+    vector<string> spKeys;
+    cfgSystemPortTable.getKeys(spKeys);
+
+    //Retrieve system port configurations
+    vector<FieldValueTuple> spFv;
+    sai_system_port_config_t sysport;
+    for (auto &k : spKeys)
+    {
+        cfgSystemPortTable.get(k, spFv);
+
+        for (auto &fv : spFv)
+        {
+            if (fv.first == "switch_id")
+            {
+                sysport.attached_switch_id = stoi(fv.second);
+                continue;
+            }
+            if (fv.first == "core_index")
+            {
+                sysport.attached_core_index = stoi(fv.second);
+                continue;
+            }
+            if (fv.first == "core_port_index")
+            {
+                sysport.attached_core_port_index = stoi(fv.second);
+                continue;
+            }
+            if (fv.first == "speed")
+            {
+                sysport.speed = stoi(fv.second);
+                continue;
+            }
+            if (fv.first == "system_port_id")
+            {
+                sysport.port_id = stoi(fv.second);
+                continue;
+            }
+            if (fv.first == "num_voq")
+            {
+                sysport.num_voq = stoi(fv.second);
+                continue;
+            }
+        }
+        //Add to system port config list
+        sysportcfglist.push_back(sysport);
+
+        //Also push to APP DB
+        appSystemPortTable.set(k, spFv);
+    }
+
+    SWSS_LOG_NOTICE("Created System Port config list for %d system ports", (int32_t) sysportcfglist.size());
+
+    return true;
+}
+
 int main(int argc, char **argv)
 {
     swss::Logger::linkToDbNative("orchagent");
@@ -161,8 +286,10 @@ int main(int argc, char **argv)
     sai_status_t status;
 
     string record_location = ".";
+    string swss_rec_filename = "swss.rec";
+    string sairedis_rec_filename = "sairedis.rec";
 
-    while ((opt = getopt(argc, argv, "b:m:r:d:i:hs")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:")) != -1)
     {
         switch (opt)
         {
@@ -170,8 +297,17 @@ int main(int argc, char **argv)
             gBatchSize = atoi(optarg);
             break;
         case 'i':
-            gAsicInstance = (char *)calloc(strlen(optarg)+1, sizeof(char));
-            memcpy(gAsicInstance, optarg, strlen(optarg));
+            {
+                // Limit asic instance string max length
+                size_t len = strnlen(optarg, SAI_MAX_HARDWARE_ID_LEN);
+                // Check if input is longer and warn
+                if (len == SAI_MAX_HARDWARE_ID_LEN && optarg[len+1] != '\0')
+                {
+                    SWSS_LOG_WARN("ASIC instance_id length > SAI_MAX_HARDWARE_ID_LEN, LIMITING !!");
+                }
+                // If longer, trancate into a string
+                gAsicInstance.assign(optarg, len);
+            }
             break;
         case 'm':
             gMacAddress = MacAddress(optarg);
@@ -215,7 +351,22 @@ int main(int argc, char **argv)
             gSyncMode = true;
             SWSS_LOG_NOTICE("Enabling synchronous mode");
             break;
+        case 'z':
+            sai_deserialize_redis_communication_mode(optarg, gRedisCommunicationMode);
+            break;
+        case 'f':
 
+            if (optarg)
+            {
+                swss_rec_filename = optarg;
+            }
+            break;
+        case 'j':
+            if (optarg)
+            {
+                sairedis_rec_filename = optarg;
+            }
+            break;
         default: /* '?' */
             exit(EXIT_FAILURE);
         }
@@ -224,7 +375,7 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("--- Starting Orchestration Agent ---");
 
     initSaiApi();
-    initSaiRedis(record_location);
+    initSaiRedis(record_location, sairedis_rec_filename);
 
     sai_attribute_t attr;
     vector<sai_attribute_t> attrs;
@@ -239,7 +390,7 @@ int main(int argc, char **argv)
     /* Disable/enable SwSS recording */
     if (gSwssRecord)
     {
-        gRecordFile = record_location + "/" + "swss.rec";
+        gRecordFile = record_location + "/" + swss_rec_filename;
         gRecordOfs.open(gRecordFile, std::ofstream::out | std::ofstream::app);
         if (!gRecordOfs.is_open())
         {
@@ -257,6 +408,14 @@ int main(int argc, char **argv)
     attr.value.ptr = (void *)on_switch_shutdown_request;
     attrs.push_back(attr);
 
+    // Instantiate database connectors
+    DBConnector appl_db("APPL_DB", 0);
+    DBConnector config_db("CONFIG_DB", 0);
+    DBConnector state_db("STATE_DB", 0);
+
+    // Get switch_type
+    getCfgSwitchType(&config_db, gMySwitchType);
+
     if (gMacAddress)
     {
         attr.id = SAI_SWITCH_ATTR_SRC_MAC_ADDRESS;
@@ -264,29 +423,71 @@ int main(int argc, char **argv)
         attrs.push_back(attr);
     }
 
-    /* Must be last Attribute */
-    attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
-    attr.value.u64 = gSwitchId;
-    attrs.push_back(attr);
-
     // SAI_REDIS_SWITCH_ATTR_SYNC_MODE attribute only setBuffer and g_syncMode to true
     // since it is not using ASIC_DB, we can execute it before create_switch
     // when g_syncMode is set to true here, create_switch will wait the response from syncd
     if (gSyncMode)
     {
-        attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_MODE;
-        attr.value.booldata = true;
+        SWSS_LOG_WARN("sync mode is depreacated, use -z param");
 
-        sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+        gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_SYNC;
     }
 
-    if (gAsicInstance)
+    attr.id = SAI_REDIS_SWITCH_ATTR_REDIS_COMMUNICATION_MODE;
+    attr.value.s32 = gRedisCommunicationMode;
+
+    sai_switch_api->set_switch_attribute(gSwitchId, &attr);
+
+    if (!gAsicInstance.empty())
     {
         attr.id = SAI_SWITCH_ATTR_SWITCH_HARDWARE_INFO;
-        attr.value.s8list.count = (uint32_t)(strlen(gAsicInstance)+1);
-        attr.value.s8list.list = (int8_t*)gAsicInstance;
+        attr.value.s8list.count = (uint32_t)gAsicInstance.size();
+        // TODO: change SAI definition of `list` to `const char *`
+        attr.value.s8list.list = (int8_t *)const_cast<char *>(gAsicInstance.c_str());
         attrs.push_back(attr);
     }
+
+    // Get info required for VOQ system and connect to CHASSISS_APP_DB
+    shared_ptr<DBConnector> chassis_app_db;
+    vector<sai_system_port_config_t> sysportconfiglist;
+    if ((gMySwitchType == "voq") &&
+            (getSystemPortConfigList(&config_db, &appl_db, sysportconfiglist)))
+    {
+        attr.id = SAI_SWITCH_ATTR_TYPE;
+        attr.value.u32 = SAI_SWITCH_TYPE_VOQ;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_SWITCH_ID;
+        attr.value.u32 = gVoqMySwitchId;
+        attrs.push_back(attr);
+
+        attr.id = SAI_SWITCH_ATTR_MAX_SYSTEM_CORES;
+        attr.value.u32 = gVoqMaxCores;
+        attrs.push_back(attr);
+
+        gCfgSystemPorts = (uint32_t) sysportconfiglist.size();
+        if (gCfgSystemPorts)
+        {
+            attr.id = SAI_SWITCH_ATTR_SYSTEM_PORT_CONFIG_LIST;
+            attr.value.sysportconfiglist.count = gCfgSystemPorts;
+            attr.value.sysportconfiglist.list = sysportconfiglist.data();
+            attrs.push_back(attr);
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Voq switch create with 0 system ports!");
+            exit(EXIT_FAILURE);
+        }
+
+        //Connect to CHASSIS_APP_DB in redis-server in control/supervisor card as per
+        //connection info in database_config.json
+        chassis_app_db = make_shared<DBConnector>("CHASSIS_APP_DB", 0, true);
+    }
+
+    /* Must be last Attribute */
+    attr.id = SAI_REDIS_SWITCH_ATTR_CONTEXT;
+    attr.value.u64 = gSwitchId;
+    attrs.push_back(attr);
 
     status = sai_switch_api->create_switch(&gSwitchId, (uint32_t)attrs.size(), attrs.data());
     if (status != SAI_STATUS_SUCCESS)
@@ -367,13 +568,10 @@ int main(int argc, char **argv)
     SWSS_LOG_NOTICE("Created underlay router interface ID %" PRIx64, gUnderlayIfId);
 
     /* Initialize orchestration components */
-    DBConnector appl_db("APPL_DB", 0);
-    DBConnector config_db("CONFIG_DB", 0);
-    DBConnector state_db("STATE_DB", 0);
-
+    
     init_gearbox_phys(&appl_db);
 
-    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db);
+    auto orchDaemon = make_shared<OrchDaemon>(&appl_db, &config_db, &state_db, chassis_app_db.get());
 
     if (!orchDaemon->init())
     {

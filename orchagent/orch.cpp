@@ -299,13 +299,6 @@ bool Orch::bake()
     return true;
 }
 
-bool Orch::postBake()
-{
-    SWSS_LOG_ENTER();
-
-    return true;
-}
-
 /*
 - Validates reference has proper format which is [table_name:object_name]
 - validates table_name exists
@@ -658,7 +651,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
 
 void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
-    if (db->getDbName() == "CONFIG_DB" || db->getDbName() == "STATE_DB")
+    if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
         addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
     }

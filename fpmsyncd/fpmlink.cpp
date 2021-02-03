@@ -18,6 +18,18 @@ void netlink_parse_rtattr(struct rtattr **tb, int max, struct rtattr *rta,
         {
             tb[rta->rta_type] = rta;
         }
+        else
+        {
+            /* FRR 7.5 is sending RTA_ENCAP with NLA_F_NESTED bit set*/
+            if (rta->rta_type & NLA_F_NESTED)
+            {
+                int rta_type = rta->rta_type & ~NLA_F_NESTED;
+                if (rta_type <= max)
+                {
+                   tb[rta_type] = rta;
+                }
+            }
+        }
         rta = RTA_NEXT(rta, len);
     }
 }

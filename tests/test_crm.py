@@ -702,6 +702,31 @@ class TestCrm(object):
         #table_used_counter = getCrmCounterValue(dvs, 'ACL_STATS:INGRESS:PORT', 'crm_stats_acl_group_used')
         #assert table_used_counter == 0
 
+    def test_CrmSnatEntry(self, dvs, testlog):
+
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_available')
+        assert used_counter == 0
+        assert avail_counter != 0
+
+    def test_CrmDnatEntry(self, dvs, testlog):
+
+        # get counters
+        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_used')
+        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_available')
+        assert used_counter == 0
+        assert avail_counter != 0
+
+#    commented ipmc test case till vslib is updated
+#    def test_CrmIpmcEntry(self, dvs, testlog):
+#
+#        # get counters
+#        used_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_used')
+#        avail_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_ipmc_entry_available')
+#        assert used_counter == 0
+#        assert avail_counter != 0
+
     def test_Configure(self, dvs, testlog):
 
         #polling interval
@@ -905,6 +930,50 @@ class TestCrm(object):
         threshold_type = getCrmConfigStr(dvs, 'Config', 'fdb_entry_threshold_type')
         assert threshold_type == 'percentage'
 
+    def test_Configure_snat(self, dvs, testlog):
+
+        #thresholds snat low/high threshold/type
+        dvs.runcmd("crm config thresholds snat low 50")
+        dvs.runcmd("crm config thresholds snat high 90")
+        dvs.runcmd("crm config thresholds snat type percentage")
+
+        time.sleep(2)
+        threshold_low = getCrmConfigValue(dvs, 'Config', 'snat_entry_low_threshold')
+        assert threshold_low == 50
+        threshold_high = getCrmConfigValue(dvs, 'Config', 'snat_entry_high_threshold')
+        assert threshold_high == 90
+        threshold_type = getCrmConfigStr(dvs, 'Config', 'snat_entry_threshold_type')
+        assert threshold_type == 'percentage'
+
+    def test_Configure_dnat(self, dvs, testlog):
+
+        #thresholds dnat low/high threshold/type
+        dvs.runcmd("crm config thresholds dnat low 50")
+        dvs.runcmd("crm config thresholds dnat high 90")
+        dvs.runcmd("crm config thresholds dnat type percentage")
+
+        time.sleep(2)
+        threshold_low = getCrmConfigValue(dvs, 'Config', 'dnat_entry_low_threshold')
+        assert threshold_low == 50
+        threshold_high = getCrmConfigValue(dvs, 'Config', 'dnat_entry_high_threshold')
+        assert threshold_high == 90
+        threshold_type = getCrmConfigStr(dvs, 'Config', 'dnat_entry_threshold_type')
+        assert threshold_type == 'percentage'
+
+    def test_Configure_ipmc(self, dvs, testlog):
+
+        #thresholds ipmc low/high threshold/type
+        dvs.runcmd("crm config thresholds ipmc low 50")
+        dvs.runcmd("crm config thresholds ipmc high 90")
+        dvs.runcmd("crm config thresholds ipmc type percentage")
+
+        time.sleep(2)
+        threshold_low = getCrmConfigValue(dvs, 'Config', 'ipmc_entry_low_threshold')
+        assert threshold_low == 50
+        threshold_high = getCrmConfigValue(dvs, 'Config', 'ipmc_entry_high_threshold')
+        assert threshold_high == 90
+        threshold_type = getCrmConfigStr(dvs, 'Config', 'ipmc_entry_threshold_type')
+        assert threshold_type == 'percentage'
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
