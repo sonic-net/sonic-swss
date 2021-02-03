@@ -85,4 +85,4 @@ tunnelmgrd_LDADD = -lswsscommon $(SAIMETA_LIBS)
 macsecmgrd_SOURCES = macsecmgrd.cpp macsecmgr.cpp $(top_srcdir)/orchagent/orch.cpp $(top_srcdir)/orchagent/request_parser.cpp shellcmd.h
 macsecmgrd_CFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
 macsecmgrd_CPPFLAGS = $(DBGFLAGS) $(AM_CFLAGS) $(CFLAGS_COMMON) $(CFLAGS_SAI)
-macsecmgrd_LDADD = -lswsscommon
+macsecmgrd_LDADD = -lswsscommon $(SAIMETA_LIBS)
