@@ -152,7 +152,7 @@ public:
 class MuxOrch : public Orch2, public Observer, public Subject
 {
 public:
-    MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch*, NeighOrch*);
+    MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch*, NeighOrch*, FdbOrch*);
 
     using handler_pair = pair<string, bool (MuxOrch::*) (const Request& )>;
     using handler_map = map<string, bool (MuxOrch::*) (const Request& )>;
@@ -168,12 +168,12 @@ public:
     }
 
     MuxCable* findMuxCableInSubnet(IpAddress);
-    bool isNeighborActive(IpAddress nbr, string alias);
+    bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
-    void updateNeighbor(const NeighborUpdate&);
 
-    void addNexthop(NextHopKey, string);
+    void addNexthop(NextHopKey, string = "");
     void removeNexthop(NextHopKey);
+    string getNexthopMuxName(NextHopKey);
     sai_object_id_t getNextHopId(const NextHopKey&);
 
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
@@ -187,8 +187,13 @@ private:
     bool handleMuxCfg(const Request&);
     bool handlePeerSwitch(const Request&);
 
+    void updateNeighbor(const NeighborUpdate&);
+    void updateFdb(const FdbUpdate&);
+
+    bool getMuxPort(const MacAddress&, const string&, string&);
+
     IpAddress mux_peer_switch_ = 0x0;
-    sai_object_id_t mux_tunnel_id_;
+    sai_object_id_t mux_tunnel_id_ = SAI_NULL_OBJECT_ID;
 
     MuxCableTb mux_cable_tb_;
     MuxTunnelNHs mux_tunnel_nh_;
@@ -198,6 +203,7 @@ private:
 
     TunnelDecapOrch *decap_orch_;
     NeighOrch *neigh_orch_;
+    FdbOrch *fdb_orch_;
 
     MuxCfgRequest request_;
 };

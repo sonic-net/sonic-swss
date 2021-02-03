@@ -19,6 +19,7 @@
 #include "portsorch.h"
 #include "aclorch.h"
 #include "routeorch.h"
+#include "fdborch.h"
 
 /* Global variables */
 extern Directory<Orch*> gDirectory;
@@ -27,6 +28,7 @@ extern NeighOrch *gNeighOrch;
 extern RouteOrch *gRouteOrch;
 extern AclOrch *gAclOrch;
 extern PortsOrch *gPortsOrch;
+extern FdbOrch *gFdbOrch;
 
 extern sai_object_id_t gVirtualRouterId;
 extern sai_object_id_t  gUnderlayIfId;
@@ -195,6 +197,9 @@ static sai_object_id_t create_tunnel(const IpAddress* p_dst_ip, const IpAddress*
     attr.id = SAI_TUNNEL_ATTR_PEER_MODE;
     attr.value.s32 = SAI_TUNNEL_PEER_MODE_P2P;
     tunnel_attrs.push_back(attr);
+
+    attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_MODE;
+    attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
 
     if (p_src_ip != nullptr)
     {
@@ -474,7 +479,7 @@ void MuxCable::updateNeighbor(NextHopKey nh, bool add)
     {
         mux_orch_->addNexthop(nh, mux_name_);
     }
-    else
+    else if (mux_name_ == mux_orch_->getNexthopMuxName(nh))
     {
         mux_orch_->removeNexthop(nh);
     }
@@ -507,9 +512,11 @@ void MuxNbrHandler::update(NextHopKey nh, sai_object_id_t tunnelId, bool add, Mu
             break;
         case MuxState::MUX_STATE_ACTIVE:
             neighbors_[nh.ip_address] = gNeighOrch->getLocalNextHopId(nh);
+            gNeighOrch->enableNeighbor(nh);
             break;
         case MuxState::MUX_STATE_STANDBY:
             neighbors_[nh.ip_address] = tunnelId;
+            gNeighOrch->disableNeighbor(nh);
             mux_cb_orch->addTunnelRoute(nh);
             create_route(pfx, tunnelId);
             break;
@@ -806,7 +813,6 @@ sai_object_id_t MuxOrch::getNextHopTunnelId(std::string tunnelKey, IpAddress& ip
     return it->second.nh_id;
 }
 
-
 MuxCable* MuxOrch::findMuxCableInSubnet(IpAddress ip)
 {
     for (auto it = mux_cable_tb_.begin(); it != mux_cable_tb_.end(); it++)
@@ -821,7 +827,7 @@ MuxCable* MuxOrch::findMuxCableInSubnet(IpAddress ip)
     return nullptr;
 }
 
-bool MuxOrch::isNeighborActive(IpAddress nbr, string alias)
+bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, string& alias)
 {
     MuxCable* ptr = findMuxCableInSubnet(nbr);
 
@@ -830,7 +836,88 @@ bool MuxOrch::isNeighborActive(IpAddress nbr, string alias)
         return ptr->isActive();
     }
 
+    string port;
+    if (!getMuxPort(mac, alias, port))
+    {
+        SWSS_LOG_INFO("Mux get port from FDB failed for '%s' mac '%s'",
+                       nbr.to_string().c_str(), mac.to_string().c_str());
+        return true;
+    }
+
+    if (!port.empty() && isMuxExists(port))
+    {
+        MuxCable* ptr = getMuxCable(port);
+        return ptr->isActive();
+    }
+
     return true;
+}
+
+bool MuxOrch::getMuxPort(const MacAddress& mac, const string& alias, string& portName)
+{
+    portName = std::string();
+    Port rif, port;
+
+    if (!gPortsOrch->getPort(alias, rif))
+    {
+        SWSS_LOG_INFO("Interface '%s' not found in port table", alias.c_str());
+        return false;
+    }
+
+    if (rif.m_type != Port::VLAN)
+    {
+        SWSS_LOG_INFO("Interface type for '%s' is not Vlan, type %d", alias.c_str(), rif.m_type);
+        return false;
+    }
+
+    if (!gFdbOrch->getPort(mac, rif.m_vlan_info.vlan_id, port))
+    {
+        SWSS_LOG_NOTICE("FDB entry not found: Vlan %s, mac %s", alias.c_str(), mac.to_string().c_str());
+        return true;
+    }
+
+    portName = port.m_alias;
+    return true;
+}
+
+void MuxOrch::updateFdb(const FdbUpdate& update)
+{
+    if (!update.add)
+    {
+        /*
+         * For Mac aging, flush events, skip updating mux neighbors.
+         * Instead, wait for neighbor update events
+         */
+        return;
+    }
+
+    NeighborEntry neigh;
+    MacAddress mac;
+    MuxCable* ptr;
+    for (auto nh = mux_nexthop_tb_.begin(); nh != mux_nexthop_tb_.end(); ++nh)
+    {
+        auto res = neigh_orch_->getNeighborEntry(nh->first, neigh, mac);
+        if (!res || update.entry.mac != mac)
+        {
+            continue;
+        }
+
+        if (nh->second != update.entry.port_name)
+        {
+            if (!nh->second.empty() && isMuxExists(nh->second))
+            {
+                ptr = getMuxCable(nh->second);
+                nh->second = update.entry.port_name;
+                ptr->updateNeighbor(nh->first, false);
+            }
+
+            if (isMuxExists(update.entry.port_name))
+            {
+                ptr = getMuxCable(update.entry.port_name);
+                ptr->updateNeighbor(nh->first, true);
+            }
+        }
+    }
 }
 
 void MuxOrch::updateNeighbor(const NeighborUpdate& update)
@@ -841,7 +928,43 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
         if (ptr->isIpInSubnet(update.entry.ip_address))
         {
             ptr->updateNeighbor(update.entry, update.add);
+            return;
         }
+    }
+
+    string port, old_port;
+    if (update.add && !getMuxPort(update.mac, update.entry.alias, port))
+    {
+        return;
+    }
+    else if (update.add)
+    {
+        /* Check if the neighbor already exists */
+        old_port = getNexthopMuxName(update.entry);
+        addNexthop(update.entry);
+    }
+    else
+    {
+        auto it = mux_nexthop_tb_.find(update.entry);
+        if (it != mux_nexthop_tb_.end())
+        {
+            port = it->second;
+            removeNexthop(update.entry);
+        }
+    }
+
+    MuxCable* ptr;
+    if (!old_port.empty() && old_port != port && isMuxExists(old_port))
+    {
+        ptr = getMuxCable(old_port);
+        ptr->updateNeighbor(update.entry, false);
+        addNexthop(update.entry);
+    }
+
+    if (!port.empty() && isMuxExists(port))
+    {
+        ptr = getMuxCable(port);
+        ptr->updateNeighbor(update.entry, update.add);
     }
 }
 
@@ -853,6 +976,16 @@ void MuxOrch::addNexthop(NextHopKey nh, string muxName)
 void MuxOrch::removeNexthop(NextHopKey nh)
 {
     mux_nexthop_tb_.erase(nh);
+}
+
+string MuxOrch::getNexthopMuxName(NextHopKey nh)
+{
+    if (mux_nexthop_tb_.find(nh) == mux_nexthop_tb_.end())
+    {
+        return std::string();
+    }
+
+    return mux_nexthop_tb_[nh];
 }
 
 sai_object_id_t MuxOrch::getNextHopId(const NextHopKey &nh)
@@ -888,6 +1021,12 @@ void MuxOrch::update(SubjectType type, void *cntx)
             updateNeighbor(*update);
             break;
         }
+        case SUBJECT_TYPE_FDB_CHANGE:
+        {
+            FdbUpdate *update = static_cast<FdbUpdate *>(cntx);
+            updateFdb(*update);
+            break;
+        }
         default:
             /* Received update in which we are not interested
              * Ignore it
@@ -896,15 +1035,18 @@ void MuxOrch::update(SubjectType type, void *cntx)
     }
 }
 
-MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch* decapOrch, NeighOrch* neighOrch) :
+MuxOrch::MuxOrch(DBConnector *db, const std::vector<std::string> &tables,
+         TunnelDecapOrch* decapOrch, NeighOrch* neighOrch, FdbOrch* fdbOrch) :
          Orch2(db, tables, request_),
          decap_orch_(decapOrch),
-         neigh_orch_(neighOrch)
+         neigh_orch_(neighOrch),
+         fdb_orch_(fdbOrch)
 {
     handler_map_.insert(handler_pair(CFG_MUX_CABLE_TABLE_NAME, &MuxOrch::handleMuxCfg));
     handler_map_.insert(handler_pair(CFG_PEER_SWITCH_TABLE_NAME, &MuxOrch::handlePeerSwitch));
 
     neigh_orch_->attach(this);
+    fdb_orch_->attach(this);
 }
 
 bool MuxOrch::handleMuxCfg(const Request& request)
@@ -921,13 +1063,13 @@ bool MuxOrch::handleMuxCfg(const Request& request)
     {
         if(isMuxExists(port_name))
         {
-            SWSS_LOG_ERROR("Mux for port '%s' already exists", port_name.c_str());
+            SWSS_LOG_WARN("Mux for port '%s' already exists", port_name.c_str());
             return true;
         }
 
         if (mux_peer_switch_.isZero())
         {
-            SWSS_LOG_ERROR("Peer switch addr not yet configured, port '%s'", port_name.c_str());
+            SWSS_LOG_INFO("Mux Peer switch addr not yet configured, port '%s'", port_name.c_str());
             return false;
         }
 
@@ -998,7 +1140,7 @@ bool MuxOrch::addOperation(const Request& request)
         auto& tn = request.getTableName();
         if (handler_map_.find(tn) == handler_map_.end())
         {
-            SWSS_LOG_ERROR(" %s handler is not initialized", tn.c_str());
+            SWSS_LOG_ERROR("Mux %s handler is not initialized", tn.c_str());
             return true;
         }
 
@@ -1022,7 +1164,7 @@ bool MuxOrch::delOperation(const Request& request)
         auto& tn = request.getTableName();
         if (handler_map_.find(tn) == handler_map_.end())
         {
-            SWSS_LOG_ERROR(" %s handler is not initialized", tn.c_str());
+            SWSS_LOG_ERROR("Mux %s handler is not initialized", tn.c_str());
             return true;
         }
 
@@ -1099,7 +1241,7 @@ bool MuxCableOrch::addOperation(const Request& request)
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     if (!mux_orch->isMuxExists(port_name))
     {
-        SWSS_LOG_WARN("Mux entry for port '%s' doesn't exist", port_name.c_str());
+        SWSS_LOG_INFO("Mux entry for port '%s' doesn't exist", port_name.c_str());
         return false;
     }
 
@@ -1112,7 +1254,7 @@ bool MuxCableOrch::addOperation(const Request& request)
     }
     catch(const std::runtime_error& error)
     {
-        SWSS_LOG_ERROR("Error setting state %s for port %s. Error: %s",
+        SWSS_LOG_ERROR("Mux Error setting state %s for port %s. Error: %s",
                         state.c_str(), port_name.c_str(), error.what());
         return false;
     }
@@ -1171,13 +1313,13 @@ bool MuxStateOrch::addOperation(const Request& request)
     }
     catch(const std::runtime_error& error)
     {
-        SWSS_LOG_ERROR("Error getting state for port %s Error: %s", port_name.c_str(), error.what());
+        SWSS_LOG_ERROR("Mux error getting state for port %s Error: %s", port_name.c_str(), error.what());
         return false;
     }
 
     if (mux_obj->isStateChangeInProgress())
     {
-        SWSS_LOG_NOTICE("Mux state change for port '%s' is in-progress", port_name.c_str());
+        SWSS_LOG_INFO("Mux state change for port '%s' is in-progress", port_name.c_str());
         return false;
     }
 
@@ -1186,7 +1328,7 @@ bool MuxStateOrch::addOperation(const Request& request)
         mux_state = MUX_HW_STATE_UNKNOWN;
     }
 
-    SWSS_LOG_NOTICE("Setting State DB entry (hw state %s, mux state %s) for port %s",
+    SWSS_LOG_NOTICE("Mux setting State DB entry (hw state %s, mux state %s) for port %s",
                      hw_state.c_str(), mux_state.c_str(), port_name.c_str());
 
     updateMuxState(port_name, mux_state);
