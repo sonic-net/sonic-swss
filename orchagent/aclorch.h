@@ -213,6 +213,11 @@ public:
         return m_counterOid;
     }
 
+    vector<sai_object_id_t> getInPorts() 
+    {
+        return m_inPorts;
+    }
+
     static shared_ptr<AclRule> makeShared(acl_table_type_t type, AclOrch *acl, MirrorOrch *mirror, DTelOrch *dtel, const string& rule, const string& table, const KeyOpFieldsValuesTuple&);
     virtual ~AclRule() {}
 
@@ -255,7 +260,7 @@ public:
     bool validateAddAction(string attr_name, string attr_value);
     bool validateAddMatch(string attr_name, string attr_value);
     bool validate();
-    void update(SubjectType, void *);
+    void update(SubjectType type, void *data);
 protected:
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
 };
@@ -429,6 +434,7 @@ public:
     bool updateAclTable(AclTable &currentTable, AclTable &newTable);
     bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
+    void updateAclRule(shared_ptr<AclRule> aclRule, string table_id, string attr_name);
 
     bool isCombinedMirrorV6Table();
     bool isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const;
@@ -443,6 +449,10 @@ public:
     static bool getAclBindPortId(Port& port, sai_object_id_t& port_id);
 
     using Orch::doTask;  // Allow access to the basic doTask
+    map<sai_object_id_t, AclTable>  getMapAclTables()
+    {
+        return m_AclTables;
+    }
 
 private:
     SwitchOrch *m_switchOrch;

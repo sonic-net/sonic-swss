@@ -993,11 +993,26 @@ bool AclRuleL3::validate()
     return true;
 }
 
-void AclRuleL3::update(SubjectType, void *)
+void AclRuleL3::update(SubjectType type, void *data)
 {
-    // Do nothing
-}
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status;
 
+    if(data != NULL)
+    {
+        attr.id = *(sai_acl_entry_attr_t *)data;
+        attr.value = m_matches[*(sai_acl_entry_attr_t *)data];
+        attr.value.aclfield.enable = true;
+        
+        status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to update ACL rule %s, rv:%d",
+                    m_id.c_str(), status);
+        }
+    }
+}
 
 AclRulePfcwd::AclRulePfcwd(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
         AclRuleL3(aclOrch, rule, table, type, createCounter)
@@ -1006,12 +1021,6 @@ AclRulePfcwd::AclRulePfcwd(AclOrch *aclOrch, string rule, string table, acl_tabl
 
 bool AclRulePfcwd::validateAddMatch(string attr_name, string attr_value)
 {
-    if (attr_name != MATCH_TC)
-    {
-        SWSS_LOG_ERROR("%s is not supported for the tables of type Pfcwd", attr_name.c_str());
-        return false;
-    }
-
     return AclRule::validateAddMatch(attr_name, attr_value);
 }
 
@@ -1349,7 +1358,13 @@ bool AclTable::create()
         attr.id = SAI_ACL_TABLE_ATTR_ACL_STAGE;
         attr.value.s32 = (stage == ACL_STAGE_INGRESS) ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
         table_attrs.push_back(attr);
-
+        
+        if(stage == ACL_STAGE_INGRESS) {
+            attr.id = SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS;
+            attr.value.booldata = true;
+            table_attrs.push_back(attr);
+        }
+        
         sai_status_t status = sai_acl_api->create_acl_table(&m_oid, gSwitchId, (uint32_t)table_attrs.size(), table_attrs.data());
 
         if (status == SAI_STATUS_SUCCESS)
@@ -2917,6 +2932,20 @@ bool AclOrch::removeAclRule(string table_id, string rule_id)
     }
 
     return m_AclTables[table_oid].remove(rule_id);
+}
+
+void AclOrch::updateAclRule(shared_ptr<AclRule> newRule, string table_id, string attr_name)
+{
+    sai_object_id_t table_oid = getTableById(table_id);
+
+    if (table_oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_ERROR("Failed to add ACL rule in ACL table %s. Table doesn't exist", table_id.c_str());
+        return;
+    }
+
+    m_AclTables[table_oid].rules[newRule->getId()]->update(SUBJECT_TYPE_PORT_CHANGE, &aclMatchLookup[attr_name]);
+    return;
 }
 
 bool AclOrch::isCombinedMirrorV6Table()
