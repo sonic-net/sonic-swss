@@ -63,7 +63,7 @@ static bool get_value(
     auto value_opt = swss::fvsGetValue(ta, field, true);
     if (!value_opt)
     {
-        SWSS_LOG_WARN("Cannot find field : %s", field.c_str());
+        SWSS_LOG_DEBUG("Cannot find field : %s", field.c_str());
         return false;
     }
 
