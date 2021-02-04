@@ -606,7 +606,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
                 SWSS_LOG_DEBUG("Resolved to sai_object:0x%" PRIx64 ", type:%s, name:%s", sai_obj, ref_type_name.c_str(), object_name.c_str());
                 sai_object_arr.push_back(sai_obj);
                 if (!object_name_list.empty())
-                    object_name_list += string(&list_item_delimiter, 1);
+                    object_name_list += list_item_delimiter;
                 object_name_list += ref_type_name + delimiter + object_name;
             }
             count++;
