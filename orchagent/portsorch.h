@@ -152,6 +152,7 @@ private:
     unique_ptr<Table> m_queuePortTable;
     unique_ptr<Table> m_queueIndexTable;
     unique_ptr<Table> m_queueTypeTable;
+    unique_ptr<Table> m_queueMapTable;
     unique_ptr<Table> m_pgTable;
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;

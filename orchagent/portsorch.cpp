@@ -46,6 +46,7 @@ extern BufferOrch *gBufferOrch;
 extern FdbOrch *gFdbOrch;
 extern Directory<Orch*> gDirectory;
 extern sai_system_port_api_t *sai_system_port_api;
+extern bool gIsSnapshotSupported;
 
 #define VLAN_PREFIX         "Vlan"
 #define DEFAULT_VLAN_ID     1
@@ -247,6 +248,7 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_queuePortTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_PORT_MAP));
     m_queueIndexTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_INDEX_MAP));
     m_queueTypeTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_TYPE_MAP));
+    m_queueMapTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_MAP));
 
     /* Initialize ingress priority group tables */
     m_pgTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_PG_NAME_MAP));
@@ -2130,6 +2132,17 @@ void PortsOrch::doPortTask(Consumer &consumer)
             {
                 addSystemPorts();
                 m_initDone = true;
+                /* PG and queue maps per port need to be recreated
+                 * after this step for the threshold feature.
+                 */
+                generateQueueMap();
+                generatePriorityGroupMap();
+
+                /* Let threshold know about the updated Maps */
+                FieldValueTuple finish_notice("Done", "true");
+                vector<FieldValueTuple> attrs = { finish_notice };
+                m_queueMapTable->set("queuMapInitDone", attrs);
+
                 SWSS_LOG_INFO("Get PortInitDone notification from portsyncd.");
             }
 

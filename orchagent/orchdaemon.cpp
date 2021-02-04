@@ -314,6 +314,17 @@ bool OrchDaemon::init()
     }
     gAclOrch = new AclOrch(acl_table_connectors, gSwitchOrch, gPortsOrch, gMirrorOrch, gNeighOrch, gRouteOrch, dtel_orch);
 
+    ThresholdOrch *thres_orch = NULL;
+    if (gIsThresholdSupported == true)
+    {
+        vector<string> thresOrch_tables = {
+            CFG_THRESHOLD_TABLE_NAME,
+            CFG_THRESHOLD_BUFFERPOOL_TABLE_NAME
+        };
+
+        thres_orch = new ThresholdOrch(m_configDb, thresOrch_tables, gPortsOrch);
+    }
+
     m_orchList.push_back(gFdbOrch);
     m_orchList.push_back(gMirrorOrch);
     m_orchList.push_back(gAclOrch);
@@ -332,6 +343,10 @@ bool OrchDaemon::init()
     m_orchList.push_back(mux_orch);
     m_orchList.push_back(mux_cb_orch);
     m_orchList.push_back(mux_st_orch);
+    if (thres_orch)
+    {
+        m_orchList.push_back(thres_orch);
+    }
 
     m_select = new Select();
 
