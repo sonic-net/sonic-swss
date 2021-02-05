@@ -66,6 +66,14 @@ static map<string, sai_port_fec_mode_t> fec_mode_map =
     { "fc", SAI_PORT_FEC_MODE_FC }
 };
 
+static map<string, sai_port_flow_control_mode_t> flowctl_mode_map =
+{
+    { "off",  SAI_PORT_FLOW_CONTROL_MODE_DISABLE },
+    { "tx_only", SAI_PORT_FLOW_CONTROL_MODE_TX_ONLY },
+    { "rx_only", SAI_PORT_FLOW_CONTROL_MODE_RX_ONLY },
+    { "on",  SAI_PORT_FLOW_CONTROL_MODE_BOTH_ENABLE }
+};
+
 static map<string, sai_port_priority_flow_control_mode_t> pfc_asym_map =
 {
     { "on", SAI_PORT_PRIORITY_FLOW_CONTROL_MODE_SEPARATE },
@@ -890,6 +898,26 @@ bool PortsOrch::setPortFec(Port &port, sai_port_fec_mode_t mode)
 
     setGearboxPortsAttr(port, SAI_PORT_ATTR_FEC_MODE, &mode);
 
+    return true;
+}
+
+bool PortsOrch::setPortFlowControl(sai_object_id_t id, sai_port_flow_control_mode_t mode)
+{
+    SWSS_LOG_ENTER();
+
+    sai_attribute_t attr;
+    attr.id = SAI_PORT_ATTR_GLOBAL_FLOW_CONTROL_MODE;
+    attr.value.s32 = mode;
+
+    sai_status_t status = sai_port_api->set_port_attribute(id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to set flow control mode %d to port pid:%" PRIx64,
+                       mode, id);
+        return false;
+    }
+    SWSS_LOG_INFO("Set flow control mode %d to port pid:%" PRIx64,
+                       mode, id);
     return true;
 }
 
@@ -2147,6 +2175,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             string admin_status;
             string fec_mode;
             string pfc_asym;
+            string flowctl_mode;
             uint32_t mtu = 0;
             uint32_t speed = 0;
             string learn_mode;
@@ -2197,6 +2226,12 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 if (fvField(i) == "fec")
                 {
                     fec_mode = fvValue(i);
+                }
+
+                /* Set port flow control */
+                if (fvField(i) == "flow_control")
+                {
+                    flowctl_mode = fvValue(i);
                 }
 
                 /* Get port fdb learn mode*/
@@ -2508,6 +2543,33 @@ void PortsOrch::doPortTask(Consumer &consumer)
                     else
                     {
                         SWSS_LOG_ERROR("Unknown fec mode %s", fec_mode.c_str());
+                    }
+                }
+
+                if (!flowctl_mode.empty())
+                {
+                    if (flowctl_mode_map.find(flowctl_mode) != flowctl_mode_map.end())
+                    {
+                        /* reset flowctl mode upon mode change */
+                        if (p.m_flowctl_mode != flowctl_mode_map[flowctl_mode])
+                        {
+                            p.m_flowctl_mode = flowctl_mode_map[flowctl_mode];
+                            if (setPortFlowControl(p.m_port_id, p.m_flowctl_mode))
+                            {
+                                m_portList[alias] = p;
+                                SWSS_LOG_NOTICE("Set port %s flowctl to %s", alias.c_str(), flowctl_mode.c_str());
+                            }
+                            else
+                            {
+                                SWSS_LOG_ERROR("Failed to set port %s flowctl to %s", alias.c_str(), flowctl_mode.c_str());
+                                it++;
+                                continue;
+                            }
+                        }
+                    }
+                    else
+                    {
+                        SWSS_LOG_ERROR("Unknown flowctl mode %s", flowctl_mode.c_str());
                     }
                 }
 
