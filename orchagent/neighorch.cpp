@@ -135,8 +135,17 @@ void NeighOrch::update(SubjectType type, void *cntx)
 
     return;
 }
+
 bool NeighOrch::hasNextHop(const NextHopKey &nexthop)
 {
+    // First check if mux has NH
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    sai_object_id_t nhid = mux_orch->getNextHopId(nexthop);
+    if (nhid != SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
     return m_syncdNextHops.find(nexthop) != m_syncdNextHops.end();
 }
 
@@ -250,11 +259,11 @@ bool NeighOrch::setNextHopFlag(const NextHopKey &nexthop, const uint32_t nh_flag
     }
 
     nhop->second.nh_flags |= nh_flag;
-
+    uint32_t count;
     switch (nh_flag)
     {
         case NHFLAGS_IFDOWN:
-            rc = gRouteOrch->invalidnexthopinNextHopGroup(nexthop);
+            rc = gRouteOrch->invalidnexthopinNextHopGroup(nexthop, count);
             break;
         default:
             assert(0);
@@ -279,11 +288,11 @@ bool NeighOrch::clearNextHopFlag(const NextHopKey &nexthop, const uint32_t nh_fl
     }
 
     nhop->second.nh_flags &= ~nh_flag;
-
+    uint32_t count;
     switch (nh_flag)
     {
         case NHFLAGS_IFDOWN:
-            rc = gRouteOrch->validnexthopinNextHopGroup(nexthop);
+            rc = gRouteOrch->validnexthopinNextHopGroup(nexthop, count);
             break;
         default:
             assert(0);
@@ -391,9 +400,31 @@ bool NeighOrch::removeOverlayNextHop(const NextHopKey &nexthop)
     return true;
 }
 
+sai_object_id_t NeighOrch::getLocalNextHopId(const NextHopKey& nexthop)
+{
+    if (m_syncdNextHops.find(nexthop) == m_syncdNextHops.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    return m_syncdNextHops[nexthop].next_hop_id;
+}
+
 sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
 {
     assert(hasNextHop(nexthop));
+
+    /*
+     * The nexthop id could be varying depending on the use-case
+     * For e.g, a route could have a direct neighbor but may require
+     * to be tx via tunnel nexthop
+     */
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    sai_object_id_t nhid = mux_orch->getNextHopId(nexthop);
+    if (nhid != SAI_NULL_OBJECT_ID)
+    {
+        return nhid;
+    }
     return m_syncdNextHops[nexthop].next_hop_id;
 }
 
@@ -403,16 +434,22 @@ int NeighOrch::getNextHopRefCount(const NextHopKey &nexthop)
     return m_syncdNextHops[nexthop].ref_count;
 }
 
-void NeighOrch::increaseNextHopRefCount(const NextHopKey &nexthop)
+void NeighOrch::increaseNextHopRefCount(const NextHopKey &nexthop, uint32_t count)
 {
     assert(hasNextHop(nexthop));
-    m_syncdNextHops[nexthop].ref_count ++;
+    if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end())
+    {
+        m_syncdNextHops[nexthop].ref_count += count;
+    }
 }
 
-void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop)
+void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop, uint32_t count)
 {
     assert(hasNextHop(nexthop));
-    m_syncdNextHops[nexthop].ref_count --;
+    if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end())
+    {
+        m_syncdNextHops[nexthop].ref_count -= count;
+    }
 }
 
 bool NeighOrch::getNeighborEntry(const NextHopKey &nexthop, NeighborEntry &neighborEntry, MacAddress &macAddress)

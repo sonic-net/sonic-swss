@@ -295,12 +295,13 @@ void RouteOrch::detach(Observer *observer, const IpAddress& dstAddr, sai_object_
     }
 }
 
-bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop)
+bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& count)
 {
     SWSS_LOG_ENTER();
 
     sai_object_id_t nexthop_id;
     sai_status_t status;
+    count = 0;
 
     for (auto nhopgroup = m_syncdNextHopGroups.begin();
          nhopgroup != m_syncdNextHopGroups.end(); ++nhopgroup)
@@ -333,6 +334,7 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop)
             return false;
         }
 
+        ++count;
         gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
         nhopgroup->second.nhopgroup_members[nexthop] = nexthop_id;
     }
@@ -345,12 +347,13 @@ bool RouteOrch::validnexthopinNextHopGroup(const NextHopKey &nexthop)
     return true;
 }
 
-bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop)
+bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop, uint32_t& count)
 {
     SWSS_LOG_ENTER();
 
     sai_object_id_t nexthop_id;
     sai_status_t status;
+    count = 0;
 
     for (auto nhopgroup = m_syncdNextHopGroups.begin();
          nhopgroup != m_syncdNextHopGroups.end(); ++nhopgroup)
@@ -371,6 +374,7 @@ bool RouteOrch::invalidnexthopinNextHopGroup(const NextHopKey &nexthop)
             return false;
         }
 
+        ++count;
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
 
@@ -562,7 +566,7 @@ void RouteOrch::doTask(Consumer& consumer)
                      * way is to create loopback interface and then create
                      * route pointing to it, so that we can traps packets to
                      * CPU */
-                    if (alias == "eth0" || alias == "docker0" ||
+                    if (alias == "eth0" || alias == "docker0" || alias == "tun0" ||
                         alias == "lo" || !alias.compare(0, strlen(LOOPBACK_PREFIX), LOOPBACK_PREFIX))
                     {
                         excp_intfs_flag = true;
@@ -1186,6 +1190,52 @@ bool RouteOrch::removeNextHopGroup(const NextHopGroupKey &nexthops)
         }
     }
     m_syncdNextHopGroups.erase(nexthops);
+
+    return true;
+}
+
+bool RouteOrch::updateNextHopRoutes(const NextHopKey& nextHop, uint32_t& numRoutes)
+{
+    numRoutes = 0;
+    sai_route_entry_t route_entry;
+    sai_attribute_t route_attr;
+    sai_object_id_t next_hop_id;
+
+    for (auto rt_table : m_syncdRoutes)
+    {
+        for (auto rt_entry : rt_table.second)
+        {
+            // Skip routes with ecmp nexthops
+            if (rt_entry.second.getSize() > 1)
+            {
+                continue;
+            }
+
+            if (rt_entry.second.contains(nextHop))
+            {
+                SWSS_LOG_INFO("Updating route %s during nexthop status change",
+                               rt_entry.first.to_string().c_str());
+                next_hop_id = m_neighOrch->getNextHopId(nextHop);
+
+                route_entry.vr_id = rt_table.first;
+                route_entry.switch_id = gSwitchId;
+                copy(route_entry.destination, rt_entry.first);
+
+                route_attr.id = SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID;
+                route_attr.value.oid = next_hop_id;
+
+                sai_status_t status = sai_route_api->set_route_entry_attribute(&route_entry, &route_attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to update route %s, rv:%d",
+                                    rt_entry.first.to_string().c_str(), status);
+                    return false;
+                }
+
+                ++numRoutes;
+            }
+        }
+    }
 
     return true;
 }

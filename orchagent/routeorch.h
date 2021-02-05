@@ -107,8 +107,10 @@ public:
     bool addNextHopGroup(const NextHopGroupKey&);
     bool removeNextHopGroup(const NextHopGroupKey&);
 
-    bool validnexthopinNextHopGroup(const NextHopKey&);
-    bool invalidnexthopinNextHopGroup(const NextHopKey&);
+    bool updateNextHopRoutes(const NextHopKey&, uint32_t&);
+
+    bool validnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
+    bool invalidnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
 
     bool createRemoteVtep(sai_object_id_t, const NextHopKey&);
     bool deleteRemoteVtep(sai_object_id_t, const NextHopKey&);

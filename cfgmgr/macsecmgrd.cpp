@@ -6,17 +6,24 @@
 #include <mutex>
 #include <algorithm>
 
-#include "dbconnector.h"
-#include "select.h"
-#include "exec.h"
-#include "schema.h"
-#include "tunnelmgr.h"
+#include <logger.h>
+#include <producerstatetable.h>
+#include <macaddress.h>
+#include <exec.h>
+#include <tokenize.h>
+#include <shellcmd.h>
+#include <warm_restart.h>
+#include <select.h>
+
+#include "macsecmgr.h"
 
 using namespace std;
 using namespace swss;
 
 /* select() function timeout retry time, in millisecond */
 #define SELECT_TIMEOUT 1000
+
+MacAddress gMacAddress;
 
 /*
  * Following global variables are defined here for the purpose of
@@ -34,25 +41,26 @@ string gRecordFile;
 /* Global database mutex */
 mutex gDbMutex;
 
+
 int main(int argc, char **argv)
 {
-    Logger::linkToDbNative("tunnelmgrd");
-
-    SWSS_LOG_NOTICE("--- Starting Tunnelmgrd ---");
 
     try
     {
-        vector<string> cfgTunTables = {
-            CFG_TUNNEL_TABLE_NAME,
-            CFG_LOOPBACK_INTERFACE_TABLE_NAME
+        Logger::linkToDbNative("macsecmgrd");
+        SWSS_LOG_NOTICE("--- Starting macsecmgrd ---");
+
+        swss::DBConnector cfgDb("CONFIG_DB", 0);
+        swss::DBConnector stateDb("STATE_DB", 0);
+
+        std::vector<std::string> cfg_macsec_tables = {
+            CFG_MACSEC_PROFILE_TABLE_NAME,
+            CFG_PORT_TABLE_NAME,
         };
 
-        DBConnector cfgDb("CONFIG_DB", 0);
-        DBConnector appDb("APPL_DB", 0);
+        MACsecMgr macsecmgr(&cfgDb, &stateDb, cfg_macsec_tables);
 
-        TunnelMgr tunnelmgr(&cfgDb, &appDb, cfgTunTables);
-
-        std::vector<Orch *> cfgOrchList = {&tunnelmgr};
+        std::vector<Orch *> cfgOrchList = {&macsecmgr};
 
         swss::Select s;
         for (Orch *o : cfgOrchList)
@@ -74,7 +82,7 @@ int main(int argc, char **argv)
             }
             if (ret == Select::TIMEOUT)
             {
-                tunnelmgr.doTask();
+                macsecmgr.doTask();
                 continue;
             }
 
