@@ -1,8 +1,6 @@
 #include "macsecorch.h"
 
 #include <macaddress.h>
-#include <redisapi.h>
-#include <redisclient.h>
 #include <sai_serialize.h>
 #include <swss/stringutility.h>
 #include <swss/redisutility.h>
