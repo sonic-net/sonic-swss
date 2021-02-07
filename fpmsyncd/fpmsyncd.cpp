@@ -158,6 +158,13 @@ int main(int argc, char **argv)
                     {
                         readyToReconcile = sync.isReadyToReconcile();
                         SWSS_LOG_NOTICE("Warm-Restart EOIU hold timer expired.");
+                        if(!readyToReconcile)
+                        {
+                            // re-start check timer for every 2 seconds now on
+                            reconcileCheckTimer.stop();
+                            reconcileCheckTimer.setInterval(timespec{2, 0});
+                            reconcileCheckTimer.start();
+                        }
                     }
 
                     if (sync.m_warmStartHelper.inProgress() && readyToReconcile)
@@ -210,7 +217,7 @@ int main(int argc, char **argv)
                     {
                         if (sync.isReadyToReconcile())
                         {
-                            reconcileHoldTimer.setInterval(timespec{2, 0});
+                            reconcileHoldTimer.setInterval(timespec{1, 0});
                             reconcileHoldTimer.start();
                             s.addSelectable(&reconcileHoldTimer);
                             SWSS_LOG_NOTICE("Warm-Restart started reconcile hold timer ");
