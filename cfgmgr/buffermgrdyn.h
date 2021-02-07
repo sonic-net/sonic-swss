@@ -73,7 +73,7 @@ typedef struct {
 typedef enum {
     // Port is under initializing, which means its info hasn't been comprehensive for calculating headroom
     PORT_INITIALIZING,
-    // All necessary information for calculating headrom is ready
+    // All necessary information for calculating headroom is ready
     PORT_READY
 } port_state_t;
 

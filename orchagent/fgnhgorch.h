@@ -83,7 +83,7 @@ typedef std::map<IpAddress, FgNhgEntry*> FgNhgMembers;
 /* Main structure to hold user configuration */
 typedef std::map<FgNhg, FgNhgEntry> FgNhgs;
 
-/* Helper struct populated at every route change to identify the next-hop changes which occured */
+/* Helper struct populated at every route change to identify the next-hop changes which occurred */
 typedef struct
 {
     std::vector<NextHopKey> nhs_to_del;

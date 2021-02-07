@@ -19,7 +19,7 @@
  * 1. All keys in this file are in format of APPL_DB key.
  *    Key population:
  *        On receiving item update from CONFIG_DB: key has been transformed into the format of APPL_DB
- *        In intermal maps: table name removed from the index
+ *        In internal maps: table name removed from the index
  * 2. Maintain maps for pools, profiles and PGs in CONFIG_DB and APPL_DB
  * 3. Keys of maps in this file don't contain the TABLE_NAME
  * 3. 
@@ -392,7 +392,7 @@ void BufferMgrDynamic::checkSharedBufferPoolSize()
                 // Eventually, the correct values will pushed to APPL_DB and then ASIC_DB
                 recalculateSharedBufferPool();
                 m_firstTimeCalculateBufferPool = false;
-                SWSS_LOG_NOTICE("Buffer pool update defered because port is still under initialization, start polling timer");
+                SWSS_LOG_NOTICE("Buffer pool update deferred because port is still under initialization, start polling timer");
             }
 
             return;
@@ -631,7 +631,7 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
 }
 
 //Called when speed/cable length updated from CONFIG_DB
-// Update buffer profile of a certern PG of a port or all PGs of the port according to its speed, cable_length and mtu
+// Update buffer profile of a certain PG of a port or all PGs of the port according to its speed, cable_length and mtu
 // Called when
 //    - port's speed, cable_length or mtu updated
 //    - one buffer pg of port's is set to dynamic calculation
@@ -1563,7 +1563,7 @@ task_process_status BufferMgrDynamic::handleBufferPortEgressProfileListTable(Key
  * This function copies the data from tables in CONFIG_DB to APPL_DB.
  * With dynamically buffer calculation supported, the following tables
  * will be moved to APPL_DB from CONFIG_DB because the CONFIG_DB contains
- * confgured entries only while APPL_DB contains dynamically generated entries
+ * configured entries only while APPL_DB contains dynamically generated entries
  *  - BUFFER_POOL
  *  - BUFFER_PROFILE
  *  - BUFFER_PG

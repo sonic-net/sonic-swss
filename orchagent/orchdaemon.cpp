@@ -58,7 +58,7 @@ OrchDaemon::~OrchDaemon()
     /*
      * Some orchagents call other agents in their destructor.
      * To avoid accessing deleted agent, do deletion in reverse order.
-     * NOTE: This is stil not a robust solution, as order in this list
+     * NOTE: This is still not a robust solution, as order in this list
      *       does not strictly match the order of construction of agents.
      * For a robust solution, first some cleaning/house-keeping in
      * orchagents management is in order.
@@ -602,7 +602,7 @@ void OrchDaemon::start()
 
 /*
  * Try to perform orchagent state restore and dynamic states sync up if
- * warm start reqeust is detected.
+ * warm start request is detected.
  */
 bool OrchDaemon::warmRestoreAndSyncUp()
 {
@@ -618,7 +618,7 @@ bool OrchDaemon::warmRestoreAndSyncUp()
      *
      * First iteration: switchorch, Port init/hostif create part of portorch, buffers configuration
      *
-     * Second iteratoin: port speed/mtu/fec_mode/pfc_asym/admin_status config,
+     * Second iteration: port speed/mtu/fec_mode/pfc_asym/admin_status config,
      * other orch(s) which wait for port to become ready.
      *
      * Third iteration: Drain remaining data that are out of order.

@@ -677,7 +677,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         if (op == "ALL")
         {
             /*
-             * so far only support flush all the FDB entris
+             * so far only support flush all the FDB entries
              * flush per port and flush per vlan will be added later.
              */
             status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
@@ -741,7 +741,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
  * Description:
  *     Flushes FDB entries based on bridge_port_oid, or vlan_oid or both.
  *     This function is called in three cases.
- *     1. Port is reoved from VLAN (via SUBJECT_TYPE_VLAN_MEMBER_CHANGE)
+ *     1. Port is removed from VLAN (via SUBJECT_TYPE_VLAN_MEMBER_CHANGE)
  *     2. Bridge port OID is removed (Direct call)
  *     3. Port is shut down (via SUBJECT_TYPE_
  */

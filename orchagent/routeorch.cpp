@@ -54,10 +54,10 @@ RouteOrch::RouteOrch(DBConnector *db, string tableName, SwitchOrch *switchOrch, 
 
         /*
          * ASIC specific workaround to re-calculate maximum ECMP groups
-         * according to diferent ECMP mode used.
+         * according to different ECMP mode used.
          *
          * On Mellanox platform, the maximum ECMP groups returned is the value
-         * under the condition that the ECMP group size is 1. Deviding this
+         * under the condition that the ECMP group size is 1. Dividing this
          * number by DEFAULT_MAX_ECMP_GROUP_SIZE gets the maximum number of
          * ECMP groups when the maximum ECMP group size is 32.
          */
@@ -549,7 +549,7 @@ void RouteOrch::doTask(Consumer& consumer)
                 }
 
                 /* Set the empty ip(s) to zero
-                 * as IpAddress("") will construst a incorrect ip. */
+                 * as IpAddress("") will construct a incorrect ip. */
                 for (auto &ip : ipv)
                 {
                     if (ip.empty())

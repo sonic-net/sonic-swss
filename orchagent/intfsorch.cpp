@@ -1047,7 +1047,7 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
         attr.id = SAI_ROUTER_INTERFACE_ATTR_NAT_ZONE_ID;
         attr.value.u32 = port.m_nat_zone_id;
 
-        SWSS_LOG_INFO("Assinging NAT zone id %d to interface %s\n", attr.value.u32, port.m_alias.c_str());
+        SWSS_LOG_INFO("Assigning NAT zone id %d to interface %s\n", attr.value.u32, port.m_alias.c_str());
         attrs.push_back(attr);
     }
 

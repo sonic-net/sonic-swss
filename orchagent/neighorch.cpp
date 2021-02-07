@@ -823,7 +823,7 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
         {
             if (status == SAI_STATUS_ITEM_NOT_FOUND)
             {
-                SWSS_LOG_ERROR("Failed to locate neigbor %s on %s, rv:%d",
+                SWSS_LOG_ERROR("Failed to locate neighbor %s on %s, rv:%d",
                         m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
                 return true;
             }

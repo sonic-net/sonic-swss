@@ -173,7 +173,7 @@ bool AclRule::validateAddPriority(string attr_name, string attr_value)
         char *endp = NULL;
         errno = 0;
         m_priority = (uint32_t)strtol(attr_value.c_str(), &endp, 0);
-        // chack conversion was successfull and the value is within the allowed range
+        // check conversion was successful and the value is within the allowed range
         status = (errno == 0) &&
                  (endp == attr_value.c_str() + attr_value.size()) &&
                  (m_priority >= m_minPriority) &&
@@ -2476,7 +2476,7 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
             }
         }
 #else
-        /* assume all enum values are supported untill sai object api is available */
+        /* assume all enum values are supported until sai object api is available */
         for (size_t i = 0; i < meta->enummetadata->valuescount; i++)
         {
             m_aclEnumActionCapabilities[acl_action].insert(meta->enummetadata->values[i]);
@@ -2747,7 +2747,7 @@ bool AclOrch::addAclTable(AclTable &newTable)
         /* If ACL table exists, remove the table first.*/
         if (!removeAclTable(table_id))
         {
-            SWSS_LOG_ERROR("Failed to remove exsiting ACL table %s before adding the new one",
+            SWSS_LOG_ERROR("Failed to remove existing ACL table %s before adding the new one",
                     table_id.c_str());
             return false;
         }

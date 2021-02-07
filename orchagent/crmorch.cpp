@@ -596,7 +596,7 @@ void CrmOrch::checkCrmThresholds()
                 }
                 else
                 {
-                    SWSS_LOG_WARN("%s Exception occured (div by Zero): Used count %u free count %u",
+                    SWSS_LOG_WARN("%s Exception occurred (div by Zero): Used count %u free count %u",
                                   res.name.c_str(), cnt.usedCounter, cnt.availableCounter);
                 }
             }

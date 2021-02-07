@@ -352,7 +352,7 @@ public:
     map<string, shared_ptr<AclRule>> rules;
     // Set to store the ACL table port alias
     set<string> portSet;
-    // Set to store the not cofigured ACL table port alias
+    // Set to store the not configured ACL table port alias
     set<string> pendingPortSet;
 
     AclTable()
@@ -374,9 +374,9 @@ public:
     bool validate();
     bool create();
 
-    // Bind the ACL table to a port which is alread linked
+    // Bind the ACL table to a port which is already linked
     bool bind(sai_object_id_t portOid);
-    // Unbind the ACL table to a port which is alread linked
+    // Unbind the ACL table to a port which is already linked
     bool unbind(sai_object_id_t portOid);
     // Bind the ACL table to all ports linked
     bool bind();

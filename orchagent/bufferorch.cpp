@@ -178,7 +178,7 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
     // is received on buffer pool watermark key under table "FLEX_COUNTER_GROUP_TABLE"
     // Because the SubscriberStateTable listens to the entire keyspace of "BUFFER_POOL_WATERMARK", any update
     // to field value tuples under key "BUFFER_POOL_WATERMARK" will cause this tuple to be heard again
-    // To avoid resync the coutner ID list a second time, we introduce a data member variable to mark whether
+    // To avoid resync the counter ID list a second time, we introduce a data member variable to mark whether
     // this operation has already been done or not yet
     if (m_isBufferPoolWatermarkCounterIdListGenerated)
     {

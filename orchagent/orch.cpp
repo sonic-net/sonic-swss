@@ -103,7 +103,7 @@ void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
     {
         /*
         * Now we are trying to add the key-value with SET.
-        * We maintain maximun two values per key.
+        * We maintain maximum two values per key.
         * In case there is one key-value, it should be DEL or SET
         * In case there are two key-value pairs, it should be DEL then SET
         * The code logic is following:
@@ -531,7 +531,7 @@ void Orch::logfileReopen()
 
     /*
      * On log rotate we will use the same file name, we are assuming that
-     * logrotate deamon move filename to filename.1 and we will create new
+     * logrotate daemon move filename to filename.1 and we will create new
      * empty file here.
      */
 
@@ -637,7 +637,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
         range_high = (uint32_t)stoul(range_values[1]);
         if (range_low >= range_high)
         {
-            SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than righ value.\n", input.c_str());
+            SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than right value.\n", input.c_str());
             return false;
         }
     }
