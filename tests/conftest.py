@@ -31,7 +31,7 @@ from buffer_model import enable_dynamic_buffer
 # ports in the system (much like the rest of the test suite). This should be adjusted to accomodate
 # a dynamic number of ports. GitHub Issue: Azure/sonic-swss#1384.
 NUM_PORTS = 32
-
+FABRIC_NUM_PORTS = 16
 
 def ensure_system(cmd):
     rc, output = subprocess.getstatusoutput(cmd)
@@ -470,6 +470,12 @@ class DockerVirtualSwitch:
         """
         num_ports = NUM_PORTS
 
+        # Voq and fabric asics have fabric ports enabled
+        self.get_config_db()
+        metadata = self.config_db.get_entry('DEVICE_METADATA|localhost', '')
+        if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
+            num_ports = NUM_PORTS + FABRIC_NUM_PORTS
+
         # Verify that all ports have been initialized and configured
         app_db = self.get_app_db()
         startup_polling_config = PollingConfig(5, timeout, strict=True)
@@ -483,6 +489,11 @@ class DockerVirtualSwitch:
         # Verify that all ports have been created
         asic_db = self.get_asic_db()
         asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_PORT", num_ports + 1)  # +1 CPU Port
+
+        # Verify that fabric ports are monitored in STATE_DB
+        if metadata.get('switch_type', 'npu') in ['voq', 'fabric']:
+            self.get_state_db()
+            self.state_db.wait_for_n_keys("FABRIC_PORT_TABLE", 16)
 
     def net_cleanup(self) -> None:
         """Clean up network, remove extra links."""
