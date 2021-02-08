@@ -767,8 +767,8 @@ void OrchDaemon::addOrchList(Orch *o)
     m_orchList.push_back(o);
 }
 
-FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
-    OrchDaemon(applDb, configDb, stateDb),
+FabricOrchDaemon::FabricOrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
+    OrchDaemon(applDb, configDb, stateDb, chassisAppDb),
     m_applDb(applDb),
     m_configDb(configDb)
 {

@@ -73,7 +73,7 @@ private:
 class FabricOrchDaemon : public OrchDaemon
 {
 public:
-    FabricOrchDaemon(DBConnector *, DBConnector *, DBConnector *);
+    FabricOrchDaemon(DBConnector *, DBConnector *, DBConnector *, DBConnector *);
     bool init() override;
 private:
     DBConnector *m_applDb;
