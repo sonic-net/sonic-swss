@@ -999,7 +999,7 @@ void AclRuleL3::update(SubjectType type, void *data)
     sai_attribute_t attr;
     sai_status_t status;
 
-    if(data != NULL)
+    if (data != NULL)
     {
         attr.id = *(sai_acl_entry_attr_t *)data;
         attr.value = m_matches[*(sai_acl_entry_attr_t *)data];
@@ -1008,8 +1008,7 @@ void AclRuleL3::update(SubjectType type, void *data)
         status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            SWSS_LOG_ERROR("Failed to update ACL rule %s, rv:%d",
-                    m_id.c_str(), status);
+            SWSS_LOG_ERROR("Failed to update ACL rule %s, rv:%d", m_id.c_str(), status);
         }
     }
 }
@@ -1021,6 +1020,12 @@ AclRulePfcwd::AclRulePfcwd(AclOrch *aclOrch, string rule, string table, acl_tabl
 
 bool AclRulePfcwd::validateAddMatch(string attr_name, string attr_value)
 {
+    if ((attr_name != MATCH_TC) && (attr_name != MATCH_IN_PORTS))
+    {
+        SWSS_LOG_ERROR("%s is not supported for the tables of type PFCWD", attr_name.c_str());
+        return false;
+    }
+
     return AclRule::validateAddMatch(attr_name, attr_value);
 }
 
@@ -1349,7 +1354,7 @@ bool AclTable::create()
     attr.value.s32list.list = bpoint_list.data();
     table_attrs.push_back(attr);
 
-    if (type == ACL_TABLE_PFCWD)
+    if ((type == ACL_TABLE_PFCWD) || (type == ACL_TABLE_DROP))
     {
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_TC;
         attr.value.booldata = true;
@@ -1359,7 +1364,7 @@ bool AclTable::create()
         attr.value.s32 = (stage == ACL_STAGE_INGRESS) ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
         table_attrs.push_back(attr);
         
-        if(stage == ACL_STAGE_INGRESS) {
+        if (stage == ACL_STAGE_INGRESS) {
             attr.id = SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS;
             attr.value.booldata = true;
             table_attrs.push_back(attr);
@@ -2934,18 +2939,58 @@ bool AclOrch::removeAclRule(string table_id, string rule_id)
     return m_AclTables[table_oid].remove(rule_id);
 }
 
-void AclOrch::updateAclRule(shared_ptr<AclRule> newRule, string table_id, string attr_name)
+bool AclOrch::updateAclRule(shared_ptr<AclRule> rule, string table_id, string attr_name, void *data, bool oper)
 {
+    SWSS_LOG_ENTER();
+    
     sai_object_id_t table_oid = getTableById(table_id);
+    string attr_value;
 
-    if (table_oid == SAI_NULL_OBJECT_ID)
+    if (table_oid == SAI_NULL_OBJECT_ID) 
     {
-        SWSS_LOG_ERROR("Failed to add ACL rule in ACL table %s. Table doesn't exist", table_id.c_str());
-        return;
+        SWSS_LOG_ERROR("Failed to update ACL rule in ACL table %s. Table doesn't exist", table_id.c_str());
+        return false;
     }
 
-    m_AclTables[table_oid].rules[newRule->getId()]->update(SUBJECT_TYPE_PORT_CHANGE, &aclMatchLookup[attr_name]);
-    return;
+    switch(aclMatchLookup[attr_name]) 
+    {
+        case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS:
+        {
+            sai_object_id_t port_oid = *(sai_object_id_t *)data;
+            vector<sai_object_id_t> in_ports = rule->getInPorts();
+
+            if(oper == RULE_OPER_ADD) {
+                in_ports.push_back(port_oid);
+            } else {
+                vector<sai_object_id_t> :: iterator port_iter;
+                for (auto port_iter = in_ports.begin(); port_iter != in_ports.end(); port_iter++)
+                {
+                    if(*port_iter == port_oid) {
+                        in_ports.erase(port_iter);
+                        break;
+                    }
+                }
+            }
+            
+            for (const auto& port_iter: in_ports)
+            {
+                Port p;
+                gPortsOrch->getPort(port_iter, p);
+                attr_value += p.m_alias;
+                attr_value += ',';
+            }
+            attr_value.pop_back();
+
+            rule->validateAddMatch(MATCH_IN_PORTS, attr_value);  
+            m_AclTables[table_oid].rules[rule->getId()]->update(SUBJECT_TYPE_PORT_CHANGE, &aclMatchLookup[attr_name]);
+        }
+        break;
+
+        default:
+            break;
+    }
+
+    return true;
 }
 
 bool AclOrch::isCombinedMirrorV6Table()
