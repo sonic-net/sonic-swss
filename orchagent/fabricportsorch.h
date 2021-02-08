@@ -22,11 +22,8 @@ private:
     shared_ptr<DBConnector> m_flex_db;
 
     unique_ptr<Table> m_stateTable;
-    unique_ptr<Table> m_portNameQueueCounterTable;
-    unique_ptr<Table> m_queuePortCounterTable;
-    unique_ptr<Table> m_queueIndexCounterTable;
-    unique_ptr<Table> m_queueTypeCounterTable;
-    unique_ptr<Table> m_portNamePortCounterTable;
+    unique_ptr<Table> m_laneQueueCounterTable;
+    unique_ptr<Table> m_lanePortCounterTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
 
     swss::SelectableTimer *m_timer = nullptr;
@@ -37,8 +34,8 @@ private:
     sai_uint32_t m_fabricPortCount;
     map<int, sai_object_id_t> m_fabricLanePortMap;
     unordered_map<int, bool> m_portStatus;
-    unordered_map<int, size_t> m_portFlappingCount;
-    unordered_map<int, time_t> m_portFlappingSeenLastTime;
+    unordered_map<int, size_t> m_portDownCount;
+    unordered_map<int, time_t> m_portDownSeenLastTime;
 
     bool m_getFabricPortListDone = false;
     bool m_isQueueStatsGenerated = false;

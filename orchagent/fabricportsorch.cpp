@@ -17,17 +17,11 @@
 #define FABRIC_PORT_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS   10000
 #define FABRIC_QUEUE_STAT_COUNTER_FLEX_COUNTER_GROUP        "FABRIC_QUEUE_STAT_COUNTER"
 #define FABRIC_QUEUE_STAT_FLEX_COUNTER_POLLING_INTERVAL_MS  100000
-#define FABRIC_PORT_TABLE_NAME          "FABRIC_PORT_TABLE_NAME"
-#define FABRIC_COUNTERS_QUEUE_NAME_MAP  "FABRIC_COUNTERS_QUEUE_NAME_MAP"
-#define FABRIC_COUNTERS_QUEUE_PORT_MAP  "FABRIC_COUNTERS_QUEUE_PORT_MAP"
-#define FABRIC_COUNTERS_QUEUE_INDEX_MAP "FABRIC_COUNTERS_QUEUE_INDEX_MAP"
-#define FABRIC_COUNTERS_QUEUE_TYPE_MAP  "FABRIC_COUNTERS_QUEUE_TYPE_MAP"
-#define FABRIC_COUNTERS_PORT_NAME_MAP   "FABRIC_COUNTERS_PORT_NAME_MAP"
+#define FABRIC_PORT_TABLE "FABRIC_PORT_TABLE"
 
 extern sai_object_id_t gSwitchId;
 extern sai_switch_api_t *sai_switch_api;
 extern sai_port_api_t *sai_port_api;
-extern sai_queue_api_t *sai_queue_api;
 
 const vector<sai_port_stat_t> port_stat_ids =
 {
@@ -57,20 +51,18 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
         m_timer(new SelectableTimer(timespec { .tv_sec = FABRIC_POLLING_INTERVAL_DEFAULT, .tv_nsec = 0 }))
 {
     SWSS_LOG_ENTER();
+
     SWSS_LOG_NOTICE( "FabricPortsOrch constructor" );
 
     m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
-    m_stateTable = unique_ptr<Table>(new Table(m_state_db.get(), FABRIC_PORT_TABLE_NAME));
+    m_stateTable = unique_ptr<Table>(new Table(m_state_db.get(), FABRIC_PORT_TABLE));
 
     m_counter_db = shared_ptr<DBConnector>(new DBConnector("COUNTERS_DB", 0));
-    m_portNameQueueCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), FABRIC_COUNTERS_QUEUE_NAME_MAP));
-    m_queuePortCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), FABRIC_COUNTERS_QUEUE_PORT_MAP));
-    m_queueIndexCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), FABRIC_COUNTERS_QUEUE_INDEX_MAP));
-    m_queueTypeCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), FABRIC_COUNTERS_QUEUE_TYPE_MAP));
-    m_portNamePortCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), FABRIC_COUNTERS_PORT_NAME_MAP));
+    m_laneQueueCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_NAME_MAP));
+    m_lanePortCounterTable = unique_ptr<Table>(new Table(m_counter_db.get(), COUNTERS_QUEUE_PORT_MAP));
 
     m_flex_db = shared_ptr<DBConnector>(new DBConnector("FLEX_COUNTER_DB", 0));
-    m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FABRIC_PORT_TABLE_NAME));
+    m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FABRIC_PORT_TABLE));
 
     getFabricPortList();
 
@@ -82,7 +74,6 @@ FabricPortsOrch::FabricPortsOrch(DBConnector *appl_db, vector<table_name_with_pr
 int FabricPortsOrch::getFabricPortList()
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_NOTICE("Get fabric port list done %d", m_getFabricPortListDone == true ? 1 : 0 );
 
     if (m_getFabricPortListDone) {
         return FABRIC_PORT_SUCCESS;
@@ -126,12 +117,13 @@ int FabricPortsOrch::getFabricPortList()
         }
         int lane = attr.value.u32list.list[0];
         m_fabricLanePortMap[lane] = fabric_port_list[i];
-        SWSS_LOG_NOTICE("Get fabric port pid: %" PRIx64 " lanes: %d", fabric_port_list[i], lane);
     }
 
     generatePortStats();
 
     m_getFabricPortListDone = true;
+
+    updateFabricPortState();
 
     return FABRIC_PORT_SUCCESS;
 }
@@ -143,27 +135,18 @@ bool FabricPortsOrch::allPortsReady()
 
 void FabricPortsOrch::generatePortStats()
 {
-    SWSS_LOG_NOTICE("Generate fabric port stats");
-
-    vector<FieldValueTuple> portNamePortCounterMap;
-    for (auto p : m_fabricLanePortMap)
-    {
-        int lane = p.first;
-        sai_object_id_t port = p.second;
-
-        std::ostringstream portName;
-        portName << "FabricPort" << lane;
-        portNamePortCounterMap.emplace_back(portName.str(), sai_serialize_object_id(port));
-
-        // Install flex counters for port stats
-        std::unordered_set<std::string> counter_stats;
-        for (const auto& it: port_stat_ids)
-        {
-            counter_stats.emplace(sai_serialize_port_stat(it));
-        }
-        port_stat_manager.setCounterIdList(port, CounterType::PORT, counter_stats);
-    }
-    m_portNamePortCounterTable->set("", portNamePortCounterMap);
+    // FIX_ME: This function installs flex counters for port stats
+    // on fabric ports for fabric asics and voq asics (that connect
+    // to fabric asics via fabric ports). These counters will be
+    // installed in FLEX_COUNTER_DB, and queried by syncd and updated
+    // to COUNTERS_DB.
+    // However, currently BCM SAI doesn't update its code to query
+    // port stats (metrics in list port_stat_ids) yet.
+    // Also, BCM sets too low value for "Max logical port count" (256),
+    // causing syncd to crash on voq asics that now include regular front
+    // panel ports, fabric ports, and multiple logical ports.
+    // So, this function will just do nothing for now, and we will readd
+    // code to install port stats counters when BCM completely supports.
 }
 
 void FabricPortsOrch::generateQueueStats()
@@ -171,99 +154,13 @@ void FabricPortsOrch::generateQueueStats()
     if (m_isQueueStatsGenerated) return;
     if (!m_getFabricPortListDone) return;
 
-    SWSS_LOG_NOTICE("Generate queue map for fabric ports");
-
-    sai_status_t status;
-    sai_attribute_t attr;
-    sai_attribute_t queue_attrs[2];
-
-    for (auto p : m_fabricLanePortMap)
-    {
-        int lane = p.first;
-        sai_object_id_t port = p.second;
-
-        attr.id = SAI_PORT_ATTR_QOS_NUMBER_OF_QUEUES;
-        status = sai_port_api->get_port_attribute(port, 1, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            throw runtime_error("FabricPortsOrch get port queue number failure");
-        }
-        int num_queues = attr.value.u32;
-
-        if (num_queues > 0)
-        {
-            vector<sai_object_id_t> m_queue_ids;
-            m_queue_ids.resize(num_queues);
-
-            attr.id = SAI_PORT_ATTR_QOS_QUEUE_LIST;
-            attr.value.objlist.count = (uint32_t) num_queues;
-            attr.value.objlist.list = m_queue_ids.data();
-
-            status = sai_port_api->get_port_attribute(port, 1, &attr);
-            if (status != SAI_STATUS_SUCCESS)
-            {
-                throw runtime_error("FabricPortsOrch get port queue list failure");
-            }
-
-            // Maintain queue map and install flex counters for queue stats
-            vector<FieldValueTuple> portNameQueueMap;
-            vector<FieldValueTuple> queuePortMap;
-            vector<FieldValueTuple> queueTypeMap;
-            vector<FieldValueTuple> queueIndexMap;
-
-            for (size_t q = 0; q < m_queue_ids.size(); q ++)
-            {
-                std::ostringstream portName;
-                portName << "FabricPort" << lane << ":" << q;
-                const auto queue = sai_serialize_object_id(m_queue_ids[q]);
-
-                portNameQueueMap.emplace_back(portName.str(), queue);
-                queuePortMap.emplace_back(queue, sai_serialize_object_id(port));
-
-                queue_attrs[0].id = SAI_QUEUE_ATTR_TYPE;
-                queue_attrs[1].id = SAI_QUEUE_ATTR_INDEX;
-                status = sai_queue_api->get_queue_attribute(m_queue_ids[q], 2, queue_attrs);
-                if (status == SAI_STATUS_SUCCESS)
-                {
-                    string queueType;
-                    string queueIndex;
-                    switch (queue_attrs[0].value.s32)
-                    {
-                        case SAI_QUEUE_TYPE_ALL:
-                            queueType = "SAI_QUEUE_TYPE_ALL";
-                            break;
-                        case SAI_QUEUE_TYPE_UNICAST:
-                            queueType = "SAI_QUEUE_TYPE_UNICAST";
-                            break;
-                        case SAI_QUEUE_TYPE_MULTICAST:
-                            queueType = "SAI_QUEUE_TYPE_MULTICAST";
-                            break;
-                        default:
-                            throw runtime_error("Got unsupported queue type");
-                    }
-                    queueTypeMap.emplace_back(queue, queueType);
-                    queueIndex = to_string(queue_attrs[1].value.u8);
-                    queueIndexMap.emplace_back(queue, queueIndex);
-                }
-                else
-                {
-                    SWSS_LOG_NOTICE("FabricPortsOrch cannot get fabric port queue type and index");
-                }
-
-                std::unordered_set<string> counter_stats;
-                for (const auto& it: queue_stat_ids)
-                {
-                    counter_stats.emplace(sai_serialize_queue_stat(it));
-                }
-                queue_stat_manager.setCounterIdList(m_queue_ids[q], CounterType::QUEUE, counter_stats);
-            }
-
-            m_portNameQueueCounterTable->set("", portNameQueueMap);
-            m_queuePortCounterTable->set("", queuePortMap);
-            m_queueTypeCounterTable->set("", queueTypeMap);
-            m_queueIndexCounterTable->set("", queueIndexMap);
-        }
-    }
+    // FIX_ME: Similar to generatePortStats(), generateQueueStats() installs
+    // flex counters for queue stats on fabric ports for fabric asics and voq asics.
+    // However, currently BCM SAI doesn't fully support queue stats query.
+    // Query on queue type and index is not supported for fabric asics while
+    // voq asics are not completely supported.
+    // So, this function will just do nothing for now, and we will readd
+    // code to install queue stats counters when BCM completely supports.
 
     m_isQueueStatsGenerated = true;
 }
@@ -299,14 +196,16 @@ void FabricPortsOrch::updateFabricPortState()
         status = sai_port_api->get_port_attribute(port, 1, &attr);
         if (status != SAI_STATUS_SUCCESS)
         {
-            throw runtime_error("FabricPortsOrch get port status failure");
+            // Port may not be ready for query
+            SWSS_LOG_ERROR("Failed to get fabric port (%d) status, rv:%d", lane, status);
+            return;
         }
 
         if (m_portStatus.find(lane) != m_portStatus.end() &&
-            m_portStatus[lane] != attr.value.booldata)
+            m_portStatus[lane] && !attr.value.booldata)
         {
-            m_portFlappingCount[lane] ++;
-            m_portFlappingSeenLastTime[lane] = now;
+            m_portDownCount[lane] ++;
+            m_portDownSeenLastTime[lane] = now;
         }
         m_portStatus[lane] = attr.value.booldata;
 
@@ -335,11 +234,11 @@ void FabricPortsOrch::updateFabricPortState()
             values.emplace_back("REMOTE_MOD", to_string(remote_peer));
             values.emplace_back("REMOTE_PORT", to_string(remote_port));
         }
-        if (m_portFlappingCount[lane] > 0)
+        if (m_portDownCount[lane] > 0)
         {
-            values.emplace_back("PORT_FLAPPING_COUNT", to_string(m_portFlappingCount[lane]));
-            values.emplace_back("PORT_FLAPPING_SEEN_LAST_TIME",
-                                to_string(m_portFlappingSeenLastTime[lane]));
+            values.emplace_back("PORT_DOWN_COUNT", to_string(m_portDownCount[lane]));
+            values.emplace_back("PORT_DOWN_SEEN_LAST_TIME",
+                                to_string(m_portDownSeenLastTime[lane]));
         }
         m_stateTable->set(key, values);
     }
@@ -355,6 +254,8 @@ void FabricPortsOrch::doTask(Consumer &consumer)
 
 void FabricPortsOrch::doTask(swss::SelectableTimer &timer)
 {
+    SWSS_LOG_ENTER();
+
     if (!m_getFabricPortListDone)
     {
         getFabricPortList();
