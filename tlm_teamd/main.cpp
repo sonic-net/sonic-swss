@@ -98,7 +98,7 @@ int main()
             if (res == swss::Select::OBJECT)
             {
                 update_interfaces(sst_lag, teamdctl_mgr);
-                values_store.update(teamdctl_mgr.get_dumps());
+                values_store.update(teamdctl_mgr.get_dumps(false));
             }
             else if (res == swss::Select::ERROR)
             {
@@ -108,7 +108,10 @@ int main()
             else if (res == swss::Select::TIMEOUT)
             {
                 teamdctl_mgr.process_add_queue();
-                values_store.update(teamdctl_mgr.get_dumps());
+		// When get_dumps API is triggered per TIMEOUT interval as done here, 
+		// there is a possible race condition on lag resource removal and the error
+		// will be reproted incorrectly. So set the param to_retry = true.
+                values_store.update(teamdctl_mgr.get_dumps(true));
             }
             else
             {

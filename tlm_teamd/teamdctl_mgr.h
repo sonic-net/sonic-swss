@@ -18,8 +18,9 @@ public:
     bool add_lag(const std::string & lag_name);
     bool remove_lag(const std::string & lag_name);
     void process_add_queue();
-    TeamdCtlDump get_dump(const std::string & lag_name);
-    TeamdCtlDumps get_dumps();
+    // Retry logic added to prevent incorrect error reporting in dump API's
+    TeamdCtlDump get_dump(const std::string & lag_name, bool to_retry);
+    TeamdCtlDumps get_dumps(bool to_retry);
 
 private:
     bool has_key(const std::string & lag_name) const;
