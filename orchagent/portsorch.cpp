@@ -4848,7 +4848,7 @@ bool PortsOrch::getSystemPorts()
     status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
     if (status != SAI_STATUS_SUCCESS)
     {
-        SWSS_LOG_ERROR("Failed to get number of system ports, rv:%d", status);
+        SWSS_LOG_INFO("Failed to get number of system ports, rv:%d", status);
         return false;
     }
 
