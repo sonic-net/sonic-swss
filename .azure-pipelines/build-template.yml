@@ -63,7 +63,6 @@ jobs:
       source: specific
       project: build
       pipeline: 9
-      artifacts: sonic-swss-common
       artifacts: ${{ parameters.swss_common_artifact_name }}
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
@@ -79,7 +78,7 @@ jobs:
     displayName: "Download sonic sairedis deb packages"
   - script: |
       sudo dpkg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon_1.0.0_${{ parameters.arch }}.deb
-      sudo dukg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon-dev_1.0.0_${{ parameters.arch }].deb
+      sudo dukg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
       sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsaivs_*.deb
       sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsaivs-dev_*.deb
       sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsairedis_*.deb
