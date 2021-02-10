@@ -194,6 +194,14 @@ TeamdCtlDump TeamdCtlMgr::get_dump(const std::string & lag_name, bool to_retry)
         if (r == 0)
         {
             res = { true, std::string(dump) };
+
+            // If this lag interface errored last time, clear it as we are good now.
+            if (lag_name.compare(last_errored_lag_name) == 0)
+            {
+                SWSS_LOG_NOTICE("The LAG '%s' had errored in get_dump earlier, clearing it", lag_name.c_str());
+                last_errored_lag_name.clear();
+                no_of_retry = 0;
+            }
         }
         else
         {
