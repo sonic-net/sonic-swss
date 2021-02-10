@@ -200,6 +200,7 @@ static sai_object_id_t create_tunnel(const IpAddress* p_dst_ip, const IpAddress*
 
     attr.id = SAI_TUNNEL_ATTR_ENCAP_TTL_MODE;
     attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
+    tunnel_attrs.push_back(attr);
 
     if (p_src_ip != nullptr)
     {
@@ -829,6 +830,11 @@ MuxCable* MuxOrch::findMuxCableInSubnet(IpAddress ip)
 
 bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, string& alias)
 {
+    if (mux_cable_tb_.empty())
+    {
+        return true;
+    }
+
     MuxCable* ptr = findMuxCableInSubnet(nbr);
 
     if (ptr)
@@ -860,19 +866,19 @@ bool MuxOrch::getMuxPort(const MacAddress& mac, const string& alias, string& por
 
     if (!gPortsOrch->getPort(alias, rif))
     {
-        SWSS_LOG_INFO("Interface '%s' not found in port table", alias.c_str());
+        SWSS_LOG_ERROR("Interface '%s' not found in port table", alias.c_str());
         return false;
     }
 
     if (rif.m_type != Port::VLAN)
     {
-        SWSS_LOG_INFO("Interface type for '%s' is not Vlan, type %d", alias.c_str(), rif.m_type);
+        SWSS_LOG_DEBUG("Interface type for '%s' is not Vlan, type %d", alias.c_str(), rif.m_type);
         return false;
     }
 
     if (!gFdbOrch->getPort(mac, rif.m_vlan_info.vlan_id, port))
     {
-        SWSS_LOG_NOTICE("FDB entry not found: Vlan %s, mac %s", alias.c_str(), mac.to_string().c_str());
+        SWSS_LOG_INFO("FDB entry not found: Vlan %s, mac %s", alias.c_str(), mac.to_string().c_str());
         return true;
     }
 
@@ -907,6 +913,10 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
             if (!nh->second.empty() && isMuxExists(nh->second))
             {
                 ptr = getMuxCable(nh->second);
+                if (ptr->isIpInSubnet(nh->first.ip_address))
+                {
+                    continue;
+                }
                 nh->second = update.entry.port_name;
                 ptr->updateNeighbor(nh->first, false);
             }
@@ -922,6 +932,11 @@ void MuxOrch::updateFdb(const FdbUpdate& update)
 
 void MuxOrch::updateNeighbor(const NeighborUpdate& update)
 {
+    if (mux_cable_tb_.empty())
+    {
+        return;
+    }
+
     for (auto it = mux_cable_tb_.begin(); it != mux_cable_tb_.end(); it++)
     {
         MuxCable* ptr = it->second.get();
@@ -998,7 +1013,8 @@ sai_object_id_t MuxOrch::getNextHopId(const NextHopKey &nh)
     auto mux_name = mux_nexthop_tb_[nh];
     if (!isMuxExists(mux_name))
     {
-        SWSS_LOG_WARN("Mux entry for port '%s' doesn't exist", mux_name.c_str());
+        SWSS_LOG_INFO("Mux entry for nh '%s' port '%s' doesn't exist",
+                       nh.ip_address.to_string().c_str(), mux_name.c_str());
         return SAI_NULL_OBJECT_ID;
     }
 
@@ -1063,7 +1079,7 @@ bool MuxOrch::handleMuxCfg(const Request& request)
     {
         if(isMuxExists(port_name))
         {
-            SWSS_LOG_WARN("Mux for port '%s' already exists", port_name.c_str());
+            SWSS_LOG_INFO("Mux for port '%s' already exists", port_name.c_str());
             return true;
         }
 
