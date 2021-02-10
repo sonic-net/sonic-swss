@@ -33,12 +33,11 @@ jobs:
   displayName: ${{ parameters.arch }}
   timeoutInMinutes: ${{ parameters.timeout }}
 
-  - ${{ if eq(parameters.pool, '') }}:
-    - pool:
-        vmImage: 'ubuntu-20.04'
-
-  - ${{ if ne(parameters.pool, '') }}:
-    - pool: ${{ parameters.pool }}
+  pool:
+    ${{ if ne(paramters.pool, '') }}:
+      name: ${{ parameters.pool }}
+    ${{ if eq(paramters.pool, '') }}:
+      vmImage: 'ubuntu-20.04'
 
   container:
     image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
