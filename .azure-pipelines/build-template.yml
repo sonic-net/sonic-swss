@@ -10,6 +10,8 @@ parameters:
   type: string
   values:
   - sonicbld
+  - default
+  default: default
 
 - name: timeout
   type: number
@@ -33,9 +35,9 @@ jobs:
   timeoutInMinutes: ${{ parameters.timeout }}
 
   pool:
-    ${{ if ne(paramters.pool, '') }}:
+    ${{ if ne(paramters.pool, 'default') }}:
       name: ${{ parameters.pool }}
-    ${{ if eq(paramters.pool, '') }}:
+    ${{ if eq(paramters.pool, 'default') }}:
       vmImage: 'ubuntu-20.04'
 
   container:
