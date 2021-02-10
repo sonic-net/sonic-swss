@@ -35,9 +35,9 @@ jobs:
   timeoutInMinutes: ${{ parameters.timeout }}
 
   pool:
-    ${{ if ne(paramters.pool, 'default') }}:
+    ${{ if ne(parameters.pool, 'default') }}:
       name: ${{ parameters.pool }}
-    ${{ if eq(paramters.pool, 'default') }}:
+    ${{ if eq(parameters.pool, 'default') }}:
       vmImage: 'ubuntu-20.04'
 
   container:
