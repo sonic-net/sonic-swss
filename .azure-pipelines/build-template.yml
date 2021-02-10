@@ -10,7 +10,6 @@ parameters:
   type: string
   values:
   - sonicbld
-  default: ''
 
 - name: timeout
   type: number
