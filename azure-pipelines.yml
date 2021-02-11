@@ -48,3 +48,7 @@ stages:
       sairedis_artifact_name: sonic-sairedis
       swss_artifact_name: sonic-swss
       artifact_name: docker-sonic-vs
+
+- stage: Test
+  jobs:
+  - template: .azure-pipelines/test-docker-sonic-vs-template.yml

@@ -1,0 +1,52 @@
+parameters:
+- name: timeout
+  type: number
+  default: 180
+
+jobs:
+- job:
+  displayName: vstest
+  timeoutInMinutes: ${{ parameters.timeout }}
+
+  pool:
+    vmImage: 'ubuntu-20.04'
+
+  steps:
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      artifact: docker-sonic-vs
+    displayName: "Download docker sonic vs image"
+
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: 9
+      artifact: sonic-swss-common.amd64.ubuntu20_04
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
+    displayName: "Download sonic swss common deb packages"
+
+  - script: |
+      set -x
+      sudo .azure-pipelines/build_and_install_team.sh
+
+      sudo apt-get install -y libhiredis0.14
+      sudo dpkg -i --force-confask,confnew ../libswsscommon_1.0.0_amd64.deb || apt-get install -f
+      sudo dpkg -i ../python3-swsscommon_1.0.0_amd64.deb
+
+      # install packages for vs test
+      sudo apt-get install -y python3-pip
+      sudo pip3 install pytest==4.6.2 attrs==19.1.0 exabgp==4.0.10 distro==1.5.0 docker==4.4.1 redis==3.3.4
+    displayName: "Install dependencies"
+
+  - script: |
+      sudo docker load -i ../docker-sonic-vs.gz
+      pushd tests
+      sudo py.test -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
+    displayName: "Run vs tests"
+
+  - task: PublishTestResults@2
+    inputs:
+      testResultsFiles: '**/tr.xml'
+      testRunTitle: vstest
