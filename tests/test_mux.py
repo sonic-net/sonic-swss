@@ -104,6 +104,8 @@ class TestMuxTunnelBase(object):
                 assert self.check_interface_exists_in_asicdb(asicdb, value)
             elif field == "SAI_TUNNEL_ATTR_UNDERLAY_INTERFACE":
                 assert self.check_interface_exists_in_asicdb(asicdb, value)
+            elif field == "SAI_TUNNEL_ATTR_ENCAP_TTL_MODE":
+                assert value == "SAI_TUNNEL_TTL_MODE_PIPE_MODEL"
             else:
                 assert False, "Field %s is not tested" % field
 
