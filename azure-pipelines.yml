@@ -39,3 +39,12 @@ stages:
       swss_common_artifact_name: sonic-swss-common.arm64
       sairedis_artifact_name: sonic-sairedis.arm64
       artifact_name: sonic-swss.arm64
+
+- stage: BuildDocker
+  jobs:
+  - template: .azure-pipelines/build-docker-sonic-vs-template.yml
+    parameters:
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
+      swss_artifact_name: sonic-swss
+      artifact_name: docker-sonic-vs

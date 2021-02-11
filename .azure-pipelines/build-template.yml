@@ -5,6 +5,7 @@ parameters:
   - amd64
   - armhf
   - arm64
+  default: amd64
 
 - name: pool
   type: string
