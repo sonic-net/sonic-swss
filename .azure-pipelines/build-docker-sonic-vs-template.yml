@@ -52,7 +52,12 @@ jobs:
     displayName: "Download sonic sairedis deb packages"
   - task: DownloadPipelineArtifact@2
     inputs:
+      source: specific
+      project: build
+      pipeline: 15
       artifact: ${{ parameters.swss_artifact_name }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download sonic swss artifact"
   - task: DownloadPipelineArtifact@2
     inputs:
