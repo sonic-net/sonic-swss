@@ -13,6 +13,7 @@
 #include "gearboxutils.h"
 #include "saihelper.h"
 #include "lagid.h"
+#include "flexcounterorch.h"
 
 
 #define FCS_LEN 4
@@ -125,6 +126,8 @@ public:
 
     void generateQueueMap();
     void generatePriorityGroupMap();
+    void generatePortCounterMap();
+    void generatePortBufferDropCounterMap();
 
     void refreshPortStatus();
     bool removeAclTableGroup(const Port &p);
@@ -286,6 +289,9 @@ private:
     bool m_isPriorityGroupMapGenerated = false;
     void generatePriorityGroupMapPerPort(const Port& port);
 
+    bool m_isPortCounterMapGenerated = false;
+    bool m_isPortBufferDropCounterMapGenerated = false;
+
     bool setPortAutoNeg(sai_object_id_t id, int an);
     bool setPortFecMode(sai_object_id_t id, int fec);
     bool setPortInterfaceType(sai_object_id_t id, sai_port_interface_type_t interface_type);
@@ -327,6 +333,8 @@ private:
     void voqSyncAddLagMember(Port &lag, Port &port);
     void voqSyncDelLagMember(Port &lag, Port &port);
     unique_ptr<LagIdAllocator> m_lagIdAllocator;
+
+    std::unordered_set<std::string> generateCounterStats(const string& type);
 
 };
 #endif /* SWSS_PORTSORCH_H */
