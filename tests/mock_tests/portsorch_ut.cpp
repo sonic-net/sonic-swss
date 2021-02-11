@@ -142,6 +142,14 @@ namespace portsorch_test
         };
 
         ASSERT_EQ(gPortsOrch, nullptr);
+
+        vector<string> flex_counter_tables = {
+            CFG_FLEX_COUNTER_TABLE_NAME
+        };
+        auto* flexCounterOrch = new FlexCounterOrch(m_config_db.get(), flex_counter_tables);
+
+        gDirectory.set(flexCounterOrch);
+
         gPortsOrch = new PortsOrch(m_app_db.get(), ports_tables);
         vector<string> buffer_tables = { APP_BUFFER_POOL_TABLE_NAME,
                                          APP_BUFFER_PROFILE_TABLE_NAME,
