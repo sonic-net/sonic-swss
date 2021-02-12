@@ -194,7 +194,7 @@ class TestVirtualChassis(object):
                     assert test_neigh != "", "Neigh not found in ASIC_DB"
 
                     # Check for presence of encap index, retrieve and store it for sync verification
-                    test_neigh_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", test_neigh)
+                    test_neigh_entry = asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", test_neigh)
                     encap_index = test_neigh_entry.get("SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_INDEX")
                     assert encap_index != "", "VOQ encap index is not programmed in ASIC_DB"
 
@@ -209,6 +209,7 @@ class TestVirtualChassis(object):
                 chassis_app_db.wait_for_n_keys("SYSTEM_NEIGH", 1)
                 sysneighkeys = chassis_app_db.get_keys("SYSTEM_NEIGH")
 
+                print(sysneighkeys)
                 test_sysneigh = ""
                 for sysnk in sysneighkeys:
                     sysnk_tok = sysnk.split("|")
