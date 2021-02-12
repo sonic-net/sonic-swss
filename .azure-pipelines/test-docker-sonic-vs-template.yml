@@ -17,7 +17,12 @@ jobs:
   steps:
   - task: DownloadPipelineArtifact@2
     inputs:
-      artifact: docker-sonic-vs
+      source: specific
+      project: build
+      pipeline: 1
+      artifact: sonic-buildimage.kvm
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
     displayName: "Download docker sonic vs image"
 
   - task: DownloadPipelineArtifact@2
@@ -46,11 +51,12 @@ jobs:
 
   - script: |
       set -x
-      sudo docker load -i ../docker-sonic-vs.gz
+      sudo docker load -i ../target/docker-sonic-vs.gz
+      sudo docker images
       docker ps
       ip netns list
       pushd tests
-      sudo py.test -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs:$(Build.DefinitionName).$(Build.BuildNumber)
+      sudo py.test -v --force-flaky --junitxml=tr.xml --imgname=docker-sonic-vs test_virtual_chassis.py
     displayName: "Run vs tests"
 
   - task: PublishTestResults@2
