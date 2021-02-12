@@ -686,7 +686,7 @@ Executor *Orch::getExecutor(string executorName)
     return NULL;
 }
 
-bool Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status)
+bool Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis create
@@ -694,8 +694,8 @@ bool Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status)
      * Return value: true - Handled the status successfully. No need to retry this SAI operation.
      *               false - Cannot handle the status. Need to retry the SAI operation.
      * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_ITEM_ALREADY_EXISTS)
-     *       2. Develop fine-grain failure handling mechanisms specific and replace
-     *          this coarse handling in each orch.
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
     switch (status)
@@ -711,7 +711,7 @@ bool Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status)
     return false;
 }
 
-bool Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status)
+bool Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis set
@@ -719,8 +719,8 @@ bool Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status)
      * Return value: true - Handled the status successfully. No need to retry this SAI operation.
      *               false - Cannot handle the status. Need to retry the SAI operation.
      * TODO: 1. Add general handling logic for specific statuses
-     *       2. Develop fine-grain failure handling mechanisms specific and replace
-     *          this coarse handling in each orch.
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
     switch (status)
@@ -736,7 +736,7 @@ bool Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status)
     return false;
 }
 
-bool Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status)
+bool Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis remove
@@ -745,8 +745,8 @@ bool Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status)
      *               false - Cannot handle the status. Need to retry the SAI operation.
      * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_OBJECT_IN_USE,
      *          SAI_STATUS_ITEM_NOT_FOUND)
-     *       2. Develop fine-grain failure handling mechanisms specific and replace
-     *          this coarse handling in each orch.
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
      *       3. Take the type of sai api into consideration.
      */
     switch (status)

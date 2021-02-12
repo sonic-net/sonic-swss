@@ -237,9 +237,9 @@ protected:
     Executor *getExecutor(std::string executorName);
 
     /* Handling SAI status*/
-    virtual bool handleSaiCreateStatus(sai_api_t api, sai_status_t status);
-    virtual bool handleSaiSetStatus(sai_api_t api, sai_status_t status);
-    virtual bool handleSaiRemoveStatus(sai_api_t api, sai_status_t status);
+    virtual bool handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
+    virtual bool handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
+    virtual bool handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
 private:
     void removeMeFromObjsReferencedByMe(type_map &type_maps, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name);
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);
