@@ -9,8 +9,8 @@ source /etc/os-release
 
 function build_and_install_kmodule()
 {
-    if sudo modprobe team 2>/dev/null && sudo modprobe vrf 2>/dev/null; then
-        echo "The module team and vrf exist."
+    if sudo modprobe team 2>/dev/null && sudo modprobe vrf 2>/dev/null && sudo modprobe macsec 2>/dev/null; then
+        echo "The module team, vrf and macsec exist."
         return
     fi
 
@@ -47,10 +47,12 @@ function build_and_install_kmodule()
     cp /boot/config-$(uname -r) .config
     grep NET_TEAM .config.bk >> .config
     echo CONFIG_NET_VRF=m >> .config
+    echo CONFIG_MACSEC=m >> .config
     make VERSION=$VERSION PATCHLEVEL=$PATCHLEVEL SUBLEVEL=$SUBLEVEL EXTRAVERSION=-${EXTRAVERSION} LOCALVERSION=-${LOCALVERSION} modules_prepare
     make M=drivers/net/team
     mv drivers/net/Makefile drivers/net/Makefile.bak
     echo 'obj-$(CONFIG_NET_VRF) += vrf.o' > drivers/net/Makefile
+    echo 'obj-$(CONFIG_MACSEC) += macsec.o' >> drivers/net/Makefile
     make M=drivers/net
 
     # Install the module
@@ -69,6 +71,13 @@ function build_and_install_kmodule()
         modinfo $NET_DIR/vrf.ko
         depmod
         modprobe vrf
+    fi
+    if [ ! -e "$NET_DIR/macsec.ko" ]; then
+        mkdir -p $NET_DIR
+        cp drivers/net/macsec.ko $NET_DIR/
+        modinfo $NET_DIR/macsec.ko
+        depmod
+        modprobe macsec
     fi
 
     cd /tmp
