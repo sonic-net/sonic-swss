@@ -30,10 +30,10 @@ class TestVirtualChassis(object):
 
     def test_voq_switch(self, vct):
         """Test VOQ switch objects configuration.
-        
+
         This test validates configuration of switch creation objects required for
         VOQ switches. The switch_type, max_cores and switch_id attributes configuration
-        are verified. For the System port config list, it is verified that all the 
+        are verified. For the System port config list, it is verified that all the
         configured system ports are avaiable in the asic db by checking the count.
         """
 
@@ -54,40 +54,40 @@ class TestVirtualChassis(object):
 
                 cfg_max_cores = metatbl.get("max_cores")
                 assert cfg_max_cores != "", "Got error in getting max_cores from CONFIG_DB DEVICE_METADATA"
-                
+
                 cfgspkeys = config_db.get_keys("SYSTEM_PORT")
                 sp_count = len(cfgspkeys)
 
                 asic_db = dvs.get_asic_db()
                 keys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
                 switch_oid_key = keys[0]
-                
+
                 switch_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_SWITCH", switch_oid_key)
 
                 value = switch_entry.get("SAI_SWITCH_ATTR_TYPE")
                 assert value == "SAI_SWITCH_TYPE_VOQ", "Switch type is not VOQ"
-                
+
                 value = switch_entry.get("SAI_SWITCH_ATTR_SWITCH_ID")
                 assert value == cfg_switch_id, "VOQ switch id is invalid"
-                
+
                 value = switch_entry.get("SAI_SWITCH_ATTR_MAX_SYSTEM_CORES")
                 assert value == cfg_max_cores, "Max system cores is invalid"
-                
+
                 value = switch_entry.get("SAI_SWITCH_ATTR_SYSTEM_PORT_CONFIG_LIST")
                 assert value != "", "Empty system port config list"
                 # Convert the spcfg string to dictionary
                 spcfg = ast.literal_eval(value)
                 assert spcfg['count'] == sp_count, "Number of systems ports configured is invalid"
-    
+
     def test_chassis_app_db_sync(self, vct):
         """Test chassis app db syncing.
-        
+
         This test is for verifying the database sync mechanism. With the virtual chassis
         setup, it is verified that at least one database entry is synced from line card to
         supervisor card. An interface entry is used as sample database entry for verification
         of syncing mechanism.
         """
-        
+
         dvss = vct.dvss
         for name in dvss.keys():
             if name.startswith("supervisor"):
@@ -95,17 +95,17 @@ class TestVirtualChassis(object):
                 chassis_app_db = DVSDatabase(swsscommon.CHASSIS_APP_DB, dvs.redis_chassis_sock)
                 keys = chassis_app_db.get_keys("SYSTEM_INTERFACE")
                 assert len(keys), "No chassis app db syncing is done"
-                
+
     def test_chassis_system_interface(self, vct):
         """Test RIF record creation in ASIC_DB for remote interfaces.
-        
+
         This test verifies RIF programming in ASIC_DB for remote interface. The orchagent
         creates RIF record for system port interfaces from other line cards. It is verified
         by retrieving a RIF record from local ASIC_DB that corresponds to a remote system port
-        and checking that the switch id of that remote system port does not match the local asic 
+        and checking that the switch id of that remote system port does not match the local asic
         switch id.
         """
-        
+
         dvss = vct.dvss
         for name in dvss.keys():
             dvs = dvss[name]
@@ -116,11 +116,11 @@ class TestVirtualChassis(object):
             cfg_switch_type = metatbl.get("switch_type")
 
             # Test only for line cards
-            if cfg_switch_type == "voq":    
+            if cfg_switch_type == "voq":
                 lc_switch_id = metatbl.get("switch_id")
                 assert lc_switch_id != "", "Got error in getting switch_id from CONFIG_DB DEVICE_METADATA"
                 if lc_switch_id == "0":
-                    # Testing in Linecard1, In Linecard1 there will be RIF for Ethernet12 from Linecard3 
+                    # Testing in Linecard1, In Linecard1 there will be RIF for Ethernet12 from Linecard3
                     # Note: Tesing can be done in any linecard for RIF of any system port interface.
                     #       Here testing is done on linecard with switch id 0
                     asic_db = dvs.get_asic_db()
@@ -151,7 +151,7 @@ class TestVirtualChassis(object):
 
     def test_chassis_system_neigh(self, vct):
         """Test neigh record creation and syncing to chassis app db.
-        
+
         This test validates that:
            (i)   Local neighbor entry is created with encap index
            (ii)  Local neighbor is synced to chassis ap db with assigned encap index
@@ -159,6 +159,7 @@ class TestVirtualChassis(object):
         """
 
         dvss = vct.dvss
+        print("name {}".format(dvss.keys()))
         for name in dvss.keys():
             dvs = dvss[name]
 
@@ -168,19 +169,20 @@ class TestVirtualChassis(object):
             cfg_switch_type = metatbl.get("switch_type")
 
             # Neighbor record verifiation done in line card
-            if cfg_switch_type == "voq":    
+            if cfg_switch_type == "voq":
                 lc_switch_id = metatbl.get("switch_id")
                 assert lc_switch_id != "", "Got error in getting switch_id from CONFIG_DB DEVICE_METADATA"
                 if lc_switch_id == "0":
 
                     # Add a static neighbor
+                    _, res = dvs.runcmd(['sh', "-c", "ip neigh show"])
                     _, res = dvs.runcmd(['sh', "-c", "ip neigh add 10.8.101.2 lladdr 00:01:02:03:04:05 dev Ethernet0"])
                     assert res == "", "Error configuring static neigh"
 
                     asic_db = dvs.get_asic_db()
                     neighkeys = asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY")
                     assert len(neighkeys), "No neigh entries in ASIC_DB"
-                    
+
                     # Check for presence of the neighbor in ASIC_DB
                     test_neigh = ""
                     for nkey in neighkeys:
@@ -188,25 +190,26 @@ class TestVirtualChassis(object):
                         if ne['ip'] == '10.8.101.2':
                             test_neigh = nkey
                             break
-                        
+
                     assert test_neigh != "", "Neigh not found in ASIC_DB"
-                    
+
                     # Check for presence of encap index, retrieve and store it for sync verification
-                    test_neigh_entry = asic_db.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", test_neigh)
+                    test_neigh_entry = asic_db.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEIGHBOR_ENTRY", test_neigh)
                     encap_index = test_neigh_entry.get("SAI_NEIGHBOR_ENTRY_ATTR_ENCAP_INDEX")
                     assert encap_index != "", "VOQ encap index is not programmed in ASIC_DB"
-                    
+
                     break
-                    
-        # Verify neighbor record syncing with encap index       
+
+        # Verify neighbor record syncing with encap index
         dvss = vct.dvss
         for name in dvss.keys():
             if name.startswith("supervisor"):
                 dvs = dvss[name]
                 chassis_app_db = DVSDatabase(swsscommon.CHASSIS_APP_DB, dvs.redis_chassis_sock)
+                chassis_app_db.wait_for_n_keys("SYSTEM_NEIGH", 1)
                 sysneighkeys = chassis_app_db.get_keys("SYSTEM_NEIGH")
-                assert len(sysneighkeys), "No system neighbor entries in chassis app db"
-                
+
+                print(sysneighkeys)
                 test_sysneigh = ""
                 for sysnk in sysneighkeys:
                     sysnk_tok = sysnk.split("|")
@@ -214,15 +217,15 @@ class TestVirtualChassis(object):
                     if sysnk_tok[2] == "10.8.101.2":
                         test_sysneigh = sysnk
                         break
-                
+
                 assert test_sysneigh != "", "Neigh is not sync-ed to chassis app db"
-               
-                test_sysneigh_entry = chassis_app_db.get_entry("SYSTEM_NEIGH", test_sysneigh) 
+
+                test_sysneigh_entry = chassis_app_db.get_entry("SYSTEM_NEIGH", test_sysneigh)
                 sys_neigh_encap_index = test_sysneigh_entry.get("encap_index")
                 assert sys_neigh_encap_index != "", "System neigh in chassis app db does not have encap index"
-                
+
                 assert encap_index == sys_neigh_encap_index, "Encap index not sync-ed correctly"
-                
+
                 break
 
 # Add Dummy always-pass test at end as workaroud
