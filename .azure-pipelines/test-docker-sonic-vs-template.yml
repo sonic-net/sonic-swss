@@ -20,7 +20,7 @@ jobs:
       source: specific
       project: build
       pipeline: 1
-      artifact: sonic-buildimage.kvm
+      artifact: sonic-buildimage.vs
       runVersion: 'latestFromBranch'
       runBranch: 'refs/heads/master'
     displayName: "Download docker sonic vs image"
