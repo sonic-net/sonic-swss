@@ -367,7 +367,12 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             for (auto &attribute : attribs)
             {
                 sai_status = sai_buffer_api->set_buffer_pool_attribute(sai_object, &attribute);
-                if (SAI_STATUS_SUCCESS != sai_status)
+                if (SAI_STATUS_ATTR_NOT_IMPLEMENTED_0 == sai_status)
+                {
+                    SWSS_LOG_NOTICE("Buffer pool SET for name:%s, sai object:%" PRIx64 ", not implemented. status:%d. Ignoring it", object_name.c_str(), sai_object, sai_status);
+                    return task_process_status::task_ignore;
+                }
+		        else if (SAI_STATUS_SUCCESS != sai_status)
                 {
                     SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
                     return task_process_status::task_failed;
@@ -553,7 +558,12 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             for (auto &attribute : attribs)
             {
                 sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
-                if (SAI_STATUS_SUCCESS != sai_status)
+                if (SAI_STATUS_ATTR_NOT_IMPLEMENTED_0 == sai_status)
+                {
+                    SWSS_LOG_NOTICE("Buffer profile SET for name:%s, sai object:%" PRIx64 ", not implemented. status:%d. Ignoring it", object_name.c_str(), sai_object, sai_status);
+                    return task_process_status::task_ignore;
+                }
+                else if (SAI_STATUS_SUCCESS != sai_status)
                 {
                     SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
                     return task_process_status::task_failed;
@@ -1011,6 +1021,7 @@ void BufferOrch::doTask(Consumer &consumer)
         switch(task_status)
         {
             case task_process_status::task_success :
+            case task_process_status::task_ignore :
                 it = consumer.m_toSync.erase(it);
                 break;
             case task_process_status::task_invalid_entry:
