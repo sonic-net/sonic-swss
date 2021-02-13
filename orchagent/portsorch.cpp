@@ -2264,11 +2264,8 @@ void PortsOrch::doPortTask(Consumer &consumer)
              * 1. Remove ports which don't exist anymore
              * 2. Create new ports
              * 3. Initialize all ports
-             *
-             * In order to make sure all ports are received, check the size of m_lanesAliasSpeedMap. If the size is
-             * equal to the port count sent by portsyncd, then all ports are received.
              */
-            if ((m_portConfigState == PORT_CONFIG_RECEIVED || m_portConfigState == PORT_CONFIG_DONE))
+            if (m_portConfigState == PORT_CONFIG_RECEIVED || m_portConfigState == PORT_CONFIG_DONE)
             {
                 for (auto it = m_portListLaneMap.begin(); it != m_portListLaneMap.end();)
                 {
