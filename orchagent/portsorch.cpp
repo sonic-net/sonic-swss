@@ -2247,7 +2247,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed, an, fec_mode, index);
             }
 
-            if (role == "Rec")
+            if (role == "Rec" || role == "Inb")
             {
                 doProcessRecircPort(alias, lane_set, op);
                 it = consumer.m_toSync.erase(it);
@@ -2268,8 +2268,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
              * In order to make sure all ports are received, check the size of m_lanesAliasSpeedMap. If the size is
              * equal to the port count sent by portsyncd, then all ports are received.
              */
-            if ((m_portConfigState == PORT_CONFIG_RECEIVED || m_portConfigState == PORT_CONFIG_DONE) &&
-                m_portCount == (sai_uint32_t)m_lanesAliasSpeedMap.size())
+            if ((m_portConfigState == PORT_CONFIG_RECEIVED || m_portConfigState == PORT_CONFIG_DONE))
             {
                 for (auto it = m_portListLaneMap.begin(); it != m_portListLaneMap.end();)
                 {
@@ -4865,8 +4864,24 @@ void PortsOrch::doProcessRecircPort(string alias, set<int> lane_set, string op)
         SWSS_LOG_NOTICE("Added recirc port %s, pid:%" PRIx64 " lanes:%s",
                         alias.c_str(), port_id, lane_str.c_str());
 
-        /* Create rif for recirc port */
-        gIntfsOrch->addRouterIntfForRecircPort(p);
+        /* Create host intf for recirc port */
+        if(addHostIntfs(p, p.m_alias, p.m_hif_id))
+        {
+            SWSS_LOG_NOTICE("Created host intf for recycle port %s", p.m_alias.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to Create host intf for recirc port %s", p.m_alias.c_str());
+        }
+
+        if(setHostIntfsOperStatus(p, true))
+        {
+            SWSS_LOG_NOTICE("Set host intf oper status UP for recirc port %s", p.m_alias.c_str());
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to set host intf oper status for recirc port %s", p.m_alias.c_str());
+        }
 
         PortUpdate update = { p, true };
         notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
