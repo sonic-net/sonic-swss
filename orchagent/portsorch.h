@@ -143,6 +143,8 @@ public:
     bool isInbandPort(const string &alias);
     bool setVoqInbandIntf(string &alias, string &type);
 
+    bool getRecircPort(Port &p, string role);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
@@ -290,10 +292,9 @@ private:
     void initGearbox();
     bool initGearboxPort(Port &port);
 
-    map<string, Port> m_recircPortList;
-    map<string, Port>::iterator m_recircPortIter = m_recircPortList.end();
-    void doProcessRecircPort(string alias, set<int> laneSet, string op);
-    
+    map<string, string> m_recircPortRole;
+    void doProcessRecircPort(string alias, string role, set<int> laneSet, string op);
+
     //map key is tuple of <attached_switch_id, core_index, core_port_index>
     map<tuple<int, int, int>, sai_object_id_t> m_systemPortOidMap;
     sai_uint32_t m_systemPortCount;

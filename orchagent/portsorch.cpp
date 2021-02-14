@@ -2249,7 +2249,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
 
             if (role == "Rec" || role == "Inb")
             {
-                doProcessRecircPort(alias, lane_set, op);
+                doProcessRecircPort(alias, role, lane_set, op);
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
@@ -2297,7 +2297,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                      * have limiited support for recirc port. This check can be removed once SAI implementation
                      * is enhanced/changed in the future.
                      */
-                    if (m_recircPortList.find(get<0>(it->second)) == m_recircPortList.end() &&
+                    if (m_recircPortRole.find(get<0>(it->second)) == m_recircPortRole.end() &&
                         !initPort(get<0>(it->second), get<4>(it->second), it->first))
                     {
                         throw runtime_error("PortsOrch initialization failure.");
@@ -2341,6 +2341,16 @@ void PortsOrch::doPortTask(Consumer &consumer)
             }
             else
             {
+                /* Skip configuring recirc port for now because the current SAI implementation of some vendors
+                 * have limiited support for recirc port. This check can be removed once SAI implementation
+                 * is enhanced/changed in the future.
+                 */
+                if (m_recircPortRole.find(alias) != m_recircPortRole.end())
+                {
+                    it = consumer.m_toSync.erase(it);
+                    continue;
+                }
+
                 if (an != -1 && an != p.m_autoneg)
                 {
                     if (setPortAutoNeg(p.m_port_id, an))
@@ -4820,27 +4830,36 @@ bool PortsOrch::getSystemPorts()
     return true;
 }
 
-void PortsOrch::doProcessRecircPort(string alias, set<int> lane_set, string op)
+bool PortsOrch::getRecircPort(Port &port, string role)
+{
+    for (auto it = m_recircPortRole.begin(); it != m_recircPortRole.end(); it++)
+    {
+        if (it->second == role)
+        {
+            return getPort(it->first, port);
+        }
+    }
+    SWSS_LOG_ERROR("Failed to find recirc port with role %s", role.c_str());
+    return false;
+}
+
+void PortsOrch::doProcessRecircPort(string alias, string role, set<int> lane_set, string op)
 {
     SWSS_LOG_ENTER();
 
     if (op == SET_COMMAND)
     {
-        if (m_recircPortList.find(alias) != m_recircPortList.end())
+        if (m_recircPortRole.find(alias) != m_recircPortRole.end())
         {
-            SWSS_LOG_WARN("Recirc port %s already added", alias.c_str());
+            SWSS_LOG_DEBUG("Recirc port %s already added", alias.c_str());
             return;
         }
 
         /* Find pid of recirc port */ 
         sai_object_id_t port_id = SAI_NULL_OBJECT_ID;
-        for (auto it = m_portListLaneMap.begin(); it != m_portListLaneMap.end(); it++)
+        if (m_portListLaneMap.find(lane_set) != m_portListLaneMap.end())
         {
-            if (it->first == lane_set)
-            {
-                port_id = it->second;
-                break;
-            }
+            port_id = m_portListLaneMap[lane_set];
         }
 
         if (port_id == SAI_NULL_OBJECT_ID)
@@ -4851,7 +4870,8 @@ void PortsOrch::doProcessRecircPort(string alias, set<int> lane_set, string op)
         Port p(alias, Port::PHY);
         p.m_port_id = port_id;
         p.m_init = true;
-        m_recircPortList[alias] = p;
+        m_recircPortRole[alias] = role;
+        setPort(alias, p);
 
         string lane_str = "";
         for (auto lane : lane_set)

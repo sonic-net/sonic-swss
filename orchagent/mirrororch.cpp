@@ -858,7 +858,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         if (gMySwitchType == "voq")
         {
             Port recirc_port;
-            if (!m_portsOrch->getRecircPort(recirc_port))
+            if (!m_portsOrch->getRecircPort(recirc_port, "Rec"))
             {
                 SWSS_LOG_ERROR("Failed to get recirc prot");
                 return false;
