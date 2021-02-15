@@ -436,12 +436,14 @@ void CrmOrch::getResAvailableCounters()
 
     for (auto &res : m_resourcesMap)
     {
-        sai_attribute_t attr;
-        attr.id = crmResSaiAvailAttrMap.at(res.first);
-
         // ignore unsupported resources
         if (res.second.resStatus != CrmResourceStatus::CRM_RES_SUPPORTED)
+        {
             continue;
+        }
+
+        sai_attribute_t attr;
+        attr.id = crmResSaiAvailAttrMap.at(res.first);
 
         switch (attr.id)
         {
