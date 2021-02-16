@@ -44,7 +44,6 @@ const int intfsorch_pri = 35;
 
 #define INBAND_INTF_TIMER_SEC 1
 
-#define LOOPBACK_PREFIX     "Loopback"
 
 static const vector<sai_router_interface_stat_t> rifStatIds =
 {
