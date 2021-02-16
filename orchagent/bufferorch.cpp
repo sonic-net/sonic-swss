@@ -124,7 +124,7 @@ void BufferOrch::initBufferConstants()
     vector<FieldValueTuple> fvVector;
     fvVector.emplace_back(make_pair("mmu_size", to_string(attr.value.u64 * 1024)));
     m_stateBufferMaximumValueTable.set("global", fvVector);
-    SWSS_LOG_NOTICE("Got maximum memory size %lu, exposing to %s|global",
+    SWSS_LOG_NOTICE("Got maximum memory size %" PRIx64 ", exposing to %s|global",
                     attr.value.u64, STATE_BUFFER_MAXIMUM_VALUE_TABLE);
 }
 
@@ -178,7 +178,7 @@ void BufferOrch::generateBufferPoolWatermarkCounterIdList(void)
     // is received on buffer pool watermark key under table "FLEX_COUNTER_GROUP_TABLE"
     // Because the SubscriberStateTable listens to the entire keyspace of "BUFFER_POOL_WATERMARK", any update
     // to field value tuples under key "BUFFER_POOL_WATERMARK" will cause this tuple to be heard again
-    // To avoid resync the coutner ID list a second time, we introduce a data member variable to mark whether
+    // To avoid resync the counter ID list a second time, we introduce a data member variable to mark whether
     // this operation has already been done or not yet
     if (m_isBufferPoolWatermarkCounterIdListGenerated)
     {
@@ -367,7 +367,12 @@ task_process_status BufferOrch::processBufferPool(KeyOpFieldsValuesTuple &tuple)
             for (auto &attribute : attribs)
             {
                 sai_status = sai_buffer_api->set_buffer_pool_attribute(sai_object, &attribute);
-                if (SAI_STATUS_SUCCESS != sai_status)
+                if (SAI_STATUS_ATTR_NOT_IMPLEMENTED_0 == sai_status)
+                {
+                    SWSS_LOG_NOTICE("Buffer pool SET for name:%s, sai object:%" PRIx64 ", not implemented. status:%d. Ignoring it", object_name.c_str(), sai_object, sai_status);
+                    return task_process_status::task_ignore;
+                }
+                else if (SAI_STATUS_SUCCESS != sai_status)
                 {
                     SWSS_LOG_ERROR("Failed to modify buffer pool, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
                     return task_process_status::task_failed;
@@ -553,7 +558,12 @@ task_process_status BufferOrch::processBufferProfile(KeyOpFieldsValuesTuple &tup
             for (auto &attribute : attribs)
             {
                 sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
-                if (SAI_STATUS_SUCCESS != sai_status)
+                if (SAI_STATUS_ATTR_NOT_IMPLEMENTED_0 == sai_status)
+                {
+                    SWSS_LOG_NOTICE("Buffer profile SET for name:%s, sai object:%" PRIx64 ", not implemented. status:%d. Ignoring it", object_name.c_str(), sai_object, sai_status);
+                    return task_process_status::task_ignore;
+                }
+                else if (SAI_STATUS_SUCCESS != sai_status)
                 {
                     SWSS_LOG_ERROR("Failed to modify buffer profile, name:%s, sai object:%" PRIx64 ", status:%d", object_name.c_str(), sai_object, sai_status);
                     return task_process_status::task_failed;
@@ -966,7 +976,7 @@ void BufferOrch::doTask()
     //     ├── buffer queue
     //     └── buffer pq table
 
-    SWSS_LOG_INFO("Handling buffer task");
+    SWSS_LOG_DEBUG("Handling buffer task");
 
     auto pool_consumer = getExecutor((APP_BUFFER_POOL_TABLE_NAME));
     pool_consumer->drain();
@@ -1011,6 +1021,7 @@ void BufferOrch::doTask(Consumer &consumer)
         switch(task_status)
         {
             case task_process_status::task_success :
+            case task_process_status::task_ignore :
                 it = consumer.m_toSync.erase(it);
                 break;
             case task_process_status::task_invalid_entry:

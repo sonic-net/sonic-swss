@@ -99,7 +99,7 @@ void NeighSync::onMsg(int nlmsg_type, struct nl_object *obj)
     /* Ignore neighbor entries with Broadcast Mac - Trigger for directed broadcast */
     if (!delete_key && (MacAddress(macStr) == MacAddress("ff:ff:ff:ff:ff:ff")))
     {
-        SWSS_LOG_INFO("Broadcast Mac recieved, ignoring for %s", ipStr);
+        SWSS_LOG_INFO("Broadcast Mac received, ignoring for %s", ipStr);
         return;
     }
 

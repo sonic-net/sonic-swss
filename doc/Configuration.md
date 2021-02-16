@@ -539,7 +539,16 @@ group name and IP ranges in **BGP_PEER_RANGE** table.
         "ipv4_neighbor_low_threshold": "70",
         "acl_group_threshold_type": "percentage",
         "ipv4_nexthop_high_threshold": "85",
-        "ipv6_route_threshold_type": "percentage"
+        "ipv6_route_threshold_type": "percentage",
+        "snat_entry_threshold_type": "percentage",
+        "snat_entry_high_threshold": "85",
+        "snat_entry_low_threshold": "70",
+        "dnat_entry_threshold_type": "percentage",
+        "dnat_entry_high_threshold": "85",
+        "dnat_entry_low_threshold": "70",
+        "ipmc_entry_threshold_type": "percentage",
+        "ipmc_entry_high_threshold": "85",
+        "ipmc_entry_low_threshold": "70"
     }
   }
 }

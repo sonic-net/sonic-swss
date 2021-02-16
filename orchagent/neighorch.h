@@ -23,8 +23,14 @@ struct NextHopEntry
     uint32_t            nh_flags;       // flags
 };
 
+struct NeighborData
+{
+    MacAddress    mac;
+    bool          hw_configured = false; // False means, entry is not written to HW
+};
+
 /* NeighborTable: NeighborEntry, neighbor MAC address */
-typedef map<NeighborEntry, MacAddress> NeighborTable;
+typedef map<NeighborEntry, NeighborData> NeighborTable;
 /* NextHopTable: NextHopKey, NextHopEntry */
 typedef map<NextHopKey, NextHopEntry> NextHopTable;
 
@@ -38,24 +44,35 @@ struct NeighborUpdate
 class NeighOrch : public Orch, public Subject, public Observer
 {
 public:
-    NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch);
+    NeighOrch(DBConnector *db, string tableName, IntfsOrch *intfsOrch, FdbOrch *fdbOrch, PortsOrch *portsOrch, DBConnector *chassisAppDb);
     ~NeighOrch();
 
     bool hasNextHop(const NextHopKey&);
 
     sai_object_id_t getNextHopId(const NextHopKey&);
+    sai_object_id_t getLocalNextHopId(const NextHopKey&);
     int getNextHopRefCount(const NextHopKey&);
 
-    void increaseNextHopRefCount(const NextHopKey&);
-    void decreaseNextHopRefCount(const NextHopKey&);
+    void increaseNextHopRefCount(const NextHopKey&, uint32_t count = 1);
+    void decreaseNextHopRefCount(const NextHopKey&, uint32_t count = 1);
 
     bool getNeighborEntry(const NextHopKey&, NeighborEntry&, MacAddress&);
     bool getNeighborEntry(const IpAddress&, NeighborEntry&, MacAddress&);
 
+    bool enableNeighbor(const NeighborEntry&);
+    bool disableNeighbor(const NeighborEntry&);
+    bool isHwConfigured(const NeighborEntry&);
+
+    sai_object_id_t addTunnelNextHop(const NextHopKey&);
+    bool removeTunnelNextHop(const NextHopKey&);
+
     bool ifChangeInformNextHop(const string &, bool);
     bool isNextHopFlagSet(const NextHopKey &, const uint32_t);
-
+    bool removeOverlayNextHop(const NextHopKey &);
     void update(SubjectType, void *);
+
+    bool addInbandNeighbor(string alias, IpAddress ip_address);
+    bool delInbandNeighbor(string alias, IpAddress ip_address);
 
 private:
     PortsOrch *m_portsOrch;
@@ -70,7 +87,7 @@ private:
     bool removeNextHop(const IpAddress&, const string&);
 
     bool addNeighbor(const NeighborEntry&, const MacAddress&);
-    bool removeNeighbor(const NeighborEntry&);
+    bool removeNeighbor(const NeighborEntry&, bool disable = false);
 
     bool setNextHopFlag(const NextHopKey &, const uint32_t);
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
@@ -80,7 +97,16 @@ private:
 
     void doTask(Consumer &consumer);
 
-    std::map<IpAddress, string> m_remoteNeigh; 
+    void doVoqSystemNeighTask(Consumer &consumer);
+
+    unique_ptr<Table> m_tableVoqSystemNeighTable;
+    unique_ptr<Table> m_stateSystemNeighTable;
+    bool getSystemPortNeighEncapIndex(string &alias, IpAddress &ip, uint32_t &encap_index);
+    bool addVoqEncapIndex(string &alias, IpAddress &ip, vector<sai_attribute_t> &neighbor_attrs);
+    void voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacAddress &mac, sai_neighbor_entry_t &neighbor_entry);
+    void voqSyncDelNeigh(string &alias, IpAddress &ip_address);
+
+    std::map<IpAddress, string> m_remoteNeigh;     
 };
 
 #endif /* SWSS_NEIGHORCH_H */

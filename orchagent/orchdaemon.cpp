@@ -38,13 +38,15 @@ BufferOrch *gBufferOrch;
 SwitchOrch *gSwitchOrch;
 Directory<Orch*> gDirectory;
 NatOrch *gNatOrch;
+MACsecOrch *gMacsecOrch;
 
 bool gIsNatSupported = false;
 
-OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb) :
+OrchDaemon::OrchDaemon(DBConnector *applDb, DBConnector *configDb, DBConnector *stateDb, DBConnector *chassisAppDb) :
         m_applDb(applDb),
         m_configDb(configDb),
-        m_stateDb(stateDb)
+        m_stateDb(stateDb),
+        m_chassisAppDb(chassisAppDb)
 {
     SWSS_LOG_ENTER();
 }
@@ -56,7 +58,7 @@ OrchDaemon::~OrchDaemon()
     /*
      * Some orchagents call other agents in their destructor.
      * To avoid accessing deleted agent, do deletion in reverse order.
-     * NOTE: This is stil not a robust solution, as order in this list
+     * NOTE: This is still not a robust solution, as order in this list
      *       does not strictly match the order of construction of agents.
      * For a robust solution, first some cleaning/house-keeping in
      * orchagents management is in order.
@@ -74,8 +76,15 @@ bool OrchDaemon::init()
 
     string platform = getenv("platform") ? getenv("platform") : "";
     TableConnector stateDbSwitchTable(m_stateDb, "SWITCH_CAPABILITY");
+    TableConnector app_switch_table(m_applDb, APP_SWITCH_TABLE_NAME);
+    TableConnector conf_asic_sensors(m_configDb, CFG_ASIC_SENSORS_TABLE_NAME);
 
-    gSwitchOrch = new SwitchOrch(m_applDb, APP_SWITCH_TABLE_NAME, stateDbSwitchTable);
+    vector<TableConnector> switch_tables = {
+        conf_asic_sensors,
+        app_switch_table
+    };
+
+    gSwitchOrch = new SwitchOrch(m_applDb, switch_tables, stateDbSwitchTable);
 
     const int portsorch_base_pri = 40;
 
@@ -87,11 +96,15 @@ bool OrchDaemon::init()
         { APP_LAG_MEMBER_TABLE_NAME,  portsorch_base_pri     }
     };
 
+    vector<table_name_with_pri_t> app_fdb_tables = {
+        { APP_FDB_TABLE_NAME,        FdbOrch::fdborch_pri},
+        { APP_VXLAN_FDB_TABLE_NAME,  FdbOrch::fdborch_pri}
+    };
+
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
     gPortsOrch = new PortsOrch(m_applDb, ports_tables);
-    TableConnector applDbFdb(m_applDb, APP_FDB_TABLE_NAME);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
-    gFdbOrch = new FdbOrch(applDbFdb, stateDbFdb, gPortsOrch);
+    gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, gPortsOrch);
 
     vector<string> vnet_tables = {
             APP_VNET_RT_TABLE_NAME,
@@ -120,13 +133,15 @@ bool OrchDaemon::init()
     ChassisOrch* chassis_frontend_orch = new ChassisOrch(m_configDb, m_applDb, chassis_frontend_tables, vnet_rt_orch);
     gDirectory.set(chassis_frontend_orch);
 
-    gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch);
-    gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch);
+    gIntfsOrch = new IntfsOrch(m_applDb, APP_INTF_TABLE_NAME, vrf_orch, m_chassisAppDb);
+    gNeighOrch = new NeighOrch(m_applDb, APP_NEIGH_TABLE_NAME, gIntfsOrch, gFdbOrch, gPortsOrch, m_chassisAppDb);
 
-    vector<string> fgnhg_tables = {
-        CFG_FG_NHG,
-        CFG_FG_NHG_PREFIX,
-        CFG_FG_NHG_MEMBER
+    const int fgnhgorch_pri = 15;
+
+    vector<table_name_with_pri_t> fgnhg_tables = {
+        { CFG_FG_NHG,                 fgnhgorch_pri },
+        { CFG_FG_NHG_PREFIX,          fgnhgorch_pri },
+        { CFG_FG_NHG_MEMBER,          fgnhgorch_pri }
     };
 
     gFgNhgOrch = new FgNhgOrch(m_configDb, m_applDb, m_stateDb, fgnhg_tables, gNeighOrch, gIntfsOrch, vrf_orch);
@@ -234,6 +249,29 @@ bool OrchDaemon::init()
 
     gNatOrch = new NatOrch(m_applDb, m_stateDb, nat_tables, gRouteOrch, gNeighOrch);
 
+    vector<string> mux_tables = {
+        CFG_MUX_CABLE_TABLE_NAME,
+        CFG_PEER_SWITCH_TABLE_NAME
+    };
+    MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
+    gDirectory.set(mux_orch);
+
+    MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, APP_MUX_CABLE_TABLE_NAME);
+    gDirectory.set(mux_cb_orch);
+
+    MuxStateOrch *mux_st_orch = new MuxStateOrch(m_stateDb, STATE_HW_MUX_CABLE_TABLE_NAME);
+    gDirectory.set(mux_st_orch);
+
+    vector<string> macsec_app_tables = {
+        APP_MACSEC_PORT_TABLE_NAME,
+        APP_MACSEC_EGRESS_SC_TABLE_NAME,
+        APP_MACSEC_INGRESS_SC_TABLE_NAME,
+        APP_MACSEC_EGRESS_SA_TABLE_NAME,
+        APP_MACSEC_INGRESS_SA_TABLE_NAME,
+    };
+
+    gMacsecOrch = new MACsecOrch(m_applDb, m_stateDb, macsec_app_tables, gPortsOrch);
+  
     /*
      * The order of the orch list is important for state restore of warm start and
      * the queued processing in m_toSync map after gPortsOrch->allPortsReady() is set.
@@ -242,7 +280,7 @@ bool OrchDaemon::init()
      * when iterating ConsumerMap. This is ensured implicitly by the order of keys in ordered map.
      * For cases when Orch has to process tables in specific order, like PortsOrch during warm start, it has to override Orch::doTask()
      */
-    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch};
+    m_orchList = { gSwitchOrch, gCrmOrch, gPortsOrch, gBufferOrch, gIntfsOrch, gNeighOrch, gRouteOrch, copp_orch, tunnel_decap_orch, qos_orch, wm_orch, policer_orch, sflow_orch, debug_counter_orch, gMacsecOrch};
 
     bool initialize_dtel = false;
     if (platform == BFN_PLATFORM_SUBSTRING || platform == VS_PLATFORM_SUBSTRING)
@@ -291,6 +329,9 @@ bool OrchDaemon::init()
     m_orchList.push_back(vnet_rt_orch);
     m_orchList.push_back(gNatOrch);
     m_orchList.push_back(gFgNhgOrch);
+    m_orchList.push_back(mux_orch);
+    m_orchList.push_back(mux_cb_orch);
+    m_orchList.push_back(mux_st_orch);
 
     m_select = new Select();
 
@@ -304,10 +345,48 @@ bool OrchDaemon::init()
         CFG_PFC_WD_TABLE_NAME
     };
 
-    if ((platform == MLNX_PLATFORM_SUBSTRING)
-        || (platform == INVM_PLATFORM_SUBSTRING)
-        || (platform == BFN_PLATFORM_SUBSTRING)
-        || (platform == NPS_PLATFORM_SUBSTRING))
+    if (platform == MLNX_PLATFORM_SUBSTRING)
+    {
+
+        static const vector<sai_port_stat_t> portStatIds =
+        {
+            SAI_PORT_STAT_PFC_0_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_1_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_2_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_3_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_4_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_5_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_6_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_7_RX_PAUSE_DURATION_US,
+            SAI_PORT_STAT_PFC_0_RX_PKTS,
+            SAI_PORT_STAT_PFC_1_RX_PKTS,
+            SAI_PORT_STAT_PFC_2_RX_PKTS,
+            SAI_PORT_STAT_PFC_3_RX_PKTS,
+            SAI_PORT_STAT_PFC_4_RX_PKTS,
+            SAI_PORT_STAT_PFC_5_RX_PKTS,
+            SAI_PORT_STAT_PFC_6_RX_PKTS,
+            SAI_PORT_STAT_PFC_7_RX_PKTS,
+        };
+
+        static const vector<sai_queue_stat_t> queueStatIds =
+        {
+            SAI_QUEUE_STAT_PACKETS,
+            SAI_QUEUE_STAT_CURR_OCCUPANCY_BYTES,
+        };
+
+        static const vector<sai_queue_attr_t> queueAttrIds;
+
+        m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
+                    m_configDb,
+                    pfc_wd_tables,
+                    portStatIds,
+                    queueStatIds,
+                    queueAttrIds,
+                    PFC_WD_POLL_MSECS));
+    }
+    else if ((platform == INVM_PLATFORM_SUBSTRING)
+             || (platform == BFN_PLATFORM_SUBSTRING)
+             || (platform == NPS_PLATFORM_SUBSTRING))
     {
 
         static const vector<sai_port_stat_t> portStatIds =
@@ -338,9 +417,7 @@ bool OrchDaemon::init()
 
         static const vector<sai_queue_attr_t> queueAttrIds;
 
-        if ((platform == MLNX_PLATFORM_SUBSTRING)
-            || (platform == INVM_PLATFORM_SUBSTRING)
-            || (platform == NPS_PLATFORM_SUBSTRING))
+        if ((platform == INVM_PLATFORM_SUBSTRING) || (platform == NPS_PLATFORM_SUBSTRING))
         {
             m_orchList.push_back(new PfcWdSwOrch<PfcWdZeroBufferHandler, PfcWdLossyHandler>(
                         m_configDb,
@@ -525,7 +602,7 @@ void OrchDaemon::start()
 
 /*
  * Try to perform orchagent state restore and dynamic states sync up if
- * warm start reqeust is detected.
+ * warm start request is detected.
  */
 bool OrchDaemon::warmRestoreAndSyncUp()
 {
@@ -541,7 +618,7 @@ bool OrchDaemon::warmRestoreAndSyncUp()
      *
      * First iteration: switchorch, Port init/hostif create part of portorch, buffers configuration
      *
-     * Second iteratoin: port speed/mtu/fec_mode/pfc_asym/admin_status config,
+     * Second iteration: port speed/mtu/fec_mode/pfc_asym/admin_status config,
      * other orch(s) which wait for port to become ready.
      *
      * Third iteration: Drain remaining data that are out of order.

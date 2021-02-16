@@ -130,7 +130,7 @@ void PolicerOrch::doTask(Consumer &consumer)
 
         if (op == SET_COMMAND)
         {
-            // Mark the opeartion as an 'update', if the policer exists.
+            // Mark the operation as an 'update', if the policer exists.
             bool update = m_syncdPolicers.find(key) != m_syncdPolicers.end();
 
             vector<sai_attribute_t> attrs;

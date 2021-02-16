@@ -124,7 +124,8 @@ static const acl_capabilities_t defaultAclActionsSupported =
         ACL_STAGE_INGRESS,
         {
             SAI_ACL_ACTION_TYPE_PACKET_ACTION,
-            SAI_ACL_ACTION_TYPE_MIRROR_INGRESS
+            SAI_ACL_ACTION_TYPE_MIRROR_INGRESS,
+            SAI_ACL_ACTION_TYPE_NO_NAT
         }
     },
     {
@@ -172,7 +173,7 @@ bool AclRule::validateAddPriority(string attr_name, string attr_value)
         char *endp = NULL;
         errno = 0;
         m_priority = (uint32_t)strtol(attr_value.c_str(), &endp, 0);
-        // chack conversion was successfull and the value is within the allowed range
+        // check conversion was successful and the value is within the allowed range
         status = (errno == 0) &&
                  (endp == attr_value.c_str() + attr_value.size()) &&
                  (m_priority >= m_minPriority) &&
@@ -1011,6 +1012,16 @@ bool AclRulePfcwd::validateAddMatch(string attr_name, string attr_value)
         return false;
     }
 
+    return AclRule::validateAddMatch(attr_name, attr_value);
+}
+
+AclRuleMux::AclRuleMux(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
+        AclRuleL3(aclOrch, rule, table, type, createCounter)
+{
+}
+
+bool AclRuleMux::validateAddMatch(string attr_name, string attr_value)
+{
     return AclRule::validateAddMatch(attr_name, attr_value);
 }
 
@@ -2465,7 +2476,7 @@ void AclOrch::queryAclActionAttrEnumValues(const string &action_name,
             }
         }
 #else
-        /* assume all enum values are supported untill sai object api is available */
+        /* assume all enum values are supported until sai object api is available */
         for (size_t i = 0; i < meta->enummetadata->valuescount; i++)
         {
             m_aclEnumActionCapabilities[acl_action].insert(meta->enummetadata->values[i]);
@@ -2736,7 +2747,7 @@ bool AclOrch::addAclTable(AclTable &newTable)
         /* If ACL table exists, remove the table first.*/
         if (!removeAclTable(table_id))
         {
-            SWSS_LOG_ERROR("Failed to remove exsiting ACL table %s before adding the new one",
+            SWSS_LOG_ERROR("Failed to remove existing ACL table %s before adding the new one",
                     table_id.c_str());
             return false;
         }

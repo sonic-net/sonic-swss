@@ -906,7 +906,7 @@ void VxlanMgr::createAppDBTunnelMapTable(const KeyOpFieldsValuesTuple & t)
     std::replace(vxlanTunnelMapName.begin(), vxlanTunnelMapName.end(), config_db_key_delimiter, delimiter);
 
     /* Case 1: Entry exist - Erase from cache & return
-     * Case 2: Enry does not exist - Write to AppDB 
+     * Case 2: Entry does not exist - Write to AppDB 
      * Case 3: Entry exist but modified - Not taken care. Will address later
      */
     if (m_in_reconcile)
@@ -915,13 +915,13 @@ void VxlanMgr::createAppDBTunnelMapTable(const KeyOpFieldsValuesTuple & t)
         if (it != m_appVxlanTunnelMapKeysRecon.end())
         {
             m_appVxlanTunnelMapKeysRecon.erase(it);
-            SWSS_LOG_INFO("Reconcile App Tunnel Map Table create %s reconciled. Pending %lu",
+            SWSS_LOG_INFO("Reconcile App Tunnel Map Table create %s reconciled. Pending %zu",
                             vxlanTunnelMapName.c_str(), m_appVxlanTunnelMapKeysRecon.size());
             return;
         }
         else
         {
-            SWSS_LOG_INFO("Reconcile App Tunnel Map Table create %s doesnt not exist. Pending %lu",
+            SWSS_LOG_INFO("Reconcile App Tunnel Map Table create %s does not exist. Pending %zu",
                             vxlanTunnelMapName.c_str(), m_appVxlanTunnelMapKeysRecon.size());
         }
     }
@@ -956,7 +956,7 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
                     vlan_id.c_str());
 
     // Case 1: Entry exist - Erase from cache & return
-    // Case 2: Enry does not exist - Create netDevice in Kernel
+    // Case 2: Entry does not exist - Create netDevice in Kernel
     // Case 3: Entry exist but modified - Not taken care. Will address later
      
     if (m_in_reconcile)
@@ -965,13 +965,13 @@ int VxlanMgr::createVxlanNetdevice(std::string vxlanTunnelName, std::string vni_
         if (it != m_vxlanNetDevices.end())
         {
             m_vxlanNetDevices.erase(it);
-            SWSS_LOG_INFO("Reconcile VxlanNetDevice %s reconciled. Pending %lu",
+            SWSS_LOG_INFO("Reconcile VxlanNetDevice %s reconciled. Pending %zu",
                             vxlan_dev_name.c_str(), m_vxlanNetDevices.size());
             return 0;
         }
         else
         {
-            SWSS_LOG_INFO("Reconcile VxlanNetDevice %s does not exist. Pending %lu",
+            SWSS_LOG_INFO("Reconcile VxlanNetDevice %s does not exist. Pending %zu",
                             vxlan_dev_name.c_str(), m_vxlanNetDevices.size());
         }
     }
@@ -1184,7 +1184,7 @@ void VxlanMgr::beginReconcile(bool warm)
     {
         SWSS_LOG_INFO("App Tunnel Map Key: %s", k.c_str());
     }
-    SWSS_LOG_INFO("Pending %lu entries for the Tunnel Map Table", m_appVxlanTunnelMapKeysRecon.size());
+    SWSS_LOG_INFO("Pending %zu entries for the Tunnel Map Table", m_appVxlanTunnelMapKeysRecon.size());
     return;
 }
 

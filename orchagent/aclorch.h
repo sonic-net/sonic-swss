@@ -35,6 +35,7 @@
 #define TABLE_TYPE_DTEL_FLOW_WATCHLIST  "DTEL_FLOW_WATCHLIST"
 #define TABLE_TYPE_DTEL_DROP_WATCHLIST  "DTEL_DROP_WATCHLIST"
 #define TABLE_TYPE_MCLAG                "MCLAG"
+#define TABLE_TYPE_MUX                  "MUX"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
@@ -115,7 +116,8 @@ typedef enum
     ACL_TABLE_CTRLPLANE,
     ACL_TABLE_DTEL_FLOW_WATCHLIST,
     ACL_TABLE_DTEL_DROP_WATCHLIST,
-    ACL_TABLE_MCLAG
+    ACL_TABLE_MCLAG,
+    ACL_TABLE_MUX
 } acl_table_type_t;
 
 typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
@@ -272,6 +274,12 @@ public:
     bool validateAddMatch(string attr_name, string attr_value);
 };
 
+class AclRuleMux: public AclRuleL3
+{
+public:
+    AclRuleMux(AclOrch *m_pAclOrch, string rule, string table, acl_table_type_t type, bool createCounter = false);
+    bool validateAddMatch(string attr_name, string attr_value);
+};
 
 class AclRuleMirror: public AclRule
 {
@@ -344,7 +352,7 @@ public:
     map<string, shared_ptr<AclRule>> rules;
     // Set to store the ACL table port alias
     set<string> portSet;
-    // Set to store the not cofigured ACL table port alias
+    // Set to store the not configured ACL table port alias
     set<string> pendingPortSet;
 
     AclTable()
@@ -366,9 +374,9 @@ public:
     bool validate();
     bool create();
 
-    // Bind the ACL table to a port which is alread linked
+    // Bind the ACL table to a port which is already linked
     bool bind(sai_object_id_t portOid);
-    // Unbind the ACL table to a port which is alread linked
+    // Unbind the ACL table to a port which is already linked
     bool unbind(sai_object_id_t portOid);
     // Bind the ACL table to all ports linked
     bool bind();

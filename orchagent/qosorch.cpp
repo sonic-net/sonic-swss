@@ -468,7 +468,7 @@ bool WredMapHandler::convertFieldValuesToAttributes(KeyOpFieldsValuesTuple &tupl
             attribs.push_back(attr);
         }
         else {
-            SWSS_LOG_ERROR("Unkonwn wred profile field:%s", fvField(*i).c_str());
+            SWSS_LOG_ERROR("Unknown wred profile field:%s", fvField(*i).c_str());
             return false;
         }
     }
@@ -816,7 +816,7 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             }
             else if (fvField(*i) == scheduler_priority_field_name)
             {
-                // TODO: The meaning is to be able to adjus priority of the given scheduler group.
+                // TODO: The meaning is to be able to adjust priority of the given scheduler group.
                 // However currently SAI model does not provide such ability.
             }
             else if (fvField(*i) == scheduler_meter_type_field_name)

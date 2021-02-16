@@ -1,0 +1,101 @@
+parameters:
+- name: arch
+  type: string
+  values:
+  - amd64
+  - armhf
+  - arm64
+  default: amd64
+
+- name: pool
+  type: string
+  values:
+  - sonicbld
+  - default
+  default: default
+
+- name: timeout
+  type: number
+  default: 60
+
+- name: sonic_slave
+  type: string
+
+- name: sairedis_artifact_name
+  type: string
+
+- name: swss_common_artifact_name
+  type: string
+
+- name: artifact_name
+  type: string
+
+jobs:
+- job:
+  displayName: ${{ parameters.arch }}
+  timeoutInMinutes: ${{ parameters.timeout }}
+
+  pool:
+    ${{ if ne(parameters.pool, 'default') }}:
+      name: ${{ parameters.pool }}
+    ${{ if eq(parameters.pool, 'default') }}:
+      vmImage: 'ubuntu-20.04'
+
+  container:
+    image: sonicdev-microsoft.azurecr.io:443/${{ parameters.sonic_slave }}:latest
+
+  steps:
+  - script: |
+      sudo apt-get install -y libhiredis0.14 libhiredis-dev
+      sudo apt-get install -y libzmq5 libzmq3-dev
+      sudo apt-get install -qq -y \
+          libhiredis-dev \
+          libnl-3-dev \
+          libnl-genl-3-dev \
+          libnl-route-3-dev \
+          libnl-nf-3-dev \
+          swig3.0
+      sudo apt-get install -y libdbus-1-3
+      sudo apt-get install -y libteam-dev \
+          libteam5 \
+          libteamdctl0
+    displayName: "Install dependencies"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: 9
+      artifacts: ${{ parameters.swss_common_artifact_name }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
+    displayName: "Download sonic swss common deb packages"
+  - task: DownloadPipelineArtifact@2
+    inputs:
+      source: specific
+      project: build
+      pipeline: 12
+      artifacts: ${{ parameters.sairedis_artifact_name }}
+      runVersion: 'latestFromBranch'
+      runBranch: 'refs/heads/master'
+    displayName: "Download sonic sairedis deb packages"
+  - script: |
+      sudo dpkg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon_1.0.0_${{ parameters.arch }}.deb
+      sudo dpkg -i ${{ parameters.swss_common_artifact_name }}/libswsscommon-dev_1.0.0_${{ parameters.arch }}.deb
+      sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsaivs_*.deb
+      sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsaivs-dev_*.deb
+      sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsairedis_*.deb
+      sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsairedis-dev_*.deb
+      sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsaimetadata_*.deb
+      sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/libsaimetadata-dev_*.deb
+      sudo dpkg -i ${{ parameters.sairedis_artifact_name }}/syncd-vs_*.deb
+    workingDirectory: $(Pipeline.Workspace)
+    displayName: "Install sonic swss common and sairedis"
+  - checkout: self
+    submodules: true
+  - script: |
+      ./autogen.sh
+      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
+    displayName: "Compile sonic swss"
+  - publish: $(System.DefaultWorkingDirectory)/
+    artifact: ${{ parameters.artifact_name }}
+    displayName: "Archive swss debian packages"

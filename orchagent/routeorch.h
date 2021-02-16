@@ -6,6 +6,7 @@
 #include "switchorch.h"
 #include "intfsorch.h"
 #include "neighorch.h"
+#include "vxlanorch.h"
 
 #include "ipaddress.h"
 #include "ipaddresses.h"
@@ -19,6 +20,8 @@
 #define NHGRP_MAX_SIZE 128
 /* Length of the Interface Id value in EUI64 format */
 #define EUI64_INTF_ID_LEN 8
+
+#define LOOPBACK_PREFIX     "Loopback"
 
 typedef std::map<NextHopKey, sai_object_id_t> NextHopGroupMembers;
 
@@ -104,8 +107,14 @@ public:
     bool addNextHopGroup(const NextHopGroupKey&);
     bool removeNextHopGroup(const NextHopGroupKey&);
 
-    bool validnexthopinNextHopGroup(const NextHopKey&);
-    bool invalidnexthopinNextHopGroup(const NextHopKey&);
+    bool updateNextHopRoutes(const NextHopKey&, uint32_t&);
+
+    bool validnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
+    bool invalidnexthopinNextHopGroup(const NextHopKey&, uint32_t&);
+
+    bool createRemoteVtep(sai_object_id_t, const NextHopKey&);
+    bool deleteRemoteVtep(sai_object_id_t, const NextHopKey&);
+    bool removeOverlayNextHops(sai_object_id_t, const NextHopGroupKey&);
 
     void notifyNextHopChangeObservers(sai_object_id_t, const IpPrefix&, const NextHopGroupKey&, bool);
     const NextHopGroupKey getSyncdRouteNhgKey(sai_object_id_t vrf_id, const IpPrefix& ipPrefix);

@@ -89,7 +89,7 @@ bool load_json_db_data(ifstream &fs, vector<KeyOpFieldsValuesTuple> &db_items)
         {
             if (el_count != arr_item.size())
             {
-                SWSS_LOG_ERROR("Chlid elements must have both key and op entry. %s",
+                SWSS_LOG_ERROR("Child elements must have both key and op entry. %s",
                                arr_item.dump().c_str());
                 return false;
             }

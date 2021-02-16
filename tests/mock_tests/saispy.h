@@ -5,7 +5,7 @@
 
 #include "saitypes.h"
 
-// Spy C functin pointer to std::function to access closure
+// Spy C function pointer to std::function to access closure
 // Internal using static `spy` function pointer to invoke std::function `fake`
 // To make sure the convert work for multiple function in the same or different API table.
 // The caller shall passing <n/objtype> to create unique SaiSpyFunction class.
@@ -21,7 +21,7 @@
 //    auto x = SpyOn<SAI_API_ACL, SAI_OBJECT_TYPE_ACL_TABLE>(&acl_api.get()->create_acl_table);
 //    auto y = SpyOn<SAI_API_SWITCH, SAI_OBJECT_TYPE_SWITCH>(&switch_api.get()->create_switch);
 //
-// The rest rare case is spy same function in different API table. Using differnt n value for that.
+// The rest rare case is spy same function in different API table. Using different n value for that.
 //     auto x = SpyOn<0, SAI_OBJECT_TYPE_ACL_TABLE>(&acl_api_1.get()->create_acl_table);
 //     auto y = SpyOn<1, SAI_OBJECT_TYPE_ACL_TABLE>(&acl_api_2.get()->create_acl_table);
 //

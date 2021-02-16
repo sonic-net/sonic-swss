@@ -103,7 +103,7 @@ void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
     {
         /*
         * Now we are trying to add the key-value with SET.
-        * We maintain maximun two values per key.
+        * We maintain maximum two values per key.
         * In case there is one key-value, it should be DEL or SET
         * In case there are two key-value pairs, it should be DEL then SET
         * The code logic is following:
@@ -531,7 +531,7 @@ void Orch::logfileReopen()
 
     /*
      * On log rotate we will use the same file name, we are assuming that
-     * logrotate deamon move filename to filename.1 and we will create new
+     * logrotate daemon move filename to filename.1 and we will create new
      * empty file here.
      */
 
@@ -606,7 +606,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
                 SWSS_LOG_DEBUG("Resolved to sai_object:0x%" PRIx64 ", type:%s, name:%s", sai_obj, ref_type_name.c_str(), object_name.c_str());
                 sai_object_arr.push_back(sai_obj);
                 if (!object_name_list.empty())
-                    object_name_list += string(&list_item_delimiter);
+                    object_name_list += list_item_delimiter;
                 object_name_list += ref_type_name + delimiter + object_name;
             }
             count++;
@@ -637,7 +637,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
         range_high = (uint32_t)stoul(range_values[1]);
         if (range_low >= range_high)
         {
-            SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than righ value.\n", input.c_str());
+            SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than right value.\n", input.c_str());
             return false;
         }
     }
@@ -651,7 +651,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
 
 void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
-    if (db->getDbName() == "CONFIG_DB" || db->getDbName() == "STATE_DB")
+    if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
         addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
     }

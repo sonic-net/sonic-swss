@@ -92,10 +92,12 @@ public:
     bool getPortByBridgePortId(sai_object_id_t bridge_port_id, Port &port);
     void setPort(string alias, Port port);
     void getCpuPort(Port &port);
+    bool getInbandPort(Port &port);
     bool getVlanByVlanId(sai_vlan_id_t vlan_id, Port &vlan);
 
     bool setHostIntfsOperStatus(const Port& port, bool up) const;
     void updateDbPortOperStatus(const Port& port, sai_port_oper_status_t status) const;
+
     bool createBindAclTableGroup(sai_object_id_t  port_oid,
                    sai_object_id_t  acl_table_oid,
                    sai_object_id_t  &group_oid,
@@ -125,6 +127,7 @@ public:
 
     bool addSubPort(Port &port, const string &alias, const bool &adminUp = true, const uint32_t &mtu = 0);
     bool removeSubPort(const string &alias);
+    bool updateL3VniStatus(uint16_t vlan_id, bool status);
     void getLagMember(Port &lag, vector<Port> &portv);
     void updateChildPortsMtu(const Port &p, const uint32_t mtu);
 
@@ -136,7 +139,10 @@ public:
     bool removeVlanMember(Port &vlan, Port &port);
     bool isVlanMember(Port &vlan, Port &port);
 
-    
+    string m_inbandPortName = "";
+    bool isInbandPort(const string &alias);
+    bool setVoqInbandIntf(string &alias, string &type);
+
 private:
     unique_ptr<Table> m_counterTable;
     unique_ptr<Table> m_counterLagTable;
@@ -149,6 +155,7 @@ private:
     unique_ptr<Table> m_pgTable;
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;
+    unique_ptr<Table> m_stateBufferMaximumValueTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
@@ -158,6 +165,7 @@ private:
 
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
+    shared_ptr<DBConnector> m_state_db;
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
@@ -220,6 +228,7 @@ private:
 
     bool initializePort(Port &port);
     void initializePriorityGroups(Port &port);
+    void initializePortMaximumHeadroom(Port &port);
     void initializeQueues(Port &port);
 
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);
@@ -277,20 +286,25 @@ private:
 
     void getPortSerdesVal(const std::string& s, std::vector<uint32_t> &lane_values);
 
-    bool setPortSerdesAttribute(sai_object_id_t port_id, sai_attr_id_t attr_id,
-                                vector<uint32_t> &serdes_val);
+    bool setPortSerdesAttribute(sai_object_id_t port_id,
+                                std::map<sai_port_serdes_attr_t, std::vector<uint32_t>> &serdes_attr);
+
+
+    void removePortSerdesAttribute(sai_object_id_t port_id);
+
     bool getSaiAclBindPointType(Port::Type                type,
                                 sai_acl_bind_point_type_t &sai_acl_bind_type);
     void initGearbox();
     bool initGearboxPort(Port &port);
 
-    /* 
-     * This is actually added by the following PR:
-     * https://github.com/Azure/sonic-swss/pull/1431
-     */
-    string m_inbandPortName;
-
     bool addInbandVlan(const string &alias, const string &type);
+    
+    //map key is tuple of <attached_switch_id, core_index, core_port_index>
+    map<tuple<int, int, int>, sai_object_id_t> m_systemPortOidMap;
+    sai_uint32_t m_systemPortCount;
+    bool getSystemPorts();
+    bool addSystemPorts();
+    
 };
 #endif /* SWSS_PORTSORCH_H */
 

@@ -1,0 +1,64 @@
+# C/C++ with GCC
+# Build your C/C++ project with GCC using make.
+# Add steps that publish test results, save build artifacts, deploy, and more:
+# https://docs.microsoft.com/azure/devops/pipelines/apps/c-cpp/gcc
+
+trigger:
+  branches:
+    include:
+      - "*"
+
+stages:
+- stage: Build
+
+  jobs:
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: amd64
+      sonic_slave: sonic-slave-buster
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
+      artifact_name: sonic-swss
+
+- stage: BuildArm
+  dependsOn: Build
+  condition: succeeded('Build')
+  jobs:
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: armhf
+      timeout: 240
+      pool: sonicbld
+      sonic_slave: sonic-slave-buster-armhf
+      swss_common_artifact_name: sonic-swss-common.armhf
+      sairedis_artifact_name: sonic-sairedis.armhf
+      artifact_name: sonic-swss.armhf
+
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: arm64
+      timeout: 240
+      pool: sonicbld
+      sonic_slave: sonic-slave-buster-arm64
+      swss_common_artifact_name: sonic-swss-common.arm64
+      sairedis_artifact_name: sonic-sairedis.arm64
+      artifact_name: sonic-swss.arm64
+
+- stage: BuildDocker
+  dependsOn: Build
+  condition: succeeded('Build')
+  jobs:
+  - template: .azure-pipelines/build-docker-sonic-vs-template.yml
+    parameters:
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
+      swss_artifact_name: sonic-swss
+      artifact_name: docker-sonic-vs
+
+- stage: Test
+  dependsOn: BuildDocker
+  condition: succeeded('BuildDocker')
+  jobs:
+  - template: .azure-pipelines/test-docker-sonic-vs-template.yml
+    parameters:
+      log_artifact_name: log

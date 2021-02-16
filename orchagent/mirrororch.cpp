@@ -64,8 +64,9 @@ MirrorEntry::MirrorEntry(const string& platform) :
         greType = 0x88be;
     }
 
+    string alias = "";
     nexthopInfo.prefix = IpPrefix("0.0.0.0/0");
-    nexthopInfo.nexthop = NextHopKey("0.0.0.0", "");
+    nexthopInfo.nexthop = NextHopKey("0.0.0.0", alias);
 }
 
 MirrorOrch::MirrorOrch(TableConnector stateDbConnector, TableConnector confDbConnector,
@@ -612,7 +613,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
             }
             else
             {
-                // Get the firt member of the LAG
+                // Get the first member of the LAG
                 Port member;
                 string first_member_alias = *session.neighborInfo.port.m_members.begin();
                 m_portsOrch->getPort(first_member_alias, member);
@@ -923,7 +924,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         sai_object_id_t oid = SAI_NULL_OBJECT_ID;
         if (!m_policerOrch->getPolicerOid(session.policer, oid))
         {
-            SWSS_LOG_ERROR("Faield to get policer %s", session.policer.c_str());
+            SWSS_LOG_ERROR("Failed to get policer %s", session.policer.c_str());
             return false;
         }
 
@@ -1185,7 +1186,8 @@ void MirrorOrch::updateNextHop(const NextHopUpdate& update)
         }
         else
         {
-            session.nexthopInfo.nexthop = NextHopKey("0.0.0.0", "");
+            string alias = "";
+            session.nexthopInfo.nexthop = NextHopKey("0.0.0.0", alias);
         }
 
         // Update State DB Nexthop
@@ -1227,7 +1229,7 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
 }
 
 // The function is called when SUBJECT_TYPE_FDB_CHANGE is received.
-// This function will handle the case when new FDB enty is learned/added in the VLAN,
+// This function will handle the case when new FDB entry is learned/added in the VLAN,
 // or when the old FDB entry gets removed. Only when the neighbor is VLAN will the case
 // be handled.
 void MirrorOrch::updateFdb(const FdbUpdate& update)
@@ -1242,7 +1244,7 @@ void MirrorOrch::updateFdb(const FdbUpdate& update)
         // Check the following three conditions:
         // 1) mirror session is pointing to a VLAN
         // 2) the VLAN matches the FDB notification VLAN ID
-        // 3) the destination MAC matches the FDB notifaction MAC
+        // 3) the destination MAC matches the FDB notification MAC
         if (session.neighborInfo.port.m_type != Port::VLAN ||
                 session.neighborInfo.port.m_vlan_info.vlan_oid != update.entry.bv_id ||
                 session.neighborInfo.mac != update.entry.mac)
@@ -1272,7 +1274,7 @@ void MirrorOrch::updateFdb(const FdbUpdate& update)
                 activateSession(name, session);
             }
         }
-        // Remvoe the monitor port
+        // Remove the monitor port
         else
         {
             deactivateSession(name, session);

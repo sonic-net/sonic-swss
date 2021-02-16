@@ -125,7 +125,7 @@ class PfcWdZeroBufferHandler: public PfcWdLossyHandler
     private:
         /*
          * Sets lock bits on port's priority group and queue
-         * to protect them from beeing changed by other Orch's
+         * to protect them from being changed by other Orch's
          */
         void setPriorityGroupAndQueueLockFlag(Port& port, bool isLocked) const;
 
