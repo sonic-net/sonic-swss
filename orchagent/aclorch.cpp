@@ -1364,7 +1364,8 @@ bool AclTable::create()
         attr.value.s32 = (stage == ACL_STAGE_INGRESS) ? SAI_ACL_STAGE_INGRESS : SAI_ACL_STAGE_EGRESS;
         table_attrs.push_back(attr);
         
-        if (stage == ACL_STAGE_INGRESS) {
+        if (stage == ACL_STAGE_INGRESS)
+        {
             attr.id = SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS;
             attr.value.booldata = true;
             table_attrs.push_back(attr);
@@ -2952,20 +2953,23 @@ bool AclOrch::updateAclRule(shared_ptr<AclRule> rule, string table_id, string at
         return false;
     }
 
-    switch(aclMatchLookup[attr_name]) 
+    switch (aclMatchLookup[attr_name]) 
     {
         case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS:
         {
             sai_object_id_t port_oid = *(sai_object_id_t *)data;
             vector<sai_object_id_t> in_ports = rule->getInPorts();
 
-            if(oper == RULE_OPER_ADD) {
+            if (oper == RULE_OPER_ADD) 
+            {
                 in_ports.push_back(port_oid);
-            } else {
-                vector<sai_object_id_t> :: iterator port_iter;
+            } 
+            else 
+            {
                 for (auto port_iter = in_ports.begin(); port_iter != in_ports.end(); port_iter++)
                 {
-                    if(*port_iter == port_oid) {
+                    if (*port_iter == port_oid) 
+                    {
                         in_ports.erase(port_iter);
                         break;
                     }

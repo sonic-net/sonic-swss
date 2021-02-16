@@ -244,14 +244,15 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
     }
     else
     {
-        table_oid = gAclOrch->getTableById(m_strIngressTable);
-        shared_ptr<AclRulePfcwd> newRule = make_shared<AclRulePfcwd>(gAclOrch, m_strRule, m_strIngressTable, table_type);
+        found->second.bind(port);
         
+        table_oid = gAclOrch->getTableById(m_strIngressTable);
         map<sai_object_id_t, AclTable> table_map = gAclOrch->getAclTables();
-        auto rule_iter = table_map[table_oid].rules.find(newRule->getId());
+        auto rule_iter = table_map[table_oid].rules.find(m_strRule);
 
         if (rule_iter == table_map[table_oid].rules.end())
         {
+            shared_ptr<AclRulePfcwd> newRule = make_shared<AclRulePfcwd>(gAclOrch, m_strRule, m_strIngressTable, table_type);
             createPfcAclRule(newRule, queueId, m_strIngressTable, port);
         } 
         else 
@@ -285,13 +286,19 @@ PfcWdAclHandler::~PfcWdAclHandler(void)
     sai_object_id_t table_oid = gAclOrch->getTableById(m_strIngressTable);
     map<sai_object_id_t, AclTable> table_map = gAclOrch->getAclTables();
     auto rule_iter = table_map[table_oid].rules.find(m_strRule);
+    uint64_t table_size = table_map[table_oid].rules.size();
 
     vector<sai_object_id_t> port_set = rule_iter->second->getInPorts();
     sai_object_id_t port = getPort();
 
-    if((port_set.size() == 1) && (port_set[0] == port))
+    if ((port_set.size() == 1) && (port_set[0] == port))
     {
         gAclOrch->removeAclRule(m_strIngressTable, m_strRule);
+        if (table_size == 1) 
+        {
+            auto found = m_aclTables.find(m_strIngressTable);
+            found->second.unbind(port);
+        }
     }
     else 
     {
@@ -299,7 +306,7 @@ PfcWdAclHandler::~PfcWdAclHandler(void)
     } 
 
     auto found = m_aclTables.find(m_strEgressTable);
-    found->second.unbind(getPort());
+    found->second.unbind(port);
 }
 
 void PfcWdAclHandler::clear()
@@ -327,7 +334,7 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, b
     aclTable.link(port);
     aclTable.id = strTable;
 
-    if(ingress) 
+    if (ingress) 
     {
         aclTable.type = ACL_TABLE_DROP;
         aclTable.stage = ACL_STAGE_INGRESS;
@@ -354,13 +361,13 @@ void PfcWdAclHandler::createPfcAclRule(shared_ptr<AclRulePfcwd> rule, uint8_t qu
     attr_value = to_string(queueId);
     rule->validateAddMatch(attr_name, attr_value);
 
-    // Add MATCH_IN_PORTS as match creteria for ingress table
-    if(strTable == INGRESS_TABLE_DROP) 
+    // Add MATCH_IN_PORTS as match criteria for ingress table
+    if (strTable == INGRESS_TABLE_DROP) 
     {
         Port p;
         attr_name = MATCH_IN_PORTS;
-        bool retVal = gPortsOrch->getPort(portOid, p);
-        if (retVal == false) 
+
+        if (!gPortsOrch->getPort(portOid, p))
         {
             SWSS_LOG_ERROR("Failed to get port structure from port oid 0x%" PRIx64, portOid);
             return;
