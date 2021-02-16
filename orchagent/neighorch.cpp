@@ -1249,6 +1249,19 @@ void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacA
     sai_attribute_t attr;
     sai_status_t status;
 
+    Port inbandPort;
+    if (!gPortsOrch->getInbandPort(inbandPort))
+    {
+        SWSS_LOG_ERROR("Failed to get inband port/VLAN");
+        return;
+    }
+
+    if (inbandPort.m_type == Port::VLAN && inbandPort.m_alias == alias)
+    {
+        SWSS_LOG_NOTICE("Skip inband VLAN neigh: %s", ip_address.to_string().c_str());
+        return;
+    }
+
     //Sync only local neigh. Confirm for the local neigh and
     //get the system port alias for key for syncing to CHASSIS_APP_DB
     Port port;
