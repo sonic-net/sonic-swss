@@ -26,9 +26,6 @@ public:
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
     virtual void onMsgRaw(struct nlmsghdr *obj);
-    
-    bool isReadyToReconcile();
-
     WarmStartHelper  m_warmStartHelper;
 
 private:

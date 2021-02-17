@@ -73,32 +73,6 @@ bool FdbSync::isIntfRestoreDone()
     return true;
 }
 
-// Check if vxlan entries are re-conciled to kernel 
-bool FdbSync::isReadyToReconcile()
-{
-    vector<string> required_modules = {
-        "orchagent",
-    };
-
-    for (string& module : required_modules)
-    {
-        WarmStart::WarmStartState state;
-        
-        WarmStart::getWarmStartState(module, state);
-        if (state == WarmStart::RECONCILED)
-        {
-            SWSS_LOG_INFO("Module %s Reconciled %d",module.c_str(), (int) state);            
-        }
-        else
-        {
-            SWSS_LOG_INFO("Module %s NOT Reconciled %d",module.c_str(), (int) state);            
-            return false;
-        }
-    }
-    
-    return true;
-}
-
 void FdbSync::processCfgEvpnNvo()
 {
     std::deque<KeyOpFieldsValuesTuple> entries;

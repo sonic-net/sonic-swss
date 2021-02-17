@@ -36,7 +36,6 @@ int main(int argc, char **argv)
             int ret;
             Select s;
             SelectableTimer replayCheckTimer(timespec{0, 0});
-            SelectableTimer reconCheckTimer(timespec{0, 0});
 
             using namespace std::chrono;
 
@@ -58,7 +57,7 @@ int main(int argc, char **argv)
                     if (pasttime > INTF_RESTORE_MAX_WAIT_TIME)
                     {
                         SWSS_LOG_INFO("timed-out before all interface data was replayed to kernel!!!");
-                        break;
+                        throw runtime_error("fdbsyncd: timedout on interface data replay");
                     }
                     sleep(1);
                 }
@@ -106,36 +105,13 @@ int main(int argc, char **argv)
                     if (sync.getFdbStateTable()->empty() && sync.getCfgEvpnNvoTable()->empty())
                     {
                         sync.getRestartAssist()->appDataReplayed();
-                        SWSS_LOG_NOTICE("FDB Replay Complete,  Start Reconcile Check");
-                        reconCheckTimer.setInterval(timespec{FDBSYNC_RECON_WAIT_TIME, 0});
-                        reconCheckTimer.start();
-                        s.addSelectable(&reconCheckTimer);
+                        SWSS_LOG_NOTICE("FDB Replay Complete");
                     }
                     else
                     {
                         replayCheckTimer.setInterval(timespec{1, 0});
                         // re-start replay check timer
                         replayCheckTimer.start();
-                    }
-
-                }
-                else if (temps == &reconCheckTimer)
-                {
-                    if (sync.isReadyToReconcile())
-                    {
-                        if (sync.getRestartAssist()->isWarmStartInProgress())
-                        {
-                            sync.m_reconcileDone = true;
-                            sync.getRestartAssist()->stopReconcileTimer(s);
-                            sync.getRestartAssist()->reconcile();
-                            SWSS_LOG_NOTICE("VXLAN FDB VNI Reconcillation Complete (Event)");
-                        }
-                    }
-                    else
-                    {
-                        reconCheckTimer.setInterval(timespec{1, 0});
-                        // Restart and check again in 1 sec
-                        reconCheckTimer.start();
                     }
                 }
                 else
@@ -151,7 +127,7 @@ int main(int argc, char **argv)
                             sync.m_reconcileDone = true;
                             sync.getRestartAssist()->stopReconcileTimer(s);
                             sync.getRestartAssist()->reconcile();
-                            SWSS_LOG_NOTICE("VXLAN FDB VNI Reconcillation Complete (Timer)");
+                            SWSS_LOG_NOTICE("VXLAN FDB VNI Reconcillation Complete");
                         }
                     }
                 }
