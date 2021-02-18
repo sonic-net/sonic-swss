@@ -395,6 +395,8 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
     string map_type_name = consumer.getTableName();
     string object_name = kfvKey(tuple);
     string op = kfvOp(tuple);
+    auto platform_env_var = getenv("platform");
+    string platform = platform_env_var ? platform_env_var: "";
 
     SWSS_LOG_DEBUG("object name:%s", object_name.c_str());
     if (m_buffer_type_maps[map_type_name]->find(object_name) != m_buffer_type_maps[map_type_name]->end())
@@ -509,6 +511,11 @@ task_process_status BufferOrch::processBufferProfile(Consumer &consumer)
             SWSS_LOG_DEBUG("Modifying existing sai object:%" PRIx64, sai_object);
             for (auto &attribute : attribs)
             {
+                if ((platform == BRCM_PLATFORM_SUBSTRING) && (attribute.id != SAI_BUFFER_PROFILE_ATTR_SHARED_DYNAMIC_TH))
+                {
+                    continue;
+                }
+
                 sai_status = sai_buffer_api->set_buffer_profile_attribute(sai_object, &attribute);
                 if (SAI_STATUS_SUCCESS != sai_status)
                 {
