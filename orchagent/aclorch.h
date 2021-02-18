@@ -36,6 +36,7 @@
 #define TABLE_TYPE_DTEL_DROP_WATCHLIST  "DTEL_DROP_WATCHLIST"
 #define TABLE_TYPE_MCLAG                "MCLAG"
 #define TABLE_TYPE_MUX                  "MUX"
+#define TABLE_TYPE_DROP                 "DROP"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
@@ -200,6 +201,7 @@ public:
     virtual bool create();
     virtual bool remove();
     virtual void update(SubjectType, void *) = 0;
+    virtual void update_in_ports(void *);
     virtual AclRuleCounters getCounters();
 
     string getId()
@@ -264,7 +266,7 @@ public:
     bool validateAddAction(string attr_name, string attr_value);
     bool validateAddMatch(string attr_name, string attr_value);
     bool validate();
-    void update(SubjectType type, void *data);
+    void update(SubjectType, void *);
 protected:
     sai_object_id_t getRedirectObjectId(const string& redirect_param);
 };

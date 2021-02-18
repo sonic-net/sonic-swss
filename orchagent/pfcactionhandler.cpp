@@ -244,8 +244,6 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
     }
     else
     {
-        found->second.bind(port);
-        
         table_oid = gAclOrch->getTableById(m_strIngressTable);
         map<sai_object_id_t, AclTable> table_map = gAclOrch->getAclTables();
         auto rule_iter = table_map[table_oid].rules.find(m_strRule);
@@ -286,7 +284,6 @@ PfcWdAclHandler::~PfcWdAclHandler(void)
     sai_object_id_t table_oid = gAclOrch->getTableById(m_strIngressTable);
     map<sai_object_id_t, AclTable> table_map = gAclOrch->getAclTables();
     auto rule_iter = table_map[table_oid].rules.find(m_strRule);
-    uint64_t table_size = table_map[table_oid].rules.size();
 
     vector<sai_object_id_t> port_set = rule_iter->second->getInPorts();
     sai_object_id_t port = getPort();
@@ -294,11 +291,6 @@ PfcWdAclHandler::~PfcWdAclHandler(void)
     if ((port_set.size() == 1) && (port_set[0] == port))
     {
         gAclOrch->removeAclRule(m_strIngressTable, m_strRule);
-        if (table_size == 1) 
-        {
-            auto found = m_aclTables.find(m_strIngressTable);
-            found->second.unbind(port);
-        }
     }
     else 
     {

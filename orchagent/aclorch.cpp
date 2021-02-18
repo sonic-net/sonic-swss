@@ -109,7 +109,8 @@ static acl_table_type_lookup_t aclTableTypeLookUp =
     { TABLE_TYPE_CTRLPLANE,             ACL_TABLE_CTRLPLANE },
     { TABLE_TYPE_DTEL_FLOW_WATCHLIST,   ACL_TABLE_DTEL_FLOW_WATCHLIST },
     { TABLE_TYPE_DTEL_DROP_WATCHLIST,   ACL_TABLE_DTEL_DROP_WATCHLIST },
-    { TABLE_TYPE_MCLAG,                 ACL_TABLE_MCLAG }
+    { TABLE_TYPE_MCLAG,                 ACL_TABLE_MCLAG },
+    { TABLE_TYPE_DROP,                  ACL_TABLE_DROP }
 };
 
 static acl_stage_type_lookup_t aclStageLookUp =
@@ -620,6 +621,26 @@ bool AclRule::remove()
     return res;
 }
 
+void AclRule::update_in_ports(void *data)
+{
+    SWSS_LOG_ENTER();
+    sai_attribute_t attr;
+    sai_status_t status;
+
+    if (data != NULL)
+    {
+        attr.id = *(sai_acl_entry_attr_t *)data;
+        attr.value = m_matches[*(sai_acl_entry_attr_t *)data];
+        attr.value.aclfield.enable = true;
+        
+        status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
+        if (status != SAI_STATUS_SUCCESS)
+        {
+            SWSS_LOG_ERROR("Failed to update ACL rule %s, rv:%d", m_id.c_str(), status);
+        }
+    }
+}
+
 AclRuleCounters AclRule::getCounters()
 {
     SWSS_LOG_ENTER();
@@ -675,7 +696,8 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
         type != ACL_TABLE_MIRROR_DSCP &&
         type != ACL_TABLE_DTEL_FLOW_WATCHLIST &&
         type != ACL_TABLE_DTEL_DROP_WATCHLIST &&
-        type != ACL_TABLE_MCLAG)
+        type != ACL_TABLE_MCLAG &&
+        type != ACL_TABLE_DROP)
     {
         throw runtime_error("Unknown table type");
     }
@@ -722,6 +744,10 @@ shared_ptr<AclRule> AclRule::makeShared(acl_table_type_t type, AclOrch *acl, Mir
     else if (type == ACL_TABLE_MCLAG)
     {
         return make_shared<AclRuleMclag>(acl, rule, table, type);
+    }
+    else if (type == ACL_TABLE_DROP)
+    {
+        return make_shared<AclRulePfcwd>(acl, rule, table, type);
     }
 
     throw runtime_error("Wrong combination of table type and action in rule " + rule);
@@ -993,24 +1019,9 @@ bool AclRuleL3::validate()
     return true;
 }
 
-void AclRuleL3::update(SubjectType type, void *data)
+void AclRuleL3::update(SubjectType, void *)
 {
-    SWSS_LOG_ENTER();
-    sai_attribute_t attr;
-    sai_status_t status;
-
-    if (data != NULL)
-    {
-        attr.id = *(sai_acl_entry_attr_t *)data;
-        attr.value = m_matches[*(sai_acl_entry_attr_t *)data];
-        attr.value.aclfield.enable = true;
-        
-        status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to update ACL rule %s, rv:%d", m_id.c_str(), status);
-        }
-    }
+    // Do nothing
 }
 
 AclRulePfcwd::AclRulePfcwd(AclOrch *aclOrch, string rule, string table, acl_table_type_t type, bool createCounter) :
@@ -1020,12 +1031,6 @@ AclRulePfcwd::AclRulePfcwd(AclOrch *aclOrch, string rule, string table, acl_tabl
 
 bool AclRulePfcwd::validateAddMatch(string attr_name, string attr_value)
 {
-    if ((attr_name != MATCH_TC) && (attr_name != MATCH_IN_PORTS))
-    {
-        SWSS_LOG_ERROR("%s is not supported for the tables of type PFCWD", attr_name.c_str());
-        return false;
-    }
-
     return AclRule::validateAddMatch(attr_name, attr_value);
 }
 
@@ -1340,7 +1345,7 @@ bool AclTable::create()
     vector<int32_t> bpoint_list;
 
     // PFC watch dog ACLs are only applied to port
-    if (type == ACL_TABLE_PFCWD)
+    if ((type == ACL_TABLE_PFCWD) || (type == ACL_TABLE_DROP))
     {
         bpoint_list = { SAI_ACL_BIND_POINT_TYPE_PORT };
     }
@@ -1538,6 +1543,10 @@ bool AclTable::create()
         table_attrs.push_back(attr);
 
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
+        attr.value.booldata = true;
+        table_attrs.push_back(attr);
+
+        attr.id = SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
     }
@@ -2986,7 +2995,7 @@ bool AclOrch::updateAclRule(shared_ptr<AclRule> rule, string table_id, string at
             attr_value.pop_back();
 
             rule->validateAddMatch(MATCH_IN_PORTS, attr_value);  
-            m_AclTables[table_oid].rules[rule->getId()]->update(SUBJECT_TYPE_PORT_CHANGE, &aclMatchLookup[attr_name]);
+            m_AclTables[table_oid].rules[rule->getId()]->update_in_ports(&aclMatchLookup[attr_name]);
         }
         break;
 
