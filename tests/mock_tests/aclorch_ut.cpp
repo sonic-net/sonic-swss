@@ -115,7 +115,6 @@ namespace aclorch_test
               { "SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS", "true" },
-              { "SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_ACL_RANGE_TYPE", "2:SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE,SAI_ACL_RANGE_TYPE_L4_SRC_PORT_RANGE" },
               { "SAI_ACL_TABLE_ATTR_ACL_STAGE", "SAI_ACL_STAGE_INGRESS" }});
         SaiAttributeList attr_list(SAI_OBJECT_TYPE_ACL_TABLE, v, false);

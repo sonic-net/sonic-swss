@@ -1545,10 +1545,6 @@ bool AclTable::create()
         attr.id = SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL;
         attr.value.booldata = true;
         table_attrs.push_back(attr);
-
-        attr.id = SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS;
-        attr.value.booldata = true;
-        table_attrs.push_back(attr);
     }
 
     attr.id = SAI_ACL_TABLE_ATTR_FIELD_L4_SRC_PORT;
@@ -3000,6 +2996,7 @@ bool AclOrch::updateAclRule(shared_ptr<AclRule> rule, string table_id, string at
         break;
 
         default:
+            SWSS_LOG_ERROR("Acl rule update not supported for attr name %s", attr_name.c_str());
             break;
     }
 

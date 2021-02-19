@@ -230,7 +230,7 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
 
     string queuestr = to_string(queueId);
     m_strRule = "Rule_PfcWdAclHandler_" + queuestr;
-  
+
     // Ingress table/rule creation
     table_type = ACL_TABLE_DROP;
     m_strIngressTable = INGRESS_TABLE_DROP;
@@ -330,7 +330,8 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, b
     {
         aclTable.type = ACL_TABLE_DROP;
         aclTable.stage = ACL_STAGE_INGRESS;
-    } else 
+    } 
+    else 
     {
         aclTable.type = ACL_TABLE_PFCWD;
         aclTable.stage = ACL_STAGE_EGRESS;
