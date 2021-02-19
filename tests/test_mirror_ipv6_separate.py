@@ -169,6 +169,7 @@ class TestMirror(object):
             "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS",
             "SAI_ACL_TABLE_ATTR_FIELD_DSCP",
             "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE",
+            "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID",
             "SAI_ACL_TABLE_ATTR_FIELD_IN_PORTS",
         ]
 
