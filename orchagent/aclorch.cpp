@@ -621,23 +621,20 @@ bool AclRule::remove()
     return res;
 }
 
-void AclRule::update_in_ports(void *data)
+void AclRule::updateInPorts()
 {
     SWSS_LOG_ENTER();
     sai_attribute_t attr;
     sai_status_t status;
 
-    if (data != NULL)
+    attr.id = SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS;
+    attr.value = m_matches[SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS];
+    attr.value.aclfield.enable = true;
+    
+    status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        attr.id = *(sai_acl_entry_attr_t *)data;
-        attr.value = m_matches[*(sai_acl_entry_attr_t *)data];
-        attr.value.aclfield.enable = true;
-        
-        status = sai_acl_api->set_acl_entry_attribute(m_ruleOid, &attr);
-        if (status != SAI_STATUS_SUCCESS)
-        {
-            SWSS_LOG_ERROR("Failed to update ACL rule %s, rv:%d", m_id.c_str(), status);
-        }
+        SWSS_LOG_ERROR("Failed to update ACL rule %s, rv:%d", m_id.c_str(), status);
     }
 }
 
@@ -2991,13 +2988,13 @@ bool AclOrch::updateAclRule(shared_ptr<AclRule> rule, string table_id, string at
             attr_value.pop_back();
 
             rule->validateAddMatch(MATCH_IN_PORTS, attr_value);  
-            m_AclTables[table_oid].rules[rule->getId()]->update_in_ports(&aclMatchLookup[attr_name]);
+            m_AclTables[table_oid].rules[rule->getId()]->updateInPorts();
         }
         break;
 
         default:
             SWSS_LOG_ERROR("Acl rule update not supported for attr name %s", attr_name.c_str());
-            break;
+        break;
     }
 
     return true;

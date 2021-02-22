@@ -201,7 +201,7 @@ public:
     virtual bool create();
     virtual bool remove();
     virtual void update(SubjectType, void *) = 0;
-    virtual void update_in_ports(void *);
+    virtual void updateInPorts();
     virtual AclRuleCounters getCounters();
 
     string getId()
