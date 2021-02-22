@@ -546,11 +546,13 @@ void NeighOrch::doTask(Consumer &consumer)
             continue;
         }
 
-        if(gPortsOrch->isInbandPort(alias))
+        IpAddress ip_address(key.substr(found+1));
+
+        if (gPortsOrch->isInbandPort(alias))
         {
             Port ibport;
             gPortsOrch->getInbandPort(ibport);
-            if(ibport.m_type != Port::VLAN)
+            if (ibport.m_type != Port::VLAN)
             {
                 //For "port" type Inband, the neighbors are only remote neighbors.
                 //Hence, this is the neigh learned due to the kernel entry added on
@@ -558,16 +560,7 @@ void NeighOrch::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
-            //For "vlan" type inband, may identify the remote neighbors and skip
-        }
-
-        IpAddress ip_address(key.substr(found+1));
-
-        if (gPortsOrch->isInbandPort(alias))
-        {
-            Port ibport;
-            gPortsOrch->getInbandPort(ibport);
-            if(ibport.m_type == Port::VLAN)
+            else
             {
                 /* For inband Vlan, a kernel neigh is added for every remote neighbor
                  * and the interface that the neigh is attached is inband Vlan.
@@ -1256,6 +1249,8 @@ void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacA
         return;
     }
 
+    // Inband neighbors are not synced to CHASSIS_APP_DB for VLAN type inband interface
+    // since these neigibors are learned within inband VLAN.
     if (inbandPort.m_type == Port::VLAN && inbandPort.m_alias == alias)
     {
         SWSS_LOG_NOTICE("Skip inband VLAN neigh: %s", ip_address.to_string().c_str());
