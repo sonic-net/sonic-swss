@@ -237,6 +237,7 @@ class TestMirror(object):
             "SAI_ACL_TABLE_ATTR_FIELD_L4_DST_PORT",
             "SAI_ACL_TABLE_ATTR_FIELD_TCP_FLAGS",
             "SAI_ACL_TABLE_ATTR_FIELD_DSCP",
+            "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID"
         ]
 
         expected_sai_list_attributes = [
