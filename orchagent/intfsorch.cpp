@@ -1408,9 +1408,9 @@ void IntfsOrch::processInbandVlanReady()
          {
              m_stateVlanTable->hset(inbandVlan.m_alias, "state", "ok");
              SWSS_LOG_INFO("Added inband VLAN %s to STATE_VLAN_TABLE", inbandVlan.m_alias.c_str());
-         }
 
-         m_inbandVlanTimer->stop();
+             m_inbandVlanTimer->stop();
+         }
      }
 }
 
