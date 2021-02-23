@@ -1123,7 +1123,7 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                     fvVector.push_back(mac);
                     m_stateSystemNeighTable->set(state_key, fvVector);
 
-                    m_m_remoteNeigh[ip_address] = alias
+                    m_remoteNeigh[ip_address] = alias
 
                     it = consumer.m_toSync.erase(it);
                 }
