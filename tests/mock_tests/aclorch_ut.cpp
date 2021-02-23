@@ -149,6 +149,7 @@ namespace aclorch_test
         auto v = vector<swss::FieldValueTuple>(
             { { "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" },
               { "SAI_ACL_TABLE_ATTR_FIELD_ETHER_TYPE", "true" },
+              { "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL", "true" },
               { "SAI_ACL_TABLE_ATTR_FIELD_SRC_IP", "true" },
@@ -437,6 +438,7 @@ namespace aclorch_test
             vector<swss::FieldValueTuple> fields;
 
             fields.push_back({ "SAI_ACL_TABLE_ATTR_ACL_BIND_POINT_TYPE_LIST", "2:SAI_ACL_BIND_POINT_TYPE_PORT,SAI_ACL_BIND_POINT_TYPE_LAG" });
+            fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_OUTER_VLAN_ID", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_ACL_IP_TYPE", "true" });
             fields.push_back({ "SAI_ACL_TABLE_ATTR_FIELD_IP_PROTOCOL", "true" });
 
