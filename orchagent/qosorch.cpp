@@ -1314,31 +1314,79 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             continue;
         }
 
-        /* Apply a list of attributes to be applied */
-        for (auto it = update_list.begin(); it != update_list.end(); it++)
+        if(op == SET_COMMAND)
         {
-            sai_attribute_t attr;
-            attr.id = it->first;
-            attr.value.oid = it->second.second;
-
-            sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
-            if (status != SAI_STATUS_SUCCESS)
+            /* Apply a list of attributes to be applied */
+            for (auto it = update_list.begin(); it != update_list.end(); it++)
             {
-                SWSS_LOG_ERROR("Failed to apply %s to port %s, rv:%d",
+                sai_attribute_t attr;
+                attr.id = it->first;
+                attr.value.oid = it->second.second;
+
+                sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+                if (status != SAI_STATUS_SUCCESS)
+                {
+                    SWSS_LOG_ERROR("Failed to apply %s to port %s, rv:%d",
                                it->second.first.c_str(), port_name.c_str(), status);
-                return task_process_status::task_invalid_entry;
+                    return task_process_status::task_invalid_entry;
+                }
+                SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
             }
-            SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
-        }
 
-        if (pfc_enable)
-        {
-            if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable))
+            if (pfc_enable)
             {
-                SWSS_LOG_ERROR("Failed to apply PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
-            }
+                if (!gPortsOrch->setPortPfc(port.m_port_id, pfc_enable))
+                {
+                    SWSS_LOG_ERROR("Failed to apply PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
+                }
 
-            SWSS_LOG_INFO("Applied PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
+                SWSS_LOG_INFO("Applied PFC bits 0x%x to port %s", pfc_enable, port_name.c_str());
+            }
+        }
+        else if (op == DEL_COMMAND)
+        {
+            /* Deletion of specific map type */
+            if (update_list.size() != 0)
+            {
+                /* Apply a list of attributes to be applied */
+                for (auto it = update_list.begin(); it != update_list.end(); it++)
+                {
+                    sai_attribute_t attr;
+                    attr.id = it->first;
+                    /* Set SAI_NULL_OBJECT_ID to bind default map on port */
+                    attr.value.oid = SAI_NULL_OBJECT_ID;
+
+                    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to remove %s from port %s, rv:%d",
+                                it->second.first.c_str(), port_name.c_str(), status);
+                        return task_process_status::task_invalid_entry;
+                    }
+                    SWSS_LOG_INFO("Removed %s from port %s", it->second.first.c_str(), port_name.c_str());
+                }
+            }
+            else
+            {
+                /* Complete deletion of the table PORT_QOS_MAP.
+                 * Iterate through all types of port qos map bindings
+                 * Example: "config qos clear"
+                 */
+                for (auto it = qos_to_attr_map.begin(); it != qos_to_attr_map.end(); it++)
+                {
+                    sai_attribute_t attr;
+                    attr.id = it->second;
+                    attr.value.oid = SAI_NULL_OBJECT_ID;
+                    sai_status_t status = sai_port_api->set_port_attribute(port.m_port_id, &attr);
+                    if (status != SAI_STATUS_SUCCESS)
+                    {
+                        SWSS_LOG_ERROR("Failed to apply default map to port %s, rv:%d",
+                        port_name.c_str(), status);
+                        return task_process_status::task_invalid_entry;
+                    }
+                    SWSS_LOG_INFO("Removed (all) %d from port %s", it->second, port_name.c_str());
+                }
+            }
         }
     }
 
