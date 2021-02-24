@@ -10,6 +10,7 @@
 #include "tokenize.h"
 #include "logger.h"
 #include "consumerstatetable.h"
+#include "sai_serialize.h"
 
 using namespace swss;
 
@@ -683,6 +684,82 @@ Executor *Orch::getExecutor(string executorName)
     }
 
     return NULL;
+}
+
+bool Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis create
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: true - Handled the status successfully. No need to retry this SAI operation.
+     *               false - Cannot handle the status. Need to retry the SAI operation.
+     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_ITEM_ALREADY_EXISTS)
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+            return true;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            exit(EXIT_FAILURE);
+    }
+    return false;
+}
+
+bool Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis set
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: true - Handled the status successfully. No need to retry this SAI operation.
+     *               false - Cannot handle the status. Need to retry the SAI operation.
+     * TODO: 1. Add general handling logic for specific statuses
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
+            return true;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            exit(EXIT_FAILURE);
+    }
+    return false;
+}
+
+bool Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis remove
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: true - Handled the status successfully. No need to retry this SAI operation.
+     *               false - Cannot handle the status. Need to retry the SAI operation.
+     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_OBJECT_IN_USE,
+     *          SAI_STATUS_ITEM_NOT_FOUND)
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
+            return true;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            exit(EXIT_FAILURE);
+    }
+    return false;
 }
 
 void Orch2::doTask(Consumer &consumer)
