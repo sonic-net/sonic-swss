@@ -304,7 +304,7 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
     SWSS_LOG_NOTICE("Enable redis pipeline");
 
     char *platform = getenv("platform");
-    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    if (platform && (strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, XS_PLATFORM_SUBSTRING)))
     {
         /* We set this long timeout in order for Orchagent to wait enough time for
          * response from syncd. It is needed since in init, systemd syncd startup
@@ -334,7 +334,7 @@ void initSaiRedis(const string &record_location, const std::string &record_filen
     }
     SWSS_LOG_NOTICE("Notify syncd INIT_VIEW");
 
-    if (platform && strstr(platform, MLNX_PLATFORM_SUBSTRING))
+    if (platform && (strstr(platform, MLNX_PLATFORM_SUBSTRING) || strstr(platform, XS_PLATFORM_SUBSTRING)))
     {
         /* Set timeout back to the default value */
         attr.id = SAI_REDIS_SWITCH_ATTR_SYNC_OPERATION_RESPONSE_TIMEOUT;
