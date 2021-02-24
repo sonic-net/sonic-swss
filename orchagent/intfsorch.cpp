@@ -588,8 +588,8 @@ void IntfsOrch::doTask(Consumer &consumer)
         string vrf_name = "", vnet_name = "", nat_zone = "";
         MacAddress mac;
 
-        uint32_t mtu;
-        bool adminUp;
+        uint32_t mtu = 0;
+        bool adminUp = false;
         uint32_t nat_zone_id = 0;
         string proxy_arp = "";
         string inband_type = "";
@@ -742,7 +742,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
-                if (isSubIntf)
+                if (!ip_prefix_in_key && isSubIntf)
                 {
                     if (!gPortsOrch->addSubPort(port, alias, adminUp, mtu))
                     {
