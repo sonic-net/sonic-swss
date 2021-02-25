@@ -68,6 +68,7 @@ private:
 
     std::vector<sai_object_id_t> m_unicast_queue_ids;
     std::vector<sai_object_id_t> m_multicast_queue_ids;
+    std::vector<sai_object_id_t> m_all_queue_ids;
     std::vector<sai_object_id_t> m_pg_ids;
 };
 
