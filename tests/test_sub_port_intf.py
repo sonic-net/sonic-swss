@@ -318,6 +318,11 @@ class TestSubPortIntf(object):
 
         wait_for_result(_access_function)
 
+    def check_sub_port_intf_mtu_kernel(self, dvs, port_name, mtu):
+        (ec, out) = dvs.runcmd(['bash', '-c', "ip link show {} | grep 'mtu {}'".format(port_name, mtu)])
+        assert ec == 0
+        assert mtu in out
+
     def check_sub_port_intf_vrf_bind_kernel(self, dvs, port_name, vrf_name):
         (ec, out) = dvs.runcmd(['bash', '-c', "ip link show {} | grep {}".format(port_name, vrf_name)])
         assert ec == 0
@@ -976,9 +981,15 @@ class TestSubPortIntf(object):
 
         rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
 
+        # Verify sub port interface mtu in linux kernel
+        self.check_sub_port_intf_mtu_kernel(dvs, sub_port_intf_name, DEFAULT_MTU)
+
         # Change parent port mtu
         mtu = "8888"
         dvs.set_mtu(parent_port, mtu)
+
+        # Verify sub port interface mtu in linux kernel
+        self.check_sub_port_intf_mtu_kernel(dvs, sub_port_intf_name, mtu)
 
         # Verify that sub port router interface entry in ASIC_DB has the updated mtu
         fv_dict = {
@@ -989,6 +1000,9 @@ class TestSubPortIntf(object):
 
         # Restore parent port mtu
         dvs.set_mtu(parent_port, DEFAULT_MTU)
+
+        # Verify sub port interface mtu in linux kernel
+        self.check_sub_port_intf_mtu_kernel(dvs, sub_port_intf_name, DEFAULT_MTU)
 
         # Verify that sub port router interface entry in ASIC_DB has the default mtu
         fv_dict = {
