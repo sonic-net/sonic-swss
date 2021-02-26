@@ -26,7 +26,9 @@
 #include "natorch.h"
 #include "notifier.h"
 #include "sai_serialize.h"
+#include "crmorch.h"
 
+extern CrmOrch            *gCrmOrch;
 extern PortsOrch          *gPortsOrch;
 extern sai_object_id_t     gSwitchId;
 extern sai_switch_api_t   *sai_switch_api;
@@ -786,6 +788,7 @@ bool NatOrch::addHwDnatEntry(const IpAddress &ip_address)
 
     updateNatCounters(ip_address, 0, 0);
     m_natEntries[ip_address].addedToHw = true; 
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -868,6 +871,7 @@ bool NatOrch::addHwDnaptEntry(const NaptEntryKey &key)
 
     m_naptEntries[key].addedToHw = true;
     updateNaptCounters(key.prototype.c_str(), key.ip_address, key.l4_port, 0, 0);
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_DNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -935,6 +939,7 @@ bool NatOrch::removeHwDnatEntry(const IpAddress &dstIp)
                     entry.entry_type.c_str(), dstIp.to_string().c_str(), entry.translated_ip.to_string().c_str());
   
     deleteNatCounters(dstIp);
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_DNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -1118,6 +1123,7 @@ bool NatOrch::removeHwDnaptEntry(const NaptEntryKey &key)
                     entry.translated_ip.to_string().c_str(), entry.translated_l4_port);
 
     deleteNaptCounters(key.prototype.c_str(), key.ip_address, key.l4_port);
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_DNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -1308,6 +1314,7 @@ bool NatOrch::addHwSnatEntry(const IpAddress &ip_address)
     updateNatCounters(ip_address, 0, 0);
     m_natEntries[ip_address].addedToHw = true;
     m_natEntries[ip_address].activeTime = time_now.tv_sec;
+    gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_SNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -1478,6 +1485,7 @@ bool NatOrch::addHwSnaptEntry(const NaptEntryKey &keyEntry)
      m_naptEntries[keyEntry].activeTime = time_now.tv_sec;
 
      updateNaptCounters(keyEntry.prototype.c_str(), keyEntry.ip_address, keyEntry.l4_port, 0, 0);
+     gCrmOrch->incCrmResUsedCounter(CrmResourceType::CRM_SNAT_ENTRY);
 
      if (entry.entry_type == "static")
      {
@@ -1630,6 +1638,7 @@ bool NatOrch::removeHwSnatEntry(const IpAddress &ip_address)
     }
     deleteNatCounters(ip_address);
     m_natEntries.erase(ip_address);
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_SNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
@@ -1720,6 +1729,7 @@ bool NatOrch::removeHwSnaptEntry(const NaptEntryKey &keyEntry)
     }
     deleteNaptCounters(keyEntry.prototype.c_str(), keyEntry.ip_address, keyEntry.l4_port);
     m_naptEntries.erase(keyEntry);
+    gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_SNAT_ENTRY);
 
     if (entry.entry_type == "static")
     {
