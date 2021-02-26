@@ -7,15 +7,6 @@ from swsscommon import swsscommon
 def create_fvs(**kwargs):
     return swsscommon.FieldValuePairs(list(kwargs.items()))
 
-def create_entry(tbl, key, pairs):
-    fvs = swsscommon.FieldValuePairs(pairs)
-    tbl.set(key, fvs)
-    time.sleep(1)
-
-def create_entry_tbl(db, table, separator, key, pairs):
-    tbl = swsscommon.Table(db, table)
-    create_entry(tbl, key, pairs)
-
 
 class TestMuxTunnelBase(object):
     APP_TUNNEL_DECAP_TABLE_NAME = "TUNNEL_DECAP_TABLE"
@@ -41,44 +32,32 @@ class TestMuxTunnelBase(object):
 
 
     def check_interface_exists_in_asicdb(self, asicdb, sai_oid):
-        if_table = swsscommon.Table(asicdb, self.ASIC_RIF_TABLE)
-        status, fvs = if_table.get(sai_oid)
-        return status
+        fvs = asicdb.get_entry(self.ASIC_RIF_TABLE, sai_oid)
+        return True
 
     def check_vr_exists_in_asicdb(self, asicdb, sai_oid):
-        vfr_table = swsscommon.Table(asicdb, self.ASIC_VRF_TABLE)
-        status, fvs = vfr_table.get(sai_oid)
-        return status
+        fvs = asicdb.get_entry(self.ASIC_VRF_TABLE, sai_oid)
+        return True
 
     def create_and_test_peer(self, db, asicdb, peer_name, peer_ip, src_ip):
         """ Create PEER entry verify all needed enties in ASIC DB exists """
 
-        create_entry_tbl(
-            db,
-            "PEER_SWITCH", '|', "%s" % (peer_name),
-            [
-                ("address_ipv4", peer_ip),
-            ]  
-        )  
+        peer_attrs = {
+            "address_ipv4": peer_ip
+        }
 
-        time.sleep(2)
+        db.create_entry("PEER_SWITCH", peer_name, peer_attrs)
 
         # check asic db table
-        tunnel_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TABLE)
-
-        tunnels = tunnel_table.getKeys()
-
         # There will be two tunnels, one P2MP and another P2P
-        assert len(tunnels) == 2
+        tunnels = asicdb.wait_for_n_keys(self.ASIC_TUNNEL_TABLE, 2)
 
         p2p_obj = None
 
         for tunnel_sai_obj in tunnels:
-            status, fvs = tunnel_table.get(tunnel_sai_obj)
+            fvs = asicdb.wait_for_entry(self.ASIC_TUNNEL_TABLE, tunnel_sai_obj)
 
-            assert status == True
-        
-            for field, value in fvs:
+            for field, value in fvs.items():
                 if field == "SAI_TUNNEL_ATTR_TYPE":
                     assert value == "SAI_TUNNEL_TYPE_IPINIP"
                 if field == "SAI_TUNNEL_ATTR_PEER_MODE":
@@ -87,11 +66,9 @@ class TestMuxTunnelBase(object):
 
         assert p2p_obj != None
 
-        status, fvs = tunnel_table.get(p2p_obj)
+        fvs = asicdb.wait_for_entry(self.ASIC_TUNNEL_TABLE, p2p_obj)
 
-        assert status == True
-
-        for field, value in fvs:
+        for field, value in fvs.items():
             if field == "SAI_TUNNEL_ATTR_TYPE":
                 assert value == "SAI_TUNNEL_TYPE_IPINIP"
             elif field == "SAI_TUNNEL_ATTR_ENCAP_SRC_IP":
@@ -111,18 +88,14 @@ class TestMuxTunnelBase(object):
 
 
     def check_tunnel_termination_entry_exists_in_asicdb(self, asicdb, tunnel_sai_oid, dst_ips):
-        tunnel_term_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TERM_ENTRIES)
-
-        tunnel_term_entries = tunnel_term_table.getKeys()
-        assert len(tunnel_term_entries) == len(dst_ips)
+        tunnel_term_entries = asicdb.wait_for_n_keys(self.ASIC_TUNNEL_TERM_ENTRIES, len(dst_ips))
 
         for term_entry in tunnel_term_entries:
-            status, fvs = tunnel_term_table.get(term_entry)
+            fvs = asicdb.get_entry(self.ASIC_TUNNEL_TERM_ENTRIES, term_entry)
 
-            assert status == True
             assert len(fvs) == 5
 
-            for field, value in fvs:
+            for field, value in fvs.items():
                 if field == "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_VR_ID":
                     assert self.check_vr_exists_in_asicdb(asicdb, value)
                 elif field == "SAI_TUNNEL_TERM_TABLE_ENTRY_ATTR_TYPE":
@@ -152,16 +125,12 @@ class TestMuxTunnelBase(object):
         time.sleep(1)
 
         # check asic db table
-        tunnel_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TABLE)
-
-        tunnels = tunnel_table.getKeys()
-        assert len(tunnels) == 1
+        tunnels = asicdb.wait_for_n_keys(self.ASIC_TUNNEL_TABLE, 1)
 
         tunnel_sai_obj = tunnels[0]
 
-        status, fvs = tunnel_table.get(tunnel_sai_obj)
+        fvs = asicdb.wait_for_entry(self.ASIC_TUNNEL_TABLE, tunnel_sai_obj)
 
-        assert status == True
         # 6 parameters to check in case of decap tunnel
         # + 1 (SAI_TUNNEL_ATTR_ENCAP_SRC_IP) in case of symmetric tunnel
         assert len(fvs) == 7 if is_symmetric_tunnel else 6
@@ -170,7 +139,7 @@ class TestMuxTunnelBase(object):
         expected_dscp_mode = self.dscp_modes_map[kwargs["dscp_mode"]]
         expected_ttl_mode = self.ttl_modes_map[kwargs["ttl_mode"]]
 
-        for field, value in fvs:
+        for field, value in fvs.items():
             if field == "SAI_TUNNEL_ATTR_TYPE":
                 assert value == "SAI_TUNNEL_TYPE_IPINIP"
             elif field == "SAI_TUNNEL_ATTR_ENCAP_SRC_IP":
@@ -219,15 +188,15 @@ class TestMuxTunnelBase(object):
     def cleanup_left_over(self, db, asicdb):
         """ Cleanup APP and ASIC tables """
 
-        tunnel_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TABLE)
-        for key in tunnel_table.getKeys():
-            tunnel_table._del(key)
+        tunnel_table = asicdb.get_keys(self.ASIC_TUNNEL_TABLE)
+        for key in tunnel_table:
+            asicdb.delete_entry(self.ASIC_TUNNEL_TABLE, key)
 
-        tunnel_term_table = swsscommon.Table(asicdb, self.ASIC_TUNNEL_TERM_ENTRIES)
-        for key in tunnel_term_table.getKeys():
-            tunnel_term_table._del(key)
+        tunnel_term_table = asicdb.get_keys(self.ASIC_TUNNEL_TERM_ENTRIES)
+        for key in tunnel_term_table:
+            asicdb.delete_entry(self.ASIC_TUNNEL_TERM_ENTRIES, key)
 
-        tunnel_app_table = swsscommon.Table(asicdb, self.APP_TUNNEL_DECAP_TABLE_NAME)
+        tunnel_app_table = swsscommon.Table(db, self.APP_TUNNEL_DECAP_TABLE_NAME)
         for key in tunnel_app_table.getKeys():
             tunnel_table._del(key)
 
@@ -239,9 +208,9 @@ class TestMuxTunnel(TestMuxTunnelBase):
         """ test IPv4 Mux tunnel creation """
 
         db = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
-        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
 
-        self.cleanup_left_over(db, asicdb)
+        #self.cleanup_left_over(db, asicdb)
 
         # create tunnel IPv4 tunnel
         self.create_and_test_tunnel(db, asicdb, tunnel_name="MuxTunnel0", tunnel_type="IPINIP",
@@ -252,8 +221,8 @@ class TestMuxTunnel(TestMuxTunnelBase):
     def test_Peer(self, dvs, testlog):
         """ test IPv4 Mux tunnel creation """
 
-        db = swsscommon.DBConnector(swsscommon.CONFIG_DB, dvs.redis_sock, 0)
-        asicdb = swsscommon.DBConnector(swsscommon.ASIC_DB, dvs.redis_sock, 0)
+        db = dvs.get_config_db()
+        asicdb = dvs.get_asic_db()
 
         self.create_and_test_peer(db, asicdb, "peer",  "1.1.1.1", "10.1.0.32")
 
