@@ -5178,7 +5178,7 @@ bool PortsOrch::setVoqInbandIntf(string &alias, string &type)
     }
     else
     {
-        if(!addInbandVlan(alias, type)
+        if (!addInbandVlan(alias, type))
         {
             SWSS_LOG_ERROR("Failed to add inband VLAN");
             return false;
