@@ -998,6 +998,34 @@ class TestSubPortIntf(object):
         }
         self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
 
+        # Change parent port mtu
+        mtu = "6666"
+        dvs.set_mtu(parent_port, mtu)
+
+        # Verify sub port interface mtu in linux kernel
+        self.check_sub_port_intf_mtu_kernel(dvs, sub_port_intf_name, mtu)
+
+        # Verify that sub port router interface entry in ASIC_DB has the updated mtu
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": mtu,
+            "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": vrf_oid,
+        }
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Change parent port mtu
+        mtu = "7777"
+        dvs.set_mtu(parent_port, mtu)
+
+        # Verify sub port interface mtu in linux kernel
+        self.check_sub_port_intf_mtu_kernel(dvs, sub_port_intf_name, mtu)
+
+        # Verify that sub port router interface entry in ASIC_DB has the updated mtu
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": mtu,
+            "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": vrf_oid,
+        }
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
         # Restore parent port mtu
         dvs.set_mtu(parent_port, DEFAULT_MTU)
 
