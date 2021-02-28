@@ -673,6 +673,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
                 }
 
                 m_subIntfList.insert(alias);
+                m_portSubIntfSet[parentAlias].insert(alias);
             }
 
             if (!mtu.empty())
@@ -783,6 +784,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
         {
             removeHostSubIntf(alias);
             m_subIntfList.erase(alias);
+            m_portSubIntfSet[parentAlias].erase(alias);
 
             removeSubIntfState(alias);
         }
@@ -871,7 +873,21 @@ void IntfMgr::doTask(Consumer &consumer)
 
         if (keys.size() == 1)
         {
-            if((table_name == CFG_VOQ_INBAND_INTERFACE_TABLE_NAME) &&
+            if ((table_name == CFG_PORT_TABLE_NAME)
+                    || (table_name == CFG_LAG_TABLE_NAME))
+            {
+                if (!doHostSubIntfUpdateTask(keys, data, op))
+                {
+                    it++;
+                }
+                else
+                {
+                    it = consumer.m_toSync.erase(it);
+                }
+                continue;
+            }
+
+            if ((table_name == CFG_VOQ_INBAND_INTERFACE_TABLE_NAME) &&
                     (op == SET_COMMAND))
             {
                 //No further processing needed. Just relay to orchagent
@@ -881,6 +897,7 @@ void IntfMgr::doTask(Consumer &consumer)
                 it = consumer.m_toSync.erase(it);
                 continue;
             }
+
             if (!doIntfGeneralTask(keys, data, op))
             {
                 it++;

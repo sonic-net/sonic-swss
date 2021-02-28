@@ -23,7 +23,8 @@ private:
     Table m_statePortTable, m_stateLagTable, m_stateVlanTable, m_stateVrfTable, m_stateIntfTable;
     Table m_appPortTable, m_appLagTable;
 
-    std::set<std::string> m_subIntfList;
+    std::unordered_set<std::string> m_subIntfList;
+    std::unordered_map<std::string, std::unordered_set<std::string>> m_portSubIntfSet;
     std::set<std::string> m_loopbackIntfList;
     std::set<std::string> m_pendingReplayIntfList;
 
@@ -34,6 +35,7 @@ private:
 
     bool doIntfGeneralTask(const std::vector<std::string>& keys, std::vector<FieldValueTuple> data, const std::string& op);
     bool doIntfAddrTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
+    bool doHostSubIntfUpdateTask(const std::vector<std::string>& keys, const std::vector<FieldValueTuple>& data, const std::string& op);
     void doTask(Consumer &consumer);
 
     bool isIntfStateOk(const std::string &alias);
