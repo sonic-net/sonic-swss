@@ -309,7 +309,7 @@ void WatermarkOrch::init_queue_ids()
         {
             m_unicast_queue_ids.push_back(id);
         }
-        else if (fv.second == "SAI_QUEUE_TYPE_MULTI")
+        else if (fv.second == "SAI_QUEUE_TYPE_MULTICAST")
         {
             m_multicast_queue_ids.push_back(id);
         }
