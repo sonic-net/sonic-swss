@@ -201,7 +201,7 @@ class TestMuxTunnelBase(object):
 
         # In standby mode, the entry must not be added to Neigh table but Route
         asicdb.wait_for_matching_keys(self.ASIC_NEIGH_TABLE, existing_keys)
-        rtkeys = dvs_route.check_asicdb_route_entries([self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK])
+        dvs_route.check_asicdb_route_entries([self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK])
 
         # The first standby route also creates as tunnel Nexthop
         self.check_tnl_nexthop_in_asic_db(asicdb, 3)
@@ -211,12 +211,12 @@ class TestMuxTunnelBase(object):
 
         asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_v4)
         asicdb.wait_for_deleted_entry(self.ASIC_NEIGH_TABLE, srv1_v6)
-        rtkeys = dvs_route.check_asicdb_route_entries([self.SERV1_IPV4+self.IPV4_MASK, self.SERV1_IPV6+self.IPV6_MASK])
+        dvs_route.check_asicdb_route_entries([self.SERV1_IPV4+self.IPV4_MASK, self.SERV1_IPV6+self.IPV6_MASK])
 
         # Change state to Active. This will add Neigh and delete Route
         self.set_mux_state(appdb, "Ethernet4", "active")
 
-        rtkeys = dvs_route.check_asicdb_deleted_route_entries([self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK])
+        dvs_route.check_asicdb_deleted_route_entries([self.SERV2_IPV4+self.IPV4_MASK, self.SERV2_IPV6+self.IPV6_MASK])
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV4, 3)
         self.check_neigh_in_asic_db(asicdb, self.SERV2_IPV6, 3)
 
@@ -319,12 +319,12 @@ class TestMuxTunnelBase(object):
 
 
     def check_interface_exists_in_asicdb(self, asicdb, sai_oid):
-        fvs = asicdb.get_entry(self.ASIC_RIF_TABLE, sai_oid)
+        asicdb.wait_for_entry(self.ASIC_RIF_TABLE, sai_oid)
         return True
 
 
     def check_vr_exists_in_asicdb(self, asicdb, sai_oid):
-        fvs = asicdb.get_entry(self.ASIC_VRF_TABLE, sai_oid)
+        asicdb.wait_for_entry(self.ASIC_VRF_TABLE, sai_oid)
         return True
 
 
