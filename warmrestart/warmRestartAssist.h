@@ -75,6 +75,7 @@ public:
         DELETE  = 3
     };
     // These functions were used as described in the class description
+    void setReconcileInterval(uint32_t time);
     void startReconcileTimer(Select &s);
     void stopReconcileTimer(Select &s);
     bool checkReconcileTimer(Selectable *s);

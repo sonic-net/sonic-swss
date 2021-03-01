@@ -284,6 +284,13 @@ void AppRestartAssist::reconcile()
     return;
 }
 
+// set the reconcile interval
+void AppRestartAssist::setReconcileInterval(uint32_t time)
+{
+    m_reconcileTimer = time;
+    m_warmStartTimer.setInterval(timespec{m_reconcileTimer, 0});
+}
+
 // start the timer, take Select class "s" to add the timer.
 void AppRestartAssist::startReconcileTimer(Select &s)
 {

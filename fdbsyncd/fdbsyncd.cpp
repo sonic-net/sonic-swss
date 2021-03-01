@@ -7,6 +7,7 @@
 #include "netdispatcher.h"
 #include "netlink.h"
 #include "fdbsyncd/fdbsync.h"
+#include "warm_restart.h"
 
 using namespace std;
 using namespace swss;
@@ -61,8 +62,6 @@ int main(int argc, char **argv)
                     }
                     sleep(1);
                 }
-                SWSS_LOG_NOTICE("Starting ReconcileTimer");
-                sync.getRestartAssist()->startReconcileTimer(s);
                 replayCheckTimer.setInterval(timespec{1, 0});
                 replayCheckTimer.start();
                 s.addSelectable(&replayCheckTimer);
@@ -106,6 +105,17 @@ int main(int argc, char **argv)
                     {
                         sync.getRestartAssist()->appDataReplayed();
                         SWSS_LOG_NOTICE("FDB Replay Complete");
+                        s.removeSelectable(&replayCheckTimer);
+
+                        /* Obtain warm-restart timer defined for routing application */
+                        uint32_t warmRestartIval = WarmStart::getWarmStartTimer("bgp","bgp");
+                        if (warmRestartIval)
+                        {
+                            sync.getRestartAssist()->setReconcileInterval(warmRestartIval);
+                        }
+                        //Else the interval is already set to default value
+                        SWSS_LOG_NOTICE("Starting ReconcileTimer");
+                        sync.getRestartAssist()->startReconcileTimer(s);
                     }
                     else
                     {
