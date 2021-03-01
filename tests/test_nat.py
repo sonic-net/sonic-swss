@@ -373,6 +373,14 @@ class TestNat(object):
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
 
+        # set pooling interval to 1
+        dvs.runcmd("crm config polling interval 1")
+
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY', '1000')
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '1000')
+
+        time.sleep(2)
+
         # get snat counters
         used_snat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_used')
         avail_snat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_available')
@@ -380,9 +388,6 @@ class TestNat(object):
         # get dnat counters
         used_dnat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_used')
         avail_dnat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_available')
-
-        # set pooling interval to 1
-        dvs.runcmd("crm config polling interval 1")
 
         # add a static nat entry
         dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
@@ -394,6 +399,9 @@ class TestNat(object):
                 assert True
             else:
                 assert False
+
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY', '999')
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '999')
 
         time.sleep(2)
 
@@ -412,6 +420,9 @@ class TestNat(object):
 
         # delete a static nat entry
         dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_SNAT_ENTRY', '1000')
+        dvs.setReadOnlyAttr('SAI_OBJECT_TYPE_SWITCH', 'SAI_SWITCH_ATTR_AVAILABLE_DNAT_ENTRY', '1000')
 
         time.sleep(2)
 
