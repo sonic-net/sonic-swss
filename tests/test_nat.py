@@ -7,6 +7,19 @@ L3_TABLE_NAME = "L3_TEST"
 L3_BIND_PORTS = ["Ethernet0"]
 L3_RULE_NAME = "L3_TEST_RULE"
 
+from swsscommon import swsscommon
+
+def getCrmCounterValue(dvs, key, counter):
+
+    counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, dvs.redis_sock, 0)
+    crm_stats_table = swsscommon.Table(counters_db, 'CRM')
+
+    for k in crm_stats_table.get(key)[1]:
+        if k[0] == counter:
+            return int(k[1])
+
+    return 0
+
 class TestNat(object):
     def setup_db(self, dvs):
         self.app_db = dvs.get_app_db()
@@ -353,6 +366,67 @@ class TestNat(object):
         dvs_acl.remove_acl_table(L3_TABLE_NAME)
         dvs_acl.verify_acl_table_count(0)
 
+    def test_CrmSnatAndDnatEntryUsedCount(self, dvs, testlog):
+        # initialize
+        self.setup_db(dvs)
+
+        # get neighbor and arp entry
+        dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
+
+        # get snat counters
+        used_snat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_used')
+        avail_snat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_available')
+
+        # get dnat counters
+        used_dnat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_used')
+        avail_dnat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_available')
+
+        # set pooling interval to 1
+        dvs.runcmd("crm config polling interval 1")
+
+        # add a static nat entry
+        dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
+
+        #check the entry in asic db, 3 keys = SNAT, DNAT and DNAT_Pool
+        keys = self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 3)
+        for key in keys:
+            if (key.find("dst_ip:67.66.65.1")) or (key.find("src_ip:18.18.18.2")):
+                assert True
+            else:
+                assert False
+
+        time.sleep(2)
+
+        # get snat counters
+        new_used_snat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_used')
+        new_avail_snat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_available')
+
+        # get dnat counters
+        new_used_dnat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_used')
+        new_avail_dnat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_available')
+
+        assert new_used_snat_counter - used_snat_counter == 1
+        assert new_avail_snat_counter - avail_snat_counter == 1
+        assert new_used_dnat_counter - used_dnat_counter == 1
+        assert new_avail_dnat_counter - avail_dnat_counter == 1
+
+        # delete a static nat entry
+        dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
+
+        time.sleep(2)
+
+        # get snat counters
+        new_used_snat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_used')
+        new_avail_snat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_snat_entry_available')
+
+        # get dnat counters
+        new_used_dnat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_used')
+        new_avail_dnat_counter = getCrmCounterValue(dvs, 'STATS', 'crm_stats_dnat_entry_available')
+
+        assert new_used_snat_counter == used_snat_counter
+        assert new_avail_snat_counter == avail_snat_counter
+        assert new_used_dnat_counter == used_dnat_counter
+        assert new_avail_dnat_counter == avail_dnat_counter
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
