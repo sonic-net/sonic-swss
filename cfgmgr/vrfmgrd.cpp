@@ -35,6 +35,7 @@ mutex gDbMutex;
 int main(int argc, char **argv)
 {
     Logger::linkToDbNative("vrfmgrd");
+    bool isWarmStart = false;
     SWSS_LOG_ENTER();
 
     SWSS_LOG_NOTICE("--- Starting vrfmgrd ---");
@@ -56,6 +57,8 @@ int main(int argc, char **argv)
 
         VrfMgr vrfmgr(&cfgDb, &appDb, &stateDb, cfg_vrf_tables);
 
+        isWarmStart = WarmStart::isWarmStart();
+
         // TODO: add tables in stateDB which interface depends on to monitor list
         std::vector<Orch *> cfgOrchList = {&vrfmgr};
 
@@ -69,6 +72,7 @@ int main(int argc, char **argv)
         while (true)
         {
             Selectable *sel;
+            static bool firstReadTimeout = true;
             int ret;
 
             ret = s.select(&sel, SELECT_TIMEOUT);
@@ -80,6 +84,14 @@ int main(int argc, char **argv)
             if (ret == Select::TIMEOUT)
             {
                 vrfmgr.doTask();
+                if (isWarmStart && firstReadTimeout)
+                {
+                    firstReadTimeout = false;
+                    WarmStart::setWarmStartState("vrfmgrd", WarmStart::REPLAYED);
+                    // There is no operation to be performed for vrfmgrd reconcillation
+                    // Hence mark it reconciled right away
+                    WarmStart::setWarmStartState("vrfmgrd", WarmStart::RECONCILED);
+                }
                 continue;
             }
 

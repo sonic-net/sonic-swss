@@ -247,7 +247,7 @@ void SflowMgr::sflowCheckAndFillValues(string alias, vector<FieldValueTuple> &va
     {
         if (m_sflowPortConfMap[alias].admin == "")
         {
-            /* By default admin state is enable if not set explicitely */
+            /* By default admin state is enable if not set explicitly */
             m_sflowPortConfMap[alias].admin = "up";
         }
         FieldValueTuple fv("admin_state", m_sflowPortConfMap[alias].admin);

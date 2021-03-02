@@ -38,6 +38,19 @@ struct VlanInfo
     sai_vlan_id_t       vlan_id = 0;
 };
 
+struct SystemPortInfo
+{
+    std::string alias = "";
+    sai_system_port_type_t type;
+    sai_object_id_t local_port_oid = 0;
+    uint32_t port_id = 0;
+    uint32_t switch_id = 0;
+    uint32_t core_index = 0;
+    uint32_t core_port_index = 0;
+    uint32_t speed = 400000;
+    uint32_t num_voq = 8;
+};
+
 class Port
 {
 public:
@@ -50,6 +63,7 @@ public:
         LAG,
         TUNNEL,
         SUBPORT,
+        SYSTEM,
         UNKNOWN
     } ;
 
@@ -110,6 +124,7 @@ public:
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;
     uint32_t  m_up_member_count = 0;
+    uint32_t  m_maximum_headroom = 0;
 
     /*
      * Following two bit vectors are used to lock
@@ -124,6 +139,10 @@ public:
 
     std::unordered_set<sai_object_id_t> m_ingress_acl_tables_uset;
     std::unordered_set<sai_object_id_t> m_egress_acl_tables_uset;
+
+    sai_object_id_t  m_system_port_oid = 0;
+    SystemPortInfo   m_system_port_info;
+
 };
 
 }

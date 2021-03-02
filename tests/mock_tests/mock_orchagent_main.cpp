@@ -21,6 +21,7 @@ bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
 ofstream gRecordOfs;
 string gRecordFile;
+string gMySwitchType = "voq";
 
 VRFOrch *gVrfOrch;
 

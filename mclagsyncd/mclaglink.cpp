@@ -453,8 +453,8 @@ void MclagLink::setPortMacLearnMode(char *msg)
     attrs.push_back(learn_attr);
     if (strncmp(learn_port.c_str(), PORTCHANNEL_PREFIX, strlen(PORTCHANNEL_PREFIX)) == 0)
         p_lag_tbl->set(learn_port, attrs);
-    /*vxlan tunnel dont supported currently, for src_ip is the mandatory attribute*/
-    /*else if(strncmp(learn_port.c_str(),VXLAN_TUNNEL_PREFIX,5)==0)
+    /* vxlan tunnel is currently not supported, for src_ip is the mandatory attribute */
+    /* else if(strncmp(learn_port.c_str(),VXLAN_TUNNEL_PREFIX,5)==0)
         p_tnl_tbl->set(learn_port, attrs); */
     else
         p_port_tbl->set(learn_port, attrs);

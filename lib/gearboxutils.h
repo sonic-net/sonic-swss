@@ -41,6 +41,7 @@ typedef struct
     std::string sai_init_config_file;
     std::string config_file;
     std::string access;
+    std::string hwinfo;
     uint32_t address;
     uint32_t bus_id;
 } gearbox_phy_t;

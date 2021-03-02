@@ -19,6 +19,7 @@ from swsscommon import swsscommon
 from dvslib.dvs_database import DVSDatabase
 from dvslib.dvs_common import PollingConfig, wait_for_result
 from dvslib.dvs_acl import DVSAcl
+from dvslib.dvs_route import DVSRoute
 from dvslib import dvs_vlan
 from dvslib import dvs_lag
 from dvslib import dvs_mirror
@@ -1079,6 +1080,24 @@ class DockerVirtualSwitch:
         self.cdb = swsscommon.DBConnector(4, self.redis_sock, 0)
         self.sdb = swsscommon.DBConnector(6, self.redis_sock, 0)
 
+    def getSwitchOid(self):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_SWITCH")
+        keys = tbl.getKeys()
+        return str(keys[0])
+
+    def getVlanOid(self, vlanId):
+        tbl = swsscommon.Table(self.adb, "ASIC_STATE:SAI_OBJECT_TYPE_VLAN")
+        vlan_oid = None
+        keys = tbl.getKeys()
+        for k in keys:
+            (status, fvs) = tbl.get(k)
+            assert status == True, "Could not read vlan from DB"
+            for fv in fvs:
+                if fv[0] == "SAI_VLAN_ATTR_VLAN_ID" and fv[1] == str(vlanId):
+                    vlan_oid = str(k)
+                    break
+        return vlan_oid
+
     # deps: acl_portchannel, fdb
     def getCrmCounterValue(self, key, counter):
         counters_db = swsscommon.DBConnector(swsscommon.COUNTERS_DB, self.redis_sock, 0)
@@ -1441,7 +1460,7 @@ class DockerVirtualChassisTopology:
                 chassis_container_name = device_info["hostname"] + "." + self.ns
 
                 port_info = config["PORT"]
-            
+
             for port, config in port_info.items():
                 if "admin_status" not in config:
                     continue
@@ -1450,13 +1469,13 @@ class DockerVirtualChassisTopology:
                     instance_to_port_status_map[chassis_container_name] = []
 
                 instance_to_port_status_map[chassis_container_name].append((port, config.get("admin_status")))
-            
+
             return instance_to_port_status_map
 
     def handle_chassis_connections(self):
         if self.oper != "create":
             return
-        
+
         instance_to_port_status_map = self.get_chassis_instance_port_statuses()
         for chassis_instance, port_statuses in instance_to_port_status_map.items():
             if chassis_instance not in self.dvss:
@@ -1571,6 +1590,12 @@ def dvs_acl(request, dvs) -> DVSAcl:
                   dvs.get_config_db(),
                   dvs.get_state_db(),
                   dvs.get_counters_db())
+
+@pytest.fixture(scope="class")
+def dvs_route(request, dvs) -> DVSRoute:
+    return DVSRoute(dvs.get_asic_db(),
+                    dvs.get_config_db())
+
 
 # FIXME: The rest of these also need to be reverted back to normal fixtures to
 # appease the linter.

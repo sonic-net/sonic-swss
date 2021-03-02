@@ -9,6 +9,7 @@
 #include "portsorch.h"
 #include "tunneldecaporch.h"
 #include "aclorch.h"
+#include "neighorch.h"
 
 enum MuxState
 {
@@ -49,18 +50,23 @@ private:
     sai_object_id_t port_ = SAI_NULL_OBJECT_ID;
 };
 
-// Mux Neighbor Handler for adding/removing neigbhors
+// IP to nexthop index mapping
+typedef std::map<IpAddress, sai_object_id_t> MuxNeighbor;
+
+// Mux Neighbor Handler for adding/removing neighbors
 class MuxNbrHandler
 {
 public:
     MuxNbrHandler() = default;
 
-    bool enable();
-    bool disable();
-    void update(IpAddress, string alias = "", bool = true);
+    bool enable(bool update_rt);
+    bool disable(sai_object_id_t);
+    void update(NextHopKey nh, sai_object_id_t, bool = true, MuxState = MuxState::MUX_STATE_INIT);
+
+    sai_object_id_t getNextHopId(const NextHopKey);
 
 private:
-    IpAddresses neighbors_;
+    MuxNeighbor neighbors_;
     string alias_;
 };
 
@@ -83,9 +89,10 @@ public:
     bool isStateChangeInProgress() { return st_chg_in_progress_; }
 
     bool isIpInSubnet(IpAddress ip);
-    void updateNeighbor(IpAddress ip, string alias, bool add)
+    void updateNeighbor(NextHopKey nh, bool add);
+    sai_object_id_t getNextHopId(const NextHopKey nh)
     {
-        nbr_handler_->update(ip, alias, add);
+        return nbr_handler_->getNextHopId(nh);
     }
 
 private:
@@ -93,8 +100,8 @@ private:
     bool stateInitActive();
     bool stateStandby();
 
-    bool aclHandler(sai_object_id_t, bool = true);
-    bool nbrHandler(bool = true);
+    bool aclHandler(sai_object_id_t, bool add = true);
+    bool nbrHandler(bool enable, bool update_routes = true);
 
     string mux_name_;
 
@@ -133,6 +140,7 @@ struct NHTunnel
 typedef std::unique_ptr<MuxCable> MuxCable_T;
 typedef std::map<std::string, MuxCable_T> MuxCableTb;
 typedef std::map<IpAddress, NHTunnel> MuxTunnelNHs;
+typedef std::map<NextHopKey, std::string> NextHopTb;
 
 class MuxCfgRequest : public Request
 {
@@ -144,7 +152,7 @@ public:
 class MuxOrch : public Orch2, public Observer, public Subject
 {
 public:
-    MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch*, NeighOrch*);
+    MuxOrch(DBConnector *db, const std::vector<std::string> &tables, TunnelDecapOrch*, NeighOrch*, FdbOrch*);
 
     using handler_pair = pair<string, bool (MuxOrch::*) (const Request& )>;
     using handler_map = map<string, bool (MuxOrch::*) (const Request& )>;
@@ -160,12 +168,17 @@ public:
     }
 
     MuxCable* findMuxCableInSubnet(IpAddress);
-    bool isNeighborActive(IpAddress nbr, string alias);
+    bool isNeighborActive(const IpAddress&, const MacAddress&, string&);
     void update(SubjectType, void *);
-    void updateNeighbor(const NeighborUpdate&);
+
+    void addNexthop(NextHopKey, string = "");
+    void removeNexthop(NextHopKey);
+    string getNexthopMuxName(NextHopKey);
+    sai_object_id_t getNextHopId(const NextHopKey&);
 
     sai_object_id_t createNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
     bool removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAddr);
+    sai_object_id_t getNextHopTunnelId(std::string tunnelKey, IpAddress& ipAddr);
 
 private:
     virtual bool addOperation(const Request& request);
@@ -174,16 +187,23 @@ private:
     bool handleMuxCfg(const Request&);
     bool handlePeerSwitch(const Request&);
 
+    void updateNeighbor(const NeighborUpdate&);
+    void updateFdb(const FdbUpdate&);
+
+    bool getMuxPort(const MacAddress&, const string&, string&);
+
     IpAddress mux_peer_switch_ = 0x0;
-    sai_object_id_t mux_tunnel_id_;
+    sai_object_id_t mux_tunnel_id_ = SAI_NULL_OBJECT_ID;
 
     MuxCableTb mux_cable_tb_;
     MuxTunnelNHs mux_tunnel_nh_;
+    NextHopTb mux_nexthop_tb_;
 
     handler_map handler_map_;
 
     TunnelDecapOrch *decap_orch_;
     NeighOrch *neigh_orch_;
+    FdbOrch *fdb_orch_;
 
     MuxCfgRequest request_;
 };
@@ -208,6 +228,8 @@ public:
     MuxCableOrch(DBConnector *db, const std::string& tableName);
 
     void updateMuxState(string portName, string muxState);
+    void addTunnelRoute(const NextHopKey &nhKey);
+    void removeTunnelRoute(const NextHopKey &nhKey);
 
 private:
     virtual bool addOperation(const Request& request);
@@ -215,6 +237,7 @@ private:
 
     unique_ptr<Table> mux_table_;
     MuxCableRequest request_;
+    ProducerStateTable app_tunnel_route_table_;
 };
 
 const request_description_t mux_state_request_description = {

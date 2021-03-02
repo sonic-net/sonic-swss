@@ -436,6 +436,12 @@ void CrmOrch::getResAvailableCounters()
 
     for (auto &res : m_resourcesMap)
     {
+        // ignore unsupported resources
+        if (res.second.resStatus != CrmResourceStatus::CRM_RES_SUPPORTED)
+        {
+            continue;
+        }
+
         sai_attribute_t attr;
         attr.id = crmResSaiAvailAttrMap.at(res.first);
 
@@ -457,10 +463,15 @@ void CrmOrch::getResAvailableCounters()
                 sai_status_t status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
                 if (status != SAI_STATUS_SUCCESS)
                 {
-                    if(status == SAI_STATUS_NOT_SUPPORTED)
+                    if((status == SAI_STATUS_NOT_SUPPORTED) ||
+                       (status == SAI_STATUS_NOT_IMPLEMENTED) ||
+                       SAI_STATUS_IS_ATTR_NOT_SUPPORTED(status) ||
+                       SAI_STATUS_IS_ATTR_NOT_IMPLEMENTED(status))
                     {
-                        // remove unsupported resources from map
-                        m_resourcesMap.erase(res.first);
+                        // mark unsupported resources
+                        res.second.resStatus = CrmResourceStatus::CRM_RES_NOT_SUPPORTED;
+                        SWSS_LOG_NOTICE("Switch attribute %u not supported", attr.id);
+                        break;
                     }
                     SWSS_LOG_ERROR("Failed to get switch attribute %u , rv:%d", attr.id, status);
                     break;
@@ -591,7 +602,7 @@ void CrmOrch::checkCrmThresholds()
                 }
                 else
                 {
-                    SWSS_LOG_WARN("%s Exception occured (div by Zero): Used count %u free count %u",
+                    SWSS_LOG_WARN("%s Exception occurred (div by Zero): Used count %u free count %u",
                                   res.name.c_str(), cnt.usedCounter, cnt.availableCounter);
                 }
             }

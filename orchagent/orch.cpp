@@ -10,6 +10,7 @@
 #include "tokenize.h"
 #include "logger.h"
 #include "consumerstatetable.h"
+#include "sai_serialize.h"
 
 using namespace swss;
 
@@ -103,7 +104,7 @@ void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
     {
         /*
         * Now we are trying to add the key-value with SET.
-        * We maintain maximun two values per key.
+        * We maintain maximum two values per key.
         * In case there is one key-value, it should be DEL or SET
         * In case there are two key-value pairs, it should be DEL then SET
         * The code logic is following:
@@ -531,7 +532,7 @@ void Orch::logfileReopen()
 
     /*
      * On log rotate we will use the same file name, we are assuming that
-     * logrotate deamon move filename to filename.1 and we will create new
+     * logrotate daemon move filename to filename.1 and we will create new
      * empty file here.
      */
 
@@ -606,7 +607,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
                 SWSS_LOG_DEBUG("Resolved to sai_object:0x%" PRIx64 ", type:%s, name:%s", sai_obj, ref_type_name.c_str(), object_name.c_str());
                 sai_object_arr.push_back(sai_obj);
                 if (!object_name_list.empty())
-                    object_name_list += string(&list_item_delimiter);
+                    object_name_list += list_item_delimiter;
                 object_name_list += ref_type_name + delimiter + object_name;
             }
             count++;
@@ -637,7 +638,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
         range_high = (uint32_t)stoul(range_values[1]);
         if (range_low >= range_high)
         {
-            SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than righ value.\n", input.c_str());
+            SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than right value.\n", input.c_str());
             return false;
         }
     }
@@ -651,7 +652,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
 
 void Orch::addConsumer(DBConnector *db, string tableName, int pri)
 {
-    if (db->getDbName() == "CONFIG_DB" || db->getDbName() == "STATE_DB")
+    if (db->getDbId() == CONFIG_DB || db->getDbId() == STATE_DB || db->getDbId() == CHASSIS_APP_DB)
     {
         addExecutor(new Consumer(new SubscriberStateTable(db, tableName, TableConsumable::DEFAULT_POP_BATCH_SIZE, pri), this, tableName));
     }
@@ -683,6 +684,82 @@ Executor *Orch::getExecutor(string executorName)
     }
 
     return NULL;
+}
+
+bool Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis create
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: true - Handled the status successfully. No need to retry this SAI operation.
+     *               false - Cannot handle the status. Need to retry the SAI operation.
+     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_ITEM_ALREADY_EXISTS)
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+            return true;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            exit(EXIT_FAILURE);
+    }
+    return false;
+}
+
+bool Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis set
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: true - Handled the status successfully. No need to retry this SAI operation.
+     *               false - Cannot handle the status. Need to retry the SAI operation.
+     * TODO: 1. Add general handling logic for specific statuses
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
+            return true;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            exit(EXIT_FAILURE);
+    }
+    return false;
+}
+
+bool Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis remove
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: true - Handled the status successfully. No need to retry this SAI operation.
+     *               false - Cannot handle the status. Need to retry the SAI operation.
+     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_OBJECT_IN_USE,
+     *          SAI_STATUS_ITEM_NOT_FOUND)
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
+            return true;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            exit(EXIT_FAILURE);
+    }
+    return false;
 }
 
 void Orch2::doTask(Consumer &consumer)

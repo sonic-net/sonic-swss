@@ -3431,7 +3431,7 @@ void NatOrch::updateAllConntrackEntries(void)
 {
     SWSS_LOG_ENTER();
 
-    /* Send notifcations for the Single NAT entries to set timeout */
+    /* Send notifications for the Single NAT entries to set timeout */
     NatEntry::iterator natIter = m_natEntries.begin();
     while (natIter != m_natEntries.end())
     {
@@ -3447,7 +3447,7 @@ void NatOrch::updateAllConntrackEntries(void)
         natIter++;
     }
 
-    /* Send notifcations for the Single NAPT entries to set timeout */
+    /* Send notifications for the Single NAPT entries to set timeout */
     NaptEntry::iterator naptIter = m_naptEntries.begin();
     while (naptIter != m_naptEntries.end())
     {
@@ -3461,7 +3461,7 @@ void NatOrch::updateAllConntrackEntries(void)
         naptIter++;
     }
 
-    /* Send notifcations for the Twice NAT entries to set timeout */
+    /* Send notifications for the Twice NAT entries to set timeout */
     TwiceNatEntry::iterator twiceNatIter = m_twiceNatEntries.begin();
     while (twiceNatIter != m_twiceNatEntries.end())
     {
@@ -3475,7 +3475,7 @@ void NatOrch::updateAllConntrackEntries(void)
         twiceNatIter++;
     }
    
-    /* Send notifcations for the Twice NAPT entries to set timeout */
+    /* Send notifications for the Twice NAPT entries to set timeout */
     TwiceNaptEntry::iterator twiceNaptIter = m_twiceNaptEntries.begin();
     while (twiceNaptIter != m_twiceNaptEntries.end())
     {

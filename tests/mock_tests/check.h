@@ -4,11 +4,17 @@
 #include <iostream>
 #include <vector>
 
-#include "saiattributelist.h"
+#include "SaiAttributeList.h"
+
+#include <hiredis/hiredis.h>
+#include "swss/dbconnector.h"
+#include "swss/logger.h"
+#include "sai_serialize.h"
+#include "string.h"
 
 struct Check
 {
-    static bool AttrListEq(sai_object_type_t objecttype, const std::vector<sai_attribute_t> &act_attr_list, SaiAttributeList &exp_attr_list)
+    static bool AttrListEq(sai_object_type_t objecttype, const std::vector<sai_attribute_t> &act_attr_list, saimeta::SaiAttributeList &exp_attr_list)
     {
         if (act_attr_list.size() != exp_attr_list.get_attr_count())
         {

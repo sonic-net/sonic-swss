@@ -91,7 +91,7 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
             }
             else if (table_attr == ASIC_SENSORS_POLLER_INTERVAL)
             {
-                uint32_t interval=to_uint<uint32_t>(fvValue(fvt));
+                auto interval=to_int<time_t>(fvValue(fvt));
 
                 if (fvField(fvt) == "interval")
                 {
@@ -104,7 +104,7 @@ void SwitchOrch::doCfgSensorsTableTask(Consumer &consumer)
                     }
                     else
                     {
-                        SWSS_LOG_INFO("ASIC sensors : poller interval unchanged : %d seconds",m_sensorsPollerInterval);
+                        SWSS_LOG_INFO("ASIC sensors : poller interval unchanged : %s seconds", to_string(m_sensorsPollerInterval).c_str());
                     }
                 }
                 else
