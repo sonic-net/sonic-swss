@@ -41,7 +41,6 @@ enum MCLAG_DOMAIN_CFG_OP_TYPE {
     MCLAG_CFG_OPER_ATTR_DEL   = 4   //Attribute del 
 };
 
-
 enum MCLAG_DOMAIN_CFG_ATTR_BMAP_FLAGS {
     MCLAG_CFG_ATTR_NONE                  = 0x0,  
     MCLAG_CFG_ATTR_SRC_ADDR              = 0x1,  

@@ -584,7 +584,6 @@ void MclagLink::setFdbEntry(char *msg, int msg_len)
             SWSS_LOG_NOTICE("del fdb entry from ASIC_DB:key =%s", fdb_key.c_str());
         }
     }
-
     return;
 }
 
@@ -948,7 +947,6 @@ void MclagLink::processMclagDomainCfg(std::deque<KeyOpFieldsValuesTuple> &entrie
         memcpy((char*)(infor_start + infor_len), (char*)&cfg_info, sizeof(struct mclag_domain_cfg_info));
         infor_len = infor_len +  sizeof(struct mclag_domain_cfg_info);
         SWSS_LOG_DEBUG(" MCLAGSYNCD CFG Table Updates: domain_id:%d infor_len:%d infor_start:%p ", cfg_info.domain_id, (int)infor_len, infor_start);  
-
     }
 
     /*no config info notification reqd */
@@ -1271,7 +1269,7 @@ void MclagLink::processVlanMemberTableUpdates(std::deque<KeyOpFieldsValuesTuple>
             infor_len = sizeof(mclag_msg_hdr_t);
         }
         memcpy((char*)(infor_start + infor_len), (char*)&vlan_mbr_info,    sizeof(struct mclag_vlan_mbr_info)); 
-        infor_len +=  sizeof(struct mclag_vlan_mbr_info) ;
+        infor_len += sizeof(struct mclag_vlan_mbr_info) ;
     }
 
     /*no config info notification reqd */
@@ -1279,8 +1277,8 @@ void MclagLink::processVlanMemberTableUpdates(std::deque<KeyOpFieldsValuesTuple>
         return; 
 
     msg_hdr = (mclag_msg_hdr_t *)infor_start;
-    msg_hdr->version = 1;
-    msg_hdr->msg_len = (unsigned short)infor_len;
+    msg_hdr->version  = 1;
+    msg_hdr->msg_len  = (unsigned short)infor_len;
     msg_hdr->msg_type = MCLAG_SYNCD_MSG_TYPE_VLAN_MBR_UPDATES;
 
     SWSS_LOG_NOTICE("mclagsycnd send msg to iccpd,mclag vlan member updates; msg_len =%d, msg_type =%d count : %d ver:%d ", msg_hdr->msg_len, msg_hdr->msg_type, msg_hdr->version, count);
@@ -1859,57 +1857,57 @@ uint64_t MclagLink::readData()
         {
             case MCLAG_MSG_TYPE_PORT_ISOLATE:
                 setPortIsolate(msg);
-                    break;
+                break;
 
             case MCLAG_MSG_TYPE_PORT_MAC_LEARN_MODE:
                 setPortMacLearnMode(msg);
-                    break;
+                break;
 
             case MCLAG_MSG_TYPE_FLUSH_FDB:
                 setFdbFlush();
-                    break;
+                break;
 
             case MCLAG_MSG_TYPE_FLUSH_FDB_BY_PORT:
                 setFdbFlushByPort(msg);
-                    break;
+                break;
 
             case MCLAG_MSG_TYPE_SET_INTF_MAC:
                 setIntfMac(msg);
-                    break;
+                break;
 
             case MCLAG_MSG_TYPE_SET_FDB:
                 setFdbEntry(msg, (int)(hdr->msg_len - sizeof(mclag_msg_hdr_t)));
-                    break;
+                break;
             case MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_ENABLE:
             case MCLAG_MSG_TYPE_SET_TRAFFIC_DIST_DISABLE:
-                    mclagsyncd_set_traffic_disable(msg, hdr->msg_type);
-                    break;
+                mclagsyncd_set_traffic_disable(msg, hdr->msg_type);
+                break;
             case MCLAG_MSG_TYPE_SET_ICCP_STATE:
-                    mclagsyncd_set_iccp_state(msg, mclag_msg_data_len(hdr));
-                    break;
+                mclagsyncd_set_iccp_state(msg, mclag_msg_data_len(hdr));
+                break;
             case MCLAG_MSG_TYPE_SET_ICCP_ROLE:
-                    mclagsyncd_set_iccp_role(msg, mclag_msg_data_len(hdr));
-                    break;
+                mclagsyncd_set_iccp_role(msg, mclag_msg_data_len(hdr));
+                break;
             case MCLAG_MSG_TYPE_SET_ICCP_SYSTEM_ID:
-                    mclagsyncd_set_system_id(msg, mclag_msg_data_len(hdr));
-                    break;
+                mclagsyncd_set_system_id(msg, mclag_msg_data_len(hdr));
+                break;
             case MCLAG_MSG_TYPE_DEL_ICCP_INFO:
-                    mclagsyncd_del_iccp_info(msg);
-                    break;
+                mclagsyncd_del_iccp_info(msg);
+                break;
             case MCLAG_MSG_TYPE_SET_REMOTE_IF_STATE:
-                    mclagsyncd_set_remote_if_state(msg, mclag_msg_data_len(hdr));
-                    break;
+                mclagsyncd_set_remote_if_state(msg, mclag_msg_data_len(hdr));
+                break;
             case MCLAG_MSG_TYPE_DEL_REMOTE_IF_INFO:
-                    mclagsyncd_del_remote_if_info(msg, mclag_msg_data_len(hdr));
-                    break;
+                mclagsyncd_del_remote_if_info(msg, mclag_msg_data_len(hdr));
+                break;
             case MCLAG_MSG_TYPE_SET_PEER_LINK_ISOLATION:
-                    mclagsyncd_set_peer_link_isolation(msg, mclag_msg_data_len(hdr));
-                    break;
+                mclagsyncd_set_peer_link_isolation(msg, mclag_msg_data_len(hdr));
+                break;
             case MCLAG_MSG_TYPE_SET_ICCP_PEER_SYSTEM_ID:
-                    mclagsyncd_set_peer_system_id(msg, mclag_msg_data_len(hdr));
-                    break;
+                mclagsyncd_set_peer_system_id(msg, mclag_msg_data_len(hdr));
+                break;
             default:
-                    break;
+                break;
         }
 
         start += msg_len;

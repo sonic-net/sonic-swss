@@ -150,9 +150,7 @@ struct mclagDomainEntry
 
    bool operator ==(const mclagDomainEntry &domain) const
    {
-       if (domain_id != domain.domain_id)
-           return 0;
-       return 1;
+       return (domain_id == domain.domain_id);
    }
 };
 
@@ -174,9 +172,7 @@ struct mclagDomainData
 
     bool mandatoryFieldsPresent() const
     {
-        if (!source_ip.empty() && !peer_ip.empty())
-            return 1;
-        return 0;
+        return (!source_ip.empty() && !peer_ip.empty());
     }
 
     bool allFieldsEmpty() const
