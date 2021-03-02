@@ -87,6 +87,7 @@ public:
     void setState(string state);
     string getState();
     bool isStateChangeInProgress() { return st_chg_in_progress_; }
+    bool isStateChangeFailed() { return st_chg_failed_; }
 
     bool isIpInSubnet(IpAddress ip);
     void updateNeighbor(NextHopKey nh, bool add);
@@ -107,6 +108,7 @@ private:
 
     MuxState state_ = MuxState::MUX_STATE_INIT;
     bool st_chg_in_progress_ = false;
+    bool st_chg_failed_ = false;
 
     IpPrefix srv_ip4_, srv_ip6_;
     IpAddress peer_ip4_;

@@ -43,7 +43,7 @@ extern sai_router_interface_api_t* sai_router_intfs_api;
 #define MUX_ACL_TABLE_NAME "mux_acl_table";
 #define MUX_ACL_RULE_NAME "mux_acl_rule";
 #define MUX_HW_STATE_UNKNOWN "unknown"
-#define MUX_HW_STATE_PENDING "pending"
+#define MUX_HW_STATE_ERROR "error"
 
 const map<std::pair<MuxState, MuxState>, MuxStateChange> muxStateTransition =
 {
@@ -387,6 +387,9 @@ void MuxCable::setState(string new_state)
     SWSS_LOG_NOTICE("[%s] Set MUX state from %s to %s", mux_name_.c_str(),
                      muxStateValToString.at(state_).c_str(), new_state.c_str());
 
+    // Update HW Mux cable state anyways
+    mux_cb_orch_->updateMuxState(mux_name_, new_state);
+
     MuxState ns = muxStateStringToVal.at(new_state);
 
     auto it = muxStateTransition.find(make_pair(state_, ns));
@@ -398,8 +401,6 @@ void MuxCable::setState(string new_state)
         return;
     }
 
-    mux_cb_orch_->updateMuxState(mux_name_, new_state);
-
     MuxState state = state_;
     state_ = ns;
 
@@ -410,6 +411,7 @@ void MuxCable::setState(string new_state)
         //Reset back to original state
         state_ = state;
         st_chg_in_progress_ = false;
+        st_chg_failed_ = true;
         throw std::runtime_error("Failed to handle state transition");
     }
 
@@ -1272,7 +1274,7 @@ bool MuxCableOrch::addOperation(const Request& request)
     {
         SWSS_LOG_ERROR("Mux Error setting state %s for port %s. Error: %s",
                         state.c_str(), port_name.c_str(), error.what());
-        return false;
+        return true;
     }
 
     SWSS_LOG_NOTICE("Mux State set to %s for port %s", state.c_str(), port_name.c_str());
@@ -1341,7 +1343,14 @@ bool MuxStateOrch::addOperation(const Request& request)
 
     if (mux_state != hw_state)
     {
-        mux_state = MUX_HW_STATE_UNKNOWN;
+        if (mux_obj->isStateChangeFailed())
+        {
+            mux_state = MUX_HW_STATE_ERROR;
+        }
+        else
+        {
+            mux_state = MUX_HW_STATE_UNKNOWN;
+        }
     }
 
     SWSS_LOG_NOTICE("Mux setting State DB entry (hw state %s, mux state %s) for port %s",
