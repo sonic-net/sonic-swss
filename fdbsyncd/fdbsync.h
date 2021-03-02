@@ -10,7 +10,7 @@
 #include "warmRestartAssist.h"
 
 /*
- * Default warm-restart timer interval for routing-stack app
+ * Default timer interval for fdbsyncd reconcillation 
  */
 #define DEFAULT_FDBSYNC_WARMSTART_TIMER 120
 

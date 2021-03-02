@@ -114,6 +114,8 @@ int main(int argc, char **argv)
                             sync.getRestartAssist()->setReconcileInterval(warmRestartIval);
                         }
                         //Else the interval is already set to default value
+
+                        //TODO: Optimise the reconcillation time using eoiu - issue#1657
                         SWSS_LOG_NOTICE("Starting ReconcileTimer");
                         sync.getRestartAssist()->startReconcileTimer(s);
                     }
