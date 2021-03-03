@@ -300,9 +300,6 @@ class TestNat(object):
         #check the entry is not there in asic db
         self.asic_db.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NAT_ENTRY", 0)
 
-        # clear interfaces
-        self.clear_interfaces(dvs)
-
     def test_VerifyConntrackTimeoutForNatEntry(self, dvs, testlog):
         # get neighbor and arp entry
         dvs.servers[0].runcmd("ping -c 1 18.18.18.2")
@@ -438,6 +435,9 @@ class TestNat(object):
         assert new_avail_snat_counter == avail_snat_counter
         assert new_used_dnat_counter == used_dnat_counter
         assert new_avail_dnat_counter == avail_dnat_counter
+
+        # clear interfaces
+        self.clear_interfaces(dvs)
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
