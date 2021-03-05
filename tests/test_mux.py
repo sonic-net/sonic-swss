@@ -136,14 +136,10 @@ class TestMuxTunnelBase(object):
 
         nhg_id = fvs["SAI_ROUTE_ENTRY_ATTR_NEXT_HOP_ID"]
 
-        fvs = asicdb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhg_id)
-
-        assert bool(fvs)
-
-        keys = asicdb.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER")
+        fvs = asicdb.wait_for_entry("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP", nhg_id)
 
         # Two NH group members are expected to be added
-        assert len(keys) == 2
+        keys = asicdb.wait_for_n_keys("ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER", 2)
 
         count = 0
 
