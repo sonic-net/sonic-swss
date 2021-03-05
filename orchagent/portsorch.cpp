@@ -2228,7 +2228,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 /* Set autoneg and ignore the port speed setting */
                 else if (fvField(i) == "autoneg")
                 {
-                    an = (int)stoul(fvValue(i));
+                    an = (fvValue(i) == "on");
                 }
                 /* Set port serdes Pre-emphasis */
                 else if (fvField(i) == "preemphasis")
