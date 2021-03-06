@@ -115,8 +115,6 @@ class TestMuxTunnelBase(object):
 
     def check_nexthop_in_asic_db(self, asicdb, key, standby=False):
 
-        global tunnel_nh_id
-
         fvs = asicdb.get_entry(self.ASIC_ROUTE_TABLE, key)
         if not fvs:
             assert False
@@ -129,8 +127,6 @@ class TestMuxTunnelBase(object):
 
 
     def check_nexthop_group_in_asic_db(self, asicdb, key, num_tnl_nh=0):
-
-        global tunnel_nh_id
 
         fvs = asicdb.get_entry("ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY", key)
 
