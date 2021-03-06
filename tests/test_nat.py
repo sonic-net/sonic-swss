@@ -12,7 +12,6 @@ class TestNat(object):
         self.app_db = dvs.get_app_db()
         self.asic_db = dvs.get_asic_db()
         self.config_db = dvs.get_config_db()
-        self.counters_db = dvs.get_counters_db()
 
     def set_interfaces(self, dvs):
         fvs = {"NULL": "NULL"}
@@ -42,16 +41,6 @@ class TestNat(object):
         dvs.servers[1].runcmd("ifconfig eth0 0.0.0.0")
 
         time.sleep(1)
-
-    def getCrmCounterValue(self, dvs, counter):
-
-        crmStatsTable = self.counters_db.get_entry("CRM", "STATS")
-
-        if counter in crmStatsTable.keys():
-            value = crmStatsTable[counter]
-            return int(value)
-
-        return 0
 
     def test_NatGlobalTable(self, dvs, testlog):
         # initialize
@@ -377,12 +366,12 @@ class TestNat(object):
         time.sleep(2)
 
         # get snat counters
-        used_snat_counter = getCrmCounterValue(dvs, 'crm_stats_snat_entry_used')
-        avail_snat_counter = getCrmCounterValue(dvs, 'crm_stats_snat_entry_available')
+        used_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_used')
+        avail_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_available')
 
         # get dnat counters
-        used_dnat_counter = getCrmCounterValue(dvs, 'crm_stats_dnat_entry_used')
-        avail_dnat_counter = getCrmCounterValue(dvs, 'crm_stats_dnat_entry_available')
+        used_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_used')
+        avail_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_available')
 
         # add a static nat entry
         dvs.runcmd("config nat add static basic 67.66.65.1 18.18.18.2")
@@ -401,17 +390,17 @@ class TestNat(object):
         time.sleep(2)
 
         # get snat counters
-        new_used_snat_counter = getCrmCounterValue(dvs, 'crm_stats_snat_entry_used')
-        new_avail_snat_counter = getCrmCounterValue(dvs, 'crm_stats_snat_entry_available')
+        new_used_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_used')
+        new_avail_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_available')
 
         # get dnat counters
-        new_used_dnat_counter = getCrmCounterValue(dvs, 'crm_stats_dnat_entry_used')
-        new_avail_dnat_counter = getCrmCounterValue(dvs, 'crm_stats_dnat_entry_available')
+        new_used_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_used')
+        new_avail_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_available')
 
         assert new_used_snat_counter - used_snat_counter == 1
-        assert new_avail_snat_counter - avail_snat_counter == 1
+        assert avail_snat_counter - new_avail_snat_counter == 1
         assert new_used_dnat_counter - used_dnat_counter == 1
-        assert new_avail_dnat_counter - avail_dnat_counter == 1
+        assert avail_dnat_counter - new_avail_dnat_counter == 1
 
         # delete a static nat entry
         dvs.runcmd("config nat remove static basic 67.66.65.1 18.18.18.2")
@@ -422,12 +411,12 @@ class TestNat(object):
         time.sleep(2)
 
         # get snat counters
-        new_used_snat_counter = getCrmCounterValue(dvs, 'crm_stats_snat_entry_used')
-        new_avail_snat_counter = getCrmCounterValue(dvs, 'crm_stats_snat_entry_available')
+        new_used_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_used')
+        new_avail_snat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_snat_entry_available')
 
         # get dnat counters
-        new_used_dnat_counter = getCrmCounterValue(dvs, 'crm_stats_dnat_entry_used')
-        new_avail_dnat_counter = getCrmCounterValue(dvs, 'crm_stats_dnat_entry_available')
+        new_used_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_used')
+        new_avail_dnat_counter = dvs.getCrmCounterValue('STATS', 'crm_stats_dnat_entry_available')
 
         assert new_used_snat_counter == used_snat_counter
         assert new_avail_snat_counter == avail_snat_counter
