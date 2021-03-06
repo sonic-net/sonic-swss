@@ -31,6 +31,7 @@ tests_SOURCES = aclorch_ut.cpp \
                 mock_table.cpp \
                 mock_hiredis.cpp \
                 mock_redisreply.cpp \
+                bulker_ut.cpp \
                 $(top_srcdir)/lib/gearboxutils.cpp \
                 $(top_srcdir)/orchagent/orchdaemon.cpp \
                 $(top_srcdir)/orchagent/orch.cpp \
