@@ -1298,7 +1298,7 @@ bool NatOrch::addHwSnatEntry(const IpAddress &ip_address)
     {
         SWSS_LOG_ERROR("Failed to create %s SNAT NAT entry with ip %s and it's translated ip %s",
                        entry.entry_type.c_str(), ip_address.to_string().c_str(), entry.translated_ip.to_string().c_str());
-        
+
         return handleSaiCreateStatus(SAI_API_NAT, status);
     }
 
@@ -2542,7 +2542,7 @@ void NatOrch::enableNatFeature(void)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to enable NAT: %d", status);
-        handleSaiSetStatus(SAI_API_NAT, status);
+        handleSaiSetStatus(SAI_API_SWITCH, status);
     }
 
     SWSS_LOG_INFO("NAT Query timer start ");
@@ -2581,7 +2581,7 @@ void NatOrch::disableNatFeature(void)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to disable NAT: %d", status);
-        handleSaiSetStatus(SAI_API_NAT, status);
+        handleSaiSetStatus(SAI_API_SWITCH, status);
     }
 
     SWSS_LOG_INFO("NAT Query timer stop ");
