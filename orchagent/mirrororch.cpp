@@ -756,7 +756,7 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
                 SWSS_LOG_ERROR("Failed to configure %s session on port %s: %s, status %d, sessionId %x",
                                 ingress ? "RX" : "TX", port.m_alias.c_str(),
                                 p.m_alias.c_str(), status, sessionId);
-                return false;
+                return handleSaiSetStatus(SAI_API_PORT, status);
             }
         }
     }
@@ -767,7 +767,7 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
         {
             SWSS_LOG_ERROR("Failed to configure %s session on port %s, status %d, sessionId %x",
                             ingress ? "RX" : "TX", port.m_alias.c_str(), status, sessionId);
-            return false;
+            return handleSaiSetStatus(SAI_API_PORT, status);
         }
     }
     return true;
@@ -940,7 +940,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         SWSS_LOG_ERROR("Failed to activate mirroring session %s", name.c_str());
         session.status = false;
 
-        return false;
+        return handleSaiCreateStatus(SAI_API_MIRROR, status);
     }
 
     session.status = true;
@@ -991,7 +991,7 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to deactivate mirroring session %s", name.c_str());
-        return false;
+        return handleSaiRemoveStatus(SAI_API_MIRROR, status);
     }
 
     session.status = false;
@@ -1019,7 +1019,7 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
     {
         SWSS_LOG_ERROR("Failed to update mirror session %s destination MAC to %s, rv:%d",
                 name.c_str(), session.neighborInfo.mac.to_string().c_str(), status);
-        return false;
+        return handleSaiSetStatus(SAI_API_MIRROR, status);
     }
 
     SWSS_LOG_NOTICE("Update mirror session %s destination MAC to %s",
@@ -1049,7 +1049,7 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     {
         SWSS_LOG_ERROR("Failed to update mirror session %s monitor port to %s, rv:%d",
                 name.c_str(), port.m_alias.c_str(), status);
-        return false;
+        return handleSaiSetStatus(SAI_API_MIRROR, status);
     }
 
     SWSS_LOG_NOTICE("Update mirror session %s monitor port to %s",
@@ -1106,7 +1106,7 @@ bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
         {
             SWSS_LOG_ERROR("Failed to update mirror session %s VLAN to %s, rv:%d",
                     name.c_str(), session.neighborInfo.port.m_alias.c_str(), status);
-            return false;
+            return handleSaiSetStatus(SAI_API_MIRROR, status);
         }
     }
 

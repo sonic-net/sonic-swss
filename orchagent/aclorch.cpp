@@ -3626,6 +3626,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create table %s", flowWLTable.description.c_str());
+        handleSaiCreateStatus(SAI_API_ACL, status);
         return status;
     }
 
@@ -3687,6 +3688,7 @@ sai_status_t AclOrch::createDTelWatchListTables()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create table %s", dropWLTable.description.c_str());
+        handleSaiCreateStatus(SAI_API_ACL, status);
         return status;
     }
 
@@ -3719,6 +3721,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete table %s", table_id.c_str());
+        handleSaiRemoveStatus(SAI_API_ACL, status);
         return status;
     }
 
@@ -3739,6 +3742,7 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete table %s", table_id.c_str());
+        handleSaiRemoveStatus(SAI_API_ACL, status);
         return status;
     }
 

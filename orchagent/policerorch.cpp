@@ -224,8 +224,11 @@ void PolicerOrch::doTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("Failed to create policer %s, rv:%d",
                             key.c_str(), status);
-                    it++;
-                    continue;
+                    if (!handleSaiCreateStatus(SAI_API_POLICER, status))
+                    {
+                        it++;
+                        continue;
+                    }
                 }
 
                 SWSS_LOG_NOTICE("Created policer %s", key.c_str());
@@ -258,8 +261,11 @@ void PolicerOrch::doTask(Consumer &consumer)
                     {
                         SWSS_LOG_ERROR("Failed to update policer %s attribute, rv:%d",
                                 key.c_str(), status);
-                        it++;
-                        continue;
+                        if (!handleSaiSetStatus(SAI_API_POLICER, status))
+                        {
+                            it++;
+                            continue;
+                        }
                     }
                 }
 
@@ -290,8 +296,11 @@ void PolicerOrch::doTask(Consumer &consumer)
             {
                 SWSS_LOG_ERROR("Failed to remove policer %s, rv:%d",
                         key.c_str(), status);
-                it++;
-                continue;
+                if (handleSaiRemoveStatus(SAI_API_POLICER, status))
+                {
+                    it++;
+                    continue;
+                }
             }
 
             SWSS_LOG_NOTICE("Removed policer %s", key.c_str());

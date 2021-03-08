@@ -291,6 +291,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 {
                     SWSS_LOG_ERROR("Failed to create FDB %s on %s, rv:%d",
                         existing_entry->first.mac.to_string().c_str(), update.port.m_alias.c_str(), status);
+                    handleSaiCreateStatus(SAI_API_FDB, status);
                     return;
                 }
                 return;
@@ -1089,7 +1090,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             {
                 SWSS_LOG_ERROR("macUpdate-Failed for attr.id=0x%x for FDB %s in %s on %s, rv:%d",
                             itr.id, entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str(), status);
-                return false;
+                return handleSaiSetStatus(SAI_API_FDB, status);
             }
         }
         if (oldPort.m_bridge_port_id != port.m_bridge_port_id)
@@ -1110,7 +1111,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
                     fdbData.type.c_str(), entry.mac.to_string().c_str(),
                     vlan.m_alias.c_str(), port_name.c_str(), status);
-            return false; //FIXME: it should be based on status. Some could be retried, some not
+            return handleSaiCreateStatus(SAI_API_FDB, status);
         }
         port.m_fdb_count++;
         m_portsOrch->setPort(port.m_alias, port);
@@ -1225,7 +1226,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     {
         SWSS_LOG_ERROR("FdbOrch RemoveFDBEntry: Failed to remove FDB entry. mac=%s, bv_id=0x%" PRIx64,
                        entry.mac.to_string().c_str(), entry.bv_id);
-        return true; //FIXME: it should be based on status. Some could be retried. some not
+        return handleSaiRemoveStatus(SAI_API_FDB, status);
     }
 
     SWSS_LOG_INFO("Removed mac=%s bv_id=0x%" PRIx64 " port:%s",
