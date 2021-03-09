@@ -1342,7 +1342,10 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
             // If LAG is empty, deactivate session
             if (update.lag.m_members.empty())
             {
-                deactivateSession(name, session);
+                if (session.status)
+                {
+                    deactivateSession(name, session);
+                }
                 session.neighborInfo.portId = SAI_OBJECT_TYPE_NULL;
             }
             // Switch to a new member of the LAG
