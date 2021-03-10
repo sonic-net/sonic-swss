@@ -2907,7 +2907,7 @@ void AclOrch::doAclRuleTask(Consumer &consumer)
             {
                 newRule = AclRule::makeShared(type, this, m_mirrorOrch, m_dTelOrch, rule_id, table_id, t);
             }
-            catch (exception &e)
+            catch (runtime_error &e)
             {
                 SWSS_LOG_ERROR("Error while creating ACL rule %s: %s", rule_id.c_str(), e.what());
                 it = consumer.m_toSync.erase(it);
