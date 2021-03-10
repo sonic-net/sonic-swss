@@ -89,7 +89,7 @@ bool VRFOrch::addOperation(const Request& request)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create virtual router name: %s, rv: %d", vrf_name.c_str(), status);
-            return false;
+            return handleSaiCreateStatus(SAI_API_VIRTUAL_ROUTER, status);
         }
 
         vrf_table_[vrf_name].vrf_id = router_id;
@@ -119,7 +119,7 @@ bool VRFOrch::addOperation(const Request& request)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to update virtual router attribute. vrf name: %s, rv: %d", vrf_name.c_str(), status);
-                return false;
+                return handleSaiSetStatus(SAI_API_VIRTUAL_ROUTER, status);
             }
         }
 
@@ -156,7 +156,7 @@ bool VRFOrch::delOperation(const Request& request)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove virtual router name: %s, rv:%d", vrf_name.c_str(), status);
-        return false;
+        return handleSaiRemoveStatus(SAI_API_VIRTUAL_ROUTER, status);
     }
 
     vrf_table_.erase(vrf_name);

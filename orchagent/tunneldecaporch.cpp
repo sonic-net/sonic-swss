@@ -232,7 +232,7 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create overlay router interface %d", status);
-        return false;
+        return handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status);
     }
 
     SWSS_LOG_NOTICE("Create overlay loopback router interface oid:%" PRIx64, overlayIfId);
@@ -308,7 +308,7 @@ bool TunnelDecapOrch::addDecapTunnel(string key, string type, IpAddresses dst_ip
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create tunnel");
-        return false;
+        return handleSaiCreateStatus(SAI_API_TUNNEL, status);
     }
 
     tunnelTable[key] = { tunnel_id, overlayIfId, dst_ip, {} };
@@ -384,7 +384,7 @@ bool TunnelDecapOrch::addDecapTunnelTermEntries(string tunnelKey, IpAddresses ds
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to create tunnel entry table for ip: %s", ip.c_str());
-                return false;
+                return handleSaiCreateStatus(SAI_API_TUNNEL, status);
             }
 
             // insert into ip to entry mapping
@@ -476,7 +476,7 @@ bool TunnelDecapOrch::setTunnelAttribute(string field, string value, sai_object_
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set attribute %s with value %s\n", field.c_str(), value.c_str());
-        return false;
+        return handleSaiSetStatus(SAI_API_TUNNEL, status);
     }
     SWSS_LOG_NOTICE("Set attribute %s with value %s\n", field.c_str(), value.c_str());
     return true;
@@ -563,7 +563,7 @@ bool TunnelDecapOrch::removeDecapTunnel(string key)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove tunnel: %" PRIu64, tunnel_info->tunnel_id);
-        return false;
+        return handleSaiRemoveStatus(SAI_API_TUNNEL, status);
     }
 
     // delete overlay loopback interface
@@ -571,7 +571,7 @@ bool TunnelDecapOrch::removeDecapTunnel(string key)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove tunnel overlay interface: %" PRIu64, tunnel_info->overlay_intf_id);
-        return false;
+        return handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status);
     }
 
     tunnelTable.erase(key);
@@ -596,7 +596,7 @@ bool TunnelDecapOrch::removeDecapTunnelTermEntry(sai_object_id_t tunnel_term_id,
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove tunnel table entry: %" PRIu64, tunnel_term_id);
-        return false;
+        return handleSaiRemoveStatus(SAI_API_TUNNEL, status);
     }
 
     // making sure to remove all instances of the ip address
@@ -676,6 +676,7 @@ sai_object_id_t TunnelDecapOrch::createNextHopTunnel(std::string tunnelKey, IpAd
     {
         SWSS_LOG_ERROR("Tunnel NH create failed %s, ip %s", tunnelKey.c_str(),
                         ipAddr.to_string().c_str());
+        handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
     }
     else
     {
@@ -731,7 +732,7 @@ bool TunnelDecapOrch::removeNextHopTunnel(std::string tunnelKey, IpAddress& ipAd
         {
             SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
                             ipAddr.to_string().c_str(), tunnelKey.c_str(), status);
-            return false;
+            return handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
         }
     }
     else

@@ -205,7 +205,7 @@ void SwitchOrch::doAppSwitchTableTask(Consumer &consumer)
                 {
                     SWSS_LOG_ERROR("Failed to set switch attribute %s to %s, rv:%d",
                             attribute.c_str(), value.c_str(), status);
-                    retry = true;
+                    retry = handleSaiSetStatus(SAI_API_SWITCH, status);
                     break;
                 }
 
@@ -306,7 +306,7 @@ bool SwitchOrch::setAgingFDB(uint32_t sec)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set switch %" PRIx64 " fdb_aging_time attribute: %d", gSwitchId, status);
-        return false;
+        return handleSaiSetStatus(SAI_API_SWITCH, status);
     }
     SWSS_LOG_NOTICE("Set switch %" PRIx64 " fdb_aging_time %u sec", gSwitchId, sec);
     return true;
