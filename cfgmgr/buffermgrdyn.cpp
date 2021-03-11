@@ -290,6 +290,12 @@ void BufferMgrDynamic::calculateHeadroomSize(buffer_profile_t &headroom)
     {
         auto ret = swss::runRedisScript(*m_applDb, m_headroomSha, keys, argv);
 
+        if (ret.empty())
+        {
+            SWSS_LOG_ERROR("Failed to calculate headroom for %s", headroom.name.c_str());
+            return;
+        }
+
         // The format of the result:
         // a list of strings containing key, value pairs with colon as separator
         // each is a field of the profile
@@ -309,9 +315,6 @@ void BufferMgrDynamic::calculateHeadroomSize(buffer_profile_t &headroom)
             if (pairs[0] == "xon_offset")
                 headroom.xon_offset = pairs[1];
         }
-
-        if (ret.empty())
-            SWSS_LOG_WARN("Got empty result when calculating headroom for %s", headroom.name.c_str());
     }
     catch (...)
     {
@@ -350,7 +353,10 @@ void BufferMgrDynamic::recalculateSharedBufferPool()
         //    debug:<debug info>
 
         if (ret.empty())
-            SWSS_LOG_WARN("Got empty result when recalculating shared buffer pool size");
+        {
+            SWSS_LOG_WARN("Failed to recalculate shared buffer pool size");
+            return;
+        }
 
         for ( auto i : ret)
         {
@@ -653,9 +659,9 @@ void BufferMgrDynamic::releaseProfile(const string &profile_name)
 
 bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_profile_t &profile, const string &new_pg = "")
 {
-    //port: used to fetch the maximum headroom size
-    //profile: the profile referenced by the new_pg (if provided) or all PGs
-    //new_pg: which pg is newly added?
+    // port: used to fetch the maximum headroom size
+    // profile: the profile referenced by the new_pg (if provided) or all PGs
+    // new_pg: which pg is newly added?
 
     if (!profile.lossless)
     {
@@ -689,7 +695,10 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
         // each is the size of a buffer pool
 
         if (ret.empty())
-            SWSS_LOG_WARN("Got empty result when checking headroom for %s", profile.name.c_str());
+        {
+            SWSS_LOG_WARN("Failed to check headroom for %s", profile.name.c_str());
+            return result;
+        }
 
         for ( auto i : ret)
         {
@@ -720,7 +729,7 @@ bool BufferMgrDynamic::isHeadroomResourceValid(const string &port, const buffer_
     return result;
 }
 
-task_process_status BufferMgrDynamic::removeAllPGsFromPort(const string &port)
+task_process_status BufferMgrDynamic::removeAllPgsFromPort(const string &port)
 {
     buffer_pg_lookup_t &portPgs = m_portPgLookup[port];
     set<string> profilesToBeReleased;
@@ -745,7 +754,7 @@ task_process_status BufferMgrDynamic::removeAllPGsFromPort(const string &port)
 
     checkSharedBufferPoolSize();
 
-    //Remove the old profile which is probably not referenced anymore.
+    // Remove the old profile which is probably not referenced anymore.
     if (!profilesToBeReleased.empty())
     {
         for (auto &oldProfile : profilesToBeReleased)
@@ -757,7 +766,7 @@ task_process_status BufferMgrDynamic::removeAllPGsFromPort(const string &port)
     return task_process_status::task_success;
 }
 
-//Called when speed/cable length updated from CONFIG_DB
+// Called when speed/cable length updated from CONFIG_DB
 // Update buffer profile of a certain PG of a port or all PGs of the port according to its speed, cable_length and mtu
 // Called when
 //    - port's speed, cable_length or mtu updated
@@ -777,7 +786,7 @@ task_process_status BufferMgrDynamic::removeAllPGsFromPort(const string &port)
 // 2. Update port's info: speed, cable length and mtu
 // 3. If any of the PGs is updated, recalculate pool size
 // 4. try release each profile in to-be-released profile set
-task_process_status BufferMgrDynamic::refreshPriorityGroupsForPort(const string &port, const string &speed, const string &cable_length, const string &mtu, const string &exactly_matched_key = "")
+task_process_status BufferMgrDynamic::refreshPgsForPort(const string &port, const string &speed, const string &cable_length, const string &mtu, const string &exactly_matched_key = "")
 {
     port_info_t &portInfo = m_portInfoLookup[port];
     string &gearbox_model = portInfo.gearbox_model;
@@ -808,7 +817,7 @@ task_process_status BufferMgrDynamic::refreshPriorityGroupsForPort(const string 
         if (portPg.dynamic_calculated)
         {
             string threshold;
-            //Calculate new headroom size
+            // Calculate new headroom size
             if (portPg.static_configured)
             {
                 // static_configured but dynamic_calculated means non-default threshold value
@@ -833,8 +842,8 @@ task_process_status BufferMgrDynamic::refreshPriorityGroupsForPort(const string 
             SWSS_LOG_DEBUG("Handling PG %s port %s, for static profile %s", key.c_str(), port.c_str(), newProfile.c_str());
         }
 
-        //Calculate whether accumulative headroom size exceeds the maximum value
-        //Abort if it does
+        // Calculate whether accumulative headroom size exceeds the maximum value
+        // Abort if it does
         if (!isHeadroomResourceValid(port, m_bufferProfileLookup[newProfile], exactly_matched_key))
         {
             SWSS_LOG_ERROR("Update speed (%s) and cable length (%s) for port %s failed, accumulative headroom size exceeds the limit",
@@ -863,7 +872,7 @@ task_process_status BufferMgrDynamic::refreshPriorityGroupsForPort(const string 
             portPg.running_profile_name = newProfile;
         }
 
-        //appl_db Database operation: set item BUFFER_PG|<port>|<pg>
+        // appl_db Database operation: set item BUFFER_PG|<port>|<pg>
         updateBufferPgToDb(key, newProfile, true);
         isHeadroomUpdated = true;
     }
@@ -883,7 +892,7 @@ task_process_status BufferMgrDynamic::refreshPriorityGroupsForPort(const string 
 
     portInfo.state = PORT_READY;
 
-    //Remove the old profile which is probably not referenced anymore.
+    // Remove the old profile which is probably not referenced anymore.
     if (!profilesToBeReleased.empty())
     {
         for (auto &oldProfile : profilesToBeReleased)
@@ -1013,7 +1022,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
         // Not having profile_name but both speed and cable length have been configured for that port
         // This is because the first PG on that port is configured after speed, cable length configured
         // Just regenerate the profile
-        task_status = refreshPriorityGroupsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu, pg_key);
+        task_status = refreshPgsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu, pg_key);
         if (task_status != task_process_status::task_success)
             return task_status;
 
@@ -1026,7 +1035,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
         }
         else
         {
-            task_status = refreshPriorityGroupsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu, pg_key);
+            task_status = refreshPgsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu, pg_key);
             if (task_status != task_process_status::task_success)
                 return task_status;
         }
@@ -1047,7 +1056,7 @@ task_process_status BufferMgrDynamic::doUpdatePgTask(const string &pg_key, const
     return task_process_status::task_success;
 }
 
-//Remove the currently configured lossless pg
+// Remove the currently configured lossless pg
 task_process_status BufferMgrDynamic::doRemovePgTask(const string &pg_key, const string &port)
 {
     auto &bufferPgs = m_portPgLookup[port];
@@ -1102,7 +1111,7 @@ task_process_status BufferMgrDynamic::doUpdateBufferProfileForDynamicTh(buffer_p
             SWSS_LOG_DEBUG("Checking PG %s for dynamic profile %s", key.c_str(), profileName.c_str());
             portsChecked.insert(portName);
 
-            rc = refreshPriorityGroupsForPort(portName, port.speed, port.cable_length, port.mtu);
+            rc = refreshPgsForPort(portName, port.speed, port.cable_length, port.mtu);
             if (task_process_status::task_success != rc)
             {
                 SWSS_LOG_ERROR("Update the profile on %s failed", key.c_str());
@@ -1272,16 +1281,16 @@ task_process_status BufferMgrDynamic::handleCableLenTable(KeyOpFieldsValuesTuple
 
             SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to cable length updated", port.c_str());
 
-            //Try updating the buffer information
+            // Try updating the buffer information
             switch (portInfo.state)
             {
             case PORT_INITIALIZING:
                 portInfo.state = PORT_READY;
-                task_status = refreshPriorityGroupsForPort(port, speed, cable_length, mtu);
+                task_status = refreshPgsForPort(port, speed, cable_length, mtu);
                 break;
 
             case PORT_READY:
-                task_status = refreshPriorityGroupsForPort(port, speed, cable_length, mtu);
+                task_status = refreshPgsForPort(port, speed, cable_length, mtu);
                 break;
 
             case PORT_ADMIN_DOWN:
@@ -1334,7 +1343,7 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
     string op = kfvOp(tuple);
     bool speed_updated = false, mtu_updated = false, admin_status_updated = false, admin_up;
 
-    SWSS_LOG_DEBUG("processing command:%s PORT table key %s", op.c_str(), port.c_str());
+    SWSS_LOG_DEBUG("Processing command:%s PORT table key %s", op.c_str(), port.c_str());
 
     port_info_t &portInfo = m_portInfoLookup[port];
 
@@ -1346,17 +1355,22 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
 
     if (op == SET_COMMAND)
     {
+        string old_speed;
+        string old_mtu;
+
         for (auto i : kfvFieldsValues(tuple))
         {
             if (fvField(i) == "speed" && fvValue(i) != portInfo.speed)
             {
                 speed_updated = true;
+                old_speed = move(portInfo.speed);
                 portInfo.speed = fvValue(i);
             }
 
             if (fvField(i) == "mtu" && fvValue(i) != portInfo.mtu)
             {
                 mtu_updated = true;
+                old_mtu = move(portInfo.mtu);
                 portInfo.mtu = fvValue(i);
             }
 
@@ -1378,9 +1392,26 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         {
             if (!cable_length.empty() && !speed.empty())
             {
-                SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to speed or port updated", port.c_str());
+                if (speed_updated)
+                {
+                    if (mtu_updated)
+                    {
+                        SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to speed updated from %s to %s and MTU updated from %s to %s",
+                                      port.c_str(), old_speed.c_str(), portInfo.speed.c_str(), old_mtu.c_str(), portInfo.mtu.c_str());
+                    }
+                    else
+                    {
+                        SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to speed updated from %s to %s",
+                                      port.c_str(), old_speed.c_str(), portInfo.speed.c_str());
+                    }
+                }
+                else
+                {
+                    SWSS_LOG_INFO("Updating BUFFER_PG for port %s due to MTU updated from %s to %s",
+                                  port.c_str(), old_mtu.c_str(), portInfo.mtu.c_str());
+                }
 
-                //Try updating the buffer information
+                // Try updating the buffer information
                 switch (portInfo.state)
                 {
                 case PORT_INITIALIZING:
@@ -1400,6 +1431,10 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
                 case PORT_ADMIN_DOWN:
                     SWSS_LOG_INFO("Nothing to be done when port %s's speed or cable length updated since the port is administratively down", port.c_str());
                     break;
+
+                default:
+                    SWSS_LOG_ERROR("Port %s: invalid port state %d when handling port update", port.c_str(), portInfo.state);
+                    break;
                 }
 
                 SWSS_LOG_DEBUG("Port Info for %s after handling speed %s cable %s gb %s",
@@ -1411,7 +1446,6 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
                 SWSS_LOG_WARN("Cable length or speed for %s hasn't been configured yet, unable to calculate headroom", port.c_str());
                 // We don't retry here because it doesn't make sense until both cable length and speed are configured.
             }
-
         }
 
         if (admin_status_updated)
@@ -1432,7 +1466,8 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
                 need_remove_all_pgs = true;
             }
 
-            SWSS_LOG_INFO("Recalculate shared buffer pool size due to port %s's admin_status updated", port.c_str());
+            SWSS_LOG_INFO("Recalculate shared buffer pool size due to port %s's admin_status updated to %s",
+                          port.c_str(), (admin_up ? "up" : "down"));
         }
 
         // In case both need_remove_all_pgs and need_refresh_all_pgs are true, the need_remove_all_pgs will take effect.
@@ -1440,11 +1475,11 @@ task_process_status BufferMgrDynamic::handlePortTable(KeyOpFieldsValuesTuple &tu
         // In this case, we just need record the new speed (or mtu) but don't need to refresh all PGs on the port since the port is administratively down
         if (need_remove_all_pgs)
         {
-            task_status = removeAllPGsFromPort(port);
+            task_status = removeAllPgsFromPort(port);
         }
         else if (need_refresh_all_pgs)
         {
-            task_status = refreshPriorityGroupsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu);
+            task_status = refreshPgsForPort(port, portInfo.speed, portInfo.cable_length, portInfo.mtu);
         }
     }
 
@@ -1458,7 +1493,7 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
     string op = kfvOp(tuple);
     vector<FieldValueTuple> fvVector;
 
-    SWSS_LOG_DEBUG("processing command:%s table BUFFER_POOL key %s", op.c_str(), pool.c_str());
+    SWSS_LOG_DEBUG("Processing command:%s table BUFFER_POOL key %s", op.c_str(), pool.c_str());
     if (op == SET_COMMAND)
     {
         // For set command:
@@ -1473,7 +1508,7 @@ task_process_status BufferMgrDynamic::handleBufferPoolTable(KeyOpFieldsValuesTup
             string &field = fvField(*i);
             string &value = fvValue(*i);
 
-            SWSS_LOG_DEBUG("field:%s, value:%s", field.c_str(), value.c_str());
+            SWSS_LOG_DEBUG("Field:%s, value:%s", field.c_str(), value.c_str());
             if (field == buffer_size_field_name)
             {
                 bufferPool.dynamic_size = false;
@@ -1557,12 +1592,12 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
     string op = kfvOp(tuple);
     vector<FieldValueTuple> fvVector;
 
-    SWSS_LOG_DEBUG("processing command:%s BUFFER_PROFILE table key %s", op.c_str(), profileName.c_str());
+    SWSS_LOG_DEBUG("Processing command:%s BUFFER_PROFILE table key %s", op.c_str(), profileName.c_str());
     if (op == SET_COMMAND)
     {
-        //For set command:
-        //1. Create the corresponding table entries in APPL_DB
-        //2. Record the table in the internal cache m_bufferProfileLookup
+        // For set command:
+        // 1. Create the corresponding table entries in APPL_DB
+        // 2. Record the table in the internal cache m_bufferProfileLookup
         buffer_profile_t &profileApp = m_bufferProfileLookup[profileName];
 
         profileApp.static_configured = true;
@@ -1577,7 +1612,7 @@ task_process_status BufferMgrDynamic::handleBufferProfileTable(KeyOpFieldsValues
             const string &field = fvField(*i);
             string value = fvValue(*i);
 
-            SWSS_LOG_DEBUG("field:%s, value:%s", field.c_str(), value.c_str());
+            SWSS_LOG_DEBUG("Field:%s, value:%s", field.c_str(), value.c_str());
             if (field == buffer_pool_field_name)
             {
                 if (!value.empty())
@@ -1727,7 +1762,7 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
     vector<FieldValueTuple> fvVector;
     buffer_pg_t &bufferPg = m_portPgLookup[port][key];
 
-    SWSS_LOG_DEBUG("processing command:%s table BUFFER_PG key %s", op.c_str(), key.c_str());
+    SWSS_LOG_DEBUG("Processing command:%s table BUFFER_PG key %s", op.c_str(), key.c_str());
     if (op == SET_COMMAND)
     {
         bool ignored = false;
@@ -1751,7 +1786,7 @@ task_process_status BufferMgrDynamic::handleOneBufferPgEntry(const string &key, 
             const string &field = fvField(*i);
             string value = fvValue(*i);
 
-            SWSS_LOG_DEBUG("field:%s, value:%s", field.c_str(), value.c_str());
+            SWSS_LOG_DEBUG("Field:%s, value:%s", field.c_str(), value.c_str());
             if (field == buffer_profile_field_name && value != "NULL")
             {
                 // Headroom override
@@ -1950,7 +1985,7 @@ task_process_status BufferMgrDynamic::doBufferTableTask(KeyOpFieldsValuesTuple &
     string key = kfvKey(tuple);
     const string &name = applTable.getTableName();
 
-    //transform the separator in key from "|" to ":"
+    // Transform the separator in key from "|" to ":"
     transformSeperator(key);
 
     string op = kfvOp(tuple);
@@ -1962,7 +1997,7 @@ task_process_status BufferMgrDynamic::doBufferTableTask(KeyOpFieldsValuesTuple &
 
         for (auto i : kfvFieldsValues(tuple))
         {
-            //transform the separator in values from "|" to ":"
+            // Transform the separator in values from "|" to ":"
             if (fvField(i) == "pool")
                 transformReference(fvValue(i));
             if (fvField(i) == "profile")
