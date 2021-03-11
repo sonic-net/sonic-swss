@@ -226,7 +226,6 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
     SWSS_LOG_ENTER();
 
     acl_table_type_t table_type;
-    sai_object_id_t  table_oid;
 
     string queuestr = to_string(queueId);
     m_strRule = "Rule_PfcWdAclHandler_" + queuestr;
@@ -244,18 +243,15 @@ PfcWdAclHandler::PfcWdAclHandler(sai_object_id_t port, sai_object_id_t queue,
     }
     else
     {
-        table_oid = gAclOrch->getTableById(m_strIngressTable);
-        map<sai_object_id_t, AclTable> table_map = gAclOrch->getAclTables();
-        auto rule_iter = table_map[table_oid].rules.find(m_strRule);
-
-        if (rule_iter == table_map[table_oid].rules.end())
+        AclRule* rule = gAclOrch->getAclRule(m_strIngressTable, m_strRule);
+        if (rule == nullptr)
         {
             shared_ptr<AclRulePfcwd> newRule = make_shared<AclRulePfcwd>(gAclOrch, m_strRule, m_strIngressTable, table_type);
             createPfcAclRule(newRule, queueId, m_strIngressTable, port);
         } 
         else 
         {
-            gAclOrch->updateAclRule(rule_iter->second, m_strIngressTable, MATCH_IN_PORTS, &port, RULE_OPER_ADD);
+            gAclOrch->updateAclRule(m_strIngressTable, m_strRule, MATCH_IN_PORTS, &port, RULE_OPER_ADD);
         }
     }
 
@@ -281,11 +277,13 @@ PfcWdAclHandler::~PfcWdAclHandler(void)
 {
     SWSS_LOG_ENTER();
 
-    sai_object_id_t table_oid = gAclOrch->getTableById(m_strIngressTable);
-    map<sai_object_id_t, AclTable> table_map = gAclOrch->getAclTables();
-    auto rule_iter = table_map[table_oid].rules.find(m_strRule);
+    AclRule* rule = gAclOrch->getAclRule(m_strIngressTable, m_strRule);
+    if (rule == nullptr)
+    {
+        SWSS_LOG_THROW("ACL Rule does not exist for rule %s", m_strRule.c_str());
+    }
 
-    vector<sai_object_id_t> port_set = rule_iter->second->getInPorts();
+    vector<sai_object_id_t> port_set = rule->getInPorts();
     sai_object_id_t port = getPort();
 
     if ((port_set.size() == 1) && (port_set[0] == port))
@@ -294,7 +292,7 @@ PfcWdAclHandler::~PfcWdAclHandler(void)
     }
     else 
     {
-        gAclOrch->updateAclRule(rule_iter->second, m_strIngressTable, MATCH_IN_PORTS, &port, RULE_OPER_DELETE);
+        gAclOrch->updateAclRule(m_strIngressTable, m_strRule, MATCH_IN_PORTS, &port, RULE_OPER_DELETE);
     } 
 
     auto found = m_aclTables.find(m_strEgressTable);
@@ -323,6 +321,16 @@ void PfcWdAclHandler::createPfcAclTable(sai_object_id_t port, string strTable, b
     assert(inserted.second);
 
     AclTable& aclTable = inserted.first->second;
+
+    sai_object_id_t table_oid = gAclOrch->getTableById(strTable);
+    if (ingress && table_oid != SAI_NULL_OBJECT_ID)
+    {
+        // DROP ACL table is already created
+        SWSS_LOG_NOTICE("ACL table %s exists, reuse the same", strTable.c_str());
+        aclTable = *(gAclOrch->getTableByOid(table_oid));
+        return;
+    }
+
     aclTable.link(port);
     aclTable.id = strTable;
 

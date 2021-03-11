@@ -440,7 +440,8 @@ public:
     bool updateAclTable(AclTable &currentTable, AclTable &newTable);
     bool addAclRule(shared_ptr<AclRule> aclRule, string table_id);
     bool removeAclRule(string table_id, string rule_id);
-    bool updateAclRule(shared_ptr<AclRule> aclRule, string table_id, string attr_name, void *data, bool oper);
+    bool updateAclRule(string table_id, string rule_id, string attr_name, void *data, bool oper);
+    AclRule* getAclRule(string table_id, string rule_id);
 
     bool isCombinedMirrorV6Table();
     bool isAclActionSupported(acl_stage_type_t stage, sai_acl_action_type_t action) const;

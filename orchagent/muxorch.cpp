@@ -40,8 +40,8 @@ extern sai_router_interface_api_t* sai_router_intfs_api;
 
 /* Constants */
 #define MUX_TUNNEL "MuxTunnel0"
-#define MUX_ACL_TABLE_NAME "mux_acl_table";
-#define MUX_ACL_RULE_NAME "mux_acl_rule";
+#define MUX_ACL_TABLE_NAME INGRESS_TABLE_DROP
+#define MUX_ACL_RULE_NAME "mux_acl_rule"
 #define MUX_HW_STATE_UNKNOWN "unknown"
 #define MUX_HW_STATE_ERROR "error"
 
@@ -202,6 +202,10 @@ static sai_object_id_t create_tunnel(const IpAddress* p_dst_ip, const IpAddress*
     attr.value.s32 = SAI_TUNNEL_TTL_MODE_PIPE_MODEL;
     tunnel_attrs.push_back(attr);
 
+    attr.id = SAI_TUNNEL_ATTR_LOOPBACK_PACKET_ACTION;
+    attr.value.s32 = SAI_PACKET_ACTION_DROP;
+    tunnel_attrs.push_back(attr);
+
     if (p_src_ip != nullptr)
     {
         attr.id = SAI_TUNNEL_ATTR_ENCAP_SRC_IP;
@@ -343,7 +347,7 @@ bool MuxCable::stateActive()
         return false;
     }
 
-    if (!aclHandler(port.m_port_id, false))
+    if (!aclHandler(port.m_port_id, mux_name_, false))
     {
         SWSS_LOG_INFO("Remove ACL drop rule failed for %s", mux_name_.c_str());
         return false;
@@ -373,7 +377,7 @@ bool MuxCable::stateStandby()
         return false;
     }
 
-    if (!aclHandler(port.m_port_id))
+    if (!aclHandler(port.m_port_id, mux_name_))
     {
         SWSS_LOG_INFO("Add ACL drop rule failed for %s", mux_name_.c_str());
         return false;
@@ -429,11 +433,11 @@ string MuxCable::getState()
     return (muxStateValToString.at(state_));
 }
 
-bool MuxCable::aclHandler(sai_object_id_t port, bool add)
+bool MuxCable::aclHandler(sai_object_id_t port, string alias, bool add)
 {
     if (add)
     {
-        acl_handler_ = make_shared<MuxAclHandler>(port);
+        acl_handler_ = make_shared<MuxAclHandler>(port, alias);
     }
     else
     {
@@ -685,16 +689,18 @@ sai_object_id_t MuxNbrHandler::getNextHopId(const NextHopKey nhKey)
 
 std::map<std::string, AclTable> MuxAclHandler::acl_table_;
 
-MuxAclHandler::MuxAclHandler(sai_object_id_t port)
+MuxAclHandler::MuxAclHandler(sai_object_id_t port, string alias)
 {
     SWSS_LOG_ENTER();
 
     // There is one handler instance per MUX port
-    acl_table_type_t table_type = ACL_TABLE_MUX;
+    acl_table_type_t table_type = ACL_TABLE_DROP;
     string table_name = MUX_ACL_TABLE_NAME;
     string rule_name = MUX_ACL_RULE_NAME;
 
     port_ = port;
+    alias_ = alias;
+
     auto found = acl_table_.find(table_name);
     if (found == acl_table_.end())
     {
@@ -709,8 +715,18 @@ MuxAclHandler::MuxAclHandler(sai_object_id_t port)
     else
     {
         SWSS_LOG_NOTICE("Binding port %" PRIx64 "", port);
-        // Otherwise just bind ACL table with the port
-        found->second.bind(port);
+
+        AclRule* rule = gAclOrch->getAclRule(table_name, rule_name);
+        if (rule == nullptr)
+        {
+            shared_ptr<AclRuleMux> newRule =
+                    make_shared<AclRuleMux>(gAclOrch, rule_name, table_name, table_type);
+            createMuxAclRule(newRule, table_name);
+        }
+        else
+        {
+            gAclOrch->updateAclRule(table_name, rule_name, MATCH_IN_PORTS, &port, RULE_OPER_ADD);
+        }
     }
 }
 
@@ -718,11 +734,25 @@ MuxAclHandler::~MuxAclHandler(void)
 {
     SWSS_LOG_ENTER();
     string table_name = MUX_ACL_TABLE_NAME;
+    string rule_name = MUX_ACL_RULE_NAME;
 
     SWSS_LOG_NOTICE("Un-Binding port %" PRIx64 "", port_);
 
-    auto found = acl_table_.find(table_name);
-    found->second.unbind(port_);
+    AclRule* rule = gAclOrch->getAclRule(table_name, rule_name);
+    if (rule == nullptr)
+    {
+        SWSS_LOG_THROW("ACL Rule does not exist for port %s, rule %s", alias_.c_str(), rule_name.c_str());
+    }
+
+    vector<sai_object_id_t> port_set = rule->getInPorts();
+    if ((port_set.size() == 1) && (port_set[0] == port_))
+    {
+        gAclOrch->removeAclRule(table_name, rule_name);
+    }
+    else
+    {
+        gAclOrch->updateAclRule(table_name, rule_name, MATCH_IN_PORTS, &port_, RULE_OPER_DELETE);
+    }
 }
 
 void MuxAclHandler::createMuxAclTable(sai_object_id_t port, string strTable)
@@ -736,7 +766,17 @@ void MuxAclHandler::createMuxAclTable(sai_object_id_t port, string strTable)
     assert(inserted.second);
 
     AclTable& acl_table = inserted.first->second;
-    acl_table.type = ACL_TABLE_MUX;
+
+    sai_object_id_t table_oid = gAclOrch->getTableById(strTable);
+    if (table_oid != SAI_NULL_OBJECT_ID)
+    {
+        // DROP ACL table is already created
+        SWSS_LOG_NOTICE("ACL table %s exists, reuse the same", strTable.c_str());
+        acl_table = *(gAclOrch->getTableByOid(table_oid));
+        return;
+    }
+
+    acl_table.type = ACL_TABLE_DROP;
     acl_table.id = strTable;
     acl_table.link(port);
     acl_table.stage = ACL_STAGE_INGRESS;
@@ -752,6 +792,11 @@ void MuxAclHandler::createMuxAclRule(shared_ptr<AclRuleMux> rule, string strTabl
     attr_name = RULE_PRIORITY;
     attr_value = "999";
     rule->validateAddPriority(attr_name, attr_value);
+
+    // Add MATCH_IN_PORTS as match criteria for ingress table
+    attr_name = MATCH_IN_PORTS;
+    attr_value = alias_;
+    rule->validateAddMatch(attr_name, attr_value);
 
     attr_name = ACTION_PACKET_ACTION;
     attr_value = PACKET_ACTION_DROP;

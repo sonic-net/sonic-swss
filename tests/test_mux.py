@@ -29,6 +29,7 @@ class TestMuxTunnelBase(object):
     IPV4_MASK                   = "/32"
     IPV6_MASK                   = "/128"
     TUNNEL_NH_ID                = 0
+    ACL_PRIORITY                = "999"
     
     ecn_modes_map = {
         "standard"       : "SAI_TUNNEL_DECAP_ECN_MODE_STANDARD",
@@ -310,6 +311,43 @@ class TestMuxTunnelBase(object):
         self.check_nexthop_group_in_asic_db(asicdb, rtkeys[0])
 
 
+    def get_expected_sai_qualifiers(self, portlist, dvs_acl):
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_PRIORITY": self.ACL_PRIORITY,
+            "SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS": dvs_acl.get_port_list_comparator(portlist)
+        }
+
+        return expected_sai_qualifiers
+
+
+    def create_and_test_acl(self, appdb, asicdb, dvs, dvs_acl):
+
+        # Start with active, verify NO ACL rules exists
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        self.set_mux_state(appdb, "Ethernet4", "active")
+
+        dvs_acl.verify_no_acl_rules()
+
+        # Set one mux port to standby, verify ACL rule with inport bitmap (1 port)
+        self.set_mux_state(appdb, "Ethernet0", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        # Set two mux ports to standby, verify ACL rule with inport bitmap (2 ports)
+        self.set_mux_state(appdb, "Ethernet4", "standby")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet0","Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        # Set one mux port to active, verify ACL rule with inport bitmap (1 port)
+        self.set_mux_state(appdb, "Ethernet0", "active")
+        sai_qualifier = self.get_expected_sai_qualifiers(["Ethernet4"], dvs_acl)
+        dvs_acl.verify_acl_rule(sai_qualifier, action="DROP", priority=self.ACL_PRIORITY)
+
+        # Set last mux port to active, verify ACL rule is deleted
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        dvs_acl.verify_no_acl_rules()
+
+
     def check_interface_exists_in_asicdb(self, asicdb, sai_oid):
         asicdb.wait_for_entry(self.ASIC_RIF_TABLE, sai_oid)
         return True
@@ -364,6 +402,8 @@ class TestMuxTunnelBase(object):
                 assert self.check_interface_exists_in_asicdb(asicdb, value)
             elif field == "SAI_TUNNEL_ATTR_ENCAP_TTL_MODE":
                 assert value == "SAI_TUNNEL_TTL_MODE_PIPE_MODEL"
+            elif field == "SAI_TUNNEL_ATTR_LOOPBACK_PACKET_ACTION":
+                assert value == "SAI_PACKET_ACTION_DROP"
             else:
                 assert False, "Field %s is not tested" % field
 
@@ -537,6 +577,15 @@ class TestMuxTunnel(TestMuxTunnelBase):
         asicdb = dvs.get_asic_db()
 
         self.create_and_test_route(appdb, asicdb, dvs, dvs_route)
+
+
+    def test_acl(self, dvs, dvs_acl, testlog):
+        """ test Route entries and mux state change """
+
+        appdb  = swsscommon.DBConnector(swsscommon.APPL_DB, dvs.redis_sock, 0)
+        asicdb = dvs.get_asic_db()
+
+        self.create_and_test_acl(appdb, asicdb, dvs, dvs_acl)
 
 
 # Add Dummy always-pass test at end as workaroud

@@ -2961,7 +2961,26 @@ bool AclOrch::removeAclRule(string table_id, string rule_id)
     return m_AclTables[table_oid].remove(rule_id);
 }
 
-bool AclOrch::updateAclRule(shared_ptr<AclRule> rule, string table_id, string attr_name, void *data, bool oper)
+AclRule* AclOrch::getAclRule(string table_id, string rule_id)
+{
+    sai_object_id_t table_oid = getTableById(table_id);
+    if (table_oid == SAI_NULL_OBJECT_ID)
+    {
+        SWSS_LOG_INFO("Table %s does not exist", table_id.c_str());
+        return nullptr;
+    }
+
+    const auto& rule_it = m_AclTables[table_oid].rules.find(rule_id);
+    if (rule_it == m_AclTables[table_oid].rules.end())
+    {
+        SWSS_LOG_INFO("Rule %s doesn't exist", rule_id.c_str());
+        return nullptr;
+    }
+
+    return rule_it->second.get();
+}
+
+bool AclOrch::updateAclRule(string table_id, string rule_id, string attr_name, void *data, bool oper)
 {
     SWSS_LOG_ENTER();
     
@@ -2974,12 +2993,19 @@ bool AclOrch::updateAclRule(shared_ptr<AclRule> rule, string table_id, string at
         return false;
     }
 
+    auto rule_it = m_AclTables[table_oid].rules.find(rule_id);
+    if (rule_it == m_AclTables[table_oid].rules.end())
+    {
+        SWSS_LOG_ERROR("Failed to update ACL rule in ACL table %s. Rule doesn't exist", rule_id.c_str());
+        return false;
+    }
+
     switch (aclMatchLookup[attr_name]) 
     {
         case SAI_ACL_ENTRY_ATTR_FIELD_IN_PORTS:
         {
             sai_object_id_t port_oid = *(sai_object_id_t *)data;
-            vector<sai_object_id_t> in_ports = rule->getInPorts();
+            vector<sai_object_id_t> in_ports = rule_it->second->getInPorts();
 
             if (oper == RULE_OPER_ADD) 
             {
@@ -3004,10 +3030,14 @@ bool AclOrch::updateAclRule(shared_ptr<AclRule> rule, string table_id, string at
                 attr_value += p.m_alias;
                 attr_value += ',';
             }
-            attr_value.pop_back();
 
-            rule->validateAddMatch(MATCH_IN_PORTS, attr_value);  
-            m_AclTables[table_oid].rules[rule->getId()]->updateInPorts();
+            if (!attr_value.empty())
+            {
+                attr_value.pop_back();
+            }
+
+            rule_it->second->validateAddMatch(MATCH_IN_PORTS, attr_value);
+            rule_it->second->updateInPorts();
         }
         break;
 
