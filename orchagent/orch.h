@@ -42,6 +42,8 @@ const char state_db_key_delimiter  = '|';
 #define DEFAULT_KEY_SEPARATOR  ":"
 #define VLAN_SUB_INTERFACE_SEPARATOR "."
 
+#define THRESHOLD_SUPPORTED_FIELD "threshold_supported"
+
 const int default_orch_pri = 0;
 
 typedef enum
