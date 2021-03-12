@@ -8,6 +8,7 @@
 #include <tuple>
 #include <map>
 #include <condition_variable>
+
 #include "orch.h"
 #include "switchorch.h"
 #include "portsorch.h"
@@ -15,28 +16,12 @@
 #include "dtelorch.h"
 #include "observer.h"
 
+#include "acltable.h"
+
 // ACL counters update interval in the DB
 // Value is in seconds. Should not be less than 5 seconds
 // (in worst case update of 1265 counters takes almost 5 sec)
 #define COUNTERS_READ_INTERVAL 10
-
-#define TABLE_DESCRIPTION "POLICY_DESC"
-#define TABLE_TYPE        "TYPE"
-#define TABLE_PORTS       "PORTS"
-#define TABLE_SERVICES    "SERVICES"
-
-#define TABLE_TYPE_L3                   "L3"
-#define TABLE_TYPE_L3V6                 "L3V6"
-#define TABLE_TYPE_MIRROR               "MIRROR"
-#define TABLE_TYPE_MIRRORV6             "MIRRORV6"
-#define TABLE_TYPE_MIRROR_DSCP          "MIRROR_DSCP"
-#define TABLE_TYPE_PFCWD                "PFCWD"
-#define TABLE_TYPE_CTRLPLANE            "CTRLPLANE"
-#define TABLE_TYPE_DTEL_FLOW_WATCHLIST  "DTEL_FLOW_WATCHLIST"
-#define TABLE_TYPE_DTEL_DROP_WATCHLIST  "DTEL_DROP_WATCHLIST"
-#define TABLE_TYPE_MCLAG                "MCLAG"
-#define TABLE_TYPE_MUX                  "MUX"
-#define TABLE_TYPE_DROP                 "DROP"
 
 #define RULE_PRIORITY           "PRIORITY"
 #define MATCH_IN_PORTS          "IN_PORTS"
@@ -109,24 +94,6 @@
 #define RULE_OPER_ADD           0
 #define RULE_OPER_DELETE        1
 
-typedef enum
-{
-    ACL_TABLE_UNKNOWN,
-    ACL_TABLE_L3,
-    ACL_TABLE_L3V6,
-    ACL_TABLE_MIRROR,
-    ACL_TABLE_MIRRORV6,
-    ACL_TABLE_MIRROR_DSCP,
-    ACL_TABLE_PFCWD,
-    ACL_TABLE_CTRLPLANE,
-    ACL_TABLE_DTEL_FLOW_WATCHLIST,
-    ACL_TABLE_DTEL_DROP_WATCHLIST,
-    ACL_TABLE_MCLAG,
-    ACL_TABLE_MUX,
-    ACL_TABLE_DROP
-} acl_table_type_t;
-
-typedef map<string, acl_table_type_t> acl_table_type_lookup_t;
 typedef map<string, sai_acl_entry_attr_t> acl_rule_attr_lookup_t;
 typedef map<string, sai_acl_ip_type_t> acl_ip_type_lookup_t;
 typedef map<string, sai_acl_dtel_flow_op_t> acl_dtel_flow_op_type_lookup_t;

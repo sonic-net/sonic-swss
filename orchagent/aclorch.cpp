@@ -3073,11 +3073,11 @@ void AclOrch::doAclTableTask(Consumer &consumer)
 
                 SWSS_LOG_DEBUG("TABLE ATTRIBUTE: %s : %s", attr_name.c_str(), attr_value.c_str());
 
-                if (attr_name == TABLE_DESCRIPTION)
+                if (attr_name == ACL_TABLE_DESCRIPTION)
                 {
                     newTable.description = attr_value;
                 }
-                else if (attr_name == TABLE_TYPE)
+                else if (attr_name == ACL_TABLE_TYPE)
                 {
                     if (!processAclTableType(attr_value, newTable.type))
                     {
@@ -3087,7 +3087,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                         break;
                     }
                 }
-                else if (attr_name == TABLE_PORTS)
+                else if (attr_name == ACL_TABLE_PORTS)
                 {
                     if (!processAclTablePorts(attr_value, newTable))
                     {
@@ -3097,7 +3097,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                         break;
                     }
                 }
-                else if (attr_name == TABLE_STAGE)
+                else if (attr_name == ACL_TABLE_STAGE)
                 {
                    if (!processAclTableStage(attr_value, newTable.stage))
                    {
@@ -3107,7 +3107,7 @@ void AclOrch::doAclTableTask(Consumer &consumer)
                        break;
                    }
                 }
-                else if (attr_name == TABLE_SERVICES)
+                else if (attr_name == ACL_TABLE_SERVICES)
                 {
                     // TODO: validate control plane ACL table has this attribute
                     continue;

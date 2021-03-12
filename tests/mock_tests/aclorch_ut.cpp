@@ -748,10 +748,7 @@ namespace aclorch_test
         {
             for (const auto &fv : values)
             {
-                if (fv.first == TABLE_DESCRIPTION)
-                {
-                }
-                else if (fv.first == TABLE_TYPE)
+                if (fv.first == ACL_TABLE_TYPE)
                 {
                     if (fv.second == TABLE_TYPE_L3)
                     {
@@ -772,16 +769,16 @@ namespace aclorch_test
                         return false;
                     }
                 }
-                else if (fv.first == TABLE_STAGE)
+                else if (fv.first == ACL_TABLE_STAGE)
                 {
-                    if (fv.second == TABLE_INGRESS)
+                    if (fv.second == STAGE_INGRESS)
                     {
                         if (acl_table.stage != ACL_STAGE_INGRESS)
                         {
                             return false;
                         }
                     }
-                    else if (fv.second == TABLE_EGRESS)
+                    else if (fv.second == STAGE_EGRESS)
                     {
                         if (acl_table.stage != ACL_STAGE_EGRESS)
                         {
@@ -792,9 +789,6 @@ namespace aclorch_test
                     {
                         return false;
                     }
-                }
-                else if (fv.first == TABLE_PORTS)
-                {
                 }
             }
 
@@ -951,17 +945,17 @@ namespace aclorch_test
 
         for (const auto &acl_table_type : { TABLE_TYPE_L3, TABLE_TYPE_L3V6 })
         {
-            for (const auto &acl_table_stage : { TABLE_INGRESS, TABLE_EGRESS })
+            for (const auto &acl_table_stage : { STAGE_INGRESS, STAGE_EGRESS })
             {
                 string acl_table_id = "acl_table_1";
 
                 auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
                     { { acl_table_id,
                         SET_COMMAND,
-                        { { TABLE_DESCRIPTION, "filter source IP" },
-                          { TABLE_TYPE, acl_table_type },
-                          { TABLE_STAGE, acl_table_stage },
-                          { TABLE_PORTS, "1,2" } } } });
+                        { { ACL_TABLE_DESCRIPTION, "filter source IP" },
+                          { ACL_TABLE_TYPE, acl_table_type },
+                          { ACL_TABLE_STAGE, acl_table_stage },
+                          { ACL_TABLE_PORTS, "1,2" } } } });
                 // FIXME:                  ^^^^^^^^^^^^^ fixed port
 
                 orch->doAclTableTask(kvfAclTable);
@@ -1012,12 +1006,12 @@ namespace aclorch_test
         auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
             { { acl_table_id,
                 SET_COMMAND,
-                { { TABLE_DESCRIPTION, "filter source IP" },
-                  { TABLE_TYPE, TABLE_TYPE_L3 },
+                { { ACL_TABLE_DESCRIPTION, "filter source IP" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3 },
                   //            ^^^^^^^^^^^^^ L3 ACL
-                  { TABLE_STAGE, TABLE_INGRESS },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
                   // FIXME:      ^^^^^^^^^^^^^ only support / test for ingress ?
-                  { TABLE_PORTS, "1,2" } } } });
+                  { ACL_TABLE_PORTS, "1,2" } } } });
         // FIXME:                  ^^^^^^^^^^^^^ fixed port
 
         orch->doAclTableTask(kvfAclTable);
@@ -1102,12 +1096,12 @@ namespace aclorch_test
         auto kvfAclTable = deque<KeyOpFieldsValuesTuple>(
             { { acl_table_id,
                 SET_COMMAND,
-                { { TABLE_DESCRIPTION, "filter source IP" },
-                  { TABLE_TYPE, TABLE_TYPE_L3V6 },
+                { { ACL_TABLE_DESCRIPTION, "filter source IP" },
+                  { ACL_TABLE_TYPE, TABLE_TYPE_L3V6 },
                   //            ^^^^^^^^^^^^^ L3V6 ACL
-                  { TABLE_STAGE, TABLE_INGRESS },
+                  { ACL_TABLE_STAGE, STAGE_INGRESS },
                   // FIXME:      ^^^^^^^^^^^^^ only support / test for ingress ?
-                  { TABLE_PORTS, "1,2" } } } });
+                  { ACL_TABLE_PORTS, "1,2" } } } });
         // FIXME:                  ^^^^^^^^^^^^^ fixed port
 
         orch->doAclTableTask(kvfAclTable);
