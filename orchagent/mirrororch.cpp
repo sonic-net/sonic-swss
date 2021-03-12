@@ -991,7 +991,7 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to deactivate mirroring session %s", name.c_str());
-        return handleSaiRemoveStatus(SAI_API_MIRROR, status);
+        return false;
     }
 
     session.status = false;

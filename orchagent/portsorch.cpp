@@ -2336,11 +2336,9 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 {
                     if (m_lanesAliasSpeedMap.find(it->first) == m_lanesAliasSpeedMap.end())
                     {
-                        sai_status_t status = removePort(it->second);
-                        if (status != SAI_STATUS_SUCCESS)
+                        if (SAI_STATUS_SUCCESS != removePort(it->second))
                         {
-                            SWSS_LOG_ERROR("PortsOrch initialization failure.");
-                            handleSaiRemoveStatus(SAI_API_PORT, status);
+                            throw runtime_error("PortsOrch initialization failure.");
                         }
                         it = m_portListLaneMap.erase(it);
                     }
@@ -2690,8 +2688,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                 sai_status_t status = sai_hostif_api->remove_hostif(hif_id);
                 if (status != SAI_STATUS_SUCCESS)
                 {
-                    SWSS_LOG_ERROR("Remove hostif for the port failed");
-                    handleSaiRemoveStatus(SAI_API_HOSTIF, status);
+                    throw runtime_error("Remove hostif for the port failed");
                 }
 
                 Port p;
@@ -2707,8 +2704,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             {
                 if (SAI_STATUS_OBJECT_IN_USE != status)
                 {
-                    SWSS_LOG_ERROR("Delete port failed");
-                    handleSaiRemoveStatus(SAI_API_PORT, status);
+                    throw runtime_error("Delete port failed");
                 }
                 SWSS_LOG_WARN("Failed to remove port %" PRIx64 ", as the object is in use", port_id);
                 it++;
