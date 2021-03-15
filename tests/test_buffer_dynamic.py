@@ -102,10 +102,17 @@ class TestBufferMgrDyn(object):
                     self.ingress_lossless_pool_oid = key
 
     def check_new_profile_in_asic_db(self, dvs, profile):
-        diff = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE")) - self.initProfileSet
-        if len(diff) == 1:
-            self.newProfileInAsicDb = diff.pop()
-        assert self.newProfileInAsicDb, "Can't get SAI OID for newly created profile {}".format(profile)
+        retry_count = 0
+        self.newProfileInAsicDb = None
+        while retry_count < 5:
+            retry_count += 1
+            diff = set(self.asic_db.get_keys("ASIC_STATE:SAI_OBJECT_TYPE_BUFFER_PROFILE")) - self.initProfileSet
+            if len(diff) == 1:
+                self.newProfileInAsicDb = diff.pop()
+                break
+            else:
+                time.sleep(1)
+        assert self.newProfileInAsicDb, "Can't get SAI OID for newly created profile {} after retry {} times".format(profile, retry_count)
 
         # in case diff is empty, we just treat the newProfileInAsicDb cached the latest one
         fvs = self.app_db.get_entry("BUFFER_PROFILE_TABLE", profile)
