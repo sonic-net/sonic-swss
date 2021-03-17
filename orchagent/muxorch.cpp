@@ -420,6 +420,7 @@ void MuxCable::setState(string new_state)
     }
 
     st_chg_in_progress_ = false;
+    st_chg_failed_ = false;
     SWSS_LOG_INFO("Changed state to %s", new_state.c_str());
 
     return;

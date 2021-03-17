@@ -102,7 +102,7 @@ private:
     bool stateInitActive();
     bool stateStandby();
 
-    bool aclHandler(sai_object_id_t, string, bool add = true);
+    bool aclHandler(sai_object_id_t port, string alias, bool add = true);
     bool nbrHandler(bool enable, bool update_routes = true);
 
     string mux_name_;
