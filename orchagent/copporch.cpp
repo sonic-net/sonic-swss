@@ -1,3 +1,6 @@
+#include <sys/ioctl.h>
+#include <net/if.h>
+
 #include "sai.h"
 #include "copporch.h"
 #include "portsorch.h"
@@ -427,6 +430,89 @@ bool CoppOrch::createPolicer(string trap_group_name, vector<sai_attribute_t> &po
     return true;
 }
 
+bool CoppOrch::createSubmitToIngressHostIf(vector<sai_attribute_t> &ingress_attribs)
+{
+    SWSS_LOG_ENTER();
+
+    sai_status_t sai_status;
+    struct ifreq ifr;
+    int sock_fd;
+    char *ifname = NULL;
+    size_t len;
+
+    sai_status = sai_hostif_api->create_hostif(&m_submit_to_ingress_id,
+                                               gSwitchId,
+                                               (uint32_t)ingress_attribs.size(),
+                                               ingress_attribs.data()
+                                               );
+
+    if (sai_status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to create SubmitToIngress hostif, rc=%d",
+                       sai_status);
+        return false;
+    }
+
+    // Setting CPU port operational status is not working on some of
+    // the vendor SAI implementations. Using IOCTL to bring the
+    // netdev up instead.
+
+    // find the netdev name
+    for (uint32_t i = 0; i < (uint32_t)ingress_attribs.size(); i++)
+    {
+        if (ingress_attribs[i].id == SAI_HOSTIF_ATTR_NAME)
+        {
+            ifname = ingress_attribs[i].value.chardata;
+            break;
+        }
+    }
+
+    if (ifname == NULL)
+    {
+        SWSS_LOG_ERROR("No interface name found");
+        (void)removeSubmitToIngressHostIf();
+        return false;
+    }
+
+    // create a socket
+    sock_fd = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
+    if (sock_fd < 0)
+    {
+        SWSS_LOG_ERROR("Failed to open raw socket, sock_fd=%d",
+                       sock_fd);
+        (void)removeSubmitToIngressHostIf();
+        return false;
+    }
+
+    // bind it to the netdev by name
+    len = strnlen(ifname, IFNAMSIZ);
+    setsockopt(sock_fd, SOL_SOCKET, SO_BINDTODEVICE, ifname, (socklen_t)len);
+
+    // read the flags
+    memset(&ifr, 0, sizeof(ifr));
+    strncpy(ifr.ifr_name, ifname, sizeof(ifr.ifr_name));
+    if (ioctl(sock_fd, SIOCGIFFLAGS, &ifr) == -1)
+    {
+        SWSS_LOG_ERROR("Unable to read socket flags");
+        close(sock_fd);
+        (void)removeSubmitToIngressHostIf();
+        return false;
+    }
+
+    // set the flags to bring the interface up
+    ifr.ifr_flags |= IFF_UP|IFF_RUNNING;
+    if (ioctl(sock_fd, SIOCSIFFLAGS, &ifr) == -1)
+    {
+        SWSS_LOG_ERROR("Unable to write socket flags");
+        close(sock_fd);
+        (void)removeSubmitToIngressHostIf();
+        return false;
+    }
+
+    close(sock_fd);
+    return true;
+}
+
 bool CoppOrch::createGenetlinkHostIf(string trap_group_name, vector<sai_attribute_t> &genetlink_attribs)
 {
     SWSS_LOG_ENTER();
@@ -449,6 +535,31 @@ bool CoppOrch::createGenetlinkHostIf(string trap_group_name, vector<sai_attribut
     }
 
     m_trap_group_hostif_map[m_trap_group_map[trap_group_name]] = hostif_id;
+    return true;
+}
+
+bool CoppOrch::removeSubmitToIngressHostIf()
+{
+    SWSS_LOG_ENTER();
+
+    if (SAI_NULL_OBJECT_ID == m_submit_to_ingress_id)
+    {
+        SWSS_LOG_ERROR("Can't delete invalid SubmitToIngress hostif");
+        return false;
+    }
+
+    sai_status_t sai_status;
+
+    sai_status = sai_hostif_api->remove_hostif(m_submit_to_ingress_id);
+    if (sai_status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_ERROR("Failed to delete SubmitToIngress hostif, rc=%d",
+                       sai_status);
+        return false;
+    }
+
+    m_submit_to_ingress_id = SAI_NULL_OBJECT_ID;
+
     return true;
 }
 
@@ -501,6 +612,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
     vector<sai_attribute_t> trap_id_attribs;
     vector<sai_attribute_t> policer_attribs;
     vector<sai_attribute_t> genetlink_attribs;
+    vector<sai_attribute_t> ingress_attribs;
 
     vector<sai_hostif_trap_type_t> trap_ids;
     vector<sai_hostif_trap_type_t> add_trap_ids;
@@ -520,7 +632,8 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
         }
 
         if (!getAttribsFromTrapGroup(fv_tuple, trap_gr_attribs, trap_id_attribs,
-                                    policer_attribs, genetlink_attribs))
+                                    policer_attribs, genetlink_attribs,
+                                    ingress_attribs))
         {
             return task_process_status::task_invalid_entry;
         }
@@ -531,7 +644,6 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             for (sai_uint32_t ind = 0; ind < trap_gr_attribs.size(); ind++)
             {
                 auto trap_gr_attr = trap_gr_attribs[ind];
-
                 sai_status = sai_hostif_api->set_hostif_trap_group_attribute(m_trap_group_map[trap_group_name], &trap_gr_attr);
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
@@ -572,6 +684,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 return task_process_status::task_failed;
             }
         }
+
         if (!trap_id_attribs.empty())
         {
             vector<sai_hostif_trap_type_t> group_trap_ids;
@@ -603,6 +716,7 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             }
             m_trap_group_trap_id_attrs[trap_group_name] = trap_attr;
         }
+
         if (!genetlink_attribs.empty())
         {
             if (m_trap_group_hostif_map.find(m_trap_group_map[trap_group_name]) !=
@@ -623,6 +737,15 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 return task_process_status::task_failed;
             }
         }
+
+        if (!ingress_attribs.empty())
+        {
+            if (!createSubmitToIngressHostIf(ingress_attribs))
+            {
+                return task_process_status::task_failed;
+            }
+        }
+
         if (!trapGroupProcessTrapIdChange(trap_group_name, add_trap_ids, rem_trap_ids))
         {
             return task_process_status::task_failed;
@@ -875,6 +998,12 @@ bool CoppOrch::processTrapGroupDel (string trap_group_name)
         return false;
     }
 
+    if (!removeSubmitToIngressHostIf())
+    {
+        SWSS_LOG_ERROR("Failed to remove ingress hostif");
+        return false;
+    }
+
     /* Reset the trap IDs to default trap group with default attributes */
     vector<sai_hostif_trap_type_t> trap_ids_to_reset;
     for (auto it : m_syncdTrapIds)
@@ -920,7 +1049,8 @@ bool CoppOrch::getAttribsFromTrapGroup (vector<FieldValueTuple> &fv_tuple,
                                         vector<sai_attribute_t> &trap_gr_attribs,
                                         vector<sai_attribute_t> &trap_id_attribs,
                                         vector<sai_attribute_t> &policer_attribs,
-                                        vector<sai_attribute_t> &genetlink_attribs)
+                                        vector<sai_attribute_t> &genetlink_attribs,
+                                        vector<sai_attribute_t> &ingress_attribs)
 {
     sai_attribute_t attr;
 
@@ -1034,17 +1164,54 @@ bool CoppOrch::getAttribsFromTrapGroup (vector<FieldValueTuple> &fv_tuple,
             genetlink_attribs.push_back(attr);
 
             attr.id = SAI_HOSTIF_ATTR_NAME;
+            auto size = sizeof(attr.value.chardata);
             strncpy(attr.value.chardata, fvValue(*i).c_str(),
-                    sizeof(attr.value.chardata));
+                    size - 1);
+            attr.value.chardata[size - 1] = '\0';
             genetlink_attribs.push_back(attr);
 
         }
         else if (fvField(*i) == copp_genetlink_mcgrp_name)
         {
             attr.id = SAI_HOSTIF_ATTR_GENETLINK_MCGRP_NAME;
+            auto size = sizeof(attr.value.chardata);
             strncpy(attr.value.chardata, fvValue(*i).c_str(),
-                    sizeof(attr.value.chardata));
+                    size - 1);
+            attr.value.chardata[size - 1] = '\0';
             genetlink_attribs.push_back(attr);
+        }
+        else if (fvField(*i) == copp_submit_to_ingress_name)
+        {
+            sai_status_t status;
+
+            attr.id = SAI_HOSTIF_ATTR_TYPE;
+            attr.value.s32 = SAI_HOSTIF_TYPE_NETDEV;
+            ingress_attribs.push_back(attr);
+
+            attr.id = SAI_HOSTIF_ATTR_NAME;
+            auto size = sizeof(attr.value.chardata);
+            strncpy(attr.value.chardata, fvValue(*i).c_str(),
+                    size - 1);
+            attr.value.chardata[size - 1] = '\0';
+            ingress_attribs.push_back(attr);
+
+            // If this isn't passed in true, the false setting makes
+            // the device unready for later attempts to set UP/RUNNING
+            attr.id = SAI_HOSTIF_ATTR_OPER_STATUS;
+            attr.value.booldata = true;
+            ingress_attribs.push_back(attr);
+
+            // Get CPU port object id to signal submit to ingress
+            attr.id = SAI_SWITCH_ATTR_CPU_PORT;
+            status = sai_switch_api->get_switch_attribute(gSwitchId, 1, &attr);
+            if (status != SAI_STATUS_SUCCESS)
+            {
+                SWSS_LOG_ERROR("Unable to get CPU port");
+                return false;
+            }
+
+            attr.id = SAI_HOSTIF_ATTR_OBJ_ID;
+            ingress_attribs.push_back(attr);
         }
         else
         {

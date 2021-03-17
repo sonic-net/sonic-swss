@@ -28,6 +28,9 @@ const std::string copp_policer_action_yellow_field = "yellow_action";
 const std::string copp_genetlink_name              = "genetlink_name";
 const std::string copp_genetlink_mcgrp_name        = "genetlink_mcgrp_name";
 
+// submit_to_ingress fields
+const std::string copp_submit_to_ingress_name      = "submit_to_ingress_name";
+
 typedef std::map<sai_attr_id_t, sai_attribute_value_t> TrapIdAttribs;
 struct copp_trap_objects
 {
@@ -50,7 +53,19 @@ class CoppOrch : public Orch
 {
 public:
     CoppOrch(swss::DBConnector* db, std::string tableName);
+
+    inline object_map getTrapGroupMap()
+    {
+        return m_trap_group_map;
+    }
+
+    inline TrapGroupHostIfMap getTrapGroupHostIfMap()
+    {
+        return m_trap_group_hostif_map;
+    }
 protected:
+    sai_object_id_t m_submit_to_ingress_id;
+
     object_map m_trap_group_map;
 
     TrapGroupPolicerTable m_trap_group_policer_map;
@@ -77,6 +92,8 @@ protected:
     bool createGenetlinkHostIf(std::string trap_group_name, std::vector<sai_attribute_t> &hostif_attribs);
     bool removeGenetlinkHostIf(std::string trap_group_name);
     bool createGenetlinkHostIfTable(std::vector<sai_hostif_trap_type_t> &trap_id_list);
+    bool createSubmitToIngressHostIf(std::vector<sai_attribute_t> &hostif_attribs);
+    bool removeSubmitToIngressHostIf();
     bool removeGenetlinkHostIfTable(std::vector<sai_hostif_trap_type_t> &trap_id_list);
     void getTrapAddandRemoveList(std::string trap_group_name, std::vector<sai_hostif_trap_type_t> &trap_ids,
                                  std::vector<sai_hostif_trap_type_t> &add_trap_ids,
@@ -95,11 +112,11 @@ protected:
                                   std::vector<sai_attribute_t> &trap_gr_attribs,
                                   std::vector<sai_attribute_t> &trap_id_attribs,
                                   std::vector<sai_attribute_t> &policer_attribs,
-                                  std::vector<sai_attribute_t> &genetlink_attribs);
+                                  std::vector<sai_attribute_t> &genetlink_attribs,
+                                  std::vector<sai_attribute_t> &ingress_attribs);
 
     bool trapGroupUpdatePolicer (std::string trap_group_name, std::vector<sai_attribute_t> &policer_attribs);
 
     virtual void doTask(Consumer& consumer);
 };
 #endif /* SWSS_COPPORCH_H */
-
