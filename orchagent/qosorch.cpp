@@ -81,6 +81,7 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
     string qos_object_name = kfvKey(tuple);
     string qos_map_type_name = consumer.getTableName();
     string op = kfvOp(tuple);
+    task_process_status status;
 
     if (QosOrch::getTypeMap()[qos_map_type_name]->find(qos_object_name) != QosOrch::getTypeMap()[qos_map_type_name]->end())
     {
@@ -124,11 +125,12 @@ task_process_status QosMapHandler::processWorkItem(Consumer& consumer)
             SWSS_LOG_ERROR("Object with name:%s not found.", qos_object_name.c_str());
             return task_process_status::task_invalid_entry;
         }
-        if (!removeQosItem(sai_object))
+        status = removeQosItem(sai_object);
+        if (status != task_process_status::task_success)
         {
-            SWSS_LOG_ERROR("Failed to remove dscp_to_tc map. db name:%s sai object:%" PRIx64, qos_object_name.c_str(), sai_object);
-            return task_process_status::task_failed;
+            return status;
         }
+        SWSS_LOG_DEBUG("successfully removed map db name:%s sai object:%" PRIx64, qos_object_name.c_str(), sai_object);
         auto it_to_delete = (QosOrch::getTypeMap()[qos_map_type_name])->find(qos_object_name);
         (QosOrch::getTypeMap()[qos_map_type_name])->erase(it_to_delete);
     }
@@ -152,17 +154,25 @@ bool QosMapHandler::modifyQosItem(sai_object_id_t sai_object, vector<sai_attribu
     return true;
 }
 
-bool QosMapHandler::removeQosItem(sai_object_id_t sai_object)
+task_process_status QosMapHandler::removeQosItem(sai_object_id_t sai_object)
 {
     SWSS_LOG_ENTER();
-    SWSS_LOG_DEBUG("Removing QosMap object:%" PRIx64, sai_object);
     sai_status_t sai_status = sai_qos_map_api->remove_qos_map(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to remove map, status:%d", sai_status);
-        return false;
+        if (SAI_STATUS_OBJECT_IN_USE == sai_status)
+        {
+            SWSS_LOG_WARN("Failed to remove map as the object:%" PRIx64 " is in use. Retry", sai_object);
+            return task_process_status::task_need_retry;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove map, status:%d", sai_status);
+            return task_process_status::task_failed;
+        }
     }
-    return true;
+    SWSS_LOG_DEBUG("Removed QosMap object:%" PRIx64, sai_object);
+    return task_process_status::task_success;
 }
 
 void QosMapHandler::freeAttribResources(vector<sai_attribute_t> &attributes)
@@ -549,17 +559,26 @@ sai_object_id_t WredMapHandler::addQosItem(const vector<sai_attribute_t> &attrib
     return sai_object;
 }
 
-bool WredMapHandler::removeQosItem(sai_object_id_t sai_object)
+task_process_status WredMapHandler::removeQosItem(sai_object_id_t sai_object)
 {
     SWSS_LOG_ENTER();
     sai_status_t sai_status;
     sai_status = sai_wred_api->remove_wred(sai_object);
     if (SAI_STATUS_SUCCESS != sai_status)
     {
-        SWSS_LOG_ERROR("Failed to remove scheduler profile, status:%d", sai_status);
-        return false;
+        if (SAI_STATUS_OBJECT_IN_USE == sai_status)
+        {
+            SWSS_LOG_WARN("Failed to remove wred profile as the object:%" PRIx64 " is in use. Retry ", sai_object);
+            return task_process_status::task_need_retry;
+        }
+        else
+        {
+            SWSS_LOG_ERROR("Failed to remove wred profile, status:%d", sai_status);
+            return task_process_status::task_failed;
+        }
     }
-    return true;
+    SWSS_LOG_DEBUG("Removed wred profile as the object:%" PRIx64, sai_object);
+    return task_process_status::task_success;
 }
 
 task_process_status QosOrch::handleWredProfileTable(Consumer& consumer)
@@ -891,11 +910,20 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
         sai_status = sai_scheduler_api->remove_scheduler(sai_object);
         if (SAI_STATUS_SUCCESS != sai_status)
         {
-            SWSS_LOG_ERROR("Failed to remove scheduler profile. db name:%s sai object:%" PRIx64, qos_object_name.c_str(), sai_object);
-            return task_process_status::task_failed;
+            if (SAI_STATUS_OBJECT_IN_USE == sai_status)
+            {
+                SWSS_LOG_WARN("Failed to remove scheduler profile:%s as the object:%" PRIx64 " is in use, retry ", qos_object_name.c_str(), sai_object);
+                return task_process_status::task_need_retry;
+            }
+            else
+            {
+                SWSS_LOG_ERROR("Failed to remove scheduler profile:%s, status:%d sai object:%" PRIx64, qos_object_name.c_str(), sai_status, sai_object);
+                return task_process_status::task_failed;
+            }
         }
         auto it_to_delete = (m_qos_maps[qos_map_type_name])->find(qos_object_name);
         (m_qos_maps[qos_map_type_name])->erase(it_to_delete);
+        SWSS_LOG_DEBUG("Deleted [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
     }
     else
     {
