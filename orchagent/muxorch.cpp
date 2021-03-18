@@ -904,6 +904,14 @@ bool MuxOrch::isNeighborActive(const IpAddress& nbr, const MacAddress& mac, stri
         return ptr->isActive();
     }
 
+    NextHopKey nh_key = NextHopKey(nbr, alias);
+    string curr_port = getNexthopMuxName(nh_key);
+    if (port.empty() && !curr_port.empty() && isMuxExists(curr_port))
+    {
+        MuxCable* ptr = getMuxCable(curr_port);
+        return ptr->isActive();
+    }
+
     return true;
 }
 
@@ -1004,6 +1012,16 @@ void MuxOrch::updateNeighbor(const NeighborUpdate& update)
     {
         /* Check if the neighbor already exists */
         old_port = getNexthopMuxName(update.entry);
+
+        /* if new port from FDB is empty or same as existing port, return and
+         * no further handling is required
+         */
+        if (port.empty() || old_port == port)
+        {
+            addNexthop(update.entry, old_port);
+            return;
+        }
+
         addNexthop(update.entry);
     }
     else
