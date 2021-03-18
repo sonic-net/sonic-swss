@@ -574,6 +574,7 @@ void VxlanTunnel::updateNextHop(IpAddress& ipAddr, MacAddress macAddress,
     if (it == nh_tunnels_.end())
     {
         nh_tunnels_[key] = {nh_id, 1};
+        nh_tunnels_[key].ref_count++;
         return;
     } 
     else 
