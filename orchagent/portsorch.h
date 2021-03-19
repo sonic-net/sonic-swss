@@ -155,7 +155,6 @@ private:
     unique_ptr<Table> m_pgTable;
     unique_ptr<Table> m_pgPortTable;
     unique_ptr<Table> m_pgIndexTable;
-    unique_ptr<Table> m_stateBufferMaximumValueTable;
     unique_ptr<ProducerTable> m_flexCounterTable;
     unique_ptr<ProducerTable> m_flexCounterGroupTable;
 
@@ -166,7 +165,6 @@ private:
 
     shared_ptr<DBConnector> m_counter_db;
     shared_ptr<DBConnector> m_flex_db;
-    shared_ptr<DBConnector> m_state_db;
 
     FlexCounterManager port_stat_manager;
     FlexCounterManager port_buffer_drop_stat_manager;
@@ -229,7 +227,6 @@ private:
 
     bool initializePort(Port &port);
     void initializePriorityGroups(Port &port);
-    void initializePortMaximumHeadroom(Port &port);
     void initializeQueues(Port &port);
 
     bool addHostIntfs(Port &port, string alias, sai_object_id_t &host_intfs_id);

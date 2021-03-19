@@ -10,15 +10,36 @@ local new_pg = ARGV[3]
 local accumulative_size = 0
 
 local appl_db = "0"
+local config_db = "4"
 local state_db = "6"
 
 local ret_true = {}
+local ret_false = {}
 local ret = {}
 local default_ret = {}
 
 table.insert(ret_true, "result:true")
+table.insert(ret_false, "result:false")
 
-default_ret = ret_true
+-- Fetch the cable length from CONFIG_DB
+redis.call('SELECT', config_db)
+local cable_length_keys = redis.call('KEYS', 'CABLE_LENGTH*')
+if #cable_length_keys == 0 then
+    return ret_true
+end
+
+-- Check whether cable length exceeds 300m (maximum value in the non-dynamic-buffer solution)
+local cable_length_str = redis.call('HGET', cable_length_keys[1], port)
+if cable_length_str == nil then
+    return ret_true
+end
+local cable_length = tonumber(string.sub(cable_length_str, 1, -2))
+if cable_length > 300 then
+    default_ret = ret_false
+else
+    default_ret = ret_true
+end
+table.insert(default_ret, 'debug:no max_headroom_size configured, check cable length instead')
 
 local speed = redis.call('HGET', 'PORT|' .. port, 'speed')
 
@@ -46,6 +67,7 @@ local function get_number_of_pgs(keyname)
     local range = string.match(keyname, "Ethernet%d+:([^%s]+)$")
     local size
     if range == nil then
+        table.insert(debuginfo, "debug:invalid pg:" .. keyname)
         return 0
     end
     if string.len(range) == 1 then
@@ -97,8 +119,10 @@ if max_headroom_size > accumulative_size then
     table.insert(ret, "result:true")
 else
     table.insert(ret, "result:false")
-    table.insert(ret, "debug:Accumulative headroom on port " .. accumulative_size .. " exceeds the maximum available headroom which is " .. max_headroom_size)
 end
+
+table.insert(ret, "debug:max headroom:" .. max_headroom_size)
+table.insert(ret, "debug:accumulative headroom:" .. accumulative_size)
 
 for i = 1, #debuginfo do
     table.insert(ret, debuginfo[i])
