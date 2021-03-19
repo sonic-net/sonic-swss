@@ -12,7 +12,7 @@ local lossypg_400g = 0
 local result = {}
 local profiles = {}
 
-local total_port = 0
+local count_up_port = 0
 
 local mgmt_pool_size = 256 * 1024
 local egress_mirror_headroom = 10 * 1024
@@ -30,38 +30,43 @@ end
 
 local function iterate_all_items(all_items)
     table.sort(all_items)
+    local prev_port = "None"
     local port
+    local is_up
     local fvpairs
+    local status
+    local admin_down_ports = 0
     for i = 1, #all_items, 1 do
-        -- Count the number of priorities or queues in each BUFFER_PG or BUFFER_QUEUE item
-        -- For example, there are:
-        --     3 queues in 'BUFFER_QUEUE_TABLE:Ethernet0:0-2'
-        --     2 priorities in 'BUFFER_PG_TABLE:Ethernet0:3-4'
+        -- Check whether the port on which pg or tc hosts is admin down
         port = string.match(all_items[i], "Ethernet%d+")
         if port ~= nil then
-            local range = string.match(all_items[i], "Ethernet%d+:([^%s]+)$")
-            local profile = redis.call('HGET', all_items[i], 'profile')
-            local index = find_profile(profile)
-            if index == 0 then
-                -- Indicate an error in case the referenced profile hasn't been inserted or has been removed
-                -- It's possible when the orchagent is busy
-                -- The buffermgrd will take care of it and retry later
-                return 1
+            if prev_port ~= port then
+                status = redis.call('HGET', 'PORT_TABLE:'..port, 'admin_status')
+                prev_port = port
+                if status == "down" then
+                    is_up = false
+                else
+                    is_up = true
+                end
             end
-            local size
-            if string.len(range) == 1 then
-                size = 1
-            else
-                size = 1 + tonumber(string.sub(range, -1)) - tonumber(string.sub(range, 1, 1))
-            end
-            profiles[index][2] = profiles[index][2] + size
-            local speed = redis.call('HGET', 'PORT_TABLE:'..port, 'speed')
-            if speed == '400000' and profile == '[BUFFER_PROFILE_TABLE:ingress_lossy_profile]' then
-                lossypg_400g = lossypg_400g + size
+            if is_up == true then
+                local range = string.match(all_items[i], "Ethernet%d+:([^%s]+)$")
+                local profile = redis.call('HGET', all_items[i], 'profile')
+                local index = find_profile(profile)
+                local size
+                if string.len(range) == 1 then
+                    size = 1
+                else
+                    size = 1 + tonumber(string.sub(range, -1)) - tonumber(string.sub(range, 1, 1))
+                end
+                profiles[index][2] = profiles[index][2] + size
+                local speed = redis.call('HGET', 'PORT_TABLE:'..port, 'speed')
+                if speed == '400000' and profile == '[BUFFER_PROFILE_TABLE:ingress_lossy_profile]' then
+                    lossypg_400g = lossypg_400g + size
+                end
             end
         end
     end
-    return 0
 end
 
 -- Connect to CONFIG_DB
@@ -69,7 +74,12 @@ redis.call('SELECT', config_db)
 
 local ports_table = redis.call('KEYS', 'PORT|*')
 
-total_port = #ports_table
+for i = 1, #ports_table do
+    local status = redis.call('HGET', ports_table[i], 'admin_status')
+    if status == "up" then
+        count_up_port = count_up_port + 1
+    end
+end
 
 local egress_lossless_pool_size = redis.call('HGET', 'BUFFER_POOL|egress_lossless_pool', 'size')
 
@@ -104,12 +114,8 @@ end
 local all_pgs = redis.call('KEYS', 'BUFFER_PG*')
 local all_tcs = redis.call('KEYS', 'BUFFER_QUEUE*')
 
-local fail_count = 0
-fail_count = fail_count + iterate_all_items(all_pgs)
-fail_count = fail_count + iterate_all_items(all_tcs)
-if fail_count > 0 then
-    return {}
-end
+iterate_all_items(all_pgs)
+iterate_all_items(all_tcs)
 
 local statistics = {}
 
@@ -124,7 +130,7 @@ for i = 1, #profiles, 1 do
                 size = size + lossypg_reserved
             end
             if profiles[i][1] == "BUFFER_PROFILE_TABLE:egress_lossy_profile" then
-                profiles[i][2] = total_port
+                profiles[i][2] = count_up_port
             end
             if size ~= 0 then
                 if shp_enabled and shp_size == 0 then
@@ -146,7 +152,7 @@ local lossypg_extra_for_400g = (lossypg_reserved_400g - lossypg_reserved) * loss
 accumulative_occupied_buffer = accumulative_occupied_buffer + lossypg_extra_for_400g
 
 -- Accumulate sizes for egress mirror and management pool
-local accumulative_egress_mirror_overhead = total_port * egress_mirror_headroom
+local accumulative_egress_mirror_overhead = count_up_port * egress_mirror_headroom
 accumulative_occupied_buffer = accumulative_occupied_buffer + accumulative_egress_mirror_overhead + mgmt_pool_size
 
 -- Fetch mmu_size
@@ -234,6 +240,5 @@ table.insert(result, "debug:egress_mirror:" .. accumulative_egress_mirror_overhe
 table.insert(result, "debug:shp_enabled:" .. tostring(shp_enabled))
 table.insert(result, "debug:shp_size:" .. shp_size)
 table.insert(result, "debug:accumulative xoff:" .. accumulative_xoff)
-table.insert(result, "debug:total port:" .. total_port)
 
 return result
