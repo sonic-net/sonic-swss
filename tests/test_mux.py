@@ -169,6 +169,13 @@ class TestMuxTunnelBase(object):
 
         time.sleep(1)
 
+    def del_fdb(self, dvs, mac):
+
+        appdb = dvs.get_app_db()
+        ps = swsscommon.ProducerStateTable(appdb.db_connection, "FDB_TABLE")
+        ps._del("Vlan1000:"+mac)
+
+        time.sleep(1)
 
     def create_and_test_neighbor(self, confdb, appdb, asicdb, dvs, dvs_route):
 
@@ -247,6 +254,23 @@ class TestMuxTunnelBase(object):
         dvs_route.check_asicdb_deleted_route_entries([ip_2+self.IPV6_MASK])
         self.check_neigh_in_asic_db(asicdb, ip_2, 4)
 
+        # Simulate FDB aging out test case
+        ip_3 = "192.168.0.200"
+
+        self.add_neighbor(dvs, ip_3, "00:00:00:00:00:12")
+
+        # ip_3 is added to standby mux
+        dvs_route.check_asicdb_route_entries([ip_3+self.IPV4_MASK])
+
+        # Simulate FDB age out
+        self.del_fdb(dvs, "00-00-00-00-00-12")
+
+        # FDB ageout is not expected to change existing state of neighbor
+        dvs_route.check_asicdb_route_entries([ip_3+self.IPV4_MASK])
+
+        # Change to active
+        self.set_mux_state(appdb, "Ethernet4", "active")
+        dvs_route.check_asicdb_deleted_route_entries([ip_3+self.IPV4_MASK])
 
     def create_and_test_route(self, appdb, asicdb, dvs, dvs_route):
 
