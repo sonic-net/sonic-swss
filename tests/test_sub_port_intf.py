@@ -730,6 +730,180 @@ class TestSubPortIntf(object):
         self._test_sub_port_intf_admin_status_change(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
         self._test_sub_port_intf_admin_status_change(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
 
+    def _test_sub_port_intf_parent_port_admin_status_change(self, dvs, sub_port_intf_name, vrf_name=None):
+        substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = substrs[0]
+
+        vrf_oid = self.default_vrf_oid
+        old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
+
+        # Set parent port admin status up
+        self.set_parent_port_admin_status(dvs, parent_port, "up")
+        if vrf_name:
+            self.create_vrf(vrf_name)
+            vrf_oid = self.get_newly_created_oid(ASIC_VIRTUAL_ROUTER_TABLE, [vrf_oid])
+        self.create_sub_port_intf_profile(sub_port_intf_name, vrf_name)
+
+        self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+
+        # Verify sub port interface admin status up in linux kernel
+        self.check_sub_port_intf_admin_status_kernel(dvs, sub_port_intf_name, admin_up=True)
+        # Verify sub port interface admin status up in APP_DB
+        fv_dict = {
+            ADMIN_STATUS: "up",
+        }
+        if vrf_name:
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+        # Verify sub port interface admin status up in ASIC_DB
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "true",
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "true",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
+            "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": vrf_oid,
+        }
+        rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Set parent port admin status down, with sub port interface admin status up
+        self.set_parent_port_admin_status(dvs, parent_port, "down")
+
+        # Verify sub port interface admin status down in linux kernel
+        self.check_sub_port_intf_admin_status_kernel(dvs, sub_port_intf_name, admin_up=False)
+        # Verify that sub port interface admin status in APP_DB stays unchanged (admin status up)
+        fv_dict = {
+            ADMIN_STATUS: "up",
+        }
+        if vrf_name:
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+        # Verify that sub port router interface entry in ASIC_DB stays unchanged (admin status up)
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "true",
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "true",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
+            "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": vrf_oid,
+        }
+        rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Set parent port admin status up, with sub port interface admin status up
+        self.set_parent_port_admin_status(dvs, parent_port, "up")
+
+        # Verify sub port interface admin status up in linux kernel
+        self.check_sub_port_intf_admin_status_kernel(dvs, sub_port_intf_name, admin_up=True)
+        # Verify that sub port interface admin status in APP_DB stays unchanged (admin status up)
+        fv_dict = {
+            ADMIN_STATUS: "up",
+        }
+        if vrf_name:
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+        # Verify that sub port router interface entry in ASIC_DB stays unchanged (admin status up)
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "true",
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "true",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
+            "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": vrf_oid,
+        }
+        rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Change sub port interface admin status to down, with parent port admin status up
+        self.set_sub_port_intf_admin_status(sub_port_intf_name, "down")
+
+        # Verify sub port interface admin status change in linux kernel
+        self.check_sub_port_intf_admin_status_kernel(dvs, sub_port_intf_name, admin_up=False)
+        # Verify that sub port interface admin status change is synced to APP_DB by Intfmgrd
+        fv_dict = {
+            ADMIN_STATUS: "down",
+        }
+        if vrf_name:
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+        # Verify that sub port router interface entry in ASIC_DB has the updated admin status
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "false",
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "false",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
+            "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": vrf_oid,
+        }
+        rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Set parent port admin status down, with sub port interface admin status down
+        self.set_parent_port_admin_status(dvs, parent_port, "down")
+
+        # Verify sub port interface admin status down in linux kernel
+        self.check_sub_port_intf_admin_status_kernel(dvs, sub_port_intf_name, admin_up=False)
+        # Verify that sub port interface admin status in APP_DB stays unchanged (admin down)
+        fv_dict = {
+            ADMIN_STATUS: "down",
+        }
+        if vrf_name:
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+        # Verify that sub port router interface entry in ASIC_DB stays unchanged (admin down)
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "false",
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "false",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
+            "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": vrf_oid,
+        }
+        rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Set parent port admin status up, with sub port interface admin status down
+        self.set_parent_port_admin_status(dvs, parent_port, "up")
+
+        # Verify sub port interface admin status down in linux kernel
+        self.check_sub_port_intf_admin_status_kernel(dvs, sub_port_intf_name, admin_up=False)
+        # Verify that sub port interface admin status in APP_DB stays unchanged (admin status down)
+        fv_dict = {
+            ADMIN_STATUS: "down",
+        }
+        if vrf_name:
+            fv_dict[VRF_NAME if vrf_name.startswith(VRF_PREFIX) else VNET_NAME] = vrf_name
+        self.check_sub_port_intf_fvs(self.app_db, APP_INTF_TABLE_NAME, sub_port_intf_name, fv_dict)
+        # Verify that sub port router interface entry in ASIC_DB stays unchanged (admin status down)
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "false",
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "false",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
+            "SAI_ROUTER_INTERFACE_ATTR_VIRTUAL_ROUTER_ID": vrf_oid,
+        }
+        rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Remove IP addresses
+        ip_addrs = [
+            self.IPV4_ADDR_UNDER_TEST,
+        ]
+        self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
+        if vrf_name is None or not vrf_name.startswith(VNET_PREFIX):
+            ip_addrs.append(self.IPV6_ADDR_UNDER_TEST)
+            self.remove_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        self.check_sub_port_intf_ip_addr_removal(sub_port_intf_name, ip_addrs)
+
+        # Remove a sub port interface
+        self.remove_sub_port_intf_profile(sub_port_intf_name)
+        self.check_sub_port_intf_profile_removal(rif_oid)
+
+        # Remove vrf if created
+        if vrf_name:
+            self.remove_vrf(vrf_name)
+            self.check_vrf_removal(vrf_oid)
+            if vrf_name.startswith(VNET_PREFIX):
+                self.remove_vxlan_tunnel(self.TUNNEL_UNDER_TEST)
+                self.app_db.wait_for_n_keys(ASIC_TUNNEL_TABLE, 0)
+
+    def test_sub_port_intf_parent_port_admin_status_change(self, dvs):
+        self.connect_dbs(dvs)
+
+        self._test_sub_port_intf_parent_port_admin_status_change(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST)
+
     def _test_sub_port_intf_remove_ip_addrs(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
         parent_port = substrs[0]
