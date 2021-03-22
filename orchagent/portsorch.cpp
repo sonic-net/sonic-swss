@@ -1454,9 +1454,9 @@ bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
             SWSS_LOG_ERROR("Failed to set pvid %u to port: %s", attr.value.u32, port.m_alias.c_str());
             task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
             if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         SWSS_LOG_NOTICE("Set pvid %u to port: %s", attr.value.u32, port.m_alias.c_str());
     }
@@ -1472,9 +1472,9 @@ bool PortsOrch::setPortPvid(Port &port, sai_uint32_t pvid)
             SWSS_LOG_ERROR("Failed to set pvid %u to lag: %s", attr.value.u32, port.m_alias.c_str());
             task_process_status handle_status = handleSaiSetStatus(SAI_API_LAG, status);
             if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         SWSS_LOG_NOTICE("Set pvid %u to lag: %s", attr.value.u32, port.m_alias.c_str());
     }
@@ -1544,9 +1544,9 @@ bool PortsOrch::setHostIntfsStripTag(Port &port, sai_hostif_vlan_tag_t strip)
                         hostif_vlan_tag[strip], p.m_alias.c_str());
             task_process_status handle_status = handleSaiSetStatus(SAI_API_HOSTIF, status);
             if (handle_status != task_success)
-        {
-            return parseHandleSaiStatusFailure(handle_status);
-        }
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         SWSS_LOG_NOTICE("Set %s to host interface: %s",
                         hostif_vlan_tag[strip], p.m_alias.c_str());
