@@ -903,6 +903,10 @@ class TestSubPortIntf(object):
         self.connect_dbs(dvs)
 
         self._test_sub_port_intf_parent_port_admin_status_change(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST)
+        self._test_sub_port_intf_parent_port_admin_status_change(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST)
+
+        self._test_sub_port_intf_parent_port_admin_status_change(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
+        self._test_sub_port_intf_parent_port_admin_status_change(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, self.VRF_UNDER_TEST)
 
     def _test_sub_port_intf_remove_ip_addrs(self, dvs, sub_port_intf_name, vrf_name=None):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
