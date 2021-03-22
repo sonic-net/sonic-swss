@@ -89,7 +89,11 @@ bool VRFOrch::addOperation(const Request& request)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to create virtual router name: %s, rv: %d", vrf_name.c_str(), status);
-            return handleSaiCreateStatus(SAI_API_VIRTUAL_ROUTER, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_VIRTUAL_ROUTER, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
 
         vrf_table_[vrf_name].vrf_id = router_id;
@@ -119,7 +123,11 @@ bool VRFOrch::addOperation(const Request& request)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to update virtual router attribute. vrf name: %s, rv: %d", vrf_name.c_str(), status);
-                return handleSaiSetStatus(SAI_API_VIRTUAL_ROUTER, status);
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_VIRTUAL_ROUTER, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
 
@@ -156,7 +164,11 @@ bool VRFOrch::delOperation(const Request& request)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove virtual router name: %s, rv:%d", vrf_name.c_str(), status);
-        return handleSaiRemoveStatus(SAI_API_VIRTUAL_ROUTER, status);
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_VIRTUAL_ROUTER, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     vrf_table_.erase(vrf_name);

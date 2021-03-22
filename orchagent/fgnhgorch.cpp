@@ -241,7 +241,11 @@ bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry,
     {
         SWSS_LOG_ERROR("Failed to set next hop oid %" PRIx64 " member %" PRIx64 ": %d",
             syncd_fg_route_entry->nhopgroup_members[index], nh_oid, status);
-        return handleSaiSetStatus(SAI_API_NEXT_HOP_GROUP, status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_NEXT_HOP_GROUP, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     setStateDbRouteEntry(ipPrefix, index, nextHop);
@@ -318,7 +322,11 @@ bool FgNhgOrch::removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_rout
         {
             SWSS_LOG_ERROR("Failed to remove next hop group member %" PRIx64 ", rv:%d",
                 nhgm, status);
-            return handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
@@ -986,7 +994,11 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
                     SWSS_LOG_ERROR("Failed to clean-up after next-hop member creation failure");
                 }
                 
-                return handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
 
             setStateDbRouteEntry(ipPrefix, j, bank_nh_memb);

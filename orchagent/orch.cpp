@@ -686,13 +686,14 @@ Executor *Orch::getExecutor(string executorName)
     return NULL;
 }
 
-bool Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
+task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis create
      * operation (i.e., notify users by throwing excepions when failures happen).
-     * Return value: true - Handled the status successfully. No need to retry this SAI operation.
-     *               false - Cannot handle the status. Need to retry the SAI operation.
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
      * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_ITEM_ALREADY_EXISTS)
      *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
      *          in each orch.
@@ -702,22 +703,23 @@ bool Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *conte
     {
         case SAI_STATUS_SUCCESS:
             SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
-            return true;
+            return task_success;
         default:
             SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
             exit(EXIT_FAILURE);
     }
-    return false;
+    return task_need_retry;
 }
 
-bool Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
+task_process_status Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis set
      * operation (i.e., notify users by throwing excepions when failures happen).
-     * Return value: true - Handled the status successfully. No need to retry this SAI operation.
-     *               false - Cannot handle the status. Need to retry the SAI operation.
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
      * TODO: 1. Add general handling logic for specific statuses
      *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
      *          in each orch.
@@ -727,22 +729,23 @@ bool Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
     {
         case SAI_STATUS_SUCCESS:
             SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
-            return true;
+            return task_success;
         default:
             SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
             exit(EXIT_FAILURE);
     }
-    return false;
+    return task_need_retry;
 }
 
-bool Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
+task_process_status Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
 {
     /*
      * This function aims to provide coarse handling of failures in sairedis remove
      * operation (i.e., notify users by throwing excepions when failures happen).
-     * Return value: true - Handled the status successfully. No need to retry this SAI operation.
-     *               false - Cannot handle the status. Need to retry the SAI operation.
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
      * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_OBJECT_IN_USE,
      *          SAI_STATUS_ITEM_NOT_FOUND)
      *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
@@ -753,13 +756,32 @@ bool Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *conte
     {
         case SAI_STATUS_SUCCESS:
             SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
-            return true;
+            return task_success;
         default:
             SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
             exit(EXIT_FAILURE);
     }
-    return false;
+    return task_need_retry;
+}
+
+bool Orch::parseHandleSaiStatusFailure(task_process_status status)
+{
+    /*
+     * This function parses task process status from SAI failure handling function to whether a retry is needed.
+     * Return value: true - no retry is needed.
+     *               false - retry is needed.
+     */
+    switch (status)
+    {
+        case task_need_retry:
+            return false;
+        case task_failed:
+            return true;
+        default:
+            SWSS_LOG_WARN("task_process_status %d is not expected in parseHandleSaiStatusFailure", status);
+    }
+    return true;
 }
 
 void Orch2::doTask(Consumer &consumer)

@@ -756,7 +756,11 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
                 SWSS_LOG_ERROR("Failed to configure %s session on port %s: %s, status %d, sessionId %x",
                                 ingress ? "RX" : "TX", port.m_alias.c_str(),
                                 p.m_alias.c_str(), status, sessionId);
-                return handleSaiSetStatus(SAI_API_PORT, status);
+                task_process_status handle_status =  handleSaiSetStatus(SAI_API_PORT, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
     }
@@ -767,7 +771,11 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
         {
             SWSS_LOG_ERROR("Failed to configure %s session on port %s, status %d, sessionId %x",
                             ingress ? "RX" : "TX", port.m_alias.c_str(), status, sessionId);
-            return handleSaiSetStatus(SAI_API_PORT, status);
+            task_process_status handle_status =  handleSaiSetStatus(SAI_API_PORT, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
     }
     return true;
@@ -940,7 +948,11 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         SWSS_LOG_ERROR("Failed to activate mirroring session %s", name.c_str());
         session.status = false;
 
-        return handleSaiCreateStatus(SAI_API_MIRROR, status);
+        task_process_status handle_status =  handleSaiCreateStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     session.status = true;
@@ -991,7 +1003,11 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to deactivate mirroring session %s", name.c_str());
-        return false;
+        task_process_status handle_status =  handleSaiRemoveStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     session.status = false;
@@ -1019,7 +1035,11 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
     {
         SWSS_LOG_ERROR("Failed to update mirror session %s destination MAC to %s, rv:%d",
                 name.c_str(), session.neighborInfo.mac.to_string().c_str(), status);
-        return handleSaiSetStatus(SAI_API_MIRROR, status);
+        task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Update mirror session %s destination MAC to %s",
@@ -1049,7 +1069,11 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     {
         SWSS_LOG_ERROR("Failed to update mirror session %s monitor port to %s, rv:%d",
                 name.c_str(), port.m_alias.c_str(), status);
-        return handleSaiSetStatus(SAI_API_MIRROR, status);
+        task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Update mirror session %s monitor port to %s",
@@ -1106,7 +1130,11 @@ bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
         {
             SWSS_LOG_ERROR("Failed to update mirror session %s VLAN to %s, rv:%d",
                     name.c_str(), session.neighborInfo.port.m_alias.c_str(), status);
-            return handleSaiSetStatus(SAI_API_MIRROR, status);
+            task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
     }
 

@@ -1027,7 +1027,11 @@ bool QosOrch::applySchedulerToQueueSchedulerGroup(Port &port, size_t queue_ind, 
     if (SAI_STATUS_SUCCESS != sai_status)
     {
         SWSS_LOG_ERROR("Failed applying scheduler profile:0x%" PRIx64 " to scheduler group:0x%" PRIx64 ", port:%s", scheduler_profile_id, group_id, port.m_alias.c_str());
-        return handleSaiSetStatus(SAI_API_SCHEDULER_GROUP, sai_status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_SCHEDULER_GROUP, sai_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_DEBUG("port:%s, scheduler_profile_id:0x%" PRIx64 " applied to scheduler group:0x%" PRIx64, port.m_alias.c_str(), scheduler_profile_id, group_id);
@@ -1055,7 +1059,11 @@ bool QosOrch::applyWredProfileToQueue(Port &port, size_t queue_ind, sai_object_i
     if (sai_status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set queue attribute:%d", sai_status);
-        return handleSaiSetStatus(SAI_API_QUEUE, sai_status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_QUEUE, sai_status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -1209,7 +1217,11 @@ bool QosOrch::applyMapToPort(Port &port, sai_attr_id_t attr_id, sai_object_id_t 
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed setting sai object:%" PRIx64 " for port:%s, status:%d", map_id, port.m_alias.c_str(), status);
-        return handleSaiSetStatus(SAI_API_PORT, status);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -1330,6 +1342,7 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
                 SWSS_LOG_ERROR("Failed to apply %s to port %s, rv:%d",
                                it->second.first.c_str(), port_name.c_str(), status);
                 handleSaiSetStatus(SAI_API_PORT, status);
+
                 return task_process_status::task_invalid_entry;
             }
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());

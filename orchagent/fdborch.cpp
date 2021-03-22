@@ -1090,7 +1090,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             {
                 SWSS_LOG_ERROR("macUpdate-Failed for attr.id=0x%x for FDB %s in %s on %s, rv:%d",
                             itr.id, entry.mac.to_string().c_str(), vlan.m_alias.c_str(), port_name.c_str(), status);
-                return handleSaiSetStatus(SAI_API_FDB, status);
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_FDB, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
         if (oldPort.m_bridge_port_id != port.m_bridge_port_id)
@@ -1111,7 +1115,11 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
             SWSS_LOG_ERROR("Failed to create %s FDB %s in %s on %s, rv:%d",
                     fdbData.type.c_str(), entry.mac.to_string().c_str(),
                     vlan.m_alias.c_str(), port_name.c_str(), status);
-            return handleSaiCreateStatus(SAI_API_FDB, status);
+            task_process_status handle_status = handleSaiCreateStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried, some not
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         port.m_fdb_count++;
         m_portsOrch->setPort(port.m_alias, port);
@@ -1226,7 +1234,11 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     {
         SWSS_LOG_ERROR("FdbOrch RemoveFDBEntry: Failed to remove FDB entry. mac=%s, bv_id=0x%" PRIx64,
                        entry.mac.to_string().c_str(), entry.bv_id);
-        return handleSaiRemoveStatus(SAI_API_FDB, status);
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_FDB, status); //FIXME: it should be based on status. Some could be retried. some not
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_INFO("Removed mac=%s bv_id=0x%" PRIx64 " port:%s",

@@ -31,7 +31,11 @@ bool SflowOrch::sflowCreateSession(uint32_t rate, SflowSession &session)
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create sample packet session with rate %d", rate);
-        return handleSaiCreateStatus(SAI_API_SAMPLEPACKET, sai_rc);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_SAMPLEPACKET, sai_rc);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     session.m_sample_id = session_id;
     session.ref_count = 0;
@@ -47,7 +51,11 @@ bool SflowOrch::sflowDestroySession(SflowSession &session)
     {
         SWSS_LOG_ERROR("Failed to destroy sample packet session with id %" PRIx64 "",
                        session.m_sample_id);
-        return handleSaiRemoveStatus(SAI_API_SAMPLEPACKET, sai_rc);
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_SAMPLEPACKET, sai_rc);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -111,7 +119,11 @@ bool SflowOrch::sflowAddPort(sai_object_id_t sample_id, sai_object_id_t port_id)
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set session %" PRIx64 " on port %" PRIx64 , sample_id, port_id);
-        return handleSaiSetStatus(SAI_API_PORT, sai_rc);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -128,7 +140,11 @@ bool SflowOrch::sflowDelPort(sai_object_id_t port_id)
     if (sai_rc != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete session on port %" PRIx64  , port_id);
-        return handleSaiSetStatus(SAI_API_PORT, sai_rc);
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, sai_rc);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
