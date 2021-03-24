@@ -125,6 +125,7 @@ void CoppOrch::initDefaultHostIntfTable()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create default host interface table, rv:%d", status);
+        handleSaiCreateStatus(SAI_API_HOSTIF, status);
         throw "CoppOrch initialization failure";
     }
 

@@ -1085,6 +1085,7 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     {
         SWSS_LOG_ERROR("Failed to create router interface %s, rv:%d",
                 port.m_alias.c_str(), status);
+        return handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status);
         throw runtime_error("Failed to create router interface.");
     }
 
@@ -1121,6 +1122,7 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove router interface for port %s, rv:%d", port.m_alias.c_str(), status);
+        return handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status);
         throw runtime_error("Failed to remove router interface.");
     }
 
@@ -1165,6 +1167,7 @@ void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
+        handleSaiCreateStatus(SAI_API_ROUTE, status);
         throw runtime_error("Failed to create IP2me route.");
     }
 
@@ -1191,6 +1194,7 @@ void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_pref
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
+        handleSaiRemoveStatus(SAI_API_ROUTE, status);
         throw runtime_error("Failed to remove IP2me route.");
     }
 
