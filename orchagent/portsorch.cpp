@@ -263,6 +263,9 @@ PortsOrch::PortsOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames)
     m_flexCounterTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_TABLE));
     m_flexCounterGroupTable = unique_ptr<ProducerTable>(new ProducerTable(m_flex_db.get(), FLEX_COUNTER_GROUP_TABLE));
 
+    m_state_db = shared_ptr<DBConnector>(new DBConnector("STATE_DB", 0));
+    m_stateBufferMaximumValueTable = unique_ptr<Table>(new Table(m_state_db.get(), STATE_BUFFER_MAXIMUM_VALUE_TABLE));
+
     initGearbox();
 
     string queueWmSha, pgWmSha;
@@ -3322,6 +3325,25 @@ void PortsOrch::initializePriorityGroups(Port &port)
     SWSS_LOG_INFO("Get priority groups for port %s", port.m_alias.c_str());
 }
 
+void PortsOrch::initializePortMaximumHeadroom(Port &port)
+{
+    sai_attribute_t attr;
+
+    attr.id = SAI_PORT_ATTR_QOS_MAXIMUM_HEADROOM_SIZE;
+
+    sai_status_t status = sai_port_api->get_port_attribute(port.m_port_id, 1, &attr);
+    if (status != SAI_STATUS_SUCCESS)
+    {
+        SWSS_LOG_NOTICE("Unable to get the maximum headroom for port %s rv:%d, ignored", port.m_alias.c_str(), status);
+        return;
+    }
+
+    vector<FieldValueTuple> fvVector;
+    port.m_maximum_headroom = attr.value.u32;
+    fvVector.emplace_back("max_headroom_size", to_string(port.m_maximum_headroom));
+    m_stateBufferMaximumValueTable->set(port.m_alias, fvVector);
+}
+
 bool PortsOrch::initializePort(Port &port)
 {
     SWSS_LOG_ENTER();
@@ -3330,6 +3352,7 @@ bool PortsOrch::initializePort(Port &port)
 
     initializePriorityGroups(port);
     initializeQueues(port);
+    initializePortMaximumHeadroom(port);
 
     /* Create host interface */
     if (!addHostIntfs(port, port.m_alias, port.m_hif_id))

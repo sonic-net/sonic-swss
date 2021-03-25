@@ -124,6 +124,7 @@ public:
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;
     uint32_t  m_up_member_count = 0;
+    uint32_t  m_maximum_headroom = 0;
 
     /*
      * Following two bit vectors are used to lock
