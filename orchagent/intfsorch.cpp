@@ -1085,8 +1085,10 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     {
         SWSS_LOG_ERROR("Failed to create router interface %s, rv:%d",
                 port.m_alias.c_str(), status);
-        handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status);
-        throw runtime_error("Failed to create router interface.");
+        if (handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status) != task_success)
+        {
+            throw runtime_error("Failed to create router interface.");
+        }
     }
 
     port.m_vr_id = vrf_id;
@@ -1122,8 +1124,10 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove router interface for port %s, rv:%d", port.m_alias.c_str(), status);
-        handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status);
-        throw runtime_error("Failed to remove router interface.");
+        if (handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status) != task_success)
+        {
+            throw runtime_error("Failed to remove router interface.");
+        }
     }
 
     port.m_rif_id = 0;
@@ -1167,8 +1171,10 @@ void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
-        handleSaiCreateStatus(SAI_API_ROUTE, status);
-        throw runtime_error("Failed to create IP2me route.");
+        if (handleSaiCreateStatus(SAI_API_ROUTE, status) != task_success)
+        {
+            throw runtime_error("Failed to create IP2me route.");
+        }
     }
 
     SWSS_LOG_NOTICE("Create IP2me route ip:%s", ip_prefix.getIp().to_string().c_str());
@@ -1194,8 +1200,10 @@ void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_pref
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
-        handleSaiRemoveStatus(SAI_API_ROUTE, status);
-        throw runtime_error("Failed to remove IP2me route.");
+        if (handleSaiRemoveStatus(SAI_API_ROUTE, status) != task_success)
+        {
+            throw runtime_error("Failed to remove IP2me route.");
+        }
     }
 
     SWSS_LOG_NOTICE("Remove packet action trap route ip:%s", ip_prefix.getIp().to_string().c_str());
@@ -1237,8 +1245,10 @@ void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix
     {
         SWSS_LOG_ERROR("Failed to create broadcast entry %s rv:%d",
                        ip_addr.to_string().c_str(), status);
-        handleSaiCreateStatus(SAI_API_NEIGHBOR, status);
-        return;
+        if (handleSaiCreateStatus(SAI_API_NEIGHBOR, status) != task_success)
+        {
+            return;
+        }
     }
 
     SWSS_LOG_NOTICE("Add broadcast route for ip:%s", ip_addr.to_string().c_str());
@@ -1267,14 +1277,17 @@ void IntfsOrch::removeDirectedBroadcast(const Port &port, const IpPrefix &ip_pre
         if (status == SAI_STATUS_ITEM_NOT_FOUND)
         {
             SWSS_LOG_ERROR("No broadcast entry found for %s", ip_addr.to_string().c_str());
+            return;
         }
         else
         {
             SWSS_LOG_ERROR("Failed to remove broadcast entry %s rv:%d",
                            ip_addr.to_string().c_str(), status);
-            handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
+            if (handleSaiRemoveStatus(SAI_API_NEIGHBOR, status) != task_success)
+            {
+                return;
+            }
         }
-        return;
     }
 
     SWSS_LOG_NOTICE("Remove broadcast route ip:%s", ip_addr.to_string().c_str());

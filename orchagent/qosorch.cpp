@@ -864,8 +864,11 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("fail to set scheduler attribute, id:%d", attr.id);
-                    handleSaiSetStatus(SAI_API_SCHEDULER, sai_status);
-                    return task_process_status::task_failed;
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_SCHEDULER, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
                 }
             }
         }
@@ -876,8 +879,11 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
             {
                 SWSS_LOG_ERROR("Failed to create scheduler profile [%s:%s], rv:%d",
                                qos_map_type_name.c_str(), qos_object_name.c_str(), sai_status);
-                handleSaiCreateStatus(SAI_API_SCHEDULER, sai_status);
-                return task_process_status::task_failed;
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_SCHEDULER, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return handle_status;
+                }
             }
             SWSS_LOG_NOTICE("Created [%s:%s]", qos_map_type_name.c_str(), qos_object_name.c_str());
             (*(m_qos_maps[qos_map_type_name]))[qos_object_name].m_saiObjectId = sai_object;
@@ -894,8 +900,11 @@ task_process_status QosOrch::handleSchedulerTable(Consumer& consumer)
         if (SAI_STATUS_SUCCESS != sai_status)
         {
             SWSS_LOG_ERROR("Failed to remove scheduler profile. db name:%s sai object:%" PRIx64, qos_object_name.c_str(), sai_object);
-            handleSaiRemoveStatus(SAI_API_SCHEDULER, sai_status);
-            return task_process_status::task_failed;
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_SCHEDULER, sai_status);
+            if (handle_status != task_process_status::task_success)
+            {
+                return handle_status;
+            }
         }
         auto it_to_delete = (m_qos_maps[qos_map_type_name])->find(qos_object_name);
         (m_qos_maps[qos_map_type_name])->erase(it_to_delete);
@@ -1341,9 +1350,11 @@ task_process_status QosOrch::handlePortQosMapTable(Consumer& consumer)
             {
                 SWSS_LOG_ERROR("Failed to apply %s to port %s, rv:%d",
                                it->second.first.c_str(), port_name.c_str(), status);
-                handleSaiSetStatus(SAI_API_PORT, status);
-
-                return task_process_status::task_invalid_entry;
+                task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return task_process_status::task_invalid_entry;
+                }
             }
             SWSS_LOG_INFO("Applied %s to port %s", it->second.first.c_str(), port_name.c_str());
         }

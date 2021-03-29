@@ -35,8 +35,10 @@ DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOr
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("DTEL ERROR: Error creating DTel id");
-        handleSaiCreateStatus(SAI_API_DTEL, status);
-        return;
+        if (handleSaiCreateStatus(SAI_API_DTEL, status) != task_success)
+        {
+            return;
+        }
     }
 
     attr.id = SAI_DTEL_ATTR_INT_L4_DSCP;
@@ -49,8 +51,10 @@ DTelOrch::DTelOrch(DBConnector *db, vector<string> tableNames, PortsOrch *portOr
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("DTEL ERROR: Failed to set default INT L4 DSCP value/mask");
-        handleSaiSetStatus(SAI_API_DTEL, status);
-        return;
+        if (handleSaiSetStatus(SAI_API_DTEL, status) != task_success)
+        {
+            return;
+        }
     }
 }
 
@@ -60,8 +64,10 @@ DTelOrch::~DTelOrch()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("DTEL ERROR: Error deleting DTel id");
-        handleSaiRemoveStatus(SAI_API_DTEL, status);
-        return;
+        if (handleSaiRemoveStatus(SAI_API_DTEL, status) != task_success)
+        {
+            return;
+        }
     }
 }
 
@@ -414,8 +420,10 @@ void DTelOrch::update(SubjectType type, void *cntx)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to update sink port list on port add");
-                handleSaiSetStatus(SAI_API_DTEL, status);
-                return;
+                if (handleSaiSetStatus(SAI_API_DTEL, status) != task_success)
+                {
+                    return;
+                }
             }
         }
     } else {
@@ -425,8 +433,10 @@ void DTelOrch::update(SubjectType type, void *cntx)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to update sink port list on port remove");
-                handleSaiSetStatus(SAI_API_DTEL, status);
-                return;
+                if (handleSaiSetStatus(SAI_API_DTEL, status) != task_success)
+                {
+                    return;
+                }
             }
         }
     }
@@ -511,12 +521,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to enable INT endpoint mode");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == INT_TRANSIT)
@@ -529,12 +546,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to enable INT transit mode");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == POSTCARD)
@@ -547,12 +571,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to enable DTel postcard");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == DROP_REPORT)
@@ -565,12 +596,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to enable drop report");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == QUEUE_REPORT)
@@ -583,12 +621,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to enable queue report");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == SWITCH_ID)
@@ -601,12 +646,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set switch id");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == FLOW_STATE_CLEAR_CYCLE)
@@ -619,12 +671,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set Dtel flow state clear cycle");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == LATENCY_SENSITIVITY)
@@ -637,12 +696,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set Dtel latency sensitivity");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == SINK_PORT_LIST)
@@ -675,12 +741,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 status = updateSinkPortList();
                 if (status != SAI_STATUS_SUCCESS)
                 {
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == INT_L4_DSCP)
@@ -718,12 +791,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT L4 DSCP value/mask");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
 
@@ -738,12 +818,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to disable INT endpoint mode");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == INT_TRANSIT)
@@ -754,12 +841,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to disable INT transit mode");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == POSTCARD)
@@ -770,12 +864,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to disable postcard mode");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == DROP_REPORT)
@@ -786,12 +887,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to disable drop report");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == QUEUE_REPORT)
@@ -802,12 +910,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to disable queue report");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == SWITCH_ID)
@@ -820,12 +935,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset switch id");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == FLOW_STATE_CLEAR_CYCLE)
@@ -838,12 +960,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset flow state clear cycle");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == LATENCY_SENSITIVITY)
@@ -856,12 +985,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset latency sensitivity");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == SINK_PORT_LIST)
@@ -871,12 +1007,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset sink port list");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
             else if (table_attr == INT_L4_DSCP)
@@ -888,12 +1031,19 @@ void DTelOrch::doDtelTableTask(Consumer &consumer)
                 if (status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("DTEL ERROR: Failed to reset INT L4 DSCP value/mask");
-                    if (handleSaiSetStatus(SAI_API_DTEL, status) == task_need_retry)
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_DTEL, status);
+                    if (handle_status != task_success)
                     {
-                        it++;
-                        continue;
+                        if (parseHandleSaiStatusFailure(handle_status))
+                        {
+                            goto dtel_table_continue;
+                        }
+                        else
+                        {
+                            it++;
+                            continue;
+                        }
                     }
-                    goto dtel_table_continue;
                 }
             }
         }
@@ -1026,12 +1176,19 @@ void DTelOrch::doDtelReportSessionTableTask(Consumer &consumer)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT EP report session %s", report_session_id.c_str());
-                if (handleSaiCreateStatus(SAI_API_DTEL, status) == task_need_retry)
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_DTEL, status);
+                if (handle_status != task_success)
                 {
-                    it++;
-                    continue;
+                    if (parseHandleSaiStatusFailure(handle_status))
+                    {
+                        goto report_session_table_continue;
+                    }
+                    else
+                    {
+                        it++;
+                        continue;
+                    }
                 }
-                goto report_session_table_continue;
             }
 
             DTelReportSessionEntry rs_entry = { };
@@ -1173,12 +1330,19 @@ void DTelOrch::doDtelINTSessionTableTask(Consumer &consumer)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to set INT session %s", int_session_id.c_str());
-                if (handleSaiCreateStatus(SAI_API_DTEL, status) == task_need_retry)
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_DTEL, status);
+                if (handle_status != task_success)
                 {
-                    it++;
-                    continue;
+                    if (parseHandleSaiStatusFailure(handle_status))
+                    {
+                        goto int_session_table_continue;
+                    }
+                    else
+                    {
+                        it++;
+                        continue;
+                    }
                 }
-                goto int_session_table_continue;
             }
 
             DTelINTSessionEntry is_entry;
@@ -1490,11 +1654,18 @@ void DTelOrch::doDtelEventTableTask(Consumer &consumer)
             if (status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("DTEL ERROR: Failed to create event %s", event.c_str());
-                if (handleSaiCreateStatus(SAI_API_DTEL, status) == task_need_retry)
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_DTEL, status);
+                if (handle_status != task_success)
                 {
-                    goto event_table_skip;
+                    if (parseHandleSaiStatusFailure(handle_status))
+                    {
+                        goto event_table_continue;
+                    }
+                    else
+                    {
+                        goto event_table_skip;
+                    }
                 }
-                goto event_table_continue;
             }
 
             addEvent(event, event_oid, report_session_id);

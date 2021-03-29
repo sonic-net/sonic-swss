@@ -291,8 +291,10 @@ void FdbOrch::update(sai_fdb_event_t        type,
                 {
                     SWSS_LOG_ERROR("Failed to create FDB %s on %s, rv:%d",
                         existing_entry->first.mac.to_string().c_str(), update.port.m_alias.c_str(), status);
-                    handleSaiCreateStatus(SAI_API_FDB, status);
-                    return;
+                    if (handleSaiCreateStatus(SAI_API_FDB, status) != task_success)
+                    {
+                        return;
+                    }
                 }
                 return;
             }

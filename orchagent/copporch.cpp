@@ -125,8 +125,10 @@ void CoppOrch::initDefaultHostIntfTable()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create default host interface table, rv:%d", status);
-        handleSaiCreateStatus(SAI_API_HOSTIF, status);
-        throw "CoppOrch initialization failure";
+        if (handleSaiCreateStatus(SAI_API_HOSTIF, status) != task_success)
+        {
+            throw "CoppOrch initialization failure";
+        }
     }
 
     SWSS_LOG_NOTICE("Create default host interface table");
@@ -526,8 +528,11 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                 if (sai_status != SAI_STATUS_SUCCESS)
                 {
                     SWSS_LOG_ERROR("Failed to apply attribute:%d to trap group:%" PRIx64 ", name:%s, error:%d\n", trap_gr_attr.id, m_trap_group_map[trap_group_name], trap_group_name.c_str(), sai_status);
-                    handleSaiSetStatus(SAI_API_HOSTIF, sai_status);
-                    return task_process_status::task_failed;
+                    task_process_status handle_status = handleSaiSetStatus(SAI_API_HOSTIF, sai_status);
+                    if (handle_status != task_process_status::task_success)
+                    {
+                        return handle_status;
+                    }
                 }
                 SWSS_LOG_NOTICE("Set trap group %s to host interface", trap_group_name.c_str());
             }
@@ -541,8 +546,11 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
             if (sai_status != SAI_STATUS_SUCCESS)
             {
                 SWSS_LOG_ERROR("Failed to create host interface trap group %s, rc=%d", trap_group_name.c_str(), sai_status);
-                handleSaiCreateStatus(SAI_API_HOSTIF, sai_status);
-                return task_process_status::task_failed;
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_HOSTIF, sai_status);
+                if (handle_status != task_process_status::task_success)
+                {
+                    return handle_status;
+                }
             }
 
             SWSS_LOG_NOTICE("Create host interface trap group %s", trap_group_name.c_str());
@@ -573,8 +581,11 @@ task_process_status CoppOrch::processCoppRule(Consumer& consumer)
                         SWSS_LOG_ERROR("Failed to set attribute %d on trap %" PRIx64 ""
                                 " on group %s", i.id, m_syncdTrapIds[trap_id].trap_obj, 
                                 trap_group_name.c_str());
-                        handleSaiSetStatus(SAI_API_HOSTIF, sai_status);
-                        return task_process_status::task_failed;
+                        task_process_status handle_status = handleSaiSetStatus(SAI_API_HOSTIF, sai_status);
+                        if (handle_status != task_process_status::task_success)
+                        {
+                            return handle_status;
+                        }
                     }
                 }
             }
