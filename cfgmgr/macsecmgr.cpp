@@ -24,11 +24,10 @@
 using namespace std;
 using namespace swss;
 
-#define WPA_SUPPLICANT_CMD "./wpa_supplicant"
-#define WPA_CLI_CMD        "./wpa_cli"
-#define WPA_CONF           "./wpa.conf"
-// #define SOCK_DIR           "/var/run/macsec/"
-#define SOCK_DIR           "./"
+#define WPA_SUPPLICANT_CMD "/sbin/wpa_supplicant"
+#define WPA_CLI_CMD        "/sbin/wpa_cli"
+#define WPA_CONF           "/etc/wpa_supplicant.conf"
+#define SOCK_DIR           "/var/run/"
 
 constexpr std::uint64_t RETRY_TIME = 30;
 
@@ -64,13 +63,21 @@ static bool get_value(
     auto value_opt = swss::fvsGetValue(ta, field, true);
     if (!value_opt)
     {
-        SWSS_LOG_WARN("Cannot find field : %s", field.c_str());
+        SWSS_LOG_DEBUG("Cannot find field : %s", field.c_str());
         return false;
     }
 
-    lexical_convert(*value_opt, value);
+    try
+    {
+        lexical_convert(*value_opt, value);
+    }
+    catch(const boost::bad_lexical_cast &e)
+    {
+        SWSS_LOG_ERROR("Cannot convert value(%s) in field(%s)", value_opt->c_str(), field.c_str());
+        return false;
+    }
 
-    return false;
+    return true;
 }
 
 static void wpa_cli_commands(std::ostringstream & ostream)

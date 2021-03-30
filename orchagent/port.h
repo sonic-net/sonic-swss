@@ -41,7 +41,7 @@ struct VlanInfo
 struct SystemPortInfo
 {
     std::string alias = "";
-    sai_system_port_type_t type;
+    sai_system_port_type_t type = SAI_SYSTEM_PORT_TYPE_LOCAL;
     sai_object_id_t local_port_oid = 0;
     uint32_t port_id = 0;
     uint32_t switch_id = 0;
@@ -124,6 +124,7 @@ public:
     uint32_t  m_vnid = VNID_NONE;
     uint32_t  m_fdb_count = 0;
     uint32_t  m_up_member_count = 0;
+    uint32_t  m_maximum_headroom = 0;
 
     /*
      * Following two bit vectors are used to lock

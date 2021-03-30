@@ -588,8 +588,8 @@ void IntfsOrch::doTask(Consumer &consumer)
         string vrf_name = "", vnet_name = "", nat_zone = "";
         MacAddress mac;
 
-        uint32_t mtu;
-        bool adminUp;
+        uint32_t mtu = 0;
+        bool adminUp = false;
         uint32_t nat_zone_id = 0;
         string proxy_arp = "";
         string inband_type = "";
@@ -742,7 +742,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
-                if (isSubIntf)
+                if (!ip_prefix_in_key && isSubIntf)
                 {
                     if (!gPortsOrch->addSubPort(port, alias, adminUp, mtu))
                     {
@@ -1047,7 +1047,7 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
         attr.id = SAI_ROUTER_INTERFACE_ATTR_NAT_ZONE_ID;
         attr.value.u32 = port.m_nat_zone_id;
 
-        SWSS_LOG_INFO("Assinging NAT zone id %d to interface %s\n", attr.value.u32, port.m_alias.c_str());
+        SWSS_LOG_INFO("Assigning NAT zone id %d to interface %s\n", attr.value.u32, port.m_alias.c_str());
         attrs.push_back(attr);
     }
 

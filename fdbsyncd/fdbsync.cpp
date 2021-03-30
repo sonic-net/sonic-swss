@@ -43,6 +43,36 @@ FdbSync::~FdbSync()
     }
 }
 
+
+// Check if interface entries are restored in kernel
+bool FdbSync::isIntfRestoreDone()
+{
+    vector<string> required_modules = {
+            "vxlanmgrd",
+            "intfmgrd",
+            "vlanmgrd",
+            "vrfmgrd"
+        };
+
+    for (string& module : required_modules)
+    {
+        WarmStart::WarmStartState state;
+        
+        WarmStart::getWarmStartState(module, state);
+        if (state == WarmStart::REPLAYED || state == WarmStart::RECONCILED)
+        {
+            SWSS_LOG_INFO("Module %s Replayed or Reconciled %d",module.c_str(), (int) state);            
+        }
+        else
+        {
+            SWSS_LOG_INFO("Module %s NOT Replayed or Reconciled %d",module.c_str(), (int) state);            
+            return false;
+        }
+    }
+    
+    return true;
+}
+
 void FdbSync::processCfgEvpnNvo()
 {
     std::deque<KeyOpFieldsValuesTuple> entries;
@@ -447,6 +477,10 @@ void FdbSync::macDelVxlanDB(string key)
     fvVector.push_back(t);
     fvVector.push_back(v);
 
+    SWSS_LOG_NOTICE("%sVXLAN_FDB_TABLE: DEL_KEY %s vtep:%s type:%s", 
+            m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "" ,
+            key.c_str(), vtep.c_str(), type.c_str());
+
     // If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist->isWarmStartInProgress())
     {
@@ -454,7 +488,6 @@ void FdbSync::macDelVxlanDB(string key)
         return;
     }
     
-    SWSS_LOG_INFO("VXLAN_FDB_TABLE: DEL_KEY %s vtep:%s type:%s", key.c_str(), vtep.c_str(), type.c_str());
     m_fdbTable.del(key);
     return;
 
@@ -476,6 +509,9 @@ void FdbSync::macAddVxlan(string key, struct in_addr vtep, string type, uint32_t
     fvVector.push_back(t);
     fvVector.push_back(v);
 
+    SWSS_LOG_INFO("%sVXLAN_FDB_TABLE: ADD_KEY %s vtep:%s type:%s", 
+            m_AppRestartAssist->isWarmStartInProgress() ? "WARM-RESTART:" : "" ,
+            key.c_str(), svtep.c_str(), type.c_str());
     // If warmstart is in progress, we take all netlink changes into the cache map
     if (m_AppRestartAssist->isWarmStartInProgress())
     {
@@ -483,7 +519,6 @@ void FdbSync::macAddVxlan(string key, struct in_addr vtep, string type, uint32_t
         return;
     }
     
-    SWSS_LOG_INFO("VXLAN_FDB_TABLE: ADD_KEY %s vtep:%s type:%s", key.c_str(), svtep.c_str(), type.c_str());
     m_fdbTable.set(key, fvVector);
 
     return;

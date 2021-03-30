@@ -135,6 +135,18 @@ class TestAcl:
         dvs_acl.verify_no_acl_rules()
         dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
 
+    def test_AclRuleVlanId(self, dvs_acl, l3_acl_table):
+        config_qualifiers = {"VLAN_ID": "100"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID": dvs_acl.get_simple_qualifier_comparator("100&mask:0xfff")
+        }
+
+        dvs_acl.create_acl_rule(L3_TABLE_NAME, L3_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L3_TABLE_NAME, L3_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
     def test_V6AclTableCreationDeletion(self, dvs_acl):
         try:
             dvs_acl.create_acl_table(L3V6_TABLE_NAME,
@@ -280,6 +292,18 @@ class TestAcl:
         config_qualifiers = {"L4_DST_PORT_RANGE": "101-200"}
         expected_sai_qualifiers = {
             "SAI_ACL_ENTRY_ATTR_FIELD_ACL_RANGE_TYPE": dvs_acl.get_acl_range_comparator("SAI_ACL_RANGE_TYPE_L4_DST_PORT_RANGE", "101,200")
+        }
+
+        dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers)
+
+        dvs_acl.remove_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
+    def test_V6AclRuleVlanId(self, dvs_acl, l3v6_acl_table):
+        config_qualifiers = {"VLAN_ID": "100"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID": dvs_acl.get_simple_qualifier_comparator("100&mask:0xfff")
         }
 
         dvs_acl.create_acl_rule(L3V6_TABLE_NAME, L3V6_RULE_NAME, config_qualifiers)

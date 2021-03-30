@@ -168,11 +168,24 @@ void FdbOrch::update(sai_fdb_event_t        type,
                    type, update.entry.mac.to_string().c_str(),
                    entry->bv_id, bridge_port_id);
 
+
     if (bridge_port_id &&
         !m_portsOrch->getPortByBridgePortId(bridge_port_id, update.port))
     {
-        SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 ".",
+        if (type == SAI_FDB_EVENT_FLUSHED)
+        {
+            /* In case of flush - can be ignored due to a race.
+               There are notifications about FDB FLUSH (syncd/sai_redis) on port,
+               which was already removed by orchagent as a result of
+               removeVlanMember action (removeBridgePort) */
+            SWSS_LOG_INFO("Flush event: Failed to get port by bridge port ID 0x%" PRIx64 ".",
                         bridge_port_id);
+
+        } else {
+            SWSS_LOG_ERROR("Failed to get port by bridge port ID 0x%" PRIx64 ".",
+                        bridge_port_id);
+
+        }
         return;
     }
 
@@ -263,7 +276,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
             {
                 /*port added back to vlan before we receive delete
                   notification for flush from SAI. Re-add entry to SAI
-                 */ 
+                 */
                 sai_attribute_t attr;
                 vector<sai_attribute_t> attrs;
 
@@ -286,7 +299,7 @@ void FdbOrch::update(sai_fdb_event_t        type,
 
         update.add = false;
         if (!update.port.m_alias.empty())
-        { 
+        {
             update.port.m_fdb_count--;
             m_portsOrch->setPort(update.port.m_alias, update.port);
         }
@@ -677,7 +690,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         if (op == "ALL")
         {
             /*
-             * so far only support flush all the FDB entris
+             * so far only support flush all the FDB entries
              * flush per port and flush per vlan will be added later.
              */
             status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
@@ -741,7 +754,7 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
  * Description:
  *     Flushes FDB entries based on bridge_port_oid, or vlan_oid or both.
  *     This function is called in three cases.
- *     1. Port is reoved from VLAN (via SUBJECT_TYPE_VLAN_MEMBER_CHANGE)
+ *     1. Port is removed from VLAN (via SUBJECT_TYPE_VLAN_MEMBER_CHANGE)
  *     2. Bridge port OID is removed (Direct call)
  *     3. Port is shut down (via SUBJECT_TYPE_
  */
@@ -1036,8 +1049,8 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         attr.value.ipaddr = ipaddr;
         attrs.push_back(attr);
     }
-    else if (macUpdate 
-            && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED) 
+    else if (macUpdate
+            && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)
             && (fdbData.origin != oldOrigin))
     {
         /* origin is changed from Remote-advertized to Local-provisioned
@@ -1051,7 +1064,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         attrs.push_back(attr);
     }
 
-    if (macUpdate && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED)) 
+    if (macUpdate && (oldOrigin == FDB_ORIGIN_VXLAN_ADVERTIZED))
     {
         if ((fdbData.origin != oldOrigin)
            || ((oldType == "dynamic") && (oldType != fdbData.type)))
@@ -1062,7 +1075,7 @@ bool FdbOrch::addFdbEntry(const FdbEntry& entry, const string& port_name,
         }
     }
 
-    
+
     if (macUpdate)
     {
         SWSS_LOG_INFO("MAC-Update FDB %s in %s on from-%s:to-%s from-%s:to-%s origin-%d-to-%d",
@@ -1225,7 +1238,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     (void)m_entries.erase(entry);
 
     // Remove in StateDb
-    if (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED) 
+    if (fdbData.origin != FDB_ORIGIN_VXLAN_ADVERTIZED)
     {
         m_fdbStateTable.del(key);
     }
@@ -1245,7 +1258,7 @@ bool FdbOrch::removeFdbEntry(const FdbEntry& entry, FdbOrigin origin)
     return true;
 }
 
-void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac, 
+void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
         const unsigned short &vlanId, FdbOrigin origin, const string portName)
 {
     bool found=false;
@@ -1268,7 +1281,7 @@ void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
                     if (iter->fdbData.origin == origin)
                     {
                         SWSS_LOG_INFO("FDB entry found in saved fdb. deleting..."
-                                "mac=%s vlan_id=0x%x origin:%d port:%s", 
+                                "mac=%s vlan_id=0x%x origin:%d port:%s",
                                 mac.to_string().c_str(), vlanId, origin,
                                 itr.first.c_str());
                         saved_fdb_entries[itr.first].erase(iter);
@@ -1280,7 +1293,7 @@ void FdbOrch::deleteFdbEntryFromSavedFDB(const MacAddress &mac,
                     {
                         SWSS_LOG_INFO("FDB entry found in saved fdb, but Origin is "
                                 "different mac=%s vlan_id=0x%x reqOrigin:%d "
-                                "foundOrigin:%d port:%s, IGNORED", 
+                                "foundOrigin:%d port:%s, IGNORED",
                                 mac.to_string().c_str(), vlanId, origin,
                                 iter->fdbData.origin, itr.first.c_str());
                     }

@@ -18,6 +18,7 @@ using namespace swss;
  */
 const uint32_t DEFAULT_ROUTING_RESTART_INTERVAL = 120;
 
+
 // Wait 3 seconds after detecting EOIU reached state
 // TODO: support eoiu hold interval config
 const uint32_t DEFAULT_EOIU_HOLD_INTERVAL = 3;
@@ -67,6 +68,7 @@ int main(int argc, char **argv)
             SelectableTimer eoiuCheckTimer(timespec{0, 0});
             // After eoiu flags are detected, start a hold timer before starting reconciliation.
             SelectableTimer eoiuHoldTimer(timespec{0, 0});
+           
             /*
              * Pipeline should be flushed right away to deal with state pending
              * from previous try/catch iterations.
@@ -108,6 +110,10 @@ int main(int argc, char **argv)
                 s.addSelectable(&eoiuCheckTimer);
                 SWSS_LOG_NOTICE("Warm-Restart eoiuCheckTimer timer started.");
             }
+            else
+            {
+                sync.m_warmStartHelper.setState(WarmStart::WSDISABLED);
+            }
 
             while (true)
             {
@@ -132,6 +138,7 @@ int main(int argc, char **argv)
                     {
                         SWSS_LOG_NOTICE("Warm-Restart EOIU hold timer expired.");
                     }
+
                     if (sync.m_warmStartHelper.inProgress())
                     {
                         sync.m_warmStartHelper.reconcile();
@@ -188,7 +195,7 @@ int main(int argc, char **argv)
         }
         catch (const exception& e)
         {
-            cout << "Exception \"" << e.what() << "\" had been thrown in deamon" << endl;
+            cout << "Exception \"" << e.what() << "\" had been thrown in daemon" << endl;
             return 0;
         }
     }

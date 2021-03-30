@@ -81,7 +81,7 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
-    cout << "    -s: enable synchronous mode (depreacated, use -z)" << endl;
+    cout << "    -s: enable synchronous mode (deprecated, use -z)" << endl;
     cout << "    -z: redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
@@ -305,7 +305,7 @@ int main(int argc, char **argv)
                 {
                     SWSS_LOG_WARN("ASIC instance_id length > SAI_MAX_HARDWARE_ID_LEN, LIMITING !!");
                 }
-                // If longer, trancate into a string
+                // If longer, truncate into a string
                 gAsicInstance.assign(optarg, len);
             }
             break;
@@ -575,7 +575,7 @@ int main(int argc, char **argv)
 
     if (!orchDaemon->init())
     {
-        SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
+        SWSS_LOG_ERROR("Failed to initialize orchestration daemon");
         exit(EXIT_FAILURE);
     }
 

@@ -174,7 +174,7 @@ void LinkSync::onMsg(int nlmsg_type, struct nl_object *obj)
 
     unsigned int flags = rtnl_link_get_flags(link);
     bool admin = flags & IFF_UP;
-    bool oper = flags & IFF_LOWER_UP;
+    bool oper = flags & IFF_RUNNING;
 
     char addrStr[MAX_ADDR_SIZE+1] = {0};
     nl_addr2str(rtnl_link_get_addr(link), addrStr, MAX_ADDR_SIZE);

@@ -446,7 +446,7 @@ namespace portsorch_test
 
         pgConsumer = static_cast<Consumer*>(gBufferOrch->getExecutor(APP_BUFFER_PG_TABLE_NAME));
         pgConsumer->dumpPendingTasks(ts);
-        ASSERT_TRUE(ts.empty()); // PG should be proceesed now
+        ASSERT_TRUE(ts.empty()); // PG should be processed now
         ts.clear();
     }
 
@@ -571,7 +571,7 @@ namespace portsorch_test
 
         vector<string> ts;
 
-        // check LAG, VLAN tasks were proceesed
+        // check LAG, VLAN tasks were processed
         // port table may require one more doTask iteration
         for (auto tableName: {
                 APP_LAG_TABLE_NAME,

@@ -205,6 +205,27 @@ bool NbrMgr::setNeighbor(const string& alias, const IpAddress& ip, const MacAddr
     return send_message(m_nl_sock, msg);
 }
 
+/**
+ * Parse APPL_DB neighbors resolve table.
+ *
+ * @param [app_db_nbr_tbl_key], key from APPL_DB - APP_NEIGH_RESOLVE_TABLE_NAME
+ * @param [delimiter], APPL_DB delimiter ":"
+ *
+ * @return the string vector which contain the VLAN alias and IP address
+ */
+vector<string> NbrMgr::parseAliasIp(const string &app_db_nbr_tbl_key, const char *delimiter)
+{
+    vector<string> ret;
+    size_t found = app_db_nbr_tbl_key.find(delimiter);
+    string alias = app_db_nbr_tbl_key.substr(0, found);
+    string ip_address = app_db_nbr_tbl_key.substr(found + 1, app_db_nbr_tbl_key.size() - 1);
+
+    ret.push_back(alias);
+    ret.push_back(ip_address);
+
+    return ret;
+}
+
 void NbrMgr::doResolveNeighTask(Consumer &consumer)
 {
     SWSS_LOG_ENTER();
@@ -213,7 +234,8 @@ void NbrMgr::doResolveNeighTask(Consumer &consumer)
     while (it != consumer.m_toSync.end())
     {
         KeyOpFieldsValuesTuple    t = it->second;
-        vector<string>            keys = tokenize(kfvKey(t),delimiter);
+        vector<string>            keys = parseAliasIp(kfvKey(t), consumer.getConsumerTable()->getTableNameSeparator().c_str());
+
         MacAddress                mac;
         IpAddress                 ip(keys[1]);
         string                    alias(keys[0]);

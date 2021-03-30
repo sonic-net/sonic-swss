@@ -137,6 +137,18 @@ class TestEgressAclTable:
         dvs_acl.remove_acl_rule(TABLE_NAME, RULE_NAME)
         dvs_acl.verify_no_acl_rules()
 
+    def test_AclRuleVlanId(self, dvs_acl, egress_acl_table):
+        config_qualifiers = {"VLAN_ID": "100"}
+        expected_sai_qualifiers = {
+            "SAI_ACL_ENTRY_ATTR_FIELD_OUTER_VLAN_ID": dvs_acl.get_simple_qualifier_comparator("100&mask:0xfff")
+        }
+
+        dvs_acl.create_acl_rule(TABLE_NAME, RULE_NAME, config_qualifiers, action="DROP", priority="1000")
+        dvs_acl.verify_acl_rule(expected_sai_qualifiers, action="DROP", priority="1000")
+
+        dvs_acl.remove_acl_rule(TABLE_NAME, RULE_NAME)
+        dvs_acl.verify_no_acl_rules()
+
 
 # Add Dummy always-pass test at end as workaroud
 # for issue when Flaky fail on final test it invokes module tear-down before retrying
