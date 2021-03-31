@@ -686,16 +686,15 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     std::string data;
     std::vector<swss::FieldValueTuple> values;
 
+    Port vlan;
+    Port port;
+
     consumer.pop(op, data, values);
 
     if (&consumer == m_flushNotificationsConsumer)
     {
         if (op == "ALL")
         {
-            /*
-             * so far only support flush all the FDB entries
-             * flush per port and flush per vlan will be added later.
-             */
             status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -706,14 +705,22 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         }
         else if (op == "PORT")
         {
-            /*place holder for flush port fdb*/
-            SWSS_LOG_ERROR("Received unsupported flush port fdb request");
+            if (!m_portsOrch->getPort(data, port))
+            {
+                SWSS_LOG_ERROR("could not locate port from data %s", data.c_str());
+                return;
+            }
+            flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
             return;
         }
         else if (op == "VLAN")
         {
-            /*place holder for flush vlan fdb*/
-            SWSS_LOG_ERROR("Received unsupported flush vlan fdb request");
+            if (!m_portsOrch->getPort(data, vlan))
+            {
+                SWSS_LOG_ERROR("could not locate vlan from data %s", data.c_str());
+                return;
+            }
+            flushFDBEntries(SAI_NULL_OBJECT_ID, vlan.m_vlan_info.vlan_oid);
             return;
         }
         else
@@ -839,7 +846,9 @@ void FdbOrch::updatePortOperState(const PortOperStateUpdate& update)
 
         // Get BVID of each VLAN that this port is a member of
         // and call notifyObserversFDBFlush
-        for (const auto& vlan_member: p.m_vlan_members)
+        vlan_members_t vlan_members;
+        m_portsOrch->getPortVlanMembers(p, vlan_members);
+        for (const auto& vlan_member: vlan_members)
         {
             swss::Port vlan;
             string vlan_alias = VLAN_PREFIX + to_string(vlan_member.first);
