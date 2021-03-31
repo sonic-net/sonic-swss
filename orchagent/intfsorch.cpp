@@ -178,7 +178,11 @@ bool IntfsOrch::setRouterIntfsMtu(const Port &port)
     {
         SWSS_LOG_ERROR("Failed to set router interface %s MTU to %u, rv:%d",
                 port.m_alias.c_str(), port.m_mtu, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_NOTICE("Set router interface %s MTU to %u",
             port.m_alias.c_str(), port.m_mtu);
@@ -200,7 +204,11 @@ bool IntfsOrch::setRouterIntfsMac(const Port &port)
     {
         SWSS_LOG_ERROR("Failed to set router interface %s MAC to %s, rv:%d",
                 port.m_alias.c_str(), port.m_mac.to_string().c_str(), status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_NOTICE("Set router interface %s MAC to %s",
             port.m_alias.c_str(), port.m_mac.to_string().c_str());
@@ -229,7 +237,11 @@ bool IntfsOrch::setRouterIntfsNatZoneId(Port &port)
     {
          SWSS_LOG_ERROR("Failed to set router interface %s NAT Zone Id to %u, rv:%d",
                 port.m_alias.c_str(), port.m_nat_zone_id, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_NOTICE("Set router interface %s NAT Zone Id to %u",
             port.m_alias.c_str(), port.m_nat_zone_id);
@@ -250,7 +262,11 @@ bool IntfsOrch::setRouterIntfsAdminStatus(const Port &port)
     {
         SWSS_LOG_ERROR("Failed to set router interface %s V4 admin status to %s, rv:%d",
                 port.m_alias.c_str(), port.m_admin_state_up == true ? "up" : "down", status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE;
@@ -260,7 +276,11 @@ bool IntfsOrch::setRouterIntfsAdminStatus(const Port &port)
     {
         SWSS_LOG_ERROR("Failed to set router interface %s V6 admin status to %s, rv:%d",
                 port.m_alias.c_str(), port.m_admin_state_up == true ? "up" : "down", status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     return true;
@@ -284,7 +304,11 @@ bool IntfsOrch::setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_ty
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set flood type for VLAN %u, rv:%d", port.m_vlan_info.vlan_id, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     return true;
@@ -771,6 +795,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                     {
                         SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, rv:%d",
                                                      mac.to_string().c_str(), port.m_alias.c_str(), status);
+                        if (handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status) == task_need_retry)
+                        {
+                            it++;
+                            continue;
+                        }
                     }
                     else
                     {
@@ -999,7 +1028,10 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     {
         SWSS_LOG_ERROR("Failed to create router interface %s, rv:%d",
                 port.m_alias.c_str(), status);
-        throw runtime_error("Failed to create router interface.");
+        if (handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status) != task_success)
+        {
+            throw runtime_error("Failed to create router interface.");
+        }
     }
 
     port.m_vr_id = vrf_id;
@@ -1029,7 +1061,10 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove router interface for port %s, rv:%d", port.m_alias.c_str(), status);
-        throw runtime_error("Failed to remove router interface.");
+        if (handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status) != task_success)
+        {
+            throw runtime_error("Failed to remove router interface.");
+        }
     }
 
     port.m_rif_id = 0;
@@ -1067,7 +1102,10 @@ void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
-        throw runtime_error("Failed to create IP2me route.");
+        if (handleSaiCreateStatus(SAI_API_ROUTE, status) != task_success)
+        {
+            throw runtime_error("Failed to create IP2me route.");
+        }
     }
 
     SWSS_LOG_NOTICE("Create IP2me route ip:%s", ip_prefix.getIp().to_string().c_str());
@@ -1093,7 +1131,10 @@ void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_pref
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
-        throw runtime_error("Failed to remove IP2me route.");
+        if (handleSaiRemoveStatus(SAI_API_ROUTE, status) != task_success)
+        {
+            throw runtime_error("Failed to remove IP2me route.");
+        }
     }
 
     SWSS_LOG_NOTICE("Remove packet action trap route ip:%s", ip_prefix.getIp().to_string().c_str());
@@ -1135,7 +1176,10 @@ void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix
     {
         SWSS_LOG_ERROR("Failed to create broadcast entry %s rv:%d",
                        ip_addr.to_string().c_str(), status);
-        return;
+        if (handleSaiCreateStatus(SAI_API_NEIGHBOR, status) != task_success)
+        {
+            return;
+        }
     }
 
     SWSS_LOG_NOTICE("Add broadcast route for ip:%s", ip_addr.to_string().c_str());
@@ -1164,13 +1208,17 @@ void IntfsOrch::removeDirectedBroadcast(const Port &port, const IpPrefix &ip_pre
         if (status == SAI_STATUS_ITEM_NOT_FOUND)
         {
             SWSS_LOG_ERROR("No broadcast entry found for %s", ip_addr.to_string().c_str());
+            return;
         }
         else
         {
             SWSS_LOG_ERROR("Failed to remove broadcast entry %s rv:%d",
                            ip_addr.to_string().c_str(), status);
+            if (handleSaiRemoveStatus(SAI_API_NEIGHBOR, status) != task_success)
+            {
+                return;
+            }
         }
-        return;
     }
 
     SWSS_LOG_NOTICE("Remove broadcast route ip:%s", ip_addr.to_string().c_str());

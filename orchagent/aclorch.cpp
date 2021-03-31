@@ -3626,7 +3626,10 @@ sai_status_t AclOrch::createDTelWatchListTables()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create table %s", flowWLTable.description.c_str());
-        return status;
+        if (handleSaiCreateStatus(SAI_API_ACL, status) != task_success)
+        {
+            return status;
+        }
     }
 
     gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
@@ -3687,14 +3690,17 @@ sai_status_t AclOrch::createDTelWatchListTables()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create table %s", dropWLTable.description.c_str());
-        return status;
+        if (handleSaiCreateStatus(SAI_API_ACL, status) != task_success)
+        {
+            return status;
+        }
     }
 
     gCrmOrch->incCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH);
     m_AclTables[table_oid] = dropWLTable;
     SWSS_LOG_INFO("Successfully created ACL table %s, oid: %" PRIx64, dropWLTable.description.c_str(), table_oid);
 
-    return status;
+    return SAI_STATUS_SUCCESS;
 }
 
 sai_status_t AclOrch::deleteDTelWatchListTables()
@@ -3719,7 +3725,10 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete table %s", table_id.c_str());
-        return status;
+        if (handleSaiRemoveStatus(SAI_API_ACL, status) != task_success)
+        {
+            return status;
+        }
     }
 
     gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);
@@ -3739,7 +3748,10 @@ sai_status_t AclOrch::deleteDTelWatchListTables()
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to delete table %s", table_id.c_str());
-        return status;
+        if (handleSaiRemoveStatus(SAI_API_ACL, status) != task_success)
+        {
+            return status;
+        }
     }
 
     gCrmOrch->decCrmAclUsedCounter(CrmResourceType::CRM_ACL_TABLE, SAI_ACL_STAGE_INGRESS, SAI_ACL_BIND_POINT_TYPE_SWITCH, table_oid);

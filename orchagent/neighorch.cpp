@@ -199,7 +199,11 @@ bool NeighOrch::addNextHop(const IpAddress &ipAddress, const string &alias)
     {
         SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
                        ipAddress.to_string().c_str(), alias.c_str(), status);
-        return handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Created next hop %s on %s",
@@ -642,7 +646,11 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
             {
                 SWSS_LOG_ERROR("Failed to create neighbor %s on %s, rv:%d",
                            macAddress.to_string().c_str(), alias.c_str(), status);
-                return handleSaiCreateStatus(SAI_API_NEIGHBOR, status);
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
         SWSS_LOG_NOTICE("Created neighbor ip %s, %s on %s", ip_address.to_string().c_str(),
@@ -665,7 +673,11 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
             {
                 SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
                                macAddress.to_string().c_str(), alias.c_str(), status);
-                return handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
 
@@ -689,7 +701,11 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
         {
             SWSS_LOG_ERROR("Failed to update neighbor %s on %s, rv:%d",
                            macAddress.to_string().c_str(), alias.c_str(), status);
-            return handleSaiSetStatus(SAI_API_NEIGHBOR, status);
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
     }
@@ -746,7 +762,11 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
             {
                 SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
                                ip_address.to_string().c_str(), alias.c_str(), status);
-                return handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
 
@@ -778,7 +798,11 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
             {
                 SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
                         m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
-                return handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
 

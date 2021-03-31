@@ -778,7 +778,11 @@ bool NatOrch::addHwDnatEntry(const IpAddress &ip_address)
         SWSS_LOG_ERROR("Failed to create %s DNAT NAT entry with ip %s and it's translated ip %s",
                        entry.entry_type.c_str(), ip_address.to_string().c_str(), entry.translated_ip.to_string().c_str());
 
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Created %s DNAT NAT entry with ip %s and it's translated ip %s",
@@ -859,7 +863,11 @@ bool NatOrch::addHwDnaptEntry(const NaptEntryKey &key)
         SWSS_LOG_ERROR("Failed to create %s DNAT NAPT entry with ip %s, port %d, prototype %s and it's translated ip %s, translated port %d",
                        entry.entry_type.c_str(), key.ip_address.to_string().c_str(), key.l4_port, key.prototype.c_str(),
                        entry.translated_ip.to_string().c_str(), entry.translated_l4_port);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Created %s DNAT NAPT entry with ip %s, port %d, prototype %s and it's translated ip %s, translated port %d",
@@ -928,7 +936,11 @@ bool NatOrch::removeHwDnatEntry(const IpAddress &dstIp)
         SWSS_LOG_INFO("Failed to remove %s DNAT NAT entry with ip %s and it's translated ip %s",
                       entry.entry_type.c_str(), dstIp.to_string().c_str(), entry.translated_ip.to_string().c_str());
 
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Removed %s DNAT NAT entry with ip %s and it's translated ip %s",
@@ -1014,7 +1026,11 @@ bool NatOrch::removeHwTwiceNatEntry(const TwiceNatEntryKey &key)
         SWSS_LOG_INFO("Failed to remove Twice NAT entry with src-ip %s, dst-ip %s",
                       key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str());
 
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_NOTICE("Removed Twice NAT entry with src-ip %s, dst-ip %s",
                     key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str());
@@ -1110,7 +1126,11 @@ bool NatOrch::removeHwDnaptEntry(const NaptEntryKey &key)
                       entry.translated_ip.to_string().c_str(), entry.translated_l4_port);
 
 
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Removed %s DNAT NAPT entry with ip %s, port %d, prototype %s and it's translated ip %s, translated port %d",
@@ -1205,7 +1225,11 @@ bool NatOrch::removeHwTwiceNaptEntry(const TwiceNaptEntryKey &key)
         SWSS_LOG_INFO("Failed to remove Twice NAPT entry with prototype %s, src-ip %s, src port %d, dst-ip %s, dst port %d",
                        key.prototype.c_str(), key.src_ip.to_string().c_str(), key.src_l4_port,
                        key.dst_ip.to_string().c_str(), key.dst_l4_port);
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Removed Twice NAPT entry with prototype %s, src-ip %s, src port %d, dst-ip %s, dst port %d",
@@ -1299,7 +1323,11 @@ bool NatOrch::addHwSnatEntry(const IpAddress &ip_address)
         SWSS_LOG_ERROR("Failed to create %s SNAT NAT entry with ip %s and it's translated ip %s",
                        entry.entry_type.c_str(), ip_address.to_string().c_str(), entry.translated_ip.to_string().c_str());
 
-        return true;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Created %s SNAT NAT entry with ip %s and it's translated ip %s",
@@ -1379,7 +1407,11 @@ bool NatOrch::addHwTwiceNatEntry(const TwiceNatEntryKey &key)
                        value.entry_type.c_str(), key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str(),
                        value.translated_src_ip.to_string().c_str(), value.translated_dst_ip.to_string().c_str());
 
-        return true;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Created %s Twice NAT entry with src ip %s, dst ip %s, translated src ip %s, translated dst ip %s",
@@ -1467,7 +1499,11 @@ bool NatOrch::addHwSnaptEntry(const NaptEntryKey &keyEntry)
                        entry.entry_type.c_str(), keyEntry.ip_address.to_string().c_str(), keyEntry.l4_port, keyEntry.prototype.c_str(),
                        entry.translated_ip.to_string().c_str(), entry.translated_l4_port);
 
-        return true;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
      }
 
      SWSS_LOG_NOTICE("Created %s SNAT NAPT entry with ip %s, port %d, prototype %s and it's translated ip %s, translated port %d",
@@ -1562,7 +1598,11 @@ bool NatOrch::addHwTwiceNaptEntry(const TwiceNaptEntryKey &key)
                        key.dst_l4_port, key.prototype.c_str(), value.translated_src_ip.to_string().c_str(), value.translated_src_l4_port,
                        value.translated_dst_ip.to_string().c_str(), value.translated_dst_l4_port);
 
-        return true;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
      }
 
 
@@ -1796,7 +1836,11 @@ bool NatOrch::addHwDnatPoolEntry(const IpAddress &ip_address)
     {
         SWSS_LOG_ERROR("Failed to create DNAT Pool entry with ip %s", ip_address.to_string().c_str());
 
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Created DNAT Pool entry with ip %s", ip_address.to_string().c_str());
@@ -1826,7 +1870,11 @@ bool NatOrch::removeHwDnatPoolEntry(const IpAddress &dstIp)
     {
         SWSS_LOG_INFO("Failed to remove DNAT Pool entry with ip %s", dstIp.to_string().c_str());
 
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NAT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Removed DNAT Pool entry with ip %s", dstIp.to_string().c_str());
@@ -2542,6 +2590,7 @@ void NatOrch::enableNatFeature(void)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to enable NAT: %d", status);
+        handleSaiSetStatus(SAI_API_SWITCH, status);
     }
 
     SWSS_LOG_INFO("NAT Query timer start ");
@@ -2580,6 +2629,7 @@ void NatOrch::disableNatFeature(void)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to disable NAT: %d", status);
+        handleSaiSetStatus(SAI_API_SWITCH, status);
     }
 
     SWSS_LOG_INFO("NAT Query timer stop ");
@@ -3663,6 +3713,7 @@ bool NatOrch::setNatCounters(const NatEntry::iterator &iter)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to clear packet counter for SNAT entry [src-ip %s]", ipAddr.to_string().c_str());
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
     else if (entry.nat_type == "dnat")
@@ -3670,6 +3721,7 @@ bool NatOrch::setNatCounters(const NatEntry::iterator &iter)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to clear packet counter for DNAT entry [dst-ip %s]", ipAddr.to_string().c_str());
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
 
@@ -3680,6 +3732,7 @@ bool NatOrch::setNatCounters(const NatEntry::iterator &iter)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to clear byte counter for SNAT entry [src-ip %s]", ipAddr.to_string().c_str());
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
     else if (entry.nat_type == "dnat")
@@ -3687,6 +3740,7 @@ bool NatOrch::setNatCounters(const NatEntry::iterator &iter)
         if (status != SAI_STATUS_SUCCESS)
         {
             SWSS_LOG_ERROR("Failed to clear byte counter for DNAT entry [dst-ip %s]", ipAddr.to_string().c_str());
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
     /* Update the Counter values in the database */
@@ -3897,6 +3951,7 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
         {
             SWSS_LOG_ERROR("Failed to clear packet counter for SNAPT entry for [proto %s, src-ip %s, src-port %d",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port);
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
     else if (entry.nat_type == "dnat")
@@ -3905,6 +3960,7 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
         {
             SWSS_LOG_ERROR("Failed to clear packet counter for DNAPT entry for [proto %s, dst-ip %s, dst-port %d]",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port);
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
 
@@ -3916,6 +3972,7 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
         {
             SWSS_LOG_ERROR("Failed to clear byte counter for SNAPT entry for [proto %s, src-ip %s, src-port %d",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port);
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
     else if (entry.nat_type == "dnat")
@@ -3924,6 +3981,7 @@ bool NatOrch::setNaptCounters(const NaptEntry::iterator &iter)
         {
             SWSS_LOG_ERROR("Failed to clear byte counter for DNAPT entry for [proto %s, dst-ip %s, dst-port %d]",
                            naptKey.prototype.c_str(), naptKey.ip_address.to_string().c_str(), naptKey.l4_port);
+            handleSaiSetStatus(SAI_API_NAT, status);
         }
     }
 
@@ -3971,6 +4029,7 @@ bool NatOrch::setTwiceNatCounters(const TwiceNatEntry::iterator &iter)
     {
         SWSS_LOG_ERROR("Failed to clear packet counters for Twice NAT entry [src-ip %s, dst-ip %s]",
                         key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str());
+        handleSaiSetStatus(SAI_API_NAT, status);
     }
 
     status = sai_nat_api->set_nat_entry_attribute(&dbl_nat_entry, &nat_entry_attr_byte);
@@ -3979,6 +4038,7 @@ bool NatOrch::setTwiceNatCounters(const TwiceNatEntry::iterator &iter)
     {
         SWSS_LOG_ERROR("Failed to clear byte counters for Twice NAT entry [src-ip %s, dst-ip %s]",
                         key.src_ip.to_string().c_str(), key.dst_ip.to_string().c_str());
+        handleSaiSetStatus(SAI_API_NAT, status);
     }
 
     /* Update the Counter values in the database */
@@ -4032,6 +4092,7 @@ bool NatOrch::setTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
     {
         SWSS_LOG_ERROR("Failed to clear packet counters for Twice NAPT entry [src-ip %s, src port %d, dst-ip %s, dst port %d]",
                         key.src_ip.to_string().c_str(), key.src_l4_port, key.dst_ip.to_string().c_str(), key.dst_l4_port);
+        handleSaiSetStatus(SAI_API_NAT, status);
     }
 
     status = sai_nat_api->set_nat_entry_attribute(&dbl_nat_entry, &nat_entry_attr_byte);
@@ -4040,6 +4101,7 @@ bool NatOrch::setTwiceNaptCounters(const TwiceNaptEntry::iterator &iter)
     {
         SWSS_LOG_ERROR("Failed to clear byte counters for Twice NAPT entry [src-ip %s, src port %d, dst-ip %s, dst port %d]",
                         key.src_ip.to_string().c_str(), key.src_l4_port, key.dst_ip.to_string().c_str(), key.dst_l4_port);
+        handleSaiSetStatus(SAI_API_NAT, status);
     }
 
     /* Update the Counter values in the database */
