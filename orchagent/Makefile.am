@@ -15,7 +15,8 @@ dist_swss_DATA = \
 		 port_rates.lua \
 		 watermark_queue.lua \
 		 watermark_pg.lua \
-		 watermark_bufferpool.lua
+		 watermark_bufferpool.lua \
+		 lagids.lua
 
 bin_PROGRAMS = orchagent routeresync orchagent_restart_check
 
@@ -62,7 +63,8 @@ orchagent_SOURCES = \
             debugcounterorch.cpp \
             natorch.cpp \
             muxorch.cpp \
-            macsecorch.cpp
+            macsecorch.cpp \
+            lagid.cpp 
 
 orchagent_SOURCES += flex_counter/flex_counter_manager.cpp flex_counter/flex_counter_stat_manager.cpp
 orchagent_SOURCES += debug_counter/debug_counter.cpp debug_counter/drop_counter.cpp

@@ -789,14 +789,19 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
     attr.id = SAI_MACSEC_ATTR_DIRECTION;
     attr.value.s32 = SAI_MACSEC_DIRECTION_EGRESS;
     attrs.push_back(attr);
-    if (sai_macsec_api->create_macsec(
-            &macsec_obj.first->second.m_egress_id,
-            switch_id,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_macsec_api->create_macsec(
+                                &macsec_obj.first->second.m_egress_id,
+                                switch_id,
+                                static_cast<uint32_t>(attrs.size()),
+                                attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Cannot initialize MACsec egress object at the switch 0x%" PRIx64, switch_id);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     recover.add_action([&]() { sai_macsec_api->remove_macsec(macsec_obj.first->second.m_egress_id); });
 
@@ -804,14 +809,19 @@ bool MACsecOrch::initMACsecObject(sai_object_id_t switch_id)
     attr.id = SAI_MACSEC_ATTR_DIRECTION;
     attr.value.s32 = SAI_MACSEC_DIRECTION_INGRESS;
     attrs.push_back(attr);
-    if (sai_macsec_api->create_macsec(
-            &macsec_obj.first->second.m_ingress_id,
-            switch_id,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
+    status = sai_macsec_api->create_macsec(
+                                &macsec_obj.first->second.m_ingress_id,
+                                switch_id,
+                                static_cast<uint32_t>(attrs.size()),
+                                attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Cannot initialize MACsec ingress object at the switch 0x%" PRIx64, switch_id);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     recover.add_action([&]() { sai_macsec_api->remove_macsec(macsec_obj.first->second.m_ingress_id); });
 
@@ -847,18 +857,18 @@ bool MACsecOrch::deinitMACsecObject(sai_object_id_t switch_id)
 
     bool result = true;
 
-    if (sai_macsec_api->remove_macsec(
-            macsec_obj->second.m_egress_id) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_macsec_api->remove_macsec(macsec_obj->second.m_egress_id);
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Cannot deinitialize MACsec egress object at the switch 0x%" PRIx64, macsec_obj->first);
-        result &= false;
+        result &= (handleSaiRemoveStatus(SAI_API_MACSEC, status) == task_success);
     }
 
-    if (sai_macsec_api->remove_macsec(
-            macsec_obj->second.m_ingress_id) != SAI_STATUS_SUCCESS)
+    status = sai_macsec_api->remove_macsec(macsec_obj->second.m_ingress_id);
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Cannot deinitialize MACsec ingress object at the switch 0x%" PRIx64, macsec_obj->first);
-        result &= false;
+        result &= (handleSaiRemoveStatus(SAI_API_MACSEC, status) == task_success);
     }
 
     m_macsec_objs.erase(macsec_obj);
@@ -1005,13 +1015,18 @@ bool MACsecOrch::createMACsecPort(
     attr.id = SAI_MACSEC_PORT_ATTR_PORT_ID;
     attr.value.oid = line_port_id;
     attrs.push_back(attr);
-    if (sai_macsec_api->create_macsec_port(
-            &macsec_port_id,
-            switch_id,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_macsec_api->create_macsec_port(
+                                &macsec_port_id,
+                                switch_id,
+                                static_cast<uint32_t>(attrs.size()),
+                                attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     return true;
@@ -1169,10 +1184,14 @@ bool MACsecOrch::deleteMACsecPort(
 
 bool MACsecOrch::deleteMACsecPort(sai_object_id_t macsec_port_id)
 {
-    if (sai_macsec_api->remove_macsec_port(
-            macsec_port_id) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_macsec_api->remove_macsec_port(macsec_port_id);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -1195,23 +1214,32 @@ bool MACsecOrch::createMACsecFlow(
     attr.id = SAI_MACSEC_FLOW_ATTR_MACSEC_DIRECTION;
     attr.value.s32 = direction;
     attrs.push_back(attr);
-    if (sai_macsec_api->create_macsec_flow(
-            &flow_id,
-            switch_id,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_macsec_api->create_macsec_flow(
+                            &flow_id,
+                            switch_id,
+                            static_cast<uint32_t>(attrs.size()),
+                            attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
 
 bool MACsecOrch::deleteMACsecFlow(sai_object_id_t flow_id)
 {
-    if (sai_macsec_api->remove_macsec_flow(
-            flow_id) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_macsec_api->remove_macsec_flow(flow_id);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -1441,14 +1469,19 @@ bool MACsecOrch::createMACsecSC(
     attr.value.s32 = cipher_suite;
     attrs.push_back(attr);
 
-    if (sai_macsec_api->create_macsec_sc(
-            &sc_id,
-            switch_id,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_macsec_api->create_macsec_sc(
+                                &sc_id,
+                                switch_id,
+                                static_cast<uint32_t>(attrs.size()),
+                                attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_WARN("Cannot create MACsec egress SC 0x%" PRIx64, sci);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -1525,10 +1558,14 @@ bool MACsecOrch::deleteMACsecSC(sai_object_id_t sc_id)
 {
     SWSS_LOG_ENTER();
 
-    if (sai_macsec_api->remove_macsec_sc(
-            sc_id) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_macsec_api->remove_macsec_sc(sc_id);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -1812,13 +1849,18 @@ bool MACsecOrch::createMACsecSA(
         attrs.push_back(attr);
     }
 
-    if (sai_macsec_api->create_macsec_sa(
-            &sa_id,
-            switch_id,
-            static_cast<uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_macsec_api->create_macsec_sa(
+                                &sa_id,
+                                switch_id,
+                                static_cast<uint32_t>(attrs.size()),
+                                attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -1826,10 +1868,15 @@ bool MACsecOrch::createMACsecSA(
 bool MACsecOrch::deleteMACsecSA(sai_object_id_t sa_id)
 {
     SWSS_LOG_ENTER();
-    if (sai_macsec_api->remove_macsec_sa(
-            sa_id) != SAI_STATUS_SUCCESS)
+
+    sai_status_t status = sai_macsec_api->remove_macsec_sa(sa_id);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_MACSEC, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -1992,22 +2039,32 @@ bool MACsecOrch::createMACsecACLTable(
     attr.value.booldata = sci_in_sectag;
     attrs.push_back(attr);
 
-    if (sai_acl_api->create_acl_table(
-            &table_id,
-            switch_id,
-            static_cast<std::uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_acl_api->create_acl_table(
+                                &table_id,
+                                switch_id,
+                                static_cast<std::uint32_t>(attrs.size()),
+                                attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
 
 bool MACsecOrch::deleteMACsecACLTable(sai_object_id_t table_id)
 {
-    if (sai_acl_api->remove_acl_table(table_id) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_acl_api->remove_acl_table(table_id);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -2029,11 +2086,14 @@ bool MACsecOrch::bindMACsecACLTabletoPort(
     }
     attr.value.oid = table_id;
 
-    if (sai_port_api->set_port_attribute(
-            port_id,
-            &attr) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -2054,11 +2114,14 @@ bool MACsecOrch::unbindMACsecACLTable(
     }
     attr.value.oid = SAI_NULL_OBJECT_ID;
 
-    if (sai_port_api->set_port_attribute(
-            port_id,
-            &attr) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_port_api->set_port_attribute(port_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_PORT, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -2100,13 +2163,18 @@ bool MACsecOrch::createMACsecACLEAPOLEntry(
     attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_FORWARD;
     attr.value.aclaction.enable = true;
     attrs.push_back(attr);
-    if (sai_acl_api->create_acl_entry(
-            &entry_id,
-            switch_id,
-            static_cast<std::uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_acl_api->create_acl_entry(
+                                &entry_id,
+                                switch_id,
+                                static_cast<std::uint32_t>(attrs.size()),
+                                attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -2141,13 +2209,19 @@ bool MACsecOrch::createMACsecACLDataEntry(
         attr.value.u64 = sci;
         attrs.push_back(attr);
     }
-    if (sai_acl_api->create_acl_entry(
-            &entry_id,
-            switch_id,
-            static_cast<std::uint32_t>(attrs.size()),
-            attrs.data()) != SAI_STATUS_SUCCESS)
+
+    sai_status_t status = sai_acl_api->create_acl_entry(
+                                &entry_id,
+                                switch_id,
+                                static_cast<std::uint32_t>(attrs.size()),
+                                attrs.data());
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }
@@ -2160,21 +2234,27 @@ bool MACsecOrch::setMACsecFlowActive(sai_object_id_t entry_id, sai_object_id_t f
     attr.value.aclaction.parameter.oid = flow_id;
     attr.value.aclaction.enable = active;
 
-    if (sai_acl_api->set_acl_entry_attribute(
-            entry_id,
-            &attr) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_acl_api->set_acl_entry_attribute(entry_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     attr.id = SAI_ACL_ENTRY_ATTR_ACTION_PACKET_ACTION;
     attr.value.aclaction.parameter.s32 = SAI_PACKET_ACTION_DROP;
     attr.value.aclaction.enable = !active;
-    if (sai_acl_api->set_acl_entry_attribute(
-            entry_id,
-            &attr) != SAI_STATUS_SUCCESS)
+    status = sai_acl_api->set_acl_entry_attribute(entry_id, &attr);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     return true;
@@ -2182,10 +2262,14 @@ bool MACsecOrch::setMACsecFlowActive(sai_object_id_t entry_id, sai_object_id_t f
 
 bool MACsecOrch::deleteMACsecACLEntry(sai_object_id_t entry_id)
 {
-    if (sai_acl_api->remove_acl_entry(
-            entry_id) != SAI_STATUS_SUCCESS)
+    sai_status_t status = sai_acl_api->remove_acl_entry(entry_id);
+    if (status != SAI_STATUS_SUCCESS)
     {
-        return false;
+        task_process_status handle_status = handleSaiRemoveStatus(SAI_API_ACL, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     return true;
 }

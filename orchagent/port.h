@@ -51,6 +51,13 @@ struct SystemPortInfo
     uint32_t num_voq = 8;
 };
 
+struct SystemLagInfo
+{
+    std::string alias = "";
+    int32_t switch_id = -1;
+    int32_t spa_id = 0;
+};
+
 class Port
 {
 public:
@@ -142,6 +149,7 @@ public:
 
     sai_object_id_t  m_system_port_oid = 0;
     SystemPortInfo   m_system_port_info;
+    SystemLagInfo    m_system_lag_info;
 
 };
 

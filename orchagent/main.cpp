@@ -67,6 +67,8 @@ string gMySwitchType = "";
 int32_t gVoqMySwitchId = -1;
 int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
+string gMyHostName = "";
+string gMyAsicName = "";
 
 void usage()
 {
@@ -209,6 +211,34 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
     if (gVoqMaxCores == 0)
     {
         SWSS_LOG_ERROR("Invalid VOQ max cores %d configured", gVoqMaxCores);
+        return false;
+    }
+
+    if (!cfgDeviceMetaDataTable.hget("localhost", "hostname", value))
+    {
+        // hostname is not configured.
+        SWSS_LOG_ERROR("Host name is not configured");
+        return false;
+    }
+    gMyHostName = value;
+
+    if (!gMyHostName.size())
+    {
+        SWSS_LOG_ERROR("Invalid host name %s configured", gMyHostName.c_str());
+        return false;
+    }
+
+    if (!cfgDeviceMetaDataTable.hget("localhost", "asic_name", value))
+    {
+        // asic_name is not configured.
+        SWSS_LOG_ERROR("Asic name is not configured");
+        return false;
+    }
+    gMyAsicName = value;
+
+    if (!gMyAsicName.size())
+    {
+        SWSS_LOG_ERROR("Invalid asic name %s configured", gMyAsicName.c_str());
         return false;
     }
 
