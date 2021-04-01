@@ -1,4 +1,5 @@
 import time
+import pytest
 
 # Counter keys on ConfigDB
 PORT_KEY                  =   "PORT"
@@ -24,6 +25,13 @@ BUFFER_POOL_WATERMARK_MAP =   "COUNTERS_BUFFER_POOL_NAME_MAP"
 PORT_BUFFER_DROP_MAP      =   "COUNTERS_PORT_NAME_MAP"
 PG_WATERMARK_MAP          =   "COUNTERS_PG_NAME_MAP"
 
+counter_type_dict = {"port_counter":[PORT_KEY, PORT_STAT, PORT_MAP],
+                     "queue_counter":[QUEUE_KEY, QUEUE_STAT, QUEUE_MAP],
+                     "rif_counter":[RIF_KEY, RIF_STAT, RIF_MAP],
+                     "buffer_pool_watermark_counter":[BUFFER_POOL_WATERMARK_KEY, BUFFER_POOL_WATERMARK_STAT, BUFFER_POOL_WATERMARK_MAP],
+                     "port_buffer_drop_counter":[PORT_BUFFER_DROP_KEY, PORT_BUFFER_DROP_STAT, PORT_BUFFER_DROP_MAP],
+                     "pg_watermark_counter":[PG_WATERMARK_KEY, PG_WATERMARK_STAT, PG_WATERMARK_MAP]}
+
 class TestFlexCounters(object):
 
     def setup_dbs(self, dvs):
@@ -31,68 +39,45 @@ class TestFlexCounters(object):
         self.flex_db = dvs.get_flex_db()
         self.counters_db = dvs.get_counters_db()
 
+    def verify_no_flex_counters_tables(self, counter_stat):
+        counters_stat_keys = self.flex_db.get_keys("FLEX_COUNTER_TABLE:" + counter_stat)
+        assert len(counters_stat_keys) == 0, "FLEX_COUNTER_TABLE:" + str(counter_stat) + " tables exist before enabling the flex counter group"
+
     def verify_flex_counters_populated(self, map, stat):
         counters_keys = self.counters_db.db_connection.hgetall(map)
         assert len(counters_keys) > 0, str(map) + " not created in Counters DB"
 
         for counter_entry in counters_keys.items():
-            id_list = self.flex_db.db_connection.hgetall("FLEX_COUNTER_TABLE:" + stat + ":" + counter_entry[1]).items()
-            assert len(id_list) > 0, "No ID list for counter " + str(counter_entry[0])
+            name = counter_entry[0]
+            oid = counter_entry[1]
+            id_list = self.flex_db.db_connection.hgetall("FLEX_COUNTER_TABLE:" + stat + ":" + oid).items()
+            assert len(id_list) > 0, "No ID list for counter " + str(name)
 
     def enable_flex_counter_group(self, group):
         group_stats_entry = {"FLEX_COUNTER_STATUS": "enable"}
         self.config_db.create_entry("FLEX_COUNTER_TABLE", group, group_stats_entry)
         time.sleep(2)
 
-    def test_port_counters(self, dvs):
+    @pytest.mark.parametrize("counter_type", ["port_counter",
+                                              "queue_counter",
+                                              "rif_counter",
+                                              "buffer_pool_watermark_counter",
+                                              "port_buffer_drop_counter",
+                                              "pg_watermark_counter"])
+    def test_flex_counters(self, dvs, counter_type):
         self.setup_dbs(dvs)
-        try:
-            self.enable_flex_counter_group(PORT_KEY)
-            self.verify_flex_counters_populated(PORT_MAP, PORT_STAT)
-        except Exception as e:
-            assert False, "Failed to write/read from DB, exception: {}".format(str(e))
+        counter_key = counter_type_dict[counter_type][0]
+        counter_stat = counter_type_dict[counter_type][1]
+        counter_map = counter_type_dict[counter_type][2]
 
-    def test_queue_counters(self, dvs):
-        self.setup_dbs(dvs)
-        try:
-            self.enable_flex_counter_group(QUEUE_KEY)
-            self.verify_flex_counters_populated(QUEUE_MAP, QUEUE_STAT)
-        except Exception as e:
-            assert False, "Failed to write/read from DB, exception: {}".format(str(e))
+        self.verify_no_flex_counters_tables(counter_stat)
 
-    def test_rif_counters(self, dvs):
-        self.setup_dbs(dvs)
-        try:
+        if counter_type == "rif_counter":
             self.config_db.db_connection.hset('INTERFACE|Ethernet0', "NULL", "NULL")
             self.config_db.db_connection.hset('INTERFACE|Ethernet0|192.168.0.1/24', "NULL", "NULL")
 
-            self.enable_flex_counter_group(RIF_KEY)
-            self.verify_flex_counters_populated(RIF_MAP, RIF_STAT)
+        self.enable_flex_counter_group(counter_key)
+        self.verify_flex_counters_populated(counter_map, counter_stat)
 
+        if counter_type == "rif_counter":
             self.config_db.db_connection.hdel('INTERFACE|Ethernet0|192.168.0.1/24', "NULL")
-        except Exception as e:
-            assert False, "Failed to write/read from DB, exception: {}".format(str(e))
-
-    def test_buffer_pool_watermark_counters(self, dvs):
-        self.setup_dbs(dvs)
-        try:
-            self.enable_flex_counter_group(BUFFER_POOL_WATERMARK_KEY)
-            self.verify_flex_counters_populated(BUFFER_POOL_WATERMARK_MAP, BUFFER_POOL_WATERMARK_STAT)
-        except Exception as e:
-            assert False, "Failed to write/read from DB, exception: {}".format(str(e))
-
-    def test_port_buffer_drop_counters(self, dvs):
-        self.setup_dbs(dvs)
-        try:
-            self.enable_flex_counter_group(PORT_BUFFER_DROP_KEY)
-            self.verify_flex_counters_populated(PORT_BUFFER_DROP_MAP, PORT_BUFFER_DROP_STAT)
-        except Exception as e:
-            assert False, "Failed to write/read from DB, exception: {}".format(str(e))
-
-    def test_pg_watermark_counters(self, dvs):
-        self.setup_dbs(dvs)
-        try:
-            self.enable_flex_counter_group(PG_WATERMARK_KEY)
-            self.verify_flex_counters_populated(PG_WATERMARK_MAP, PG_WATERMARK_STAT)
-        except Exception as e:
-            assert False, "Failed to write/read from DB, exception: {}".format(str(e))
