@@ -19,6 +19,7 @@ stages:
       swss_common_artifact_name: sonic-swss-common
       sairedis_artifact_name: sonic-sairedis
       artifact_name: sonic-swss
+      archive_pytests: true
 
 - stage: BuildArm
   dependsOn: Build

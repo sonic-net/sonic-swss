@@ -30,6 +30,10 @@ parameters:
 - name: artifact_name
   type: string
 
+- name: archive_pytests
+  type: boolean
+  default: false
+
 jobs:
 - job:
   displayName: ${{ parameters.arch }}
@@ -93,9 +97,16 @@ jobs:
   - checkout: self
     submodules: true
   - script: |
+      set -x
+      tar czf pytest.tgz tests
+      cp -r pytest.tgz $(Build.ArtifactStagingDirectory)/
       ./autogen.sh
       dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
     displayName: "Compile sonic swss"
   - publish: $(System.DefaultWorkingDirectory)/
     artifact: ${{ parameters.artifact_name }}
     displayName: "Archive swss debian packages"
+  - publish: $(Build.ArtifactStagingDirectory)/
+    artifact: sonic-swss-pytests
+    displayName: "Archive swss pytests"
+    condition: eq('${{ parameters.archive_pytests }}', true)
