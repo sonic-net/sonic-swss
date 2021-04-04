@@ -58,6 +58,10 @@ class TestFlexCounters(object):
         self.config_db.create_entry("FLEX_COUNTER_TABLE", group, group_stats_entry)
         time.sleep(2)
 
+# The test will check there are no flex counters tables on FlexCounter DB when the counters are disabled.
+# After enabling each counter group, the test will check the flow of creating flex counters tables on FlexCounter DB.
+# For some counter types the MAPS on COUNTERS DB will be created as well after enabling the counter group, this will be also verified on this test.
+
     @pytest.mark.parametrize("counter_type", ["port_counter",
                                               "queue_counter",
                                               "rif_counter",
