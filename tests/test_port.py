@@ -70,6 +70,28 @@ class TestPort(object):
 
         assert oper_status == "up"
 
+    def test_PortFecForce(self, dvs, testlog):
+        db = swsscommon.DBConnector(0, dvs.redis_sock, 0)
+        adb = dvs.get_asic_db()
+
+        ptbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
+
+        # set fec
+        fvs = swsscommon.FieldValuePairs([("fec","none")])
+        ptbl.set("Ethernet0", fvs)
+        fvs = swsscommon.FieldValuePairs([("fec","rs")])
+        ptbl.set("Ethernet4", fvs)
+
+        # validate if fec none is pushed to asic db when set first time
+        port_oid = adb.port_name_map["Ethernet0"]
+        expected_fields = {"SAI_PORT_ATTR_FEC_MODE":"SAI_PORT_FEC_MODE_NONE"}
+        adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+
+        # validate if fec rs is pushed to asic db when set first time
+        port_oid = adb.port_name_map["Ethernet4"]
+        expected_fields = {"SAI_PORT_ATTR_FEC_MODE":"SAI_PORT_FEC_MODE_RS"}
+        adb.wait_for_field_match("ASIC_STATE:SAI_OBJECT_TYPE_PORT", port_oid, expected_fields)
+
     def test_PortFec(self, dvs, testlog):
         dvs.runcmd("config interface startup Ethernet0")
         dvs.runcmd("config interface ip add Ethernet0 10.0.0.0/31")
