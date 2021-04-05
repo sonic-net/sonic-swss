@@ -109,6 +109,15 @@ bool VRFOrch::addOperation(const Request& request)
         gRouteOrch->addLinkLocalRouteToMe(router_id, default_link_local_prefix);
         SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in VRF %s", default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
 
+        /* All the interfaces have the same MAC address and hence the same
+         * auto-generated link-local ipv6 address with eui64 interface-id.
+         * Hence add a single /128 route entry for the link-local interface
+         * address pointing to the CPU port.
+         */
+        IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr();
+        gRouteOrch->addLinkLocalRouteToMe(router_id, linklocal_prefix);
+        SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu in VRF %s", linklocal_prefix.to_string().c_str(), vrf_name.c_str());
+
         vrf_table_[vrf_name].vrf_id = router_id;
         vrf_table_[vrf_name].ref_count = 0;
         vrf_id_table_[router_id] = vrf_name;
@@ -172,11 +181,15 @@ bool VRFOrch::delOperation(const Request& request)
     if (vrf_table_[vrf_name].ref_count)
         return false;
 
-    /* Delete link-local fe80::/10 CPU route for the VRF. */
-    IpPrefix default_link_local_prefix("fe80::/10");
-
     sai_object_id_t router_id = vrf_table_[vrf_name].vrf_id;
 
+    /* Delete link-local ipv6 address with eui64 /128 CPU route for the VRF. */
+    IpPrefix linklocal_prefix = gRouteOrch->getLinkLocalEui64Addr();
+    gRouteOrch->delLinkLocalRouteToMe(router_id, linklocal_prefix);
+    SWSS_LOG_NOTICE("Deleted link local ipv6 route %s to cpu in VRF %s", linklocal_prefix.to_string().c_str(), vrf_name.c_str());
+
+    /* Delete link-local fe80::/10 CPU route for the VRF. */
+    IpPrefix default_link_local_prefix("fe80::/10");
     gRouteOrch->delLinkLocalRouteToMe(router_id, default_link_local_prefix);
     SWSS_LOG_NOTICE("Deleted link local ipv6 route %s to cpu in VRF %s", default_link_local_prefix.to_string().c_str(), vrf_name.c_str());
 

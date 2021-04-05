@@ -154,6 +154,7 @@ public:
 
     void addLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
     void delLinkLocalRouteToMe(sai_object_id_t vrf_id, IpPrefix linklocal_prefix);
+    std::string getLinkLocalEui64Addr(void);
 
 private:
     SwitchOrch *m_switchOrch;
@@ -190,8 +191,6 @@ private:
     bool removeLabelRoute(LabelRouteBulkContext& ctx);
     bool addLabelRoutePost(const LabelRouteBulkContext& ctx, const NextHopGroupKey &nextHops);
     bool removeLabelRoutePost(const LabelRouteBulkContext& ctx);
-
-    std::string getLinkLocalEui64Addr(void);
 
     void doTask(Consumer& consumer);
     void doLabelTask(Consumer& consumer);

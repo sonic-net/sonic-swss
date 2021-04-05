@@ -119,11 +119,23 @@ RouteOrch::RouteOrch(DBConnector *db, vector<table_name_with_pri_t> &tableNames,
 
     SWSS_LOG_NOTICE("Create IPv6 default route with packet action drop");
 
+    /* All the interfaces have the same MAC address and hence the same
+     * auto-generated link-local ipv6 address with eui64 interface-id.
+     * Hence add a single /128 route entry for the link-local interface
+     * address pointing to the CPU port.
+     */
+    IpPrefix linklocal_prefix = getLinkLocalEui64Addr();
+
+    addLinkLocalRouteToMe(gVirtualRouterId, linklocal_prefix);
+    SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", linklocal_prefix.to_string().c_str());
+
     /* Add fe80::/10 subnet route to forward all link-local packets
      * destined to us, to CPU */
     IpPrefix default_link_local_prefix("fe80::/10");
 
     addLinkLocalRouteToMe(gVirtualRouterId, default_link_local_prefix);
+    SWSS_LOG_NOTICE("Created link local ipv6 route %s to cpu", default_link_local_prefix.to_string().c_str());
+
 }
 
 std::string RouteOrch::getLinkLocalEui64Addr(void)
