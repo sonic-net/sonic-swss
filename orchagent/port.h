@@ -152,6 +152,8 @@ public:
     SystemPortInfo   m_system_port_info;
     SystemLagInfo    m_system_lag_info;
 
+    bool m_fec_cfg = false;
+    bool m_an_cfg = false;
 };
 
 }
