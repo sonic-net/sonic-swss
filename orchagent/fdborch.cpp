@@ -305,12 +305,6 @@ void FdbOrch::update(sai_fdb_event_t        type,
         {
             update.port.m_fdb_count--;
             m_portsOrch->setPort(update.port.m_alias, update.port);
-
-            // this is not posted in last PR but its present in gerrit
-            if ((update.port.m_fdb_count == 0) && (update.port.m_vlan_members.empty()))
-            {
-                m_portsOrch->removeBridgePort(update.port);
-            }
         }
         if (!vlan.m_alias.empty())
         {
@@ -692,15 +686,16 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     std::string data;
     std::vector<swss::FieldValueTuple> values;
 
-    Port vlan;
-    Port port;
-
     consumer.pop(op, data, values);
 
     if (&consumer == m_flushNotificationsConsumer)
     {
         if (op == "ALL")
         {
+            /*
+             * so far only support flush all the FDB entries
+             * flush per port and flush per vlan will be added later.
+             */
             status = sai_fdb_api->flush_fdb_entries(gSwitchId, 0, NULL);
             if (status != SAI_STATUS_SUCCESS)
             {
@@ -711,22 +706,14 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
         }
         else if (op == "PORT")
         {
-            if (!m_portsOrch->getPort(data, port))
-            {
-                SWSS_LOG_ERROR("could not locate port from data %s", data.c_str());
-                return;
-            }
-            flushFDBEntries(port.m_bridge_port_id, SAI_NULL_OBJECT_ID);
+            /*place holder for flush port fdb*/
+            SWSS_LOG_ERROR("Received unsupported flush port fdb request");
             return;
         }
         else if (op == "VLAN")
         {
-            if (!m_portsOrch->getPort(data, vlan))
-            {
-                SWSS_LOG_ERROR("could not locate vlan from data %s", data.c_str());
-                return;
-            }
-            flushFDBEntries(SAI_NULL_OBJECT_ID, vlan.m_vlan_info.vlan_oid);
+            /*place holder for flush vlan fdb*/
+            SWSS_LOG_ERROR("Received unsupported flush vlan fdb request");
             return;
         }
         else
@@ -739,12 +726,6 @@ void FdbOrch::doTask(NotificationConsumer& consumer)
     {
         uint32_t count;
         sai_fdb_event_notification_data_t *fdbevent = nullptr;
-        extern void handle_fdb_event(_In_ const std::string &data);
-        /* The sai_redis fdb handling is moved here so that both
-         * reference count updates (sai_redis and portsOrch)
-         * happen in same context to avoid any mismatch.
-         */
-        handle_fdb_event(data);
 
         sai_deserialize_fdb_event_ntf(data, count, &fdbevent);
 
