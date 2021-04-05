@@ -50,11 +50,7 @@ void MclagLink::addVlanMbr(std::string vlan, std::string mbr_port)
 //returns 1 if present, else returns zero
 int MclagLink::findVlanMbr(std::string vlan, std::string mbr_port)
 {
-    if (m_vlan_mbrship.find(vlan_mbr(vlan,mbr_port))  != m_vlan_mbrship.end())
-    {
-        return 1;
-    }
-    return 0;
+    return (m_vlan_mbrship.find(vlan_mbr(vlan,mbr_port))  != m_vlan_mbrship.end());
 }
 
 

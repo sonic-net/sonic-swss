@@ -177,10 +177,7 @@ struct mclagDomainData
 
     bool allFieldsEmpty() const
     {
-        if (source_ip.empty() && peer_ip.empty() && peer_link.empty()
-                && keepalive_interval == -1 && session_timeout == -1)
-            return 1;
-        return 0;
+        return (source_ip.empty() && peer_ip.empty() && peer_link.empty() && keepalive_interval == -1 && session_timeout == -1);
     }
 };
 
