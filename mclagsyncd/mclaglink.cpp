@@ -260,7 +260,7 @@ void MclagLink::setPortIsolate(char *msg)
         cur = cur + op_hdr->op_len;
 
         /*get isolate dst ports infor*/
-        op_hdr = (mclag_sub_option_hdr_t *)cur;
+        op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
         cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
 
 
@@ -339,14 +339,14 @@ void MclagLink::setPortIsolate(char *msg)
         cur = msg;
 
         /*get isolate src port infor*/
-        op_hdr = (mclag_sub_option_hdr_t *)cur;
+        op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
         cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
         isolate_src_port.insert(0, (const char*)cur, op_hdr->op_len);
 
         cur = cur + op_hdr->op_len;
 
         /*get isolate dst ports infor*/
-        op_hdr = (mclag_sub_option_hdr_t *)cur;
+        op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
         cur = cur + MCLAG_SUB_OPTION_HDR_LEN;
         isolate_dst_port.insert(0, (const char*)cur, op_hdr->op_len);
 
@@ -737,7 +737,7 @@ void MclagLink::processMclagDomainCfg(std::deque<KeyOpFieldsValuesTuple> &entrie
 
             for (auto i : kfvFieldsValues(entry))
             {
-                SWSS_LOG_DEBUG(" MCLAGSYNCD CFG Table Updates : "   "Field %s, Value: %s size:%ld EntryExits:%d \n", 
+                SWSS_LOG_DEBUG(" MCLAGSYNCD CFG Table Updates : "   "Field %s, Value: %s size:%d EntryExits:%d \n", 
                         fvField(i).c_str(), fvValue(i).c_str(), fvValue(i).size(), entryExists);
 
                 if (fvField(i) == "source_ip")
@@ -922,7 +922,7 @@ void MclagLink::processMclagDomainCfg(std::deque<KeyOpFieldsValuesTuple> &entrie
 
         if (MCLAG_MAX_SEND_MSG_LEN - infor_len < (sizeof(struct mclag_domain_cfg_info)) )
         {
-            cfg_msg_hdr = (mclag_msg_hdr_t *)infor_start;
+            cfg_msg_hdr = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
             cfg_msg_hdr->version = 1;
             cfg_msg_hdr->msg_len = (unsigned short)infor_len;
             cfg_msg_hdr->msg_type = MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_DOMAIN;
@@ -949,7 +949,7 @@ void MclagLink::processMclagDomainCfg(std::deque<KeyOpFieldsValuesTuple> &entrie
     if (infor_len <= sizeof(mclag_msg_hdr_t))
         return;
 
-    cfg_msg_hdr = (mclag_msg_hdr_t *)infor_start;
+    cfg_msg_hdr = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
     cfg_msg_hdr->version = 1;
     cfg_msg_hdr->msg_len = (unsigned short)infor_len;
     cfg_msg_hdr->msg_type = MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_DOMAIN;
@@ -1049,7 +1049,7 @@ void MclagLink::mclagsyncd_send_mclag_iface_cfg(std::deque<KeyOpFieldsValuesTupl
 
         if (MCLAG_MAX_SEND_MSG_LEN - infor_len < (sizeof(struct mclag_iface_cfg_info)) )
         {
-            cfg_msg_hdr = (mclag_msg_hdr_t *)infor_start;
+            cfg_msg_hdr = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
             cfg_msg_hdr->version = 1;
             cfg_msg_hdr->msg_len = (unsigned short)infor_len;
             cfg_msg_hdr->msg_type = MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_IFACE;
@@ -1073,7 +1073,7 @@ void MclagLink::mclagsyncd_send_mclag_iface_cfg(std::deque<KeyOpFieldsValuesTupl
     if (infor_len <= sizeof(mclag_msg_hdr_t))
         return; 
 
-    cfg_msg_hdr = (mclag_msg_hdr_t *)infor_start;
+    cfg_msg_hdr = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
     cfg_msg_hdr->version = 1;
     cfg_msg_hdr->msg_len = (unsigned short)infor_len;
     cfg_msg_hdr->msg_type = MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_IFACE;
@@ -1141,7 +1141,7 @@ void MclagLink::mclagsyncd_send_mclag_unique_ip_cfg(std::deque<KeyOpFieldsValues
 
         if (MCLAG_MAX_SEND_MSG_LEN - infor_len < (sizeof(struct mclag_unique_ip_cfg_info)) )
         {
-            cfg_msg_hdr = (mclag_msg_hdr_t *)infor_start;
+            cfg_msg_hdr = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
             cfg_msg_hdr->version = 1;
             cfg_msg_hdr->msg_len = (unsigned short)infor_len;
             cfg_msg_hdr->msg_type = MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_UNIQUE_IP;
@@ -1166,7 +1166,7 @@ void MclagLink::mclagsyncd_send_mclag_unique_ip_cfg(std::deque<KeyOpFieldsValues
     if (infor_len <= sizeof(mclag_msg_hdr_t))
         return;
 
-    cfg_msg_hdr = (mclag_msg_hdr_t *)infor_start;
+    cfg_msg_hdr = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
     cfg_msg_hdr->version = 1;
     cfg_msg_hdr->msg_len = (unsigned short)infor_len;
     cfg_msg_hdr->msg_type = MCLAG_SYNCD_MSG_TYPE_CFG_MCLAG_UNIQUE_IP;
@@ -1248,7 +1248,7 @@ void MclagLink::processVlanMemberTableUpdates(std::deque<KeyOpFieldsValuesTuple>
 
         if (MCLAG_MAX_SEND_MSG_LEN - infor_len < (sizeof(struct mclag_vlan_mbr_info)) )
         {
-            msg_hdr = (mclag_msg_hdr_t *)infor_start;
+            msg_hdr = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
             msg_hdr->version = 1;
             msg_hdr->msg_len = (unsigned short)infor_len;
             msg_hdr->msg_type = MCLAG_SYNCD_MSG_TYPE_VLAN_MBR_UPDATES;
@@ -1272,7 +1272,7 @@ void MclagLink::processVlanMemberTableUpdates(std::deque<KeyOpFieldsValuesTuple>
     if (infor_len <= sizeof(mclag_msg_hdr_t))
         return; 
 
-    msg_hdr = (mclag_msg_hdr_t *)infor_start;
+    msg_hdr = reinterpret_cast<mclag_msg_hdr_t *>(static_cast<void *>(infor_start));
     msg_hdr->version  = 1;
     msg_hdr->msg_len  = (unsigned short)infor_len;
     msg_hdr->msg_type = MCLAG_SYNCD_MSG_TYPE_VLAN_MBR_UPDATES;
@@ -1300,7 +1300,7 @@ void MclagLink::mclagsyncd_set_traffic_disable(
     vector<FieldValueTuple>   fvVector;
 
     /* Get port-channel name */
-    op_hdr = (mclag_sub_option_hdr_t *)msg;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(msg));
     if (op_hdr->op_type != MCLAG_SUB_OPTION_TYPE_MCLAG_INTF_NAME)
     {
         SWSS_LOG_ERROR("Invalid option type %u", op_hdr->op_type);
@@ -1335,7 +1335,7 @@ void MclagLink::mclagsyncd_set_iccp_state(
     while (cur_len < msg_len)
     {
         cur = msg + cur_len;
-        op_hdr = (mclag_sub_option_hdr_t *)cur;
+        op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
         switch(op_hdr->op_type)
         {
             case MCLAG_SUB_OPTION_TYPE_MCLAG_ID:
@@ -1385,7 +1385,7 @@ void MclagLink::mclagsyncd_set_iccp_role(
     while (cur_len < msg_len)
     {
         cur = msg + cur_len;
-        op_hdr = (mclag_sub_option_hdr_t *)cur;
+        op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
 
         switch(op_hdr->op_type)
         {
@@ -1439,7 +1439,7 @@ void MclagLink::mclagsyncd_set_system_id(
     while (cur_len < msg_len)
     {
         cur = msg + cur_len;
-        op_hdr = (mclag_sub_option_hdr_t *)cur;
+        op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
 
         switch(op_hdr->op_type)
         {
@@ -1480,7 +1480,7 @@ void MclagLink::mclagsyncd_del_iccp_info(
     vector<FieldValueTuple>   fvVector;
 
     /* Get MLAG ID */
-    op_hdr = (mclag_sub_option_hdr_t *)msg;
+    op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(msg));
     if (op_hdr->op_type != MCLAG_SUB_OPTION_TYPE_MCLAG_ID)
     {
         SWSS_LOG_ERROR("Invalid option type %u", op_hdr->op_type);
@@ -1542,7 +1542,7 @@ void MclagLink::mclagsyncd_set_remote_if_state(
     while (cur_len < msg_len)
     {
         cur = msg + cur_len;
-        op_hdr = (mclag_sub_option_hdr_t *)cur;
+        op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
         switch(op_hdr->op_type)
         {
             case MCLAG_SUB_OPTION_TYPE_MCLAG_ID:
@@ -1598,7 +1598,7 @@ void MclagLink::mclagsyncd_del_remote_if_info(
     while (cur_len < msg_len)
     {
         cur = msg + cur_len;
-        op_hdr = (mclag_sub_option_hdr_t *)cur;
+        op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
         switch(op_hdr->op_type)
         {
             case MCLAG_SUB_OPTION_TYPE_MCLAG_ID:
@@ -1646,7 +1646,7 @@ void MclagLink::mclagsyncd_set_peer_link_isolation(
     while (cur_len < msg_len)
     {
         cur = msg + cur_len;
-        op_hdr = (mclag_sub_option_hdr_t *)cur;
+        op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
         switch(op_hdr->op_type)
         {
             case MCLAG_SUB_OPTION_TYPE_MCLAG_ID:
@@ -1696,7 +1696,7 @@ void MclagLink::mclagsyncd_set_peer_system_id(
     while (cur_len < msg_len)
     {
         cur = msg + cur_len;
-        op_hdr = (mclag_sub_option_hdr_t *)cur;
+        op_hdr = reinterpret_cast<mclag_sub_option_hdr_t *>(static_cast<void *>(cur));
 
         switch(op_hdr->op_type)
         {
