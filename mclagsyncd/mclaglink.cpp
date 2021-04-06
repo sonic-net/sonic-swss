@@ -737,8 +737,8 @@ void MclagLink::processMclagDomainCfg(std::deque<KeyOpFieldsValuesTuple> &entrie
 
             for (auto i : kfvFieldsValues(entry))
             {
-                SWSS_LOG_DEBUG(" MCLAGSYNCD CFG Table Updates : "   "Field %s, Value: %s size:%ld EntryExits:%d \n", 
-                        fvField(i).c_str(), fvValue(i).c_str(), fvValue(i).size(), entryExists);
+                SWSS_LOG_DEBUG(" MCLAGSYNCD CFG Table Updates : "   "Field %s, Value: %s  EntryExits:%d \n", 
+                        fvField(i).c_str(), fvValue(i).c_str(), entryExists);
 
                 if (fvField(i) == "source_ip")
                 {
