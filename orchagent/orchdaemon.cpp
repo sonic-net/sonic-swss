@@ -58,7 +58,7 @@ OrchDaemon::~OrchDaemon()
     /*
      * Some orchagents call other agents in their destructor.
      * To avoid accessing deleted agent, do deletion in reverse order.
-     * NOTE: This is stil not a robust solution, as order in this list
+     * NOTE: This is still not a robust solution, as order in this list
      *       does not strictly match the order of construction of agents.
      * For a robust solution, first some cleaning/house-keeping in
      * orchagents management is in order.
@@ -102,7 +102,7 @@ bool OrchDaemon::init()
     };
 
     gCrmOrch = new CrmOrch(m_configDb, CFG_CRM_TABLE_NAME);
-    gPortsOrch = new PortsOrch(m_applDb, ports_tables);
+    gPortsOrch = new PortsOrch(m_applDb, ports_tables, m_chassisAppDb);
     TableConnector stateDbFdb(m_stateDb, STATE_FDB_TABLE_NAME);
     gFdbOrch = new FdbOrch(m_applDb, app_fdb_tables, stateDbFdb, gPortsOrch);
 
@@ -253,7 +253,7 @@ bool OrchDaemon::init()
         CFG_MUX_CABLE_TABLE_NAME,
         CFG_PEER_SWITCH_TABLE_NAME
     };
-    MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, tunnel_decap_orch, gNeighOrch);
+    MuxOrch *mux_orch = new MuxOrch(m_configDb, mux_tables, tunnel_decap_orch, gNeighOrch, gFdbOrch);
     gDirectory.set(mux_orch);
 
     MuxCableOrch *mux_cb_orch = new MuxCableOrch(m_applDb, APP_MUX_CABLE_TABLE_NAME);
@@ -602,7 +602,7 @@ void OrchDaemon::start()
 
 /*
  * Try to perform orchagent state restore and dynamic states sync up if
- * warm start reqeust is detected.
+ * warm start request is detected.
  */
 bool OrchDaemon::warmRestoreAndSyncUp()
 {
@@ -618,7 +618,7 @@ bool OrchDaemon::warmRestoreAndSyncUp()
      *
      * First iteration: switchorch, Port init/hostif create part of portorch, buffers configuration
      *
-     * Second iteratoin: port speed/mtu/fec_mode/pfc_asym/admin_status config,
+     * Second iteration: port speed/mtu/fec_mode/pfc_asym/admin_status config,
      * other orch(s) which wait for port to become ready.
      *
      * Third iteration: Drain remaining data that are out of order.

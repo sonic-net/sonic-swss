@@ -12,8 +12,8 @@ class TestPortAutoNeg(object):
 
         tbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
 
-        # set autoneg = false and speed = 1000
-        fvs = swsscommon.FieldValuePairs([("autoneg","1"), ("speed", "1000")])
+        # set autoneg = true and speed = 1000
+        fvs = swsscommon.FieldValuePairs([("autoneg","on"), ("speed", "1000")])
 
         tbl.set("Ethernet0", fvs)
 
@@ -50,7 +50,7 @@ class TestPortAutoNeg(object):
                 assert fv[1] == "1:100"
 
         # change autoneg to false
-        fvs = swsscommon.FieldValuePairs([("autoneg","0")])
+        fvs = swsscommon.FieldValuePairs([("autoneg","off")])
 
         tbl.set("Ethernet0", fvs)
 
@@ -99,7 +99,7 @@ class TestPortAutoNeg(object):
         stbl = swsscommon.Table(sdb, "PORT_TABLE")
 
         # set autoneg = true and speed = 1000
-        fvs = swsscommon.FieldValuePairs([("autoneg","1"), ("speed", "1000")])
+        fvs = swsscommon.FieldValuePairs([("autoneg","on"), ("speed", "1000")])
         ctbl.set("Ethernet0", fvs)
 
         time.sleep(1)

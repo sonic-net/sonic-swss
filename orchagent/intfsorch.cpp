@@ -35,6 +35,7 @@ extern BufferOrch *gBufferOrch;
 extern bool gIsNatSupported;
 extern NeighOrch *gNeighOrch;
 extern string gMySwitchType;
+extern int32_t gVoqMySwitchId;
 
 const int intfsorch_pri = 35;
 
@@ -190,7 +191,11 @@ bool IntfsOrch::setRouterIntfsMtu(const Port &port)
     {
         SWSS_LOG_ERROR("Failed to set router interface %s MTU to %u, rv:%d",
                 port.m_alias.c_str(), port.m_mtu, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_NOTICE("Set router interface %s MTU to %u",
             port.m_alias.c_str(), port.m_mtu);
@@ -212,7 +217,11 @@ bool IntfsOrch::setRouterIntfsMac(const Port &port)
     {
         SWSS_LOG_ERROR("Failed to set router interface %s MAC to %s, rv:%d",
                 port.m_alias.c_str(), port.m_mac.to_string().c_str(), status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_NOTICE("Set router interface %s MAC to %s",
             port.m_alias.c_str(), port.m_mac.to_string().c_str());
@@ -241,7 +250,11 @@ bool IntfsOrch::setRouterIntfsNatZoneId(Port &port)
     {
          SWSS_LOG_ERROR("Failed to set router interface %s NAT Zone Id to %u, rv:%d",
                 port.m_alias.c_str(), port.m_nat_zone_id, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
     SWSS_LOG_NOTICE("Set router interface %s NAT Zone Id to %u",
             port.m_alias.c_str(), port.m_nat_zone_id);
@@ -262,7 +275,11 @@ bool IntfsOrch::setRouterIntfsAdminStatus(const Port &port)
     {
         SWSS_LOG_ERROR("Failed to set router interface %s V4 admin status to %s, rv:%d",
                 port.m_alias.c_str(), port.m_admin_state_up == true ? "up" : "down", status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     attr.id = SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE;
@@ -272,7 +289,11 @@ bool IntfsOrch::setRouterIntfsAdminStatus(const Port &port)
     {
         SWSS_LOG_ERROR("Failed to set router interface %s V6 admin status to %s, rv:%d",
                 port.m_alias.c_str(), port.m_admin_state_up == true ? "up" : "down", status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     return true;
@@ -296,7 +317,11 @@ bool IntfsOrch::setIntfVlanFloodType(const Port &port, sai_vlan_flood_control_ty
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to set flood type for VLAN %u, rv:%d", port.m_vlan_info.vlan_id, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_VLAN, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     return true;
@@ -588,8 +613,8 @@ void IntfsOrch::doTask(Consumer &consumer)
         string vrf_name = "", vnet_name = "", nat_zone = "";
         MacAddress mac;
 
-        uint32_t mtu;
-        bool adminUp;
+        uint32_t mtu = 0;
+        bool adminUp = false;
         uint32_t nat_zone_id = 0;
         string proxy_arp = "";
         string inband_type = "";
@@ -742,7 +767,7 @@ void IntfsOrch::doTask(Consumer &consumer)
             Port port;
             if (!gPortsOrch->getPort(alias, port))
             {
-                if (isSubIntf)
+                if (!ip_prefix_in_key && isSubIntf)
                 {
                     if (!gPortsOrch->addSubPort(port, alias, adminUp, mtu))
                     {
@@ -826,6 +851,11 @@ void IntfsOrch::doTask(Consumer &consumer)
                     {
                         SWSS_LOG_ERROR("Failed to set router interface mac %s for port %s, rv:%d",
                                                      mac.to_string().c_str(), port.m_alias.c_str(), status);
+                        if (handleSaiSetStatus(SAI_API_ROUTER_INTERFACE, status) == task_need_retry)
+                        {
+                            it++;
+                            continue;
+                        }
                     }
                     else
                     {
@@ -1047,7 +1077,7 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
         attr.id = SAI_ROUTER_INTERFACE_ATTR_NAT_ZONE_ID;
         attr.value.u32 = port.m_nat_zone_id;
 
-        SWSS_LOG_INFO("Assinging NAT zone id %d to interface %s\n", attr.value.u32, port.m_alias.c_str());
+        SWSS_LOG_INFO("Assigning NAT zone id %d to interface %s\n", attr.value.u32, port.m_alias.c_str());
         attrs.push_back(attr);
     }
 
@@ -1056,7 +1086,10 @@ bool IntfsOrch::addRouterIntfs(sai_object_id_t vrf_id, Port &port)
     {
         SWSS_LOG_ERROR("Failed to create router interface %s, rv:%d",
                 port.m_alias.c_str(), status);
-        throw runtime_error("Failed to create router interface.");
+        if (handleSaiCreateStatus(SAI_API_ROUTER_INTERFACE, status) != task_success)
+        {
+            throw runtime_error("Failed to create router interface.");
+        }
     }
 
     port.m_vr_id = vrf_id;
@@ -1092,7 +1125,10 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove router interface for port %s, rv:%d", port.m_alias.c_str(), status);
-        throw runtime_error("Failed to remove router interface.");
+        if (handleSaiRemoveStatus(SAI_API_ROUTER_INTERFACE, status) != task_success)
+        {
+            throw runtime_error("Failed to remove router interface.");
+        }
     }
 
     port.m_rif_id = 0;
@@ -1136,7 +1172,10 @@ void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to create IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
-        throw runtime_error("Failed to create IP2me route.");
+        if (handleSaiCreateStatus(SAI_API_ROUTE, status) != task_success)
+        {
+            throw runtime_error("Failed to create IP2me route.");
+        }
     }
 
     SWSS_LOG_NOTICE("Create IP2me route ip:%s", ip_prefix.getIp().to_string().c_str());
@@ -1162,7 +1201,10 @@ void IntfsOrch::removeIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_pref
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to remove IP2me route ip:%s, rv:%d", ip_prefix.getIp().to_string().c_str(), status);
-        throw runtime_error("Failed to remove IP2me route.");
+        if (handleSaiRemoveStatus(SAI_API_ROUTE, status) != task_success)
+        {
+            throw runtime_error("Failed to remove IP2me route.");
+        }
     }
 
     SWSS_LOG_NOTICE("Remove packet action trap route ip:%s", ip_prefix.getIp().to_string().c_str());
@@ -1204,7 +1246,10 @@ void IntfsOrch::addDirectedBroadcast(const Port &port, const IpPrefix &ip_prefix
     {
         SWSS_LOG_ERROR("Failed to create broadcast entry %s rv:%d",
                        ip_addr.to_string().c_str(), status);
-        return;
+        if (handleSaiCreateStatus(SAI_API_NEIGHBOR, status) != task_success)
+        {
+            return;
+        }
     }
 
     SWSS_LOG_NOTICE("Add broadcast route for ip:%s", ip_addr.to_string().c_str());
@@ -1233,13 +1278,17 @@ void IntfsOrch::removeDirectedBroadcast(const Port &port, const IpPrefix &ip_pre
         if (status == SAI_STATUS_ITEM_NOT_FOUND)
         {
             SWSS_LOG_ERROR("No broadcast entry found for %s", ip_addr.to_string().c_str());
+            return;
         }
         else
         {
             SWSS_LOG_ERROR("Failed to remove broadcast entry %s rv:%d",
                            ip_addr.to_string().c_str(), status);
+            if (handleSaiRemoveStatus(SAI_API_NEIGHBOR, status) != task_success)
+            {
+                return;
+            }
         }
-        return;
     }
 
     SWSS_LOG_NOTICE("Remove broadcast route ip:%s", ip_addr.to_string().c_str());
@@ -1362,9 +1411,14 @@ bool IntfsOrch::isRemoteSystemPortIntf(string alias)
     Port port;
     if(gPortsOrch->getPort(alias, port))
     {
+        if (port.m_type == Port::LAG)
+        {
+            return(port.m_system_lag_info.switch_id != gVoqMySwitchId);
+        }
+
         return(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE);
     }
-    //Given alias is system port alias of the local port
+    //Given alias is system port alias of the local port/LAG
     return false;
 }
 
@@ -1375,11 +1429,22 @@ void IntfsOrch::voqSyncAddIntf(string &alias)
     Port port;
     if(gPortsOrch->getPort(alias, port))
     {
-        if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+        if (port.m_type == Port::LAG)
         {
-            return;
+            if (port.m_system_lag_info.switch_id != gVoqMySwitchId)
+            {
+                return;
+            }
+            alias = port.m_system_lag_info.alias;
         }
-        alias = port.m_system_port_info.alias;
+        else
+        {
+            if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+            {
+                return;
+            }
+            alias = port.m_system_port_info.alias;
+        }
     }
     else
     {
@@ -1401,11 +1466,22 @@ void IntfsOrch::voqSyncDelIntf(string &alias)
     Port port;
     if(gPortsOrch->getPort(alias, port))
     {
-        if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+        if (port.m_type == Port::LAG)
         {
-            return;
+            if (port.m_system_lag_info.switch_id != gVoqMySwitchId)
+            {
+                return;
+            }
+            alias = port.m_system_lag_info.alias;
         }
-        alias = port.m_system_port_info.alias;
+        else
+        {
+            if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+            {
+                return;
+            }
+            alias = port.m_system_port_info.alias;
+        }
     }
     else
     {

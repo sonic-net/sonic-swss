@@ -159,14 +159,18 @@ class TestWatermark(object):
 
         self.uc_q = []
         self.mc_q = []
+        self.all_q = []
 
         for q in self.qs:
-             if self.qs.index(q) % 16 < 8:
+             if self.qs.index(q) % 16 < 5:
                  tbl.set('', [(q, "SAI_QUEUE_TYPE_UNICAST")])
                  self.uc_q.append(q)
-             else:
+             elif self.qs.index(q) % 16 < 10:
                  tbl.set('', [(q, "SAI_QUEUE_TYPE_MULTICAST")])
                  self.mc_q.append(q)
+             else:
+                 tbl.set('', [(q, "SAI_QUEUE_TYPE_ALL")])
+                 self.all_q.append(q)
 
     def test_telemetry_period(self, dvs):
         self.setup_dbs(dvs)
@@ -279,6 +283,30 @@ class TestWatermark(object):
         self.verify_value(dvs, self.mc_q, WmTables.persistent, SaiWmStats.queue_shared, "288")
         self.verify_value(dvs, self.uc_q, WmTables.user, SaiWmStats.queue_shared, "288")
         self.verify_value(dvs, self.mc_q, WmTables.user, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.all_q, WmTables.user, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.all_q, WmTables.persistent, SaiWmStats.queue_shared, "288")
+
+        # clear queue all watermark, and verify that multicast and unicast watermarks are not affected
+
+        # clear persistent all watermark
+        exitcode, output = dvs.runcmd("sonic-clear queue persistent-watermark all")
+        time.sleep(1)
+        assert exitcode == 0, "CLI failure: %s" % output
+        # make sure it cleared
+        self.verify_value(dvs, self.all_q, WmTables.persistent, SaiWmStats.queue_shared, "0")
+
+        # clear user all watermark
+        exitcode, output = dvs.runcmd("sonic-clear queue watermark all")
+        time.sleep(1)
+        assert exitcode == 0, "CLI failure: %s" % output
+        # make sure it cleared
+        self.verify_value(dvs, self.all_q, WmTables.user, SaiWmStats.queue_shared, "0")
+
+        # make sure the rest is untouched
+        self.verify_value(dvs, self.mc_q, WmTables.user, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.mc_q, WmTables.persistent, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.uc_q, WmTables.user, SaiWmStats.queue_shared, "288")
+        self.verify_value(dvs, self.uc_q, WmTables.persistent, SaiWmStats.queue_shared, "0")
 
         self.enable_unittests(dvs, "false")
 

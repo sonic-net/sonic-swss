@@ -2,6 +2,7 @@
     "DEVICE_METADATA": {
         "localhost": {
             "hostname" : "lc1",
+            "asic_name" : "Asic0",
             "instance_name": "Linecard1",
             "connect_to_chassis_db" : 1,
             "chassis_db_address" : "10.8.1.200",

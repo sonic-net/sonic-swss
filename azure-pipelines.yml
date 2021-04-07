@@ -8,195 +8,58 @@ trigger:
     include:
       - "*"
 
-jobs:
-- job:
-  displayName: "amd64"
-  pool:
-    vmImage: 'ubuntu-20.04'
+stages:
+- stage: Build
 
-  container:
-    image: sonicdev-microsoft.azurecr.io:443/sonic-slave-buster:latest
+  jobs:
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: amd64
+      sonic_slave: sonic-slave-buster
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
+      artifact_name: sonic-swss
+      archive_pytests: true
 
-  steps:
-  - script: |
-      sudo apt-get install -y libhiredis0.14 libhiredis-dev
-      sudo apt-get install -y libzmq5 libzmq3-dev
-      sudo apt-get install -qq -y \
-          libhiredis-dev \
-          libnl-3-dev \
-          libnl-genl-3-dev \
-          libnl-route-3-dev \
-          libnl-nf-3-dev \
-          swig3.0
-      sudo apt-get install -y libdbus-1-3
-      sudo apt-get install -y libteam-dev \
-          libteam5 \
-          libteamdctl0
-    displayName: "Install dependencies"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: 9
-      artifacts: sonic-swss-common
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-    displayName: "Download sonic swss common deb packages"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: 12
-      artifacts: sonic-sairedis
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-    displayName: "Download sonic sairedis deb packages"
-  - script: |
-      sudo dpkg -i sonic-swss-common/libswsscommon_1.0.0_amd64.deb
-      sudo dpkg -i sonic-swss-common/libswsscommon-dev_1.0.0_amd64.deb
-      sudo dpkg -i sonic-sairedis/libsaivs_*.deb
-      sudo dpkg -i sonic-sairedis/libsaivs-dev_*.deb
-      sudo dpkg -i sonic-sairedis/libsairedis_*.deb
-      sudo dpkg -i sonic-sairedis/libsairedis-dev_*.deb
-      sudo dpkg -i sonic-sairedis/libsaimetadata_*.deb
-      sudo dpkg -i sonic-sairedis/libsaimetadata-dev_*.deb
-      sudo dpkg -i sonic-sairedis/syncd-vs_*.deb
-    workingDirectory: $(Pipeline.Workspace)
-    displayName: "Install sonic swss common and sairedis"
-  - checkout: self
-    submodules: true
-  - script: |
-      ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
-    displayName: "Compile sonic swss"
-  - publish: $(System.DefaultWorkingDirectory)/
-    artifact: sonic-swss
-    displayName: "Archive swss debian packages"
+- stage: BuildArm
+  dependsOn: Build
+  condition: succeeded('Build')
+  jobs:
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: armhf
+      timeout: 240
+      pool: sonicbld
+      sonic_slave: sonic-slave-buster-armhf
+      swss_common_artifact_name: sonic-swss-common.armhf
+      sairedis_artifact_name: sonic-sairedis.armhf
+      artifact_name: sonic-swss.armhf
 
-- job:
-  displayName: "arm64"
-  timeoutInMinutes: 180
-  pool: sonicbld
+  - template: .azure-pipelines/build-template.yml
+    parameters:
+      arch: arm64
+      timeout: 240
+      pool: sonicbld
+      sonic_slave: sonic-slave-buster-arm64
+      swss_common_artifact_name: sonic-swss-common.arm64
+      sairedis_artifact_name: sonic-sairedis.arm64
+      artifact_name: sonic-swss.arm64
 
-  container:
-    image: sonicdev-microsoft.azurecr.io:443/sonic-slave-buster-arm64:latest
+- stage: BuildDocker
+  dependsOn: Build
+  condition: succeeded('Build')
+  jobs:
+  - template: .azure-pipelines/build-docker-sonic-vs-template.yml
+    parameters:
+      swss_common_artifact_name: sonic-swss-common
+      sairedis_artifact_name: sonic-sairedis
+      swss_artifact_name: sonic-swss
+      artifact_name: docker-sonic-vs
 
-  steps:
-  - script: |
-      sudo apt-get install -y libhiredis0.14 libhiredis-dev
-      sudo apt-get install -y libzmq5 libzmq3-dev
-      sudo apt-get install -qq -y \
-          libhiredis-dev \
-          libnl-3-dev \
-          libnl-genl-3-dev \
-          libnl-route-3-dev \
-          libnl-nf-3-dev \
-          swig3.0
-      sudo apt-get install -y libdbus-1-3
-      sudo apt-get install -y libteam-dev \
-          libteam5 \
-          libteamdctl0
-    displayName: "Install dependencies"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: 9
-      artifacts: sonic-swss-common.arm64
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-    displayName: "Download sonic swss common deb packages"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: 12
-      artifacts: sonic-sairedis.arm64
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-    displayName: "Download sonic sairedis deb packages"
-  - script: |
-      sudo dpkg -i sonic-swss-common.arm64/libswsscommon_1.0.0_arm64.deb
-      sudo dpkg -i sonic-swss-common.arm64/libswsscommon-dev_1.0.0_arm64.deb
-      sudo dpkg -i sonic-sairedis.arm64/libsaivs_*.deb
-      sudo dpkg -i sonic-sairedis.arm64/libsaivs-dev_*.deb
-      sudo dpkg -i sonic-sairedis.arm64/libsairedis_*.deb
-      sudo dpkg -i sonic-sairedis.arm64/libsairedis-dev_*.deb
-      sudo dpkg -i sonic-sairedis.arm64/libsaimetadata_*.deb
-      sudo dpkg -i sonic-sairedis.arm64/libsaimetadata-dev_*.deb
-      sudo dpkg -i sonic-sairedis.arm64/syncd-vs_*.deb
-    workingDirectory: $(Pipeline.Workspace)
-    displayName: "Install sonic swss common and sairedis"
-  - checkout: self
-    submodules: true
-  - script: |
-      ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
-    displayName: "Compile sonic swss"
-  - publish: $(System.DefaultWorkingDirectory)/
-    artifact: sonic-swss.arm64
-    displayName: "Archive swss debian packages"
-
-- job:
-  displayName: "armhf"
-  timeoutInMinutes: 180
-  pool: sonicbld
-
-  container:
-    image: sonicdev-microsoft.azurecr.io:443/sonic-slave-buster-armhf:latest
-
-  steps:
-  - script: |
-      sudo apt-get install -y libhiredis0.14 libhiredis-dev
-      sudo apt-get install -y libzmq5 libzmq3-dev
-      sudo apt-get install -qq -y \
-          libhiredis-dev \
-          libnl-3-dev \
-          libnl-genl-3-dev \
-          libnl-route-3-dev \
-          libnl-nf-3-dev \
-          swig3.0
-      sudo apt-get install -y libdbus-1-3
-      sudo apt-get install -y libteam-dev \
-          libteam5 \
-          libteamdctl0
-    displayName: "Install dependencies"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: 9
-      artifacts: sonic-swss-common.armhf
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-    displayName: "Download sonic swss common deb packages"
-  - task: DownloadPipelineArtifact@2
-    inputs:
-      source: specific
-      project: build
-      pipeline: 12
-      artifacts: sonic-sairedis.armhf
-      runVersion: 'latestFromBranch'
-      runBranch: 'refs/heads/master'
-    displayName: "Download sonic sairedis deb packages"
-  - script: |
-      sudo dpkg -i sonic-swss-common.armhf/libswsscommon_1.0.0_armhf.deb
-      sudo dpkg -i sonic-swss-common.armhf/libswsscommon-dev_1.0.0_armhf.deb
-      sudo dpkg -i sonic-sairedis.armhf/libsaivs_*.deb
-      sudo dpkg -i sonic-sairedis.armhf/libsaivs-dev_*.deb
-      sudo dpkg -i sonic-sairedis.armhf/libsairedis_*.deb
-      sudo dpkg -i sonic-sairedis.armhf/libsairedis-dev_*.deb
-      sudo dpkg -i sonic-sairedis.armhf/libsaimetadata_*.deb
-      sudo dpkg -i sonic-sairedis.armhf/libsaimetadata-dev_*.deb
-      sudo dpkg -i sonic-sairedis.armhf/syncd-vs_*.deb
-    workingDirectory: $(Pipeline.Workspace)
-    displayName: "Install sonic swss common and sairedis"
-  - checkout: self
-    submodules: true
-  - script: |
-      ./autogen.sh
-      dpkg-buildpackage -us -uc -b -j$(nproc) && cp ../*.deb .
-    displayName: "Compile sonic swss"
-  - publish: $(System.DefaultWorkingDirectory)/
-    artifact: sonic-swss.armhf
-    displayName: "Archive swss debian packages"
+- stage: Test
+  dependsOn: BuildDocker
+  condition: succeeded('BuildDocker')
+  jobs:
+  - template: .azure-pipelines/test-docker-sonic-vs-template.yml
+    parameters:
+      log_artifact_name: log

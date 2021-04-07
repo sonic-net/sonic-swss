@@ -235,6 +235,12 @@ protected:
     /* Note: consumer will be owned by this class */
     void addExecutor(Executor* executor);
     Executor *getExecutor(std::string executorName);
+
+    /* Handling SAI status*/
+    virtual task_process_status handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
+    virtual task_process_status handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
+    virtual task_process_status handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context = nullptr);
+    bool parseHandleSaiStatusFailure(task_process_status status);
 private:
     void removeMeFromObjsReferencedByMe(type_map &type_maps, const std::string &table, const std::string &obj_name, const std::string &field, const std::string &old_referenced_obj_name);
     void addConsumer(swss::DBConnector *db, std::string tableName, int pri = default_orch_pri);

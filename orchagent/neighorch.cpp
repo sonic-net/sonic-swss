@@ -18,6 +18,7 @@ extern RouteOrch *gRouteOrch;
 extern FgNhgOrch *gFgNhgOrch;
 extern Directory<Orch*> gDirectory;
 extern string gMySwitchType;
+extern int32_t gVoqMySwitchId;
 
 const int neighorch_pri = 30;
 
@@ -135,8 +136,17 @@ void NeighOrch::update(SubjectType type, void *cntx)
 
     return;
 }
+
 bool NeighOrch::hasNextHop(const NextHopKey &nexthop)
 {
+    // First check if mux has NH
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    sai_object_id_t nhid = mux_orch->getNextHopId(nexthop);
+    if (nhid != SAI_NULL_OBJECT_ID)
+    {
+        return true;
+    }
+
     return m_syncdNextHops.find(nexthop) != m_syncdNextHops.end();
 }
 
@@ -195,7 +205,11 @@ bool NeighOrch::addNextHop(const IpAddress &ipAddress, const string &alias)
     {
         SWSS_LOG_ERROR("Failed to create next hop %s on %s, rv:%d",
                        ipAddress.to_string().c_str(), alias.c_str(), status);
-        return false;
+        task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Created next hop %s on %s",
@@ -250,11 +264,11 @@ bool NeighOrch::setNextHopFlag(const NextHopKey &nexthop, const uint32_t nh_flag
     }
 
     nhop->second.nh_flags |= nh_flag;
-
+    uint32_t count;
     switch (nh_flag)
     {
         case NHFLAGS_IFDOWN:
-            rc = gRouteOrch->invalidnexthopinNextHopGroup(nexthop);
+            rc = gRouteOrch->invalidnexthopinNextHopGroup(nexthop, count);
             break;
         default:
             assert(0);
@@ -279,11 +293,11 @@ bool NeighOrch::clearNextHopFlag(const NextHopKey &nexthop, const uint32_t nh_fl
     }
 
     nhop->second.nh_flags &= ~nh_flag;
-
+    uint32_t count;
     switch (nh_flag)
     {
         case NHFLAGS_IFDOWN:
-            rc = gRouteOrch->validnexthopinNextHopGroup(nexthop);
+            rc = gRouteOrch->validnexthopinNextHopGroup(nexthop, count);
             break;
         default:
             assert(0);
@@ -391,9 +405,31 @@ bool NeighOrch::removeOverlayNextHop(const NextHopKey &nexthop)
     return true;
 }
 
+sai_object_id_t NeighOrch::getLocalNextHopId(const NextHopKey& nexthop)
+{
+    if (m_syncdNextHops.find(nexthop) == m_syncdNextHops.end())
+    {
+        return SAI_NULL_OBJECT_ID;
+    }
+
+    return m_syncdNextHops[nexthop].next_hop_id;
+}
+
 sai_object_id_t NeighOrch::getNextHopId(const NextHopKey &nexthop)
 {
     assert(hasNextHop(nexthop));
+
+    /*
+     * The nexthop id could be varying depending on the use-case
+     * For e.g, a route could have a direct neighbor but may require
+     * to be tx via tunnel nexthop
+     */
+    MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
+    sai_object_id_t nhid = mux_orch->getNextHopId(nexthop);
+    if (nhid != SAI_NULL_OBJECT_ID)
+    {
+        return nhid;
+    }
     return m_syncdNextHops[nexthop].next_hop_id;
 }
 
@@ -403,16 +439,22 @@ int NeighOrch::getNextHopRefCount(const NextHopKey &nexthop)
     return m_syncdNextHops[nexthop].ref_count;
 }
 
-void NeighOrch::increaseNextHopRefCount(const NextHopKey &nexthop)
+void NeighOrch::increaseNextHopRefCount(const NextHopKey &nexthop, uint32_t count)
 {
     assert(hasNextHop(nexthop));
-    m_syncdNextHops[nexthop].ref_count ++;
+    if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end())
+    {
+        m_syncdNextHops[nexthop].ref_count += count;
+    }
 }
 
-void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop)
+void NeighOrch::decreaseNextHopRefCount(const NextHopKey &nexthop, uint32_t count)
 {
     assert(hasNextHop(nexthop));
-    m_syncdNextHops[nexthop].ref_count --;
+    if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end())
+    {
+        m_syncdNextHops[nexthop].ref_count -= count;
+    }
 }
 
 bool NeighOrch::getNeighborEntry(const NextHopKey &nexthop, NeighborEntry &neighborEntry, MacAddress &macAddress)
@@ -616,9 +658,8 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
     MuxOrch* mux_orch = gDirectory.get<MuxOrch*>();
     bool hw_config = isHwConfigured(neighborEntry);
 
-    if (!hw_config && mux_orch->isNeighborActive(ip_address, alias))
+    if (!hw_config && mux_orch->isNeighborActive(ip_address, macAddress, alias))
     {
-
         if (gMySwitchType == "voq")
         {
             if (!addVoqEncapIndex(alias, ip_address, neighbor_attrs))
@@ -642,7 +683,11 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
             {
                 SWSS_LOG_ERROR("Failed to create neighbor %s on %s, rv:%d",
                            macAddress.to_string().c_str(), alias.c_str(), status);
-                return false;
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
         SWSS_LOG_NOTICE("Created neighbor ip %s, %s on %s", ip_address.to_string().c_str(),
@@ -665,7 +710,11 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
             {
                 SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
                                macAddress.to_string().c_str(), alias.c_str(), status);
-                return false;
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
             m_intfsOrch->decreaseRouterIntfsRefCount(alias);
 
@@ -689,7 +738,11 @@ bool NeighOrch::addNeighbor(const NeighborEntry &neighborEntry, const MacAddress
         {
             SWSS_LOG_ERROR("Failed to update neighbor %s on %s, rv:%d",
                            macAddress.to_string().c_str(), alias.c_str(), status);
-            return false;
+            task_process_status handle_status = handleSaiSetStatus(SAI_API_NEIGHBOR, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         SWSS_LOG_NOTICE("Updated neighbor %s on %s", macAddress.to_string().c_str(), alias.c_str());
     }
@@ -732,7 +785,7 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
         return true;
     }
 
-    if (m_syncdNextHops[nexthop].ref_count > 0)
+    if (m_syncdNextHops.find(nexthop) != m_syncdNextHops.end() && m_syncdNextHops[nexthop].ref_count > 0)
     {
         SWSS_LOG_INFO("Failed to remove still referenced neighbor %s on %s",
                       m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str());
@@ -762,7 +815,11 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
             {
                 SWSS_LOG_ERROR("Failed to remove next hop %s on %s, rv:%d",
                                ip_address.to_string().c_str(), alias.c_str(), status);
-                return false;
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
 
@@ -786,7 +843,7 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
         {
             if (status == SAI_STATUS_ITEM_NOT_FOUND)
             {
-                SWSS_LOG_ERROR("Failed to locate neigbor %s on %s, rv:%d",
+                SWSS_LOG_ERROR("Failed to locate neighbor %s on %s, rv:%d",
                         m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
                 return true;
             }
@@ -794,7 +851,11 @@ bool NeighOrch::removeNeighbor(const NeighborEntry &neighborEntry, bool disable)
             {
                 SWSS_LOG_ERROR("Failed to remove neighbor %s on %s, rv:%d",
                         m_syncdNeighbors[neighborEntry].mac.to_string().c_str(), alias.c_str(), status);
-                return false;
+                task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEIGHBOR, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
 
@@ -1056,7 +1117,6 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Failed to add voq neighbor %s to SAI", kfvKey(t).c_str());
                     it++;
                 }
             }
@@ -1081,7 +1141,6 @@ void NeighOrch::doVoqSystemNeighTask(Consumer &consumer)
                 }
                 else
                 {
-                    SWSS_LOG_ERROR("Failed to remove voq neighbor %s from SAI", kfvKey(t).c_str());
                     it++;
                 }
             }
@@ -1172,11 +1231,22 @@ void NeighOrch::voqSyncAddNeigh(string &alias, IpAddress &ip_address, const MacA
     Port port;
     if(gPortsOrch->getPort(alias, port))
     {
-        if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+        if (port.m_type == Port::LAG)
         {
-            return;
+            if (port.m_system_lag_info.switch_id != gVoqMySwitchId)
+            {
+                return;
+            }
+            alias = port.m_system_lag_info.alias;
         }
-        alias = port.m_system_port_info.alias;
+        else
+        {
+            if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+            {
+                return;
+            }
+            alias = port.m_system_port_info.alias;
+        }
     }
     else
     {
@@ -1218,11 +1288,22 @@ void NeighOrch::voqSyncDelNeigh(string &alias, IpAddress &ip_address)
     Port port;
     if(gPortsOrch->getPort(alias, port))
     {
-        if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+        if (port.m_type == Port::LAG)
         {
-            return;
+            if (port.m_system_lag_info.switch_id != gVoqMySwitchId)
+            {
+                return;
+            }
+            alias = port.m_system_lag_info.alias;
         }
-        alias = port.m_system_port_info.alias;
+        else
+        {
+            if(port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_REMOTE)
+            {
+                return;
+            }
+            alias = port.m_system_port_info.alias;
+        }
     }
     else
     {

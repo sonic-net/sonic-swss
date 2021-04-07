@@ -9,6 +9,7 @@ DEFAULT_MTU = "9100"
 CFG_VLAN_SUB_INTF_TABLE_NAME = "VLAN_SUB_INTERFACE"
 CFG_PORT_TABLE_NAME = "PORT"
 CFG_LAG_TABLE_NAME = "PORTCHANNEL"
+CFG_LAG_MEMBER_TABLE_NAME = "PORTCHANNEL_MEMBER"
 
 STATE_PORT_TABLE_NAME = "PORT_TABLE"
 STATE_LAG_TABLE_NAME = "LAG_TABLE"
@@ -24,6 +25,8 @@ ASIC_ROUTE_ENTRY_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_ROUTE_ENTRY"
 ASIC_NEXT_HOP_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP"
 ASIC_NEXT_HOP_GROUP_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP"
 ASIC_NEXT_HOP_GROUP_MEMBER_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_NEXT_HOP_GROUP_MEMBER"
+ASIC_LAG_MEMBER_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_LAG_MEMBER"
+ASIC_HOSTIF_TABLE = "ASIC_STATE:SAI_OBJECT_TYPE_HOSTIF"
 
 ADMIN_STATUS = "admin_status"
 
@@ -31,11 +34,13 @@ ETHERNET_PREFIX = "Ethernet"
 LAG_PREFIX = "PortChannel"
 
 VLAN_SUB_INTERFACE_SEPARATOR = "."
+APPL_DB_SEPARATOR = ":"
 
 
 class TestSubPortIntf(object):
     SUB_PORT_INTERFACE_UNDER_TEST = "Ethernet64.10"
     LAG_SUB_PORT_INTERFACE_UNDER_TEST = "PortChannel1.20"
+    LAG_MEMBERS_UNDER_TEST = ["Ethernet68", "Ethernet72"]
 
     IPV4_ADDR_UNDER_TEST = "10.0.0.33/31"
     IPV4_TOME_UNDER_TEST = "10.0.0.33/32"
@@ -91,22 +96,58 @@ class TestSubPortIntf(object):
 
         self.config_db.create_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, sub_port_intf_name, fvs)
 
+    def add_lag_members(self, lag, members):
+        fvs = {"NULL": "NULL"}
+
+        for member in members:
+            key = "{}|{}".format(lag, member)
+            self.config_db.create_entry(CFG_LAG_MEMBER_TABLE_NAME, key, fvs)
+
+    def create_sub_port_intf_profile_appl_db(self, sub_port_intf_name, admin_status):
+        pairs = [
+            (ADMIN_STATUS, admin_status),
+            ("mtu", "0"),
+        ]
+        fvs = swsscommon.FieldValuePairs(pairs)
+
+        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_INTF_TABLE_NAME)
+        tbl.set(sub_port_intf_name, fvs)
+
     def add_sub_port_intf_ip_addr(self, sub_port_intf_name, ip_addr):
         fvs = {"NULL": "NULL"}
 
         key = "{}|{}".format(sub_port_intf_name, ip_addr)
         self.config_db.create_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, key, fvs)
 
+    def add_sub_port_intf_ip_addr_appl_db(self, sub_port_intf_name, ip_addr):
+        pairs = [
+            ("scope", "global"),
+            ("family", "IPv4" if "." in ip_addr else "IPv6"),
+        ]
+        fvs = swsscommon.FieldValuePairs(pairs)
+
+        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_INTF_TABLE_NAME)
+        tbl.set(sub_port_intf_name + APPL_DB_SEPARATOR + ip_addr, fvs)
+
     def set_sub_port_intf_admin_status(self, sub_port_intf_name, status):
         fvs = {ADMIN_STATUS: status}
 
         self.config_db.create_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, sub_port_intf_name, fvs)
+
+    def remove_lag_members(self, lag, members):
+        for member in members:
+            key = "{}|{}".format(lag, member)
+            self.config_db.delete_entry(CFG_LAG_MEMBER_TABLE_NAME, key)
 
     def remove_sub_port_intf_profile(self, sub_port_intf_name):
         self.config_db.delete_entry(CFG_VLAN_SUB_INTF_TABLE_NAME, sub_port_intf_name)
 
     def check_sub_port_intf_profile_removal(self, rif_oid):
         self.asic_db.wait_for_deleted_keys(ASIC_RIF_TABLE, [rif_oid])
+
+    def remove_sub_port_intf_profile_appl_db(self, sub_port_intf_name):
+        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_INTF_TABLE_NAME)
+        tbl._del(sub_port_intf_name)
 
     def remove_sub_port_intf_ip_addr(self, sub_port_intf_name, ip_addr):
         key = "{}|{}".format(sub_port_intf_name, ip_addr)
@@ -115,6 +156,10 @@ class TestSubPortIntf(object):
     def check_sub_port_intf_ip_addr_removal(self, sub_port_intf_name, ip_addrs):
         interfaces = ["{}:{}".format(sub_port_intf_name, addr) for addr in ip_addrs]
         self.app_db.wait_for_deleted_keys(APP_INTF_TABLE_NAME, interfaces)
+
+    def remove_sub_port_intf_ip_addr_appl_db(self, sub_port_intf_name, ip_addr):
+        tbl = swsscommon.ProducerStateTable(self.app_db.db_connection, APP_INTF_TABLE_NAME)
+        tbl._del(sub_port_intf_name + APPL_DB_SEPARATOR + ip_addr)
 
     def get_oids(self, table):
         return self.asic_db.get_keys(table)
@@ -186,13 +231,19 @@ class TestSubPortIntf(object):
         vlan_id = substrs[1]
         if parent_port.startswith(ETHERNET_PREFIX):
             state_tbl_name = STATE_PORT_TABLE_NAME
+            phy_ports = [parent_port]
         else:
             assert parent_port.startswith(LAG_PREFIX)
             state_tbl_name = STATE_LAG_TABLE_NAME
+            phy_ports = self.LAG_MEMBERS_UNDER_TEST
 
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
 
         self.set_parent_port_admin_status(dvs, parent_port, "up")
+        # Add lag members to test physical port host interface vlan tag attribute
+        if parent_port.startswith(LAG_PREFIX):
+            self.add_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST)
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, len(self.LAG_MEMBERS_UNDER_TEST))
         self.create_sub_port_intf_profile(sub_port_intf_name)
 
         # Verify that sub port interface state ok is pushed to STATE_DB by Intfmgrd
@@ -218,9 +269,22 @@ class TestSubPortIntf(object):
         rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
         self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
 
+        # Verify physical port host interface vlan tag attribute
+        fv_dict = {
+            "SAI_HOSTIF_ATTR_VLAN_TAG": "SAI_HOSTIF_VLAN_TAG_KEEP",
+        }
+        for phy_port in phy_ports:
+            hostif_oid = dvs.asicdb.hostifnamemap[phy_port]
+            self.check_sub_port_intf_fvs(self.asic_db, ASIC_HOSTIF_TABLE, hostif_oid, fv_dict)
+
         # Remove a sub port interface
         self.remove_sub_port_intf_profile(sub_port_intf_name)
         self.check_sub_port_intf_profile_removal(rif_oid)
+
+        # Remove lag members from lag parent port
+        if parent_port.startswith(LAG_PREFIX):
+            self.remove_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST)
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 0)
 
     def test_sub_port_intf_creation(self, dvs):
         self.connect_dbs(dvs)
@@ -284,6 +348,50 @@ class TestSubPortIntf(object):
 
         self._test_sub_port_intf_add_ip_addrs(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST)
         self._test_sub_port_intf_add_ip_addrs(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST)
+
+    def _test_sub_port_intf_appl_db_proc_seq(self, dvs, sub_port_intf_name, admin_up):
+        substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
+        parent_port = substrs[0]
+        vlan_id = substrs[1]
+
+        old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
+
+        self.set_parent_port_admin_status(dvs, parent_port, "up")
+
+        # Create ip address configuration in APPL_DB before creating configuration for sub port interface itself
+        self.add_sub_port_intf_ip_addr_appl_db(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
+        self.add_sub_port_intf_ip_addr_appl_db(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        time.sleep(2)
+
+        # Create sub port interface configuration in APPL_DB
+        self.create_sub_port_intf_profile_appl_db(sub_port_intf_name, "up" if admin_up == True else "down")
+
+        # Verify that a sub port router interface entry is created in ASIC_DB
+        fv_dict = {
+            "SAI_ROUTER_INTERFACE_ATTR_TYPE": "SAI_ROUTER_INTERFACE_TYPE_SUB_PORT",
+            "SAI_ROUTER_INTERFACE_ATTR_OUTER_VLAN_ID": "{}".format(vlan_id),
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V4_STATE": "true" if admin_up == True else "false",
+            "SAI_ROUTER_INTERFACE_ATTR_ADMIN_V6_STATE": "true" if admin_up == True else "false",
+            "SAI_ROUTER_INTERFACE_ATTR_MTU": DEFAULT_MTU,
+        }
+        rif_oid = self.get_newly_created_oid(ASIC_RIF_TABLE, old_rif_oids)
+        self.check_sub_port_intf_fvs(self.asic_db, ASIC_RIF_TABLE, rif_oid, fv_dict)
+
+        # Remove ip addresses from APPL_DB
+        self.remove_sub_port_intf_ip_addr_appl_db(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
+        self.remove_sub_port_intf_ip_addr_appl_db(sub_port_intf_name, self.IPV6_ADDR_UNDER_TEST)
+        # Remove sub port interface from APPL_DB
+        self.remove_sub_port_intf_profile_appl_db(sub_port_intf_name)
+        self.check_sub_port_intf_profile_removal(rif_oid)
+
+    def test_sub_port_intf_appl_db_proc_seq(self, dvs):
+        self.connect_dbs(dvs)
+
+        self._test_sub_port_intf_appl_db_proc_seq(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, admin_up=True)
+        self._test_sub_port_intf_appl_db_proc_seq(dvs, self.SUB_PORT_INTERFACE_UNDER_TEST, admin_up=False)
+
+        self._test_sub_port_intf_appl_db_proc_seq(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, admin_up=True)
+        self._test_sub_port_intf_appl_db_proc_seq(dvs, self.LAG_SUB_PORT_INTERFACE_UNDER_TEST, admin_up=False)
 
     def _test_sub_port_intf_admin_status_change(self, dvs, sub_port_intf_name):
         substrs = sub_port_intf_name.split(VLAN_SUB_INTERFACE_SEPARATOR)
@@ -427,13 +535,19 @@ class TestSubPortIntf(object):
         parent_port = substrs[0]
         if parent_port.startswith(ETHERNET_PREFIX):
             state_tbl_name = STATE_PORT_TABLE_NAME
+            phy_ports = [parent_port]
         else:
             assert parent_port.startswith(LAG_PREFIX)
             state_tbl_name = STATE_LAG_TABLE_NAME
+            phy_ports = self.LAG_MEMBERS_UNDER_TEST
 
         old_rif_oids = self.get_oids(ASIC_RIF_TABLE)
 
         self.set_parent_port_admin_status(dvs, parent_port, "up")
+        # Add lag members to test physical port host interface vlan tag attribute
+        if parent_port.startswith(LAG_PREFIX):
+            self.add_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST)
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, len(self.LAG_MEMBERS_UNDER_TEST))
         self.create_sub_port_intf_profile(sub_port_intf_name)
 
         self.add_sub_port_intf_ip_addr(sub_port_intf_name, self.IPV4_ADDR_UNDER_TEST)
@@ -470,6 +584,19 @@ class TestSubPortIntf(object):
 
         # Verify that sub port router interface entry is removed from ASIC_DB
         self.check_sub_port_intf_key_removal(self.asic_db, ASIC_RIF_TABLE, rif_oid)
+
+        # Verify physical port host interface vlan tag attribute
+        fv_dict = {
+            "SAI_HOSTIF_ATTR_VLAN_TAG": "SAI_HOSTIF_VLAN_TAG_STRIP",
+        }
+        for phy_port in phy_ports:
+            hostif_oid = dvs.asicdb.hostifnamemap[phy_port]
+            self.check_sub_port_intf_fvs(self.asic_db, ASIC_HOSTIF_TABLE, hostif_oid, fv_dict)
+
+        # Remove lag members from lag parent port
+        if parent_port.startswith(LAG_PREFIX):
+            self.remove_lag_members(parent_port, self.LAG_MEMBERS_UNDER_TEST)
+            self.asic_db.wait_for_n_keys(ASIC_LAG_MEMBER_TABLE, 0)
 
     def test_sub_port_intf_removal(self, dvs):
         self.connect_dbs(dvs)

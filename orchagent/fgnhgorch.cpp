@@ -62,7 +62,7 @@ void FgNhgOrch::update(SubjectType type, void *cntx)
                                 SWSS_LOG_WARN("Hit unexpected condition where structs are out of sync");
                             }
                             nexthop_entry->second.link_oper_state = LINK_UP;
-                            SWSS_LOG_INFO("Updated %s assoicated with %s to state up",
+                            SWSS_LOG_INFO("Updated %s associated with %s to state up",
                                     update->port.m_alias.c_str(), ip.to_string().c_str());
 
                             if (!m_neighOrch->getNeighborEntry(ip, nhk, macAddress))
@@ -241,7 +241,11 @@ bool FgNhgOrch::writeHashBucketChange(FGNextHopGroupEntry *syncd_fg_route_entry,
     {
         SWSS_LOG_ERROR("Failed to set next hop oid %" PRIx64 " member %" PRIx64 ": %d",
             syncd_fg_route_entry->nhopgroup_members[index], nh_oid, status);
-        return false;
+        task_process_status handle_status = handleSaiSetStatus(SAI_API_NEXT_HOP_GROUP, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     setStateDbRouteEntry(ipPrefix, index, nextHop);
@@ -318,7 +322,11 @@ bool FgNhgOrch::removeFineGrainedNextHopGroup(FGNextHopGroupEntry *syncd_fg_rout
         {
             SWSS_LOG_ERROR("Failed to remove next hop group member %" PRIx64 ", rv:%d",
                 nhgm, status);
-            return false;
+            task_process_status handle_status = handleSaiRemoveStatus(SAI_API_NEXT_HOP_GROUP, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
         gCrmOrch->decCrmResUsedCounter(CrmResourceType::CRM_NEXTHOP_GROUP_MEMBER);
     }
@@ -481,9 +489,9 @@ bool FgNhgOrch::invalidNextHopInNextHopGroup(const NextHopKey& nexthop)
 
 
 /* setActiveBankHashBucketChanges: Sets hash buckets for active banks and called on a PER bank basis
- * This function deals with a scenario where next-hop changes occured for the route,
+ * This function deals with a scenario where next-hop changes occurred for the route,
  * and the next-hop change didn't cause an entire bank to go active/inactive.
- * The function uses bank_member_changes to compute the hash buckets to modify, in order to satisy the next-hop 
+ * The function uses bank_member_changes to compute the hash buckets to modify, in order to satisfy the next-hop 
  * availability for the route/neigh.
  * Eg: Prefix A had nhs 1, 2, 3 with 1, 2, 3, being equally distributed over hash buckets
  * 0-59(20 buckets per nh). If there was a nh removal of nh 2, this fn would equally redistribute hash buckets
@@ -763,12 +771,12 @@ bool FgNhgOrch::setInactiveBankToNextAvailableActiveBank(FGNextHopGroupEntry *sy
 
 
 /* setInactiveBankHashBucketChanges: Sets hash buckets for inactive banks and called on a PER bank basis.
- * This function deals with scenarios where next-hop changes occured for the route,
+ * This function deals with scenarios where next-hop changes occurred for the route,
  * and the next-hop change causes an active bank to become inactive, or an inactive bank to become active or
  * inactive bank to remain inactive.
  * The function uses the bank member diffs provided in bank_member_changes and uses it to compute
- * the hash buckets to modify, in order to satisy the next-hop availability for the route/neigh.
- * Eg: Lets assume prefix A had nhs 1, 2, 3, 4, 5, 6 with nhs being equally distirbuted over hash buckets
+ * the hash buckets to modify, in order to satisfy the next-hop availability for the route/neigh.
+ * Eg: Lets assume prefix A had nhs 1, 2, 3, 4, 5, 6 with nhs being equally distributed over hash buckets
  * 0-59(10 per nh). Now there was a nh deletion of 1, 2, 3 which constituted bank 0(4, 5, 6 constituted bank 1)
  * This function will identify that all of bank 0's nh are down and re-assign all the hash buckets(0-29) for these nhs to
  * nhs from bank 1, along with making local struct changes to track this for future route/neigh changes. 
@@ -781,7 +789,7 @@ bool FgNhgOrch::setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_r
 
     if (bank_member_changes[bank].nhs_to_add.size() > 0)
     {
-        /* Previously inactive bank now transistions to active */
+        /* Previously inactive bank now transitions to active */
         syncd_fg_route_entry->syncd_fgnhg_map[bank].clear();
         for (uint32_t i = fgNhgEntry->hash_bucket_indices[bank].start_index;
                 i <= fgNhgEntry->hash_bucket_indices[bank].end_index; i++)
@@ -805,7 +813,7 @@ bool FgNhgOrch::setInactiveBankHashBucketChanges(FGNextHopGroupEntry *syncd_fg_r
     }
     else if (bank_member_changes[bank].nhs_to_del.size() > 0)
     {
-        /* Previously active bank now transistions to inactive */
+        /* Previously active bank now transitions to inactive */
         if (!setInactiveBankToNextAvailableActiveBank(syncd_fg_route_entry, fgNhgEntry,
                     bank, bank_member_changes, nhopgroup_members_set, ipPrefix))
         {
@@ -986,7 +994,11 @@ bool FgNhgOrch::setNewNhgMembers(FGNextHopGroupEntry &syncd_fg_route_entry, FgNh
                     SWSS_LOG_ERROR("Failed to clean-up after next-hop member creation failure");
                 }
                 
-                return false;
+                task_process_status handle_status = handleSaiCreateStatus(SAI_API_NEXT_HOP_GROUP, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
 
             setStateDbRouteEntry(ipPrefix, j, bank_nh_memb);
@@ -1130,7 +1142,7 @@ bool FgNhgOrch::setFgNhg(sai_object_id_t vrf_id, const IpPrefix &ipPrefix, const
             fgNhgEntry->hash_bucket_indices.size(), BankMemberChanges());
     if (fgNhgEntry->hash_bucket_indices.size() == 0)
     {
-        /* Only happens the 1st time when hash_bucket_indices are not inited
+        /* Only happens the 1st time when hash_bucket_indices are not initialized
          */
         for (auto it : fgNhgEntry->next_hops)
         {

@@ -16,6 +16,7 @@
 
 local lossless_mtu
 local small_packet_percentage
+local over_subscribe_ratio = 0
 local cell_size
 local pipeline_latency
 local mac_phy_delay
@@ -72,8 +73,19 @@ for i = 1, #lossless_traffic_table_content, 2 do
     end
 end
 
--- Fetch DEFAULT_LOSSLESS_BUFFER_PARAMETER from CONFIG_DB
-local lossless_traffic_keys = redis.call('KEYS', 'DEFAULT_LOSSLESS_BUFFER_PARAMETER*')
+-- Fetch over subscribe ratio
+local default_lossless_param_keys = redis.call('KEYS', 'DEFAULT_LOSSLESS_BUFFER_PARAMETER*')
+local over_subscribe_ratio = tonumber(redis.call('HGET', default_lossless_param_keys[1], 'over_subscribe_ratio'))
+
+-- Fetch the shared headroom pool size
+local shp_size = tonumber(redis.call('HGET', 'BUFFER_POOL|ingress_lossless_pool', 'xoff'))
+
+local shp_enabled
+if shp_size ~= nil and shp_size ~= 0 or over_subscribe_ratio ~= nil and over_subscribe_ratio ~= 0 then
+    shp_enabled = true
+else
+    shp_enabled = false
+end
 
 -- Calculate the headroom information
 local speed_of_light = 198000000
@@ -119,7 +131,11 @@ xoff_value = math.ceil(xoff_value / 1024) * 1024
 xon_value = pipeline_latency
 xon_value = math.ceil(xon_value / 1024) * 1024
 
-headroom_size = xoff_value + xon_value + speed_overhead
+if shp_enabled then
+    headroom_size = xon_value
+else
+    headroom_size = xoff_value + xon_value + speed_overhead
+end
 headroom_size = math.ceil(headroom_size / 1024) * 1024
 
 table.insert(ret, "xon" .. ":" .. math.ceil(xon_value))

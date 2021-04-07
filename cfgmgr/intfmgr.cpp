@@ -613,7 +613,7 @@ bool IntfMgr::doIntfGeneralTask(const vector<string>& keys,
     else if (op == DEL_COMMAND)
     {
         /* make sure all ip addresses associated with interface are removed, otherwise these ip address would
-           be set with global vrf and it may cause ip address confliction. */
+           be set with global vrf and it may cause ip address conflict. */
         if (getIntfIpCount(alias))
         {
             return false;

@@ -614,7 +614,7 @@ bool MirrorOrch::getNeighborInfo(const string& name, MirrorEntry& session)
             }
             else
             {
-                // Get the firt member of the LAG
+                // Get the first member of the LAG
                 Port member;
                 string first_member_alias = *session.neighborInfo.port.m_members.begin();
                 m_portsOrch->getPort(first_member_alias, member);
@@ -761,7 +761,11 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
                 SWSS_LOG_ERROR("Failed to configure %s session on port %s: %s, status %d, sessionId %x",
                                 ingress ? "RX" : "TX", port.m_alias.c_str(),
                                 p.m_alias.c_str(), status, sessionId);
-                return false;
+                task_process_status handle_status =  handleSaiSetStatus(SAI_API_PORT, status);
+                if (handle_status != task_success)
+                {
+                    return parseHandleSaiStatusFailure(handle_status);
+                }
             }
         }
     }
@@ -772,7 +776,11 @@ bool MirrorOrch::setUnsetPortMirror(Port port,
         {
             SWSS_LOG_ERROR("Failed to configure %s session on port %s, status %d, sessionId %x",
                             ingress ? "RX" : "TX", port.m_alias.c_str(), status, sessionId);
-            return false;
+            task_process_status handle_status =  handleSaiSetStatus(SAI_API_PORT, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
     }
     return true;
@@ -951,7 +959,7 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         sai_object_id_t oid = SAI_NULL_OBJECT_ID;
         if (!m_policerOrch->getPolicerOid(session.policer, oid))
         {
-            SWSS_LOG_ERROR("Faield to get policer %s", session.policer.c_str());
+            SWSS_LOG_ERROR("Failed to get policer %s", session.policer.c_str());
             return false;
         }
 
@@ -967,7 +975,11 @@ bool MirrorOrch::activateSession(const string& name, MirrorEntry& session)
         SWSS_LOG_ERROR("Failed to activate mirroring session %s", name.c_str());
         session.status = false;
 
-        return false;
+        task_process_status handle_status =  handleSaiCreateStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     session.status = true;
@@ -1018,7 +1030,11 @@ bool MirrorOrch::deactivateSession(const string& name, MirrorEntry& session)
     if (status != SAI_STATUS_SUCCESS)
     {
         SWSS_LOG_ERROR("Failed to deactivate mirroring session %s", name.c_str());
-        return false;
+        task_process_status handle_status =  handleSaiRemoveStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     session.status = false;
@@ -1046,7 +1062,11 @@ bool MirrorOrch::updateSessionDstMac(const string& name, MirrorEntry& session)
     {
         SWSS_LOG_ERROR("Failed to update mirror session %s destination MAC to %s, rv:%d",
                 name.c_str(), session.neighborInfo.mac.to_string().c_str(), status);
-        return false;
+        task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Update mirror session %s destination MAC to %s",
@@ -1076,7 +1096,11 @@ bool MirrorOrch::updateSessionDstPort(const string& name, MirrorEntry& session)
     {
         SWSS_LOG_ERROR("Failed to update mirror session %s monitor port to %s, rv:%d",
                 name.c_str(), port.m_alias.c_str(), status);
-        return false;
+        task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+        if (handle_status != task_success)
+        {
+            return parseHandleSaiStatusFailure(handle_status);
+        }
     }
 
     SWSS_LOG_NOTICE("Update mirror session %s monitor port to %s",
@@ -1133,7 +1157,11 @@ bool MirrorOrch::updateSessionType(const string& name, MirrorEntry& session)
         {
             SWSS_LOG_ERROR("Failed to update mirror session %s VLAN to %s, rv:%d",
                     name.c_str(), session.neighborInfo.port.m_alias.c_str(), status);
-            return false;
+            task_process_status handle_status =  handleSaiSetStatus(SAI_API_MIRROR, status);
+            if (handle_status != task_success)
+            {
+                return parseHandleSaiStatusFailure(handle_status);
+            }
         }
     }
 
@@ -1256,7 +1284,7 @@ void MirrorOrch::updateNeighbor(const NeighborUpdate& update)
 }
 
 // The function is called when SUBJECT_TYPE_FDB_CHANGE is received.
-// This function will handle the case when new FDB enty is learned/added in the VLAN,
+// This function will handle the case when new FDB entry is learned/added in the VLAN,
 // or when the old FDB entry gets removed. Only when the neighbor is VLAN will the case
 // be handled.
 void MirrorOrch::updateFdb(const FdbUpdate& update)
@@ -1271,7 +1299,7 @@ void MirrorOrch::updateFdb(const FdbUpdate& update)
         // Check the following three conditions:
         // 1) mirror session is pointing to a VLAN
         // 2) the VLAN matches the FDB notification VLAN ID
-        // 3) the destination MAC matches the FDB notifaction MAC
+        // 3) the destination MAC matches the FDB notification MAC
         if (session.neighborInfo.port.m_type != Port::VLAN ||
                 session.neighborInfo.port.m_vlan_info.vlan_oid != update.entry.bv_id ||
                 session.neighborInfo.mac != update.entry.mac)
@@ -1301,7 +1329,7 @@ void MirrorOrch::updateFdb(const FdbUpdate& update)
                 activateSession(name, session);
             }
         }
-        // Remvoe the monitor port
+        // Remove the monitor port
         else
         {
             deactivateSession(name, session);
@@ -1369,7 +1397,10 @@ void MirrorOrch::updateLagMember(const LagMemberUpdate& update)
             // If LAG is empty, deactivate session
             if (update.lag.m_members.empty())
             {
-                deactivateSession(name, session);
+                if (session.status)
+                {
+                    deactivateSession(name, session);
+                }
                 session.neighborInfo.portId = SAI_OBJECT_TYPE_NULL;
             }
             // Switch to a new member of the LAG

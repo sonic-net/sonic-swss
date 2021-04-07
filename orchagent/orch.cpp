@@ -10,6 +10,7 @@
 #include "tokenize.h"
 #include "logger.h"
 #include "consumerstatetable.h"
+#include "sai_serialize.h"
 
 using namespace swss;
 
@@ -103,7 +104,7 @@ void Consumer::addToSync(const KeyOpFieldsValuesTuple &entry)
     {
         /*
         * Now we are trying to add the key-value with SET.
-        * We maintain maximun two values per key.
+        * We maintain maximum two values per key.
         * In case there is one key-value, it should be DEL or SET
         * In case there are two key-value pairs, it should be DEL then SET
         * The code logic is following:
@@ -531,7 +532,7 @@ void Orch::logfileReopen()
 
     /*
      * On log rotate we will use the same file name, we are assuming that
-     * logrotate deamon move filename to filename.1 and we will create new
+     * logrotate daemon move filename to filename.1 and we will create new
      * empty file here.
      */
 
@@ -606,7 +607,7 @@ ref_resolve_status Orch::resolveFieldRefArray(
                 SWSS_LOG_DEBUG("Resolved to sai_object:0x%" PRIx64 ", type:%s, name:%s", sai_obj, ref_type_name.c_str(), object_name.c_str());
                 sai_object_arr.push_back(sai_obj);
                 if (!object_name_list.empty())
-                    object_name_list += string(&list_item_delimiter);
+                    object_name_list += list_item_delimiter;
                 object_name_list += ref_type_name + delimiter + object_name;
             }
             count++;
@@ -637,7 +638,7 @@ bool Orch::parseIndexRange(const string &input, sai_uint32_t &range_low, sai_uin
         range_high = (uint32_t)stoul(range_values[1]);
         if (range_low >= range_high)
         {
-            SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than righ value.\n", input.c_str());
+            SWSS_LOG_ERROR("malformed index range in:%s. left value must be less than right value.\n", input.c_str());
             return false;
         }
     }
@@ -683,6 +684,104 @@ Executor *Orch::getExecutor(string executorName)
     }
 
     return NULL;
+}
+
+task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis create
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_ITEM_ALREADY_EXISTS)
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
+            return task_success;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            exit(EXIT_FAILURE);
+    }
+    return task_need_retry;
+}
+
+task_process_status Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis set
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
+            return task_success;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            exit(EXIT_FAILURE);
+    }
+    return task_need_retry;
+}
+
+task_process_status Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t status, void *context)
+{
+    /*
+     * This function aims to provide coarse handling of failures in sairedis remove
+     * operation (i.e., notify users by throwing excepions when failures happen).
+     * Return value: task_success - Handled the status successfully. No need to retry this SAI operation.
+     *               task_need_retry - Cannot handle the status. Need to retry the SAI operation.
+     *               task_failed - Failed to handle the status but another attempt is unlikely to resolve the failure.
+     * TODO: 1. Add general handling logic for specific statuses (e.g., SAI_STATUS_OBJECT_IN_USE,
+     *          SAI_STATUS_ITEM_NOT_FOUND)
+     *       2. Develop fine-grain failure handling mechanisms and replace this coarse handling
+     *          in each orch.
+     *       3. Take the type of sai api into consideration.
+     */
+    switch (status)
+    {
+        case SAI_STATUS_SUCCESS:
+            SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
+            return task_success;
+        default:
+            SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
+                        sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
+            exit(EXIT_FAILURE);
+    }
+    return task_need_retry;
+}
+
+bool Orch::parseHandleSaiStatusFailure(task_process_status status)
+{
+    /*
+     * This function parses task process status from SAI failure handling function to whether a retry is needed.
+     * Return value: true - no retry is needed.
+     *               false - retry is needed.
+     */
+    switch (status)
+    {
+        case task_need_retry:
+            return false;
+        case task_failed:
+            return true;
+        default:
+            SWSS_LOG_WARN("task_process_status %d is not expected in parseHandleSaiStatusFailure", status);
+    }
+    return true;
 }
 
 void Orch2::doTask(Consumer &consumer)

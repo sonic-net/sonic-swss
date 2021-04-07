@@ -76,7 +76,7 @@ def swss_app_check_RestoreCount_single(state_db, restore_count, name):
             if fv[0] == "restore_count":
                 assert int(fv[1]) == restore_count[key] + 1
             elif fv[0] == "state":
-                assert fv[1] == "reconciled"  or fv[1] == "disabled"
+                assert fv[1] == "reconciled" or fv[1] == "disabled"
 
 def swss_app_check_warmstart_state(state_db, name, state):
     warmtbl = swsscommon.Table(state_db, swsscommon.STATE_WARM_RESTART_TABLE_NAME)
@@ -1150,7 +1150,7 @@ class TestWarmReboot(object):
         time.sleep(5)
 
         # Verify FSM
-        swss_app_check_warmstart_state(state_db, "bgp", "")
+        swss_app_check_warmstart_state(state_db, "bgp", "disabled")
 
         # Verify that multiple changes are seen in swss and sairedis logs as there's
         # no warm-reboot logic in place.

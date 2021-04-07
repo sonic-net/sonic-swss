@@ -27,7 +27,7 @@ public:
     using TaskArgs = std::vector<FieldValueTuple>;
     struct MACsecProfile
     {
-        std::uint8_t        priority;
+        std::uint32_t       priority;
         std::string         cipher_suite;
         std::string         primary_cak;
         std::string         primary_ckn;

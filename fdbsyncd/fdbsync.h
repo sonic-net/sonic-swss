@@ -9,8 +9,17 @@
 #include "netmsg.h"
 #include "warmRestartAssist.h"
 
-// The timeout value (in seconds) for fdbsyncd reconcilation logic
-#define DEFAULT_FDBSYNC_WARMSTART_TIMER 30
+/*
+ * Default timer interval for fdbsyncd reconcillation 
+ */
+#define DEFAULT_FDBSYNC_WARMSTART_TIMER 120
+
+/*
+ * This is the MAX time in seconds, fdbsyncd will wait after warm-reboot
+ * for the interface entries to be recreated in kernel before attempting to 
+ * write the FDB data to kernel
+ */
+#define INTF_RESTORE_MAX_WAIT_TIME 180
 
 namespace swss {
 
@@ -43,7 +52,7 @@ public:
 
     virtual void onMsg(int nlmsg_type, struct nl_object *obj);
 
-    bool isFdbRestoreDone();
+    bool isIntfRestoreDone();
 
     AppRestartAssist *getRestartAssist()
     {

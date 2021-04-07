@@ -26,6 +26,8 @@ private:
     bool isIntfStateOk(const std::string &alias);
     bool setNeighbor(const std::string& alias, const IpAddress& ip, const MacAddress& mac);
 
+    vector<string> parseAliasIp(const string &app_db_nbr_tbl_key, const char *delimiter);
+
     void doResolveNeighTask(Consumer &consumer);
     void doSetNeighTask(Consumer &consumer);
     void doTask(Consumer &consumer);

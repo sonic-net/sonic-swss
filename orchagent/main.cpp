@@ -67,6 +67,8 @@ string gMySwitchType = "";
 int32_t gVoqMySwitchId = -1;
 int32_t gVoqMaxCores = 0;
 uint32_t gCfgSystemPorts = 0;
+string gMyHostName = "";
+string gMyAsicName = "";
 
 void usage()
 {
@@ -81,7 +83,7 @@ void usage()
     cout << "    -b batch_size: set consumer table pop operation batch size (default 128)" << endl;
     cout << "    -m MAC: set switch MAC address" << endl;
     cout << "    -i INST_ID: set the ASIC instance_id in multi-asic platform" << endl;
-    cout << "    -s: enable synchronous mode (depreacated, use -z)" << endl;
+    cout << "    -s: enable synchronous mode (deprecated, use -z)" << endl;
     cout << "    -z: redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
@@ -212,6 +214,34 @@ bool getSystemPortConfigList(DBConnector *cfgDb, DBConnector *appDb, vector<sai_
         return false;
     }
 
+    if (!cfgDeviceMetaDataTable.hget("localhost", "hostname", value))
+    {
+        // hostname is not configured.
+        SWSS_LOG_ERROR("Host name is not configured");
+        return false;
+    }
+    gMyHostName = value;
+
+    if (!gMyHostName.size())
+    {
+        SWSS_LOG_ERROR("Invalid host name %s configured", gMyHostName.c_str());
+        return false;
+    }
+
+    if (!cfgDeviceMetaDataTable.hget("localhost", "asic_name", value))
+    {
+        // asic_name is not configured.
+        SWSS_LOG_ERROR("Asic name is not configured");
+        return false;
+    }
+    gMyAsicName = value;
+
+    if (!gMyAsicName.size())
+    {
+        SWSS_LOG_ERROR("Invalid asic name %s configured", gMyAsicName.c_str());
+        return false;
+    }
+
     vector<string> spKeys;
     cfgSystemPortTable.getKeys(spKeys);
 
@@ -305,7 +335,7 @@ int main(int argc, char **argv)
                 {
                     SWSS_LOG_WARN("ASIC instance_id length > SAI_MAX_HARDWARE_ID_LEN, LIMITING !!");
                 }
-                // If longer, trancate into a string
+                // If longer, truncate into a string
                 gAsicInstance.assign(optarg, len);
             }
             break;
@@ -575,7 +605,7 @@ int main(int argc, char **argv)
 
     if (!orchDaemon->init())
     {
-        SWSS_LOG_ERROR("Failed to initialize orchstration daemon");
+        SWSS_LOG_ERROR("Failed to initialize orchestration daemon");
         exit(EXIT_FAILURE);
     }
 

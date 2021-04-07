@@ -47,6 +47,14 @@ typedef struct {
     bool static_configured;
     bool ingress;
     bool lossless;
+
+    // fields representing parameters by which the headroom is calculated
+    std::string speed;
+    std::string cable_length;
+    std::string port_mtu;
+    std::string gearbox_model;
+
+    // APPL_DB.BUFFER_PROFILE fields
     std::string name;
     std::string size;
     std::string xon;
@@ -73,8 +81,10 @@ typedef struct {
 typedef enum {
     // Port is under initializing, which means its info hasn't been comprehensive for calculating headroom
     PORT_INITIALIZING,
-    // All necessary information for calculating headrom is ready
-    PORT_READY
+    // All necessary information for calculating headroom is ready
+    PORT_READY,
+    // Port is admin down. All PGs programmed to APPL_DB should be removed from the port
+    PORT_ADMIN_DOWN
 } port_state_t;
 
 typedef struct {
@@ -123,6 +133,8 @@ private:
 
     bool m_portInitDone;
     bool m_firstTimeCalculateBufferPool;
+
+    std::string m_configuredSharedHeadroomPoolSize;
 
     std::shared_ptr<DBConnector> m_applDb = nullptr;
     SelectableTimer *m_buffermgrPeriodtimer = nullptr;
@@ -191,6 +203,8 @@ private:
     unsigned long m_mmuSizeNumber;
     std::string m_defaultThreshold;
 
+    std::string m_overSubscribeRatio;
+
     // Initializers
     void initTableHandlerMap();
     void parseGearboxInfo(std::shared_ptr<std::vector<KeyOpFieldsValuesTuple>> gearboxInfo);
@@ -202,6 +216,10 @@ private:
     std::string parseObjectNameFromKey(const std::string &key, size_t pos/* = 1*/);
     std::string parseObjectNameFromReference(const std::string &reference);
     std::string getDynamicProfileName(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model);
+    inline bool isNonZero(const std::string &value) const
+    {
+        return !value.empty() && value != "0";
+    }
 
     // APPL_DB table operations
     void updateBufferPoolToDb(const std::string &name, const buffer_pool_t &pool);
@@ -209,19 +227,22 @@ private:
     void updateBufferPgToDb(const std::string &key, const std::string &profile, bool add);
 
     // Meta flows
-    void calculateHeadroomSize(const std::string &speed, const std::string &cable, const std::string &port_mtu, const std::string &gearbox_model, buffer_profile_t &headroom);
+    void calculateHeadroomSize(buffer_profile_t &headroom);
     void checkSharedBufferPoolSize();
     void recalculateSharedBufferPool();
     task_process_status allocateProfile(const std::string &speed, const std::string &cable, const std::string &mtu, const std::string &threshold, const std::string &gearbox_model, std::string &profile_name);
     void releaseProfile(const std::string &profile_name);
     bool isHeadroomResourceValid(const std::string &port, const buffer_profile_t &profile, const std::string &new_pg);
+    void refreshSharedHeadroomPool(bool enable_state_updated_by_ratio, bool enable_state_updated_by_size);
 
     // Main flows
-    task_process_status refreshPriorityGroupsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);
+    task_process_status removeAllPgsFromPort(const std::string &port);
+    task_process_status refreshPgsForPort(const std::string &port, const std::string &speed, const std::string &cable_length, const std::string &mtu, const std::string &exactly_matched_key);
     task_process_status doUpdatePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doRemovePgTask(const std::string &pg_key, const std::string &port);
     task_process_status doAdminStatusTask(const std::string port, const std::string adminStatus);
-    task_process_status doUpdateStaticProfileTask(buffer_profile_t &profile);
+    task_process_status doUpdateBufferProfileForDynamicTh(buffer_profile_t &profile);
+    task_process_status doUpdateBufferProfileForSize(buffer_profile_t &profile, bool update_pool_size);
 
     // Table update handlers
     task_process_status handleBufferMaxParam(KeyOpFieldsValuesTuple &t);

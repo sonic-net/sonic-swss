@@ -47,7 +47,7 @@ int main(int argc, char **argv)
 
     try
     {
-        // Logger::linkToDbNative("macsecmgrd");
+        Logger::linkToDbNative("macsecmgrd");
         SWSS_LOG_NOTICE("--- Starting macsecmgrd ---");
 
         swss::DBConnector cfgDb("CONFIG_DB", 0);

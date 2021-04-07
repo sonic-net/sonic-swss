@@ -17,13 +17,15 @@ Table of Contents
          * [Cable length](#cable-length)  
          * [COPP_TABLE](#copp_table)  
          * [CRM](#crm)  
-         * [Data Plane L3 Interfaces](#data-plane-l3-interfaces)   
+         * [Data Plane L3 Interfaces](#data-plane-l3-interfaces)  
+         * [DEFAULT_LOSSLESS_BUFFER_PARAMETER](#DEFAULT_LOSSLESS_BUFFER_PARAMETER)  
          * [Device Metadata](#device-metadata)  
          * [Device neighbor metada](#device-neighbor-metada)  
          * [DSCP_TO_TC_MAP](#dscp_to_tc_map)  
          * [FLEX_COUNTER_TABLE](#flex_counter_table)  
          * [L2 Neighbors](#l2-neighbors)  
          * [Loopback Interface](#loopback-interface)  
+         * [LOSSLESS_TRAFFIC_PATTERN](#LOSSLESS_TRAFFIC_PATTERN)  
          * [Management Interface](#management-interface)  
          * [Management port](#management-port)  
          * [Management VRF](#management-vrf)  
@@ -334,6 +336,8 @@ group name and IP ranges in **BGP_PEER_RANGE** table.
 
 ### BUFFER_PG
 
+When the system is running in traditional buffer model, profiles needs to explicitly configured:
+
 ```
 {
 "BUFFER_PG": {
@@ -351,7 +355,31 @@ group name and IP ranges in **BGP_PEER_RANGE** table.
 
 ```
 
+When the system is running in dynamic buffer model, profiles can be:
+
+ - either calculated dynamically according to ports' configuration and just configured as "NULL";
+ - or configured explicitly.
+
+```
+{
+"BUFFER_PG": {
+    "Ethernet0|3-4": {
+        "profile": "NULL"
+    },
+    "Ethernet1|3-4": {
+        "profile": "NULL"
+    },
+    "Ethernet2|3-4": {
+        "profile": "[BUFFER_PROFILE|static_profile]"
+    }
+  }
+}
+
+```
+
 ### Buffer pool
+
+When the system is running in traditional buffer model, the size of all of the buffer pools and xoff of ingress_lossless_pool need to be configured explicitly.
 
 ```
 {
@@ -371,6 +399,29 @@ group name and IP ranges in **BGP_PEER_RANGE** table.
         "type": "ingress",
         "mode": "dynamic",
         "size": "10875072"
+    }
+  }
+}
+
+```
+
+When the system is running in dynamic buffer model, the size of some of the buffer pools can be omitted and will be dynamically calculated.
+
+```
+{
+"BUFFER_POOL": {
+    "egress_lossless_pool": {
+        "type": "egress",
+        "mode": "static",
+        "size": "15982720"
+    },
+    "egress_lossy_pool": {
+        "type": "egress",
+        "mode": "dynamic",
+    },
+    "ingress_lossless_pool": {
+        "type": "ingress",
+        "mode": "dynamic",
     }
   }
 }
@@ -419,6 +470,19 @@ group name and IP ranges in **BGP_PEER_RANGE** table.
 
 ```
 
+When the system is running in dynamic buffer model and the headroom_type is dynamic, only dynamic_th needs to be configured and rest of fields can be omitted.
+This kind of profiles will be handled by buffer manager and won't be applied to SAI.
+
+```
+{
+  {
+    "non_default_dynamic_th_profile": {
+        "dynamic_th": 1,
+        "headroom_type": "dynamic"
+    }
+  }
+}
+```
 
 ### Buffer queue
 
@@ -588,6 +652,21 @@ attributes.
 ```
 
 
+### DEFAULT_LOSSLESS_BUFFER_PARAMETER
+
+This table stores the default lossless buffer parameters for dynamic buffer calculation.
+
+```
+{
+    "DEFAULT_LOSSLESS_BUFFER_PARAMETER": {
+        "AZURE": {
+            "default_dynamic_th": "0",
+            "over_subscribe_ratio": "2"
+        }
+    }
+}
+```
+
 ### Device Metadata
 
 The **DEVICE_METADATA** table contains only one object named
@@ -609,7 +688,8 @@ instance is supported in SONiC.
         "default_pfcwd_status": "disable",
         "bgp_asn": "65100",
         "deployment_id": "1",
-        "type": "ToRRouter"
+        "type": "ToRRouter",
+        "buffer_model": "traditional"
     }
   }
 }
@@ -744,6 +824,22 @@ interface objects.
   }
 }
 
+```
+
+### LOSSLESS_TRAFFIC_PATTERN
+
+The LOSSLESS_TRAFFIC_PATTERN table stores parameters related to
+lossless traffic for dynamic buffer calculation
+
+```
+{
+    "LOSSLESS_TRAFFIC_PATTERN": {
+        "AZURE": {
+            "mtu": "1024",
+            "small_packet_percentage": "100"
+        }
+    }
+}
 ```
 
 ### Management Interface
