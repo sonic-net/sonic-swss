@@ -40,9 +40,12 @@ class BgpStateCheck():
         self.ipv4_neigh_eor_status = {}
         self.ipv6_neighbors = []
         self.ipv6_neigh_eor_status = {}
+        self.evpn_neighbors = []
+        self.evpn_neigh_eor_status = {}
         self.keepalivesRecvCnt = {}
         self.bgp_ipv4_eoiu = False
         self.bgp_ipv6_eoiu = False
+        self.bgp_evpn_eoiu = False
         self.get_peers_wt = self.DEF_TIME_OUT
 
     def get_all_peers(self):
@@ -57,8 +60,12 @@ class BgpStateCheck():
                 if "ipv6Unicast" in peer_info and "peers" in peer_info["ipv6Unicast"]:
                     self.ipv6_neighbors = peer_info["ipv6Unicast"]["peers"].keys()
 
+                if "l2VpnEvpn" in peer_info and "peers" in peer_info["l2VpnEvpn"]:
+                    self.evpn_neighbors = peer_info["l2VpnEvpn"]["peers"].keys()
+
                 syslog.syslog('BGP ipv4 neighbors: {}'.format(self.ipv4_neighbors))
-                syslog.syslog('BGP ipv4 neighbors: {}'.format(self.ipv6_neighbors))
+                syslog.syslog('BGP ipv6 neighbors: {}'.format(self.ipv6_neighbors))
+                syslog.syslog('BGP evpn neighbors: {}'.format(self.evpn_neighbors))
                 return
 
             except Exception:
@@ -75,6 +82,8 @@ class BgpStateCheck():
             self.ipv4_neigh_eor_status[neigh] = "unknown"
         for neigh in self.ipv6_neighbors:
             self.ipv6_neigh_eor_status[neigh] = "unknown"
+        for neigh in self.evpn_neighbors:
+            self.evpn_neigh_eor_status[neigh] = "unknown"
 
     # Set the statedb "BGP_STATE_TABLE|eoiu", so fpmsyncd can get the bgp eoiu signal
     # Only two families: 'ipv4' and 'ipv6'
@@ -94,13 +103,15 @@ class BgpStateCheck():
         db.connect(db.STATE_DB, False)
         db.delete(db.STATE_DB, "BGP_STATE_TABLE|IPv4|eoiu")
         db.delete(db.STATE_DB, "BGP_STATE_TABLE|IPv6|eoiu")
+        db.delete(db.STATE_DB, "BGP_STATE_TABLE|Evpn|eoiu")
         db.close(db.STATE_DB)
-        syslog.syslog('Cleaned ipv4 and ipv6 eoiu marker flags')
+        syslog.syslog('Cleaned ipv4 evpn and ipv6 eoiu marker flags')
         return
 
-    def bgp_eor_received(self, neigh, is_ipv4):
+    def bgp_eor_received(self, neigh, af):
         try:
             neighstr = "%s" % neigh
+            af_str = "%s" % af
             eor_received = False
             cmd = "vtysh -c 'show bgp neighbors %s json'" % neighstr
             output = commands.getoutput(cmd)
@@ -109,9 +120,11 @@ class BgpStateCheck():
                 if "gracefulRestartInfo" in neig_status[neighstr]:
                     if "endOfRibRecv" in neig_status[neighstr]["gracefulRestartInfo"]:
                         eor_info = neig_status[neighstr]["gracefulRestartInfo"]["endOfRibRecv"]
-                        if is_ipv4 and "IPv4 Unicast" in eor_info and eor_info["IPv4 Unicast"] == True:
+                        if af_str == "Ipv4" and "ipv4Unicast" in eor_info and eor_info["ipv4Unicast"] == True:
                             eor_received = True
-                        elif not is_ipv4 and "IPv6 Unicast" in eor_info and eor_info["IPv6 Unicast"] == True:
+                        elif af_str == "Ipv6" and "ipv6Unicast" in eor_info and eor_info["ipv6Unicast"] == True:
+                            eor_received = True
+                        elif af_str == "Evpn" and "l2VpnEvpn" in eor_info and eor_info["l2VpnEvpn"] == True:
                             eor_received = True
                 if eor_received:
                     syslog.syslog('BGP eor received for neighbors: {}'.format(neigh))
@@ -150,7 +163,7 @@ class BgpStateCheck():
         while wait_time >= 0:
             if not self.bgp_ipv4_eoiu:
                 for neigh, eor_status in self.ipv4_neigh_eor_status.items():
-                    if eor_status == "unknown" and self.bgp_eor_received(neigh, True):
+                    if eor_status == "unknown" and self.bgp_eor_received(neigh, "Ipv4"):
                         self.ipv4_neigh_eor_status[neigh] = "rcvd"
                 if "unknown" not in self.ipv4_neigh_eor_status.values():
                     self.bgp_ipv4_eoiu = True
@@ -158,13 +171,21 @@ class BgpStateCheck():
 
             if not self.bgp_ipv6_eoiu:
                 for neigh, eor_status in self.ipv6_neigh_eor_status.items():
-                    if eor_status == "unknown" and self.bgp_eor_received(neigh, False):
+                    if eor_status == "unknown" and self.bgp_eor_received(neigh, "Ipv6"):
                         self.ipv6_neigh_eor_status[neigh] = "rcvd"
                 if "unknown" not in self.ipv6_neigh_eor_status.values():
                     self.bgp_ipv6_eoiu = True
                     syslog.syslog('BGP ipv6 eoiu reached')
 
-            if self.bgp_ipv6_eoiu and self.bgp_ipv4_eoiu:
+            if not self.bgp_evpn_eoiu:
+                for neigh, eor_status in self.evpn_neigh_eor_status.items():
+                    if eor_status == "unknown" and self.bgp_eor_received(neigh, "Evpn"):
+                        self.evpn_neigh_eor_status[neigh] = "rcvd"
+                if "unknown" not in self.evpn_neigh_eor_status.values():
+                    self.bgp_evpn_eoiu = True
+                    syslog.syslog("BGP evpn eoiu reached")
+
+            if self.bgp_ipv6_eoiu and self.bgp_ipv4_eoiu and self.bgp_evpn_eoiu:
                 break;
             time.sleep(self.CHECK_INTERVAL)
             wait_time -= self.CHECK_INTERVAL
@@ -174,6 +195,9 @@ class BgpStateCheck():
 
         if not self.bgp_ipv4_eoiu:
             syslog.syslog(syslog.LOG_ERR, "BGP ipv4 eoiu not reached: {}".format(self.ipv4_neigh_eor_status));
+
+        if not self.bgp_evpn_eoiu:
+            syslog.syslog(syslog.LOG_ERR, "BGP evpn eoiu not reached: {}".format(self.evpn_neigh_eor_status));
 
 def main():
 
@@ -200,6 +224,7 @@ def main():
 
     bgp_state_check.set_bgp_eoiu_marker("IPv4", "unknown")
     bgp_state_check.set_bgp_eoiu_marker("IPv6", "unknown")
+    bgp_state_check.set_bgp_eoiu_marker("Evpn", "unknown")
     bgp_state_check.get_all_peers()
     bgp_state_check.init_peers_eor_status()
     try:
@@ -213,6 +238,8 @@ def main():
         bgp_state_check.set_bgp_eoiu_marker("IPv4", "reached")
     if bgp_state_check.bgp_ipv6_eoiu:
         bgp_state_check.set_bgp_eoiu_marker("IPv6", "reached")
+    if bgp_state_check.bgp_evpn_eoiu:
+        bgp_state_check.set_bgp_eoiu_marker("Evpn", "reached")
 
     print "bgp_eoiu_marker service is done"
     return
