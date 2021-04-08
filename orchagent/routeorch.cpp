@@ -768,12 +768,9 @@ void RouteOrch::doTask(Consumer& consumer)
             {
                 removeOverlayNextHops(it_nhg.second, it_nhg.first);
             }
-            else
+            else if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
             {
-                if (m_syncdNextHopGroups[it_nhg.first].ref_count == 0)
-                {
-                    removeNextHopGroup(it_nhg.first);
-                }
+                removeNextHopGroup(it_nhg.first);
             }
         }
     }
@@ -1462,7 +1459,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                     auto old_nextHops = it_route->second;
 
                     if (old_nextHops.is_overlay_nexthop()) {
-                        nexthop = NextHopKey(it_route->second.to_string(), true);
+                        nexthop = NextHopKey(old_nextHops.to_string(), true);
                     } else {
                         nexthop = NextHopKey(it_route->second.to_string());
                     }
@@ -1742,9 +1739,8 @@ bool RouteOrch::addRoutePost(const RouteBulkContext& ctx, const NextHopGroupKey 
             {
                 m_bulkNhgReducedRefCnt.emplace(it_route->second, 0);
             } else if (ol_nextHops.is_overlay_nexthop()){
-
                 SWSS_LOG_NOTICE("Update overlay Nexthop %s", ol_nextHops.to_string().c_str());
-                m_bulkNhgReducedRefCnt.emplace(it_route->second, vrf_id);
+                m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
             }
         }
 
@@ -1906,7 +1902,7 @@ bool RouteOrch::removeRoutePost(const RouteBulkContext& ctx)
             m_bulkNhgReducedRefCnt.emplace(it_route->second, 0);
         } else if (ol_nextHops.is_overlay_nexthop()){
             SWSS_LOG_NOTICE("Remove overlay Nexthop %s", ol_nextHops.to_string().c_str());
-            m_bulkNhgReducedRefCnt.emplace(it_route->second, vrf_id);
+            m_bulkNhgReducedRefCnt.emplace(ol_nextHops, vrf_id);
         }
     }
 
