@@ -174,7 +174,7 @@ int main(int argc, char **argv)
                         if (eoiuFlagsSet(bgpStateTable))
                         {
                             /* Obtain eoiu hold timer defined for bgp docker */
-                            uintmax_t eoiuHoldIval = WarmStart::getWarmStartTimer("eoiu_hold", "bgp");
+                            uint32_t eoiuHoldIval = WarmStart::getWarmStartTimer("eoiu_hold", "bgp");
                             if (!eoiuHoldIval)
                             {
                                 eoiuHoldTimer.setInterval(timespec{DEFAULT_EOIU_HOLD_INTERVAL, 0});
@@ -186,7 +186,7 @@ int main(int argc, char **argv)
                             }
                             eoiuHoldTimer.start();
                             s.addSelectable(&eoiuHoldTimer);
-                            SWSS_LOG_NOTICE("Warm-Restart started EOIU hold timer which is to expire in %" PRIuMAX " seconds.", eoiuHoldIval);
+                            SWSS_LOG_NOTICE("Warm-Restart started EOIU hold timer which is to expire in %d seconds.", eoiuHoldIval);
                             s.removeSelectable(&eoiuCheckTimer);
                             continue;
                         }
