@@ -20,6 +20,7 @@ extern bool gSwssRecord;
 extern ofstream gRecordOfs;
 extern bool gLogRotate;
 extern string gRecordFile;
+extern bool gExitInSaiFailure;
 
 Orch::Orch(DBConnector *db, const string tableName, int pri)
 {
@@ -705,9 +706,12 @@ task_process_status Orch::handleSaiCreateStatus(sai_api_t api, sai_status_t stat
             SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiCreateStatus");
             return task_success;
         default:
-            SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
+            if (gExitInSaiFailure)
+            {
+                SWSS_LOG_ERROR("Encountered failure in create operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            exit(EXIT_FAILURE);
+                exit(EXIT_FAILURE);
+            }
     }
     return task_need_retry;
 }
@@ -731,9 +735,12 @@ task_process_status Orch::handleSaiSetStatus(sai_api_t api, sai_status_t status,
             SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiSetStatus");
             return task_success;
         default:
-            SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
+            if (gExitInSaiFailure)
+            {
+                SWSS_LOG_ERROR("Encountered failure in set operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            exit(EXIT_FAILURE);
+                exit(EXIT_FAILURE);
+            }
     }
     return task_need_retry;
 }
@@ -758,9 +765,12 @@ task_process_status Orch::handleSaiRemoveStatus(sai_api_t api, sai_status_t stat
             SWSS_LOG_WARN("SAI_STATUS_SUCCESS is not expected in handleSaiRemoveStatus");
             return task_success;
         default:
-            SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
+            if (gExitInSaiFailure)
+            {
+                SWSS_LOG_ERROR("Encountered failure in remove operation, exiting orchagent, SAI API: %s, status: %s",
                         sai_serialize_api(api).c_str(), sai_serialize_status(status).c_str());
-            exit(EXIT_FAILURE);
+                exit(EXIT_FAILURE);
+            }
     }
     return task_need_retry;
 }

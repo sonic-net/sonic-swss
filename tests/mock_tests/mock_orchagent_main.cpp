@@ -19,6 +19,7 @@ bool gSairedisRecord = true;
 bool gSwssRecord = true;
 bool gLogRotate = false;
 bool gSaiRedisLogRotate = false;
+bool gExitInSaiFailure = true;
 ofstream gRecordOfs;
 string gRecordFile;
 string gMySwitchType = "voq";

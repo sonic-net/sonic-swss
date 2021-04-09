@@ -57,6 +57,7 @@ bool gSaiRedisLogRotate = false;
 bool gSyncMode = false;
 sai_redis_communication_mode_t gRedisCommunicationMode = SAI_REDIS_COMMUNICATION_MODE_REDIS_ASYNC;
 string gAsicInstance;
+bool gExitInSaiFailure = true;
 
 extern bool gIsNatSupported;
 
@@ -70,7 +71,7 @@ uint32_t gCfgSystemPorts = 0;
 
 void usage()
 {
-    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode]" << endl;
+    cout << "usage: orchagent [-h] [-r record_type] [-d record_location] [-f swss_rec_filename] [-j sairedis_rec_filename] [-b batch_size] [-m MAC] [-i INST_ID] [-s] [-z mode] [-e]" << endl;
     cout << "    -h: display this message" << endl;
     cout << "    -r record_type: record orchagent logs with type (default 3)" << endl;
     cout << "                    0: do not record logs" << endl;
@@ -85,6 +86,7 @@ void usage()
     cout << "    -z: redis communication mode (redis_async|redis_sync|zmq_sync), default: redis_async" << endl;
     cout << "    -f swss_rec_filename: swss record log filename(default 'swss.rec')" << endl;
     cout << "    -j sairedis_rec_filename: sairedis record log filename(default sairedis.rec)" << endl;
+    cout << "    -e disable exit and restart orchagent in SAI failures" << endl;
 }
 
 void sighup_handler(int signo)
@@ -289,7 +291,7 @@ int main(int argc, char **argv)
     string swss_rec_filename = "swss.rec";
     string sairedis_rec_filename = "sairedis.rec";
 
-    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:")) != -1)
+    while ((opt = getopt(argc, argv, "b:m:r:f:j:d:i:hsz:e")) != -1)
     {
         switch (opt)
         {
@@ -366,6 +368,10 @@ int main(int argc, char **argv)
             {
                 sairedis_rec_filename = optarg;
             }
+            break;
+        case 'e':
+            gExitInSaiFailure = false;
+            SWSS_LOG_NOTICE("Disabling exit and restart orchagent in SAI failures");
             break;
         default: /* '?' */
             exit(EXIT_FAILURE);

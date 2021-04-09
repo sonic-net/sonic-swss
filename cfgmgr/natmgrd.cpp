@@ -50,6 +50,7 @@ using namespace swss;
 int       gBatchSize = 0;
 bool      gSwssRecord = false;
 bool      gLogRotate = false;
+bool      gExitInSaiFailure = true;
 ofstream  gRecordOfs;
 string    gRecordFile;
 mutex     gDbMutex;

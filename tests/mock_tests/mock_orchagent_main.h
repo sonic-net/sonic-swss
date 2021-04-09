@@ -21,6 +21,7 @@ extern bool gSwssRecord;
 extern bool gSairedisRecord;
 extern bool gLogRotate;
 extern bool gSaiRedisLogRotate;
+extern bool gExitInSaiFailure;
 extern ofstream gRecordOfs;
 extern string gRecordFile;
 
