@@ -4950,38 +4950,15 @@ bool PortsOrch::addInbandVlan(const string &alias, const string &type)
 
     getCpuPort(cpuPort);
 
-    if (!addBridgePort(cpuPort))
-    {
-        SWSS_LOG_ERROR("Failed to add CPU port %s as bridge port", cpuPort.m_alias.c_str());
-        return false;
-    }
-
-    if (!addVlanMember(inbandVlan, cpuPort, tagged_mode))
-    {
-        SWSS_LOG_ERROR("Failed to add CPU port %s in inband VLAN", cpuPort.m_alias.c_str());
-        return false;
-    }
-
-    SWSS_LOG_NOTICE("add port %s to inbandVlan %s", cpuPort.m_alias.c_str(), inbandVlan.m_alias.c_str());
-
-    if (!addHostIntfs(inbandVlan, inbandVlan.m_alias, inbandVlan.m_hif_id))
-    {
-        SWSS_LOG_ERROR("Failed to add host intf for inband VLAN");
-        return false;
-    }
-
-    if (!setHostIntfsOperStatus(inbandVlan, true))
-    {
-        SWSS_LOG_ERROR("Failed to set host intf oper status for inband VLAN");
-        return false;
-    }
-
     for (auto &it: m_portList)
     {
         Port port = it.second;
-        if (port.m_type != Port::SYSTEM ||
-            port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_LOCAL ||
-            port.m_alias.find("Cpu") == string::npos)
+
+        // Only add local and remote CPU ports to inband VLAN.
+        if (port.m_alias != cpuPort.m_alias &&
+            (port.m_type != Port::SYSTEM ||
+             port.m_system_port_info.type == SAI_SYSTEM_PORT_TYPE_LOCAL ||
+             port.m_alias.find("Cpu") == string::npos))
         {
             continue;
         }
@@ -4998,7 +4975,19 @@ bool PortsOrch::addInbandVlan(const string &alias, const string &type)
             continue;
         }
 
-        SWSS_LOG_NOTICE("add sysport %s to inbandVlan %s", port.m_alias.c_str(), inbandVlan.m_alias.c_str());
+        SWSS_LOG_NOTICE("add port %s to inbandVlan %s", port.m_alias.c_str(), inbandVlan.m_alias.c_str());
+    }
+
+    if (!addHostIntfs(inbandVlan, inbandVlan.m_alias, inbandVlan.m_hif_id))
+    {
+        SWSS_LOG_ERROR("Failed to add host intf for inband VLAN");
+        return false;
+    }
+
+    if (!setHostIntfsOperStatus(inbandVlan, true))
+    {
+        SWSS_LOG_ERROR("Failed to set host intf oper status for inband VLAN");
+        return false;
     }
 
     return true;
