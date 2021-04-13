@@ -12,6 +12,8 @@
 #define VRF_TABLE_START 1001
 #define VRF_TABLE_END 2000
 #define TABLE_LOCAL_PREF 1001 // after l3mdev-table
+#define MGMT_VRF_TABLE_ID 5000
+#define MGMT_VRF          "mgmt"
 
 using namespace swss;
 
@@ -143,6 +145,13 @@ bool VrfMgr::delLink(const string& vrfName)
         return false;
     }
 
+    if (vrfName == MGMT_VRF)
+    {
+        recycleTable(m_vrfTableMap[vrfName]);
+        m_vrfTableMap.erase(vrfName);
+        return true;
+    }
+
     cmd << IP_CMD << " link del " << shellquote(vrfName);
     EXEC_WITH_ERROR_THROW(cmd.str(), res);
 
@@ -161,6 +170,15 @@ bool VrfMgr::setLink(const string& vrfName)
 
     if (m_vrfTableMap.find(vrfName) != m_vrfTableMap.end())
     {
+        return true;
+    }
+    
+    if (vrfName == MGMT_VRF)
+    {
+        // Mgmt VRF is initialised as part of hostcfgd, 
+        // just return the reserved table_id for mgmt VRF from here.
+        uint32_t table_id = MGMT_VRF_TABLE_ID;
+        m_vrfTableMap.emplace(vrfName, table_id);
         return true;
     }
 
@@ -207,6 +225,46 @@ void VrfMgr::doTask(Consumer &consumer)
         auto vrfName = kfvKey(t);
 
         string op = kfvOp(t);
+		// Mgmt VRF table event handling for in-band management
+        if (consumer.getTableName() == CFG_MGMT_VRF_TABLE_NAME) {
+            SWSS_LOG_DEBUG("Event for mgmt VRF op %s", op.c_str());
+            if (op == SET_COMMAND) {
+                bool in_band_mgmt_enabled = false;
+                bool mgmt_vrf_enabled = false;
+                for (auto i : kfvFieldsValues(t))
+                {
+                    if (fvField(i) == "mgmtVrfEnabled") {
+                        if (fvValue(i) == "true") {
+                            mgmt_vrf_enabled = true;
+                        } else {
+                            op = DEL_COMMAND;
+                        }
+                        SWSS_LOG_DEBUG("Event for mgmt VRF table mgmt_vrf_enabled is set val:%s", fvValue(i).c_str());
+                    } else if (fvField(i) == "in_band_mgmt_enabled") {
+                        if (fvValue(i) == "true") {
+                            in_band_mgmt_enabled = true;
+                        } else {
+                            op = DEL_COMMAND;
+                        }
+                        SWSS_LOG_DEBUG("Event for mgmt VRF table in_band_mgmt_enabled is set val:%s", fvValue(i).c_str());
+                    }
+                }
+                // If mgmt VRF is not enabled or in-band-mgmt is not enabled delete the in-band-mgmt 
+                // related VRF table map information
+                if ((op == SET_COMMAND) && ((mgmt_vrf_enabled == false) || (in_band_mgmt_enabled == false))) {
+                    op = DEL_COMMAND;
+                }
+            }
+            vrfName = MGMT_VRF;
+            if (((op == DEL_COMMAND) && (m_vrfTableMap.find(vrfName) == m_vrfTableMap.end())) || 
+                    ((op == SET_COMMAND) && (m_vrfTableMap.find(vrfName) != m_vrfTableMap.end()))) {
+                // If the mgmt VRF is not populated already, return
+                it = consumer.m_toSync.erase(it);
+                continue;
+            }
+            SWSS_LOG_DEBUG("Event for mgmt VRF op %s", op.c_str());
+        }
+        SWSS_LOG_DEBUG("Event for table %s vrf netdev %s id %s", consumer.getTableName().c_str(), vrfName.c_str(), op.c_str());
         if (op == SET_COMMAND)
         {
             if (consumer.getTableName() == CFG_VXLAN_EVPN_NVO_TABLE_NAME)
@@ -226,7 +284,8 @@ void VrfMgr::doTask(Consumer &consumer)
                 m_stateVrfTable.set(vrfName, fvVector);
 
                 SWSS_LOG_NOTICE("Created vrf netdev %s", vrfName.c_str());
-                if (consumer.getTableName() == CFG_VRF_TABLE_NAME)
+                if ((consumer.getTableName() == CFG_VRF_TABLE_NAME) ||
+                    (consumer.getTableName() == CFG_MGMT_VRF_TABLE_NAME))
                 {
                     status  = doVrfVxlanTableCreateTask (t);
                     if (status == false)
@@ -235,8 +294,15 @@ void VrfMgr::doTask(Consumer &consumer)
                         it = consumer.m_toSync.erase(it);
                         continue;
                     }
+                    vector<FieldValueTuple> vrfFvVector;
+                    // Incase of MGMT_VRF_CONFIG table event, the fields mgmtVrfEnabled, 
+                    // in_band_mgmt_enabled should be ignored.
+                    if (consumer.getTableName() != CFG_MGMT_VRF_TABLE_NAME) 
+                    {
+                        vrfFvVector = kfvFieldsValues(t);
+                    }
 
-                    m_appVrfTableProducer.set(vrfName, kfvFieldsValues(t));
+                    m_appVrfTableProducer.set(vrfName, vrfFvVector);
 
                 }
                 else
@@ -256,7 +322,8 @@ void VrfMgr::doTask(Consumer &consumer)
             {
                 doVrfEvpnNvoDelTask (t);
             }
-            else if (consumer.getTableName() == CFG_VRF_TABLE_NAME)
+            else if ((consumer.getTableName() == CFG_VRF_TABLE_NAME) ||
+                     (consumer.getTableName() == CFG_MGMT_VRF_TABLE_NAME))
             {
                 vector<FieldValueTuple> temp;
 

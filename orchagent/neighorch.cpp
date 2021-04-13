@@ -523,7 +523,8 @@ void NeighOrch::doTask(Consumer &consumer)
 
         string alias = key.substr(0, found);
 
-        if (alias == "eth0" || alias == "lo" || alias == "docker0")
+        if (alias == "eth0" || alias == "lo" || alias == "docker0"
+            || ((op == SET_COMMAND) && m_intfsOrch->isInbandIntfInMgmtVrf(alias)))
         {
             it = consumer.m_toSync.erase(it);
             continue;
