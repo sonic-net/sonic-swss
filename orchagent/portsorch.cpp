@@ -2484,10 +2484,6 @@ void PortsOrch::doPortTask(Consumer &consumer)
                         }
                     }
 
-                    /* Skip initializing recirc port for now because the current SAI implementation of some vendors
-                     * have limiited support for recirc port. This check can be removed once SAI implementation
-                     * is enhanced/changed in the future.
-                     */
                     if (!initPort(get<0>(it->second), get<5>(it->second), get<4>(it->second), it->first))
                     {
                         throw runtime_error("PortsOrch initialization failure.");
