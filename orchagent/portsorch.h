@@ -207,7 +207,7 @@ private:
     port_config_state_t m_portConfigState = PORT_CONFIG_MISSING;
     sai_uint32_t m_portCount;
     map<set<int>, sai_object_id_t> m_portListLaneMap;
-    map<set<int>, tuple<string, uint32_t, int, string, int>> m_lanesAliasSpeedMap;
+    map<set<int>, tuple<string, uint32_t, int, string, int, string>> m_lanesAliasSpeedMap;
     map<string, Port> m_portList;
     unordered_map<sai_object_id_t, int> m_portOidToIndex;
     map<string, uint32_t> m_port_ref_count;
@@ -252,7 +252,7 @@ private:
 
     bool addPort(const set<int> &lane_set, uint32_t speed, int an=0, string fec="");
     sai_status_t removePort(sai_object_id_t port_id);
-    bool initPort(const string &alias, const int index, const set<int> &lane_set);
+    bool initPort(const string &alias, const string &role, const int index, const set<int> &lane_set);
     void deInitPort(string alias, sai_object_id_t port_id);
 
     bool setPortAdminStatus(Port &port, bool up);
@@ -302,7 +302,7 @@ private:
     bool initGearboxPort(Port &port);
 
     map<string, string> m_recircPortRole;
-    void doProcessRecircPort(string alias, string role, set<int> laneSet, string op);
+    bool doProcessRecircPort(string alias, string role, set<int> laneSet, string op);
 
     //map key is tuple of <attached_switch_id, core_index, core_port_index>
     map<tuple<int, int, int>, sai_object_id_t> m_systemPortOidMap;

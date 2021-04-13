@@ -2044,9 +2044,14 @@ string PortsOrch::getPriorityGroupDropPacketsFlexCounterTableKey(string key)
     return string(PG_DROP_STAT_COUNTER_FLEX_COUNTER_GROUP) + ":" + key;
 }
 
-bool PortsOrch::initPort(const string &alias, const int index, const set<int> &lane_set)
+bool PortsOrch::initPort(const string &alias, const string &role, const int index, const set<int> &lane_set)
 {
     SWSS_LOG_ENTER();
+
+    if (role == "Rec" || role == "Inb")
+    {
+        return doProcessRecircPort(alias, role, lane_set, SET_COMMAND);
+    }
 
     /* Determine if the lane combination exists in switch */
     if (m_portListLaneMap.find(lane_set) != m_portListLaneMap.end())
@@ -2437,14 +2442,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
             /* Collect information about all received ports */
             if (lane_set.size())
             {
-                m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed, an, fec_mode, index);
-            }
-
-            if (role == "Rec" || role == "Inb")
-            {
-                doProcessRecircPort(alias, role, lane_set, op);
-                it = consumer.m_toSync.erase(it);
-                continue;
+                m_lanesAliasSpeedMap[lane_set] = make_tuple(alias, speed, an, fec_mode, index, role);
             }
 
             // TODO:
@@ -2490,8 +2488,7 @@ void PortsOrch::doPortTask(Consumer &consumer)
                      * have limiited support for recirc port. This check can be removed once SAI implementation
                      * is enhanced/changed in the future.
                      */
-                    if (m_recircPortRole.find(get<0>(it->second)) == m_recircPortRole.end() &&
-                        !initPort(get<0>(it->second), get<4>(it->second), it->first))
+                    if (!initPort(get<0>(it->second), get<5>(it->second), get<4>(it->second), it->first))
                     {
                         throw runtime_error("PortsOrch initialization failure.");
                     }
@@ -5348,7 +5345,7 @@ bool PortsOrch::getRecircPort(Port &port, string role)
     return false;
 }
 
-void PortsOrch::doProcessRecircPort(string alias, string role, set<int> lane_set, string op)
+bool PortsOrch::doProcessRecircPort(string alias, string role, set<int> lane_set, string op)
 {
     SWSS_LOG_ENTER();
 
@@ -5357,7 +5354,7 @@ void PortsOrch::doProcessRecircPort(string alias, string role, set<int> lane_set
         if (m_recircPortRole.find(alias) != m_recircPortRole.end())
         {
             SWSS_LOG_DEBUG("Recirc port %s already added", alias.c_str());
-            return;
+            return true;
         }
 
         /* Find pid of recirc port */ 
@@ -5408,14 +5405,17 @@ void PortsOrch::doProcessRecircPort(string alias, string role, set<int> lane_set
 
         PortUpdate update = { p, true };
         notify(SUBJECT_TYPE_PORT_CHANGE, static_cast<void *>(&update));
+        return true;
     }
     else if (op == DEL_COMMAND)
     {
         SWSS_LOG_ERROR("Delete recirc port is not supported.");
+        return false;
     }
     else
     {
         SWSS_LOG_ERROR("Unknown operation type %s", op.c_str());
+        return false;
     }
 }
 
