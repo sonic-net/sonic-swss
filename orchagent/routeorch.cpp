@@ -1012,13 +1012,16 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     /* Assert each IP address exists in m_syncdNextHops table,
      * and add the corresponding next_hop_id to next_hop_ids. */
+    bool missingNexthop = false;
     for (auto it : next_hop_set)
     {
         if (!m_neighOrch->hasNextHop(it))
         {
-            SWSS_LOG_INFO("Failed to get next hop %s in %s",
+            SWSS_LOG_INFO("Failed to get next hop %s in %s, resolving neighbor",
                     it.to_string().c_str(), nexthops.to_string().c_str());
-            return false;
+            m_neighOrch->resolveNeighborEntry(it, MacAddress());
+            missingNexthop = true;
+            continue;
         }
 
         // skip next hop group member create for neighbor from down port
@@ -1030,6 +1033,11 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         sai_object_id_t next_hop_id = m_neighOrch->getNextHopId(it);
         next_hop_ids.push_back(next_hop_id);
         nhopgroup_members_set[next_hop_id] = it;
+    }
+
+    if (missingNexthop)
+    {
+        return false;
     }
 
     sai_attribute_t nhg_attr;
@@ -1395,8 +1403,9 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 }
                 else
                 {
-                    SWSS_LOG_INFO("Failed to get next hop %s for %s",
+                    SWSS_LOG_INFO("Failed to get next hop %s for %s, resolving neighbor",
                             nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
+                    m_neighOrch->resolveNeighborEntry(nexthop, MacAddress());
                     return false;
                 }
             }

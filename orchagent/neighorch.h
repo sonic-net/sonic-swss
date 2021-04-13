@@ -74,6 +74,8 @@ public:
     bool addInbandNeighbor(string alias, IpAddress ip_address);
     bool delInbandNeighbor(string alias, IpAddress ip_address);
 
+    bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
+
 private:
     PortsOrch *m_portsOrch;
     IntfsOrch *m_intfsOrch;
@@ -93,7 +95,6 @@ private:
     bool clearNextHopFlag(const NextHopKey &, const uint32_t);
 
     void processFDBFlushUpdate(const FdbFlushUpdate &);
-    bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
 
     void doTask(Consumer &consumer);
     void doVoqSystemNeighTask(Consumer &consumer);
