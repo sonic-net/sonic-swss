@@ -313,7 +313,10 @@ bool NeighOrch::isNextHopFlagSet(const NextHopKey &nexthop, const uint32_t nh_fl
 
     auto nhop = m_syncdNextHops.find(nexthop);
 
-    assert(nhop != m_syncdNextHops.end());
+    if (nhop == m_syncdNextHops.end())
+    {
+        return false;
+    }
 
     if (nhop->second.nh_flags & nh_flag)
     {

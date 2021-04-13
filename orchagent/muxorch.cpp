@@ -1278,12 +1278,6 @@ void MuxCableOrch::updateMuxState(string portName, string muxState)
 
 void MuxCableOrch::addTunnelRoute(const NextHopKey &nhKey)
 {
-    if (!nhKey.ip_address.isV4())
-    {
-        SWSS_LOG_INFO("IPv6 tunnel route add '%s' - (Not Implemented)", nhKey.ip_address.to_string().c_str());
-        return;
-    }
-
     vector<FieldValueTuple> data;
     string key, alias = nhKey.alias;
 
@@ -1299,12 +1293,6 @@ void MuxCableOrch::addTunnelRoute(const NextHopKey &nhKey)
 
 void MuxCableOrch::removeTunnelRoute(const NextHopKey &nhKey)
 {
-    if (!nhKey.ip_address.isV4())
-    {
-        SWSS_LOG_INFO("IPv6 tunnel route remove '%s' - (Not Implemented)", nhKey.ip_address.to_string().c_str());
-        return;
-    }
-
     string key, alias = nhKey.alias;
 
     IpPrefix pfx = nhKey.ip_address.to_string();
