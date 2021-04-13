@@ -12,11 +12,11 @@ class TestPortAutoNeg(object):
         adb = dvs.get_asic_db()
 
         tbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
-        fvs = swsscommon.FieldValuePairs([("autoneg","0")])
+        fvs = swsscommon.FieldValuePairs([("autoneg","on")])
         tbl.set("Ethernet0", fvs)
 
         tbl = swsscommon.ProducerStateTable(db, "PORT_TABLE")
-        fvs = swsscommon.FieldValuePairs([("autoneg","1"), ("speed", "1000")])
+        fvs = swsscommon.FieldValuePairs([("autoneg","off"), ("speed", "1000")])
         tbl.set("Ethernet4", fvs)
 
         # validate if autoneg false is pushed to asic db when set first time
