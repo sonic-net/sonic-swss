@@ -130,9 +130,7 @@ class TestRoute(TestRouteBase):
 
         dvs.servers[1].runcmd("ip address add 10.0.0.3/31 dev eth0")
         dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
-
-        # get neighbor and arp entry
-        dvs.servers[0].runcmd("ping -c 1 10.0.0.3")
+        time.sleep(2)
 
         # add route entry
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ip route 2.2.2.0/24 10.0.0.1\"")
@@ -193,9 +191,6 @@ class TestRoute(TestRouteBase):
         dvs.servers[1].runcmd("ip -6 address add 2001::2/64 dev eth0")
         dvs.servers[1].runcmd("ip -6 route add default via 2001::1")
         time.sleep(2)
-
-        # get neighbor entry
-        dvs.servers[0].runcmd("ping -6 -c 1 2001::2")
 
         # add route entry
         dvs.runcmd("vtysh -c \"configure terminal\" -c \"ipv6 route 3000::0/64 2000::2\"")
