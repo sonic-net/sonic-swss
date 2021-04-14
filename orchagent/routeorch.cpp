@@ -1012,16 +1012,13 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
 
     /* Assert each IP address exists in m_syncdNextHops table,
      * and add the corresponding next_hop_id to next_hop_ids. */
-    bool missingNexthop = false;
     for (auto it : next_hop_set)
     {
         if (!m_neighOrch->hasNextHop(it))
         {
-            SWSS_LOG_INFO("Failed to get next hop %s in %s, resolving neighbor",
+            SWSS_LOG_INFO("Failed to get next hop %s in %s",
                     it.to_string().c_str(), nexthops.to_string().c_str());
-            m_neighOrch->resolveNeighborEntry(it, MacAddress());
-            missingNexthop = true;
-            continue;
+            return false;
         }
 
         // skip next hop group member create for neighbor from down port
@@ -1033,11 +1030,6 @@ bool RouteOrch::addNextHopGroup(const NextHopGroupKey &nexthops)
         sai_object_id_t next_hop_id = m_neighOrch->getNextHopId(it);
         next_hop_ids.push_back(next_hop_id);
         nhopgroup_members_set[next_hop_id] = it;
-    }
-
-    if (missingNexthop)
-    {
-        return false;
     }
 
     sai_attribute_t nhg_attr;
@@ -1382,6 +1374,12 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             if (m_neighOrch->hasNextHop(nexthop))
             {
                 next_hop_id = m_neighOrch->getNextHopId(nexthop);
+                if (m_neighborToResolve.find(nexthop) != m_neighborToResolve.end())
+                {
+                    m_neighOrch->clearResolvedNeighborEntry(nexthop);
+                    m_neighborToResolve.erase(nexthop);
+                    SWSS_LOG_INFO("Resolved neighbor for %s", nexthop.to_string().c_str());
+                }
             }
             else
             {
@@ -1405,7 +1403,11 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 {
                     SWSS_LOG_INFO("Failed to get next hop %s for %s, resolving neighbor",
                             nextHops.to_string().c_str(), ipPrefix.to_string().c_str());
-                    m_neighOrch->resolveNeighborEntry(nexthop, MacAddress());
+                    if (m_neighborToResolve.find(nexthop) == m_neighborToResolve.end())
+                    {
+                        m_neighOrch->resolveNeighborEntry(nexthop, MacAddress());
+                        m_neighborToResolve.insert(nexthop);
+                    }
                     return false;
                 }
             }
@@ -1422,6 +1424,7 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
             {
                 /* NextHopGroup is in "Ip1|alias1,Ip2|alias2,..." format*/
                 std::vector<std::string> nhops = tokenize(nextHops.to_string(), ',');
+                bool missingNexthop = false;
                 for(auto it = nhops.begin(); it != nhops.end(); ++it)
                 {
                     NextHopKey nextHop;
@@ -1452,8 +1455,24 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                                 return false;
                             }
                         }
+                        else
+                        {
+                            SWSS_LOG_INFO("Failed to get next hop %s in %s, resolving neighbor",
+                                    nextHop.to_string().c_str(), nextHops.to_string().c_str());
+                            if (m_neighborToResolve.find(nextHop) == m_neighborToResolve.end()){
+                                m_neighOrch->resolveNeighborEntry(nextHop, MacAddress());
+                                m_neighborToResolve.insert(nextHop);
+                            }
+                            missingNexthop = true;
+                        }
                     }
                 }
+
+                if (missingNexthop)
+                {
+                    return false;
+                }
+
                 /* Failed to create the next hop group and check if a temporary route is needed */
 
                 /* If the current next hop is part of the next hop group to sync,
@@ -1481,6 +1500,18 @@ bool RouteOrch::addRoute(RouteBulkContext& ctx, const NextHopGroupKey &nextHops)
                 addTempRoute(ctx, nextHops);
                 /* Return false since the original route is not successfully added */
                 return false;
+            }
+            else
+            {
+                for (auto it : nextHops.getNextHops())
+                {
+                    if (m_neighborToResolve.find(it) != m_neighborToResolve.end())
+                    {
+                        m_neighOrch->clearResolvedNeighborEntry(it);
+                        m_neighborToResolve.erase(it);
+                        SWSS_LOG_INFO("Resolved neighbor for %s", it.to_string().c_str());
+                    }
+                }
             }
         }
 

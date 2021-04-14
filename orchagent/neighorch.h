@@ -75,6 +75,7 @@ public:
     bool delInbandNeighbor(string alias, IpAddress ip_address);
 
     bool resolveNeighborEntry(const NeighborEntry &, const MacAddress &);
+    void clearResolvedNeighborEntry(const NeighborEntry &);
 
 private:
     PortsOrch *m_portsOrch;

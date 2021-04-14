@@ -72,6 +72,14 @@ bool NeighOrch::resolveNeighborEntry(const NeighborEntry &entry, const MacAddres
     return true;
 }
 
+void NeighOrch::clearResolvedNeighborEntry(const NeighborEntry &entry)
+{
+    string key, alias = entry.alias;
+    key = alias + ":" + entry.ip_address.to_string();
+    m_appNeighResolveProducer.del(key);
+    return;
+}
+
 /*
  * Function Name: processFDBFlushUpdate
  * Description:
