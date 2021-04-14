@@ -858,32 +858,14 @@ void IntfsOrch::doTask(Consumer &consumer)
             }
             else
             {
+                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
+                {
+                    it++;
+                    continue;
+                }
+
                 if (gPortsOrch->getPort(alias, port))
                 {
-                    if (ip_prefix_in_key)
-                    {
-                        string out_alias;
-
-                        if (hasIp2MeAddr(port.m_vr_id, ip_prefix, &out_alias))
-                        {
-                            string vrfName = m_vrfOrch->getVRFname(port.m_vr_id);
-
-                            if (ip_prefix.getIp().getAddrScope() == IpAddress::LINK_SCOPE)
-                            {
-                                SWSS_LOG_INFO("Ignoring SET IP Address: %s in %s, Same IP configured in %s, vrf: %s ",
-                                        ip_prefix.to_string().c_str(), alias.c_str(), out_alias.c_str(), vrfName.empty()? "default": vrfName.c_str());
-                            }
-                            else
-                            {
-                                SWSS_LOG_ERROR("Ignoring SET IP Address: %s in %s, Same IP configured in %s, vrf: %s ",
-                                        ip_prefix.to_string().c_str(), alias.c_str(), out_alias.c_str(), vrfName.empty()? "default": vrfName.c_str());
-                            }
-
-                            it = consumer.m_toSync.erase(it);
-                            continue;
-                        }
-                    }
-
                     /* Set nat zone id */
                     if ((!nat_zone.empty()) and (port.m_nat_zone_id != nat_zone_id))
                     {
@@ -908,12 +890,6 @@ void IntfsOrch::doTask(Consumer &consumer)
                         setRouterIntfsMpls(port);
                         gPortsOrch->setPort(alias, port);
                     }
-                }
-
-                if (!setIntf(alias, vrf_id, ip_prefix_in_key ? &ip_prefix : nullptr, adminUp, mtu))
-                {
-                    it++;
-                    continue;
                 }
             }
 
@@ -1238,36 +1214,6 @@ bool IntfsOrch::removeRouterIntfs(Port &port)
     }
 
     return true;
-}
-
-bool IntfsOrch::hasIp2MeAddr(sai_object_id_t in_vrf_id, const IpPrefix &in_ip_prefix, string *out_alias)
-{
-    sai_object_id_t vrf_id = gVirtualRouterId;
-
-    for (auto it = m_syncdIntfses.begin(); it != m_syncdIntfses.end(); it++)
-    {
-        for (auto prefix : it->second.ip_addresses)
-        {
-            if (prefix.isAddressInSubnet(in_ip_prefix.getIp()))
-            {
-                vrf_id = m_syncdIntfses[it->first].vrf_id;
-                string vrfName = m_vrfOrch->getVRFname(vrf_id);
-
-                if (vrf_id == in_vrf_id)
-                {
-                    *out_alias = it->first;
-
-                    if (prefix == in_ip_prefix)
-                    {
-                        SWSS_LOG_NOTICE("IP2Me Matched Addr %s, Intf = %s vrf %s ", prefix.to_string().c_str(), it->first.c_str(), vrfName.c_str());
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-
-    return false;
 }
 
 void IntfsOrch::addIp2MeRoute(sai_object_id_t vrf_id, const IpPrefix &ip_prefix)
