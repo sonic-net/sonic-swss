@@ -836,9 +836,6 @@ class TestWarmReboot(object):
         dvs.runcmd("config interface startup Ethernet0")
         dvs.runcmd("config interface startup Ethernet4")
 
-        dvs.servers[0].runcmd("ifconfig eth0 10.0.0.1/31")
-        dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
-
         dvs.servers[1].runcmd("ifconfig eth0 10.0.0.3/31")
         dvs.servers[1].runcmd("ip route add default via 10.0.0.2")
 
@@ -860,6 +857,10 @@ class TestWarmReboot(object):
         assert result == "RESTARTCHECK succeeded\n"
 
         # get neighbor and arp entry
+        dvs.servers[0].runcmd("ifconfig eth0 10.0.0.1/31")
+        dvs.servers[0].runcmd("ip route add default via 10.0.0.0")
+        time.sleep(1)
+
         dvs.servers[1].runcmd("ping -c 1 10.0.0.1")
 
         time.sleep(1)
